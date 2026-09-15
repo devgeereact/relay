@@ -841,26 +841,27 @@ const CONSOLE: &str = "main";
 /// Gating at the choke point, not at the callers, is also what makes it honest: a
 /// new fire path added tomorrow is sandboxed by construction and cannot forget.
 ///
-/// ## The choke point is FOUR functions, and it is worth naming them
+/// ## The register is `REHEARSAL_VERDICTS`, not this paragraph
 ///
-/// "One function" was the intent and never the fact, and the gap cost a leak. Every
-/// function below that publishes to the kiosk hub is a way out of the machine:
+/// "One function" was the intent and never the fact, and the gap cost a leak:
+/// `stage_next` shipped gated in name only, leaked "up next" to a live stage
+/// tablet mid-rehearsal, and had no Tauri emit at all, so the e2e rehearsal
+/// test — which counts wall events — saw nothing wrong. A prose list here was
+/// exactly what failed to catch it, so the full, current list of publishers in
+/// this module and their verdicts now lives in `REHEARSAL_VERDICTS`, in `mod
+/// tests`, checked against the module's own source by
+/// `every_publisher_in_this_module_has_an_explicit_rehearsal_verdict` — not
+/// restated here, where it can drift the way it already once did.
 ///
-/// * `broadcast_content` — gated
-/// * `clear` — gated
-/// * `black` — gated
-/// * `stage_next` — gated, and it was NOT. It leaked "up next" to a live stage
-///   tablet mid-rehearsal, and it has no Tauri emit at all, so the e2e rehearsal
-///   test — which counts wall events — saw nothing wrong.
+/// `main.rs::set_channel_template` also publishes, from outside this module, so
+/// that scanner cannot see it. It is deliberately not gated: it carries a
+/// template, not content. Reassigning a screen's look is live by design
+/// (DECISIONS §29), puts no scripture anywhere, and suppressing it would leave a
+/// kiosk rendering a template the operator has already replaced.
 ///
-/// `main.rs::set_channel_template` also publishes, and is DELIBERATELY not gated:
-/// it carries a template, not content. Reassigning a screen's look is live by
-/// design (DECISIONS §29), puts no scripture anywhere, and suppressing it would
-/// leave a kiosk rendering a template the operator has already replaced.
-///
-/// Anything added here that carries what a person would READ belongs in the gated
-/// list. Check `rehearsing(app)` first, and add an e2e case that watches the KIOSK
-/// hub, not just the wall.
+/// Anything added here that carries what a person would READ belongs in
+/// `REHEARSAL_VERDICTS` as gated. Check `rehearsing(app)` first, and add an e2e
+/// case that watches the KIOSK hub, not just the wall.
 #[derive(Default)]
 pub struct Rehearsal(pub AtomicBool);
 
@@ -3486,7 +3487,11 @@ mod tests {
                     }
                 }
             }
-            if current.is_some() {
+            // Comment lines talk ABOUT a gate or a publish call without being
+            // one — `kinds_in` above already knows this, and this scanner has
+            // to know it too, or a doc comment that merely mentions
+            // `rehearsing(` or `.publish(` reads as the real thing.
+            if current.is_some() && !t.starts_with("//") {
                 buf.push_str(line);
                 buf.push('\n');
             }
@@ -3502,12 +3507,13 @@ mod tests {
             fns.len()
         );
 
-        // A function reaches a LAN device if it hands the hub a message.
-        let publishes = |b: &str| {
-            b.contains("publish_kiosk(")
-                || b.contains("self.publish(")
-                || b.contains("hub.publish(")
-        };
+        // A function reaches a LAN device if it hands the hub a message. Matched
+        // generically on `.publish(` — any receiver, not a hardcoded list of
+        // variable names — because a publisher can be written against any local
+        // (`kiosk.publish(...)`, as `main.rs` already does). `publish_kiosk(` is
+        // matched separately because it is a free function call, not a method
+        // call on a receiver, so it never contains `.publish(`.
+        let publishes = |b: &str| b.contains("publish_kiosk(") || b.contains(".publish(");
 
         let mut found: Vec<&str> = Vec::new();
         for (name, b) in &fns {
