@@ -351,15 +351,31 @@ describe('ticker mode is measured', () => {
 // chosen for a hard-to-read background was also the one mode whose overflow the
 // fitter could not detect. Asserted on the stylesheet the component ships,
 // because jsdom does not lay out.
+//
+// Comments are stripped from the extracted rule before matching. The
+// declaration is the only thing under test — a `/* … */` comment describing
+// the history of this rule is free to say "overflow: visible" (which is
+// exactly what the clearest explanation of this fix needs to say) without
+// that prose deciding CI's verdict on its own.
 describe('the contrast panel clips', () => {
+  const stripComments = (css) => css.replace(/\/\*[\s\S]*?\*\//g, '');
+
   it('does not set overflow: visible', async () => {
     const src = await import('node:fs').then((fs) =>
       fs.readFileSync('src/lib/TemplateRender.svelte', 'utf8'),
     );
     const block = src.slice(src.indexOf('.content.panel {'));
-    const rule = block.slice(0, block.indexOf('}'));
+    const rule = stripComments(block.slice(0, block.indexOf('}')));
     expect(rule, '.content.panel must not remove the clip .content provides').not.toMatch(
       /overflow:\s*visible/,
     );
+  });
+
+  it('ignores the phrase when it only appears inside a comment', () => {
+    const rule = stripComments(`
+      /* This was \`overflow: visible\`, which took away the clip. */
+      overflow: hidden;
+    `);
+    expect(rule).not.toMatch(/overflow:\s*visible/);
   });
 });
