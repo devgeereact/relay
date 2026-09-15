@@ -20,6 +20,7 @@
     readErrors,
   } from './stores/capture.js';
   import ErrorState from './ui/ErrorState.svelte';
+  import { humanError } from './errors.js';
 
   export let compact = false; // banner form (Console) vs full card (Settings)
 
@@ -50,9 +51,16 @@
       await installModelFile(f.path);
       installMsg = `Installed ${f.label}.`;
     } catch (e) {
-      // The refusal is already written for a volunteer by `install_from_file` —
-      // "check you copied the whole file" — so it is shown as it is.
-      installMsg = e?.message ?? String(e);
+      // THROUGH THE ONE HUMANISER, like its six siblings on this surface. This
+      // read `e?.message ?? String(e)`, which renders a Rust error verbatim. The
+      // defect is latent rather than live — `install_from_file`'s own refusals
+      // are already written for a volunteer ("check you copied the whole file")
+      // — but nothing constrains the next one: the command returns
+      // `Result<String, String>`, not the typed `{ kind, message }`, so any
+      // string it ever grows arrives here unfiltered. `humanError` passes an
+      // unrecognised sentence through with a lead-in, so the good copy survives
+      // and the bad copy stops being possible.
+      installMsg = humanError(e);
     }
     await refresh();
     busy = false;

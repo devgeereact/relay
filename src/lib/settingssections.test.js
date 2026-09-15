@@ -747,3 +747,166 @@ describe('the update BUTTON goes through describeChannel too — not only the ro
     expect(SCRIPT_ONLY).not.toMatch(/up to date/i);
   });
 });
+
+// ── THE FIVE SMALLER FINDINGS (2026-09-15) ──────────────────────────────────
+//
+// Five controls on this page that did not say what had happened, plus a private
+// copy of a map that has a store. A source scan is the right instrument for four
+// of the six — they are claims about which class, which handler and which region
+// the markup carries — and it is an APPROXIMATION for the DSN one, which is a
+// claim about behaviour over time. That is stated here rather than hidden: what
+// the scan proves is that a second commit path exists and that `savedDsn` is only
+// ever written from what the BACKEND returned. Whether a real edit survives a
+// real re-read is NOT TESTED at this level; nothing in this repository mounts
+// Settings, and a fixture that did would be a fixture of everything.
+describe('a Settings control says which of its outcomes happened', () => {
+  it('F-3 · Detect speakers reads WHICH failure it was, not a bare false', () => {
+    const fn = SCRIPT_ONLY.slice(
+      SCRIPT_ONLY.indexOf('async function detectSpeakers'),
+      SCRIPT_ONLY.indexOf('function pickOutput'),
+    );
+    expect(fn, 'detectSpeakers was not found').toBeTruthy();
+    // The three situations that used to render identically.
+    expect(fn).toMatch(/\.ok\b/);
+    expect(fn).toMatch(/'denied'/);
+    expect(fn).toMatch(/'no-input'/);
+  });
+
+  it('F-3 · and a refusal carries the way to reverse it', () => {
+    // A refusal that only says "refused" leaves an operator with a dead button
+    // and no next action. The OS path is the whole point of distinguishing it.
+    const fn = SCRIPT_ONLY.slice(
+      SCRIPT_ONLY.indexOf('async function detectSpeakers'),
+      SCRIPT_ONLY.indexOf('function pickOutput'),
+    );
+    expect(fn).toMatch(/Privacy & Security/);
+    expect(fn).toMatch(/Microphone/);
+  });
+
+  it('F-3 · the outcome is rendered, and in a live region', () => {
+    expect(MARKUP_ONLY).toMatch(/\{#if outMsg\}[\s\S]{0,200}role="status"/);
+  });
+
+  it('F-9 · no inline amber survives anywhere in the markup', () => {
+    // Amber means ON AIR and nothing else (rule 18). Settings is never on air,
+    // and this file's own style block says "Rose, never amber" three times while
+    // the demo-content edited count carried `style="color:var(--v-amber)"`.
+    expect(
+      MARKUP_ONLY,
+      'An inline amber in Settings. Amber means ON AIR; use .s-netbad (rose, a ' +
+        'failure) or .s-netwarn (amethyst, a caution).',
+    ).not.toMatch(/--v-amber/);
+  });
+
+  it('F-9 · the demo edited count wears the caution class instead', () => {
+    const demoBlock = MARKUP_ONLY.slice(
+      MARKUP_ONLY.indexOf('<div class="rw-group">Demo content</div>'),
+      MARKUP_ONLY.indexOf('<div class="rw-group">Service lock</div>'),
+    );
+    expect(demoBlock).toMatch(/been changed since/);
+    expect(demoBlock).toMatch(/class="s-netwarn"/);
+  });
+
+  it('F-10 · both results that were announced to nobody now have live regions', () => {
+    expect(MARKUP_ONLY).toMatch(/\{#if updateMsg\}[\s\S]{0,120}role="status"/);
+    expect(MARKUP_ONLY).toMatch(/\{#if crashMsg\}[\s\S]{0,200}role="status"/);
+  });
+
+  it('F-8 · the Sentry DSN has a commit path of its own', () => {
+    // `setCrashReporting` had exactly one caller — the switch — so with crash
+    // reporting already on, editing the address wrote only a local object and
+    // the next re-read put the old one back. The one control in Relay that
+    // decides where data leaves this machine.
+    const calls = SCRIPT_ONLY.match(/setCrashReporting\(/g) ?? [];
+    expect(
+      calls.length,
+      'setCrashReporting has one caller again. The DSN can be edited with no way ' +
+        'to commit it while the switch is already on.',
+    ).toBeGreaterThan(1);
+    expect(SCRIPT_ONLY).toMatch(/async function saveDsn/);
+    expect(MARKUP_ONLY).toMatch(/on:click=\{saveDsn\}/);
+  });
+
+  it('F-8 · and does not commit on blur or on every keystroke', () => {
+    // The failure mode of the option NOT taken: blur fires on any focus change,
+    // so a half-typed or mis-pasted address would become the live destination
+    // with no moment at which the operator said so — and reports already sent to
+    // the wrong endpoint cannot be recalled.
+    const field = MARKUP_ONLY.slice(
+      MARKUP_ONLY.indexOf('id="crash-dsn"'),
+      MARKUP_ONLY.indexOf('</div>', MARKUP_ONLY.indexOf('id="crash-dsn"')),
+    );
+    expect(field).toMatch(/bind:value=\{crash\.dsn\}/);
+    expect(field).not.toMatch(/on:blur|on:change|on:input/);
+  });
+
+  it('F-8 · an unsaved address says so rather than looking committed', () => {
+    // The Save button's own failure mode is an edit that is never saved. That one
+    // can be made visible, which is why it was chosen over the silent one.
+    expect(SCRIPT_ONLY).toMatch(/dsnDirty\s*=/);
+    expect(MARKUP_ONLY).toMatch(/\{#if dsnDirty\}/);
+  });
+
+  it('F-8 · savedDsn is only ever written from what the backend returned', () => {
+    // Rule 15 on the smallest possible control: if the local copy were written
+    // from what was ASKED for, a refused save would leave the field looking
+    // committed while the engine reported somewhere else.
+    // The declaration is not a write; every assignment after it must be one.
+    const writes = SCRIPT_ONLY.match(/(?<!let )savedDsn\s*=/g) ?? [];
+    expect(writes.length, 'savedDsn is written in more than one place').toBe(1);
+    expect(SCRIPT_ONLY).toMatch(/function acceptCrash\(landed\)[\s\S]{0,160}savedDsn = landed/);
+  });
+});
+
+describe('Settings keeps no private copy of a thing that has a store', () => {
+  it('reads the canonical content kinds rather than a list of its own', () => {
+    // A four-entry private list that predated the timer: the Countdown look could
+    // be set in the Templates gallery and was invisible here.
+    expect(SCRIPT_ONLY).toMatch(/contentTypes = CONTENT_KINDS/);
+    expect(
+      SCRIPT_ONLY,
+      'Settings has grown its own content-kind list again.',
+      // The SECTION list at the top of the file legitimately has a `scripture`
+      // key — it is a Settings section, not a content kind. Anchor on the pairing
+      // that only a content-look list has.
+    ).not.toMatch(/key: 'song',\s*label:/);
+  });
+
+  it('and Settings, the gallery and the editor all agree about every kind', () => {
+    const { CONTENT_KINDS } = require('./layers.js');
+    const gallery = read('src/lib/views/templates/TemplateGallery.svelte');
+    const editor = read('src/lib/views/templates/TemplateEditor.svelte');
+    expect(CONTENT_KINDS.map((k) => k.key)).toContain('countdown');
+    for (const src of [SRC, gallery, editor]) {
+      expect(src).toMatch(/CONTENT_KINDS/);
+    }
+  });
+
+  it('subscribes to the one store instead of refilling a local map', () => {
+    expect(MARKUP_ONLY).toMatch(/\$contentTemplates\[ct\.key\]/);
+    expect(
+      SCRIPT_ONLY,
+      'Settings holds a private ctMap again. `contentTemplates` is the one store ' +
+        'and three surfaces used to keep private copies that silently disagreed.',
+    ).not.toMatch(/\bctMap\b/);
+    expect(SCRIPT_ONLY).toMatch(/loadContentTemplates\(\)/);
+  });
+});
+
+describe('the offline model install goes through the one humaniser', () => {
+  // Stripped, for the same reason the Settings scan is: the comment beside the
+  // fix quotes the expression it replaced, and a scanner that reads comments
+  // reports a fixed defect as still present.
+  const MODEL = strip(read('src/lib/ModelSetup.svelte'));
+
+  it('F-5 · installFound renders humanError, not a raw Rust string', () => {
+    // Its six siblings on this surface already do. The defect is latent —
+    // `install_from_file`'s own refusals are written for a volunteer — but the
+    // command returns Result<String, String>, not the typed { kind, message },
+    // so nothing constrains the next string it grows.
+    const fn = MODEL.slice(MODEL.indexOf('async function installFound'), MODEL.indexOf('async function get('));
+    expect(fn, 'installFound was not found').toBeTruthy();
+    expect(fn).toMatch(/installMsg = humanError\(e\)/);
+    expect(fn).not.toMatch(/e\?\.message \?\? String\(e\)/);
+  });
+});

@@ -47,7 +47,7 @@
     Math.round(
       (Object.keys(CATALOGUES[code] ?? {}).filter((k) => !k.startsWith('_')).length / TOTAL) * 100,
     );
-  import { capture, meter, templates, initAudio, startCapture, stopCapture, setThresholds, setSttLanguage, setInputDevice, listTranslations, getActiveTranslation, setActiveTranslation, localIp, loadTemplates, getContentTemplates, setContentTemplate, getCrashReporting, setCrashReporting, serviceTargetMinutes, loadServiceTarget, setServiceTarget, latencyReport, latencyReset, latencySetEnabled, serviceLock, loadServiceLock, setServiceLock, rooms, loadRooms, saveRoom, useRoom, deleteRoom,
+  import { capture, meter, templates, initAudio, startCapture, stopCapture, setThresholds, setSttLanguage, setInputDevice, listTranslations, getActiveTranslation, setActiveTranslation, localIp, loadTemplates, contentTemplates, loadContentTemplates, setContentTemplate, getCrashReporting, setCrashReporting, serviceTargetMinutes, loadServiceTarget, setServiceTarget, latencyReport, latencyReset, latencySetEnabled, serviceLock, loadServiceLock, setServiceLock, rooms, loadRooms, saveRoom, useRoom, deleteRoom,
     listOutputChannels, setChannelDisplay, activeVoiceProfile, languageReport, exportDiagnostics, readErrors,
     demoStatus, loadDemoContent, removeDemoContent } from '../stores/capture.js';
   import Loading from '../ui/Loading.svelte';
@@ -55,6 +55,7 @@
   import { captureRoom, observedNote, applyRoom, describeApply } from '../rooms.js';
   import { snapshotPath, KEEP_SNAPSHOTS } from '../updater.js';
   import { diagnose, drift } from '../latency.js';
+  import { CONTENT_KINDS } from '../layers.js';
 
   // ─────────────────────────────────────────────────────────────────────────
   // SECTION NAV — ELEVEN SECTIONS, MERGED FROM EIGHTEEN (docs/REBRAND.md §11).
@@ -160,14 +161,38 @@
   // ─────────────────────────────────────────────────────────────────────────
   let crash = { enabled: false, dsn: '' };
   let crashMsg = '';
+  // ── THE DSN NEEDS A COMMIT OF ITS OWN ──────────────────────────────────────
+  //
+  // `setCrashReporting` had exactly one caller, the switch. With the switch
+  // already ON, editing the DSN wrote only this local object: the field showed
+  // the new address, the engine went on reporting to the old one, and leaving
+  // Settings and coming back re-read `get_crash_reporting` and silently put the
+  // old address back. The one control in Relay that decides where data leaves
+  // this machine could be changed and keep pointing somewhere else.
+  //
+  // A SAVE BUTTON, not commit-on-blur. Blur fires on any focus change, so a
+  // half-typed or mis-pasted address would become the live destination with no
+  // moment at which the operator said so — and crash reports that have gone to
+  // the wrong endpoint cannot be recalled. The button's own failure mode is an
+  // edit that is never saved, and that one can be made VISIBLE: `dsnDirty` marks
+  // the field as unsaved, so "I typed it and nothing happened" is on the screen
+  // rather than discovered a week later.
+  let savedDsn = '';
+  let dsnBusy = false;
+  $: dsnDirty = (crash.dsn ?? '').trim() !== savedDsn.trim();
   // The Privacy screen reads the LIVE value, never a literal. A page that says
   // "off" because somebody typed "off" is worth less than no page at all — it is
   // the one row a person opens it to check.
   $: crashOn = !!crash.enabled;
+  /** Take whatever the backend LANDED on, never what was asked for (rule 15). */
+  function acceptCrash(landed) {
+    crash = landed;
+    savedDsn = landed?.dsn ?? '';
+  }
   async function toggleCrash(enabled) {
     crashMsg = '';
     try {
-      crash = await setCrashReporting(enabled, crash.dsn);
+      acceptCrash(await setCrashReporting(enabled, crash.dsn));
       crashMsg = crash.enabled
         ? 'Crash reporting on.'
         : enabled
@@ -177,18 +202,37 @@
       crashMsg = humanError(e);
     }
   }
+  /** Commit the address WITHOUT changing whether reporting is on. */
+  async function saveDsn() {
+    dsnBusy = true;
+    crashMsg = '';
+    try {
+      acceptCrash(await setCrashReporting(crashOn, crash.dsn));
+      crashMsg = savedDsn
+        ? crash.enabled
+          ? 'Saved. Crash reports now go to that address.'
+          : 'Saved. Crash reporting is still off — the switch below turns it on.'
+        : 'The address was cleared. Crash reporting cannot run without one.';
+    } catch (e) {
+      crashMsg = humanError(e);
+    }
+    dsnBusy = false;
+  }
 
   // Per-content-type default templates (ProPresenter-style).
-  const contentTypes = [
-    { key: 'scripture', label: 'Scripture' },
-    { key: 'song', label: 'Lyrics' },
-    { key: 'media', label: 'Media' },
-    { key: 'announce', label: 'Announcements' },
-  ];
-  let ctMap = { scripture: null, song: null, media: null, announce: null };
+  //
+  // THE KINDS AND THE MAP BOTH COME FROM ELSEWHERE, and neither used to.
+  // `contentTypes` was a private four-entry list that predated the timer, so the
+  // Countdown look could be set in the Templates gallery and was invisible here;
+  // `ctMap` was a private object with the same four keys, refilled once on mount,
+  // over the top of a store whose own comment says three surfaces used to hold
+  // private copies of exactly this and silently disagreed. `CONTENT_KINDS`
+  // (lib/layers.js) is the canonical list the gallery and the editor render, and
+  // `$contentTemplates` is the one store `setContentTemplate` writes — so this
+  // surface now cannot drift from either.
+  const contentTypes = CONTENT_KINDS;
   async function pickCt(kind, val) {
     const id = val ? parseInt(val, 10) : null;
-    ctMap[kind] = id;
     await setContentTemplate(kind, id);
   }
 
@@ -498,12 +542,45 @@
   async function refreshOutputs() {
     outDevices = await listOutputDevices();
   }
+  // WHAT THE BUTTON FOUND. Pressing *Detect speakers* used to re-render this
+  // block pixel for pixel in three different situations — the operator declined
+  // the prompt, the machine has no input device to ask about, and it worked and
+  // this computer genuinely has one speaker — because `ensureDeviceAccess`
+  // returned a bare `false` for the first two and the list stayed empty for the
+  // third. `outMsg` is what happened, `outMsgBad` whether that is a refusal
+  // (rose) or merely news (the ordinary foot colour). Rose, never amber: nothing
+  // on this page is on air.
+  let outMsg = '';
+  let outMsgBad = false;
   /** Unlock real speaker names by tripping the media permission once. */
   async function detectSpeakers() {
     outBusy = true;
+    outMsg = '';
+    outMsgBad = false;
     try {
-      await ensureDeviceAccess();
+      const access = await ensureDeviceAccess();
       await refreshOutputs();
+      if (access.ok) {
+        // Granted. Whether anything NEW appeared is the second question, and it
+        // is the one the operator actually pressed the button to settle.
+        outMsg = outDevices.length
+          ? `Found ${outDevices.length} speaker${outDevices.length === 1 ? '' : 's'} besides the system default.`
+          : 'Microphone access granted — this computer reports no speakers besides the system default. There is nothing more to choose, and video sound is already going to the right place.';
+      } else if (access.reason === 'denied') {
+        outMsgBad = true;
+        // The way back is the point. A refusal that only says "refused" leaves an
+        // operator with a dead button and no next action.
+        outMsg =
+          'Microphone access was refused, so macOS is still hiding the speaker names. Turn Relay back on in System Settings → Privacy & Security → Microphone, then press Detect speakers again.';
+      } else if (access.reason === 'no-input') {
+        outMsg =
+          'This computer has no microphone to ask about, so the speaker names stay hidden. Plug an input in, or leave video sound on the system default.';
+      } else if (access.reason === 'unsupported') {
+        outMsg = 'This webview cannot ask for microphone access at all.';
+      } else {
+        outMsgBad = true;
+        outMsg = 'Asking for microphone access failed, and the reason was not one Relay recognises.';
+      }
     } finally {
       outBusy = false;
     }
@@ -715,9 +792,11 @@
     try {
       await loadTranslations();
       activeTranslation = await getActiveTranslation();
-      crash = await getCrashReporting();
+      acceptCrash(await getCrashReporting());
       await loadTemplates();
-      ctMap = await getContentTemplates();
+      // Into the STORE, not a private copy. `loadContentTemplates` is the one
+      // reader that fills it, and every other surface subscribes.
+      await loadContentTemplates();
     } catch (e) {
       crashMsg = humanError(e);
     } finally {
@@ -964,7 +1043,7 @@
         {#each contentTypes as ct}
           <div class="rw-nv">
             <span class="rw-nvk">{ct.label}</span>
-            <select class="r-select rw-nvctl s-sel" value={ctMap[ct.key] ?? ''} on:change={(e) => pickCt(ct.key, e.target.value)} aria-label="{ct.label} content look">
+            <select class="r-select rw-nvctl s-sel" value={$contentTemplates[ct.key] ?? ''} on:change={(e) => pickCt(ct.key, e.target.value)} aria-label="{ct.label} content look">
               <option value="">Channel default</option>
               {#each $templates as tpl}<option value={tpl.id}>{tpl.name}</option>{/each}
             </select>
@@ -1094,6 +1173,13 @@
               Where video sound plays on the <b>fullscreen output window</b>. OBS/kiosk
               browser sources are left muted — OBS mixes their audio itself.
             </p>
+          {/if}
+          <!-- OUTSIDE the branch chain on purpose. Three of the four outcomes
+               leave `outLocked` true and redraw the identical block, which is the
+               defect; the fourth flips the branch and would drop the sentence that
+               explains why. One place, all four. -->
+          {#if outMsg}
+            <p class="rw-foot" class:s-netbad={outMsgBad} role="status">{outMsg}</p>
           {/if}
         </div>
 
@@ -1462,7 +1548,14 @@
               Everything it added is named “Demo · …”, except the saved verses, whose
               names are real Bible references and stay true ones.
               {#if demo.edited > 0}
-                <b style="color:var(--v-amber);"
+                <!-- `.s-netwarn` (amethyst), not an inline amber. Amber means ON
+                     AIR and nothing else (rule 18), and Settings is never on air.
+                     This file's own comments say "Rose, never amber" three times
+                     and define the two colours a value may wear instead; this was
+                     the last inline exception left. Amethyst rather than rose
+                     because an edited demo item is a caution, not a failure — it
+                     is the thing the Remove button will KEEP. -->
+                <b class="s-netwarn"
                   >{demo.edited} of them {demo.edited === 1 ? 'has' : 'have'} been changed since.</b
                 >
                 Removing will <b>keep</b> {demo.edited === 1 ? 'that one' : 'those'} and delete the
@@ -1590,7 +1683,11 @@
           <button class="r-btn primary sm" on:click={doCheckUpdates} disabled={checking}>
             {checking ? 'Checking…' : 'Check for Updates'}
           </button>
-          {#if updateMsg}<p class="rw-foot">{updateMsg}</p>{/if}
+          <!-- ANNOUNCED. Six other message surfaces on this page carry a live
+               region and these two did not, so the two results a screen reader
+               user gets nothing for were the update check and the one control
+               that decides whether data leaves the machine. -->
+          {#if updateMsg}<p class="rw-foot" role="status">{updateMsg}</p>{/if}
         </div>
 
         <!-- WHAT AN UPDATE WOULD DO TO YOUR HISTORY.
@@ -1860,7 +1957,25 @@
             If you turn it on, Relay sends only the technical details of a crash — the error, where in the code it happened, and your operating system. <b>Sermon transcripts, verse text, song lyrics, announcements and service names are never sent</b>, and are stripped from every report before it leaves. Reports are queued and sent later, so a bad network can never slow down a live service.
           </p>
           <label class="r-lbl" for="crash-dsn">Sentry DSN (your own project)</label>
-          <input id="crash-dsn" class="r-input" type="text" placeholder="https://…@…ingest.sentry.io/…" bind:value={crash.dsn} disabled={!$capture.available} />
+          <!-- The field and the button that commits it are ONE decision, so they
+               are one row (`.s-addrow`). Nothing here commits on blur: see the
+               block in the script for why an address that decides where data
+               leaves this machine does not become live by accident. -->
+          <div class="s-addrow">
+            <input id="crash-dsn" class="r-input s-dsn" type="text" placeholder="https://…@…ingest.sentry.io/…" bind:value={crash.dsn} disabled={!$capture.available} />
+            <button class="r-btn ghost sm" on:click={saveDsn} disabled={!$capture.available || dsnBusy || !dsnDirty}>
+              {dsnBusy ? 'Saving…' : 'Save address'}
+            </button>
+          </div>
+          {#if dsnDirty}
+            <!-- Amethyst, never amber: this is a caution, and amber means on air.
+                 An unsaved edit that says nothing is the same silence the Save
+                 button was added to end, one step along. -->
+            <p class="rw-foot s-netwarn" role="status">
+              Not saved yet. Crash reports still go to the address Relay already has —
+              press <b>Save address</b> to change that.
+            </p>
+          {/if}
         </div>
 
         <!-- §12 · ONE INSTRUMENT. This was a full-width `r-btn` reading *Turn
@@ -1898,7 +2013,7 @@
              leaves a phantom band under the row whenever there is nothing to
              say. -->
         {#if crashMsg}
-          <div class="s-prose"><p class="rw-foot" style="margin-top:0;">{crashMsg}</p></div>
+          <div class="s-prose"><p class="rw-foot" role="status" style="margin-top:0;">{crashMsg}</p></div>
         {/if}
       {/if}
       </div>
@@ -2030,6 +2145,9 @@
      is ACTIVE, not the state that is good — the copy carries the judgement. */
   .s-nvp.on{ color:var(--v-emerald); }
   .s-sel{ width:190px; max-width:100%; }
+  /* The DSN takes the row's width and the Save button keeps its own, so a long
+     address does not push the commit off the end of the line. */
+  .s-dsn{ flex:1 1 260px; min-width:0; }
   .s-lenctl{ display:flex; align-items:center; gap:8px; justify-content:flex-end; }
   .s-leninput{ width:90px; text-align:right; }
   .s-lenunit{ color:var(--v-faint); font-size:var(--v-fs-cap); }
