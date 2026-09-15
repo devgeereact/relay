@@ -114,6 +114,24 @@ pub const PROTECTED: &[(&str, &str)] = &[
     ("delete_template", "deleting a template"),
     ("delete_channel", "removing a screen"),
     ("delete_plan", "deleting a service plan"),
+    // A CUE, not just the plan that holds it (DECISIONS §85, 2026-09-15).
+    //
+    // The list protected the container and not its contents, so during a service
+    // Relay refused to let an operator delete a plan and allowed them to delete
+    // every cue in it, one at a time, at lower cost per click and far higher
+    // frequency. As far as the record shows that was never a decision — it was
+    // the container's decision never re-asked of the thing inside it.
+    //
+    // It passes this list's own test ("everything on it is something a volunteer
+    // might legitimately want"): a volunteer who wants a cue gone mid-service can
+    // simply SKIP it — the transport walks past it and nothing reaches a screen —
+    // whereas the deletion takes the cue's stage note, duration, section heading
+    // and pinned template with it, and there is no undo anywhere on this desk.
+    //
+    // The REORDER commands (`move_plan_item`, `reorder_plan`) deliberately stay
+    // off. They are recoverable by reordering back, and an operator reshuffling a
+    // running order mid-service is doing the ordinary thing this desk is for.
+    ("remove_plan_item", "deleting a cue from the running order"),
     ("delete_song", "deleting a song"),
     ("delete_arrangement", "deleting an arrangement"),
     ("delete_saved_scripture", "deleting saved scripture"),

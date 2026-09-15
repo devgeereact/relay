@@ -3998,3 +3998,59 @@ The console's programme pane does not replay yet. `views/Live.svelte` renders `T
 needs no new prop — it follows the `liveTransition` store the moment it is rendered by a build that
 has this — but that file was owned by another agent in the same wave and was left alone. Verified
 only that the mechanism is there, not that the pane moves. **NOT TESTED in a browser.**
+
+---
+
+## 85. Service Lock protects a cue, not only the plan that holds it (2026-09-15)
+
+### The state it was in
+
+`servicelock::PROTECTED` carried `delete_plan` and nothing about the cues inside a plan. So during a
+recorded service Relay **refused to let an operator delete a service plan, and allowed them to delete
+every cue in it, one row at a time** — at lower cost per click, from a button that sits beside
+`Move down` in the cue inspector, and far more often than anyone deletes a whole plan.
+
+`remove_plan_item`, `move_plan_item` and `reorder_plan` all ran unguarded. Live holds the playhead as
+`liveCue = { cueId, slide, onAir }`, keyed by cue id, so deleting the cue the transport is standing on
+changes where `→` goes next with nothing in the transport noticing.
+
+### Why this was not already decided
+
+The list is enumerated on purpose, and its own comment says why: *"A predicate over names
+(`starts_with("delete_")`) would silently capture a future command nobody weighed, and this list has to
+stay short: everything on it is something a volunteer might legitimately want."* That reasoning is
+right and is why the fix is one named entry rather than a pattern.
+
+But as far as the record shows, the question was asked about the **container** and never re-asked of the
+thing inside it. That is the same shape as the four one-door-of-two defects CLAUDE.md already names: a
+guarantee established on the object everyone was looking at, and not on its parts.
+
+### The decision
+
+**`remove_plan_item` joins `PROTECTED`. The two reorder commands deliberately do not.**
+
+It passes the list's own test — *is this something a volunteer might legitimately want mid-service?*
+— and the answer is that they want the **outcome**, not this action. A volunteer who wants a cue gone
+during a service can **skip it**: the transport walks past, nothing reaches a screen, and the running
+order is intact on Monday. Deleting it takes the cue's stage note, its duration, its section heading
+and its pinned template with it, and there is no undo anywhere on that desk.
+
+The reorder commands stay off the list for the opposite reason. Reordering is **recoverable by
+reordering back**, an operator reshuffling a running order mid-service is doing the ordinary thing the
+Planner exists for, and refusing it would refuse the cheap fix for a service that has gone off script —
+which is the entire product.
+
+### What this does not do
+
+It does not make the Planner unable to reach a service. The lock is liftable in one press by design
+(`servicelock.rs`), and this changes none of that — a lock that cannot be lifted is a lock that becomes
+the emergency. It is not a validator in front of a panic control (§20 and rule 36 both forbid that);
+`remove_plan_item` reaches no screen in either direction.
+
+### Instrument
+
+`servicelock::tests::every_protected_command_actually_guards_itself` already covers the new entry from
+both sides: it asserts that `main.rs` calls `lock.guard("remove_plan_item")` **and** that the command is
+still registered in `generate_handler!`, so a rename cannot leave the list quietly pointing at nothing.
+`the_guard_is_the_first_thing_the_command_does` holds the placement, because a guard after the work has
+started refuses the operator without preventing anything.

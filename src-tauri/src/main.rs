@@ -2191,7 +2191,16 @@ fn add_plan_item(
 
 /// Planner: remove a cue.
 #[tauri::command]
-fn remove_plan_item(db: tauri::State<'_, Db>, id: i64) -> error::Result<()> {
+fn remove_plan_item(
+    db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+    id: i64,
+) -> error::Result<()> {
+    // DECISIONS §85. The lock protected the PLAN and not the cues inside it, so a
+    // running order could be emptied one row at a time during a service while
+    // deleting the whole plan was refused. Skipping a cue is the reversible way to
+    // do what a volunteer actually wants mid-service.
+    lock.guard("remove_plan_item")?;
     let conn = db.0.lock()?;
     db::remove_plan_item(&conn, id).map_err(Into::into)
 }
