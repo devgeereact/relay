@@ -2091,7 +2091,14 @@
     </div>
   </div>
 
-  {#if $capture.audioError}<div class="audioerr">Audio: {$capture.audioError}</div>{/if}
+  <!-- Humanised, and it says what to DO. It was `Audio: {raw}` — the cpal device
+       string straight through, bypassing `errors.js`, which is the one humaniser
+       this codebase insists on. "input device not found: Scarlett 2i2" is a
+       sentence with no verb and no route back. The same fact now also reaches the
+       shell's degraded strip on every workspace (`degraded.js`, id `audio`). -->
+  {#if $capture.audioError}
+    <div class="audioerr" role="alert">The microphone stopped — {humanError($capture.audioError)} Check the cable, then press the microphone in Live audio.</div>
+  {/if}
   {#if $capture.outputError}<div class="audioerr">Output: {$capture.outputError}</div>{/if}
 
   <!-- ══ WHAT THE LAMPS CANNOT SAY ══
@@ -2303,10 +2310,20 @@
      Amethyst is REHEARSAL and nothing else (rule 18, DECISIONS §22) — this chip
      wore it, so on the one morning both were true the operator read the wrong
      one. The grid's cued cell has always been steel blue; these two now agree. */
-  .tag.preview{background:var(--v-sel); color:var(--v-sel-ink)}
+  /* `--v-sel-fill`, NOT `--v-sel`. White on the lighter #5b9cf8 measures 2.78:1
+     and fails AA at 9.5px — and `app.css` names this exact mistake in its own
+     comment beside the token ("White on --v-sel-fill is 4.84:1 … on the lighter
+     #5b9cf8 it is not"). This badge is what tells Preview from Programme in a dark
+     booth at a glance. */
+  .tag.preview{background:var(--v-sel-fill); color:var(--v-sel-ink)}
   /* Amber, and only when the congregation is genuinely looking at it. */
   .tag.onair{background:var(--v-amber); color:var(--v-amber-ink)}
-  .tag.reh{background:var(--v-amethyst-soft); border:1px solid var(--v-amethyst-line); color:var(--v-amethyst)}
+  /* SOLID, like ON AIR. It was a 16% tint with a hairline while its two
+     neighbours were solid fills, so the state that most needs to be unmistakable
+     was drawn the most faintly of the four. Rehearsal is a claim about what the
+     congregation can see; it should carry the same weight as the claim it
+     replaces. */
+  .tag.reh{background:var(--v-amethyst); color:var(--v-void)}
   .tag.off{background:var(--v-grey-soft); border:1px solid var(--v-line2); color:var(--v-dim)}
   /* HARD RIGHT, MONO, UPPERCASE. The reference is the one figure on this head an
      operator reads from across a booth, and in the body face it sat at a
@@ -2369,10 +2386,20 @@
     text-transform:uppercase; color:var(--v-faint); text-align:center}
   /* 64px, as measured in the prototype. The one control on this surface that is
      always the same press, in the same place, however tired the operator is. */
+  /* STEEL, NOT AMBER. Amber means ON AIR and nothing else (rule 18,
+     DESIGN_SYSTEM §1), and an operator's fastest read of the room is "is there
+     amber on this screen". A 64px amber button is lit when the screens are clear,
+     lit when nothing is staged, and lit inside a REHEARSAL — the one state whose
+     whole promise is that nothing can reach the congregation. It removed that read
+     entirely, and the design system states the rule it broke in its own words:
+     "a colour that is always lit cannot also be a warning."
+     TAKE is the primary action, so it wears the primary colour. Amber stays where
+     it is earned: the program ring, the ON AIR badge and the status cell — which
+     are genuinely the best thing on this surface and are what this protects. */
   .take{height:64px; border-radius:var(--v-r-md); border:0; cursor:pointer;
-    background:var(--v-amber); color:var(--v-amber-ink); font-family:var(--f-body);
+    background:var(--v-sel-fill); color:var(--v-sel-ink); font-family:var(--f-body);
     font-size:var(--v-fs-lbl); font-weight:700; letter-spacing:.1em;
-    box-shadow:0 6px 18px -6px var(--v-amber-glow);
+    box-shadow:0 6px 18px -6px var(--v-sel-glow);
     transition:transform 90ms var(--v-ease), filter .14s}
   .take:hover:not(:disabled){filter:brightness(1.06)}
   .take:disabled{opacity:.4; cursor:not-allowed; box-shadow:none}
@@ -2642,8 +2669,17 @@
      be shown — it is the operator's evidence that a number was misheard — and
      the control that cannot take it says why rather than failing after a press. */
   .act:disabled{cursor:not-allowed; opacity:.45}
-  .act.go{background:var(--v-emerald); color:var(--v-void)}
-  .act.no{background:var(--v-red); color:#fff}
+  /* THE EMPHASIS WAS INVERTED, AND RED MEANT TWO THINGS ON ONE SCREEN.
+     `Dismiss` was full-strength `--v-red` while `Clear screens` — the panic
+     control, fifteen pixels away in the dock — is `--v-red-soft` with a hairline.
+     So the loudest red in the room was "no thanks" and the quietest was "take the
+     wall down". Full-strength red now belongs to panic alone, and Dismiss takes
+     the same tinted-outline treatment the dock already uses for a red action.
+     `Accept & fire` becomes the steel primary it is; emerald was not in the
+     palette table at all. White on --v-red is 3.40:1 and failed AA — the tint
+     puts red TEXT on a dark ground instead, which passes comfortably. */
+  .act.go{background:var(--v-sel-fill); color:var(--v-sel-ink)}
+  .act.no{background:var(--v-red-soft); border:1px solid var(--v-red-line); color:var(--v-red)}
   .khint{margin:0; text-align:center; font-size:var(--v-fs-b3); color:var(--v-faint)}
   .khint kbd{font-family:var(--f-mono); font-size:var(--v-fs-fig); color:var(--v-dim);
     background:var(--v-surf3); border:1px solid var(--v-line2); border-radius:var(--v-r-sm); padding:2px 5px}
