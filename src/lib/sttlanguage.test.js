@@ -193,6 +193,27 @@ describe('Settings → the profile editor follows a language pinned on another t
     }
   });
 
+  it('and it follows the profile that is promoted when the active one is DELETED', async () => {
+    // The third door, and the one easiest to miss because nobody picks a language
+    // on it. Deleting the active profile promotes the next remaining one and
+    // applies it live (`main.rs`), so the engine moves to a language the operator
+    // never chose while Scripture & Languages goes on showing the deleted
+    // profile's. The wrapper's own comment enumerated two doors when there were
+    // three. Driven through the store, because the sequence is what matters.
+    const { deleteVoiceProfile } = await import('./stores/capture.js');
+    invoke.mockReset();
+    invoke.mockImplementation((cmd) =>
+      cmd === 'delete_voice_profile'
+        ? Promise.resolve({ ...ADE, id: 2, name: 'Guest', language: 'sw', is_active: true })
+        : Promise.resolve([]),
+    );
+    capture.update((s) => ({ ...s, stt: { ...s.stt, language: 'yo' } }));
+
+    await deleteVoiceProfile(1);
+
+    expect(get(capture).stt.language).toBe('sw');
+  });
+
   it('and the Scripture select follows a language changed IN the editor', async () => {
     // The same disagreement through the other door. The editor's own Language
     // select writes `voice_profiles.language` and `apply_profile` puts it on the

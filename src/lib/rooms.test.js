@@ -149,6 +149,38 @@ describe('applying a room, one piece at a time', () => {
     );
   });
 
+  it('does NOT write the language when the voice profile could not be selected', async () => {
+    // The tail of the same defect. Ordering the two steps closes the case where
+    // both work; it does nothing for the case where the profile step fails — the
+    // language would then land on whichever profile HAPPENED to stay active, which
+    // is the wrong preacher's row overwritten, on a Sunday. And a step that did not
+    // run may not be reported as applied: the operator has to be told which of the
+    // six things to go and fix.
+    const d = deps({
+      selectVoiceProfile: vi.fn(async () => {
+        throw new Error('that profile has been deleted');
+      }),
+    });
+    const r = await applyRoom({ language: 'en', voiceProfileId: 7, inputDevice: 'SM58' }, d);
+
+    expect(d.setSttLanguage, 'the language was written to whatever stayed active').not.toHaveBeenCalled();
+    expect(r.applied).toEqual(['microphone']);
+    expect(r.applied).not.toContain('recognition language');
+    expect(r.failed).toHaveLength(2);
+    expect(r.failed[1]).toMatch(/recognition language — not attempted/);
+    // …and the operator is told, in the one sentence they read.
+    expect(describeApply(r, '“Main hall”')).toMatch(/recognition language — not attempted/);
+  });
+
+  it('still applies the language when the room remembers no profile at all', async () => {
+    // The control. A guard that skipped the language whenever the profile step was
+    // not `applied` would also skip it for every room captured before a profile was
+    // ever chosen — most of them.
+    const d = deps();
+    await applyRoom({ language: 'yo' }, d);
+    expect(d.setSttLanguage).toHaveBeenCalledWith('yo');
+  });
+
   it('leaves a setting alone when the room does not remember it', async () => {
     const d = deps();
     await applyRoom({ language: 'en' }, d);

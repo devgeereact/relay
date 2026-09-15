@@ -1601,6 +1601,13 @@ return await call('create_voice_profile', { name, language });
 //   - `select_voice_profile` applies the newly-active profile by construction,
 //     which is the same disagreement reached by a different door — and it is the
 //     door `rooms.js::applyRoom` goes through.
+//   - `delete_voice_profile` is the THIRD door, and it is the one that is easiest
+//     to miss because nobody chose a language on it: deleting the ACTIVE profile
+//     promotes the next remaining one and applies it live (`main.rs`), so the
+//     engine moves to a language the operator never picked while Scripture &
+//     Languages goes on showing the deleted profile's. This enumeration named two
+//     doors when there were three, which is the mistake CLAUDE.md records four
+//     times over — *"enumerate every caller of the thing you fixed"*.
 //
 // `is_active` is the BACKEND'S answer, not the caller's copy of it: `main.rs`
 // stamps it from the database after the write, because the payload's own field is
@@ -1623,7 +1630,7 @@ return noteProfileLanguage(await call('select_voice_profile', { id }));
 
 export async function deleteVoiceProfile(id) {
 const call = await invoke();
-return await call('delete_voice_profile', { id });
+return noteProfileLanguage(await call('delete_voice_profile', { id }));
 }
 
 // ── Media (Library → Media) ──────────────────────────────────────────────────

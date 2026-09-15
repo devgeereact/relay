@@ -80,13 +80,17 @@ export async function applyRoom(settings, deps = {}) {
   const failed = [];
   const s = settings ?? {};
 
+  /** `'absent'` · `'applied'` · `'failed'` — a step's own outcome, for the steps
+   *  that depend on one another. */
   const step = async (key, label, run) => {
-    if (!(key in s)) return; // not remembered — leave whatever is set now alone
+    if (!(key in s)) return 'absent'; // not remembered — leave whatever is set now alone
     try {
       await run(s[key]);
       applied.push(label);
+      return 'applied';
     } catch (e) {
       failed.push(`${label} — ${deps.humanError ? deps.humanError(e) : String(e?.message ?? e)}`);
+      return 'failed';
     }
   };
 
@@ -108,8 +112,30 @@ export async function applyRoom(settings, deps = {}) {
   // a control that silently undoes it while reporting success is rule 35 with a
   // congregation on the other end. Select the profile FIRST, so the language lands
   // on the profile the room actually meant.
-  await step('voiceProfileId', 'voice profile', (v) => deps.selectVoiceProfile?.(v));
-  await step('language', 'recognition language', (v) => deps.setSttLanguage?.(v));
+  const profile = await step('voiceProfileId', 'voice profile', (v) =>
+    deps.selectVoiceProfile?.(v),
+  );
+  // AND IF THE PROFILE STEP DID NOT TAKE, THE LANGUAGE STEP MUST NOT RUN.
+  //
+  // Ordering the two correctly closes the case where both work. It does nothing
+  // for the case where the profile could not be selected — the deleted profile,
+  // the database locked for a moment — because the language would then be written
+  // onto whichever profile HAPPENED to stay active, which is the same corruption
+  // one branch over: the wrong preacher's row, overwritten, on a Sunday.
+  //
+  // Skipped, not attempted, and SAID rather than silently dropped. A step that did
+  // not run may not be reported as applied, and an operator who is told five of six
+  // things came back needs the sixth named or they cannot go and fix it — that is
+  // this file's whole reason for reporting piece by piece.
+  if (profile === 'failed' && 'language' in s) {
+    failed.push(
+      'recognition language — not attempted, because the voice profile did not change and the ' +
+        'language is stored on it. Applying it now would write this room’s language onto ' +
+        'whichever profile is still selected.',
+    );
+  } else {
+    await step('language', 'recognition language', (v) => deps.setSttLanguage?.(v));
+  }
 
   if (Array.isArray(s.displays) && deps.setChannelDisplay) {
     const byName = new Map((deps.channels ?? []).map((c) => [c.name, c]));
