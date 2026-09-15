@@ -46,7 +46,7 @@ describe('the update channel reports on itself', () => {
     updateChannel.set({ state: 'unchecked', at: null, detail: '' });
     updateAvailable.set(null);
     capture.update((s) => ({ ...s, capturing: false }));
-    serviceLock.set({ engaged: false });
+    serviceLock.set({ engaged: false, recording: false });
   });
 
   it('starts as UNCHECKED, not as up to date', () => {
@@ -134,6 +134,26 @@ describe('the update channel reports on itself', () => {
     // can be read long after the service that caused the refusal has ended.
     // "is being recorded" would be a false claim by then; rule 35 displaced by
     // one tense is still rule 35.
+    expect(describeChannel(get(updateChannel))).toBe('not checked — a service was being recorded');
+  });
+
+  it('an UNLOCKED service still refuses the check, and still names the service', async () => {
+    // `engaged` and `recording` are deliberately different facts: lifting the lock
+    // is a first-class override and does NOT end the service. `idle()` read only
+    // `engaged`, under a comment asserting the lock is armed for the whole of a
+    // recorded service — so an operator who unlocked to delete something, with the
+    // microphone momentarily stopped between readings, had every term false. The
+    // second call site of `idle()` downloads and restarts the application.
+    check.mockResolvedValue(null);
+    await checkForUpdate();
+    expect(get(updateChannel).state).toBe('ok');
+
+    serviceLock.set({ engaged: false, recording: true });
+    check.mockRejectedValue(new Error('should never be called'));
+    expect(await checkForUpdate()).toBeNull();
+    expect(get(updateChannel).state).toBe('skipped');
+    // …and it names the SERVICE, not the microphone. "Stop listening" is unhelpful
+    // advice to somebody whose microphone is already off.
     expect(describeChannel(get(updateChannel))).toBe('not checked — a service was being recorded');
   });
 

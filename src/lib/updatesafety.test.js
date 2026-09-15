@@ -32,7 +32,7 @@ beforeEach(() => {
   invoke.mockReset();
   installed.mockClear();
   store.capture.update((s) => ({ ...s, available: true, capturing: false }));
-  store.serviceLock.set({ engaged: false, held_back: [] });
+  store.serviceLock.set({ engaged: false, recording: false, held_back: [] });
   updater.updateError.set(null);
   updater.updateVerdict.set(null);
   updater.snapshotPath.set(null);
@@ -83,6 +83,57 @@ describe('the copy comes first', () => {
     });
     await updater.installUpdate();
     expect(args[0]).toEqual(['update_begin', { fromVersion: '0.1.0-4' }]);
+  });
+});
+
+// ── RELAY NEVER UPDATES DURING A SERVICE ────────────────────────────────────
+//
+// `updater.js`'s own rule, in capitals at the top of the file, and `installUpdate`
+// is the call that makes it matter: it downloads and RESTARTS THE APPLICATION.
+// The guard read `!capturing && !engaged`, under a comment claiming the lock is
+// armed for the whole of a recorded service — which `main.rs` says is false the
+// moment the operator lifts it, deliberately, because unlocking is a first-class
+// override and does not end the service. The update banner sits in the shell the
+// whole time, so the press is one click away from wherever the operator is.
+describe('an update cannot restart Relay in the middle of a sermon', () => {
+  it('refuses while a service is recording even though the lock has been LIFTED', async () => {
+    await findUpdate();
+    store.capture.update((s) => ({ ...s, capturing: false }));
+    store.serviceLock.set({ engaged: false, recording: true, held_back: [] });
+    invoke.mockResolvedValue('/snap.db');
+
+    await updater.installUpdate();
+
+    expect(installed, 'Relay downloaded an update mid-service').not.toHaveBeenCalled();
+    expect(invoke, 'it got as far as taking a snapshot').not.toHaveBeenCalled();
+    // And it names the SERVICE. "Stop listening" is unhelpful advice to somebody
+    // whose microphone is already off and whose service is still running.
+    expect(get(updater.updateError)).toMatch(/won't update during a service/i);
+  });
+
+  it('and still names the microphone when that is the reason', async () => {
+    // The paired case, so a fix that simply reported "a service" for everything
+    // would not pass. The operator has to know which one to clear.
+    await findUpdate();
+    store.capture.update((s) => ({ ...s, capturing: true }));
+    store.serviceLock.set({ engaged: false, recording: false, held_back: [] });
+
+    await updater.installUpdate();
+
+    expect(installed).not.toHaveBeenCalled();
+    expect(get(updater.updateError)).toMatch(/while you're listening/i);
+  });
+
+  it('installs perfectly well once nothing is running', async () => {
+    // The control. A guard that refused everything would pass the two above.
+    await findUpdate();
+    store.capture.update((s) => ({ ...s, capturing: false }));
+    store.serviceLock.set({ engaged: false, recording: false, held_back: [] });
+    invoke.mockResolvedValue('/snap.db');
+
+    await updater.installUpdate();
+
+    expect(installed).toHaveBeenCalled();
   });
 });
 

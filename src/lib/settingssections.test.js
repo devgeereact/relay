@@ -691,11 +691,12 @@ describe('the setup walk-through is held back while a service is recording', () 
     expect(lockCond, 'could not find the Service lock block\'s own condition').toBeTruthy();
     expect(terms, 'disagrees with the unlock control it sits above').toContain(lockCond);
 
-    // idle() (updater.js) deliberately reads TWO facts, not one: a service can
-    // be recording with the mic momentarily stopped, and a rehearsal can have
-    // the mic live with no service lock armed at all — either one stopping the
-    // walk-through's own microphone out from under an operator. The button must
-    // cover both.
+    // idle() (updater.js) deliberately reads more than one fact: a service can be
+    // recording with the mic momentarily stopped, and a rehearsal can have the mic
+    // live with no service lock armed at all — either one stopping the
+    // walk-through's own microphone out from under an operator. Its lock half is
+    // now two terms rather than one, for the reason this guard gained a third:
+    // lifting the lock does not end the service. The button must cover the mic.
     expect(terms).toContain('$capture.capturing');
   });
 
