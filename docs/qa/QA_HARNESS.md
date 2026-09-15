@@ -25,15 +25,16 @@ Task 8: safe mode enforced at a choke point with a shell banner, the shell's fle
 corrected, the walk-through guard, the refused update check, five Settings repairs, `endService`
 moved to the throwing group, the recognition language persisted on the voice profile, the
 `docs/OUTPUT_ROUTING.md` write-up, the ATEM/NDI documentation sweep, and the splash redesign) and
-after the Wave 1 review fixes (the room apply order, the dock's Detection switch under safe mode,
-the profile editor's stale language, the walk-through's third term, the crash-reporting read, and
-the documentation corrections). `npm run build` ran first, per RG-127: two `channels` tests serve
+after the Wave 1 review fixes (the room apply order and its failed-profile tail, the dock's
+Detection switch under safe mode, the profile editor's stale language and the three doors onto the
+column it writes, the walk-through's third term, the updater's own third term, the
+crash-reporting read, and the documentation corrections). `npm run build` ran first, per RG-127: two `channels` tests serve
 the real `dist/`, which is gitignored.
 
 | Count | Value | Command |
 |---|---|---|
 | Rust tests | **754 passed / 0 failed / 16 ignored** | `cd src-tauri && cargo test` |
-| Frontend tests | **2258 passed, 144 files** | `npx vitest run` |
+| Frontend tests | **2265 passed, 144 files** | `npx vitest run` |
 | `e2e.rs` tests | **66 passed / 0 ignored** | `cd src-tauri && cargo test e2e::` |
 | Registered commands | **139** | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
 | qa-inventory | 139/139 addressed, 0 handlerless, 0 unnamed | `node scripts/qa-inventory.mjs` |
@@ -44,7 +45,7 @@ same tree.
 **The delta is taken from the one baseline in this file that was MEASURED and can still be
 re-measured.** That is the worktree pinned to the fork commit, three paragraphs down: **750
 passed / 0 failed / 16 ignored** (Rust) and **2186 passing, 141 files** (frontend) at `7851a79`.
-So Wave 1 and its review fixes together account for **+4 Rust, +72 frontend, +3 files**, and
+So Wave 1 and its review fixes together account for **+4 Rust, +79 frontend, +3 files**, and
 `e2e.rs`, the registered commands and qa-inventory are unchanged — no command was added or
 deleted. Neither suite failed.
 
