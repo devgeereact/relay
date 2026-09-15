@@ -3315,6 +3315,12 @@ mod tests {
         // means the newest frame wins, so a transition would replace the verse and
         // the next screen to join would be sent a preference and a blank wall.
         ("transition", false),
+        // A screen's own look, pushed from main.rs when the operator reassigns it.
+        // Not retained HERE: `last_screen` holds one frame and the newest wins, so
+        // retaining a template would replace the verse and the next screen to join
+        // would be sent a look and a blank wall. The hub keeps templates in their
+        // own per-id cache (`cache_template`) and replays them on hello from there.
+        ("channel_template", false),
     ];
 
     /// THE ENUMERATION MUST GROW WITH THE MODULE, OR IT IS NOT AN ENUMERATION.
@@ -3331,31 +3337,39 @@ mod tests {
     /// that nobody has answered for is the finding.
     #[test]
     fn every_kind_this_module_publishes_has_an_explicit_verdict() {
-        let src = include_str!("channels.rs");
-        let body = src.split("mod tests").next().unwrap_or(src);
-
-        let mut found: Vec<&str> = Vec::new();
-        for line in body.lines() {
-            // Comments talk ABOUT frames without publishing any.
-            if line.trim_start().starts_with("//") {
-                continue;
-            }
-            let mut rest = line;
-            while let Some(i) = rest.find("\"kind\"") {
-                rest = &rest[i + "\"kind\"".len()..];
-                let Some(after) = rest.trim_start().strip_prefix(':') else {
+        /// Every `"kind":"…"` literal in `src`, in order, without duplicates.
+        /// Comment lines talk ABOUT frames without publishing any.
+        fn kinds_in(src: &str, out: &mut Vec<String>) {
+            for line in src.lines() {
+                if line.trim_start().starts_with("//") {
                     continue;
-                };
-                let Some(after) = after.trim_start().strip_prefix('"') else {
-                    continue;
-                };
-                let Some(end) = after.find('"') else { continue };
-                let kind = &after[..end];
-                if !found.contains(&kind) {
-                    found.push(kind);
+                }
+                let mut rest = line;
+                while let Some(i) = rest.find("\"kind\"") {
+                    rest = &rest[i + "\"kind\"".len()..];
+                    let Some(after) = rest.trim_start().strip_prefix(':') else {
+                        continue;
+                    };
+                    let Some(after) = after.trim_start().strip_prefix('"') else {
+                        continue;
+                    };
+                    let Some(end) = after.find('"') else { continue };
+                    let kind = after[..end].to_string();
+                    if !out.contains(&kind) {
+                        out.push(kind);
+                    }
                 }
             }
         }
+
+        let chan = include_str!("channels.rs");
+        let mut found: Vec<String> = Vec::new();
+        // channels.rs strips its own tests: its `mod tests` is full of example
+        // frames that are not published by the module.
+        kinds_in(chan.split("mod tests").next().unwrap_or(chan), &mut found);
+        // main.rs is scanned WHOLE. It carries `#[cfg(test)]` from line 16, so no
+        // split can separate its tests, and it holds exactly one frame literal.
+        kinds_in(include_str!("main.rs"), &mut found);
 
         assert!(
             !found.is_empty(),
@@ -3364,7 +3378,7 @@ mod tests {
         );
         for kind in &found {
             assert!(
-                FRAME_VERDICTS.iter().any(|(k, _)| k == kind),
+                FRAME_VERDICTS.iter().any(|(k, _)| *k == kind.as_str()),
                 "`{kind}` is published to the kiosk hub and no one has said whether \
                  a screen that joins late should be shown it. Add it to \
                  FRAME_VERDICTS with a reason, and assert it in the matcher test."
@@ -3372,7 +3386,7 @@ mod tests {
         }
         for (kind, retained) in FRAME_VERDICTS {
             assert!(
-                found.contains(kind),
+                found.iter().any(|f| f == kind),
                 "FRAME_VERDICTS names `{kind}`, which this module no longer \
                  publishes — a verdict about nothing"
             );
@@ -3381,6 +3395,166 @@ mod tests {
                 is_screen_frame(&frame),
                 *retained,
                 "the matcher disagrees with the verdict for `{kind}`"
+            );
+        }
+    }
+
+    /// Every function in this module that can put something on a LAN device, and
+    /// whether a rehearsal must stop it.
+    ///
+    /// `true` means the function checks `rehearsing(app)` and returns early.
+    /// `false` means it deliberately does not, and the third column is why — the
+    /// same reason that must be at the call site.
+    const REHEARSAL_VERDICTS: &[(&str, bool, &str)] = &[
+        (
+            "broadcast_content",
+            true,
+            "it carries what a congregation reads",
+        ),
+        ("clear", true, "a rehearsal must not take a real wall down"),
+        ("black", true, "a rehearsal must not black a real wall"),
+        (
+            "stage_next",
+            true,
+            "it leaked 'up next' to a live stage tablet mid-rehearsal, and it has \
+             no Tauri emit, so the e2e wall test saw nothing wrong",
+        ),
+        (
+            "stage_alert",
+            true,
+            "a word to the preacher is for a person, and a rehearsal has no person \
+             waiting for it",
+        ),
+        (
+            "set_transition",
+            false,
+            "configuration, not content. A screen that receives it looks identical \
+             afterwards; gating it would leave every screen armed with the \
+             pre-rehearsal transition once the operator went live",
+        ),
+        (
+            "set_themes",
+            false,
+            "a palette, not content. It puts nothing a person reads on a screen",
+        ),
+        (
+            "set_template",
+            false,
+            "a template, not content. Reassigning a screen's look is live by \
+             design (DECISIONS §29), and suppressing it would leave a kiosk \
+             rendering a template the operator has already replaced",
+        ),
+    ];
+
+    /// THE ENUMERATION MUST GROW WITH THE MODULE, OR IT IS NOT AN ENUMERATION.
+    ///
+    /// Retention has had a scanner since rule 43; rehearsal gating has had a doc
+    /// comment. That comment is honest about why it exists — `stage_next` shipped
+    /// ungated and leaked to a live stage tablet — and a doc comment is exactly
+    /// what failed to catch it. A sixth publisher added to this module with no
+    /// `rehearsing()` check currently fails nothing.
+    ///
+    /// This reads the module's own source, finds every function that reaches a LAN
+    /// device, and requires a verdict for each. For a function whose verdict is
+    /// `true` it goes further and requires the gate to actually be IN the
+    /// function body — an enumeration that only counted names would pass on a
+    /// publisher whose check had been deleted.
+    #[test]
+    fn every_publisher_in_this_module_has_an_explicit_rehearsal_verdict() {
+        let src = include_str!("channels.rs");
+        let body = src.split("mod tests").next().unwrap_or(src);
+
+        // (function name, its body) for every fn in the module, in source order.
+        let mut fns: Vec<(&str, String)> = Vec::new();
+        let mut current: Option<&str> = None;
+        let mut buf = String::new();
+        for line in body.lines() {
+            let t = line.trim_start();
+            let decl = t
+                .strip_prefix("pub fn ")
+                .or_else(|| t.strip_prefix("fn "))
+                .or_else(|| t.strip_prefix("pub async fn "))
+                .or_else(|| t.strip_prefix("async fn "));
+            if let Some(rest) = decl {
+                if let Some(name) = rest.split(['(', '<', ' ']).next() {
+                    if !name.is_empty() {
+                        if let Some(prev) = current.take() {
+                            fns.push((prev, std::mem::take(&mut buf)));
+                        }
+                        current = Some(name);
+                        buf.clear();
+                    }
+                }
+            }
+            if current.is_some() {
+                buf.push_str(line);
+                buf.push('\n');
+            }
+        }
+        if let Some(prev) = current.take() {
+            fns.push((prev, buf));
+        }
+
+        assert!(
+            fns.len() > 20,
+            "the scanner found only {} functions in this module — it has stopped \
+             reading it, and a scanner that quietly narrows passes everything",
+            fns.len()
+        );
+
+        // A function reaches a LAN device if it hands the hub a message.
+        let publishes = |b: &str| {
+            b.contains("publish_kiosk(")
+                || b.contains("self.publish(")
+                || b.contains("hub.publish(")
+        };
+
+        let mut found: Vec<&str> = Vec::new();
+        for (name, b) in &fns {
+            // `publish_kiosk` and `publish` are the plumbing, not publishers.
+            if *name == "publish_kiosk" || *name == "publish" {
+                continue;
+            }
+            if publishes(b) && !found.contains(name) {
+                found.push(name);
+            }
+        }
+
+        assert!(
+            !found.is_empty(),
+            "the scanner found no publisher at all — it has stopped reading this \
+             module, and a scanner that quietly narrows passes everything"
+        );
+
+        for name in &found {
+            let Some((_, gated, _)) = REHEARSAL_VERDICTS.iter().find(|(n, _, _)| n == name) else {
+                panic!(
+                    "`{name}` publishes to the kiosk hub and no one has said whether \
+                     a rehearsal must stop it. Add it to REHEARSAL_VERDICTS with a \
+                     reason, and if it is gated, add an e2e case that watches \
+                     `qa::Kiosk` rather than `qa::Wall`."
+                );
+            };
+            if *gated {
+                let b = &fns.iter().find(|(n, _)| n == name).expect("found above").1;
+                assert!(
+                    b.contains("rehearsing("),
+                    "REHEARSAL_VERDICTS says `{name}` is gated, and its body does \
+                     not call `rehearsing(`. A verdict is not a gate."
+                );
+            }
+        }
+
+        for (name, _, reason) in REHEARSAL_VERDICTS {
+            assert!(
+                found.contains(name),
+                "REHEARSAL_VERDICTS names `{name}`, which this module no longer \
+                 publishes — a verdict about nothing"
+            );
+            assert!(
+                !reason.is_empty(),
+                "`{name}` has a verdict and no reason. The reason is the half a \
+                 future reader needs."
             );
         }
     }
