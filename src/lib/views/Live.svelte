@@ -1392,13 +1392,30 @@
   function inspect(d) {
     inspecting = d ?? null;
   }
+  // ACT ON THE CLAIM THAT WAS OPENED, not on `dets[0]`.
+  //
+  // `inspect()` above already opens the card that was pressed, and the comment on
+  // it says why. The two buttons in the panel's footer did not follow: they called
+  // `acceptTop`/`dismissTop`, which are `dets[0]` — the `A` and `D` keys' claim,
+  // which is the right meaning for a key pressed at the column and the wrong one
+  // for a button pressed inside a panel about a different verse.
+  //
+  // So opening "why this match?" on the third card and pressing the amber
+  // "Accept & fire" put the FIRST card's verse on the congregation's screens. The
+  // inspector is the surface an operator opens BECAUSE they are being careful,
+  // which is what makes this the worst possible place for it. The dismiss half was
+  // quieter and worse: the claim they rejected stayed, and the one they wanted went.
+  //
+  // Capture before clearing — `inspecting` is null by the time the await resolves.
   async function inspectAccept() {
+    const d = inspecting;
     inspecting = null;
-    await acceptTop();
+    await accept(d);
   }
   async function inspectDismiss() {
+    const d = inspecting;
     inspecting = null;
-    await dismissTop();
+    if (d) dismissDetection(d.reference);
   }
 
 </script>
