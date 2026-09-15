@@ -242,9 +242,24 @@
     detail = null;
     refresh();
   }
+  // `endService` is GROUP 1 — it throws. It used to swallow, and this function
+  // called `refresh()` unconditionally afterwards: a refused `end_service`
+  // repainted the identical list under the identical button, which is as close to
+  // a claim of success as a screen can get without words. A failure now says so
+  // beside the button that caused it, and the list is NOT repainted — an
+  // unchanged surface is the disguise, not the report.
+  let endErr = '';
+  let ending = false;
   async function stopRecording() {
-    await endService();
-    refresh();
+    ending = true;
+    endErr = '';
+    try {
+      await endService();
+      refresh();
+    } catch (e) {
+      endErr = humanError(e);
+    }
+    ending = false;
   }
 </script>
 
@@ -577,11 +592,14 @@
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
           Refresh
         </button>
-        <button class="r-btn danger" on:click={stopRecording} disabled={!$capture.available}>
+        <button class="r-btn danger" on:click={stopRecording} disabled={!$capture.available || ending}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
-          End current service
+          {ending ? 'Ending…' : 'End current service'}
         </button>
       </div>
+      {#if endErr}
+        <p class="lib-enderr" role="alert">The service was not ended — {endErr}</p>
+      {/if}
     </div>
 
     {#if !$capture.available}
@@ -733,6 +751,11 @@
   .lib-actions{ display:flex; gap:10px; flex-shrink:0; }
 
   .lib-warn{ margin-top:-6px; }
+  /* The one failure this bar can report. Full width so it wraps onto its own
+     line under the buttons rather than squeezing the lead paragraph, and ROSE —
+     a refusal, never amber, which means on air and nothing else. */
+  .lib-enderr{ flex:0 0 100%; margin:0; font-size:var(--v-fs-lbl);
+    color:var(--v-rose); word-break:break-word; }
 
   /* ── Stat cards ── */
   .lib-stats{ display:grid; grid-template-columns:repeat(3, 1fr); gap:14px; }

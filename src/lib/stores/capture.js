@@ -20,8 +20,11 @@
 //   GROUP 1 — THROWS. Anything that changes what is on the screens, what the AI is
 //   allowed to do, or whether the microphone is live. `manualFire`, `confirmDetection`,
 //   `setDetection`, `setRehearsal`, `navVerse`, `startCapture`, `stopCapture`,
-//   `fireContent`, `startCountdown`, `adjustCountdown`. The caller MUST handle it and
-//   tell the operator.
+//   `fireContent`, `startCountdown`, `adjustCountdown`, `endService`. The caller MUST
+//   handle it and tell the operator.
+//   `endService` is the quiet member: it puts nothing on a wall, but it releases the
+//   service lock, so a swallowed failure leaves Relay refusing deletions, imports and
+//   model changes with nothing on screen saying why.
 //   A silent failure here is a lie told to someone standing in front of a congregation.
 //
 //   GROUP 2 — SWALLOWS, and returns a safe default. Reads: `listPlans`, `listSongs`,
@@ -609,13 +612,28 @@ export async function startService(title, date) {
 }
 
 /** Stop recording the current service (history kept). */
+/**
+ * Close the open service record.
+ *
+ * THROWS (contract group 1). It does not change what is on a screen, but it
+ * releases the SERVICE LOCK — the list of things Relay is currently refusing to
+ * do — and `end_service` takes `session.0.lock()?`, so a poisoned session mutex
+ * refuses it for real. Swallowed, the operator presses End current service, the
+ * list repaints unchanged, and the console goes on refusing deletions and model
+ * changes for a reason that has scrolled out of view. Pinned by
+ * `endservice.test.js`.
+ */
 export async function endService() {
+  let call = null;
   try {
-    const call = await invoke();
-    await call('end_service');
+    call = await invoke();
   } catch {
-    /* backend absent */
+    /* no Tauri bridge at all (a plain browser) — there is no service to end */
   }
+  // Deliberately NOT in a try: a rejection must reach the caller, and must reach
+  // it before the lock is re-read — re-reading over a failure repaints an
+  // unchanged surface, which is the original defect's whole disguise.
+  if (call) await call('end_service');
   await loadServiceLock();
 }
 

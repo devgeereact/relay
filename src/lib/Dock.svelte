@@ -243,10 +243,12 @@
   // end. Green — the prototype's Go Live — is not in Relay's colour law and does
   // not appear.
   //
-  // It reports its own outcome by not changing: `endService` swallows a backend
-  // failure (it is a history control, not a panic control, and it must never take
-  // the console down), so the proof is the next poll. If the service did not end,
-  // the button still says End service and still burns amber.
+  // It reports its own outcome TWICE, and it used to do only the second. It sits
+  // in `run()`, which catches and prints `humanError(e)` under the dock — and
+  // `endService` now throws rather than swallowing (`endservice.test.js`), so a
+  // refusal says so in words. The next poll is the corroboration, not the report:
+  // if the service did not end, the button still says End service and still burns
+  // amber.
   $: recording = !!$serviceLock.recording;
 
   let busy = false;
