@@ -140,7 +140,7 @@
   import EmptyState from '../ui/EmptyState.svelte';
   import ErrorState from '../ui/ErrorState.svelte';
   import Loading from '../ui/Loading.svelte';
-  import { heard, methodKey, inLibrary } from '../detect.js';
+  import { heard, methodBadgeKey, methodNoteKey, inLibrary } from '../detect.js';
   import DetectionInspector from '../DetectionInspector.svelte';
   import { humanError as humanErrorBase } from '../errors.js';
   import { typeOf, payloadOf, slidesOf, slideAccent, cueSub, nextOf, stepFrom } from '../plan.js';
@@ -1994,7 +1994,16 @@
             <article class="clm" class:guess={!heard(d)} class:done={!!card.outcome}>
               <div class="clm-top">
                 <span class="clm-ref">{d.reference}</span>
-                <span class="cbadge" class:p={!heard(d)}>{heard(d) ? 'Heard' : 'Paraphrase'}</span>
+                <!-- THE CHIP NAMES THE METHOD, not merely heard-vs-guessed.
+                     This was `heard(d) ? 'Heard' : 'Paraphrase'`, so `semantic`,
+                     `ambiguous` and `uncertain_book` all wore one word — and
+                     `uncertain_book` is the method added after "hymn number three
+                     sixteen" put Numbers 3:16 on a wall, which rule 10 calls the
+                     claim an operator most needs to look at. `methodKey` was
+                     imported into this file and never called. Colour is unchanged:
+                     every non-direct method stays cyan and stays without a
+                     percentage (rule 18). -->
+                <span class="cbadge" class:p={!heard(d)}>{$t(methodBadgeKey(d))}</span>
               </div>
 
               {#if heard(d)}
@@ -2004,7 +2013,13 @@
                   <i style="width:{Math.round(d.confidence * 100)}%"></i>
                 </div>
               {:else}
-                <p class="guess-note">{$t('live.not_a_spoken_reference')}</p>
+                <!-- …and the note says what is actually true of THIS method.
+                     "not a spoken reference" is right for a paraphrase and wrong
+                     for the other two: an ambiguous reference WAS spoken, and for
+                     `uncertain_book` the chapter and verse were heard and only the
+                     book was repaired. One sentence for all three said the
+                     opposite of what happened on the two that matter most. -->
+                <p class="guess-note">{$t(methodNoteKey(d))}</p>
               {/if}
 
               {#if d.matched_text}
@@ -2160,7 +2175,7 @@
   .view-ctl{ flex:0 0 auto; display:flex; align-items:center; gap:5px; }
   .view-fs{ height:22px; padding:0 8px; border-radius:var(--v-r-sm); cursor:pointer;
     background:var(--v-surf); border:1px solid var(--v-line2); color:var(--v-faint);
-    font-family:var(--f-body); font-size:10px; font-weight:600; }
+    font-family:var(--f-body); font-size:var(--v-fs-b3); font-weight:600; }
   .view-fs:hover{ color:var(--v-txt); border-color:var(--v-accent-line); }
 
   .con{
@@ -2318,7 +2333,7 @@
   /* Slate, not amber and not rose: a repeat is a fact, not an alarm. Amber means
      ON AIR and must never be spent on anything else (DECISIONS §22). */
   .mon-repeat{margin-right:8px; padding:1px 6px; border-radius:var(--v-r-sm);
-    font-size:10px; letter-spacing:.06em; color:var(--v-faint);
+    font-size:var(--v-fs-b3); letter-spacing:.06em; color:var(--v-faint);
     border:1px solid var(--v-line2)}
   .screen{flex:1; min-height:0; position:relative; overflow:hidden; background:#000;
     border-top:1px solid var(--v-line)}
@@ -2475,7 +2490,7 @@
      `planCells`) so the count under the grid agrees with the plan, and it is
      disabled rather than firing nothing. */
   .sg-void{position:absolute; inset:0; display:grid; place-items:center; padding:8px;
-    text-align:center; font-size:10px; letter-spacing:.05em; color:var(--v-faint)}
+    text-align:center; font-size:var(--v-fs-b3); letter-spacing:.05em; color:var(--v-faint)}
   .sg-cell:hover .sg-thumb{border-color:var(--v-sel-line)}
   /* Steel blue is SELECTION — the thing you are working on. It is what a preview
      is, and it is deliberately not grey: grey means CUED, a plan position. */
@@ -2509,7 +2524,7 @@
   .sg-air{background:var(--v-amber); color:var(--v-amber-ink)}
   .sg-prev{background:var(--v-sel); color:var(--v-sel-ink)}
   .sg-meta{display:flex; align-items:baseline; gap:6px; min-width:0; padding:0 2px}
-  .sg-n{flex:0 0 auto; font-size:10px; color:var(--v-dim)}
+  .sg-n{flex:0 0 auto; font-size:var(--v-fs-b3); color:var(--v-dim)}
   .sg-ttl{min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
     font-size:var(--v-fs-cap); color:var(--v-txt)}
   .sg-cell.islive .sg-ttl{color:var(--v-amber)}
@@ -2522,7 +2537,7 @@
      own face (L2). These used to be set in the body face beside an uppercase
      `SLIDES`, so the three parts of one title read as three different things. */
   .sg-cap{min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
-    font-family:var(--f-mono); font-size:10px; letter-spacing:.09em;
+    font-family:var(--f-mono); font-size:var(--v-fs-b3); letter-spacing:.09em;
     text-transform:uppercase; color:var(--v-dim)}
   /* WHAT A PRESS DOES, as ONE run (L2). `min-width:0` and the ellipsis matter:
      this is the first thing allowed to give way when the head runs out of room,
@@ -2530,7 +2545,7 @@
      survive a narrow window and this sentence is carried verbatim in `title`
      besides — and on every cell's own `title` under the pointer. */
   .sg-hint{flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis;
-    white-space:nowrap; font-size:10px; letter-spacing:.08em;
+    white-space:nowrap; font-size:var(--v-fs-b3); letter-spacing:.08em;
     text-transform:uppercase; color:var(--v-faint)}
   /* The count LEADS the line and is the one part of it that is a figure. It is
      also the part that never goes: a count is a FACT about the grid, and the
@@ -2629,7 +2644,7 @@
   .act:disabled{cursor:not-allowed; opacity:.45}
   .act.go{background:var(--v-emerald); color:var(--v-void)}
   .act.no{background:var(--v-red); color:#fff}
-  .khint{margin:0; text-align:center; font-size:10px; color:var(--v-faint)}
+  .khint{margin:0; text-align:center; font-size:var(--v-fs-b3); color:var(--v-faint)}
   .khint kbd{font-family:var(--f-mono); font-size:var(--v-fs-fig); color:var(--v-dim);
     background:var(--v-surf3); border:1px solid var(--v-line2); border-radius:var(--v-r-sm); padding:2px 5px}
 
@@ -2642,7 +2657,7 @@
     background:var(--v-amber); color:var(--v-amber-ink)}
   .mini.ghost{background:transparent; border:1px solid var(--v-line2); color:var(--v-dim)}
   .mini:hover{filter:brightness(1.08)}
-  .rel-note{margin:0; font-size:10px; color:var(--v-faint)}
+  .rel-note{margin:0; font-size:var(--v-fs-b3); color:var(--v-faint)}
   .rel-chips{display:flex; flex-wrap:wrap; gap:6px}
   .rel-chip{font-family:var(--f-mono); font-size:var(--v-fs-cap); color:var(--v-dim);
     background:var(--v-surf2); border:1px solid var(--v-line2); border-radius:var(--v-r-sm);
