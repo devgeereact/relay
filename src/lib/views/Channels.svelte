@@ -178,6 +178,38 @@
       Output Status pane — see `outputHealth.js::screenKind`. */
   const kindOf = (c) => screenKind(c.render_target);
   const transportOf = (c) => screenTransport(c.render_target);
+  /**
+   * "How do I reach this screen?" — one sentence, decided by the screen's own
+   * `render_target` and nothing else. Pure, no command, no state.
+   *
+   * `Type` and `Transport` above it name the thing ("Native window · HDMI /
+   * display"); neither tells a volunteer what to do with a cable. The full map,
+   * including which ATEMs are HDMI and which are SDI, is `docs/OUTPUT_ROUTING.md`.
+   *
+   * WHY PLAIN TEXT rather than a disclosure or a link, both of which were
+   * considered:
+   *
+   * - A `<details>`/`<summary>` would put a Space-activatable control inside the
+   *   shell, and `shortcuts.js`'s `isActivatable` covers `<button>`, `role=button`,
+   *   `role=switch` and real links — NOT `<summary>`. So an operator who tabbed to
+   *   it and pressed Space would advance the programme while the disclosure stayed
+   *   shut, and `preventDefault` would eat the toggle. That is rule 11 verbatim, on
+   *   a surface an operator opens mid-service. The three `<details>` in this
+   *   repository are all in boot gates and the crash panel, which render before
+   *   `App.svelte` and so have no transport behind them.
+   * - A link would either go nowhere (no docs ship with the binary) or navigate the
+   *   operator's console away from a live service inside the webview.
+   *
+   * So the sentence carries the answer itself and names the document for whoever
+   * set the room up, rather than promising navigation that does not exist.
+   */
+  const reachOf = (c) => {
+    if (c.render_target === 'native_window')
+      return 'Plug the display into this computer and choose it under Display above; Relay paints a fullscreen picture on it. An ATEM Mini takes that HDMI straight in. A rack-mount ATEM is SDI only and needs a small HDMI-to-SDI converter. Full map: docs/OUTPUT_ROUTING.md, sections 1 and 2.';
+    if (c.render_target === 'ndi_encode')
+      return 'NDI is parked, so nothing can reach this screen. Add a Native window for a projector or a switcher, or a Network client for OBS and kiosk screens. Full map: docs/OUTPUT_ROUTING.md.';
+    return 'Press Copy URL and paste it into an OBS or vMix browser source, or open it in a browser on the other machine. It uses no video port on this computer. Full map: docs/OUTPUT_ROUTING.md, section 3.';
+  };
 
   $: counts = {
     all: channels.length,
@@ -1046,6 +1078,12 @@
             </button>
           </div>
 
+          <!-- HOW DO I REACH THIS SCREEN? Always visible, never a click away: it
+               is one line, and the question is asked by somebody standing at the
+               desk holding a cable. See `reachOf` for why it is text rather than
+               a disclosure or a link. -->
+          <p class="ch-finhint ch-reach">{reachOf(sel)}</p>
+
           <!-- THE QR LIVES HERE NOW, and it had to move with the button.
                `showQr` sets `qrOpen`, and the only markup that rendered the code
                was inside the table's `{#each}` — so the inspector's own Show QR
@@ -1304,6 +1342,8 @@
   .ch-infonote{ display:block; font-style:normal; font-size:var(--v-fs-cap); color:var(--v-faint); }
   .ch-fin{ width:100%; }
   .ch-finhint{ margin:6px 0 0; font-size:var(--v-fs-cap); line-height:1.45; color:var(--v-faint); }
+  /* Sits under Actions, so it needs the gap the actions row does not provide. */
+  .ch-reach{ margin-top:10px; }
 
   /* A name and a VALUE (§11) — one hairline per fact, the value on the right
      edge so a column of them can be read down rather than hunted through. */

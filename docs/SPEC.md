@@ -22,7 +22,7 @@ Relay's wedge is not rebuilding all four categories to parity. It's the combinat
 | African-language STT priority | — | — | — | English-first today | Yoruba / Swahili / Hausa tier 1 |
 | Offline-first | N/A | N/A | Partial | Yes | Yes |
 
-**Design stance:** Relay sits above the existing AV chain, not in place of it. It talks to OBS, ATEM, and ProPresenter over NDI, HDMI, and the local network.
+**Design stance:** Relay sits above the existing AV chain, not in place of it. It reaches OBS, vMix and kiosk screens over the local network, and a projector or an ATEM over HDMI. **NDI is parked, not shipped** (§9): `open_ndi_output` returns a clear error, and it is what a direct ProPresenter or TriCaster ingest would need. No ATEM accepts NDI in any case, which is why the parking costs the ATEM path nothing. [OUTPUT_ROUTING.md](OUTPUT_ROUTING.md) is the map, one section per case a church actually has.
 
 ## 2. Goals & non-goals
 

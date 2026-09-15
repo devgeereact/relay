@@ -65,6 +65,7 @@ both expect it.
 | **5 · AI specification** | *What does the AI decide, what will it never do, where is it honestly weak?* | [AI_DISCLOSURE.md](AI_DISCLOSURE.md) · [LANGUAGES.md](LANGUAGES.md) | Complete |
 | **6 · Engineering handbook** | *How do we work — conventions, the rules learned the hard way, contribution bar?* | [../CLAUDE.md](../CLAUDE.md) · [CONTRIBUTING.md](CONTRIBUTING.md) | Complete |
 | **7 · Operations manual** | *How is it released, signed, updated, and operated on a Sunday?* | [RELEASING.md](RELEASING.md) · [USER_GUIDE.md](USER_GUIDE.md) | Complete |
+| **7b · Output routing** | *How do I get Relay onto my screens: a projector, an ATEM, OBS, or a fourth screen with no port left?* | [OUTPUT_ROUTING.md](OUTPUT_ROUTING.md) | **NEW** |
 | **Decisions (ADR log)** | *Why is anything the way it is?* | [DECISIONS.md](DECISIONS.md) | Complete |
 | **Known issues & tech debt** | *What is deferred, parked, or owed — and on whose authority?* | [KNOWN_ISSUES.md](KNOWN_ISSUES.md) | **NEW** |
 | **Agent routing** | *How an agent working in this repository is meant to operate* | [GEE-OS.md](GEE-OS.md) | Not part of the product hierarchy |
@@ -107,8 +108,12 @@ contradicts it, the code is wrong — flag it, don't silently "fix" the decision
 
 **An operator / church volunteer**
 1. [USER_GUIDE.md](USER_GUIDE.md) — 10-minute setup and the Sunday-morning path.
-2. [AI_DISCLOSURE.md](AI_DISCLOSURE.md) — what the AI does, and what it will never do.
-3. [PRIVACY.md](PRIVACY.md) — nothing you say, sing, or show leaves your computer.
+2. [OUTPUT_ROUTING.md](OUTPUT_ROUTING.md) — getting Relay onto your actual screens: a
+   projector, an ATEM, an OBS machine, and the fourth screen you have no port for. It also
+   names what does not work (no ATEM accepts NDI; the ATEM Media Player is a stills pool)
+   before anybody spends money on it.
+3. [AI_DISCLOSURE.md](AI_DISCLOSURE.md) — what the AI does, and what it will never do.
+4. [PRIVACY.md](PRIVACY.md) — nothing you say, sing, or show leaves your computer.
 
 **A contributor (code or language)**
 1. [CONTRIBUTING.md](CONTRIBUTING.md) — the two contributions that need **no code**
