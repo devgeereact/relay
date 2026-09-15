@@ -190,13 +190,23 @@ export function describeChannel(ch) {
     case 'ok':
       return ch.detail ? `${ch.detail} available` : 'up to date';
     case 'failed':
-      return 'could not reach the update server';
+      // The guidance this used to carry only in the button's own hand-composed
+      // sentence — restored HERE, not as a second ternary at the call site, so
+      // the row and the button can never say a different thing about the same
+      // failure again.
+      return 'could not reach the update server. This is normal offline — if you are online, the update channel may be broken.';
     case 'unavailable':
       return 'no update channel in this build';
     case 'skipped':
+      // PAST TENSE, deliberately. `checkForUpdate` only runs on launch and on
+      // this button, so this sentence is the last word in the store until the
+      // next check — which can be long after the service that caused the
+      // refusal has ended. Present tense ("is being recorded") reads as a live
+      // fact for however long that gap is; it is already history by the time
+      // anyone reads it.
       return ch.detail === 'service'
-        ? 'not checked — a service is being recorded'
-        : 'not checked — Relay is listening';
+        ? 'not checked — a service was being recorded'
+        : 'not checked — Relay was listening';
     default:
       return 'not checked yet';
   }

@@ -77,7 +77,12 @@ describe('the update channel reports on itself', () => {
     check.mockRejectedValue(new Error('Could not fetch a valid release JSON: 404'));
     expect(await checkForUpdate()).toBeNull();
     expect(get(updateChannel).state).toBe('failed');
-    expect(describeChannel(get(updateChannel))).toBe('could not reach the update server');
+    // The guidance a failed check used to carry only in the BUTTON's own
+    // hand-composed sentence is restored here, inside describeChannel, so the
+    // row and the button can never disagree about what a failure means again.
+    expect(describeChannel(get(updateChannel))).toBe(
+      'could not reach the update server. This is normal offline — if you are online, the update channel may be broken.',
+    );
     expect(get(updateChannel).detail).toMatch(/404/);
   });
 
@@ -124,16 +129,20 @@ describe('the update channel reports on itself', () => {
     expect(await checkForUpdate()).toBeNull();
     expect(get(updateChannel).state).toBe('skipped');
     expect(describeChannel(get(updateChannel))).not.toMatch(/up to date|latest version/i);
-    expect(describeChannel(get(updateChannel))).toMatch(/service/i);
+    // PAST TENSE. `checkForUpdate` only runs on launch and from this button, so
+    // this sentence is the last word in the store until the next check — which
+    // can be read long after the service that caused the refusal has ended.
+    // "is being recorded" would be a false claim by then; rule 35 displaced by
+    // one tense is still rule 35.
+    expect(describeChannel(get(updateChannel))).toBe('not checked — a service was being recorded');
   });
 
-  it('a check refused because the microphone is live names that reason instead', async () => {
+  it('a check refused because the microphone is live names that reason instead, also in the past tense', async () => {
     capture.update((s) => ({ ...s, capturing: true }));
     check.mockRejectedValue(new Error('should never be called'));
     expect(await checkForUpdate()).toBeNull();
     expect(get(updateChannel).state).toBe('skipped');
-    expect(describeChannel(get(updateChannel))).toMatch(/listening/i);
-    expect(describeChannel(get(updateChannel))).not.toMatch(/service/i);
+    expect(describeChannel(get(updateChannel))).toBe('not checked — Relay was listening');
   });
 });
 
