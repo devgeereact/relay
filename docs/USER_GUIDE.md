@@ -124,7 +124,7 @@ right in an empty hall is wrong once it fills with people.
 
 | What | How |
 |---|---|
-| **Start listening** | Press **Start listening**. Relay transcribes as the preacher speaks. |
+| **Start listening** | Press **Listen** — the microphone button in the **Live audio** card along the bottom of the window. Relay transcribes as the preacher speaks. |
 | **The preacher quotes a verse** | Relay hears it and offers it. Press **A** to put it on the screen, **D** to dismiss it. |
 | **Type a verse yourself** | The box at the bottom. `John 3:16`, `Ps 23`, `rom 8 1` — it understands all of those. Press Enter. |
 | **Read on** | `→` walks to the next verse. `←` goes back. |

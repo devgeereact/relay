@@ -20,16 +20,17 @@ every edit: `.claude/hooks/relay-fast-gate.mjs`, path-filtered and report-only (
 
 ## 0. Current inventory
 
-Re-measured **2026-09-15, after the twelve-agent audit wave**, on
-`rebrand/wave5-approved-decisions` — the assembled tree the gates were run on, not any one
-agent's branch. Twelve agents brainstormed read-only and wrote no code; the fixes that followed
+Re-measured **2026-09-15**, on `rebrand/wave3` **after #75, #76 and #77 merged** — the
+assembled tree, which is the only tree these figures mean anything on. The previous revision of
+this block quoted an agent branch that stopped being the assembled tree the moment those merged,
+which is the exact failure the table below exists to prevent. Twelve agents brainstormed read-only and wrote no code; the fixes that followed
 were the lead's, and these are the gates on the result:
 
 | Count | Value | Command |
 |---|---|---|
-| Rust tests | **739 passed / 0 failed / 16 ignored** | `cd src-tauri && cargo test` |
-| Frontend tests | **2152 across 139 files** | `npx vitest run` |
-| `e2e.rs` tests | **62** | `cargo test e2e::` |
+| Rust tests | **748 passed / 0 failed / 16 ignored** | `cd src-tauri && cargo test` |
+| Frontend tests | **2179 across 141 files** | `npx vitest run` |
+| `e2e.rs` tests | **65** | `cargo test e2e::` |
 | Registered commands | **139** | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
 | qa-inventory | 139/139 addressed, 0 handlerless, 0 unnamed | `node scripts/qa-inventory.mjs` |
 

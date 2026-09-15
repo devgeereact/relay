@@ -527,6 +527,53 @@ pub(super) fn preset_template_count() -> usize {
     all_presets().count()
 }
 
+/// THE SEEDED LOWER THIRD'S BAND MUST NOT WEAR A LAW COLOUR.
+///
+/// The seeds insert only when a name is ABSENT, so correcting the shipped value
+/// reaches a fresh install and no existing one. That is right for anything an
+/// operator might have edited — and wrong here, because of what else changed in
+/// the same wave.
+///
+/// The band on a lower third had never painted: `panelBg` fell through to the
+/// string `transparent` for any keyed template and was written inline, where it
+/// beat the stylesheet rule meant to fill it. Fixing that makes the fill VISIBLE
+/// for the first time — and on an existing install the fill is still `#b080e0`,
+/// amethyst, which rule 18 reserves for REHEARSAL. So the repair would have put a
+/// lilac bar on every stream, in a colour that already means something else, for
+/// exactly the churches already running Relay.
+///
+/// NARROW ON PURPOSE. It rewrites the accent only where the value is still one of
+/// the two shipped purples (the JS and Rust seed lists had drifted to `#8b5cf6`
+/// and `#b080e0` for one template). A church that chose its own band colour has a
+/// value in neither set and is left alone — this corrects a default nobody picked,
+/// it does not overwrite a decision somebody made.
+///
+/// Idempotent and retryable (rule 25): a second run matches nothing.
+pub(super) fn ensure_lower_third_band_is_not_a_law_colour(
+    conn: &Connection,
+) -> rusqlite::Result<()> {
+    // The two values the two seed lists shipped, and nothing else.
+    for old in ["#b080e0", "#8b5cf6"] {
+        conn.execute(
+            "UPDATE templates
+                SET style_json = replace(style_json, ?1, '#101319')
+              WHERE name = 'Lower Third'
+                AND style_json LIKE '%' || ?1 || '%'",
+            [old],
+        )?;
+    }
+    // The dark type that went with the light band would be invisible on it.
+    conn.execute(
+        "UPDATE templates
+            SET style_json = replace(style_json, '#1c1224', '#f2f4f8')
+          WHERE name = 'Lower Third'
+            AND style_json LIKE '%#101319%'
+            AND style_json LIKE '%#1c1224%'",
+        [],
+    )?;
+    Ok(())
+}
+
 pub(super) fn ensure_preset_templates(conn: &Connection) -> rusqlite::Result<()> {
     let mut check = conn.prepare("SELECT COUNT(*) FROM templates WHERE name = ?1")?;
     let mut insert = conn.prepare(
@@ -1032,5 +1079,72 @@ mod preset_template_tests {
                 "duplicate/colliding template name: {name}"
             );
         }
+    }
+    /// THE BAND THE SEEDS COULD NOT REACH.
+    ///
+    /// `ensure_preset_templates` inserts only when a name is ABSENT, so correcting
+    /// the shipped accent reached a fresh install and no existing one. In the same
+    /// wave the band became VISIBLE for the first time — `panelBg` had fallen
+    /// through to `transparent` for every keyed template — so the repair would have
+    /// put a lilac bar on every stream of every church already running Relay, in
+    /// amethyst, which rule 18 reserves for REHEARSAL.
+    ///
+    /// Watched to fail by removing the call from `ensure_tables`.
+    #[test]
+    fn an_existing_lower_third_loses_the_rehearsal_colour_it_never_showed() {
+        let conn = Connection::open_in_memory().expect("db");
+        conn.execute_batch(
+            "CREATE TABLE templates (id INTEGER PRIMARY KEY, name TEXT, region_config_json TEXT, style_json TEXT);
+             INSERT INTO templates (name, region_config_json, style_json) VALUES
+               ('Lower Third', '{}', '{\"accent\":\"#b080e0\",\"verseColor\":\"#1c1224\"}'),
+               ('Mine',        '{}', '{\"accent\":\"#00ff88\"}');",
+        )
+        .expect("seed");
+
+        ensure_lower_third_band_is_not_a_law_colour(&conn).expect("fill");
+
+        let lt: String = conn
+            .query_row(
+                "SELECT style_json FROM templates WHERE name='Lower Third'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("read");
+        assert!(
+            !lt.contains("#b080e0"),
+            "the rehearsal colour must be gone: {lt}"
+        );
+        assert!(
+            lt.contains("#101319"),
+            "and replaced by the neutral band: {lt}"
+        );
+        assert!(
+            lt.contains("#f2f4f8"),
+            "dark type on a near-black band is invisible — it must move too: {lt}"
+        );
+
+        // A church that chose its own colour is NOT touched.
+        let mine: String = conn
+            .query_row(
+                "SELECT style_json FROM templates WHERE name='Mine'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("read");
+        assert!(
+            mine.contains("#00ff88"),
+            "a deliberate choice must survive: {mine}"
+        );
+
+        // Idempotent (rule 25): a second run matches nothing and changes nothing.
+        ensure_lower_third_band_is_not_a_law_colour(&conn).expect("again");
+        let twice: String = conn
+            .query_row(
+                "SELECT style_json FROM templates WHERE name='Lower Third'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("read");
+        assert_eq!(lt, twice, "running it twice must be a no-op");
     }
 }

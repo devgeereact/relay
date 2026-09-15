@@ -30,6 +30,48 @@ const dock = read('src/lib/Dock.svelte');
 /** Prose only — the markup an operator reads, comments stripped. */
 const prose = (s) => s.replace(/<!--[\s\S]*?-->/g, '').replace(/^\s*\/\/.*$/gm, '');
 
+/**
+ * THE DOCUMENTS ARE INSTRUCTIONS TOO.
+ *
+ * The first version of this file swept three `.svelte` files and found four
+ * defects. It missed two more of exactly the same kind, in `docs/` — including
+ * `AI_DISCLOSURE.md` telling an operator that **Emergency Stop** "is in the top
+ * bar of every screen", which is the congregation-safety document naming a
+ * control deleted on 2026-09-14.
+ *
+ * A scan that covers three of five doors is the narrowing failure this repository
+ * has now recorded four times. Every surface that tells an operator to press
+ * something is in range.
+ */
+const INSTRUCTION_SURFACES = [
+  'src/lib/views/Help.svelte',
+  'src/lib/views/Settings.svelte',
+  'src/lib/Dock.svelte',
+  'src/lib/FirstRun.svelte',
+  'docs/USER_GUIDE.md',
+  'docs/AI_DISCLOSURE.md',
+];
+
+describe('no instruction anywhere names a control that was deleted', () => {
+  // Each was a real control once. `panic.test.js` and `shellchrome.test.js` assert
+  // the first is gone from the code; nothing asserted it was gone from the prose.
+  const GONE = ['Emergency Stop'];
+
+  for (const file of INSTRUCTION_SURFACES) {
+    it(`${file} names none of them`, () => {
+      const text = prose(read(file));
+      for (const control of GONE) {
+        expect(text, `${file} still tells somebody to use "${control}"`).not.toContain(control);
+      }
+    });
+  }
+
+  it('…and the scan can still see the surfaces it is about', () => {
+    // A list that quietly stops resolving passes everything.
+    for (const f of INSTRUCTION_SURFACES) expect(read(f).length).toBeGreaterThan(200);
+  });
+});
+
 describe('an instruction names a control that exists', () => {
   it('Help does not send a panicking operator to a deleted button', () => {
     expect(prose(help)).not.toContain('Emergency Stop');
