@@ -1248,6 +1248,15 @@ pub struct KioskHub {
     /// validated JSON array is ever stored (see `set_themes`), so embedding it raw
     /// into a WS message can never corrupt the frame.
     themes: Arc<Mutex<String>>,
+    /// THE CONFIGURED DEFAULT TEMPLATE, as JSON, or the literal `null`.
+    ///
+    /// The last link in every screen's resolution chain (DECISIONS §29: the
+    /// transparency law, then a pinned cue template, then the screen's own, then
+    /// the content look, then THIS). A browser source has no database, so the
+    /// hub is the only way it can learn the operator's default; without it the
+    /// output page ends at the bundled `Classic Serif` and the configured
+    /// default reaches a screen exactly once, when the channel is created.
+    default_tpl: Arc<Mutex<String>>,
     /// THE LAST FRAME THAT DECIDED WHAT IS ON THE SCREENS — content, clear or
     /// black — kept so a client that joins LATE is shown it.
     ///
@@ -1290,6 +1299,7 @@ impl Default for KioskHub {
             templates: Arc::new(Mutex::new(HashMap::new())),
             clients: Arc::new(Mutex::new(HashMap::new())),
             themes: Arc::new(Mutex::new("[]".to_string())),
+            default_tpl: Arc::new(Mutex::new("null".to_string())),
             last_screen: Arc::new(Mutex::new(None)),
             last_transition: Arc::new(Mutex::new(None)),
         }
@@ -1446,6 +1456,42 @@ impl KioskHub {
             .unwrap_or_else(|_| "[]".into());
         self.publish(format!(r#"{{"kind":"themes","themes":{blob}}}"#));
     }
+    /// Shared handle to the default-template blob, for the WS server task to read
+    /// and send to each client on `hello`.
+    pub fn default_template_handle(&self) -> Arc<Mutex<String>> {
+        self.default_tpl.clone()
+    }
+    /// Validate + store the default template WITHOUT pushing (startup warm).
+    /// Anything that is not valid JSON becomes the literal `null`, because the
+    /// value is embedded raw into a WS frame and one unparseable frame stops a
+    /// client applying every frame after it.
+    pub fn cache_default_template(&self, template_json: &str) {
+        let safe = match serde_json::from_str::<serde_json::Value>(template_json) {
+            Ok(_) => template_json.to_string(),
+            Err(_) => "null".to_string(),
+        };
+        if let Ok(mut t) = self.default_tpl.lock() {
+            *t = safe;
+        }
+    }
+    /// The cached default template JSON (`null` when none is configured).
+    pub fn default_template_json(&self) -> String {
+        self.default_tpl
+            .lock()
+            .map(|t| t.clone())
+            .unwrap_or_else(|_| "null".into())
+    }
+    /// Update the default template AND push it live, so a screen following the
+    /// content look re-resolves the instant the operator changes the default
+    /// instead of at the next reload. Same validate-then-store rule as
+    /// `cache_default_template`.
+    pub fn set_default_template(&self, template_json: &str) {
+        self.cache_default_template(template_json);
+        let blob = self.default_template_json();
+        self.publish(format!(
+            r#"{{"kind":"default_template","template":{blob}}}"#
+        ));
+    }
     /// Cache a template's JSON (no push). Used to warm the cache at startup.
     pub fn cache_template(&self, id: i64, template_json: &str) {
         if let Ok(mut m) = self.templates.lock() {
@@ -1544,6 +1590,7 @@ pub async fn run_kiosk_server(
     templates: Arc<Mutex<HashMap<i64, String>>>,
     clients: ClientRegistry,
     themes: Arc<Mutex<String>>,
+    default_tpl: Arc<Mutex<String>>,
     last_screen: Arc<Mutex<Option<String>>>,
     last_transition: TransitionSlot,
     health: OutputHealth,
@@ -1579,6 +1626,7 @@ pub async fn run_kiosk_server(
         let templates = templates.clone();
         let clients = clients.clone();
         let themes = themes.clone();
+        let default_tpl = default_tpl.clone();
         let last_screen = last_screen.clone();
         let last_transition = last_transition.clone();
         let health = health.clone();
@@ -1743,6 +1791,23 @@ pub async fn run_kiosk_server(
                                     let _ = write
                                         .send(tokio_tungstenite::tungstenite::Message::Text(
                                             format!(r#"{{"kind":"themes","themes":{blob}}}"#),
+                                        ))
+                                        .await;
+                                    // The configured default template, so this
+                                    // client can end its resolution chain where
+                                    // the operator said rather than at the
+                                    // bundled builtin. Like the template and the
+                                    // themes above it, this is configuration: on
+                                    // its own it paints nothing.
+                                    let dblob = default_tpl
+                                        .lock()
+                                        .map(|t| t.clone())
+                                        .unwrap_or_else(|_| "null".into());
+                                    let _ = write
+                                        .send(tokio_tungstenite::tungstenite::Message::Text(
+                                            format!(
+                                                r#"{{"kind":"default_template","template":{dblob}}}"#
+                                            ),
                                         ))
                                         .await;
                                     // The operator's transition override, if one is
@@ -3049,6 +3114,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.themes_handle(),
+            hub.default_template_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             OutputHealth::default(),
@@ -3109,6 +3175,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.themes_handle(),
+            hub.default_template_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             OutputHealth::default(),
@@ -3192,6 +3259,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.themes_handle(),
+            hub.default_template_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             OutputHealth::default(),
@@ -3236,6 +3304,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.themes_handle(),
+            hub.default_template_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             OutputHealth::default(),
@@ -3271,6 +3340,44 @@ mod tests {
             }
         }
         assert!(got, "the client never received the custom themes");
+    }
+
+    #[test]
+    fn the_configured_default_is_sent_to_a_screen_that_joins_later() {
+        // A BROWSER SOURCE HAS NO DATABASE. The configured default template is a
+        // settings row, so the only way a kiosk or OBS client can end its
+        // resolution chain at the operator's default — rather than at the bundled
+        // Classic Serif — is for the hub to carry it. Cached without a push at
+        // startup, pushed when it changes, and replayed on hello, exactly like the
+        // per-template cache beside it.
+        let hub = KioskHub::default();
+        hub.cache_default_template(r#"{"id":7,"name":"House Look"}"#);
+        assert_eq!(
+            hub.default_template_json(),
+            r#"{"id":7,"name":"House Look"}"#
+        );
+    }
+
+    #[test]
+    fn a_malformed_default_degrades_to_null_rather_than_breaking_the_frame() {
+        // The blob is embedded RAW into a WS frame, so anything that is not valid
+        // JSON would produce a frame no client can parse — and a client that fails
+        // to parse one frame is a screen that stops applying every frame after it.
+        let hub = KioskHub::default();
+        hub.cache_default_template("{not json");
+        assert_eq!(hub.default_template_json(), "null");
+    }
+
+    #[test]
+    fn the_default_template_frame_is_configuration_not_a_screen_frame() {
+        // Rule: only `content`, `clear` and `black` decide what a screen is
+        // SHOWING and are retained as the screen frame (rule 43). The default
+        // template paints nothing on its own — it tells a screen what to wear when
+        // nothing else answers — so retaining it would let it stand in for the
+        // verse a late-joining screen is owed.
+        assert!(!is_screen_frame(
+            r#"{"kind":"default_template","template":null}"#
+        ));
     }
 
     /// The retained-frame test above can only be trusted if the matcher agrees
@@ -3342,6 +3449,13 @@ mod tests {
         // would be sent a look and a blank wall. The hub keeps templates in their
         // own per-id cache (`cache_template`) and replays them on hello from there.
         ("channel_template", false),
+        // The operator's configured default. Not retained HERE, for the same
+        // reason as `transition` and `channel_template`: `last_screen` holds one
+        // frame and the newest wins, so retaining it would replace the verse and
+        // the next screen to join would be sent a look and a blank wall. The hub
+        // keeps it in its own slot (`default_tpl`) and replays it on hello from
+        // there.
+        ("default_template", false),
     ];
 
     /// THE ENUMERATION MUST GROW WITH THE MODULE, OR IT IS NOT AN ENUMERATION.
@@ -3478,6 +3592,14 @@ mod tests {
              live by design (DECISIONS §29), and a look is not something a person \
              reads. It used to be answered for in this doc comment, in prose, \
              which is the mechanism this test exists to replace",
+        ),
+        (
+            "set_default_template",
+            false,
+            "configuration, not content — the operator's chosen fallback look. \
+             Gating it would leave a screen already following the content look \
+             wearing the pre-rehearsal default once the operator went live, the \
+             same reasoning as `set_template` and `set_channel_template`",
         ),
     ];
 
@@ -3768,6 +3890,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.themes_handle(),
+            hub.default_template_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             OutputHealth::default(),
@@ -3831,6 +3954,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.themes_handle(),
+            hub.default_template_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             OutputHealth::default(),
@@ -4005,6 +4129,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.themes_handle(),
+            hub.default_template_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             OutputHealth::default(),
@@ -4065,6 +4190,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.themes_handle(),
+            hub.default_template_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             OutputHealth::default(),
@@ -4136,6 +4262,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.themes_handle(),
+            hub.default_template_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             OutputHealth::default(),
@@ -4193,6 +4320,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.themes_handle(),
+            hub.default_template_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             OutputHealth::default(),
@@ -4414,6 +4542,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.themes_handle(),
+            hub.default_template_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             OutputHealth::default(),
@@ -4468,6 +4597,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.themes_handle(),
+            hub.default_template_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             health.clone(),

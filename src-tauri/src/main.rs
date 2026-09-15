@@ -215,6 +215,7 @@ fn main() {
             let kiosk_templates = kiosk.templates_handle();
             let kiosk_clients = kiosk.clients_handle();
             let kiosk_themes = kiosk.themes_handle();
+            let kiosk_default_tpl = kiosk.default_template_handle();
             let kiosk_last = kiosk.last_screen_handle();
             let kiosk_last_x = kiosk.last_transition_handle();
             // Warm the custom-themes blob so a kiosk connecting before any theme is
@@ -228,6 +229,25 @@ fn main() {
                 {
                     kiosk.cache_themes(&blob);
                 }
+            }
+            // The configured default, warmed before any client can connect — a
+            // screen that joins during launch must not be told the default is
+            // `null` and then corrected.
+            {
+                let db = app.state::<Db>();
+                let dj =
+                    db.0.lock()
+                        .ok()
+                        .and_then(|conn| {
+                            db::get_setting(&conn, "default_template_id")
+                                .ok()
+                                .flatten()
+                                .and_then(|s| s.parse::<i64>().ok())
+                                .and_then(|id| db::get_template(&conn, id).ok().flatten())
+                        })
+                        .and_then(|t| serde_json::to_string(&t).ok())
+                        .unwrap_or_else(|| "null".into());
+                kiosk.cache_default_template(&dj);
             }
             // Warm the template cache so a browser client (OBS/kiosk) gets the
             // REAL saved template immediately on connect (matches the editor).
@@ -251,6 +271,7 @@ fn main() {
                 kiosk_templates,
                 kiosk_clients,
                 kiosk_themes,
+                kiosk_default_tpl,
                 kiosk_last,
                 kiosk_last_x,
                 app.state::<channels::OutputHealth>().inner().clone(),
@@ -413,6 +434,7 @@ fn main() {
             service_lock,
             set_service_lock,
             set_channel_template,
+            set_default_template,
             send_stage_alert,
             list_monitors,
             open_channel_output,
@@ -5770,6 +5792,48 @@ fn set_channel_template<R: tauri::Runtime>(
         // A template id that resolves to nothing: the row is written, and no screen
         // is told to paint something that could not be read.
         (Some(_), None) => {}
+    }
+    Ok(())
+}
+
+/// Set (or clear, with `None`) the DEFAULT template — the last link in every
+/// screen's resolution chain — and push the change live.
+///
+/// Changing the default used to be a bare `set_setting` from the frontend: it
+/// was read at channel creation and by two console panes, and nothing else in
+/// the building was told. A screen already following the content look kept the
+/// old look until it was reopened, which is why the default "did not activate on
+/// all screens". Native windows get `output://default_template`; kiosk/OBS
+/// clients get the hub frame.
+#[tauri::command]
+fn set_default_template<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    db: tauri::State<'_, Db>,
+    kiosk: tauri::State<'_, channels::KioskHub>,
+    template_id: Option<i64>,
+) -> error::Result<()> {
+    // DB write + resolve the JSON under one lock, release BEFORE emitting
+    // (rule 2: never hold a Mutex across emit).
+    let tjson = {
+        let conn = db.0.lock()?;
+        match template_id {
+            Some(id) => {
+                db::set_setting(&conn, "default_template_id", &id.to_string())?;
+                db::get_template(&conn, id)?.and_then(|t| serde_json::to_string(&t).ok())
+            }
+            None => {
+                db::set_setting(&conn, "default_template_id", "")?;
+                None
+            }
+        }
+    };
+    let blob = tjson.unwrap_or_else(|| "null".into());
+    kiosk.set_default_template(&blob);
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&blob) {
+        let _ = app.emit(
+            "output://default_template",
+            serde_json::json!({ "template": v }),
+        );
     }
     Ok(())
 }
