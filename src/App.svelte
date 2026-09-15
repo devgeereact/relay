@@ -3,7 +3,7 @@
   import { get } from 'svelte/store';
   import { trapFocus } from './lib/focus.js';
   import { t } from './lib/i18n.js';
-  import { capture, capturing, live, screenBlack, rehearsing, initAudio, autoOpenOutputs, setDetection, clearScreens, blackScreen, panicError, dismissPanicError, loadServiceLock, channelHealth, channelWaiting, startChannelHealth, latencyReport, ping, onOperatorAction, noteOperatorAction, loadLiveTransition } from './lib/stores/capture.js';
+  import { capture, capturing, live, screenBlack, rehearsing, initAudio, autoOpenOutputs, setDetection, clearScreens, blackScreen, panicError, dismissPanicError, dismissAudioError, loadServiceLock, channelHealth, channelWaiting, startChannelHealth, latencyReport, ping, onOperatorAction, noteOperatorAction, loadLiveTransition } from './lib/stores/capture.js';
   import * as training from './lib/training.js';
   import { practice, stopPractice } from './lib/practice.js';
   import { degradations, worstLevel, summarise } from './lib/degraded.js';
@@ -783,6 +783,30 @@
         <span>{$panicError}</span>
       </div>
       <button class="r-btn ghost sm" on:click={dismissPanicError}>Dismiss</button>
+    </div>
+  {/if}
+
+  <!-- THE MICROPHONE DIED (RG-117, PR #56). In the SHELL, for the reason the panic
+       bar is: a volunteer may well be in Settings or Templates when the desk feed
+       is knocked out, and a message on a tab they are not looking at is not a
+       message. `role="alert"`, because it interrupts the service; it does not
+       auto-dismiss, because "the microphone stopped" stays true until somebody
+       does something about it.
+
+       IT IS NOT A DUPLICATE OF `degraded.js`'s `audio` row, and the two cannot
+       disagree because both read this one store field. They do different jobs:
+       this INTERRUPTS, and the register INVENTORIES — the status bar's Reduced
+       cell and the Dashboard's readiness rollup both walk `degradations()`, so a
+       dead microphone that appeared only as a banner would be missing from the
+       one list that answers "what is wrong right now". Severity earns the banner;
+       completeness earns the row. -->
+  {#if $capture.audioError}
+    <div class="audiobar" role="alert" aria-live="assertive">
+      <div class="panic-t">
+        <b>Relay has stopped hearing the microphone.</b>
+        <span>{$capture.audioError}</span>
+      </div>
+      <button class="r-btn ghost sm" on:click={dismissAudioError}>Dismiss</button>
     </div>
   {/if}
 

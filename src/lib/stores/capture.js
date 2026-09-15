@@ -2335,6 +2335,17 @@ export function dismissPanicError() {
 panicError.set(null);
 }
 
+/**
+ * Acknowledge an audio device failure (RG-117).
+ *
+ * Dismissing says "I have read this", never "it is fixed": capture is already
+ * stopped by the time this banner exists, and the way back is to plug the
+ * microphone in and press start. It clears again on the next successful start.
+ */
+export function dismissAudioError() {
+capture.update((s) => ({ ...s, audioError: null }));
+}
+
 /** Push the "up next" preview to the stage/confidence monitor (null clears).
  *
  *  GROUP 1 (THROWS), moved out of GROUP 2 on 2026-08-14 (R5-8) — and the reason is
