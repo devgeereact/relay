@@ -258,14 +258,19 @@ export function templateShows(template, kind) {
  * keyed channel is ignored so the lower third / ticker keeps keying over the live
  * camera; the verse still flows into the channel's own template. Opaque channels
  * take the override; a keyed override on a keyed channel is fine.
+ *
+ * `fallback` is the operator's CONFIGURED DEFAULT (`default_template_id`) and is
+ * the last link: it answers only when nothing above it did. It is not part of
+ * the ranking §29 and §70 describe — those decide between authorities that each
+ * chose a look for this screen, and the default is what remains when none did.
  */
-export function resolveOutputTemplate(channelTpl, override, pinned = false) {
+export function resolveOutputTemplate(channelTpl, override, pinned = false, fallback = null) {
   // NO TEMPLATE OF ITS OWN = this screen follows the content look (DECISIONS §70).
   // It has to be answered before the transparency law below, because
   // `isKeyedTemplate(null)` is true — a template with no background layer is keyed,
   // and an absent template has no layers at all — so a following screen would have
   // "kept its keyed template", which is nothing, and painted an empty frame.
-  if (!channelTpl) return override ?? null;
+  if (!channelTpl) return override ?? fallback ?? null;
   if (!override) return channelTpl;
   // TRANSPARENCY LAW: a keyed (lower-third) screen never goes opaque for an opaque
   // override — the camera it keys over must not be covered. Wins over everything.

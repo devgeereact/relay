@@ -29,6 +29,11 @@
   let content = null;
   let visible = false;
   let black = false; // opaque blackout overlay
+  // THE OPERATOR'S CONFIGURED DEFAULT (`default_template_id`) — the LAST link in
+  // the resolver's chain, applied only when nothing above it answered. Pushed by
+  // the kiosk hub on connect and whenever the operator changes it, and mirrored
+  // to a native output window over `output://default_template`.
+  let defaultTpl = null;
 
   // ── THE OPERATOR'S TRANSITION OVERRIDE, SNAPSHOTTED (DECISIONS §84) ──────────
   //
@@ -74,7 +79,7 @@
   // no content look is set either, still has to paint something legible rather
   // than nothing at all.
   $: activeTemplate =
-    resolveOutputTemplate(t, override, !!content?.template_pinned) || DEFAULT_TEMPLATE;
+    resolveOutputTemplate(t, override, !!content?.template_pinned, defaultTpl) || DEFAULT_TEMPLATE;
   // THE THEME LAYER. If the resolved template pins a theme (style.themeRef), fill
   // its unset style keys from that theme — the same merge the editor previews, so
   // the wall matches the editor. Custom themes are fetched on desktop (below);
@@ -194,6 +199,13 @@
       // theme is saved. Lets THIS browser source resolve a template that pins a
       // custom theme; builtins it already knows (bundled). Safe-parsed.
       customThemes = parseThemes(JSON.stringify(m.themes ?? []));
+    } else if (m.kind === 'default_template') {
+      // THE CONFIGURED DEFAULT, pushed by the hub on connect and whenever the
+      // operator changes it. This screen follows the content look, so a change
+      // here is a change to what it wears — it is applied live rather than at
+      // the next reload, which is what "the default does not activate on all
+      // screens" actually was.
+      defaultTpl = m.template ?? null;
     } else if (m.kind === 'transition') {
       // HOW the next thing appears. Deliberately NOT applied here: it arms the
       // next content and repaints nothing. `mode: null` clears the override and
@@ -313,6 +325,11 @@
           if (channelId && e.payload?.channel === channelId && 'template' in (e.payload ?? {})) {
             t = e.payload.template ?? null;
           }
+        }),
+      );
+      unlisten.push(
+        await listen('output://default_template', (e) => {
+          defaultTpl = e.payload?.template ?? null;
         }),
       );
       isDesktop = true;
