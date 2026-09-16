@@ -2489,7 +2489,7 @@
      that must survive a long name, so they hold their size and the name is the
      one thing allowed to shrink. */
   .pt-name{flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis;
-    white-space:nowrap; font-size:var(--v-fs-b2); color:var(--v-ink)}
+    white-space:nowrap; font-size:var(--v-fs-b2); color:var(--v-txt)}
   .pt-fig{flex:0 0 auto; font-size:var(--v-fs-b2); color:var(--v-dim)}
   .pt-chip > :global(button){flex:0 0 auto}
   .pt-cap{flex:0 0 auto; font-family:var(--f-mono); font-size:var(--v-fs-cap);
