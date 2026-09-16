@@ -132,9 +132,28 @@
   // exists it renders the MM:SS itself and this default steps aside.
   $: hasTimerLayer = layered && layers.some((L) => L.visible !== false && (L.type === 'timer' || L.bind === 'countdown'));
   $: showDefaultCountdown = layered && content?.countdown_to != null && !hasTimerLayer;
+  // ── THE TEMPLATE'S OWN DEFAULTS, WHICH ARE NOT THE APP'S ──────────────────
+  // This component renders BOTH the console's preview and the congregation's
+  // wall, so every fallback it reaches for is a fallback a church sees. Two of
+  // them used to be operator-console tokens: `var(--f-serif)` for an unset face
+  // and `var(--v-amber)` for an unset accent. Both are declared in `app.css`,
+  // which is the app's chrome — `--f-display` has already been re-aliased once,
+  // from Space Grotesk to Inter, silently changing the typeface of every template
+  // naming it, and `--v-amber` is the console's ON AIR colour, which rule 18
+  // reserves for a meaning a wall does not carry.
+  //
+  // A default here belongs to the TEMPLATE. Fraunces is the family `--f-serif`
+  // resolves to today, so nothing on a wall moves; white is the neutral accent —
+  // it is what the High Visibility and Worship Lyrics templates already ask for,
+  // and it is none of the three colours rule 18 has spoken for (amber = ON AIR,
+  // cyan = a guess, amethyst = rehearsal). Wave 5, Track E.
+  const DEFAULT_FAMILY = "'Fraunces', Georgia, serif";
+  const DEFAULT_ACCENT = '#ffffff';
+  // A legacy row may still hold `var(--f-serif)`; it is passed through unchanged,
+  // because the token block is still shared with output.html and stage.html.
   const fontFamOf = (f) => {
-    const v = f || 'var(--f-serif)';
-    return v.startsWith('var(') ? v : `${v}, system-ui, sans-serif`;
+    if (!f) return DEFAULT_FAMILY;
+    return f.startsWith('var(') ? f : `${f}, system-ui, sans-serif`;
   };
   const shadowOf = (k) => {
     const n = Math.max(0, Math.min(1, Number(k) || 0));
@@ -864,7 +883,7 @@
   // "text colour"); otherwise the old behaviour — the accent, or the verse colour
   // on a band where the accent is the band fill.
   $: refColor =
-    style.refColor || (layout.lowerThird ? style.verseColor || '#1c1224' : style.accent || 'var(--v-amber)');
+    style.refColor || (layout.lowerThird ? style.verseColor || '#1c1224' : style.accent || DEFAULT_ACCENT);
 
   // ── Type styling, all template-configurable (editor "Design" controls) ─────
   // Every property below is PER REGION: the verse and the reference each carry
@@ -879,8 +898,8 @@
   // A family with a fallback: a CSS var carries its own; a bare name gets a
   // generic appended so an uninstalled font degrades to the computer default.
   const fontFam = (f) => {
-    const v = f || 'var(--f-serif)';
-    return v.startsWith('var(') ? v : `${v}, system-ui, sans-serif`;
+    if (!f) return DEFAULT_FAMILY;
+    return f.startsWith('var(') ? f : `${f}, system-ui, sans-serif`;
   };
 
   $: bgOpacity = clamp01(style.bgOpacity);
@@ -1050,8 +1069,9 @@
   // computer's default rather than something arbitrary. A CSS var already carries
   // its own generic; a bare family name ("Didot") does not, so append one.
   $: fontFamily = (() => {
-    const f = style.verseFont || 'var(--f-serif)';
-    if (f.startsWith('var(')) return f; // the var supplies its own fallback
+    const f = style.verseFont;
+    if (!f) return DEFAULT_FAMILY;
+    if (f.startsWith('var(')) return f; // a legacy token supplies its own fallback
     return `${f}, system-ui, sans-serif`;
   })();
 
@@ -1355,7 +1375,7 @@
   // gated to prop-change + resize so countdown/clock ticks don't force reflow.
 </script>
 
-<div class="stage" bind:this={stageEl} style="--accent:{style.accent || 'var(--v-amber)'};">
+<div class="stage" bind:this={stageEl} style="--accent:{style.accent || DEFAULT_ACCENT};">
   <!-- NOTHING renders without content. "Clear all screens" (content → null) must
        remove EVERYTHING — the background, the lower-third band, every layer — not
        just the text. A background left painted after a clear, or a band left over
