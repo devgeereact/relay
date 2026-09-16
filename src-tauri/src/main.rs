@@ -219,6 +219,7 @@ fn main() {
             let kiosk_default_tpl = kiosk.default_template_handle();
             let kiosk_last = kiosk.last_screen_handle();
             let kiosk_last_x = kiosk.last_transition_handle();
+            let kiosk_last_t = kiosk.last_timers_handle();
             // The configured default, warmed before any client can connect — a
             // screen that joins during launch must not be told the default is
             // `null` and then corrected.
@@ -262,6 +263,7 @@ fn main() {
                 kiosk_default_tpl,
                 kiosk_last,
                 kiosk_last_x,
+                kiosk_last_t,
                 app.state::<channels::OutputHealth>().inner().clone(),
                 8031,
             ));
@@ -3040,7 +3042,7 @@ fn start_timer<R: tauri::Runtime>(
         5.0
     };
     let now_ms = cd_now_ms();
-    Ok(app.state::<timers::TimerRegistry>().start(timers::Timer {
+    let id = app.state::<timers::TimerRegistry>().start(timers::Timer {
         id: 0, // assigned by the registry
         label: label.trim().to_string(),
         done_msg: clean_note(Some(done_msg)).unwrap_or_default(),
@@ -3050,7 +3052,14 @@ fn start_timer<R: tauri::Runtime>(
         warn_ms,
         scope,
         plan_item_id,
-    }))
+    });
+    // THE STAGE TABLET IS TOLD, UNCONDITIONALLY — not "if this one was a stage
+    // timer". `publish_timers` sends the whole stage-visible SET, so it is
+    // idempotent and asks no question; a publisher that had to decide whether it
+    // was needed is a publisher that can decide wrongly, which is the shape of the
+    // four "guarantee kept on one door" bugs this repository has already had.
+    channels::publish_timers(&app);
+    Ok(id)
 }
 
 /// RE-AIM OR HOLD ONE TIMER BY ITS IDENTITY — the transport, addressed.
@@ -3084,6 +3093,8 @@ fn adjust_timer<R: tauri::Runtime>(
             broadcast_with_clock(&app, content)?;
         }
     }
+    // And the stage tablet, whichever scope this was — see `start_timer`.
+    channels::publish_timers(&app);
     Ok(())
 }
 
@@ -3099,6 +3110,10 @@ fn adjust_timer<R: tauri::Runtime>(
 #[tauri::command]
 fn stop_timer<R: tauri::Runtime>(app: tauri::AppHandle<R>, timer_id: i64) -> error::Result<()> {
     app.state::<timers::TimerRegistry>().stop(timer_id);
+    // Stopping the LAST programme timer publishes an empty set, which is how a clock
+    // comes off a preacher's screen. Not publishing would leave it there, counting,
+    // for the rest of the service — an absent frame cannot say "there are none now".
+    channels::publish_timers(&app);
     Ok(())
 }
 
