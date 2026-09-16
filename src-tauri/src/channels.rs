@@ -929,9 +929,10 @@ fn kiosk_content_json(content: &OutputContent) -> String {
 
 /// Is this frame one of the three that decide what a screen is SHOWING?
 ///
-/// Deliberately a prefix match on frames this module builds itself, not a JSON
+/// Deliberately a substring match on frames this module builds itself, not a JSON
 /// parse: it runs inside `publish`, which is on the path between a fire and the
-/// projector. `template` and `stage_next` are excluded — the first is already
+/// projector. (This said "prefix" directly above a body comment explaining why a
+/// prefix check matched nothing — see below.) `template` and `stage_next` are excluded — the first is already
 /// sent on hello and the second is a monitor-only extra that must not stand in
 /// for the content it accompanies.
 fn is_screen_frame(msg: &str) -> bool {
