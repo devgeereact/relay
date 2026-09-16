@@ -252,6 +252,33 @@ describe('review answers for a layered template', () => {
     expect(tpl, 'the shelf has no band left to review').toBeTruthy();
     const r = reviewTemplate(tpl, null, ROOM);
     expect(r.verse.state).not.toBe('unknown');
+
+    // THE REFERENCE HALF, RESTORED. It used to ride on the same shelf entry, and
+    // `Lower Third · Lyric` cannot carry it: a lyric band has no reference-bound
+    // layer at all, on purpose (`rhide` in the prototype — a song's reference is
+    // its title, and a title under every line reads like a slide rather than a
+    // caption). Dropping the assertion with the template would have left NOTHING
+    // anywhere holding "a band template's reference is derivable", which is half
+    // the bug this block records — and `unknown` renders in the panel's
+    // reassuring branch, so the loss would have looked exactly like a pass
+    // (rule 35). The stack below is the smallest thing that has the shape: a band
+    // with a reference inside it and no background layer, which is what a
+    // scripture caption bar is.
+    const bandWithRef = {
+      name: 'a band that names its reference',
+      layout: {
+        align: 'left',
+        layers: [
+          { id: 'b', type: 'band', name: 'Band', x: 5, y: 62, w: 90, h: 38, top: 62, side: 5, pad: 3, lift: 4.4, grow: 16, members: ['v', 'r'], fill: '#0a0906', opacity: 0.9, radius: 0 },
+          { id: 'v', type: 'text', name: 'Verse', bind: 'verse', x: 8, y: 70, w: 84, h: 14, font: 'var(--f-serif)', color: '#fff7e8', size: 3, align: 'left', valign: 'middle', lineHeight: 1.2, letterSpacing: 0, shadow: 0, italic: false },
+          { id: 'r', type: 'text', name: 'Reference', bind: 'reference', x: 8, y: 85, w: 84, h: 6, font: 'var(--f-serif)', color: '#ffa31a', size: 1.7, align: 'right', valign: 'middle', lineHeight: 1.1, letterSpacing: 0.08, shadow: 0, italic: false },
+        ],
+      },
+      style: {},
+    };
+    const withRef = reviewTemplate(bandWithRef, null, ROOM);
+    expect(withRef.verse.state, 'the band is still the ground for its verse').not.toBe('unknown');
+    expect(withRef.reference.state, 'a band reference must be derivable too').not.toBe('unknown');
   });
 
   it('…and the shelf is no longer mostly unanswerable', () => {

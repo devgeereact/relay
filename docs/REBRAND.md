@@ -283,6 +283,17 @@ the stage look carries monitor-only bindings. **§5's switchable zones are still
 that is off is translated as a layer that is not present, which is the same screen and no new
 machinery, and that is the whole of the claim.
 
+> **Superseded in part, 2026-09-16 — the paragraph above is what was true on 2026-09-14 and is kept
+> as the record, but three of its statements no longer describe what ships.** The shelf holds
+> **seven**, not eight: `Lower Third · Scripture` was retired when the five coordinated template
+> families landed, because the keyed family seeds a member under that exact name and a seed that
+> inserts by name cannot hold both. So it is **one** lower third with declared `members`, not two —
+> `Lower Third · Lyric`. And three of the nine looks named above as "already shipping under Relay's
+> own names" were themselves retired into those families in the same wave: `Lower Third Light`,
+> `Nocturne · Scripture` and `Lyric Bold`. The bytes of all four are frozen in
+> `src-tauri/data/retired_presets.json` so a migration can clear them from installs that already have
+> them; `src/lib/shelf.test.js` holds the remaining seven by name.
+
 **Three departures, each recorded in the file beside the value it changes.** *(a)* Relay publishes no
 monospace family on purpose (`app.css`), so the prototype's `font:'mono'` is the display sans. *(b)*
 `SuperSource · Word left`'s fill is prototype template 7, which is not one of Relay's five built-ins —

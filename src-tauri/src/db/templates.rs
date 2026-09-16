@@ -319,59 +319,88 @@ fn preset_templates() -> &'static [(&'static str, &'static str, &'static str)] {
 /// COLOURS ARE FIXED PER FAMILY; SIZES ARE FREE PER KIND. That is what makes a
 /// family a set rather than five templates that happen to share a prefix — a
 /// lyric is scanned in a second and a verse is read, so they are not the same
-/// size, but they are the same look. No member invents a colour its family does
-/// not already carry.
+/// size, but they are the same look. A member takes its family's accent, verse
+/// colour and ground; where it varies, it varies inside the family's own hexes.
+/// The two Lyrics rows carried forward from the old Aurora and Ember families are
+/// the honest exception: both go white-on-a-darker-mix-of-their-own-hexes, which
+/// is the lyrics convention the built-in `Worship Lyrics` also follows, and they
+/// are reproduced byte for byte so a church already using one sees nothing move.
 ///
 /// NO SEEDED TEMPLATE WEARS A LAW COLOUR ON ITS BAND (rule 18): the keyed family
 /// fills with `#101319`, the neutral `ensure_lower_third_band_is_not_a_law_colour`
 /// already enforces, because a seeded band shipped in amethyst once and amethyst
 /// means rehearsal.
 ///
-/// Each layout writes its own `shows` list down. `templateShows` returns true for
-/// every kind when `layout.shows` is absent, so a template that stays silent
-/// claims all five — and the operator's first click in the editor then looks like
-/// it wiped four.
+/// EVERY LAYOUT DECLARES ALL FIVE KINDS, AND THAT IS NOT A SHRUG. `layout.shows`
+/// is a per-SCREEN filter, not a record of what a template was designed for:
+/// `Output.svelte` gates incoming content on `templateShows(own_template, kind)`
+/// BEFORE `resolveOutputTemplate` is consulted, so a narrow list on the template
+/// an operator assigned to the Main screen makes that screen silently ignore
+/// every other kind — including when a content look correctly routes songs to
+/// that family's Lyrics member, because the message is dropped before the
+/// override ever resolves. The thing that says "this is the scripture look" is
+/// the `Used for` binding, which is a different register entirely.
+///
+/// Writing all five down still does the job the list exists for. `templateShows`
+/// returns true for every kind when `shows` is ABSENT, so a silent template
+/// claims all five implicitly and the editor's filter register has to
+/// materialise a list on the operator's first click — which is what made that
+/// click look as though it had wiped four. An explicit list is the same
+/// behaviour with the register told the truth from the start.
+///
+/// The keyed family is on the same rule, deliberately. A keyed template with no
+/// `shows` list already shows every kind today — the shelf's `Lower Third · Lyric`
+/// carries none — so listing five is not a new exposure, and the transparency law
+/// in `resolveOutputTemplate` still protects the override path.
 fn theme_templates() -> &'static [(&'static str, &'static str, &'static str)] {
     // FULL-SCREEN SCRIPTURE — verse and reference, centred. The common case.
-    const SCRIPTURE: &str = r##"{"regions":["verse_text","reference"],"align":"center","lowerThird":false,"refFirst":false,"shows":["scripture"]}"##;
+    const SCRIPTURE: &str = r##"{"regions":["verse_text","reference"],"align":"center","lowerThird":false,"refFirst":false,"shows":["scripture","song","media","announce","countdown"]}"##;
     // LYRIC — the words alone. A room does not sing the title.
-    const LYRIC: &str = r##"{"regions":["verse_text"],"align":"center","lowerThird":false,"refFirst":false,"shows":["song"]}"##;
-    // MEDIA — a fired picture or video fills the frame. The regions list is what
-    // the template would show if it were handed anything else, which for a screen
-    // declaring `shows:["media"]` is nothing: `TemplateRender`'s region branch
-    // takes the media path before any region is rendered, and `fire_media` carries
-    // a url and nothing else (no reference, no text). So there is no caption here,
-    // and a caption layer would be a line blank at every fire.
-    const MEDIA: &str = r##"{"regions":["reference"],"align":"center","lowerThird":false,"refFirst":true,"shows":["media"]}"##;
+    const LYRIC: &str = r##"{"regions":["verse_text"],"align":"center","lowerThird":false,"refFirst":false,"shows":["scripture","song","media","announce","countdown"]}"##;
+    // MEDIA — a fired picture or video fills the frame. There is no caption:
+    // `TemplateRender`'s region branch takes the media path before any region is
+    // rendered, and `fire_media` carries a url and nothing else (no reference, no
+    // text), so a caption line would be blank at every fire. The `reference`
+    // region is what this template falls back to showing when it is handed
+    // something that is not a picture.
+    const MEDIA: &str = r##"{"regions":["reference"],"align":"center","lowerThird":false,"refFirst":true,"shows":["scripture","song","media","announce","countdown"]}"##;
     // ANNOUNCEMENT — a title over a scrolling body line (the ticker).
-    const ANNOUNCE: &str = r##"{"regions":["reference","verse_text"],"align":"center","lowerThird":false,"refFirst":true,"shows":["announce"]}"##;
+    const ANNOUNCE: &str = r##"{"regions":["reference","verse_text"],"align":"center","lowerThird":false,"refFirst":true,"shows":["scripture","song","media","announce","countdown"]}"##;
     // TIMER — the countdown, with its label above it. The renderer draws the
     // digits at `verseSize * 2`, so a Timer's `verseSize` is HALF the size the
     // clock ends up.
-    const TIMER: &str = r##"{"regions":["reference","verse_text"],"align":"center","lowerThird":false,"refFirst":true,"shows":["countdown"]}"##;
+    const TIMER: &str = r##"{"regions":["reference","verse_text"],"align":"center","lowerThird":false,"refFirst":true,"shows":["scripture","song","media","announce","countdown"]}"##;
     // The keyed family replaces each of the five with its banded twin. On a band
     // `accent` IS the fill and `verseColor` the text, and `background` stays
     // `transparent` — the camera underneath is the point.
-    const BAND_SCRIPTURE: &str = r##"{"regions":["verse_text","reference"],"align":"center","lowerThird":true,"refFirst":false,"shows":["scripture"]}"##;
-    const BAND_LYRIC: &str = r##"{"regions":["verse_text"],"align":"center","lowerThird":true,"refFirst":false,"shows":["song"]}"##;
-    // TWO BANDED MEMBERS DO SOMETHING WORTH KNOWING BEFORE YOU PICK THEM, and
-    // both are the renderer's existing, deliberate behaviour rather than a defect
-    // introduced here:
+    const BAND_SCRIPTURE: &str = r##"{"regions":["verse_text","reference"],"align":"center","lowerThird":true,"refFirst":false,"shows":["scripture","song","media","announce","countdown"]}"##;
+    const BAND_LYRIC: &str = r##"{"regions":["verse_text"],"align":"center","lowerThird":true,"refFirst":false,"shows":["scripture","song","media","announce","countdown"]}"##;
+    // THREE BANDED MEMBERS DO SOMETHING WORTH KNOWING BEFORE YOU PICK THEM, and
+    // all three are the renderer's existing, deliberate behaviour rather than a
+    // defect introduced here:
     //
     //   · `Lower Third · Media` paints the picture FULL FRAME. The region branch
     //     answers `content.media_url` before it ever reaches the band, so this is
     //     a keyed screen that stops being keyed for the duration of a picture.
     //     It exists because a family must answer every kind, and because a screen
-    //     told `shows:["media"]` was told to show the picture.
+    //     showing media was asked to show the picture.
     //   · `Lower Third · Timer` paints NOTHING. `countdownAllowed` is
     //     `!!countdownTo && !bandMode`: a countdown never reaches a lower third,
     //     because the band is keyed over a live camera and a clock ticking across
     //     the preacher belongs on the lobby screen. The member exists so the
     //     family is complete and so an operator who assigns it gets the same
     //     clean camera the transparency law would have given them anyway.
-    const BAND_MEDIA: &str = r##"{"regions":["reference"],"align":"center","lowerThird":true,"refFirst":true,"shows":["media"]}"##;
-    const BAND_ANNOUNCE: &str = r##"{"regions":["reference","verse_text"],"align":"center","lowerThird":true,"refFirst":true,"shows":["announce"]}"##;
-    const BAND_TIMER: &str = r##"{"regions":["reference","verse_text"],"align":"center","lowerThird":true,"refFirst":true,"shows":["countdown"]}"##;
+    //   · `Lower Third · Announcement` never renders the band geometry its
+    //     `lowerThird` flag asserts. `scroll` is true, and the footer-ticker
+    //     branch is tested BEFORE the band content block, so what paints is the
+    //     ticker pinned to the bottom of the frame rather than the band. It does
+    //     still KEY — nothing paints the rest of the frame — so a crawl over a
+    //     live camera is exactly what an operator gets, which is what a keyed
+    //     announcement should be. The flag is what keeps it on the keyed side of
+    //     the transparency law; it is not what draws it.
+    const BAND_MEDIA: &str = r##"{"regions":["reference"],"align":"center","lowerThird":true,"refFirst":true,"shows":["scripture","song","media","announce","countdown"]}"##;
+    const BAND_ANNOUNCE: &str = r##"{"regions":["reference","verse_text"],"align":"center","lowerThird":true,"refFirst":true,"shows":["scripture","song","media","announce","countdown"]}"##;
+    const BAND_TIMER: &str = r##"{"regions":["reference","verse_text"],"align":"center","lowerThird":true,"refFirst":true,"shows":["scripture","song","media","announce","countdown"]}"##;
 
     &[
         // ── Classic — the serif look Relay opens with ─────────────────────────
@@ -502,10 +531,16 @@ fn theme_templates() -> &'static [(&'static str, &'static str, &'static str)] {
         // coloured reference on black is the first thing to disappear for
         // somebody with low vision and it is the least important text on screen.
         //
-        // Its Announcement is the one member that does NOT scroll. A crawl is a
-        // moving target with a reading speed somebody else chose, which is the
-        // opposite of what this family is for; a static notice at 4cqw is the
-        // high-visibility answer. The other four families ship the ticker.
+        // Its Announcement scrolls like the other four, and this reverses a call
+        // made earlier in this same task. The reasoning then was that a crawl is a
+        // moving target with a reading speed somebody else chose. Two facts undid
+        // it: the ticker's speed is computed from text length identically for
+        // every template, so a static High Visibility notice is not a slower read
+        // than anybody else's crawl, it is just a different shape; and in the
+        // region model a non-scrolling announcement IS a scripture template — the
+        // same large line over a small one — so it would be the one family member
+        // that does not land in its own row in the gallery. Contrast is untouched
+        // either way, which is what this family is actually for.
         (
             "High Visibility · Scripture",
             SCRIPTURE,
@@ -524,7 +559,7 @@ fn theme_templates() -> &'static [(&'static str, &'static str, &'static str)] {
         (
             "High Visibility · Announcement",
             ANNOUNCE,
-            r##"{"font":"var(--f-display)","background":"#000000","accent":"#ffffff","verseColor":"#ffffff","refColor":"#ffffff","verseSize":"4","refSize":"3.2","verseLineHeight":"1.4","refGap":"1.6","verseShadow":"0","refShadow":"0","transitionMs":"0","italicRef":false,"refTransform":"uppercase","refLetterSpacing":0.06}"##,
+            r##"{"font":"var(--f-display)","background":"#000000","accent":"#ffffff","verseColor":"#ffffff","refColor":"#ffffff","verseSize":"4","refSize":"3.2","verseLineHeight":"1.4","refGap":"1.6","verseShadow":"0","refShadow":"0","transitionMs":"0","italicRef":false,"refTransform":"uppercase","refLetterSpacing":0.06,"scroll":true}"##,
         ),
         (
             "High Visibility · Timer",
@@ -1270,11 +1305,25 @@ mod preset_template_tests {
     #[test]
     fn every_seeded_template_says_which_kinds_it_renders() {
         // `templateShows` returns true for EVERY kind when `layout.shows` is
-        // absent (src/lib/layers.js:246), so a seeded template starts with all
-        // five ticked in the editor and the operator's first click looks like it
-        // wiped four. Writing the list down is what stops the render lying about
-        // what the click did — and a Lower Third family that quietly claimed to
-        // render full-screen media was never true either.
+        // absent (src/lib/layers.js), so a seeded template with no list claims all
+        // five implicitly and the editor's filter register has to materialise one
+        // on the operator's first click — which is what made that click look as
+        // though it had wiped four. The list is written down so the register
+        // starts from a real one.
+        //
+        // AND IT IS ALL FIVE, EVERY TIME. This is the half worth asserting rather
+        // than just the vocabulary. `layout.shows` is a per-SCREEN filter, not a
+        // record of what a template was designed for: `Output.svelte` gates
+        // incoming content on `templateShows(own_template, kind)` BEFORE
+        // `resolveOutputTemplate` is consulted, so a narrow list on the template
+        // an operator assigned to the Main screen makes that screen silently drop
+        // every other kind — including when a content look correctly routes songs
+        // to that family's Lyrics member, because the message never survives to
+        // reach the override. A family whose Scripture member mutes songs is not
+        // a family you can fire five kinds at over a morning, which is what the
+        // test above says a family is for. What a template is FOR is recorded by
+        // the `Used for` binding, a different register entirely.
+        let all = ["scripture", "song", "media", "announce", "countdown"];
         for (name, layout, _) in theme_templates() {
             let v: serde_json::Value =
                 serde_json::from_str(layout).unwrap_or_else(|e| panic!("{name}: {e}"));
@@ -1287,9 +1336,14 @@ mod preset_template_tests {
             );
             for k in shows {
                 let k = k.as_str().unwrap_or("");
+                assert!(all.contains(&k), "{name}: {k:?} is not a content kind");
+            }
+            for want in all {
                 assert!(
-                    ["scripture", "song", "media", "announce", "countdown"].contains(&k),
-                    "{name}: {k:?} is not a content kind"
+                    shows.iter().any(|k| k.as_str() == Some(want)),
+                    "{name}: does not show {want:?} — a seeded template that mutes \
+                     a kind mutes it on every screen it is assigned to, before any \
+                     content look can override it"
                 );
             }
         }

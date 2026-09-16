@@ -67,6 +67,11 @@ const visible = (L) => L && L.visible !== false;
 /** @returns a role key — see `KIND_META` for the full set. */
 export function templateKind(t) {
   const layout = t?.layout ?? {};
+  // The region model keeps per-element facts on the whole-template `style`, so
+  // one role — the scrolling announcement — is only visible there. The layer
+  // model carries the same fact per layer and is read below; neither is a second
+  // source of truth, they are the same signal in the two models' own shapes.
+  const style = (t && typeof t.style === 'object' && t.style) || {};
   const layers = Array.isArray(layout.layers) ? layout.layers : [];
   if (layers.length) {
     const fromLayers = kindFromLayers(layers);
@@ -93,6 +98,20 @@ export function templateKind(t) {
   const regions = Array.isArray(layout.regions) ? layout.regions : [];
   const has = (r) => regions.includes(r);
   if (layout.lowerThird) return 'lower-third';
+  // A SCROLLING REGION TEMPLATE IS AN ANNOUNCEMENT, and the layer branch above
+  // has always said so — `kindFromLayers` answers `announcement` for any visible
+  // text layer with `scroll`. The region branch did not, so the two models
+  // disagreed about the same template: a region announcement derived `scripture`
+  // until `TemplateGallery.upgradeLegacyToLayers` converted it on mount, at which
+  // point `regionsToLayers` carried `scroll: !!style.scroll` onto the verse layer
+  // and it became `announcement` — and that conversion SAVES, so a look changed
+  // rows for good on a visit to the Templates tab. Reading the same fact on both
+  // sides is what makes the round trip stable, and it is the one region-model
+  // signal for this role that exists: a NON-scrolling full-screen notice is
+  // shaped exactly like a verse (a large line and a small one), which is why
+  // `Notice Board` derives `scripture` and why that is recorded as honest rather
+  // than as a miss.
+  if (style.scroll && (has('verse_text') || has('reference'))) return 'announcement';
   if (has('reference') && has('verse_text')) return 'scripture';
   if (has('verse_text') && !has('reference')) return 'song';
   return 'custom';

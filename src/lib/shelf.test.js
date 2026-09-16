@@ -171,6 +171,15 @@ describe('every shelf look renders through the one renderer', () => {
     // §75: the band runs from its own `top` to the BOTTOM edge.
     const b = boxOf(band);
     expect(b.y + b.h).toBeCloseTo(100, 4);
+    // The words the band declares as its members are what it lays out, so the
+    // band having a box is only half the claim — this is the other half.
+    // `Lower Third · Scripture` used to carry `toContain('John 3:16')` here; a
+    // lyric band has no reference by design, so what is asserted instead is that
+    // the member it DOES declare got a box inside the band, which is the same
+    // §75 guarantee against the template that is still on the shelf.
+    const words = el.querySelectorAll('.lband ~ .ltext, .ltext');
+    expect(words.length, 'the band laid out none of its members').toBeGreaterThan(0);
+    expect(el.textContent).toContain('For God so loved');
   });
 
   it('a lyric band carries the words and NO reference at all', () => {

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { templateKind, kindsPresent, KIND_META, KIND_ORDER } from './templateKind.js';
-import { STARTERS } from './layers.js';
+import { STARTERS, regionsToLayers } from './layers.js';
 
 // Shapes taken verbatim from the seeded built-ins in db/templates.rs, so these
 // pin the derivation against the templates every install actually ships with.
@@ -44,6 +44,56 @@ describe('templateKind — the legacy region model', () => {
     expect(templateKind({ layout: null })).toBe('custom');
     expect(templateKind({ layout: { regions: 'nonsense' } })).toBe('custom');
     expect(templateKind({ layout: { layers: 'nonsense' } })).toBe('custom');
+    // The scroll rule below reads `style`, which need not be an object.
+    expect(templateKind({ layout: { regions: ['verse_text'] }, style: 'nonsense' })).toBe('song');
+    expect(templateKind({ layout: { regions: ['verse_text'] }, style: null })).toBe('song');
+  });
+
+  // ── THE SCROLLING ANNOUNCEMENT ───────────────────────────────────────────
+  // The two models disagreed about one template, and the disagreement was not
+  // stable — it resolved itself, wrongly, on a visit to the Templates tab.
+  const announce = (style) => ({
+    layout: { regions: ['reference', 'verse_text'], align: 'center', lowerThird: false, refFirst: true },
+    style,
+  });
+
+  it('reads a scrolling region template as an announcement', () => {
+    expect(templateKind(announce({ scroll: true }))).toBe('announcement');
+  });
+
+  it('and agrees with the layer model after the conversion that SAVES', () => {
+    // THE BUG THIS RULE CLOSES. `TemplateGallery.upgradeLegacyToLayers` runs on
+    // mount and saves the result, and `regionsToLayers` carries
+    // `scroll: !!style.scroll` onto the verse layer — where `kindFromLayers` has
+    // always answered `announcement`. So before this rule the same look derived
+    // `scripture` in the gallery and `announcement` once converted, and the
+    // conversion made the change permanent. Watched to fail by removing the
+    // scroll line from the region branch: the first expectation reverts to
+    // `scripture` while the second stays `announcement`.
+    const t = announce({ scroll: true });
+    const converted = { ...t, layout: regionsToLayers(t) };
+    expect(templateKind(t)).toBe(templateKind(converted));
+    expect(templateKind(converted)).toBe('announcement');
+  });
+
+  it('but a band that scrolls is still a lower third', () => {
+    // The keyed announcement in the seeded Lower Third family. `lowerThird` is
+    // read first, and it has to be: the layer branch gives the same answer for
+    // the converted form, so reversing the order here would split the models
+    // again in the other direction.
+    const t = announce({ scroll: true });
+    t.layout.lowerThird = true;
+    expect(templateKind(t)).toBe('lower-third');
+  });
+
+  it('and a NON-scrolling notice is still scripture, which is honest', () => {
+    // A full-screen notice and a full-screen verse are the same shape — a large
+    // line and a small one. `Notice Board` records this as the reason
+    // `templateKind` refuses to guess, and the rule must not start guessing now
+    // that a neighbouring role is derivable. It also protects `Stage Mono`,
+    // which is exactly this shape and must stay scripture.
+    expect(templateKind(announce({}))).toBe('scripture');
+    expect(templateKind(stageMono)).toBe('scripture');
   });
 });
 
