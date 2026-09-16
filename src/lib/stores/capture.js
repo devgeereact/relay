@@ -67,6 +67,10 @@ import { markTranscript } from '../latency.js';
 // (docs/REBRAND.md §7). The console reads it through the same function the wall and
 // the stage page do, so a held countdown cannot go on ticking on one of the three.
 import { countdownRemainingMs, countdownIsPaused } from '../countdown.js';
+// The warning WINDOW, as distinct from how long is left. `layers.js` holds the
+// one number the wall, the stage page and the dock all measure against; this file
+// is its one writer, because this file is the only one that can read the row.
+import { COUNTDOWN_WARN_MS, setCountdownWarnDefault } from '../layers.js';
 // X1 · the transition override's store lives beside its register — see the block
 // further down for why it is not declared in this file.
 import { liveTransition } from '../transitions.js';
@@ -1940,6 +1944,77 @@ export async function setServiceTarget(minutes) {
   const call = await invoke();
   await call('set_setting', { key: 'service.target_minutes', value: String(n) });
   serviceTargetMinutes.set(n);
+}
+
+// ── THE COUNTDOWN WARNING WINDOW ───────────────────────────────────────────────
+//
+// How long before zero a countdown turns red. Shipped as the last minute; an
+// operator can move it in Settings → General. Persisted in the settings KV under
+// `countdown.warn_ms` and READ, which is the whole point of it: seven controls
+// were removed from that page on 2026-09-10 for saving a preference nothing
+// opened (DECISIONS §69), and a threshold nobody reads is that defect with a
+// congregation-facing colour attached.
+//
+// The reader is `layers.js::countdownWarning`, through `setCountdownWarnDefault`,
+// which is the one rule the wall, the preacher's page and the dock all ask. A
+// figure carried by one timer still beats this default — that ranking lives in
+// `countdownWarning` and is not restated here.
+const COUNTDOWN_WARN_MIN_MS = 5_000;
+const COUNTDOWN_WARN_MAX_MS = 60 * 60_000;
+
+/** The warning window in force, in ms. Mirrors what `layers.js` is using. */
+export const countdownWarnMs = writable(COUNTDOWN_WARN_MS);
+
+/** A readable window, or the shipped minute. Never zero — a window of zero is a
+ *  warning colour that never comes on, on the one surface whose job is to. */
+function clampCountdownWarn(ms) {
+  const n = Number(ms);
+  return Number.isFinite(n) && n > 0
+    ? Math.max(COUNTDOWN_WARN_MIN_MS, Math.min(COUNTDOWN_WARN_MAX_MS, Math.round(n)))
+    : COUNTDOWN_WARN_MS;
+}
+
+/** Apply a figure to the store AND to the rule, so the two cannot come apart. */
+function applyCountdownWarn(ms) {
+  const ok = clampCountdownWarn(ms);
+  setCountdownWarnDefault(ok);
+  countdownWarnMs.set(ok);
+  return ok;
+}
+
+/**
+ * Load the configured warning window. GROUP 2 — SWALLOWS: a console that could not
+ * ask falls back to the shipped minute, which is what it had before.
+ *
+ * The fallback is applied OUT HERE rather than through a fourth argument to
+ * `guardedRead`, which takes three: `loadDefaultTemplate` and `loadServiceTarget`
+ * each pass a reset closure that is silently dropped, so on a failed read their
+ * stores keep the last good value while a comment beside them says otherwise.
+ * Not fixed here — that is three other surfaces' behaviour — but not copied either.
+ */
+export async function loadCountdownWarnMs() {
+  const raw = await guardedRead(
+    'countdownWarnMs',
+    (call) => call('get_setting', { key: 'countdown.warn_ms' }),
+    null,
+  );
+  return applyCountdownWarn(parseInt(raw, 10));
+}
+
+/**
+ * Set the warning window (ms). Persisted in the KV and applied at once, so the
+ * dock and the programme pane turn red at the new figure without a relaunch.
+ *
+ * THE ROW IS WRITTEN FIRST, and only then is the figure applied. The other order
+ * moves what the wall does while leaving the row at the old value, so a write that
+ * failed would show an operator a setting that is in force this session and gone
+ * at the next launch — a control saying one thing and the machine another.
+ */
+export async function setCountdownWarnMs(ms) {
+  const n = clampCountdownWarn(ms);
+  const call = await invoke();
+  await call('set_setting', { key: 'countdown.warn_ms', value: String(n) });
+  return applyCountdownWarn(n);
 }
 
 

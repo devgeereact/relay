@@ -47,7 +47,7 @@
     Math.round(
       (Object.keys(CATALOGUES[code] ?? {}).filter((k) => !k.startsWith('_')).length / TOTAL) * 100,
     );
-  import { capture, meter, templates, initAudio, startCapture, stopCapture, setThresholds, setSttLanguage, setInputDevice, listTranslations, getActiveTranslation, setActiveTranslation, localIp, loadTemplates, contentTemplates, loadContentTemplates, setContentTemplate, getCrashReporting, setCrashReporting, serviceTargetMinutes, loadServiceTarget, setServiceTarget, latencyReport, latencyReset, latencySetEnabled, serviceLock, loadServiceLock, setServiceLock, rooms, loadRooms, saveRoom, useRoom, deleteRoom,
+  import { capture, meter, templates, initAudio, startCapture, stopCapture, setThresholds, setSttLanguage, setInputDevice, listTranslations, getActiveTranslation, setActiveTranslation, localIp, loadTemplates, contentTemplates, loadContentTemplates, setContentTemplate, getCrashReporting, setCrashReporting, serviceTargetMinutes, loadServiceTarget, setServiceTarget, countdownWarnMs, loadCountdownWarnMs, setCountdownWarnMs, latencyReport, latencyReset, latencySetEnabled, serviceLock, loadServiceLock, setServiceLock, rooms, loadRooms, saveRoom, useRoom, deleteRoom,
     listOutputChannels, setChannelDisplay, activeVoiceProfile, languageReport, exportDiagnostics, readErrors,
     demoStatus, loadDemoContent, removeDemoContent } from '../stores/capture.js';
   import Loading from '../ui/Loading.svelte';
@@ -853,6 +853,10 @@
   // DECISIONS §69, and CLAUDE.md rule 15 in its quietest form.
 
   onMount(loadServiceTarget);
+  // Also loaded at the shell (App.svelte), because the dock reads the same rule
+  // on every tab. Re-read here so this page shows what is in the row rather than
+  // what this session happens to be holding.
+  onMount(loadCountdownWarnMs);
   onMount(async () => {
     // Session uptime — a real, honest number (this run of the app).
     bootAt = performance.now();
@@ -1038,6 +1042,35 @@
               on:change={(e) => setServiceTarget(e.target.value)}
               aria-label="Service length in minutes" />
             <span class="s-lenunit r-mono">min</span>
+          </div>
+        </div>
+
+        <!-- COUNTDOWN WARNING. How long before zero a countdown turns red, on
+             the wall, on the preacher's page and in the dock. One rule
+             (`layers.js::countdownWarning`), one number, and this is where it is
+             set — the comment above that rule used to say the threshold was
+             deliberately not a setting because the control belonged in a Settings
+             pass. This is it.
+
+             SECONDS in the field, milliseconds in the row: an operator says
+             "ninety seconds", nobody says "ninety thousand". The floor is five
+             seconds, because a window shorter than the eye takes to find the
+             screen is a colour that is never seen.
+
+             It is READ. `App.svelte` loads it at launch and `setCountdownWarnMs`
+             applies it to the rule, so this is not another of the seven controls
+             removed on 2026-09-10 for saving a preference nothing opened. -->
+        <div class="rw-nv">
+          <div class="s-nvtext">
+            <div class="rw-nvk">Countdown warning</div>
+            <p class="rw-nvnote">How long before zero a countdown turns red, on every screen showing it. A countdown shorter than ten times this warns for its last tenth instead, so a short one is not red for half its life.</p>
+          </div>
+          <div class="rw-nvctl s-lenctl">
+            <input class="r-input s-leninput" type="number" min="5" max="600" step="5"
+              value={Math.round($countdownWarnMs / 1000)}
+              on:change={(e) => setCountdownWarnMs(Number(e.target.value) * 1000)}
+              aria-label="Countdown warning in seconds" />
+            <span class="s-lenunit r-mono">sec</span>
           </div>
         </div>
 
