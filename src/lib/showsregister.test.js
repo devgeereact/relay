@@ -82,14 +82,21 @@ describe('the two content-kind registers are told apart', () => {
     host = null;
   });
 
-  it('keeps `Used for` as a chip grid, and does not render the filter the same way', async () => {
+  it('no longer renders `Used for` at all — the editor stopped writing the binding', async () => {
+    // The distinction this file was written to protect is now kept by absence:
+    // only ONE of the two registers is in this editor, so a first click on it
+    // cannot look like it did something to the other. The global binding is set
+    // from `Channels.svelte`'s matrix and from the gallery inspector, both
+    // through `setContentTemplate` — still the one writer (DECISIONS §25, §70).
     mount();
     await settle();
-    // `Used for` still wears the chip shape.
-    expect(host.querySelector('.te-showlbl').textContent.trim()).toBe('Used for');
-    expect(host.querySelectorAll('.te-showgrid').length, 'the Used-for chip grid').toBe(1);
-    // The filter is not a second copy of it: no `.te-showgrid`/`.te-showchip`
-    // rendered for the per-template register anywhere in the mounted tree.
+    expect(host.textContent).not.toMatch(/Used for/);
+    // No chip grid at all in the Template section: the only `.te-showgrid` left
+    // in this component belongs to "Words in this band", which needs a band
+    // selected and is never reached here.
+    expect(host.querySelectorAll('.te-showgrid').length).toBe(0);
+    expect(host.querySelectorAll('.te-showchip').length).toBe(0);
+    // And the filter is still a switch list, not a chip row.
     expect(host.querySelectorAll('.te-showchip[role="switch"]').length).toBe(0);
   });
 

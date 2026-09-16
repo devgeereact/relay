@@ -19,7 +19,6 @@
     alignLayer, spaceEvenly, isMovable, movableLayers,
   } from '../../layerops.js';
   import { BUILTINS } from '../../templates.js';
-  import { contentTemplates, setContentTemplate, loadContentTemplates } from '../../stores/capture.js';
   import TemplateRender from '../../TemplateRender.svelte';
   import { reviewTemplate, PREVIEW_DISTANCES_M, previewScale } from '../../legibility.js';
   import TemplatePreviewOverlay from '../../TemplatePreviewOverlay.svelte';
@@ -125,7 +124,6 @@
   });
 
   onMount(async () => {
-    loadContentTemplates();
     if (!$templates.length) await loadTemplates();
     if (draft) loadDraft(draft);
     else load(templateId);
@@ -616,20 +614,22 @@
     delete edit.layout.noMedia; // superseded by the explicit list
     edit = edit;
   }
-  // USED FOR. Which kinds of content wear this template on any screen set to
-  // follow the content look (DECISIONS §70). Toggling writes through
-  // `setContentTemplate`, which is the ONE writer of that map — three surfaces
-  // used to each hold their own copy and overwrite one another.
-  let lookErr = '';
-  async function toggleUsedFor(kind) {
-    const mine = $contentTemplates[kind] === edit?.id;
-    lookErr = '';
-    try {
-      await setContentTemplate(kind, mine ? null : edit.id);
-    } catch (e) {
-      lookErr = humanError(e);
-    }
-  }
+  // THE CONTENT LOOK IS NOT SET FROM HERE. `toggleUsedFor` and its "Used for"
+  // chip grid used to sit directly above `Content this template renders`, and
+  // the two were visually identical five-chip rows over the same five
+  // `CONTENT_KINDS` labels while being entirely different facts — one a global
+  // binding, one a per-template filter. That is the whole reason the first click
+  // on one looked like it had activated all five on the other. Wave 2 gave the
+  // filter a different control shape; this wave removes the register it was
+  // being confused with, because nothing in this editor needs to write it.
+  //
+  // The feature is not deleted, only its second writer. `Channels.svelte` keeps
+  // the one authoritative content-look matrix, the gallery's inspector keeps the
+  // per-template control on the surface an operator browses from, and both go
+  // through `setContentTemplate` — still the ONE writer (DECISIONS §25, §70).
+  // Nothing in the engine moved: `tpl_{kind}`, `set_content_template`,
+  // `ContentTemplates`, `cue_or_content_tpl` and `resolveOutputTemplate` are
+  // untouched, and §29's resolution order is unchanged.
   function set(k, v) { if (sel) { sel[k] = v; edit = edit; } }
   /** A geometry number, clamped to the canvas so an object cannot be typed off it. */
   function geom(k, v) {
@@ -1839,43 +1839,21 @@
                all of them belong to. -->
           <h3 class="te-sec te-templatesec">Template</h3>
           <div class="te-frow"><label class="te-fk" for="te-name">Name</label><input id="te-name" class="r-input te-fv" bind:value={edit.name} /></div>
-          <!-- ── TWO REGISTERS OF FIVE CHIPS, AND THEY ARE NOT THE SAME FACT ──
-               Found by agent S2 while auditing the gallery, and reported here
-               because both live in this file. They read as one fact printed
-               twice because they were two identical neutral chip rows over the
-               same five `CONTENT_KINDS` labels — and because the paragraph
-               explaining the SECOND one was attached to the FIRST, so the next
-               reader inherited the same confusion the render produced. The
-               comment is now on the register it describes.
+          <!-- "USED FOR" WAS HERE, AND IS NOW IN TWO PLACES INSTEAD OF THREE.
+               It was a chip grid writing the GLOBAL content look
+               (`setContentTemplate`, DECISIONS §70), rendered immediately above
+               the per-template filter below — two identical five-chip rows over
+               the same five `CONTENT_KINDS` labels, stating facts that have
+               nothing to do with each other. An operator's first click on the
+               filter made four chips go dark at once, which is exactly what was
+               reported as "clicking a content look activates all"; nothing was
+               wrong with either handler, the render was telling them something
+               false about what they had just done.
 
-                 · USED FOR is a GLOBAL BINDING, written by `setContentTemplate`
-                   (DECISIONS §70): when scripture fires, every screen set to
-                   *Follow the content look* wears THIS template. It says nothing
-                   about how this template renders.
-                 · The one below is a PER-TEMPLATE FILTER on `layout.shows`, read
-                   at runtime by `Output.svelte` and `layers.js::templateShows`.
-
-               The label below was **"Shows on this screen"**, and the word
-               *screen* was the damage: the thing in hand is a TEMPLATE, and
-               several screens can wear it. `Used for` keeps its name — it is a
-               term of art carried by `docs/REBRAND.md` §3.3, DECISIONS §70, the
-               gallery card and `inspectorobjects.test.js`, and renaming it here
-               alone would make two surfaces call one binding two things. -->
-          <span class="r-lbl te-showlbl">Used for</span>
-          <div class="te-showgrid">
-            {#each CONTENT_KINDS as k}
-              <button
-                class="te-showchip"
-                class:on={$contentTemplates[k.key] === edit.id}
-                on:click={() => toggleUsedFor(k.key)}
-              >
-                <span class="te-showtick" aria-hidden="true">{$contentTemplates[k.key] === edit.id ? '✓' : ''}</span>{k.label}
-              </button>
-            {/each}
-          </div>
-          <p class="te-fnote">A kind ticked here wears this template on every screen set to <b>Follow the content look</b>. A screen with a look of its own keeps it.</p>
-          {#if lookErr}<p class="te-fwarn" role="alert">{lookErr}</p>{/if}
-
+               `Channels.svelte` keeps the authoritative matrix and the gallery
+               inspector keeps the per-template control, so the feature is
+               intact and the editor simply no longer writes it. Nothing in the
+               engine changed. -->
           <!-- WHAT A SCREEN WEARING THIS TEMPLATE WILL RENDER. An online wall
                shows everything; a stage / confidence monitor might show only
                scripture, songs and the timer — when a picture or an announcement
@@ -2354,8 +2332,10 @@
      as a row of actions if it wore the button shape. */
   .te-showchip{ display:inline-flex; align-items:center; gap:5px; padding:6px 10px; border-radius:var(--v-r-md); background:var(--v-surf2); border:1px solid var(--v-line2); color:var(--v-faint); font-size:var(--v-fs-cap); cursor:pointer; }
   .te-showchip:hover{ color:var(--v-txt); border-color:var(--v-accent-line); }
-  .te-showchip.on{ background:var(--v-accent-soft); border-color:var(--v-accent-line); color:var(--v-txt); }
-  .te-showtick{ width:9px; text-align:center; color:var(--v-emerald); font-weight:700; }
+  /* `.te-showchip.on` and `.te-showtick` went with the "Used for" grid. What is
+     left of `.te-showlbl` / `.te-showgrid` / `.te-showchip` belongs to "Words in
+     this band", which reuses the shape for a flex-wrap chip row and has never
+     had a ticked state. */
   /* `Content this template renders` — a PER-TEMPLATE filter, and deliberately
      NOT a second chip grid (task 8). It used to be a second `.te-showgrid` over
      the same five labels, and because an absent `layout.shows` reads as "shows
