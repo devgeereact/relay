@@ -61,6 +61,26 @@ describe('templateKind — the legacy region model', () => {
     expect(templateKind(announce({ scroll: true }))).toBe('announcement');
   });
 
+  it('but NOT a scrolling template with no verse region to scroll', () => {
+    // THE NARROW HALF, held so the rule cannot widen back. `regionsToLayers`
+    // carries `scroll` onto the verse layer and sets `scroll: false` on the
+    // reference layer, so a reference-only template converts to a stack with no
+    // scrolling layer — `custom`. A region rule that accepted `reference` would
+    // answer `announcement` before the conversion and `custom` after it, which is
+    // the drift this whole rule exists to remove, in the other direction. Both
+    // halves are asserted across the conversion rather than in isolation, because
+    // agreement is the actual contract.
+    const refOnly = {
+      layout: { regions: ['reference'], align: 'center', lowerThird: false, refFirst: true },
+      style: { scroll: true },
+    };
+    const converted = { ...refOnly, layout: regionsToLayers(refOnly) };
+    expect(templateKind(refOnly)).toBe('custom');
+    expect(templateKind(refOnly)).toBe(templateKind(converted));
+    // …and the reason: nothing in the converted stack scrolls.
+    expect((converted.layout.layers ?? []).some((L) => L.scroll)).toBe(false);
+  });
+
   it('and agrees with the layer model after the conversion that SAVES', () => {
     // THE BUG THIS RULE CLOSES. `TemplateGallery.upgradeLegacyToLayers` runs on
     // mount and saves the result, and `regionsToLayers` carries

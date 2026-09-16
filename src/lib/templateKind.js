@@ -111,7 +111,16 @@ export function templateKind(t) {
   // shaped exactly like a verse (a large line and a small one), which is why
   // `Notice Board` derives `scripture` and why that is recorded as honest rather
   // than as a miss.
-  if (style.scroll && (has('verse_text') || has('reference'))) return 'announcement';
+  // `verse_text` ONLY, mirroring the conversion exactly. `regionsToLayers`
+  // carries `scroll` onto the VERSE layer and sets `scroll: false` on the
+  // reference layer, so a template with a reference and no verse text converts to
+  // a stack with no scrolling layer at all — `custom`. Accepting `reference` here
+  // would answer `announcement` before the conversion and `custom` after it,
+  // which is the same permanent drift this rule was added to remove, pointing the
+  // other way. Unreachable today (no seeded template carries `style.scroll`
+  // without a verse region, and the editor's scroll toggle writes a per-layer
+  // property), which is why it is one word rather than an incident.
+  if (style.scroll && has('verse_text')) return 'announcement';
   if (has('reference') && has('verse_text')) return 'scripture';
   if (has('verse_text') && !has('reference')) return 'song';
   return 'custom';

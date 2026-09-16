@@ -271,7 +271,7 @@ describe('review answers for a layered template', () => {
         layers: [
           { id: 'b', type: 'band', name: 'Band', x: 5, y: 62, w: 90, h: 38, top: 62, side: 5, pad: 3, lift: 4.4, grow: 16, members: ['v', 'r'], fill: '#0a0906', opacity: 0.9, radius: 0 },
           { id: 'v', type: 'text', name: 'Verse', bind: 'verse', x: 8, y: 70, w: 84, h: 14, font: 'var(--f-serif)', color: '#fff7e8', size: 3, align: 'left', valign: 'middle', lineHeight: 1.2, letterSpacing: 0, shadow: 0, italic: false },
-          { id: 'r', type: 'text', name: 'Reference', bind: 'reference', x: 8, y: 85, w: 84, h: 6, font: 'var(--f-serif)', color: '#ffa31a', size: 1.7, align: 'right', valign: 'middle', lineHeight: 1.1, letterSpacing: 0.08, shadow: 0, italic: false },
+          { id: 'r', type: 'text', name: 'Reference', bind: 'reference', x: 8, y: 85, w: 84, h: 6, font: 'var(--f-serif)', color: '#e6dccb', size: 1.7, align: 'right', valign: 'middle', lineHeight: 1.1, letterSpacing: 0.08, shadow: 0, italic: false },
         ],
       },
       style: {},

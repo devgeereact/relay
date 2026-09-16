@@ -171,15 +171,24 @@ describe('every shelf look renders through the one renderer', () => {
     // §75: the band runs from its own `top` to the BOTTOM edge.
     const b = boxOf(band);
     expect(b.y + b.h).toBeCloseTo(100, 4);
-    // The words the band declares as its members are what it lays out, so the
-    // band having a box is only half the claim — this is the other half.
-    // `Lower Third · Scripture` used to carry `toContain('John 3:16')` here; a
-    // lyric band has no reference by design, so what is asserted instead is that
-    // the member it DOES declare got a box inside the band, which is the same
-    // §75 guarantee against the template that is still on the shelf.
-    const words = el.querySelectorAll('.lband ~ .ltext, .ltext');
-    expect(words.length, 'the band laid out none of its members').toBeGreaterThan(0);
-    expect(el.textContent).toContain('For God so loved');
+    // AND THE BAND COMPUTED ITS MEMBER'S BOX, which is the half of §75 that the
+    // band's own geometry does not show. A member is NOT a DOM descendant of the
+    // band — both are absolutely-positioned siblings emitted by the same `{#each}`
+    // — so no selector can express containment, and one that looks as though it
+    // does (`.lband ~ .ltext, .ltext`) reduces to "every `.ltext` on the page".
+    // What IS answerable is that the rendered box is the band's arithmetic rather
+    // than the layer's own authoring: `drawBoxes` overrides a member's box, so
+    // `lyb-words` is authored at y 72 and painted at 70.5 — the band's `lift` of
+    // 5 applied. Asserted as a difference plus containment in the band's span, so
+    // it holds the relationship rather than memorising two numbers.
+    const words = el.querySelectorAll('.ltext');
+    expect(words.length, 'the band laid out none of its members').toBe(1);
+    const m = boxOf(words[0]);
+    const authored = tpl.layout.layers.find((L) => L.id === 'lyb-words');
+    expect(m.y, 'the member kept its authored top, so the band computed nothing')
+      .not.toBeCloseTo(authored.y, 4);
+    expect(m.y).toBeGreaterThanOrEqual(b.y);
+    expect(m.y + m.h).toBeLessThanOrEqual(b.y + b.h);
   });
 
   it('a lyric band carries the words and NO reference at all', () => {

@@ -531,16 +531,30 @@ fn theme_templates() -> &'static [(&'static str, &'static str, &'static str)] {
         // coloured reference on black is the first thing to disappear for
         // somebody with low vision and it is the least important text on screen.
         //
-        // Its Announcement scrolls like the other four, and this reverses a call
-        // made earlier in this same task. The reasoning then was that a crawl is a
-        // moving target with a reading speed somebody else chose. Two facts undid
-        // it: the ticker's speed is computed from text length identically for
-        // every template, so a static High Visibility notice is not a slower read
-        // than anybody else's crawl, it is just a different shape; and in the
-        // region model a non-scrolling announcement IS a scripture template — the
-        // same large line over a small one — so it would be the one family member
-        // that does not land in its own row in the gallery. Contrast is untouched
-        // either way, which is what this family is actually for.
+        // ITS ANNOUNCEMENT IS THE ONE MEMBER THAT DOES NOT SCROLL, and that is
+        // the deviation this family exists to make. `scroll` is absent, so the
+        // notice renders through the centred `.content` block: it WRAPS, and it
+        // sits inside the fit loop that reports when it has had to shrink
+        // (rule 37). The ticker branch is tested before that block and carries no
+        // fit reporting at all.
+        //
+        // The deciding fact is what the crawl does under `prefers-reduced-motion`,
+        // which is the setting a low-vision or vestibular user's machine is most
+        // likely to be carrying: `.ticker-run` gets `animation: none` and
+        // `.ticker-track` gets `text-overflow: ellipsis` over `white-space: nowrap;
+        // overflow: hidden`. The crawl stops, the notice becomes one line, and
+        // anything longer than the track is CUT OFF — silently, on the one render
+        // path this family is most likely to take. A static notice that wraps
+        // cannot do that.
+        //
+        // THE COST, STATED: with no `scroll` this member is shaped exactly like a
+        // full-screen verse — a large line over a small one — so `templateKind`
+        // derives it as `scripture` and it shares the gallery's Scripture row
+        // rather than sitting with the other four Announcements. That is the right
+        // way round. The derivation is a heuristic about shape; what a
+        // congregation can read is not, and a heuristic is the thing that bends.
+        // `Notice Board` already records the same shape as honest rather than a
+        // miss.
         (
             "High Visibility · Scripture",
             SCRIPTURE,
@@ -559,7 +573,7 @@ fn theme_templates() -> &'static [(&'static str, &'static str, &'static str)] {
         (
             "High Visibility · Announcement",
             ANNOUNCE,
-            r##"{"font":"var(--f-display)","background":"#000000","accent":"#ffffff","verseColor":"#ffffff","refColor":"#ffffff","verseSize":"4","refSize":"3.2","verseLineHeight":"1.4","refGap":"1.6","verseShadow":"0","refShadow":"0","transitionMs":"0","italicRef":false,"refTransform":"uppercase","refLetterSpacing":0.06,"scroll":true}"##,
+            r##"{"font":"var(--f-display)","background":"#000000","accent":"#ffffff","verseColor":"#ffffff","refColor":"#ffffff","verseSize":"4","refSize":"3.2","verseLineHeight":"1.4","refGap":"1.6","verseShadow":"0","refShadow":"0","transitionMs":"0","italicRef":false,"refTransform":"uppercase","refLetterSpacing":0.06}"##,
         ),
         (
             "High Visibility · Timer",
