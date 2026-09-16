@@ -50,10 +50,18 @@ const TEMPLATE = {
 const settle = () => new Promise((r) => setTimeout(r, 0));
 
 let host;
+// Same reason `layerlist.test.js` needs this: `host.remove()` alone detaches
+// the DOM node without running the component's `onDestroy`, so the 400ms
+// `liveTimer` `scheduleLive()` arms on every `edit` update (mount, and every
+// `toggleShows` click below) is never cleared and can fire `applyLive()` into
+// a torn-down jsdom later in the same worker. Track the instance and destroy
+// it for real.
+let cmp;
 function mount() {
   host = document.createElement('div');
   document.body.appendChild(host);
-  return new TemplateEditor({ target: host, props: { templateId: 21 } });
+  cmp = new TemplateEditor({ target: host, props: { templateId: 21 } });
+  return cmp;
 }
 
 describe('the two content-kind registers are told apart', () => {
@@ -68,6 +76,8 @@ describe('the two content-kind registers are told apart', () => {
   });
 
   afterEach(() => {
+    cmp?.$destroy();
+    cmp = null;
     host?.remove();
     host = null;
   });
