@@ -44,7 +44,8 @@ use channels::seed_channels;
 use serde_json::Value;
 use templates::{
     ensure_lower_third_band_is_not_a_law_colour, ensure_lyrics_template, ensure_preset_templates,
-    ensure_themes_are_inlined, reset_builtin_templates, seed_templates,
+    ensure_retired_presets_are_gone, ensure_themes_are_inlined, reset_builtin_templates,
+    seed_templates,
 };
 #[cfg(test)]
 use verses::clean_verse;
@@ -353,6 +354,15 @@ fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
     ensure_voice_profiles(conn)?; // per-preacher accent + gate calibration
     ensure_template_active(conn)?; // console-active templates (max 4)
     ensure_lyrics_template(conn)?; // the song template — see templates.rs
+                                   // RETIRE BEFORE SEEDING, not after. The seed became five families this wave and
+                                   // the rows they replaced are removed from installs that already have them. But
+                                   // seeds insert BY NAME and only when absent, and one retired shelf row shares
+                                   // the name `Lower Third · Scripture` with a new family member. Seeding first
+                                   // would see that name present, skip the family member, and this would then
+                                   // delete the old row: a family one member short until the next boot. Their bytes
+                                   // differ, so a name-plus-bytes match tells them apart either way; this is about
+                                   // ordering, not about matching. See templates.rs for the three conditions.
+    ensure_retired_presets_are_gone(conn)?;
     ensure_preset_templates(conn)?; // ready-to-use preset designs (additive, by name)
                                     // …and correct the one seeded value that additive-by-name cannot reach: see
                                     // the function's own note. The band only became visible this wave, and on an

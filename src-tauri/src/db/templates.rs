@@ -983,6 +983,156 @@ pub(super) fn ensure_preset_templates(conn: &Connection) -> rusqlite::Result<()>
     Ok(())
 }
 
+/// THE ROWS THIS WAVE STOPPED SHIPPING, as the bytes they were inserted with.
+///
+/// A frozen record on purpose, like `legacy_themes.json` above it: the migration
+/// below decides whether a row is a leftover or somebody's work by comparing it
+/// with what the seed actually wrote, so it must not read a definition that
+/// keeps moving. The seed lists it came from are empty now, which is exactly why
+/// it exists: emptying a list reaches a fresh install and no existing one.
+const RETIRED_PRESETS_JSON: &str = include_str!("../../data/retired_presets.json");
+
+/// The frozen triples, or an EMPTY list if the record cannot be read.
+///
+/// `layout` and `style` are RAW STRINGS, not parsed JSON, and that is
+/// load-bearing. The match below is on BYTES, and `serde_json`'s map is a
+/// BTreeMap: parsing and re-serialising sorts the keys, producing a string that
+/// equals nothing in any database, so the migration would silently retire
+/// nothing. The same trap the `starts_with` frame matcher fell into (rule 43):
+/// a check that looks exhaustive and matches nothing.
+///
+/// An unreadable record yields an empty list and the migration therefore retires
+/// nothing at all. That is the right way for this one to fail: a church keeps a
+/// few templates it does not want, rather than losing ones it does.
+fn retired_presets() -> Vec<(String, String, String)> {
+    #[derive(Deserialize)]
+    struct Retired {
+        templates: Vec<RetiredEntry>,
+    }
+    #[derive(Deserialize)]
+    struct RetiredEntry {
+        name: String,
+        layout: String,
+        style: String,
+    }
+    match serde_json::from_str::<Retired>(RETIRED_PRESETS_JSON) {
+        Ok(r) => r
+            .templates
+            .into_iter()
+            .map(|e| (e.name, e.layout, e.style))
+            .collect(),
+        Err(e) => {
+            eprintln!("retired_presets.json could not be read ({e}); retiring nothing");
+            Vec::new()
+        }
+    }
+}
+
+/// Whether this table exists AND still carries a `template_id` a row could point
+/// through. `pragma_table_info` returns no rows at all for a table that is not
+/// there, so one question answers both.
+///
+/// It has to be asked. This migration runs early in `ensure_tables`, and it has
+/// to: the seed that replaces these rows runs a line later, and a name it finds
+/// present is a name it will not insert. `ensure_service_plans` creates
+/// `plan_items` further down that same ladder. On a database old enough
+/// to predate the Planner the guard would be `no such table: plan_items`, which
+/// propagates out of `migrate` and panics the app at startup before the window
+/// is shown: rule 25's failure, reached by a different road.
+///
+/// Skipping an absent door loses no guarantee. A table that does not exist holds
+/// no rows, and the one that is created later in this same boot is created
+/// empty, so nothing can be pointing at a template through it.
+fn points_at_a_template(conn: &Connection, table: &str) -> rusqlite::Result<bool> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info(?1) WHERE name = 'template_id'",
+        [table],
+        |r| r.get(0),
+    )?;
+    Ok(n > 0)
+}
+
+/// REMOVE A PRESET NOBODY CHOSE, and nothing else.
+///
+/// Seeds insert by name and only when absent, so an install that predates the
+/// five families keeps every one of its old rows AND receives the twenty-five on
+/// top: a gallery an operator scrolls on a Sunday morning, at twice the length,
+/// with the leftovers interleaved among the rows that replaced them.
+///
+/// A row goes only when all three hold:
+/// 1. its name is one of the frozen twenty-one;
+/// 2. its `region_config_json` and `style_json` still equal the bytes the seed
+///    wrote, so a single edited colour makes it the operator's and it stays;
+/// 3. nothing points at it, through any of the FOUR doors.
+///
+/// Those doors are a channel, a plan cue, a content look and the configured
+/// default. Three of four is the bug this repository has had four times, and two
+/// of the four are `app_settings` rows rather than foreign keys, so no
+/// `NOT IN (SELECT ...)` can reach them and they are asked separately below.
+///
+/// Rule 25: the whole loop is ONE transaction, and `unchecked_transaction` rolls
+/// back when it is dropped, so every error path out of here, `?` included,
+/// closes it rather than leaving it open for the `PRAGMA foreign_keys = ON` that
+/// follows to no-op inside. Atomicity is not tidiness here either: a run that
+/// died after three of twenty-one deletes would commit a half-retired gallery
+/// AND still propagate the error that stopped the boot, leaving an operator with
+/// an install nobody can describe. Idempotent: a second run finds no row whose
+/// name and bytes both still match, and a fresh install never had these names.
+pub(super) fn ensure_retired_presets_are_gone(conn: &Connection) -> rusqlite::Result<()> {
+    let retired = retired_presets();
+    if retired.is_empty() {
+        return Ok(()); // an unreadable record, or nothing left to retire
+    }
+
+    // THE TWO DOORS THAT ARE SETTINGS ROWS, NOT FOREIGN KEYS. Read with `?`, not
+    // `.ok()`: a failed read is not the same fact as "no look is bound", and
+    // treating it as one deletes a template a screen is wearing. Stopping here
+    // retires nothing, which is the safe direction to fail in.
+    let mut looks: Vec<i64> = Vec::new();
+    for kind in ["scripture", "song", "media", "announce", "countdown"] {
+        if let Some(id) = crate::db::settings::content_template_id(conn, kind)? {
+            looks.push(id);
+        }
+    }
+    // `set_default_template` writes an EMPTY STRING to clear the default, so a
+    // value that does not parse is "no default", not an error.
+    let default_id = get_setting(conn, "default_template_id")?.and_then(|s| s.parse::<i64>().ok());
+
+    // THE TWO THAT ARE FOREIGN KEYS, folded into the DELETE so the check and the
+    // removal are one statement.
+    let mut guards = String::new();
+    for table in ["output_channels", "plan_items"] {
+        if points_at_a_template(conn, table)? {
+            guards.push_str(&format!(
+                " AND id NOT IN (SELECT template_id FROM {table} WHERE template_id IS NOT NULL)"
+            ));
+        }
+    }
+    let delete_sql = format!("DELETE FROM templates WHERE id = ?1{guards}");
+
+    let tx = conn.unchecked_transaction()?;
+    for (name, layout, style) in retired {
+        // Every row with this name AND these exact bytes. Plural because a name
+        // is not unique in this table: one that matched with different bytes is
+        // a template somebody edited and is not selected at all.
+        let ids: Vec<i64> = {
+            let mut stmt = tx.prepare(
+                "SELECT id FROM templates
+                  WHERE name = ?1 AND region_config_json = ?2 AND style_json = ?3",
+            )?;
+            let it = stmt.query_map((&name, &layout, &style), |r| r.get(0))?;
+            it.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        for id in ids {
+            if looks.contains(&id) || default_id == Some(id) {
+                continue;
+            }
+            tx.execute(&delete_sql, [id])?;
+        }
+    }
+    tx.commit()
+}
+
 /// Seed the built-in templates into a fresh DB (ids 1..4).
 pub(super) fn seed_templates(conn: &Connection) -> rusqlite::Result<()> {
     let mut stmt = conn.prepare(
@@ -2089,6 +2239,286 @@ mod theme_inlining_tests {
             get_setting(&conn, "themes.custom").unwrap().as_deref(),
             Some(junk),
             "an unreadable blob was destroyed"
+        );
+    }
+}
+
+#[cfg(test)]
+mod retired_preset_tests {
+    use super::*;
+    use crate::db::settings::{set_content_template, set_setting};
+
+    /// Insert a retired preset exactly as an older version seeded it, read from
+    /// the frozen record so the test cannot drift from what the migration matches.
+    fn insert_retired_fixture(conn: &Connection, name: &str) -> i64 {
+        let (n, l, s) = retired_presets()
+            .into_iter()
+            .find(|(n, _, _)| n == name)
+            .unwrap_or_else(|| panic!("{name} is not in retired_presets.json"));
+        conn.execute(
+            "INSERT INTO templates (name, region_config_json, style_json) VALUES (?1, ?2, ?3)",
+            (n, l, s),
+        )
+        .unwrap();
+        conn.last_insert_rowid()
+    }
+
+    fn count_named(conn: &Connection, name: &str) -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM templates WHERE name = ?1",
+            [name],
+            |r| r.get(0),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn the_frozen_record_parses_and_names_nothing_the_seed_still_ships() {
+        // TWO ways this migration becomes silently wrong, neither of which any
+        // other test in here can see.
+        //
+        // A record that stops parsing makes the whole thing a permanent no-op:
+        // it retires nothing, reports nothing to anybody, and every install keeps
+        // a doubled gallery. `retired_presets` swallows that deliberately (losing
+        // a template is worse than keeping one), so the parse has to be pinned
+        // where a broken build fails, the way
+        // `the_shipped_snapshot_parses_so_that_branch_is_never_taken_in_a_real_build`
+        // pins the themes snapshot.
+        let frozen = retired_presets();
+        assert_eq!(
+            frozen.len(),
+            21,
+            "the frozen record did not parse, or it stopped holding the twenty-one rows this wave retired"
+        );
+
+        // And the opposite mistake, which is worse: a frozen TRIPLE that the seed
+        // still ships. The row would be deleted here and re-inserted a line later
+        // in `ensure_tables` under a NEW id, on every single boot, for the life of
+        // the install. A frozen NAME the seed still ships is fine and deliberate:
+        // `Lower Third · Scripture` is exactly that, the shelf row's name taken
+        // over by a family member whose bytes differ, so this compares the whole
+        // triple, not the name.
+        for (name, layout, style) in &frozen {
+            let clash = all_presets()
+                .any(|(n, l, s)| n == name.as_str() && l == layout.as_str() && s == style.as_str());
+            assert!(
+                !clash,
+                "{name} is frozen as retired AND still seeded, byte for byte: it would be deleted and re-created under a new id on every boot"
+            );
+        }
+    }
+
+    #[test]
+    fn an_untouched_unreferenced_preset_is_retired() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate(&conn, true).unwrap();
+        // A row exactly as an older version seeded it.
+        insert_retired_fixture(&conn, "Midnight Blue");
+        ensure_retired_presets_are_gone(&conn).unwrap();
+        assert_eq!(count_named(&conn, "Midnight Blue"), 0);
+    }
+
+    #[test]
+    fn a_preset_the_operator_edited_is_never_retired() {
+        // No `updated_at` column exists, so "edited" is decided by comparing the
+        // bytes with what the seed shipped. A single changed colour makes the row
+        // somebody's work, and somebody's work is not a leftover.
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate(&conn, true).unwrap();
+        insert_retired_fixture(&conn, "Midnight Blue");
+        let touched = conn
+            .execute(
+                "UPDATE templates SET style_json = replace(style_json, '#f0b74a', '#00ff99')
+                  WHERE name = 'Midnight Blue' AND style_json LIKE '%#f0b74a%'",
+                [],
+            )
+            .unwrap();
+        assert_eq!(
+            touched, 1,
+            "the fixture no longer carries the colour this edit changes"
+        );
+        ensure_retired_presets_are_gone(&conn).unwrap();
+        assert_eq!(
+            count_named(&conn, "Midnight Blue"),
+            1,
+            "an edited preset is the operator's, not a leftover"
+        );
+    }
+
+    #[test]
+    fn a_referenced_preset_is_never_retired() {
+        // Four doors point at a template: a channel, a plan cue, a content look and
+        // the configured default. Checking three of them is this repository's
+        // recurring bug, a guarantee kept on one surface and skipped on its twin,
+        // so each is asserted separately rather than in one case that could pass on
+        // the first door alone.
+        for door in ["channel", "cue", "look", "default"] {
+            let conn = Connection::open_in_memory().unwrap();
+            crate::db::migrate(&conn, true).unwrap();
+            let id = insert_retired_fixture(&conn, "Midnight Blue");
+            match door {
+                "channel" => {
+                    conn.execute(
+                        "INSERT INTO output_channels (name, render_target, template_id)
+                         VALUES ('Main','native_window',?1)",
+                        [id],
+                    )
+                    .unwrap();
+                }
+                "cue" => {
+                    conn.execute("INSERT INTO service_plans (title) VALUES ('Sunday')", [])
+                        .unwrap();
+                    let plan = conn.last_insert_rowid();
+                    conn.execute(
+                        "INSERT INTO plan_items (plan_id, position, cue_type, label, template_id)
+                         VALUES (?1,0,'scripture','Reading',?2)",
+                        [plan, id],
+                    )
+                    .unwrap();
+                }
+                "look" => set_content_template(&conn, "scripture", Some(id)).unwrap(),
+                _ => set_setting(&conn, "default_template_id", &id.to_string()).unwrap(),
+            }
+            ensure_retired_presets_are_gone(&conn).unwrap();
+            let n: i64 = conn
+                .query_row("SELECT COUNT(*) FROM templates WHERE id = ?1", [id], |r| {
+                    r.get(0)
+                })
+                .unwrap();
+            assert_eq!(n, 1, "a preset reachable through the {door} was retired");
+        }
+    }
+
+    #[test]
+    fn retiring_is_retryable_and_a_fresh_install_is_unaffected() {
+        // Rule 25, and the fresh-install case: a first launch has never seeded the
+        // retired names, so this must find nothing and change nothing, three times
+        // over. It is also the one test that would catch the worst possible
+        // version of this migration: one whose frozen bytes match a row the seed
+        // still ships, deleting a family member on every boot.
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate(&conn, true).unwrap();
+        let before: i64 = conn
+            .query_row("SELECT COUNT(*) FROM templates", [], |r| r.get(0))
+            .unwrap();
+        ensure_retired_presets_are_gone(&conn).unwrap();
+        ensure_retired_presets_are_gone(&conn).unwrap();
+        ensure_retired_presets_are_gone(&conn).unwrap();
+        let after: i64 = conn
+            .query_row("SELECT COUNT(*) FROM templates", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn a_database_that_predates_the_planner_is_still_retired_from() {
+        // This migration has to run BEFORE the seed (one retired name is taken by
+        // a new family member), and the seed runs well before `ensure_service_plans`
+        // creates `plan_items`. A guard naming a table that is not there yet is
+        // `no such table: plan_items`, propagated out of `migrate`, at every boot,
+        // before the window is shown: the shape of rule 25's original failure.
+        // The real upgrade path is covered by `db::tests::migrates_pre_console_active_db`,
+        // which builds exactly this two-table database and then calls `migrate`;
+        // this asks the function directly so the reason is legible here.
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE templates (
+                id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+                region_config_json TEXT NOT NULL, style_json TEXT NOT NULL
+             );
+             CREATE TABLE output_channels (
+                id INTEGER PRIMARY KEY, name TEXT NOT NULL, render_target TEXT NOT NULL,
+                template_id INTEGER REFERENCES templates(id)
+             );",
+        )
+        .unwrap();
+        insert_retired_fixture(&conn, "Midnight Blue");
+        ensure_retired_presets_are_gone(&conn)
+            .expect("a database with no plan_items table must still boot");
+        assert_eq!(count_named(&conn, "Midnight Blue"), 0);
+
+        // And the door that IS there is still honoured on that same database.
+        let id = insert_retired_fixture(&conn, "Deep Teal");
+        conn.execute(
+            "INSERT INTO output_channels (name, render_target, template_id)
+             VALUES ('Main','native_window',?1)",
+            [id],
+        )
+        .unwrap();
+        ensure_retired_presets_are_gone(&conn).unwrap();
+        assert_eq!(
+            count_named(&conn, "Deep Teal"),
+            1,
+            "the channel door was dropped along with the absent one"
+        );
+    }
+
+    #[test]
+    fn a_failure_mid_run_leaves_every_retired_row_where_it_was() {
+        // Rule 25 proper. Running it three times cleanly proves idempotency, not
+        // retryability. This kills it MID-RUN: two retirable rows, and a trigger
+        // that lets the first through and aborts the second. Without one
+        // transaction around the whole loop the first DELETE stands, committed,
+        // and the error still propagates out of `migrate`, which on this ladder
+        // means the app panics at startup with a transaction left open for the
+        // `PRAGMA foreign_keys = ON` that follows to no-op inside (rule 25's
+        // original failure, one migration along). Modelled on
+        // `theme_inlining_tests::a_failure_part_way_through_rolls_back_and_the_next_boot_completes_it`.
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate(&conn, true).unwrap();
+        insert_retired_fixture(&conn, "Midnight Blue");
+        insert_retired_fixture(&conn, "Royal Amethyst");
+        // A third that is spoken for, to prove the references themselves survive
+        // a rollback as well as the rows.
+        let kept = insert_retired_fixture(&conn, "Deep Teal");
+        conn.execute(
+            "INSERT INTO output_channels (name, render_target, template_id)
+             VALUES ('Main','native_window',?1)",
+            [kept],
+        )
+        .unwrap();
+
+        conn.execute_batch(
+            "CREATE TRIGGER boom BEFORE DELETE ON templates WHEN OLD.name = 'Royal Amethyst'
+             BEGIN SELECT RAISE(ABORT, 'boom'); END;",
+        )
+        .unwrap();
+
+        assert!(
+            ensure_retired_presets_are_gone(&conn).is_err(),
+            "the failure must be reported, not swallowed"
+        );
+        assert!(
+            conn.is_autocommit(),
+            "a transaction was left open; the PRAGMA that follows would no-op inside it"
+        );
+        // THE ONE THAT SUCCEEDED MUST HAVE BEEN UNDONE TOO.
+        assert_eq!(
+            count_named(&conn, "Midnight Blue"),
+            1,
+            "a half-run was committed: the first row is gone and the second is not"
+        );
+        assert_eq!(count_named(&conn, "Royal Amethyst"), 1);
+        assert_eq!(count_named(&conn, "Deep Teal"), 1);
+        let still_pointed: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM output_channels WHERE template_id = ?1",
+                [kept],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(still_pointed, 1, "the channel lost the template it named");
+
+        // The next boot, with whatever broke it gone.
+        conn.execute_batch("DROP TRIGGER boom;").unwrap();
+        ensure_retired_presets_are_gone(&conn).expect("the retry must complete");
+        assert_eq!(count_named(&conn, "Midnight Blue"), 0);
+        assert_eq!(count_named(&conn, "Royal Amethyst"), 0);
+        assert_eq!(
+            count_named(&conn, "Deep Teal"),
+            1,
+            "the referenced row was retired on the retry"
         );
     }
 }
