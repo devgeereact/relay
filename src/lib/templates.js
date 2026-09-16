@@ -49,8 +49,12 @@ export const BUILTINS = [
     // screen wore a different purple from the next depending which door the
     // content came in.
     //
-    // Near-black at full strength with light type, matching `Lower Third Night`,
-    // which is the house answer for a caption bar over a camera.
+    // Near-black at full strength with light type, matching the whole
+    // `Lower Third · …` family in `db/templates.rs::theme_templates`, which is
+    // the house answer for a caption bar over a camera. (It used to cite
+    // `Lower Third Night`, one of the standalone presets retired into that
+    // family — a citation that resolves to nothing is worse than an uncited
+    // claim, because it looks like evidence.)
     layout: { regions: ['verse_text', 'reference'], align: 'center', lowerThird: true, refFirst: false },
     style: {
       font: 'var(--f-body)',

@@ -143,10 +143,12 @@ fn builtin_templates() -> &'static [(&'static str, &'static str, &'static str)] 
         (
             "Lower Third",
             r##"{"regions":["verse_text","reference"],"align":"center","lowerThird":true,"refFirst":false}"##,
-            // Neutral band, light type — matching `Lower Third Night` below and,
-            // byte for byte, the same template in `src/lib/templates.js`. Was
-            // `#b080e0` here and `#8b5cf6` there (two purples for one template),
-            // and amethyst is rule 18's rehearsal colour either way.
+            // Neutral band, light type — matching the whole `Lower Third · …`
+            // family in `theme_templates()` below and, byte for byte, the same
+            // template in `src/lib/templates.js`. Was `#b080e0` here and
+            // `#8b5cf6` there (two purples for one template), and amethyst is
+            // rule 18's rehearsal colour either way. The family replaced the
+            // `Lower Third Night` preset this line used to point at.
             r##"{"font":"var(--f-body)","background":"transparent","accent":"#101319","verseColor":"#f2f4f8","verseSize":"2.6","refSize":"1.7","italicRef":false}"##,
         ),
         (
