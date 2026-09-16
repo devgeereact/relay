@@ -2093,6 +2093,43 @@ mod tests {
         );
     }
 
+    /// The retirement runs BEFORE the seed, and only a comment held that until
+    /// this test. Same source-scan pattern as its sibling above, and the same
+    /// reason: driving `migrate` proves the outcome on one database, while the
+    /// thing that must not drift is the order of two lines.
+    ///
+    /// The cost of a silent reorder is one template on every upgrading install,
+    /// for good. One name is on both lists: the shelf's `Lower Third · Scripture`
+    /// is retired and the keyed family's member of that name is seeded. Seeding
+    /// first finds the name PRESENT (the old shelf row still holds it), so it
+    /// skips the family member; the retirement then deletes the row that blocked
+    /// it, and the name is absent with nothing left to insert it until the next
+    /// boot. Retiring first makes the first boot correct. Their bytes differ, so
+    /// the name-plus-bytes match tells them apart in either order: this is about
+    /// ordering, not about matching, which is exactly why no other test can see it.
+    #[test]
+    fn ensure_tables_retires_before_it_seeds() {
+        const MOD: &str = include_str!("mod.rs");
+        let from = MOD
+            .find("fn ensure_tables(")
+            .expect("ensure_tables must exist");
+        let body = &MOD[from..];
+        let body = &body[..body.find("\n}").expect("unterminated fn")];
+        let retire = body
+            .find("ensure_retired_presets_are_gone(conn)?")
+            .expect("ensure_tables must run the retirement, or an upgraded install keeps every old preset AND gains the twenty-five");
+        let seed = body
+            .find("ensure_preset_templates(conn)?")
+            .expect("ensure_tables must run the preset seed");
+        assert!(
+            retire < seed,
+            "ensure_retired_presets_are_gone must run BEFORE ensure_preset_templates: \
+             seeding first skips the `Lower Third · Scripture` family member (the retired \
+             shelf row still holds that name), and the retirement then deletes the row that \
+             blocked it, leaving the Lower Third family one member short until the next boot"
+        );
+    }
+
     #[test]
     fn migrates_pre_console_active_db() {
         // Simulate a DB created BEFORE the console_active column existed (the

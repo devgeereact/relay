@@ -1035,10 +1035,13 @@ fn retired_presets() -> Vec<(String, String, String)> {
 /// It has to be asked. This migration runs early in `ensure_tables`, and it has
 /// to: the seed that replaces these rows runs a line later, and a name it finds
 /// present is a name it will not insert. `ensure_service_plans` creates
-/// `plan_items` further down that same ladder. On a database old enough
-/// to predate the Planner the guard would be `no such table: plan_items`, which
-/// propagates out of `migrate` and panics the app at startup before the window
-/// is shown: rule 25's failure, reached by a different road.
+/// `plan_items` further down that same ladder. `docs/data/schema-baseline.sql`,
+/// the oldest schema Relay can upgrade FROM, creates neither `plan_items` nor
+/// `app_settings`, and `migrate` sends a `user_version == 0` database through
+/// `baseline_forward_fill`, which calls `ensure_tables`, which calls this. So a
+/// guard naming `plan_items` would be `no such table: plan_items`, propagated
+/// out of `migrate`, panicking the app at startup before the window is shown:
+/// rule 25's failure, reached by a different road.
 ///
 /// Skipping an absent door loses no guarantee. A table that does not exist holds
 /// no rows, and the one that is created later in this same boot is created
@@ -1078,6 +1081,19 @@ fn points_at_a_template(conn: &Connection, table: &str) -> rusqlite::Result<bool
 /// AND still propagate the error that stopped the boot, leaving an operator with
 /// an install nobody can describe. Idempotent: a second run finds no row whose
 /// name and bytes both still match, and a fresh install never had these names.
+///
+/// ONE PERMANENT CONSEQUENCE, WRITTEN DOWN BECAUSE IT IS NOT REVERSIBLE AND NOT
+/// VISIBLE. A single name is on both lists: the shelf's `Lower Third · Scripture`
+/// is retired, and the keyed family's member of that name is seeded. Where the
+/// old row is edited or in use it is correctly KEPT, and `ensure_preset_templates`
+/// inserts by name only when ABSENT, so the family member is not installed on
+/// that boot. The name never becomes absent, so it is not installed on any later
+/// boot either: that church has a Lower Third family of FOUR, for good, and
+/// nothing on screen says why. Both halves are deliberate (a row somebody uses is
+/// never deleted; a seed never overwrites a name that is taken), so this is a
+/// consequence rather than a bug, but a church counting its gallery should not
+/// have to derive it. The loop at the end of this function says it once per boot,
+/// and `data/retired_presets.json`'s `_readme` records it beside the bytes.
 pub(super) fn ensure_retired_presets_are_gone(conn: &Connection) -> rusqlite::Result<()> {
     let retired = retired_presets();
     if retired.is_empty() {
@@ -1094,8 +1110,10 @@ pub(super) fn ensure_retired_presets_are_gone(conn: &Connection) -> rusqlite::Re
             looks.push(id);
         }
     }
-    // `set_default_template` writes an EMPTY STRING to clear the default, so a
-    // value that does not parse is "no default", not an error.
+    // `setDefaultTemplate` (src/lib/stores/capture.js) writes an EMPTY STRING
+    // through the generic `set_setting` command to CLEAR the default, so a value
+    // that does not parse is "no default", not an error. There is no
+    // `set_default_template` command; this key has no typed writer at all.
     let default_id = get_setting(conn, "default_template_id")?.and_then(|s| s.parse::<i64>().ok());
 
     // THE TWO THAT ARE FOREIGN KEYS, folded into the DELETE so the check and the
@@ -1111,7 +1129,7 @@ pub(super) fn ensure_retired_presets_are_gone(conn: &Connection) -> rusqlite::Re
     let delete_sql = format!("DELETE FROM templates WHERE id = ?1{guards}");
 
     let tx = conn.unchecked_transaction()?;
-    for (name, layout, style) in retired {
+    for (name, layout, style) in &retired {
         // Every row with this name AND these exact bytes. Plural because a name
         // is not unique in this table: one that matched with different bytes is
         // a template somebody edited and is not selected at all.
@@ -1120,7 +1138,7 @@ pub(super) fn ensure_retired_presets_are_gone(conn: &Connection) -> rusqlite::Re
                 "SELECT id FROM templates
                   WHERE name = ?1 AND region_config_json = ?2 AND style_json = ?3",
             )?;
-            let it = stmt.query_map((&name, &layout, &style), |r| r.get(0))?;
+            let it = stmt.query_map((name, layout, style), |r| r.get(0))?;
             it.collect::<rusqlite::Result<Vec<_>>>()?
         };
         for id in ids {
@@ -1130,6 +1148,33 @@ pub(super) fn ensure_retired_presets_are_gone(conn: &Connection) -> rusqlite::Re
             tx.execute(&delete_sql, [id])?;
         }
     }
+
+    // A NAME THE SEED STILL SHIPS, KEPT AS THE OLD ROW. See the note on this
+    // function: `ensure_preset_templates` runs a line later and inserts by name
+    // only when absent, so the seeded template of this name is not installed on
+    // this boot, and the name never becomes absent, so it is not installed on any
+    // later boot either. One line, because a church counting its gallery should
+    // not have to diagnose a permanently missing family member from scratch. It
+    // costs one COUNT per contested name per boot, and there is exactly one
+    // contested name: the whole-triple disjointness of the two lists is asserted
+    // by `the_frozen_record_parses_and_names_nothing_the_seed_still_ships`.
+    for (name, _, _) in &retired {
+        if !all_presets().any(|(n, _, _)| n == name.as_str()) {
+            continue;
+        }
+        let kept: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM templates WHERE name = ?1",
+            [name],
+            |r| r.get(0),
+        )?;
+        if kept > 0 {
+            eprintln!(
+                "templates: {name:?} is kept as the retired row (it is in use, or it was \
+                 edited), so the seeded template of that name is not installed"
+            );
+        }
+    }
+
     tx.commit()
 }
 
@@ -2352,7 +2397,22 @@ mod retired_preset_tests {
         // recurring bug, a guarantee kept on one surface and skipped on its twin,
         // so each is asserted separately rather than in one case that could pass on
         // the first door alone.
-        for door in ["channel", "cue", "look", "default"] {
+        //
+        // The look door is FIVE cases, not one, for the same reason one level
+        // down: the kinds are a hardcoded array in the migration, so a single
+        // `scripture` case leaves the other four untested and a sixth kind added
+        // to `CONTENT_KINDS` later would escape the door in silence. Deleting any
+        // one kind from that array now reddens the case named after it.
+        for door in [
+            "channel",
+            "cue",
+            "look:scripture",
+            "look:song",
+            "look:media",
+            "look:announce",
+            "look:countdown",
+            "default",
+        ] {
             let conn = Connection::open_in_memory().unwrap();
             crate::db::migrate(&conn, true).unwrap();
             let id = insert_retired_fixture(&conn, "Midnight Blue");
@@ -2376,7 +2436,9 @@ mod retired_preset_tests {
                     )
                     .unwrap();
                 }
-                "look" => set_content_template(&conn, "scripture", Some(id)).unwrap(),
+                _ if door.starts_with("look:") => {
+                    set_content_template(&conn, &door["look:".len()..], Some(id)).unwrap()
+                }
                 _ => set_setting(&conn, "default_template_id", &id.to_string()).unwrap(),
             }
             ensure_retired_presets_are_gone(&conn).unwrap();
@@ -2417,9 +2479,18 @@ mod retired_preset_tests {
         // creates `plan_items`. A guard naming a table that is not there yet is
         // `no such table: plan_items`, propagated out of `migrate`, at every boot,
         // before the window is shown: the shape of rule 25's original failure.
-        // The real upgrade path is covered by `db::tests::migrates_pre_console_active_db`,
-        // which builds exactly this two-table database and then calls `migrate`;
-        // this asks the function directly so the reason is legible here.
+        //
+        // THE DATABASE THAT REACHES IT IS A BASELINE-ERA ONE, and the route was
+        // checked rather than assumed. `docs/data/schema-baseline.sql` is the
+        // oldest schema Relay can upgrade FROM, and it creates eight tables, of
+        // which `templates` and `output_channels` are two and `plan_items` is not
+        // one (nor is `app_settings`). `migrate` sends a `user_version == 0`
+        // database through `baseline_forward_fill`, which calls `ensure_tables`,
+        // which calls this. An earlier version of this comment credited
+        // `db::tests::migrates_pre_console_active_db` with covering that path; it
+        // does not call `migrate` at all, it calls `ensure_template_active` twice,
+        // so it would have stayed green over the bug. A citation that resolves to
+        // nothing is worse than an uncited claim.
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(
             "CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
