@@ -1,7 +1,12 @@
-// Entry for the mobile stage-display remote (stage.html). Shares the design
-// tokens (app.css :root) and self-hosted fonts with the console/output.
+// Entry for the mobile stage-display remote (stage.html) — the preacher's phone.
+//
+// Shares the design tokens and the self-hosted fonts with the console and the
+// output window, and NOT the console's stylesheet: this page renders in front of
+// the person preaching, and an unscoped console rule reaching it is the same leak
+// `output.html` had. See `src/tokens.css` and `src/lib/seal.test.js`. Wave 5,
+// Track E.
 import './lib/fonts.js';
-import './app.css';
+import './tokens.css';
 import Stage from './Stage.svelte';
 
 const app = new Stage({

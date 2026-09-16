@@ -268,7 +268,7 @@ live — it fails on any new hub message that no client has an explicit answer f
   real route, reached from Settings and from the cheatsheet. There is **no Console tab**: `Live` *is* the console, and the plan runs there, because an operator running a plan on a separate tab could not see the AI's suggestions — and the preacher going off-script is the entire product. (The Outputs tab's internal key is still `channels` and its file is `Channels.svelte`; the label is what an operator reads.)
 - **Sub-surfaces** — `Library` (Scripture / Lyrics / Media / Announcements / History, plus `SongEditor`, `ImportReview`, the arrangement editor and the Sunday report), `Settings` (11 sections, including **Diagnostics** — which holds the readiness screen, inside Settings and not on the tab bar — **Scripture & Languages** and **Privacy & Advanced**); plus standalone `Output` and `Stage` pages.
 - **Cross-cutting shell state** — the panic bar, the rehearsal band, the update banner, and the one-line **degraded** state are mounted once in `App.svelte`, on every tab, never per view. So is `shortcuts.js`, the single global keydown listener.
-- **Design system** — global `--v-*` tokens in `src/app.css`; every view shares them, and the four promise-carrying colours are defined once (amber = on air, amethyst = rehearsal, cyan = a guess, grey = cued).
+- **Design system** — global `--v-*` tokens in `src/tokens.css` (imported by `src/app.css`, and imported directly by the output and stage pages, which take the palette and none of the console's rules); every view shares them, and the four promise-carrying colours are defined once (amber = on air, amethyst = rehearsal, cyan = a guess, grey = cued).
 
 ---
 

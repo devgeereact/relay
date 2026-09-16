@@ -470,7 +470,7 @@ describe('§1 · the token sweep — wave 4', () => {
     // hand that no tier here could see, and it was doing it 43 times — a
     // scanner that holds every component to a rule the shared sheet is exempt
     // from is a scanner reporting on the smaller half of the problem.
-    const css = read('src/app.css');
+    const css = read('src/tokens.css') + read('src/app.css');
     const steps = new Map();
     for (const m of css.matchAll(/--v-fs-([a-z0-9]+)\s*:\s*([0-9.]+)px/g)) {
       if (!steps.has(m[2])) steps.set(m[2], m[1]);
@@ -484,7 +484,7 @@ describe('§1 · the token sweep — wave 4', () => {
     }
 
     const offenders = [];
-    for (const f of [...COMPONENTS, 'src/app.css']) {
+    for (const f of [...COMPONENTS, 'src/app.css', 'src/tokens.css']) {
       // The WHOLE file: four of these were inline `style="font-size:12px"` on
       // a boot gate, which is exactly where a hand-typed size hides from a
       // stylesheet-only scan.
@@ -528,7 +528,10 @@ describe('§1 · the token sweep — wave 4', () => {
     // console's figure face found the wrong answer first, and reordering the two
     // blocks would have silently changed every clock, confidence and latency in
     // the app.
-    const css = read('src/app.css');
+    // Both halves of the stylesheet, because the declaration itself moved: wave 5,
+    // Track E put the palette in `src/tokens.css`. Reading one file would make
+    // "declared once" true by absence, which is the failure this test is for.
+    const css = read('src/tokens.css') + read('src/app.css');
     const decls = [...css.matchAll(/--f-mono\s*:\s*([^;]+);/g)].map((m) => m[1].trim());
     expect(decls, 'two declarations is one too many').toHaveLength(1);
     expect(decls[0]).toMatch(/IBM Plex Mono/);
