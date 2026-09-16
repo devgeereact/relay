@@ -60,6 +60,7 @@
     reorderPlan,
     setPlanSection,
     setPlanDuration,
+    setPlanTimer,
     setPlanTemplate,
     searchScripture,
     searchSongs,
@@ -81,6 +82,16 @@
   let openPlan = null;
   let items = [];
   let selId = null; // cue loaded in the inspector
+
+  /**
+   * The lengths a cue may ask for, in minutes. A fixed list rather than a text
+   * box: `Duration` next to it already takes typed text, and two typed fields one
+   * above the other that mean different things is how an operator puts the sermon
+   * estimate into the clock. A number is also the only thing the backend will
+   * store — `set_plan_timer` clears anything non-positive rather than putting an
+   * 0:00 clock on a preacher's rail.
+   */
+  const TIMER_CHOICES = [1, 2, 3, 5, 10, 15, 20, 25, 30, 45, 60];
   let msg = '';
   // Distinguish "still loading" from "genuinely empty": listPlans swallows errors
   // to [], so without this flag a slow cold-open renders "No plans yet" — telling
@@ -494,6 +505,29 @@
     if (!selCue) return;
     await act(async () => {
       await setPlanDuration(selCue.id, parseDuration(durDraft));
+      await loadItems();
+    });
+  }
+  /**
+   * BIND THIS CUE TO A CLOCK, or clear the binding. It STORES AND NOTHING ELSE.
+   *
+   * Nothing on this surface can start, move, stop or SHOW a clock, and nothing
+   * ever may: the Planner is the workspace an operator opens on a Tuesday with a
+   * congregation in the room, and it may not reach an output or the preacher's
+   * monitor
+   * (`plannerbuildonly.test.js`, which names `start_timer`, `show_timer`,
+   * `adjust_timer` and `stop_timer` among the commands it refuses). Live reads the
+   * binding off the cue and starts the clock when the cue actually goes on air.
+   *
+   * `''` is the "No timer" option and clears it. `setPlanTimer` is not
+   * `setPlanDuration`: one is a clock a preacher watches, the other the estimate
+   * this workspace adds up in its header.
+   */
+  async function saveTimer(ev) {
+    if (!selCue) return;
+    const v = ev.target.value;
+    await act(async () => {
+      await setPlanTimer(selCue.id, v === '' ? null : Number(v));
       await loadItems();
     });
   }
@@ -992,6 +1026,25 @@
                 </select>
               </span>
             </div>
+            <!-- A CLOCK THE CUE ASKS FOR — stored here, started in Live. It is
+                 deliberately in the value column beside Template rather than up
+                 with Duration: Duration is an estimate this workspace adds up,
+                 and this is a timer a preacher will be watching. The words say
+                 which is which; no colour is spent on the difference, because
+                 the taxonomy is carried by the words already printed beside
+                 every cue and `colourlaw.test.js` is not amended by this wave. -->
+            <div class="rw-nv">
+              <span class="rw-nvk">Timer</span>
+              <span class="rw-nvctl">
+                <select class="r-select sp-tmrsel" aria-label="Programme timer for this cue"
+                  value={selCue.timer_minutes ?? ''} on:change={saveTimer}>
+                  <option value="">No timer</option>
+                  {#each TIMER_CHOICES as m (m)}
+                    <option value={m}>{m} min</option>
+                  {/each}
+                </select>
+              </span>
+            </div>
             <div class="rw-nv">
               <span class="rw-nvk">Fires</span>
               <!-- `ty.trig`, never a guess from the kind at this call site: it is
@@ -1000,6 +1053,13 @@
               <span class="rw-nvv">{ty.trig}</span>
             </div>
           </div>
+          <!-- THE DIFFERENCE, IN WORDS. Two fields in one inspector can both be
+               read as "how long this cue is", and they are not the same fact —
+               one is arithmetic on a build surface, the other is a clock a person
+               watches. The taxonomy is carried by the words here, as it is for
+               every cue kind in this workspace: no colour is spent separating
+               them, and `colourlaw.test.js` is not amended. -->
+          <p class="sp-fhelp">Timer starts a clock on the preacher’s monitor when this cue goes on air, in Live. Duration, above, is only the running-time estimate this plan adds up.</p>
 
           <!-- Move up · MOVE DOWN · Delete. "Move down" was missing, and its absence
                was load-bearing once the running order's per-row ↑↓✕ buttons went:
@@ -1317,6 +1377,7 @@
   .sp-kv{ margin-top:16px; border:1px solid var(--v-line); border-radius:var(--v-r-sm);
     background:var(--v-surf2); overflow:hidden; }
   .sp-tplsel{ max-width:172px; }
+  .sp-tmrsel{ max-width:172px; }
   .sp-fhelp{ margin:6px 0 0; font-size:var(--v-fs-cap); line-height:1.45; color:var(--v-faint); }
   .sp-note{ width:100%; resize:vertical; font-family:inherit; line-height:1.45; }
 

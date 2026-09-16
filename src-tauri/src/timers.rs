@@ -240,6 +240,30 @@ impl TimerRegistry {
         all.retain(|t| t.scope == scope);
         all
     }
+
+    /// WHICH TIMER BELONGS TO THIS CUE — and nothing at all when none does.
+    ///
+    /// `plan_item_id` was carried and never read: the field existed, `start_timer`
+    /// wrote it, and no code anywhere could answer a question about it. This is
+    /// its reader.
+    ///
+    /// The NEWEST wins, because ids only go up and a second timer for one cue can
+    /// only mean the cue was put on air again. The clock the operator is looking at
+    /// is the one that started last; answering with the older one would move a
+    /// clock nobody is watching and leave the visible one running, which is the
+    /// reused-id failure this registry already refuses to have.
+    ///
+    /// It returns `None` rather than the nearest thing it can find. A binding
+    /// nobody has started is an ABSENCE, and a reader that guesses would re-aim
+    /// some other cue's clock.
+    pub fn for_plan_item(&self, plan_item_id: i64) -> Option<Timer> {
+        let g = self.inner();
+        g.timers
+            .values()
+            .filter(|t| t.plan_item_id == Some(plan_item_id))
+            .max_by_key(|t| t.id)
+            .cloned()
+    }
 }
 
 #[cfg(test)]
@@ -315,6 +339,65 @@ mod tests {
                 "a held timer moved with the clock at now_ms={later}"
             );
         }
+    }
+
+    /// A CUE'S CLOCK CAN BE FOUND, AND AN UNBOUND CUE FINDS NOTHING.
+    ///
+    /// `plan_item_id` rode out through `TimerView`'s flatten and nothing read it,
+    /// so "does this cue already have a clock running" had no answer at all. The
+    /// dangerous half is the second assertion: a reader that fell back to "the
+    /// nearest timer" would hand back somebody else's clock, and the caller would
+    /// re-aim or stop a timer the operator can see for a cue they are not on.
+    #[test]
+    fn a_cue_finds_its_own_timer_and_an_unbound_cue_finds_none() {
+        let now = 1_000_000;
+        let reg = TimerRegistry::default();
+
+        assert_eq!(
+            reg.for_plan_item(42),
+            None,
+            "an empty registry must answer with nothing, not with a guess"
+        );
+
+        // Two clocks that are NOT this cue's: one free-standing, one another cue's.
+        reg.start(five(now, Scope::Stage));
+        let other_cue = Timer {
+            plan_item_id: Some(7),
+            ..five(now, Scope::Stage)
+        };
+        reg.start(other_cue);
+        assert_eq!(
+            reg.for_plan_item(42),
+            None,
+            "a cue with no clock of its own must not be handed somebody else's"
+        );
+
+        let mine = reg.start(Timer {
+            plan_item_id: Some(42),
+            label: "Sermon".into(),
+            ..five(now, Scope::Stage)
+        });
+        assert_eq!(reg.for_plan_item(42).map(|t| t.id), Some(mine));
+        assert_eq!(
+            reg.for_plan_item(7).map(|t| t.id),
+            Some(mine - 1),
+            "and the other cue still finds its own"
+        );
+
+        // Put the cue on air a second time. The clock somebody is looking at is
+        // the one that started last.
+        let again = reg.start(Timer {
+            plan_item_id: Some(42),
+            ..five(now, Scope::Stage)
+        });
+        assert_eq!(reg.for_plan_item(42).map(|t| t.id), Some(again));
+
+        reg.stop(again);
+        assert_eq!(
+            reg.for_plan_item(42).map(|t| t.id),
+            Some(mine),
+            "stopping the newest falls back to the one still running, not to nothing"
+        );
     }
 
     /// A RUNNING TIMER PAST ITS DEADLINE READS ZERO, NEVER A NEGATIVE.

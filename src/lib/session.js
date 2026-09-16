@@ -54,6 +54,21 @@ const EMPTY = {
   // `migrateSession`: a saved session that still carries the key has it DROPPED,
   // rather than left to be re-persisted for ever by the subscriber below.
   liveFullscreen: false, // hide the shell chrome around Live
+  // HOW BIG THE SLIDE CELLS ARE, as an INDEX into Live's `SLIDE_SIZES` — a
+  // number, never a label, so a renamed step cannot become a stored string
+  // nothing recognises. Out-of-range and rubbish are clamped where it is read,
+  // which is the only place that knows how many steps there are.
+  //
+  // 0 is the 158px grid this surface has always had, so an operator who never
+  // touches the control gets exactly the behaviour they had before it existed.
+  //
+  // IF THE CONTROL IS EVER REMOVED, this key goes in `migrateSession`'s drop list
+  // in the same commit — see the note there. A key nobody reads is not inert: the
+  // subscriber below writes the whole session back on every change, so it is
+  // re-persisted for the life of the install and the next reader has to work out
+  // whether it is a setting somebody forgot to wire up. That is exactly how
+  // `liveDensity` and `templatesDesk` became fossils.
+  liveSlideSize: 0,
 };
 
 /**
@@ -65,6 +80,10 @@ const EMPTY = {
  *
  * * `liveDensity` backed Live's `Normal | Compact` segment, removed on the
  *   operator's instruction (T2). It only ever changed spacing and type.
+ * A THIRD CANDIDATE IS NOT HERE YET, deliberately: `liveSlideSize` is live and
+ * read (Live's slide sizer). If that control is ever removed, its key is dropped
+ * here in the same commit, for the reason the two below record.
+ *
  * * `templatesDesk` was which DESK the Templates workspace opened on, back when
  *   Themes was the second one. Themes were folded into templates (DECISIONS
  *   §87), so the workspace has one desk and nothing reads the key. A session

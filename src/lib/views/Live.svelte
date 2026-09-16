@@ -191,6 +191,7 @@
     planItems,
     getSong,
     setStageNext,
+    startTimer,
     rehearsing,
     loadRehearsal,
     setRehearsal,
@@ -579,6 +580,9 @@
     const p = payloadOf(item);
     const s = slidesOf(item)[i];
     if (!s) return;
+    // Was this cue ALREADY the one on air? Read before the fire, because the take
+    // below is what makes it so — see the timer at the bottom of this function.
+    const cueWasOnAir = planOnAir && liveCueId === item.id;
     const stageNote = p.stage_note || null;
     // The template the operator set for THIS cue in the Planner. Passed on every
     // fire so a plan item renders with its own chosen look, not just the
@@ -624,6 +628,13 @@
       setLive(item.id, i);
       selId = item.id;
       flash(`Live: ${s.label}`);
+      // INSIDE the try, AFTER the take, so a fire that failed starts no clock: the
+      // cue never reached a screen, and a timer for a cue nobody is looking at is
+      // a clock the operator has to hunt down and stop mid-service. And BEFORE the
+      // "up next" hint below, which is deliberately not awaited: the clock is part
+      // of the take and the hint is a shrug, so the one that carries a guarantee
+      // goes first rather than racing the one that does not.
+      await startCueTimer(item, cueWasOnAir);
       const n = nextOf(items, item.id, i);
       // Deliberately shrugged: a missing "up next" is an absent hint, and the
       // wall — and this catch — already report anything that matters. Contrast
@@ -631,6 +642,53 @@
       setStageNext(n?.label ?? null, n?.text ?? null).catch(() => {});
     } catch (e) {
       flash(humanError(e));
+    }
+  }
+
+  /**
+   * A CUE THAT CARRIES A CLOCK STARTS IT HERE, AND NOWHERE ELSE.
+   *
+   * `plan_items.timer_minutes` is a request the Planner stores and cannot act on —
+   * that workspace may not reach an output or the preacher's monitor
+   * (`plannerbuildonly.test.js`). So the run surface is what acts on it, and this
+   * is the ONE call site: `fireSlide` is the single door a plan cue goes on air
+   * through, which is rule 36's reasoning applied to a timer. A second call beside
+   * `stepLive` or beside the grid press would be the fifth bug in this repository
+   * with that shape.
+   *
+   * THE CONDITIONS, each for its own reason:
+   *
+   * · `cueWasOnAir` — a clock starts when the cue GOES on air, not on every slide
+   *   of it. A five-section song would otherwise restart the sermon clock five
+   *   times as the operator walked it, and stepping back and forward would do it
+   *   again. The backend keeps one clock per cue as well (`start_timer` stops the
+   *   cue's previous one), so the two agree rather than one covering for the other.
+   * · `$rehearsing` — a rehearsal publishes no timers (`channels::publish_timers`
+   *   suppresses them), so a clock started here would be one the registry holds
+   *   and nobody can see, waiting to appear on the preacher's rail the moment the
+   *   service goes live. A rehearsal changes nothing about the service.
+   *
+   * It reports its own failure rather than riding in the fire's `catch`. The verse
+   * or the notice is already on the wall by this point and the fire SUCCEEDED; a
+   * flash saying otherwise would be the console lying about the congregation's
+   * screen, which is the more expensive of the two mistakes.
+   */
+  async function startCueTimer(item, cueWasOnAir) {
+    const mins = Number(item.timer_minutes) || 0;
+    if (mins <= 0 || cueWasOnAir || $rehearsing) return;
+    try {
+      await startTimer({
+        minutes: mins,
+        label: item.label,
+        // STAGE, never `both`. This is the preacher's bookkeeping; a congregation
+        // countdown is `start_countdown` and is an action an operator takes on
+        // purpose. A cue silently putting a clock on the wall is the one mistake
+        // that cannot be taken back quietly.
+        scope: 'stage',
+        planItemId: item.id,
+      });
+    } catch (e) {
+      flash(`On air — but its ${mins}-minute timer did not start: ${humanError(e)}`);
     }
   }
 
@@ -1389,6 +1447,46 @@
   $: fullscreen = !!$session.liveFullscreen;
   const setFullscreen = (v) => setSession({ liveFullscreen: v });
 
+  // ── HOW BIG A SLIDE CELL IS ──────────────────────────────────────────────
+  //
+  // The grid was fixed at `minmax(158px, 1fr)`, and 158px is the width
+  // `runsurface.test.js` names in its own describe title as the size at which a
+  // live cell and a cued cell must be unmistakable. It is not the size at which
+  // the WORDS on a slide are readable, and the words are what an operator is
+  // choosing between — so a cell could be told apart and not read.
+  //
+  // THE STEP MOVES THE GRID TRACK, NEVER THE THUMB. `.sg-thumb` carries
+  // `container-type: inline-size` and is the container query every `cqw` inside a
+  // cell resolves against; changing IT would resize the box the type is measured
+  // in and each cell would render at the wrong scale rather than bigger. The
+  // custom property is set on the pane body instead and the grid's own
+  // `minmax` reads it, so `<div class="sgrid">` keeps its exact spelling for the
+  // tests that locate it by literal string match.
+  //
+  // FOUR STEPS, and the first is the width the grid has always had, so a console
+  // nobody has touched is unchanged. The names are one or two characters because
+  // this rail is narrow and has clipped a label before: the density segment that
+  // used to sit here wanted 135px inside 114px and rendered `Compact` as `Compa`.
+  const SLIDE_SIZES = [
+    { px: 158, name: 'S' },
+    { px: 210, name: 'M' },
+    { px: 280, name: 'L' },
+    { px: 370, name: 'XL' },
+  ];
+  /** A stored index, made safe. Rubbish, a float and an out-of-range step all
+   *  land on a real one — the session is a file on a disk and this is the only
+   *  place that knows how many steps there are. */
+  const clampSlideSize = (v) =>
+    Math.min(SLIDE_SIZES.length - 1, Math.max(0, Math.trunc(Number(v)) || 0));
+  $: slideSizeIdx = clampSlideSize($session.liveSlideSize);
+  $: slideSize = SLIDE_SIZES[slideSizeIdx];
+  /** Step by a DELTA, read off the store rather than off the reactive
+   *  derivation. Two presses in one frame both see the same stale `slideSizeIdx`
+   *  and the second one does nothing — a stepper that loses a press is a control
+   *  that goes quiet, which is the thing the disabled ends exist to avoid. */
+  const stepSlideSize = (d) =>
+    setSession({ liveSlideSize: clampSlideSize(clampSlideSize(get(session).liveSlideSize) + d) });
+
   // §5 INSPECTOR. The claim panel has room for the verdict; the reasoning needs
   // a surface of its own. Opened per-detection, never a tab: an operator does not
   // browse detections, they interrogate the one in front of them.
@@ -1776,13 +1874,29 @@
              left for `qa-inventory` to find and nothing for a future reader to
              mistake for a preference somebody forgot to wire up. -->
         <div class="view-ctl">
+          <!-- THE SLIDE SIZER. Two steppers and a readout, the idiom the template
+               editor's zoom already uses — each end disabled at its end, so the
+               control says where it has run out rather than going quiet. It
+               changes how the console LOOKS and never what reaches a screen,
+               which is why it belongs in this slot beside Full screen. -->
+          <span class="view-size" title="How big the slide cells are">
+            <button class="r-iconbtn view-szbtn" on:click={() => stepSlideSize(-1)}
+              disabled={slideSizeIdx === 0} aria-label="Smaller slide cells">−</button>
+            <span class="view-szval r-mono">{slideSize.name}</span>
+            <button class="r-iconbtn view-szbtn" on:click={() => stepSlideSize(1)}
+              disabled={slideSizeIdx === SLIDE_SIZES.length - 1} aria-label="Bigger slide cells">+</button>
+          </span>
           <button class="view-fs" on:click={() => setFullscreen(!fullscreen)}>
             {fullscreen ? 'Show tabs' : 'Full screen'}
           </button>
         </div>
       </header>
 
-      <div class="pane-body sg-body">
+      <!-- THE GRID TRACK'S FLOOR, carried as a custom property on the BODY rather
+           than on the grid: `<div class="sgrid">` is located by literal string
+           match by `slidegridwiring.test.js`, and an attribute on it would break
+           that test by spelling rather than by meaning. -->
+      <div class="pane-body sg-body" style="--sg-min:{slideSize.px}px">
         {#if grid.cells.length}
           <div class="sgrid">
             {#each grid.cells as c (c.key)}
@@ -2190,6 +2304,14 @@
      collection switch is `.lr-seg`, its own class with its own rules, because
      Svelte scopes a component's styles and this `.seg` never reached it. */
   .view-ctl{ flex:0 0 auto; display:flex; align-items:center; gap:5px; }
+  /* 22px, not the shared 26px: this row is 22px tall and has clipped a label
+     before. The readout is one or two mono characters on a fixed width, so the
+     control cannot widen as the step changes and push `Full screen` out. */
+  .view-size{ display:flex; align-items:center; gap:3px; }
+  .view-szbtn{ width:22px; height:22px; line-height:1; }
+  .view-szbtn:disabled{ opacity:.4; cursor:not-allowed; }
+  .view-szval{ min-width:18px; text-align:center; font-size:var(--v-fs-b3);
+    letter-spacing:.06em; color:var(--v-dim); }
   .view-fs{ height:22px; padding:0 8px; border-radius:var(--v-r-sm); cursor:pointer;
     background:var(--v-surf); border:1px solid var(--v-line2); color:var(--v-faint);
     font-family:var(--f-body); font-size:var(--v-fs-b3); font-weight:600; }
@@ -2509,7 +2631,9 @@
 
   /* ── 2 · slides ───────────────────────────────────────────────── */
   .sg-body{padding:var(--v-sp-sm)}
-  .sgrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(158px,1fr));
+  /* `--sg-min` is set on `.sg-body` by the slide sizer; the fallback is the 158px
+     this grid has always had, so a console with no stored choice is unchanged. */
+  .sgrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(var(--sg-min,158px),1fr));
     gap:var(--v-sp-sm)}
   .sg-cell{display:flex; flex-direction:column; gap:5px; padding:0; text-align:left;
     background:none; border:0; cursor:pointer; min-width:0; font-family:var(--f-body)}

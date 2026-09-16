@@ -82,15 +82,27 @@ CREATE TABLE service_plans (
 
 -- One polymorphic cue for every content type. cue_type selects how payload_json
 -- is read; template_id is an optional per-content-type override. See docs/DATA_MODEL.md §4.
+--
+-- The last three columns arrived after this table did, each through the idempotent
+-- `add_plan_item_column` in db/plans.rs, and for a while this file did not show
+-- them at all: a fresh install got them from the migration rather than from the
+-- baseline, so the two agreed by accident. They are stated here now, because this
+-- file IS the shipped fresh-install shape.
 CREATE TABLE plan_items (
-    id           INTEGER PRIMARY KEY,
-    plan_id      INTEGER NOT NULL REFERENCES service_plans(id) ON DELETE CASCADE,
-    position     INTEGER NOT NULL,
-    cue_type     TEXT NOT NULL,           -- 'scripture' | 'song' | 'media' | 'announce' | 'countdown'
+    id            INTEGER PRIMARY KEY,
+    plan_id       INTEGER NOT NULL REFERENCES service_plans(id) ON DELETE CASCADE,
+    position      INTEGER NOT NULL,
+    cue_type      TEXT NOT NULL,          -- 'scripture' | 'song' | 'media' | 'announce' | 'countdown'
                                           -- (the canonical list is CONTENT_KINDS in src/lib/layers.js)
-    label        TEXT NOT NULL,
-    payload_json TEXT NOT NULL DEFAULT '{}',
-    template_id  INTEGER
+    label         TEXT NOT NULL,
+    payload_json  TEXT NOT NULL DEFAULT '{}',
+    template_id   INTEGER,
+    section_title TEXT NOT NULL DEFAULT '',  -- non-empty = this cue BEGINS a section
+    duration_sec  INTEGER NOT NULL DEFAULT 0, -- planned length, for the running-time
+                                              -- estimate only (plan.js). 0 = untimed.
+    timer_minutes INTEGER                     -- a programme clock this cue asks Live to
+                                              -- start when it goes on air. NULL = unbound,
+                                              -- which is NOT the same as 0. See PlanItem.
 );
 CREATE INDEX idx_plan_items ON plan_items(plan_id, position);
 
