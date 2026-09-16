@@ -1524,6 +1524,47 @@ mod preset_template_tests {
     }
 
     #[test]
+    fn no_seed_list_writes_an_app_chrome_token() {
+        // THE SEAL, AT THE SOURCE. Its sibling in `db/mod.rs` asks the same
+        // question of a seeded database, and that one CANNOT FAIL on a bad seed:
+        // `ensure_templates_name_real_families` runs during `fresh_db()` and
+        // repairs the row before the assertion reads it. Putting a token back in
+        // `builtin_templates()` was the check that found this — the DB test stayed
+        // green, which is a test that cannot fail, which is a theory nobody tested.
+        // So the rule is asserted in both places, and this is the half that fails
+        // when somebody WRITES one.
+        //
+        // `var(--f-serif)` and friends are declared in the operator console's
+        // stylesheet. A template naming one renders in whatever the console
+        // aliases that name to today — and `--f-display` was re-aliased from Space
+        // Grotesk to Inter exactly that way, changing the typeface of every
+        // template naming it without one template being edited. Wave 5, Track E.
+        let mut offenders: Vec<String> = Vec::new();
+        for (name, layout, style) in builtin_templates()
+            .iter()
+            .map(|(n, l, s)| (*n, *l, *s))
+            .chain(all_presets())
+        {
+            for (what, text) in [("layout", layout), ("style", style)] {
+                if text.contains("var(--") {
+                    offenders.push(format!("{name} ({what})"));
+                }
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "a seed list writes an app-chrome token; a template names a real \
+             family (wave 5, Track E): {offenders:?}"
+        );
+        // …and the scanner is looking at something. A seed list that emptied would
+        // satisfy the assertion above by saying nothing at all.
+        assert!(
+            builtin_templates().len() + all_presets().count() > 20,
+            "the seed lists went missing, so the assertion above proved nothing"
+        );
+    }
+
+    #[test]
     fn every_preset_is_added_exactly_once_and_re_running_adds_nothing() {
         // Runs on every boot — it MUST be idempotent (CLAUDE.md §25).
         let conn = fresh();

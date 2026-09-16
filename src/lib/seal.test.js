@@ -80,10 +80,24 @@ function stripComments(src) {
  */
 const TEMPLATE_DATA = [
   'src-tauri/src/db/templates.rs',
+  'src-tauri/data/shelf_templates.json',
   'src/lib/templates.js',
   'src/lib/layers.js',
   'src/lib/templatemodel.js',
 ];
+
+/**
+ * THE TWO FROZEN RECORDS, EXEMPT ON PURPOSE.
+ *
+ * `retired_presets.json` and `legacy_themes.json` are snapshots of bytes that
+ * were once in a database, and two migrations decide what a row IS by comparing
+ * it with them. Correcting a token in either would make those comparisons match
+ * nothing — a migration that silently retires nothing, which is the trap rule 43
+ * records — so they keep the tokens the rows were written with. They are named
+ * here rather than left out of the list, because an exemption nobody wrote down
+ * is indistinguishable from an oversight.
+ */
+const FROZEN_RECORDS = ['src-tauri/data/retired_presets.json', 'src-tauri/data/legacy_themes.json'];
 
 /** The style and layer keys whose value reaches a congregation screen. */
 const STYLE_KEYS =
@@ -113,6 +127,15 @@ describe('the seal — app chrome does not cross onto a congregation screen', ()
       expect(chromeTokensIn(read(path))).toEqual([]);
     });
   }
+
+  it('the two frozen records still carry the tokens their migrations match on', () => {
+    // The other direction, and the one that matters: "correcting" a frozen record
+    // is how a migration silently stops matching anything, so this fails if
+    // somebody tidies one up.
+    for (const path of FROZEN_RECORDS) {
+      expect(read(path), path).toContain('var(--');
+    }
+  });
 
   it('the scanner can still see a token it is meant to catch', () => {
     // A scanner that quietly narrows passes everything, and this repository has

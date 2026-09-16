@@ -1053,6 +1053,15 @@ mod tests {
         // Reading the ROWS is what makes this hold against a seed list that is
         // rewritten: it does not care how many templates there are, what they are
         // called, or whether they are region-model or layer-model. Wave 5, Track E.
+        //
+        // IT IS THE END-TO-END HALF AND NOT THE WHOLE TEST, and the difference was
+        // measured rather than reasoned. Putting `var(--f-serif)` back into
+        // `builtin_templates()` leaves this green, because
+        // `ensure_templates_name_real_families` runs inside `fresh_db()` and
+        // repairs the row before the assertion reads it. What it does catch is a
+        // row arriving by a door the migration does not cover. The half that fails
+        // on a bad seed is `templates::preset_template_tests::
+        // no_seed_list_writes_an_app_chrome_token`, and neither replaces the other.
         let conn = fresh_db();
         let mut offenders: Vec<String> = Vec::new();
         for t in list_templates(&conn).unwrap() {

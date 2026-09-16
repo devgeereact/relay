@@ -37,8 +37,8 @@
         "align": "center",
         "layers": [
           { "id": "hv-bg", "type": "background", "name": "Background", "x": 0, "y": 0, "w": 100, "h": 100, "fill": "#000000", "opacity": 1, "dim": 0 },
-          { "id": "hv-verse", "type": "text", "name": "Verse", "bind": "verse", "x": 6, "y": 14, "w": 88, "h": 58, "font": "var(--f-body)", "color": "#ffffff", "size": 8.4, "align": "center", "valign": "middle", "lineHeight": 1.2, "letterSpacing": 0, "shadow": 0, "italic": false },
-          { "id": "hv-ref", "type": "text", "name": "Reference", "bind": "reference", "x": 6, "y": 76, "w": 88, "h": 14, "font": "var(--f-body)", "color": "#ffffff", "size": 4.6, "align": "center", "valign": "middle", "lineHeight": 1.2, "letterSpacing": 0, "shadow": 0, "italic": false }
+          { "id": "hv-verse", "type": "text", "name": "Verse", "bind": "verse", "x": 6, "y": 14, "w": 88, "h": 58, "font": "Inter", "color": "#ffffff", "size": 8.4, "align": "center", "valign": "middle", "lineHeight": 1.2, "letterSpacing": 0, "shadow": 0, "italic": false },
+          { "id": "hv-ref", "type": "text", "name": "Reference", "bind": "reference", "x": 6, "y": 76, "w": 88, "h": 14, "font": "Inter", "color": "#ffffff", "size": 4.6, "align": "center", "valign": "middle", "lineHeight": 1.2, "letterSpacing": 0, "shadow": 0, "italic": false }
         ]
       },
       "style": {}
@@ -52,8 +52,8 @@
         "align": "center",
         "layers": [
           { "id": "nb-bg", "type": "background", "name": "Background", "x": 0, "y": 0, "w": 100, "h": 100, "fill": "linear-gradient(160deg,#11213A,#070C15)", "opacity": 1, "dim": 0 },
-          { "id": "nb-verse", "type": "text", "name": "Notice", "bind": "verse", "x": 6, "y": 26, "w": 88, "h": 46, "font": "var(--f-body)", "color": "#eaf2ff", "size": 6.8, "align": "center", "valign": "middle", "lineHeight": 1.24, "letterSpacing": 0, "shadow": 0.3, "italic": false },
-          { "id": "nb-ref", "type": "text", "name": "Title", "bind": "reference", "x": 6, "y": 74, "w": 88, "h": 12, "font": "var(--f-body)", "color": "#4cc9f0", "size": 3.2, "align": "center", "valign": "middle", "lineHeight": 1.2, "letterSpacing": 0.04, "shadow": 0, "italic": false }
+          { "id": "nb-verse", "type": "text", "name": "Notice", "bind": "verse", "x": 6, "y": 26, "w": 88, "h": 46, "font": "Inter", "color": "#eaf2ff", "size": 6.8, "align": "center", "valign": "middle", "lineHeight": 1.24, "letterSpacing": 0, "shadow": 0.3, "italic": false },
+          { "id": "nb-ref", "type": "text", "name": "Title", "bind": "reference", "x": 6, "y": 74, "w": 88, "h": 12, "font": "Inter", "color": "#4cc9f0", "size": 3.2, "align": "center", "valign": "middle", "lineHeight": 1.2, "letterSpacing": 0.04, "shadow": 0, "italic": false }
         ]
       },
       "style": {}
@@ -86,7 +86,7 @@
             "members": ["lyb-words"],
             "fill": "#05070c", "opacity": 0.86, "radius": 0
           },
-          { "id": "lyb-words", "type": "text", "name": "Words", "bind": "verse", "x": 8, "y": 72, "w": 84, "h": 18, "font": "var(--f-body)", "color": "#ffffff", "size": 3.2, "align": "left", "valign": "middle", "lineHeight": 1.16, "letterSpacing": 0, "shadow": 0, "italic": false }
+          { "id": "lyb-words", "type": "text", "name": "Words", "bind": "verse", "x": 8, "y": 72, "w": 84, "h": 18, "font": "Inter", "color": "#ffffff", "size": 3.2, "align": "left", "valign": "middle", "lineHeight": 1.16, "letterSpacing": 0, "shadow": 0, "italic": false }
         ]
       },
       "style": {}
@@ -132,14 +132,14 @@
         "align": "left",
         "layers": [
           { "id": "slt-bg", "type": "background", "name": "Background", "x": 0, "y": 0, "w": 100, "h": 100, "fill": "#04060a", "opacity": 1, "dim": 0 },
-          { "id": "slt-verse", "type": "text", "name": "Verse", "bind": "verse", "x": 3.6, "y": 6.4, "w": 64.96, "h": 48, "font": "var(--f-body)", "color": "#ffffff", "size": 7, "align": "left", "valign": "middle", "lineHeight": 1.2, "letterSpacing": 0, "shadow": 0, "italic": false },
-          { "id": "slt-ref", "type": "text", "name": "Reference", "bind": "reference", "x": 3.6, "y": 56, "w": 64.96, "h": 12, "font": "var(--f-body)", "color": "#7fd4ff", "size": 3.4, "align": "left", "valign": "middle", "lineHeight": 1.2, "letterSpacing": 0.06, "shadow": 0, "italic": false },
+          { "id": "slt-verse", "type": "text", "name": "Verse", "bind": "verse", "x": 3.6, "y": 6.4, "w": 64.96, "h": 48, "font": "Inter", "color": "#ffffff", "size": 7, "align": "left", "valign": "middle", "lineHeight": 1.2, "letterSpacing": 0, "shadow": 0, "italic": false },
+          { "id": "slt-ref", "type": "text", "name": "Reference", "bind": "reference", "x": 3.6, "y": 56, "w": 64.96, "h": 12, "font": "Inter", "color": "#7fd4ff", "size": 3.4, "align": "left", "valign": "middle", "lineHeight": 1.2, "letterSpacing": 0.06, "shadow": 0, "italic": false },
           { "id": "slt-rail", "type": "shape", "name": "Rail", "x": 70.96, "y": 6.4, "w": 25.64, "h": 67.93, "fill": "#0b0d12", "opacity": 0.9, "radius": 1.6 },
-          { "id": "slt-rail-lab", "type": "text", "name": "Countdown label", "bind": "static", "text": "COUNTDOWN", "x": 72.96, "y": 9.4, "w": 21.64, "h": 5, "font": "var(--f-body)", "color": "#7fd4ff", "size": 1.6, "align": "left", "valign": "middle", "transform": "uppercase", "lineHeight": 1.2, "letterSpacing": 0.14, "shadow": 0, "italic": false },
-          { "id": "slt-timer", "type": "text", "name": "Countdown", "bind": "countdown", "x": 72.96, "y": 15, "w": 21.64, "h": 14, "font": "var(--f-body)", "color": "#7fd4ff", "size": 5, "align": "left", "valign": "middle", "lineHeight": 1.1, "letterSpacing": 0, "shadow": 0, "italic": false, "text": "" },
+          { "id": "slt-rail-lab", "type": "text", "name": "Countdown label", "bind": "static", "text": "COUNTDOWN", "x": 72.96, "y": 9.4, "w": 21.64, "h": 5, "font": "Inter", "color": "#7fd4ff", "size": 1.6, "align": "left", "valign": "middle", "transform": "uppercase", "lineHeight": 1.2, "letterSpacing": 0.14, "shadow": 0, "italic": false },
+          { "id": "slt-timer", "type": "text", "name": "Countdown", "bind": "countdown", "x": 72.96, "y": 15, "w": 21.64, "h": 14, "font": "Inter", "color": "#7fd4ff", "size": 5, "align": "left", "valign": "middle", "lineHeight": 1.1, "letterSpacing": 0, "shadow": 0, "italic": false, "text": "" },
           { "id": "slt-strip", "type": "shape", "name": "Strip", "x": 3.6, "y": 78.6, "w": 92.8, "h": 15, "fill": "#0b0d12", "opacity": 0.9, "radius": 1.6 },
-          { "id": "slt-next-lab", "type": "text", "name": "Next label", "bind": "static", "text": "NEXT", "x": 5.6, "y": 80.4, "w": 40, "h": 4.5, "font": "var(--f-body)", "color": "#7fd4ff", "size": 1.5, "align": "left", "valign": "middle", "transform": "uppercase", "lineHeight": 1.2, "letterSpacing": 0.14, "shadow": 0, "italic": false },
-          { "id": "slt-next", "type": "text", "name": "Next", "bind": "next_reference", "x": 5.6, "y": 85.2, "w": 55.6, "h": 7, "font": "var(--f-body)", "color": "#ffffff", "size": 2.8, "align": "left", "valign": "middle", "lineHeight": 1.2, "letterSpacing": 0, "shadow": 0, "italic": false }
+          { "id": "slt-next-lab", "type": "text", "name": "Next label", "bind": "static", "text": "NEXT", "x": 5.6, "y": 80.4, "w": 40, "h": 4.5, "font": "Inter", "color": "#7fd4ff", "size": 1.5, "align": "left", "valign": "middle", "transform": "uppercase", "lineHeight": 1.2, "letterSpacing": 0.14, "shadow": 0, "italic": false },
+          { "id": "slt-next", "type": "text", "name": "Next", "bind": "next_reference", "x": 5.6, "y": 85.2, "w": 55.6, "h": 7, "font": "Inter", "color": "#ffffff", "size": 2.8, "align": "left", "valign": "middle", "lineHeight": 1.2, "letterSpacing": 0, "shadow": 0, "italic": false }
         ]
       },
       "style": {}
