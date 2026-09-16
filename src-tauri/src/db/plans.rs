@@ -110,7 +110,7 @@ fn add_plan_item_column(conn: &Connection, name: &str, decl: &str) -> rusqlite::
 /// migration race. Matched on the message because rusqlite reports it as a
 /// generic `SqliteFailure` with extended code 1, which is shared with every
 /// other SQL error and so cannot be matched on the code alone.
-fn is_duplicate_column(e: &rusqlite::Error) -> bool {
+pub(super) fn is_duplicate_column(e: &rusqlite::Error) -> bool {
     e.to_string()
         .to_lowercase()
         .contains("duplicate column name")

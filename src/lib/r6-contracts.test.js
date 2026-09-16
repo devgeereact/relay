@@ -83,11 +83,28 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       channel_template: true,
       template: true,
       stage_next: false, // monitor-only field; no congregation template renders it
-      // The Stage Message is for the platform, not the room. This `false` is
-      // the guarantee in docs/REBRAND.md §5 — "it exists inside the stage renderer,
-      // so no congregation screen can show it" — held as a test rather than as a
-      // sentence about where the code happens to live.
-      stage_alert: false,
+      // THE STAGE MESSAGE. This was `false`, and the `false` WAS the
+      // guarantee: docs/REBRAND.md §5's "no congregation screen can show it" held
+      // because this page had no branch for the frame at all — an omission, which
+      // is a fine guarantee right up until somebody has a reason to end it.
+      //
+      // The `stage_message` layer binding is that reason. A renderer reads the
+      // value now, so the absence protects nothing and the refusal has to be a
+      // decision the page takes out loud: it accepts the frame ONLY when its own
+      // channel's role is `stage`. The filter is at the receiver because the hub
+      // records nothing about who connected and DECISIONS §35 is not being
+      // reversed; the page knows its own channel because the URL is channel-keyed
+      // (DECISIONS §29).
+      //
+      // `true` here now means "has a branch", which on its own is weaker than
+      // what the `false` used to mean. `src/lib/stagemessage.test.js` holds the
+      // rest, by driving the real page and asserting on what it PAINTS — which is
+      // the claim, and is a thing a source scan cannot reach.
+      stage_alert: true,
+      // WHAT EACH SCREEN IS FOR — the fact the filter above is taken on. Sent on
+      // every hello and whenever the operator changes a role, so this page can
+      // answer "am I the stage?" and stop being one the moment it is not.
+      channel_roles: true,
       // The operator's transition override (DECISIONS §84). A congregation screen
       // is the whole point of it — a picker that moved the console preview and left
       // every OBS source cutting would be rule 35 on the one surface a congregation
@@ -117,6 +134,14 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       // distraction nobody asked for. A transition is about how a CONGREGATION
       // screen changes (DECISIONS §84).
       transition: false,
+      // DELIBERATELY NOT. `stage.html` is not an output CHANNEL: it is served on
+      // its own page, it has no `?channel=` in its URL, and it is a stage screen
+      // by construction rather than by configuration. There is no id for it to
+      // look up in this map, and giving it one would mean inventing a channel for
+      // a page that does not have one. What each screen is FOR is a question
+      // `output.html` has to ask because several different kinds of screen render
+      // through it; this page is only ever the one kind.
+      channel_roles: false,
     },
   };
 

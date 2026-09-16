@@ -2111,6 +2111,21 @@ try {
 }
 }
 
+/**
+ * WHAT A SCREEN IS FOR — `'main'`, `'stage'`, or `null` for no special role.
+ *
+ * GROUP 1 (throws), and the throw is the point. The backend refuses a second main
+ * screen by name ("Main screen is already the main screen…"), and a refusal that
+ * is swallowed leaves the picker showing a role the screen does not hold — the
+ * same failure `setChannelTemplate` describes, on the setting that decides
+ * whether a word meant for the preacher may be painted. The caller renders it
+ * through `src/lib/errors.js`, never as a raw Rust string.
+ */
+export async function setChannelRole(id, role) {
+const call = await invoke();
+await call('set_channel_role', { id, role: role || null });
+}
+
 /** Assign a physical display (monitor index string, or null) to a channel. */
 export async function setChannelDisplay(id, display) {
 const call = await invoke();

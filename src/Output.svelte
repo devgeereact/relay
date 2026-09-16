@@ -4,6 +4,7 @@
   import TemplateRender from './lib/TemplateRender.svelte';
   import { parseTemplateOverride } from './lib/templates.js';
   import { isKeyedTemplate, resolveOutputTemplate, templateShows } from './lib/layers.js';
+  import { acceptsStageMessage, roleOf } from './lib/channelroles.js';
   import { resolveTokens } from './lib/styletokens.js';
   import { markOutput } from './lib/latency.js';
   import { startBeat, paintState } from './lib/outputHealth.js';
@@ -34,6 +35,45 @@
   // the kiosk hub on connect and whenever the operator changes it, and mirrored
   // to a native output window over `output://default_template`.
   let defaultTpl = null;
+
+  // ── THE STAGE MESSAGE, AND WHY THIS PAGE MAY REFUSE IT ─────────────────────
+  //
+  // `channels::stage_alert` publishes to EVERY kiosk client. It has to: the hub
+  // records nothing about who connected and DECISIONS §35 is not being reversed,
+  // so it cannot address one screen. Until now this page was safe by OMISSION —
+  // it had no `stage_alert` branch at all, and docs/REBRAND.md §5's guarantee
+  // ("no congregation screen can show it") rested on that absence.
+  //
+  // A `stage_message` layer binding ends the omission: a renderer now reads the
+  // value, so the absence protects nothing and the refusal has to be explicit.
+  // It lives HERE, at the receiver, because the receiver is the only party that
+  // knows which screen it is — the URL is channel-keyed (DECISIONS §29) and the
+  // backend publishes what each channel is for.
+  //
+  // `stageMessage` is renderer state and NEVER a field on `OutputContent`. On the
+  // content it would be broadcast to every screen, and the only thing between it
+  // and a lobby TV would be which layers that TV's template happens to have.
+  let roles = {};
+  let stageMessage = '';
+  $: myRole = roleOf(roles, channelId);
+  /**
+   * The role map has changed. ONE writer, called from both doors, because a
+   * screen that stops being a stage must lose the message AT ONCE: an operator
+   * who moves the stage role off a tablet has said that tablet is a congregation
+   * screen now, and a refusal that only applied to the NEXT message would leave
+   * the last one painted on it for the rest of the service.
+   *
+   * Deliberately NOT a blanket `$:` that re-clears whenever the role is not
+   * `stage`. That reads as belt and braces and is worse than either: it makes the
+   * acceptance check in `stage_alert` redundant, so removing the check breaks no
+   * test — and the message would still be ASSIGNED for an instant before the
+   * reactive pass took it away, which on a congregation screen is a flash of
+   * something private. Each path guards its own case, once.
+   */
+  function applyRoles(next) {
+    roles = next && typeof next === 'object' ? next : {};
+    if (!acceptsStageMessage(roleOf(roles, channelId))) stageMessage = '';
+  }
 
   // ── THE OPERATOR'S TRANSITION OVERRIDE, SNAPSHOTTED (DECISIONS §84) ──────────
   //
@@ -164,6 +204,28 @@
       defaultTpl = null;
     }
   }
+  // Desktop only — what each screen is for, read when this window opens. Exactly
+  // the argument `loadDefaultTemplate` above makes: the hub replays the role map
+  // on `hello`, a native output window has no socket, and the event only fires
+  // when the operator CHANGES something. Without this read a projector opened
+  // mid-service knows nothing about itself until the next change.
+  //
+  // Guarded the same way — a missing command or a backend that says nothing
+  // leaves this screen with no role, which is the refusing answer and the safe
+  // one, and never throws on a live output page.
+  async function loadChannelRoles() {
+    try {
+      const call = await invoke();
+      const list = await call('list_output_channels');
+      const next = {};
+      for (const c of Array.isArray(list) ? list : []) {
+        if (c?.role) next[String(c.id)] = c.role;
+      }
+      applyRoles(next);
+    } catch {
+      applyRoles({});
+    }
+  }
   async function fetchTemplate(id) {
     try {
       const call = await invoke();
@@ -228,6 +290,18 @@
       // On a band channel, blacking out means the band goes away — the camera
       // must not be covered.
       if (isBand) visible = false;
+    } else if (m.kind === 'channel_roles') {
+      // WHAT EVERY SCREEN IS FOR. Sent on every hello and whenever it changes, so
+      // this page can answer the only question it asks of it: am I the stage?
+      applyRoles(m.roles);
+    } else if (m.kind === 'stage_alert') {
+      // ONLY A STAGE. No role is not a stage — a lobby TV and a streaming feed
+      // both arrive here with no role at all, and a filter whose default is yes
+      // is not a filter. `text: null` (or blank) clears it; an alert is an
+      // instruction about a moment, never a state of the wall, which is why the
+      // hub does not retain it (rule 43, FRAME_VERDICTS).
+      if (!acceptsStageMessage(myRole)) return;
+      stageMessage = (m.text || '').trim();
     } else if (m.kind === 'channel_template') {
       // This screen's assigned template was changed. Filter by our channel (the
       // hub broadcasts to all; each client applies only its own) — live, no re-copy.
@@ -289,6 +363,7 @@
       await loadTemplate();
       await loadLiveTransition();
       await loadDefaultTemplate();
+      await loadChannelRoles();
       const { listen } = await import('@tauri-apps/api/event');
       unlisten.push(await listen('output://content', (e) => {
         // Per-screen visibility (see applyMessage) — hold what's up if this screen
@@ -337,6 +412,15 @@
           defaultTpl = e.payload?.template ?? null;
         }),
       );
+      // BOTH DOORS. A native output window has the bridge and no socket; the
+      // kiosk page has the socket and no bridge. A role change that reached one
+      // of the two would leave a projector and a browser source disagreeing about
+      // which of them may be shown a word meant for the preacher.
+      unlisten.push(
+        await listen('output://channel_roles', (e) => {
+          applyRoles(e.payload?.roles);
+        }),
+      );
       isDesktop = true;
     } catch {
       startKiosk();
@@ -372,6 +456,7 @@
   template={renderedTemplate}
   content={visible ? content : null}
   audio={isDesktop}
+  stageMessage={stageMessage}
   transitionOverride={appliedTransition} />
 <!-- BLACKOUT NEVER BLACKS OUT A LOWER THIRD. On a keyed channel "black" would
      paint an opaque rectangle over the live camera — the opposite of what the

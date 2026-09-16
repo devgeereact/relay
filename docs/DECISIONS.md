@@ -4357,3 +4357,110 @@ lists; `ensure_retired_presets_are_gone`'s tests cover the byte-match requiremen
 operator edited being kept, and all four reference doors asserted SEPARATELY rather than in one
 case that could pass on the first door alone — the shape of a bug this repository has had four
 times before (a guarantee checked on one surface and skipped on its twin).
+
+---
+
+## 89. An output channel says what it is for, and a stage message is refused at the receiver (2026-09-16)
+
+### Context
+
+Three questions had three separate non-answers, and they turned out to be one question.
+
+**Which screen is "the main screen"?** `Live.svelte` decided with an expression written inline:
+`channels.find((c) => c.render_target === 'native_window') ?? channels[0] ?? null`. A render target
+is how a screen is WIRED — a native window, a browser source, an NDI encoder — not what it is for.
+So renaming the main screen changed nothing, deleting it silently promoted whichever channel came
+first in the list, and a church running its wall through OBS (every channel a `network_client`) had
+the programme pane previewing its streaming feed. All three read identically on the bar above the
+pane. `channels.rs`'s `MonitorInfo::primary` is a property of a physical display and was never a
+candidate for this; `output_channels` had no column for it at all.
+
+**Which screens may be shown a word to the preacher?** `channels::stage_alert` publishes to every
+kiosk client, because the hub cannot address one: it records nothing about who connected, which is
+§35 and is not being reversed. What kept the message off a congregation screen was that
+`Output.svelte` had no `stage_alert` branch — a guarantee by OMISSION, held as a `false` in
+`r6-contracts.test.js` and as a sentence in `docs/REBRAND.md` §5 about which `.svelte` file the
+markup sits in.
+
+**Does a word to the preacher survive `Esc`?** `Stage.svelte`'s `clear`/`black` branch resets six
+fields and does not reset `alert`. Nothing recorded why. `svcStart` survives that branch too and
+says why it does, in a comment, at the line — so the tree carried one deliberate survivor and one
+accidental one, spelled identically.
+
+### Decision
+
+**One — `output_channels` gains a `role` column: `main`, `stage`, or nothing.** A fresh install is
+seeded with it (`Main screen` → `main`, `Stage display` → `stage`; `Streaming` and `Lobby screen`
+hold none). An existing install is back-filled by those same two names, and only while no row
+carries a role at all — a back-fill keyed on "this row is NULL" would re-seed the main screen at
+every launch, so clearing it or moving it elsewhere would last until the next boot with nothing to
+say why. At most one screen may hold `main`, enforced in `db::set_channel_role` rather than by a
+partial index: an index can only fail, and failing is not the same as explaining, so the refusal
+names the screen that already holds it and reaches the operator through `src/lib/errors.js` like
+every other refusal on that desk. Several screens may hold `stage` — a church may have a confidence
+monitor and a preacher's tablet.
+
+Live reads the role. The old heuristic is kept as an explicit fallback, because a blank programme
+pane is a worse answer than an imperfect one, and it is LABELLED: `as Main screen` when a screen
+holds the role, `as Main screen · no main screen set` when nothing does. A bar that read the same
+in both cases would be rule 35 in a new place.
+
+**Two — a `stage_message` layer binding exists, and the refusal moves to the receiver.** A binding
+means a renderer reads the value, so the omission stops protecting anything and the refusal has to
+be a decision the page takes out loud. `Output.svelte` accepts a `stage_alert` frame only when its
+own channel's role is `stage`, and a screen that STOPS being a stage loses the message at once. The
+filter is at the receiver because the receiver is the only party that knows which screen it is: the
+URL is channel-keyed (§29) and the backend publishes what each channel is for. §35 is untouched —
+the new `channel_roles` frame carries channel ids against roles and nothing else, which is exactly
+what the Outputs desk already shows, and no name, address or anything a client chose.
+
+The value never rides on `OutputContent`. It stays its own frame kind, held in renderer state and
+passed to `TemplateRender` as a prop. On the content it would be broadcast to every screen with the
+verse, and the only thing between it and a lobby TV would be which layers that TV's template
+happens to have — which is a thing an operator can copy in two clicks. `stage_note`,
+`next_reference` and `service_started_at` do ride on the content and are kept private exactly that
+way; a message addressed to a PERSON is not in that class. `FRAME_VERDICTS` keeps
+`("stage_alert", false)`, so it is never retained and a tablet rejoining ten minutes later is not
+handed a message meant for a moment that has passed (rule 43). The rehearsal gate is unchanged.
+
+**Three — the word to the preacher SURVIVES a panic control on the stage page, deliberately.** This
+ratifies the behaviour that was already there and records the reason, which is the part that was
+missing.
+
+An alert is an instruction to a person, not a state of the wall. Every other field that branch
+clears rides WITH the content and describes the slide — the note, the next verse, the countdown —
+and clearing the content is what makes them wrong. An alert arrives on its own frame, is cleared by
+its own empty frame, and is most likely to be needed at exactly the moment the operator blanks the
+screens: if `Esc` also wiped the sentence telling the preacher why the room had just gone dark, the
+panic control would be deleting its own explanation. The same argument `svcStart` already makes one
+field along.
+
+The operator keeps a one-action way to remove it — send a blank Stage Message — so this is not a
+message that cannot be taken back, which is the condition on which "it survives" is defensible at
+all.
+
+**The half this does NOT make true, stated rather than glossed.** A stage display served through
+`output.html` behaves differently: `TemplateRender`'s whole layer stack is inside `{#if content}`,
+so a cleared wall blanks everything on that page including a `stage_message` layer, and the message
+reappears when content returns because it lives in renderer state rather than on the frame. So the
+two stage surfaces disagree across a panic control. That is a real divergence, it is filed as
+RG-143 rather than described as a design, and changing it means changing what `TemplateRender`
+renders with no content — which is rule 37 and rule 42 territory and is not this wave's to move.
+The second known limit is that a `stage_alert` has no Tauri emit at all, so a stage display wired as
+a NATIVE window receives nothing; that is deliberate (`e2e::r5_a_word_to_the_preacher_reaches_no_
+congregation_channel` asserts the Tauri door stays shut) and is filed in the same row.
+
+### Instrument
+
+`src-tauri/src/db/channels.rs` — the migration's retryability, the back-fill by name, the back-fill
+never undoing an operator's choice, the one-main refusal by name, several stages, an unknown role
+refused, and the fresh seed. `src/lib/channelroles.test.js` — the programme pane follows the role
+when the main screen is not a native window AND when a native window is not the main screen, and
+says so when nothing holds the role. `src/lib/stagemessage.test.js` drives the real `output.html`
+through the real socket and asserts what it PAINTS on a lobby screen, on the main screen, before
+the roles arrive, on a raw preview, and when a screen stops being a stage — the surface
+`r6-contracts.test.js`, which reads source text, cannot reach.
+`e2e::r5_a_word_to_the_preacher_reaches_no_screen_that_is_not_a_stage` holds the backend half: the
+roles a fresh install names, that the wire form carries ids and roles and no names, and that
+`OutputContent` has no stage-message field. `src/lib/stagealertpanic.test.js` holds the third decision,
+by driving `Stage.svelte` through `clear` and through `black`.

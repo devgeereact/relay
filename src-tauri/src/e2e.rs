@@ -2597,6 +2597,136 @@ fn r5_a_word_to_the_preacher_reaches_no_congregation_channel() {
     );
 }
 
+/// …AND THE SCREEN THAT IS NOT A STAGE IS TOLD IT IS NOT — which is the fact the
+/// refusal is taken on.
+///
+/// The sibling above watches the two DOORS and proves the alert carries nothing a
+/// congregation renderer binds. That was the whole guarantee for as long as
+/// `Output.svelte` had no `stage_alert` branch at all: the frame went past every
+/// congregation screen because none of them had anywhere to put it. `stage_message`
+/// ends that — a layer binding means a renderer reads the value — so the refusal
+/// stops being an omission and becomes a decision the page takes, on a fact the
+/// backend has to supply.
+///
+/// The hub cannot address one client: it records nothing about who connected and
+/// DECISIONS §35 is not being reversed. So this asserts the backend half of the
+/// filter, at the doors it owns:
+///
+///   - a fresh install names ONE main screen and ONE stage, and the congregation
+///     screens — Streaming and Lobby screen — hold no role at all. `null` is what
+///     they arrive with, and `acceptsStageMessage` answers no to it;
+///   - the role map that goes on the wire names them and nothing else — ids and
+///     roles, no names, no addresses, nothing about who is connected;
+///   - a channel that is NOT a stage stays absent from it after an alert has been
+///     published, so nothing about sending one can promote a screen;
+///   - `OutputContent` has no stage-message field, so the value cannot reach a
+///     congregation screen the way `stage_note` does. **That is the one this pair
+///     could not have caught before**: a field added to the content struct would
+///     be broadcast to every screen with the verse, and the frame assertions above
+///     look only at the alert.
+///
+/// What a Rust test cannot reach is whether the page PAINTS it, because the filter
+/// is in JavaScript on a page with no backend. `src/lib/stagemessage.test.js`
+/// drives the real `output.html` for that half, on a lobby channel and on the main
+/// screen, and was watched to fail with the check removed.
+#[test]
+fn r5_a_word_to_the_preacher_reaches_no_screen_that_is_not_a_stage() {
+    let app = app();
+    let h = app.handle().clone();
+    let mut kiosk = qa::Kiosk::attach(&h);
+
+    let (list, roles) = {
+        let db = h.state::<Db>();
+        let conn = db.0.lock().expect("db");
+        (
+            db::list_output_channels(&conn).expect("channels"),
+            db::channel_roles_json(&conn).expect("roles"),
+        )
+    };
+
+    // A FRESH INSTALL, ROLE BY ROLE. The two congregation screens are the ones
+    // this test exists for: they have no role, and "no role" must never be the
+    // answer a filter says yes to.
+    let role_of = |name: &str| {
+        list.iter()
+            .find(|c| c.name == name)
+            .unwrap_or_else(|| panic!("a fresh install seeds `{name}`"))
+            .role
+            .clone()
+    };
+    assert_eq!(role_of("Main screen").as_deref(), Some("main"));
+    assert_eq!(role_of("Stage display").as_deref(), Some("stage"));
+    assert_eq!(role_of("Streaming"), None, "a stream is not a stage");
+    assert_eq!(role_of("Lobby screen"), None, "a foyer TV is not a stage");
+    assert_eq!(
+        list.iter()
+            .filter(|c| c.role.as_deref() == Some("main"))
+            .count(),
+        1,
+        "exactly one screen is the main screen"
+    );
+
+    // WHAT GOES ON THE WIRE. Ids against roles, and nothing else — no names, no
+    // addresses, nothing a client chose (DECISIONS §35).
+    let map: serde_json::Value = serde_json::from_str(&roles).expect("the role map is JSON");
+    let obj = map.as_object().expect("an object keyed by channel id");
+    assert_eq!(
+        obj.len(),
+        2,
+        "only the two screens with a role appear: {roles}"
+    );
+    for c in &list {
+        let present = obj.contains_key(&c.id.to_string());
+        assert_eq!(
+            present,
+            c.role.is_some(),
+            "`{}` is {} the role map and {} a role",
+            c.name,
+            if present { "in" } else { "not in" },
+            if c.role.is_some() { "has" } else { "has no" }
+        );
+        for (_, v) in obj.iter() {
+            assert_ne!(
+                v.as_str(),
+                Some(c.name.as_str()),
+                "a screen's NAME reached the role map: {roles}"
+            );
+        }
+    }
+
+    // …AND PUBLISHING AN ALERT CHANGES NONE OF IT. Nothing about sending a word to
+    // the preacher may promote a screen into being one.
+    super::send_stage_alert(h.clone(), Some("Wrap up — 5 minutes".into())).expect("send");
+    settle();
+    let frame = kiosk.next().expect("the alert is published");
+    assert!(frame.contains(r#""kind":"stage_alert""#), "{frame}");
+    let after = {
+        let db = h.state::<Db>();
+        let conn = db.0.lock().expect("db");
+        db::channel_roles_json(&conn).expect("roles")
+    };
+    assert_eq!(after, roles, "publishing an alert moved a screen's role");
+
+    // THE FIELD THAT MUST NOT EXIST. `stage_note`, `next_reference` and
+    // `service_started_at` all ride on the content to every screen, kept private
+    // by nothing but which layers a template happens to have. A stage message may
+    // not join them: it is the one monitor-only value that is addressed to a
+    // person rather than describing the slide, and a template is a thing an
+    // operator can copy onto a lobby TV in two clicks.
+    let content = channels::kiosk_content_json(&channels::OutputContent {
+        kind: Some("scripture".into()),
+        reference: "John 3:16".into(),
+        text: Some("For God so loved the world".into()),
+        stage_note: Some("hold for prayer".into()),
+        ..Default::default()
+    });
+    assert!(
+        !content.contains("stage_message") && !content.contains("stage_alert"),
+        "the word to the preacher has become a field on OutputContent, so it now \
+         travels to every screen with the verse: {content}"
+    );
+}
+
 /// THE SCRIPTURE SEARCH — the same parser as the live pipeline, and never a fire.
 ///
 /// `search_verses` is the one search: the Planner's box, the preacher's remote

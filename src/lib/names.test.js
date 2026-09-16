@@ -31,9 +31,21 @@
 // must find a retired label when one is planted in front of it. Without that
 // third test, a matcher that had stopped matching would report a clean tree.
 //
-// Comments are scanned too, deliberately. Stripping them would be a narrowing,
-// and it is the narrowings that have burned this repository — a label copied out
-// of a stale comment is how a second name gets back in.
+// Comments are scanned for RETIRED labels, deliberately: a label copied out of a
+// stale comment is how a second name gets back in, and that test reads every
+// byte of every file.
+//
+// The other two tests — the one casing and the register of surfaces — read the
+// code with its comments removed, and that is a judgement rather than a
+// narrowing. A comment is not a surface: nobody reads one in a service, this
+// repository writes its section banners in capitals as a house style, and a
+// prose sentence naming a concept mid-explanation is not a second label for it.
+// Scanning comments there would have forced every banner above a stage-message
+// branch to be rewritten into sentence case, which is the register dictating
+// prose style rather than holding an interface to one name. The stripper is
+// itself guarded below: a label on a line that also carries a trailing comment
+// must still be found, and the retired-label test must still see one planted
+// inside a comment.
 
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -86,9 +98,30 @@ function hits(text, needle) {
   return found;
 }
 
+/**
+ * The same text with its comment CONTENT removed — `//` to end of line, `/* … *\/`
+ * and `<!-- … -->` — so the casing and register tests read what an operator can
+ * see rather than what a maintainer wrote beside it.
+ *
+ * `//` is only treated as a comment when it does not follow a `:`, so a `http://`
+ * inside a string keeps the rest of its line. The retired-label test does NOT use
+ * this: a stale comment reviving an old name is exactly what it is for.
+ */
+function codeOnly(text) {
+  return text
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+}
+
 /** The files in which `needle` is named, in any casing. */
 function filesWith(files, needle) {
   return files.filter(([, text]) => hits(text, needle).length > 0).map(([rel]) => rel);
+}
+
+/** The files whose CODE — not their comments — names `needle`, in any casing. */
+function surfacesWith(files, needle) {
+  return files.filter(([, text]) => hits(codeOnly(text), needle).length > 0).map(([rel]) => rel);
 }
 
 // ── THE REGISTER ────────────────────────────────────────────────────────────
@@ -114,6 +147,14 @@ const REGISTER = [
       'src/lib/quicktools.test.js',
       'src/lib/r6-contracts.test.js',
       'src/lib/stagezones.test.js',
+      // Wave 5 Track C — the binding, the receiver that may refuse the frame, the
+      // per-screen role picker that decides which page is allowed to paint it,
+      // and the three tests that drive those.
+      'src/lib/channelroles.js',
+      'src/lib/channelroles.test.js',
+      'src/lib/stagealertpanic.test.js',
+      'src/lib/stagemessage.test.js',
+      'src/lib/views/Channels.svelte',
     ],
     // Wave 5 Track C adds a `stage_message` text binding labelled with this same
     // string. Registered ahead of it so the merge lands green rather than red on
@@ -134,6 +175,9 @@ const REGISTER = [
       'src/lib/views/Live.svelte',
       'src/lib/views/ServicePlanner.svelte',
       'src/lib/views/plannerdesk.test.js',
+      // Wave 5 Track C — the test that ratifies what a panic control does to a
+      // Stage Message also asserts that the Stage Note beside it still goes.
+      'src/lib/stagealertpanic.test.js',
     ],
     forbidden: ['Operator note', 'Cue note', 'Monitor note', 'Confidence note'],
   },
@@ -178,7 +222,7 @@ describe('one concept, one name', () => {
       it('is written the one way, not in a second casing', () => {
         const wrong = [];
         for (const [rel, text] of files) {
-          for (const found of hits(text, entry.name)) {
+          for (const found of hits(codeOnly(text), entry.name)) {
             if (found !== entry.name) wrong.push(`${rel}: "${found}"`);
           }
         }
@@ -190,7 +234,7 @@ describe('one concept, one name', () => {
 
       it('is said only in the files this register lists', () => {
         const permitted = new Set([...entry.allowed, ...(entry.pending ?? [])]);
-        const unregistered = filesWith(files, entry.name).filter((rel) => !permitted.has(rel));
+        const unregistered = surfacesWith(files, entry.name).filter((rel) => !permitted.has(rel));
         expect(
           unregistered,
           `"${entry.name}" is shown somewhere this register does not know about. ` +
@@ -243,6 +287,23 @@ describe('the scanner itself', () => {
     expect(paths.some((p) => p.endsWith('.test.js'))).toBe(true);
     // And the one file it must not read, because it names every retired label.
     expect(paths).not.toContain(SELF);
+  });
+
+  it('strips a comment without taking the code beside it', () => {
+    // The casing and register tests read `codeOnly`, so a stripper that ate more
+    // than the comment would hide a real label and report a clean tree — the
+    // narrowing this file exists to refuse, one level down.
+    const line = `<span class="zone">Stage Message</span> <!-- STAGE MESSAGE -->`;
+    expect(hits(codeOnly(line), 'Stage Message')).toEqual(['Stage Message']);
+    const js = `const label = 'Stage Message'; // STAGE MESSAGE, in capitals`;
+    expect(hits(codeOnly(js), 'Stage Message')).toEqual(['Stage Message']);
+    // A URL keeps the rest of its line: `//` after a colon is not a comment.
+    expect(codeOnly(`fetch('http://localhost:8032/output.html'); // note`)).toContain('output.html');
+    // And it does take the comment: this is the half that lets a banner shout.
+    expect(hits(codeOnly('// STAGE MESSAGE'), 'Stage Message')).toEqual([]);
+    expect(hits(codeOnly('/* STAGE MESSAGE */'), 'Stage Message')).toEqual([]);
+    // The retired-label test does not use it, and must still see a planted name.
+    expect(hits('// Word to the preacher', 'Word to the preacher').length).toBe(1);
   });
 
   it('can still see a known instance of each name', () => {

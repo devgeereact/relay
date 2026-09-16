@@ -893,7 +893,7 @@ fn rehearsing<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> bool {
 /// but were dropped from THIS json, so a kiosk stage monitor never showed the
 /// "up next" verse while a native one did. Kept as a pure function so a test can
 /// assert the field set without a Tauri app handle.
-fn kiosk_content_json(content: &OutputContent) -> String {
+pub(crate) fn kiosk_content_json(content: &OutputContent) -> String {
     serde_json::json!({
         "kind": "content",
         "content_kind": content.kind,
@@ -1283,6 +1283,22 @@ pub struct KioskHub {
     /// which is cached and replayed here for the same reason. It is
     /// configuration, never content: it paints nothing on its own.
     last_transition: TransitionSlot,
+    /// WHAT EACH SCREEN IS FOR — `{"1":"main","2":"stage"}`, or `{}`.
+    ///
+    /// A browser source has no database, so this is the only way it can learn
+    /// its own channel's role — and it needs to, because a Stage Message is
+    /// filtered at the RECEIVER. The hub broadcasts `stage_alert` to every
+    /// client and cannot address one: it records nothing about who connected,
+    /// and DECISIONS §35 is not being reversed to let it. So the message is
+    /// refused where the refusal is possible, and the fact it is refused on has
+    /// to reach the page.
+    ///
+    /// Its own slot, for the same reason `last_transition` has one: `last_screen`
+    /// holds ONE frame and the newest wins, so retaining configuration there
+    /// would replace the verse a late-joining screen is owed (rule 43).
+    ///
+    /// Ids and roles only — no names, no addresses, nothing a client chose.
+    channel_roles: Arc<Mutex<String>>,
 }
 
 impl Default for KioskHub {
@@ -1295,6 +1311,7 @@ impl Default for KioskHub {
             default_tpl: Arc::new(Mutex::new("null".to_string())),
             last_screen: Arc::new(Mutex::new(None)),
             last_transition: Arc::new(Mutex::new(None)),
+            channel_roles: Arc::new(Mutex::new("{}".to_string())),
         }
     }
 }
@@ -1456,6 +1473,45 @@ impl KioskHub {
             r#"{{"kind":"default_template","template":{blob}}}"#
         ));
     }
+    /// Shared handle to the role map, for the WS server task to send on `hello`.
+    pub fn channel_roles_handle(&self) -> Arc<Mutex<String>> {
+        self.channel_roles.clone()
+    }
+    /// Validate + store the role map WITHOUT pushing (startup warm).
+    ///
+    /// Same validate-then-store rule as `cache_default_template`, and for the same
+    /// reason: the value is embedded RAW into a WS frame, and one unparseable
+    /// frame stops a client applying every frame after it. Anything that is not a
+    /// JSON object becomes `{}` — which is "no screen has a role", the safe
+    /// reading, because every filter downstream asks whether a role IS `stage`.
+    pub fn cache_channel_roles(&self, roles_json: &str) {
+        let safe = match serde_json::from_str::<serde_json::Value>(roles_json) {
+            Ok(v) if v.is_object() => roles_json.to_string(),
+            _ => "{}".to_string(),
+        };
+        if let Ok(mut r) = self.channel_roles.lock() {
+            *r = safe;
+        }
+    }
+    /// The cached role map (`{}` when no screen has a role).
+    pub fn channel_roles_json(&self) -> String {
+        self.channel_roles
+            .lock()
+            .map(|r| r.clone())
+            .unwrap_or_else(|_| "{}".into())
+    }
+    /// Update the role map AND push it live, so a screen already open learns it
+    /// has become — or stopped being — the stage without waiting for a reload.
+    ///
+    /// It paints nothing on its own. What it changes is whether the NEXT Stage
+    /// Message is accepted, which is the half of this that must not wait: an
+    /// operator who has just made a tablet the stage display is about to type a
+    /// message to the person holding it.
+    pub fn set_channel_roles(&self, roles_json: &str) {
+        self.cache_channel_roles(roles_json);
+        let blob = self.channel_roles_json();
+        self.publish(format!(r#"{{"kind":"channel_roles","roles":{blob}}}"#));
+    }
     /// Cache a template's JSON (no push). Used to warm the cache at startup.
     pub fn cache_template(&self, id: i64, template_json: &str) {
         if let Ok(mut m) = self.templates.lock() {
@@ -1554,6 +1610,7 @@ pub async fn run_kiosk_server(
     templates: Arc<Mutex<HashMap<i64, String>>>,
     clients: ClientRegistry,
     default_tpl: Arc<Mutex<String>>,
+    channel_roles: Arc<Mutex<String>>,
     last_screen: Arc<Mutex<Option<String>>>,
     last_transition: TransitionSlot,
     health: OutputHealth,
@@ -1589,6 +1646,7 @@ pub async fn run_kiosk_server(
         let templates = templates.clone();
         let clients = clients.clone();
         let default_tpl = default_tpl.clone();
+        let channel_roles = channel_roles.clone();
         let last_screen = last_screen.clone();
         let last_transition = last_transition.clone();
         let health = health.clone();
@@ -1759,6 +1817,25 @@ pub async fn run_kiosk_server(
                                         .send(tokio_tungstenite::tungstenite::Message::Text(
                                             format!(
                                                 r#"{{"kind":"default_template","template":{dblob}}}"#
+                                            ),
+                                        ))
+                                        .await;
+                                    // WHAT EACH SCREEN IS FOR. Sent on every
+                                    // hello, not only when something has a role,
+                                    // because `{}` is an answer: it is how a page
+                                    // learns it is NOT the stage. Withholding it
+                                    // would leave a screen unable to tell "no role
+                                    // is set" from "the reply has not arrived yet",
+                                    // and the only thing downstream of it is
+                                    // whether a private message may be painted.
+                                    let rblob = channel_roles
+                                        .lock()
+                                        .map(|r| r.clone())
+                                        .unwrap_or_else(|_| "{}".into());
+                                    let _ = write
+                                        .send(tokio_tungstenite::tungstenite::Message::Text(
+                                            format!(
+                                                r#"{{"kind":"channel_roles","roles":{rblob}}}"#
                                             ),
                                         ))
                                         .await;
@@ -3066,6 +3143,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.default_template_handle(),
+            hub.channel_roles_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             OutputHealth::default(),
@@ -3126,6 +3204,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.default_template_handle(),
+            hub.channel_roles_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             OutputHealth::default(),
@@ -3209,6 +3288,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.default_template_handle(),
+            hub.channel_roles_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             OutputHealth::default(),
@@ -3259,6 +3339,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.default_template_handle(),
+            hub.channel_roles_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             OutputHealth::default(),
@@ -3298,6 +3379,101 @@ mod tests {
             got,
             "the client never received the configured default template"
         );
+    }
+
+    /// WHAT THIS SCREEN IS FOR, ON EVERY HELLO — including when the answer is
+    /// "nothing".
+    ///
+    /// A browser source has no database, so this is the only way `output.html`
+    /// can learn its own channel's role, and the only thing downstream of that is
+    /// whether a Stage Message may be painted. The filter has to live at the
+    /// receiver because the hub cannot address one client: it records nothing
+    /// about who connected and DECISIONS §35 is not being reversed.
+    ///
+    /// Sent unconditionally, `{}` included. A page that never receives this
+    /// cannot tell "no screen has a role" from "the reply has not come yet", and
+    /// the two have to differ: only one of them will ever accept a message.
+    #[tokio::test]
+    async fn a_kiosk_client_is_told_what_every_screen_is_for_on_hello() {
+        let port = free_port();
+        let hub = KioskHub::default();
+        hub.cache_channel_roles(r#"{"1":"main","2":"stage"}"#);
+        tokio::spawn(run_kiosk_server(
+            log_only(),
+            hub.sender(),
+            hub.templates_handle(),
+            hub.clients_handle(),
+            hub.default_template_handle(),
+            hub.channel_roles_handle(),
+            hub.last_screen_handle(),
+            hub.last_transition_handle(),
+            OutputHealth::default(),
+            port,
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
+            .await
+            .expect("connect");
+        let (mut write, mut read) = ws.split();
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"kind":"hello","template_id":7}"#.to_string(),
+            ))
+            .await
+            .expect("send hello");
+
+        let mut got = None;
+        for _ in 0..5 {
+            let Ok(Some(Ok(msg))) =
+                tokio::time::timeout(std::time::Duration::from_secs(2), read.next()).await
+            else {
+                break;
+            };
+            let text = msg.into_text().unwrap();
+            if text.contains(r#""kind":"channel_roles""#) {
+                got = Some(text);
+                break;
+            }
+        }
+        let text = got.expect(
+            "a client that joins is never told what its own screen is for, so it can \
+             never accept a stage message",
+        );
+        assert!(
+            text.contains(r#""2":"stage""#) && text.contains(r#""1":"main""#),
+            "got {text}"
+        );
+    }
+
+    #[test]
+    fn the_role_map_carries_ids_and_roles_and_nothing_else() {
+        // DECISIONS §35 is not being reversed. This frame goes to every client on
+        // the LAN, so what it may contain is exactly what the Outputs desk already
+        // shows: which channel holds which role. No names, no addresses, nothing a
+        // client chose, nothing about who is connected.
+        let hub = KioskHub::default();
+        hub.cache_channel_roles(r#"{"1":"main","2":"stage"}"#);
+        assert_eq!(hub.channel_roles_json(), r#"{"1":"main","2":"stage"}"#);
+        let mut rx = hub.sender().subscribe();
+        hub.set_channel_roles(r#"{"2":"stage"}"#);
+        let frame = rx.try_recv().expect("the change is published");
+        assert_eq!(frame, r#"{"kind":"channel_roles","roles":{"2":"stage"}}"#);
+    }
+
+    #[test]
+    fn a_malformed_role_map_degrades_to_no_roles_rather_than_breaking_the_frame() {
+        // The blob is embedded RAW into a WS frame, exactly like the default
+        // template — one unparseable frame stops a client applying every frame
+        // after it. `{}` is the safe reading, because every filter downstream asks
+        // whether a role IS `stage`, so degrading refuses rather than admits.
+        let hub = KioskHub::default();
+        hub.cache_channel_roles("{not json");
+        assert_eq!(hub.channel_roles_json(), "{}");
+        // A valid JSON value that is not an object is the same failure wearing
+        // better clothes: `roles[id]` on an array or a string is not a role.
+        hub.cache_channel_roles(r#"["stage"]"#);
+        assert_eq!(hub.channel_roles_json(), "{}");
     }
 
     #[test]
@@ -3381,6 +3557,11 @@ mod tests {
         assert!(!is_screen_frame(
             r#"{"kind":"channel_template","channel_id":1,"template":{}}"#
         ));
+        // And the third of that family. A screen that joins late is owed the
+        // verse, not a map of what every screen is for.
+        assert!(!is_screen_frame(
+            r#"{"kind":"channel_roles","roles":{"1":"main","2":"stage"}}"#
+        ));
     }
 
     /// Every `kind` this module publishes, and whether it decides what a screen
@@ -3412,6 +3593,14 @@ mod tests {
         // keeps it in its own slot (`default_tpl`) and replays it on hello from
         // there.
         ("default_template", false),
+        // WHAT EACH SCREEN IS FOR. Configuration again, and not retained HERE for
+        // the third time for the third identical reason: `last_screen` holds one
+        // frame and the newest wins. It has its own slot (`channel_roles`) and is
+        // replayed on hello from there, on EVERY hello — a page that does not know
+        // its role cannot tell "I am not the stage" from "nobody has told me yet",
+        // and what hangs off that distinction is whether a word meant for the
+        // platform gets painted.
+        ("channel_roles", false),
     ];
 
     /// THE ENUMERATION MUST GROW WITH THE MODULE, OR IT IS NOT AN ENUMERATION.
@@ -3551,6 +3740,17 @@ mod tests {
              Gating it would leave a screen already following the content look \
              wearing the pre-rehearsal default once the operator went live, the \
              same reasoning as `set_template` and `set_channel_template`",
+        ),
+        (
+            "set_channel_roles",
+            false,
+            "what each screen is FOR. It paints nothing and carries nothing a \
+             person reads; what it decides is whether the NEXT stage message is \
+             accepted, and the alert itself is gated one line above. Gating this \
+             too would leave a screen that changed role during a rehearsal \
+             refusing real messages once the operator went live — the failure \
+             `set_default_template` describes, on a surface where the cost is a \
+             preacher not being told something",
         ),
     ];
 
@@ -3841,6 +4041,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.default_template_handle(),
+            hub.channel_roles_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             OutputHealth::default(),
@@ -3904,6 +4105,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.default_template_handle(),
+            hub.channel_roles_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             OutputHealth::default(),
@@ -4078,6 +4280,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.default_template_handle(),
+            hub.channel_roles_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             OutputHealth::default(),
@@ -4138,6 +4341,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.default_template_handle(),
+            hub.channel_roles_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             OutputHealth::default(),
@@ -4209,6 +4413,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.default_template_handle(),
+            hub.channel_roles_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             OutputHealth::default(),
@@ -4266,6 +4471,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.default_template_handle(),
+            hub.channel_roles_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             OutputHealth::default(),
@@ -4469,6 +4675,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.default_template_handle(),
+            hub.channel_roles_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             OutputHealth::default(),
@@ -4523,6 +4730,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.default_template_handle(),
+            hub.channel_roles_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             health.clone(),

@@ -131,6 +131,7 @@
   // task, done on a Tuesday, not with a congregation waiting.
   import { onMount, onDestroy } from 'svelte';
   import { describeScreen } from '../outputHealth.js';
+  import { programmeScreen } from '../channelroles.js';
   import TemplateRender from '../TemplateRender.svelte';
   import { resolveOutputTemplate, isKeyedTemplate } from '../layers.js';
   import ModelSetup from '../ModelSetup.svelte';
@@ -1363,7 +1364,18 @@
   // Resolved from the reactive `$templates` store (not a one-shot snapshot), so a
   // template edit — which updates `$templates` app-wide via saveTemplate →
   // loadTemplates — flows straight into these panes instead of leaving them stale.
-  $: mainChannel = channels.find((c) => c.render_target === 'native_window') ?? channels[0] ?? null;
+  //
+  // WHICH SCREEN, read from `output_channels.role` rather than guessed at. The
+  // expression that used to sit here was `channels.find((c) => c.render_target
+  // === 'native_window') ?? channels[0] ?? null` — a render target is how a screen
+  // is WIRED, not what it is for, so renaming the main screen changed nothing,
+  // deleting it silently promoted whatever came first, and a church whose wall is
+  // an OBS browser source had this pane previewing its streaming feed. All three
+  // read identically on the bar below. `channelroles.js` is the one reader, and it
+  // keeps the old heuristic as an explicit, LABELLED fallback so an install that
+  // has never opened Outputs still previews something.
+  $: programme = programmeScreen(channels);
+  $: mainChannel = programme.channel;
   $: mainTpl =
     resolveOutputTemplate(
       (mainChannel && $templates.find((t) => t.id === mainChannel.template_id)) || null,
@@ -1688,7 +1700,16 @@
              joins two facts that are both present, and disappears with the tail. -->
         {#if mainChannel}
           <span class="mon-sep" aria-hidden="true">·</span>
-          <span class="mon-as r-mono" title="This pane renders through {mainChannel.name}'s template">as {mainChannel.name}</span>
+          <!-- AND WHETHER IT WAS TOLD OR IT GUESSED. `programme.label` carries
+               both cases and they read differently on purpose: a bar that says
+               `as Main screen` whether or not a main screen has been chosen is a
+               status line that reads the same when the setting behind it is
+               missing, which is rule 35. The fallback is kept — a blank programme
+               pane is a worse answer — and it announces itself. -->
+          <span class="mon-as r-mono" class:guessed={!programme.byRole}
+            title={programme.byRole
+              ? `This pane renders through ${mainChannel.name}'s template`
+              : `No screen is set as the main screen, so this pane is showing ${mainChannel.name}. Set one in Outputs → Screens → Role.`}>{programme.label}</span>
         {/if}
         <span class="spring"></span>
         <!-- The REFERENCE, amber only when a congregation is genuinely looking
@@ -2368,6 +2389,12 @@
   .mon-name.live{color:var(--v-amber)}
   .mon-as{flex:0 0 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
     font-size:var(--v-fs-fig); letter-spacing:.11em; text-transform:uppercase; color:var(--v-faint)}
+  /* NO MAIN SCREEN IS SET, so this name is a fallback rather than a setting. It
+     is drawn differently because it MEANS differently: the pane is previewing
+     whichever screen the old heuristic picked, and an operator who cannot tell
+     that from a chosen one has the status line rule 35 is about. Not amber and
+     not amethyst — those are ON AIR and REHEARSAL and are never spent elsewhere. */
+  .mon-as.guessed{color:var(--v-dim); text-decoration:underline dotted; text-underline-offset:3px}
   /* The join between two facts that are both present. It carries no value of its
      own, so it is hidden from the accessibility tree rather than read aloud. */
   .mon-sep{flex:0 0 auto; margin-left:-2px; font-family:var(--f-mono);

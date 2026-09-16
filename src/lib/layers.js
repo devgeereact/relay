@@ -50,6 +50,15 @@ export const BINDINGS = [
   { key: 'next', label: 'Up Next (verse text)' },
   { key: 'next_reference', label: 'Up Next (reference)' },
   { key: 'note', label: 'Stage Note (monitors only)' },
+  // THE STAGE MESSAGE, as a layer. Unlike every other binding here the
+  // value does NOT ride on the fired content: it is its own hub frame
+  // (`stage_alert`), held in the renderer's own state, so it can never travel on
+  // an `OutputContent` to a congregation screen. The output page accepts the
+  // frame only when its own channel's role is `stage` — the filter is at the
+  // receiver because the kiosk hub records nothing about who connected
+  // (DECISIONS §35) — and `boundValue` therefore returns nothing for it, the same
+  // answer it gives the ticking binds below.
+  { key: 'stage_message', label: 'Stage Message' },
   { key: 'elapsed', label: 'Service timer (elapsed)' },
   { key: 'remaining', label: 'Service timer (remaining)' },
   { key: 'static', label: 'Fixed text' },
@@ -380,6 +389,14 @@ export function boundValue(layer, content) {
     case 'elapsed':
     case 'remaining':
       return ''; // computed live in the renderer (ticks), not from content
+    case 'stage_message':
+      // NOT FROM CONTENT, AND THAT IS THE GUARANTEE. Reading it off `content`
+      // here is exactly how a private message would reach a congregation screen:
+      // it would then be a field on `OutputContent`, broadcast to every screen,
+      // and the only thing between it and a lobby TV would be which layers that
+      // TV's template happens to have. The renderer supplies it, from its own
+      // state, having already decided whether this screen may be shown one.
+      return '';
     default:
       return c.text || '';
   }

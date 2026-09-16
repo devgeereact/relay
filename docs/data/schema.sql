@@ -67,7 +67,8 @@ CREATE TABLE output_channels (
     render_target  TEXT NOT NULL CHECK (render_target IN ('native_window', 'ndi_encode', 'network_client')),
     template_id    INTEGER REFERENCES templates(id),
     display_target TEXT,                  -- display index, NDI source name, or kiosk client id
-    status         TEXT NOT NULL DEFAULT 'offline' CHECK (status IN ('online', 'offline'))
+    status         TEXT NOT NULL DEFAULT 'offline' CHECK (status IN ('online', 'offline')),
+    role           TEXT CHECK (role IS NULL OR role IN ('main', 'stage'))  -- what this screen is FOR; NULL = a congregation screen with no special job
 );
 
 -- ===== Service plans & the unified cue (db/plans.rs) =====

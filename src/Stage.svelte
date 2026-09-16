@@ -437,6 +437,28 @@
       // `svcStart` deliberately SURVIVES. A cleared or blacked wall is not the end
       // of a service, and the elapsed zone is the preacher's own clock — taking it
       // away when the operator hits Esc would answer a question nobody asked.
+      //
+      // …AND SO DOES `alert`, WHICH FOR A LONG TIME SURVIVED BY ACCIDENT.
+      //
+      // It was the one field this branch left standing with nothing recorded
+      // about why, spelled identically to the one above it that has a reason. The
+      // behaviour is now ratified rather than changed (DECISIONS §89): a word to
+      // the preacher is an instruction to a PERSON, not a state of the wall.
+      // Every other field cleared here rides WITH the content and describes the
+      // slide — the note, the next verse, the countdown — and clearing the
+      // content is what makes them wrong. An alert arrives on its own frame, is
+      // cleared by its own empty frame, and is most likely to be wanted at
+      // exactly the moment the operator blanks the screens: if `Esc` also wiped
+      // the sentence telling the preacher why the room has gone dark, the panic
+      // control would be deleting its own explanation.
+      //
+      // The condition this rests on is that it can still be taken back in one
+      // action — the operator sends a blank Stage Message. If that ever stops
+      // being true, this ruling has to be reopened rather than inherited.
+      //
+      // Pinned by `src/lib/stagealertpanic.test.js`, which drives both controls,
+      // because the branch above records that if the stage monitor ever survives
+      // a panic it must survive BOTH and not by one of them being forgotten.
     } else if (m.kind === 'stage_alert') {
       // `text: null` (or empty) clears it. An alert is an instruction, not a
       // state of the wall, so nothing here is retained or restored on reconnect.

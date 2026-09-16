@@ -62,6 +62,7 @@
   import { DEFAULT_TEMPLATE } from '../templates.js';
   import { CONTENT_KINDS, resolveOutputTemplate, isKeyedTemplate } from '../layers.js';
   import { outputUrl } from '../outputurl.js';
+  import { CHANNEL_ROLES, NO_ROLE_LABEL } from '../channelroles.js';
   import {
     capture,
     templates,
@@ -74,6 +75,7 @@
     loadTemplates,
     listOutputChannels,
     setChannelTemplate,
+    setChannelRole,
     listMonitors,
     openChannelOutput,
     closeChannelOutput,
@@ -337,6 +339,16 @@
   const assignTemplate = (c, e) =>
     act(() => setChannelTemplate(c.id, e.target.value === '' ? null : parseInt(e.target.value, 10)));
   const assignDisplay = (c, e) => act(() => setChannelDisplay(c.id, e.target.value === '' ? null : e.target.value));
+  // WHAT THIS SCREEN IS FOR. '' is "no special role", which is the right answer
+  // for a streaming feed and a lobby TV and is a value rather than an empty
+  // field — the same distinction as Follow the content look above it.
+  //
+  // The backend refuses a SECOND main screen and names the one that already holds
+  // it; `act` hands that refusal to `src/lib/errors.js` like every other mutation
+  // on this desk. It is deliberately not pre-empted here by disabling the option:
+  // a picker that silently cannot be chosen explains nothing, and the sentence
+  // says which screen to clear.
+  const assignRole = (c, e) => act(() => setChannelRole(c.id, e.target.value === '' ? null : e.target.value));
   const openNative = (c) => act(() => openChannelOutput(c.id));
   const closeNative = (c) => act(() => closeChannelOutput(c.id));
 
@@ -1006,6 +1018,34 @@
               This screen's own look. It wins over a content look — only a cue that pins its
               own template overrides it (DECISIONS §29). To let the content looks decide here,
               choose <b>Follow the content look</b>.
+            </p>
+          {/if}
+
+          <!-- ROLE. A setting, not a guess: Live's programme pane used to decide
+               which screen it was previewing from `render_target`, and a Stage
+               Message is filtered on this at the receiving page. -->
+          <div class="r-lbl ch-flbl">Role</div>
+          <select class="r-select ch-fin" value={sel.role ?? ''} on:change={(e) => assignRole(sel, e)} disabled={!$capture.available}>
+            <option value="">{NO_ROLE_LABEL}</option>
+            {#each CHANNEL_ROLES as r (r.key)}
+              <option value={r.key}>{r.label}</option>
+            {/each}
+          </select>
+          {#if sel.role === 'main'}
+            <p class="ch-finhint">
+              The wall. Live's programme pane is a preview of THIS screen, through this
+              screen's template. Only one screen may be the main screen.
+            </p>
+          {:else if sel.role === 'stage'}
+            <p class="ch-finhint">
+              A screen the platform reads, not the congregation. It is the only kind of
+              screen a <b>Stage Message</b> is painted on, and several screens may be
+              stages — a confidence monitor and a preacher's tablet, for instance.
+            </p>
+          {:else}
+            <p class="ch-finhint">
+              A congregation screen with no special job. It is never shown a Stage
+              Message, and Live's programme pane is not a preview of it.
             </p>
           {/if}
 

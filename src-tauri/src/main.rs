@@ -215,6 +215,7 @@ fn main() {
             let kiosk_templates = kiosk.templates_handle();
             let kiosk_clients = kiosk.clients_handle();
             let kiosk_default_tpl = kiosk.default_template_handle();
+            let kiosk_roles = kiosk.channel_roles_handle();
             let kiosk_last = kiosk.last_screen_handle();
             let kiosk_last_x = kiosk.last_transition_handle();
             // The configured default, warmed before any client can connect — a
@@ -235,6 +236,19 @@ fn main() {
                         .and_then(|t| serde_json::to_string(&t).ok())
                         .unwrap_or_else(|| "null".into());
                 kiosk.cache_default_template(&dj);
+            }
+            // …and what each screen is FOR, on the same argument: a page that
+            // connects during launch must not be told it has no role and then
+            // corrected, because between the two it would refuse a stage message
+            // meant for it.
+            {
+                let db = app.state::<Db>();
+                let rj =
+                    db.0.lock()
+                        .ok()
+                        .and_then(|conn| db::channel_roles_json(&conn).ok())
+                        .unwrap_or_else(|| "{}".into());
+                kiosk.cache_channel_roles(&rj);
             }
             // Warm the template cache so a browser client (OBS/kiosk) gets the
             // REAL saved template immediately on connect (matches the editor).
@@ -258,6 +272,7 @@ fn main() {
                 kiosk_templates,
                 kiosk_clients,
                 kiosk_default_tpl,
+                kiosk_roles,
                 kiosk_last,
                 kiosk_last_x,
                 app.state::<channels::OutputHealth>().inner().clone(),
@@ -425,6 +440,7 @@ fn main() {
             open_channel_output,
             auto_open_outputs,
             set_channel_display,
+            set_channel_role,
             add_channel,
             delete_channel,
             clear_screens,
@@ -5661,6 +5677,69 @@ fn set_channel_display(
     db::set_channel_display(&conn, id, display.as_deref()).map_err(Into::into)
 }
 
+/// SET (or clear) WHAT A SCREEN IS FOR, and tell every screen at once.
+///
+/// `role` is `main`, `stage`, or null for a screen with no special job. The
+/// one-main rule is enforced in `db::set_channel_role` — one place, so the
+/// console, the LAN remote and any future caller cannot disagree about it — and
+/// what comes back is turned into a sentence here rather than relayed as a
+/// constraint violation (`error.rs`, and `Channels.svelte`'s five monospace Rust
+/// strings, are why).
+///
+/// BOTH DOORS, like every other piece of screen configuration in this file. A
+/// native output window hears `output://channel_roles`; a kiosk/OBS browser
+/// source gets the hub frame and picks out its own channel. A control wired to one
+/// of the two is the mistake this repository has now made four times — and here it
+/// would mean a projector and a browser source disagreeing about which of them may
+/// be shown a word meant for the preacher.
+///
+/// Rule 2: the write and the read happen under the lock, which is released before
+/// anything is emitted or published.
+#[tauri::command]
+fn set_channel_role<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    db: tauri::State<'_, Db>,
+    id: i64,
+    role: Option<String>,
+) -> error::Result<()> {
+    let roles = {
+        let conn = db.0.lock()?;
+        match db::set_channel_role(&conn, id, role.as_deref())? {
+            db::RoleOutcome::Set => {}
+            db::RoleOutcome::MainTaken(name) => {
+                return Err(error::Error::refused(format!(
+                    "{name} is already the main screen. Clear its role first, or \
+                     choose a different role for this one."
+                )))
+            }
+            db::RoleOutcome::NotARole(r) => {
+                return Err(error::Error::refused(format!(
+                    "Relay has no screen role called \"{r}\"."
+                )))
+            }
+        }
+        db::channel_roles_json(&conn)?
+    };
+    publish_channel_roles(&app, &roles);
+    Ok(())
+}
+
+/// The two doors, once. Called by every command that can change the role map.
+///
+/// The hub is reached through `try_state`, not taken as a `State` parameter: a
+/// headless Relay manages no hub — that is the "no LAN" case `qa::bare_app`
+/// deliberately reproduces — and a `State` argument panics there instead of
+/// quietly doing nothing, which is what `channels::publish_kiosk` and
+/// `channels::transition` already do for the same reason.
+fn publish_channel_roles<R: tauri::Runtime>(app: &tauri::AppHandle<R>, roles_json: &str) {
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(roles_json) {
+        let _ = app.emit("output://channel_roles", serde_json::json!({ "roles": v }));
+    }
+    if let Some(hub) = app.try_state::<channels::KioskHub>() {
+        hub.set_channel_roles(roles_json);
+    }
+}
+
 /// Add an output channel. Returns its id.
 #[tauri::command]
 fn add_channel(
@@ -5684,14 +5763,24 @@ fn add_channel(
 
 /// Delete an output channel.
 #[tauri::command]
-fn delete_channel(
+fn delete_channel<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     db: tauri::State<'_, Db>,
     lock: tauri::State<'_, servicelock::ServiceLock>,
     id: i64,
 ) -> error::Result<()> {
     lock.guard("delete_channel")?;
-    let conn = db.0.lock()?;
-    db::delete_channel(&conn, id).map_err(Into::into)
+    // Deleting the screen that held a role changes the role map, and a page that
+    // is still open would otherwise keep the role of a channel that no longer
+    // exists — which on a stage display means it keeps accepting stage messages
+    // after the operator has deleted it.
+    let roles = {
+        let conn = db.0.lock()?;
+        db::delete_channel(&conn, id)?;
+        db::channel_roles_json(&conn)?
+    };
+    publish_channel_roles(&app, &roles);
+    Ok(())
 }
 
 /// All output templates (Templates tab, Channels tab).
