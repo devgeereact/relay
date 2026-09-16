@@ -154,6 +154,10 @@
     { key: 'countdown', label: 'Countdown' },
     { key: 'clock', label: 'Clock' },
     { key: 'elapsed', label: 'Service elapsed' },
+    // The preacher's bookkeeping. A lobby TV running this page has no business
+    // carrying it, and until this key existed there was no way to take it off —
+    // the rail was the one region on the screen with no switch behind it.
+    { key: 'programme', label: 'Programme' },
   ];
   const DEFAULT_ZONES = {
     reading: true,
@@ -162,6 +166,7 @@
     countdown: true,
     clock: true,
     elapsed: true,
+    programme: true,
   };
   const ZONE_KEY = 'relay.stage.zones';
   let zones = { ...DEFAULT_ZONES };
@@ -257,10 +262,90 @@
   // `warn_ms` rides in the frame and is deliberately not read here yet: the warning
   // threshold is wave 3 Track D's, on all three surfaces at once, and a fourth
   // reading of the rule invented here is exactly what §7 forbids.
+  //
+  // ── WHAT A ROW SAYS ABOUT ITSELF (wave 4 track A) ──────────────────────────
+  //
+  // `warn_ms` and `countdown_done` both rode in the frame and neither was read, so
+  // a programme row looked exactly the same at four minutes and at ten seconds, and
+  // a FINISHED one read `0:00` — which is what a clock that has just arrived reads,
+  // not what a clock that is over reads. A held row froze, correctly, and said
+  // nothing at all about being held. Three states, one rail, and the surface whose
+  // whole job is telling a preacher how long is left was the only timer surface in
+  // the product with no warning state on it.
   $: programme = stageTimers
-    .map((t) => ({ id: t?.id, label: (t?.label || '').trim(), ms: countdownRemainingMs(t, nowMs) }))
-    .filter((r) => r.ms != null)
-    .map((r) => ({ ...r, v: formatCountdown(r.ms) }));
+    .map((t) => {
+      const ms = countdownRemainingMs(t, nowMs);
+      if (ms == null) return null;
+      const held = countdownIsPaused(t);
+      // At zero, the operator's own words if they wrote any. `0:00` otherwise —
+      // never an empty box, which is a row that says nothing and still takes room.
+      const finished = ms === 0 && !held;
+      const msg = (t?.countdown_done || '').trim();
+      return {
+        id: t?.id,
+        label: (t?.label || '').trim(),
+        ms,
+        held,
+        // Is the VALUE prose rather than digits? Only then does it take the words
+        // treatment; `0:00` is still a figure and is still sized like one.
+        words: finished && !!msg,
+        warn: !held && programmeWarn(t, ms),
+        v: finished ? msg || '0:00' : formatCountdown(ms),
+      };
+    })
+    .filter(Boolean);
+
+  // THE THRESHOLD IS THE ONE THE FRAME CARRIES, AND THERE IS NO FALLBACK.
+  //
+  // `countdownWarning` has a default rule — the last minute, or the last tenth of a
+  // countdown shorter than ten minutes — and the MINUTE in it is `Settings → General
+  // → Countdown warning`, applied through `setCountdownWarnDefault` by
+  // `stores/capture.js`. This page has no Tauri bridge and does not import that
+  // module, so the default in force here is the SHIPPED minute whatever the church
+  // set. Falling back to it would put a warning colour on this rail at a figure
+  // nobody chose and the wall does not agree with — a fourth reading of the rule,
+  // which is exactly what docs/REBRAND.md §7 forbids. So: a threshold the operator
+  // chose, or no warning at all.
+  //
+  // A HELD ROW IS NEVER WARNED (see the caller). A held timer is not running out;
+  // it is where the operator left it, and a frozen figure pulsing red says the
+  // opposite of what is true.
+  function programmeWarn(t, ms) {
+    const chosen = Number(t?.warn_ms);
+    if (!Number.isFinite(chosen) || chosen <= 0) return false;
+    return countdownWarning(ms, null, chosen);
+  }
+
+  // ── THE RAIL'S FLOOR ───────────────────────────────────────────────────────
+  //
+  // `.tmr { flex: 1 1 0 }` divided the row by however many timers were in it, with
+  // no floor: six timers on a phone in portrait is six columns of about sixty
+  // pixels, every clock on the rail illegible, and nothing anywhere saying the rail
+  // had given up. A row that cannot show every timer must SAY SO — the same shape as
+  // rule 35, one rail along.
+  //
+  // 132px is the arithmetic, not a taste: `.tval` is `92cqw / --tmrs / 6 / 0.62`, so
+  // a 132px cell puts `MM:SS` at about 32px, a little above the reading's own 26px
+  // floor. Below that the digits are inside the box and nobody across a platform can
+  // read them. At 1920 that is fourteen cells, at 1280 nine, at 1024 seven, and on a
+  // phone in portrait three.
+  //
+  // The viewport, not a measurement: `.progrow` spans the frame, and measuring the
+  // box would mean a forced layout on the one page whose job is to be still.
+  const MIN_TIMER_PX = 132;
+  let frameW = 1024;
+  $: capacity = Math.max(1, Math.floor((Number(frameW) || 1024) / MIN_TIMER_PX));
+  // The last slot is spent on the count when there is one, so the count cannot
+  // itself be the thing that gets pushed off the end. At least one clock always
+  // survives — a rail that says "6 more" and shows nothing is a rail that has told
+  // the preacher he cannot have the thing he is looking at.
+  $: progCells =
+    programme.length <= capacity
+      ? programme
+      : (() => {
+          const keep = Math.max(1, capacity - 1);
+          return [...programme.slice(0, keep), { more: programme.length - keep }];
+        })();
 
   // SERVICE ELAPSED — counts up from the epoch the fired content carries. There is
   // no epoch when no service is recording, and an absence is shown as an absence:
@@ -571,6 +656,12 @@
   });
 </script>
 
+<!-- THE ONLY THING THIS PAGE ASKS THE WINDOW FOR, and it is asked rather than
+     measured: the programme rail's floor needs to know how many clocks the frame
+     can hold at a legible size, and `getBoundingClientRect` on the row would mean a
+     forced layout on the page whose job is to be still. -->
+<svelte:window bind:innerWidth={frameW} />
+
 <div class="sr">
   <header>
     <span class="brand">Relay · Stage</span>
@@ -655,13 +746,26 @@
        means the AI is guessing; not amethyst, which means rehearsal. Slate, the
        page's own neutral — the programme is the operator's bookkeeping shown to one
        person, and it makes no claim about any screen. -->
-  {#if programme.length}
-    <div class="progrow" style="--tmrs:{programme.length}" aria-label="Programme">
-      {#each programme as t (t.id)}
-        <div class="tmr" data-timer-id={t.id}>
-          {#if t.label}<span class="tlabel">{t.label}</span>{/if}
-          <span class="tval">{t.v}</span>
-        </div>
+  {#if zones.programme && progCells.length}
+    <div class="progrow" style="--tmrs:{progCells.length}" aria-label="Programme">
+      {#each progCells as t, i (i)}
+        {#if t.more}
+          <!-- THE RAIL SAYING WHAT IT COULD NOT SHOW. Not a timer, so it carries no
+               `data-timer-id` and nothing counts it as one. -->
+          <div class="tmr tmore">
+            <span class="tval msg">+{t.more} more</span>
+          </div>
+        {:else}
+          <div class="tmr" class:warn={t.warn} class:held={t.held} data-timer-id={t.id}>
+            {#if t.label || t.held}
+              <span class="thead">
+                {#if t.label}<span class="tlabel">{t.label}</span>{/if}
+                {#if t.held}<span class="tstate">Held</span>{/if}
+              </span>
+            {/if}
+            <span class="tval" class:msg={t.words}>{t.v}</span>
+          </div>
+        {/if}
       {/each}
     </div>
   {/if}
@@ -906,6 +1010,7 @@
   .fig.warn .figv { color: var(--v-red); }
   @media (prefers-reduced-motion: no-preference) {
     .fig.warn .figv, .railrow.warn { animation: cdwarn 2s ease-in-out infinite; }
+    .tmr.warn .tval { animation: cdwarn 2s ease-in-out infinite; }
   }
   /* `inline-size`, not `size`: the row's WIDTH is definite (it is the frame) and
      its height is what its content asks for under a ceiling. `container-type: size`
@@ -938,16 +1043,46 @@
      rather than rendered empty, so the row closes up instead of leaving a gap the
      height of a word — wave 5 Track G makes label-less the dock's default and this
      page has to survive it already. */
+  /* The label and the state word share the top line: the label takes what it can
+     and ellipses, the state word is never allowed to be the thing that gets cut. */
+  .thead { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
   .tlabel { font-family: var(--f-mono); font-weight: 700; letter-spacing: .16em;
     text-transform: uppercase; line-height: 1.1; color: var(--v-faint);
     font-size: clamp(var(--v-fs-fig), 1.9vmin, 24px);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  /* HELD IS A REAL THIRD STATE AND IT READS AS ONE — the same answer the dock
+     already gave (`Dock.svelte`'s `.cdstatev.held`). It is not a colour from the
+     law: amber means ON AIR, cyan means a guess, amethyst means rehearsal, and a
+     clock somebody paused is none of those. It is the page's own ink, which is the
+     brightest thing here, because the operator did this deliberately and the
+     preacher is entitled to know a clock has stopped rather than broken. */
+  .tstate { flex: 0 0 auto; font-family: var(--f-mono); font-weight: 700;
+    letter-spacing: .16em; text-transform: uppercase; line-height: 1.1;
+    color: var(--v-txt); font-size: clamp(var(--v-fs-fig), 1.9vmin, 24px); }
   .tval { font-family: var(--f-mono); font-variant-numeric: tabular-nums; font-weight: 700;
     color: var(--v-txt); line-height: 1;
     /* The width a figure may take is its share of the row divided by the characters
        it actually has — `0.62` is the mono advance. Capped so one timer on a wide
        screen does not become the whole page. */
     font-size: min(clamp(16px, calc(92cqw / var(--tmrs) / 6 / 0.62), 64px), 9cqh); }
+  /* A FINISHED TIMER'S MESSAGE IS WORDS, NOT A FIGURE — the same answer the rail
+     beside the reading gives a finished countdown (`.railrow.done`). Digits sized
+     for `MM:SS` would put a four-word message at the size of a clock and clip it. */
+  .tval.msg { font-family: var(--f-body); font-weight: 700; letter-spacing: 0;
+    line-height: 1.15;
+    font-size: min(clamp(14px, calc(92cqw / var(--tmrs) / 11 / 0.5), 30px), 9cqh);
+    overflow: hidden; }
+  /* WHAT THE RAIL COULD NOT SHOW. Quiet, because it is bookkeeping about
+     bookkeeping — but present, because a rail that silently drops half the
+     programme is a rail nobody can tell from a complete one. */
+  .tmore { flex: 0 1 auto; justify-content: center; }
+  .tmore .tval.msg { color: var(--v-faint); }
+  /* THE LAST MINUTE, ON THE PREACHER'S OWN PROGRAMME. Same red and same rule as
+     the congregation figure beneath the reading — `.fig.warn .figv` is the
+     precedent and this reuses it rather than inventing a second warning.
+     The COLOUR is stated here, unconditionally, outside every motion query: a
+     viewer who asked for no motion must still learn that the clock is running out. */
+  .tmr.warn .tval { color: var(--v-red); }
   /* The zone panel — one instrument, no native dialog (rule 41). */
   .zonepanel { flex: 0 0 auto; max-height: 46dvh; overflow-y: auto; padding: 14px 18px;
     display: flex; flex-direction: column; gap: 10px;
@@ -1006,6 +1141,7 @@
      gets a glow instead of a pulse; the colour is the same either way. */
   @media (prefers-reduced-motion: reduce) {
     .fig.warn .figv, .railrow.warn { text-shadow: 0 0 .25em rgba(244, 81, 91, .85); }
+    .tmr.warn .tval { text-shadow: 0 0 .25em rgba(244, 81, 91, .85); }
   }
   @keyframes cdwarn { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
   /* Operator's cue note — confidence-monitor only, never on the main output. */

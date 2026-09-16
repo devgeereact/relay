@@ -177,6 +177,85 @@ describe('zones — everything the operator sent, and nothing they did not', () 
     expect(container.querySelector('.noterow')).toBeTruthy();
     spy.mockRestore();
   });
+
+  // ── WAVE 4 TRACK A · THE SEVENTH ZONE ───────────────────────────────────────
+  //
+  // `ZONES` had six keys and the programme rail was not one of them, so the one
+  // region on this screen that carries the OPERATOR'S bookkeeping was the one
+  // region with no switch behind it. A lobby TV running the stage page had no way
+  // to stop showing the preacher's programme, and §5's whole premise is that the
+  // switches remove things on the device that wants them removed.
+  const programme = (at) => ({
+    kind: 'timer',
+    timers: [
+      {
+        id: 7,
+        label: 'Offering',
+        countdown_to: at + 300_000,
+        countdown_from: at,
+        countdown_paused_ms: null,
+        countdown_done: '',
+        warn_ms: null,
+      },
+    ],
+  });
+
+  it('the programme rail is a zone, it is on by default, and switching it off gives up its room', async () => {
+    const { container } = await mount(programme(Date.now()));
+    expect(
+      container.querySelector('.progrow'),
+      'every other zone ships on; this one must too',
+    ).toBeTruthy();
+
+    await click('Zones');
+    await click('Programme');
+    await tick();
+
+    // Not hidden — GONE. `.progrow` is a `flex-basis: auto` row, so a switched-off
+    // rail that still rendered would keep taking the room it needs for its content.
+    expect(container.querySelector('.progrow')).toBeNull();
+    expect(JSON.parse(localStorage.getItem(ZONE_KEY)).programme).toBe(false);
+
+    cleanup();
+    const again = await mount(programme(Date.now()));
+    expect(again.container.querySelector('.progrow')).toBeNull();
+  });
+
+  it('a layout stored before this zone existed still loads, and gets the default', async () => {
+    // `loadZones` reads key by key OFF THE DEFAULTS, which is what makes a zone
+    // added in a later version arrive switched ON rather than `undefined` — and
+    // `undefined` is not false in a `{#if}`, so this is the difference between the
+    // rail appearing and the whole page reading a stale object. Written out as a
+    // stored payload from the version before this one, not as a doctored object.
+    localStorage.setItem(
+      ZONE_KEY,
+      JSON.stringify({
+        reading: true,
+        next: true,
+        note: false,
+        countdown: true,
+        clock: true,
+        elapsed: true,
+        figures: 'beside',
+      }),
+    );
+
+    const { container } = await mount(programme(Date.now()));
+    expect(container.querySelector('.progrow'), 'the new zone did not get its default').toBeTruthy();
+
+    // …and the six that WERE stored are untouched, `figures` included — a
+    // migration that quietly resets a device's layout is a migration nobody asked
+    // for. `figures` is the one of the seven that is not a boolean, so it is the
+    // one a key-by-key loop is most likely to lose.
+    await click('Zones');
+    const pressed = (label) =>
+      [...container.querySelectorAll('.zonebtn')]
+        .find((b) => b.textContent.trim() === label)
+        ?.getAttribute('aria-pressed');
+    expect(pressed('Note'), 'a stored choice was reset').toBe('false');
+    expect(pressed('Programme')).toBe('true');
+    expect(pressed('Figures beside the reading')).toBe('true');
+  });
 });
 
 describe('the stacked rail clock', () => {
