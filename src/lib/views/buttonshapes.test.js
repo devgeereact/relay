@@ -59,11 +59,8 @@ const FILES = [
   'src/lib/views/library/MediaLibrary.svelte',
   'src/lib/views/library/Scripture.svelte',
   'src/lib/views/library/VerseDeck.svelte',
-  'src/lib/views/templates/DeskStrip.svelte',
   'src/lib/views/templates/TemplateEditor.svelte',
   'src/lib/views/templates/TemplateGallery.svelte',
-  'src/lib/views/themes/ThemeEditor.svelte',
-  'src/lib/views/themes/ThemeGallery.svelte',
 ];
 
 // Shared instruments, all defined in `src/app.css`. A button wearing one of
@@ -255,17 +252,17 @@ describe('B2 · a button in a row of buttons uses the shared control', () => {
 
   it('and Delete wears the one destructive variant, on every surface', () => {
     // THE DEFECT: four separate copies of `class="r-btn ghost sm X-del"` with a
-    // local rule painting the text rose — Templates' Delete, Themes' Delete,
-    // History's Erase service, and the template editor's own Delete, which was
-    // the ONE that used `.r-btn sm danger`. So the same word drew a ghost's
-    // `--v-500` hairline on three surfaces and a red one on the fourth, and in
-    // Templates the two were a single press apart.
+    // local rule painting the text rose — Templates' Delete, the Themes desk's
+    // Delete (that desk is gone; themes were folded into templates), History's
+    // Erase service, and the template editor's own Delete, which was the ONE
+    // that used `.r-btn sm danger`. So the same word drew a ghost's `--v-500`
+    // hairline on three surfaces and a red one on the fourth, and in Templates
+    // the two were a single press apart.
     //
     // B1's own assertion could not see this: it holds the app.css rule, and all
     // four of these were correct app.css rules being overridden in a component.
     for (const [f, sel] of [
       ['src/lib/views/templates/TemplateGallery.svelte', 'tg-del'],
-      ['src/lib/views/themes/ThemeGallery.svelte', 'th-del'],
       ['src/lib/views/library/History.svelte', 'lib-del'],
     ]) {
       const hit = buttons(read(f)).find((b) => b.classes.includes(sel));

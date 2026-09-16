@@ -334,30 +334,29 @@ until someone can look at a running app. Tracked in [KNOWN_ISSUES.md](KNOWN_ISSU
 
 ---
 
-## 7. Themes and templates — the output style layer
+## 7. The template is the whole style — themes were folded into it
 
-**Themes are the style layer beneath templates** (DECISIONS §27). The whole model is one line:
+**A template is the only style layer** (DECISIONS §87, completing §27). A theme used to sit
+beneath one and fill the keys it left unset:
 
 ```js
 { ...theme.style, ...template.style }   // template wins, key by key
 ```
 
-- A **theme** is a named bag of defaults for the exact same flat `style` keys `TemplateRender`
-  already reads — typography, `accent`, `verseColor`, `refColor`, `background`, shadows,
-  transition, `refGap`. The permitted list is `THEME_STYLE_KEYS` in
-  [`src/lib/themes.js`](../src/lib/themes.js), and it is explicit so a theme can never smuggle
-  in a key that changes an unrelated template.
-- A **template** overrides the theme per key, and owns everything a theme may not touch —
-  per-region overrides, background image, panel, layout.
-- Resolving a theme produces **a normal template object**. It is not a new renderer, not a new
-  content type, and there is no `if theme == …` anywhere. A themed template and a hand-styled
-  one are indistinguishable downstream, which is what keeps WYSIWYG and *"outputs are render
-  targets of one engine"* intact.
-- Eight builtins ship (`BUILTIN_THEMES`): Modern Dark, Minimal, Light, Classic, Youth,
-  Conference, Wedding, Livestream. Their ids are **negative** so they can never collide with a
-  saved custom theme, and a template's `style.themeRef` is unambiguous. They live in the JS (not
-  only the DB) so a kiosk or OBS client with no database can still resolve one.
-- Layer colours may bind to a theme token (`theme:accent`) rather than a hex.
+Every field on the left of that merge was a key the template already had. There was no themes
+table and no Rust struct — a theme was a bag of defaults for the same flat `style` keys
+`TemplateRender` reads, whitelisted to a subset of them, and nine of its fourteen controls moved
+nothing at all on a layered template. So it could only ever say less than the template above it,
+and it could disagree with it about what a screen wears. It is gone: `ensure_themes_are_inlined`
+writes each pinned theme's style into the template's own, under the same precedence the renderer
+applied, so **no look changed**.
+
+**What survives is the half that was never about themes.** A layer's colour, fill or font may be
+a TOKEN (`theme:accent`) rather than a literal, so a stage, confidence or countdown starter
+follows whatever template it is dropped into. [`src/lib/styletokens.js`](../src/lib/styletokens.js)
+resolves it against that template's own style, which is what the merge already produced once the
+theme was out of it. The token keeps its spelling: it is written into every saved layer in every
+install, and renaming it would need a migration to buy a nicer word.
 
 **One property, one home** (`src/lib/templatemodel.js`, docs/REBRAND.md §3.1). A template stores
 only what it has changed and the model fills the rest:
@@ -379,8 +378,8 @@ only what it has changed and the model fills the rest:
   would keep the wall correct while the legacy key sat in the database for the next reader that
   does not resolve.
 - **A deletion is only safe if every reader moved with it**, and two did not. `regionsToLayers`
-  (which `TemplateGallery` runs on mount and **saves**) and `themes.js`'s `theme:font` resolver
-  both read `style.font` — real in the shape they were written against, absent in the shape that
+  (which `TemplateGallery` runs on mount and **saves**) and the `theme:font` token resolver (now
+  `styletokens.js`) both read `style.font` — real in the shape they were written against, absent in the shape that
   now reaches them. Every seeded template carries a `font`, so the first visit to the Templates
   tab after an upgrade would have re-typefaced the whole shelf to serif, silently, once, for good.
   Both now read the model (`migrateStyle` / `resolveStyle`), which is idempotent, so they are

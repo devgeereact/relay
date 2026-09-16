@@ -8,10 +8,24 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseColor, contrastRatio, effectiveBackground, checkContrast, checkDistance, textHeightMetres, previewScale, review, CONTRAST_FLOOR, PREVIEW_DISTANCES_M, reviewTemplate, styleOfTemplate } from './legibility.js';
-import { BUILTIN_THEMES } from './themes.js';
 
 const ROOT = path.resolve(__dirname, '../..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
+
+/**
+ * THE HIGH VISIBILITY LOOK, AS IT REACHED A SCREEN.
+ *
+ * It shipped as a built-in THEME, and themes were folded into templates
+ * (DECISIONS §87). `ensure_themes_are_inlined` wrote this exact style into every
+ * template that pinned it, so for a church that chose it the numbers below are
+ * about what they actually have — the snapshot is where those bytes live, and it
+ * is the file Rust reads. Track D re-seeds High Visibility as a template FAMILY;
+ * until it does, this is the only copy and the accessibility claim is held here
+ * rather than dropped with the desk.
+ */
+const HIGH_VIS = JSON.parse(
+  fs.readFileSync(path.join(ROOT, 'src-tauri/data/legacy_themes.json'), 'utf8'),
+).themes.find((t) => t.name === 'High Visibility');
 
 describe('the arithmetic', () => {
   it('reads the colour formats templates actually use', () => {
@@ -136,17 +150,19 @@ describe('the thresholds are reference points, and it says so', () => {
   });
 });
 
-describe('High Visibility is a THEME, not a mode', () => {
-  const hv = BUILTIN_THEMES.find((t) => t.name === 'High Visibility');
+describe('High Visibility is a LOOK, not a mode', () => {
+  const hv = HIGH_VIS;
 
-  it('exists as a built-in theme', () => {
+  it('is a style a template can carry, not a rendering branch', () => {
     // A parallel "accessibility mode" would be the `if channel_type ==` shape
-    // CLAUDE.md forbids, and would need a decision at every render site. As a theme
-    // it reaches the wall, the stage monitor, the lower third and the editor
-    // preview on the day it is selected (DECISIONS §27).
+    // CLAUDE.md forbids, and would need a decision at every render site. As a
+    // style it reaches the wall, the stage monitor, the lower third and the
+    // editor preview on the day it is selected, through the one renderer.
     expect(hv).toBeTruthy();
-    expect(hv.builtin).toBe(true);
-    expect(hv.id).toBeLessThan(0); // built-in ids are negative and cannot collide
+    // Every key is one `TemplateRender` already reads off a template's `style` —
+    // which is exactly why the theme layer beneath templates had nothing left to
+    // say, and why inlining it changed no look.
+    expect(Object.keys(hv.style).length).toBeGreaterThan(0);
   });
 
   it('is the highest contrast a projector can make', () => {
@@ -170,8 +186,10 @@ describe('High Visibility is a THEME, not a mode', () => {
     expect(hv.style.transitionMs).toBe('0');
   });
 
-  it('is larger than the default theme', () => {
-    const modern = BUILTIN_THEMES.find((t) => t.name === 'Modern Dark');
+  it('is larger than the look Relay opened with', () => {
+    const modern = JSON.parse(
+      fs.readFileSync(path.join(ROOT, 'src-tauri/data/legacy_themes.json'), 'utf8'),
+    ).themes.find((t) => t.name === 'Modern Dark');
     expect(Number(hv.style.verseSize)).toBeGreaterThan(Number(modern.style.verseSize));
   });
 });

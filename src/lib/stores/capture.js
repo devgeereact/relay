@@ -239,12 +239,6 @@ function noteResolved(d, outcome) {
 // Output templates (Phase 8), loaded from the DB.
 export const templates = writable([]);
 
-// CUSTOM themes (the style layer beneath templates — see lib/themes.js). Builtin
-// themes live in the frontend (themes.js); the operator's own themes are
-// persisted as a JSON blob in the settings KV under THEMES_KEY. The store holds
-// ONLY the custom ones — surfaces concatenate BUILTIN_THEMES + $customThemes.
-export const customThemes = writable([]);
-
 // Planned service length in MINUTES (0 = no target). Drives a monitor's REMAINING
 // timer. Persisted in the settings KV and read by the backend at start_service.
 export const serviceTargetMinutes = writable(0);
@@ -1874,46 +1868,6 @@ await loadTemplates();
 await loadContentTemplates();
 }
 
-// ── THEMES ───────────────────────────────────────────────────────────────────
-// Custom themes persist as ONE JSON blob in the settings KV. This deliberately
-// reuses the generic get_setting/set_setting commands rather than adding a
-// themes table + five commands: a theme is small, edited rarely, and always read
-// as a whole set. Builtins never touch persistence — they live in themes.js.
-const THEMES_KEY = 'themes.custom';
-
-/** Load the operator's custom themes into the store. Degrades to [] (builtins
- *  only) if the backend has no get_setting yet or the blob is corrupt — a bad
- *  themes blob must never break boot. Mirrors loadTemplates' resilience. */
-export async function loadThemes() {
-return guardedRead(
-    'loadThemes',
-    async (call) => {
-      const raw = await call('get_setting', { key: THEMES_KEY });
-      const { parseThemes } = await import('../themes.js');
-      const list = parseThemes(raw);
-      customThemes.set(list);
-      return list;
-    },
-    [],
-    () => customThemes.set([]),
-  );
-}
-
-/** Persist the whole custom-theme set (the store IS the source of truth here),
- *  then push it to any connected kiosk/OBS client so a browser source resolves a
- *  custom-themed template live. The kiosk sync is best-effort — a failure to
- *  reach the hub must never block saving a theme locally. */
-async function persistThemes(list) {
-  const call = await invoke();
-  const value = JSON.stringify(list);
-  await call('set_setting', { key: THEMES_KEY, value });
-  try {
-    await call('sync_kiosk_themes', { themesJson: value });
-  } catch {
-    /* no hub / no clients — the blob is saved; kiosks get it on next connect */
-  }
-}
-
 // ══ X1 · THE TRANSITION CONTROL (docs/REBRAND.md §8 · DECISIONS §84) ═══════════
 // One block, deliberately self-contained: this file is being edited by more than
 // one agent this wave, so an integrator can move these lines whole.
@@ -1953,28 +1907,6 @@ export async function loadLiveTransition() {
 }
 // ══ end X1 block ══════════════════════════════════════════════════════════════
 
-/**
- * Insert or update a custom theme; returns its id. A theme with no id (or a
- * builtin's negative id) is treated as NEW and gets a fresh positive id, so
- * "duplicate a builtin" always creates rather than trying to overwrite a
- * read-only builtin. Ids are max+1 (never Date-based — the app forbids it).
- */
-export async function saveTheme(theme) {
-  const list = get(customThemes);
-  const isExisting = typeof theme.id === 'number' && theme.id > 0 && list.some((t) => t.id === theme.id);
-  let next;
-  if (isExisting) {
-    next = list.map((t) => (t.id === theme.id ? { ...theme, builtin: false } : t));
-  } else {
-    const id = list.reduce((m, t) => Math.max(m, t.id), 0) + 1;
-    next = [...list, { ...theme, id, builtin: false }];
-    theme = { ...theme, id };
-  }
-  await persistThemes(next);
-  customThemes.set(next);
-  return theme.id;
-}
-
 /** Load the configured service length (minutes) into the store. Degrades to 0
  *  (no target) if the backend/setting is absent. */
 export async function loadServiceTarget() {
@@ -1997,41 +1929,6 @@ export async function setServiceTarget(minutes) {
   const call = await invoke();
   await call('set_setting', { key: 'service.target_minutes', value: String(n) });
   serviceTargetMinutes.set(n);
-}
-
-/** Delete a custom theme by id. Builtins (negative ids) are not stored, so this
- *  is a no-op for them by construction. */
-export async function deleteTheme(id) {
-  const next = get(customThemes).filter((t) => t.id !== id);
-  await persistThemes(next);
-  customThemes.set(next);
-}
-
-/** Download a theme (builtin or custom) as a portable `.relaytheme.json` file.
- *  Pure client-side — a Blob + a transient anchor click, so it needs no backend
- *  and works the same in the app webview and a plain browser. */
-export async function exportTheme(theme) {
-  const { serializeTheme } = await import('../themes.js');
-  const safeName = String(theme?.name ?? 'theme').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
-  const blob = new Blob([serializeTheme(theme)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `${safeName}.relaytheme.json`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
-
-/** Read a picked theme file, validate it, and save it as a NEW custom theme.
- *  Returns the new id. Throws a plain-language Error (via parseImportedTheme) the
- *  caller shows through the ONE humaniser — a bad file must never blank the UI. */
-export async function importThemeFromFile(file) {
-  const { parseImportedTheme } = await import('../themes.js');
-  const text = await file.text();
-  const theme = parseImportedTheme(text); // throws on a non-theme file
-  return saveTheme(theme); // fresh positive id, persisted, pushed to kiosks
 }
 
 

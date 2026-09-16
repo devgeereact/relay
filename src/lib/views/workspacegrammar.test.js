@@ -56,8 +56,6 @@ const DESKS = [
   'src/lib/views/Channels.svelte',
   'src/lib/views/Settings.svelte',
   'src/lib/views/templates/TemplateGallery.svelte',
-  'src/lib/views/themes/ThemeGallery.svelte',
-  'src/lib/views/themes/ThemeEditor.svelte',
 ];
 
 /**
@@ -350,7 +348,7 @@ describe('§1 · the decisions that kept being re-litigated per file', () => {
 //     2px and --v-r-sm is 3px; that contradiction is REBRAND's to settle.
 //   · `rgba()` is not scanned at all. Seven Splash glows were the RETIRED
 //     amethyst and no scanner here would have found them.
-//   · template CONTENT is out of scope by design (themes.js, layers.js,
+//   · template CONTENT is out of scope by design (styletokens.js, layers.js,
 //     templates.js, TemplateRender.svelte): a colour an operator saved into a
 //     slide is data, not chrome.
 //   · `crash.js` is exempt from tier 2. Its whole premise is that the
@@ -379,9 +377,8 @@ const COMPONENTS = [
   'src/lib/views/library/Inspector.svelte', 'src/lib/views/library/LiveOutputRail.svelte',
   'src/lib/views/library/LyricsPane.svelte', 'src/lib/views/library/MediaLibrary.svelte',
   'src/lib/views/library/Scripture.svelte', 'src/lib/views/library/VerseDeck.svelte',
-  'src/lib/views/templates/DeskStrip.svelte', 'src/lib/views/templates/TemplateEditor.svelte',
-  'src/lib/views/templates/TemplateGallery.svelte', 'src/lib/views/themes/ThemeEditor.svelte',
-  'src/lib/views/themes/ThemeGallery.svelte',
+  'src/lib/views/templates/TemplateEditor.svelte',
+  'src/lib/views/templates/TemplateGallery.svelte',
 ];
 
 // Swept clean of BOTH a raw hex and a literal radius, and held that way.
@@ -403,7 +400,6 @@ const SWEPT = [
   'src/lib/views/library/Collections.svelte', 'src/lib/views/library/Inspector.svelte',
   'src/lib/views/library/LiveOutputRail.svelte', 'src/lib/views/library/LyricsPane.svelte',
   'src/lib/views/library/MediaLibrary.svelte', 'src/lib/views/library/Scripture.svelte',
-  'src/lib/views/templates/DeskStrip.svelte', 'src/lib/views/themes/ThemeEditor.svelte',
 ];
 
 // Swept clean of a raw hex, but still carrying a radius the scale does not
@@ -414,7 +410,7 @@ const SWEPT_HEX_ONLY = [
   'src/lib/ui/ErrorState.svelte', 'src/lib/views/ServicePlanner.svelte',
   'src/lib/views/library/Arrangements.svelte', 'src/lib/views/library/History.svelte',
   'src/lib/views/library/ImportReview.svelte',
-  'src/lib/views/templates/TemplateGallery.svelte', 'src/lib/views/themes/ThemeGallery.svelte',
+  'src/lib/views/templates/TemplateGallery.svelte',
 ];
 
 // A comment is not a paint. Two files document a retired hex in prose

@@ -15,7 +15,6 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a) => invoke(...a) }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: async () => () => {} }));
 
 const { default: TemplateGallery } = await import('./TemplateGallery.svelte');
-const { default: DeskStrip } = await import('./DeskStrip.svelte');
 const { templates, contentTemplates, capture } = await import('../../stores/capture.js');
 const { STARTERS } = await import('../../layers.js');
 const { templateKind, KIND_ORDER } = await import('../../templateKind.js');
@@ -305,32 +304,17 @@ describe('an import shows the template it just imported', () => {
   });
 });
 
-// ── the desk strip ─────────────────────────────────────────────────────────
-describe('the desk strip promises only what it keeps', () => {
-  beforeEach(() => baseMocks());
+// ── THE DESK STRIP IS GONE, AND SO IS ITS ARIA CLAIM ───────────────────────
+//
+// Two tests stood here. They held `DeskStrip` — the Templates/Themes segmented
+// control — to `role="group"` rather than `role="tablist"`, because a tablist
+// promises Left/Right arrow navigation and a `tabpanel` behind each tab and that
+// strip kept neither. Themes were folded into templates (DECISIONS §87), so the
+// workspace has one desk; a segmented control offering one option is a control
+// that does nothing, and the component was deleted with the desk rather than left
+// rendering a button that can never be pressed.
+//
+// The reasoning is not deleted with it: the SAME false-tablist claim is what
+// `.r-seg` instances elsewhere are checked against, and the next segmented
+// control to be written should state `role="group"` for the same reason.
 
-  it('is a group of buttons, like every other .r-seg, not a tablist', async () => {
-    mount(DeskStrip, { desk: 'templates' });
-    await settle();
-    const strip = host.querySelector('.ds-strip');
-    // A tablist promises Left/Right arrow navigation between the tabs and a
-    // `tabpanel` behind each. This strip has neither — arrows do nothing, and a
-    // desk change re-renders the workspace rather than swapping a panel.
-    expect(strip.getAttribute('role')).toBe('group');
-    expect(strip.getAttribute('aria-label')).toBeTruthy();
-    for (const b of strip.querySelectorAll('button')) {
-      expect(b.getAttribute('role')).toBe(null);
-    }
-  });
-
-  it('still says which desk is showing', async () => {
-    mount(DeskStrip, { desk: 'themes' });
-    await settle();
-    const [tpl, thm] = [...host.querySelectorAll('.ds-strip button')];
-    expect(tpl.getAttribute('aria-pressed')).toBe('false');
-    expect(thm.getAttribute('aria-pressed')).toBe('true');
-    // The selected treatment is unchanged — `.r-seg` styles on `.on`, so the
-    // role swap moves nothing an operator can see.
-    expect(thm.classList.contains('on')).toBe(true);
-  });
-});

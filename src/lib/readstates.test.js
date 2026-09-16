@@ -2,19 +2,23 @@
 //
 // `readErrors` exists because a GROUP 2 read swallows to `[]` and the view cannot
 // tell those three apart from the list alone (`capture.js`, "WHY A LIST WAS EMPTY").
-// RG-95 fixed the panes that were found at the time. This file covers four that
-// were not, each of which printed the EMPTY sentence over a failed read:
+// RG-95 fixed the panes that were found at the time. This file covered four that
+// were not, each of which printed the EMPTY sentence over a failed read. Three
+// remain; the fourth's pane no longer exists (themes were folded into templates,
+// DECISIONS §87) and is recorded here rather than silently dropped, because the
+// defect it names is the one this whole file is about:
 //
 //   · Outputs → Content looks   "No templates yet — make one in the Templates tab
 //                                first." A fresh install ships five built-ins, so
 //                                that sentence cannot be true of a working Relay —
 //                                and the operator's answer to it is to build five
 //                                more. Same defect RG-95 was filed for, third door.
-//   · Templates → Themes        The gallery hid it better than anywhere else,
-//                                because the BUILT-INS always render: a failed read
-//                                showed `Custom 0` and "No theme matches this
-//                                filter", and the operator rebuilds themes they
-//                                still have.
+//   · Templates → Themes        GONE with the desk. It hid the defect better than
+//                                anywhere else, because the BUILT-INS always
+//                                rendered: a failed read showed `Custom 0` and "No
+//                                theme matches this filter", and the operator
+//                                rebuilds themes they still have. Worth keeping in
+//                                mind for the next gallery that ships built-ins.
 //   · Settings → Dashboard      "No plans yet. Build one in Planner" — the sentence
 //                                `Loading.svelte`'s own header names as the one that
 //                                makes an operator think they have lost their work,
@@ -46,7 +50,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a) => invoke(...a) }));
 vi.mock('@tauri-apps/api/app', () => ({ getVersion: () => Promise.resolve('0.0.0-test') }));
 
 const cap = await import('./stores/capture.js');
-const { readErrors, templates, customThemes } = cap;
+const { readErrors, templates } = cap;
 
 let host;
 let app;
@@ -111,32 +115,6 @@ const text = (el) => el.textContent.replace(/\s+/g, ' ');
 /** The one assertive line. `ErrorState` is `role="alert"` and nothing else is. */
 const alertText = (el) =>
   [...el.querySelectorAll('[role="alert"]')].map((n) => n.textContent.replace(/\s+/g, ' ')).join(' | ');
-
-describe('Templates → Themes says why the custom themes are missing', () => {
-  it('a failed read is not "No theme matches this filter."', async () => {
-    customThemes.set([]);
-    // The real read has to fail: seeding `readErrors` by hand would be cleared by
-    // the gallery's own `onMount(loadThemes)` a moment later, and the test would
-    // then be asserting against a store nothing had written.
-    invoke.mockImplementation((cmd) =>
-      cmd === 'get_setting' ? Promise.reject('database is locked') : Promise.resolve([]),
-    );
-    const el = await mount('./views/themes/ThemeGallery.svelte');
-
-    // Humanised through errors.js (the ONE humaniser) and announced.
-    expect(alertText(el)).toMatch(/Relay could not save that just now/);
-    expect(alertText(el)).not.toMatch(/database is locked/);
-  });
-
-  it('and a read that worked says nothing at all', async () => {
-    customThemes.set([]);
-    invoke.mockResolvedValue([]);
-    const el = await mount('./views/themes/ThemeGallery.svelte');
-    expect(el.querySelector('[role="alert"]')).toBe(null);
-    // The built-ins are still there, which is exactly why this pane hid the defect.
-    expect(text(el)).not.toMatch(/No theme matches this filter/);
-  });
-});
 
 describe('Settings → Dashboard tells the truth about its lists', () => {
   // ── A NOTE ON WHICH OF THE TWO CARDS IS DRIVEN HERE ────────────────────────

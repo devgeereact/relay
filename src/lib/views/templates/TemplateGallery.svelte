@@ -8,7 +8,6 @@
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
   import TemplateRender from '../../TemplateRender.svelte';
   import WorkspaceFrame from '../WorkspaceFrame.svelte';
-  import DeskStrip from './DeskStrip.svelte';
   import EmptyState from '../../ui/EmptyState.svelte';
   import Loading from '../../ui/Loading.svelte';
   import ErrorState from '../../ui/ErrorState.svelte';
@@ -482,12 +481,6 @@
   standfirst="Editing a template repaints every screen already wearing it."
   columns="var(--v-rail) minmax(0,1fr) var(--v-insp)">
   <svelte:fragment slot="head">
-    <!-- THE DESK STRIP. Themes moved INTO this workspace (docs/REBRAND.md §2);
-         the shell's strip carries workspaces, and Themes is a desk within
-         Templates rather than a workspace beside it. Nothing became
-         unreachable: every control the Themes tab carried is still rendered,
-         one press away. -->
-    <DeskStrip desk="templates" on:desk />
     <input type="file" accept=".json,application/json" bind:this={fileInput} on:change={onImportFile} style="display:none" />
     <button class="r-btn ghost sm" on:click|stopPropagation={() => fileInput.click()}>Import</button>
     <span class="tg-newwrap">

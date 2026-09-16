@@ -214,21 +214,8 @@ fn main() {
             let kiosk_tx = kiosk.sender();
             let kiosk_templates = kiosk.templates_handle();
             let kiosk_clients = kiosk.clients_handle();
-            let kiosk_themes = kiosk.themes_handle();
             let kiosk_last = kiosk.last_screen_handle();
             let kiosk_last_x = kiosk.last_transition_handle();
-            // Warm the custom-themes blob so a kiosk connecting before any theme is
-            // saved this session still gets the operator's themes on `hello`.
-            {
-                let db = app.state::<Db>();
-                if let Some(blob) =
-                    db.0.lock()
-                        .ok()
-                        .and_then(|conn| db::get_setting(&conn, "themes.custom").ok().flatten())
-                {
-                    kiosk.cache_themes(&blob);
-                }
-            }
             // Warm the template cache so a browser client (OBS/kiosk) gets the
             // REAL saved template immediately on connect (matches the editor).
             {
@@ -250,7 +237,6 @@ fn main() {
                 kiosk_tx,
                 kiosk_templates,
                 kiosk_clients,
-                kiosk_themes,
                 kiosk_last,
                 kiosk_last_x,
                 app.state::<channels::OutputHealth>().inner().clone(),
@@ -360,7 +346,6 @@ fn main() {
             set_content_template,
             get_setting,
             set_setting,
-            sync_kiosk_themes,
             set_live_transition,
             live_transition,
             data_health,
@@ -3089,11 +3074,10 @@ fn set_content_template(
 }
 
 /// Read a raw app setting by key (the generic KV store). Used by the frontend
-/// for small, whole-set config blobs — currently the operator's custom THEMES
-/// (`themes.custom`), which are read and written as one JSON array. Returns None
-/// when the key was never set. This is a general primitive on purpose: it is the
-/// offline-first, local-SQLite home for future frontend-owned config that does
-/// not warrant its own table.
+/// for small, whole-set config blobs — the planned service length, the chosen
+/// STT model, and so on. Returns None when the key was never set. This is a
+/// general primitive on purpose: it is the offline-first, local-SQLite home for
+/// frontend-owned config that does not warrant its own table.
 #[tauri::command]
 fn get_setting(db: tauri::State<'_, Db>, key: String) -> error::Result<Option<String>> {
     let conn = db.0.lock()?;
@@ -3105,15 +3089,6 @@ fn get_setting(db: tauri::State<'_, Db>, key: String) -> error::Result<Option<St
 fn set_setting(db: tauri::State<'_, Db>, key: String, value: String) -> error::Result<()> {
     let conn = db.0.lock()?;
     db::set_setting(&conn, &key, &value).map_err(Into::into)
-}
-
-/// Push the operator's custom themes to every connected kiosk/OBS client so a
-/// browser source (no DB) can resolve a template that pins a custom theme. The
-/// frontend calls this after persisting the `themes.custom` blob; builtin themes
-/// need no sync (the kiosk page bundles them). A no-op when nothing is connected.
-#[tauri::command]
-fn sync_kiosk_themes(kiosk: tauri::State<'_, channels::KioskHub>, themes_json: String) {
-    kiosk.set_themes(&themes_json);
 }
 
 /// THE OPERATOR'S TRANSITION OVERRIDE — how the next thing appears, on every

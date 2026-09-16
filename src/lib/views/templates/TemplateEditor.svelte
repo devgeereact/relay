@@ -27,10 +27,9 @@
   import { humanError } from '../../errors.js';
   import {
     capture, templates, loadTemplates, saveTemplate,
-    customThemes, loadThemes,
     snapshotTemplateVersion, listTemplateVersions, restoreTemplateVersion,
   } from '../../stores/capture.js';
-  import { BUILTIN_THEMES, resolveThemed, isThemeToken, THEME_TOKENS, applyThemeToTemplate } from '../../themes.js';
+  import { isThemeToken, THEME_TOKENS, resolveTokens } from '../../styletokens.js';
   import { BACKGROUNDS } from '../../backgrounds.js';
   import {
     makeLayer, isLayered, layerLabel, regionsToLayers, templateShows, CONTENT_KINDS,
@@ -58,7 +57,6 @@
   onMount(async () => {
     loadContentTemplates();
     if (!$templates.length) await loadTemplates();
-    loadThemes();
     load(templateId);
     // Land on the object the caller named — but only if this template really has
     // it. An id from somewhere else would select nothing and leave the panel
@@ -67,32 +65,12 @@
     detectFonts(true);
   });
 
-  // The theme this template inherits (style.themeRef), and the picker's options.
-  // A theme fills the style keys the template leaves unset; the template always
-  // overrides it. Setting it goes through the normal edit path (edit = edit), so
-  // it undoes, live-applies and persists like any other change.
-  $: allThemes = [...BUILTIN_THEMES, ...$customThemes];
-  $: currentThemeRef = edit?.style?.themeRef ?? '';
-  function setTheme(v) {
-    if (!edit) return;
-    edit.style ??= {};
-    if (v === '' || v == null) delete edit.style.themeRef;
-    else edit.style.themeRef = Number(v);
-    edit = edit;
-  }
-  // Recolour this template's layers to the selected theme's tokens — the step that
-  // makes a literal-coloured template actually FOLLOW the theme. Goes through the
-  // normal edit path (edit = edit), so it undoes, live-applies and can be Saved.
-  function applyThemeColours() {
-    if (!edit) return;
-    const theme = allThemes.find((t) => t.id === Number(currentThemeRef));
-    if (!theme) return;
-    edit = applyThemeToTemplate(edit, theme);
-  }
-  // The template WITH its inherited theme merged in — what the wall will show, so
-  // the editor preview is WYSIWYG including the theme. Layout/layers are shared
-  // by reference (a theme only fills style), so drag/selection still target edit.
-  $: themedEdit = edit ? resolveThemed(edit, $customThemes) : edit;
+  // The template WITH its layer style TOKENS resolved — what the wall will show,
+  // so the editor preview is WYSIWYG. A token (`theme:accent`) resolves against
+  // this template's OWN style, so a starter dropped in here wears this template's
+  // colours; `styletokens.js` has the whole of it. Layers that carry no token are
+  // shared by reference, so drag/selection still target `edit`.
+  $: themedEdit = edit ? resolveTokens(edit) : edit;
 
   // ── CAN THE BACK ROW READ THIS? (RG-18) ───────────────────────────────────
   //
@@ -273,7 +251,7 @@
   //
   // It reads the SAME two sources the canvas overlay does: `drawn` for the
   // geometry (a band and its words are placed by the band, not by x/y/w/h) and
-  // the THEMED copy of the template for the colour, so a layer bound to
+  // the TOKEN-RESOLVED copy of the template for the colour, so a layer bound to
   // `theme:accent` shows the accent the wall would use rather than the token
   // string. Both are derived, so nothing here can disagree with the artboard.
   $: themedLayers = new Map((themedEdit?.layout?.layers ?? []).map((L) => [L.id, L]));
@@ -341,10 +319,10 @@
   }
   function addBoundText(bind) {
     addOpen = false;
-    // A freshly-added bound line follows the theme out of the box: verse text
-    // takes the theme's verse colour, a reference the theme's reference colour,
-    // anything else the accent — and all take the theme typeface. The operator
-    // can unbind any of them to a literal in the properties panel.
+    // A freshly-added bound line follows THIS TEMPLATE'S OWN style out of the
+    // box: verse text takes its verse colour, a reference its reference colour,
+    // anything else the accent — and all take its typeface. The operator can
+    // unbind any of them to a literal in the properties panel.
     const colorToken =
       bind === 'verse' ? 'theme:verse' : bind === 'reference' ? 'theme:reference' : 'theme:accent';
     const L = makeLayer('text', {
@@ -571,8 +549,8 @@
     set(k, Math.max(0, Math.min(100, n)));
   }
   function num(k, v) { set(k, +v); }
-  // Layer colour/fill/font can bind to a THEME TOKEN (`theme:accent`) that follows
-  // the applied theme, or be a literal. Colours offer every token except the
+  // Layer colour/fill/font can bind to a STYLE TOKEN (`theme:accent`) that follows
+  // this template's own style, or be a literal. Colours offer every token except the
   // typeface; unbinding ('custom') restores an editable literal.
   const COLOUR_TOKENS = THEME_TOKENS.filter((t) => t.token !== 'theme:font');
   function bindToken(field, value, fallback) {
@@ -1007,21 +985,6 @@
       <span class="te-pct r-mono">{zoom}%</span>
       <button class="r-iconbtn te-zbtn" on:click={() => (zoomIdx = Math.min(ZOOMS.length - 1, zoomIdx + 1))} disabled={zoomIdx === ZOOMS.length - 1} aria-label="Zoom in">+</button>
     </div>
-    {#if edit}
-      <label class="te-theme" title="The theme this template inherits. Your own settings override it.">
-        <span class="r-lbl">Theme</span>
-        <select class="r-select sm" value={currentThemeRef} on:change={(e) => setTheme(e.target.value)}>
-          <option value="">None</option>
-          {#each allThemes as th (th.id)}
-            <option value={th.id}>{th.name}{th.builtin ? '' : ' (custom)'}</option>
-          {/each}
-        </select>
-      </label>
-      <button class="r-btn ghost sm" on:click={applyThemeColours} disabled={currentThemeRef === ''}
-        title="Recolour this template's layers to the selected theme, so it follows the theme from now on">
-        Apply colours
-      </button>
-    {/if}
     <button class="r-btn ghost sm" class:on={previewMode} on:click={() => (previewMode = !previewMode)}>{previewMode ? 'Editing' : 'Preview'}</button>
     <button class="r-btn ghost sm" on:click={() => (fsPreview = true)} disabled={!edit} title="Preview this template fullscreen in the console — reaches no output">Fullscreen</button>
     <button class="r-btn ghost sm" on:click={testOnScreens} disabled={testing || !$capture.available || !edit} title="Put a sample verse on the live screens with this template — clear it with Esc">
@@ -1475,7 +1438,7 @@
               <label class="te-fk" for="te-fill">Fill</label>
               <span class="te-fv te-swatch"><input id="te-fill" type="color" value={isColor(sel.fill) ? sel.fill : '#0b0906'} on:input={(e) => { set('fill', e.target.value); set('image', null); }} disabled={isThemeToken(sel.fill)} /><span class="te-hex r-mono">{isThemeToken(sel.fill) ? 'theme' : isColor(sel.fill) ? sel.fill.toUpperCase() : 'gradient'}</span></span>
             </div>
-            <div class="te-frow"><label class="te-fk" for="te-bgbind">Theme link</label><select id="te-bgbind" class="r-select te-fv" value={isThemeToken(sel.fill) ? sel.fill : 'custom'} on:change={(e) => { bindToken('fill', e.target.value, '#0b0906'); if (e.target.value !== 'custom') set('image', null); }}><option value="custom">Custom fill</option>{#each COLOUR_TOKENS as t}<option value={t.token}>{t.label}</option>{/each}</select></div>
+            <div class="te-frow"><label class="te-fk" for="te-bgbind">Style link</label><select id="te-bgbind" class="r-select te-fv" value={isThemeToken(sel.fill) ? sel.fill : 'custom'} on:change={(e) => { bindToken('fill', e.target.value, '#0b0906'); if (e.target.value !== 'custom') set('image', null); }}><option value="custom">Custom fill</option>{#each COLOUR_TOKENS as t}<option value={t.token}>{t.label}</option>{/each}</select></div>
             <div class="te-frow">
               <label class="te-fk" for="te-op">Opacity</label>
               <span class="te-fv te-rangerow"><input id="te-op" class="r-range" type="range" min="0" max="1" step="0.05" value={sel.opacity ?? 1} on:input={(e) => num('opacity', e.target.value)} use:rangeFill={sel.opacity ?? 1} /><span class="te-rnum r-mono">{Math.round((sel.opacity ?? 1) * 100)}%</span></span>
@@ -1523,7 +1486,7 @@
             <div class="te-frow"><label class="te-fk" for="te-rrad">Corner</label><span class="te-fv te-rangerow"><input id="te-rrad" class="r-range" type="range" min="0" max="8" step="0.2" value={sel.radius || 0} on:input={(e) => num('radius', e.target.value)} use:rangeFill={sel.radius || 0} /><span class="te-rnum r-mono">{(sel.radius || 0).toFixed(1)}</span></span></div>
             <div class="te-frow"><label class="te-fk" for="te-rout">Outline</label><span class="te-fv te-rangerow"><input id="te-rout" class="r-range" type="range" min="0" max="1" step="0.05" value={sel.outline || 0} on:input={(e) => num('outline', e.target.value)} use:rangeFill={sel.outline || 0} /><span class="te-rnum r-mono">{(sel.outline || 0).toFixed(2)}</span></span></div>
             <div class="te-frow"><label class="te-fk" for="te-routc">Outline colour</label><span class="te-fv te-swatch"><input id="te-routc" type="color" value={isColor(sel.outlineColor) ? sel.outlineColor : '#5b9cf8'} on:input={(e) => set('outlineColor', e.target.value)} disabled={isThemeToken(sel.outlineColor)} /><span class="te-hex r-mono">{isThemeToken(sel.outlineColor) ? 'theme' : isColor(sel.outlineColor) ? sel.outlineColor.toUpperCase() : '#5B9CF8'}</span></span></div>
-            <div class="te-frow"><label class="te-fk" for="te-routb">Theme link</label><select id="te-routb" class="r-select te-fv" value={isThemeToken(sel.outlineColor) ? sel.outlineColor : 'custom'} on:change={(e) => bindToken('outlineColor', e.target.value, '#5b9cf8')}><option value="custom">Custom colour</option>{#each COLOUR_TOKENS as t}<option value={t.token}>{t.label}</option>{/each}</select></div>
+            <div class="te-frow"><label class="te-fk" for="te-routb">Style link</label><select id="te-routb" class="r-select te-fv" value={isThemeToken(sel.outlineColor) ? sel.outlineColor : 'custom'} on:change={(e) => bindToken('outlineColor', e.target.value, '#5b9cf8')}><option value="custom">Custom colour</option>{#each COLOUR_TOKENS as t}<option value={t.token}>{t.label}</option>{/each}</select></div>
             <div class="te-frow">
               <label class="te-fk" for="te-rop">Opacity</label>
               <span class="te-fv te-rangerow"><input id="te-rop" class="r-range" type="range" min="0" max="1" step="0.05" value={sel.opacity ?? 1} on:input={(e) => num('opacity', e.target.value)} use:rangeFill={sel.opacity ?? 1} /><span class="te-rnum r-mono">{Math.round((sel.opacity ?? 1) * 100)}%</span></span>
@@ -1541,7 +1504,7 @@
 
             <h3 class="te-sec">Effects</h3>
             <div class="te-frow"><label class="te-fk" for="te-bfill">Fill</label><span class="te-fv te-swatch"><input id="te-bfill" type="color" value={isColor(sel.fill) ? sel.fill : '#101319'} on:input={(e) => set('fill', e.target.value)} disabled={isThemeToken(sel.fill)} /><span class="te-hex r-mono">{isThemeToken(sel.fill) ? 'theme' : isColor(sel.fill) ? sel.fill.toUpperCase() : 'gradient'}</span></span></div>
-            <div class="te-frow"><label class="te-fk" for="te-bfillbind">Theme link</label><select id="te-bfillbind" class="r-select te-fv" value={isThemeToken(sel.fill) ? sel.fill : 'custom'} on:change={(e) => bindToken('fill', e.target.value, '#101319')}><option value="custom">Custom fill</option>{#each COLOUR_TOKENS as t}<option value={t.token}>{t.label}</option>{/each}</select></div>
+            <div class="te-frow"><label class="te-fk" for="te-bfillbind">Style link</label><select id="te-bfillbind" class="r-select te-fv" value={isThemeToken(sel.fill) ? sel.fill : 'custom'} on:change={(e) => bindToken('fill', e.target.value, '#101319')}><option value="custom">Custom fill</option>{#each COLOUR_TOKENS as t}<option value={t.token}>{t.label}</option>{/each}</select></div>
             <!-- OPACITY MEANS WHAT IT SAYS (§4). The band's body sits at exactly the
                  alpha set here — nothing multiplies it down on the way to the wall. -->
             <div class="te-frow"><label class="te-fk" for="te-bop">Opacity</label><span class="te-fv te-rangerow"><input id="te-bop" class="r-range" type="range" min="0" max="1" step="0.05" value={sel.opacity ?? 1} on:input={(e) => num('opacity', e.target.value)} use:rangeFill={sel.opacity ?? 1} /><span class="te-rnum r-mono">{Math.round((sel.opacity ?? 1) * 100)}%</span></span></div>
@@ -1562,7 +1525,7 @@
           {:else if sel.type === 'shape'}
             <h3 class="te-sec">Shape</h3>
             <div class="te-frow"><label class="te-fk" for="te-sfill">Fill</label><span class="te-fv te-swatch"><input id="te-sfill" type="color" value={isColor(sel.fill) ? sel.fill : '#101319'} on:input={(e) => set('fill', e.target.value)} disabled={isThemeToken(sel.fill)} /><span class="te-hex r-mono">{isThemeToken(sel.fill) ? 'theme' : isColor(sel.fill) ? sel.fill.toUpperCase() : '#101319'}</span></span></div>
-            <div class="te-frow"><label class="te-fk" for="te-sfillbind">Theme link</label><select id="te-sfillbind" class="r-select te-fv" value={isThemeToken(sel.fill) ? sel.fill : 'custom'} on:change={(e) => bindToken('fill', e.target.value, '#101319')}><option value="custom">Custom fill</option>{#each COLOUR_TOKENS as t}<option value={t.token}>{t.label}</option>{/each}</select></div>
+            <div class="te-frow"><label class="te-fk" for="te-sfillbind">Style link</label><select id="te-sfillbind" class="r-select te-fv" value={isThemeToken(sel.fill) ? sel.fill : 'custom'} on:change={(e) => bindToken('fill', e.target.value, '#101319')}><option value="custom">Custom fill</option>{#each COLOUR_TOKENS as t}<option value={t.token}>{t.label}</option>{/each}</select></div>
             <div class="te-frow"><label class="te-fk" for="te-sop">Opacity</label><span class="te-fv te-rangerow"><input id="te-sop" class="r-range" type="range" min="0" max="1" step="0.05" value={sel.opacity ?? 1} on:input={(e) => num('opacity', e.target.value)} use:rangeFill={sel.opacity ?? 1} /><span class="te-rnum r-mono">{Math.round((sel.opacity ?? 1) * 100)}%</span></span></div>
             <div class="te-frow"><label class="te-fk" for="te-srad">Radius</label><span class="te-fv te-rangerow"><input id="te-srad" class="r-range" type="range" min="0" max="8" step="0.2" value={sel.radius || 0} on:input={(e) => num('radius', e.target.value)} use:rangeFill={sel.radius || 0} /><span class="te-rnum r-mono">{(sel.radius || 0).toFixed(1)}</span></span></div>
           {:else}
@@ -1598,7 +1561,7 @@
             <div class="te-frow">
               <label class="te-fk" for="te-font">Font</label>
               <select id="te-font" class="r-select te-fv" value={sel.font} on:change={(e) => set('font', e.target.value)}>
-                <option value="theme:font">Theme typeface</option>
+                <option value="theme:font">Template typeface</option>
                 {#if sel.font && sel.font !== 'theme:font' && !fonts.includes(sel.font)}<option value={sel.font}>{fontLabel(sel.font)}</option>{/if}
                 {#each fonts as f}<option value={f}>{f}</option>{/each}
               </select>
@@ -1607,7 +1570,7 @@
             {#if missingFont}<p class="te-fwarn">“{fontLabel(missingFont)}” isn't installed here — outputs use a default. Install it to use it.</p>{/if}
             <div class="te-frow"><label class="te-fk" for="te-size">Size</label><span class="te-fv te-stepper"><input id="te-size" class="te-num r-mono" type="number" min="1" max="16" step="0.1" value={sel.size} on:input={(e) => num('size', e.target.value)} /><span class="te-unit r-mono">cqw</span></span></div>
             <div class="te-frow"><label class="te-fk" for="te-col">Colour</label><span class="te-fv te-swatch"><input id="te-col" type="color" value={isColor(sel.color) ? sel.color : '#ffffff'} on:input={(e) => set('color', e.target.value)} disabled={isThemeToken(sel.color)} /><span class="te-hex r-mono">{isThemeToken(sel.color) ? 'theme' : isColor(sel.color) ? sel.color.toUpperCase() : '#FFFFFF'}</span></span></div>
-            <div class="te-frow"><label class="te-fk" for="te-colbind">Theme link</label><select id="te-colbind" class="r-select te-fv" value={isThemeToken(sel.color) ? sel.color : 'custom'} on:change={(e) => bindToken('color', e.target.value, '#ffffff')}><option value="custom">Custom colour</option>{#each COLOUR_TOKENS as t}<option value={t.token}>{t.label}</option>{/each}</select></div>
+            <div class="te-frow"><label class="te-fk" for="te-colbind">Style link</label><select id="te-colbind" class="r-select te-fv" value={isThemeToken(sel.color) ? sel.color : 'custom'} on:change={(e) => bindToken('color', e.target.value, '#ffffff')}><option value="custom">Custom colour</option>{#each COLOUR_TOKENS as t}<option value={t.token}>{t.label}</option>{/each}</select></div>
             <div class="te-frow">
               <span class="te-fk">Align</span>
               <span class="te-fv te-seg">
@@ -1987,13 +1950,9 @@
   /* ProPresenter-clean canvas: a flat, calm dark stage with a soft vignette for
      depth — no busy grid competing with the artboard. */
   /* `--v-void`, not a hand-picked hex. This was `#141417` — one step off the
-     token, imperceptibly — and the theme editor's stage copied it verbatim to
-     keep the two matching. When `workspacegrammar.test.js` forbade raw hexes on
-     the desks, the themes side moved to the token and this one became the odd
-     one out, matching nothing. `--v-void` is already documented as "shell +
-     main + the output-window canvas", which is exactly what a stage is: the
-     dark a slide is judged against. Both stages are on the token now, so they
-     move together. NOTE: this file is an editor, not a desk, so it is not in
+     token, imperceptibly. `--v-void` is already documented as "shell + main +
+     the output-window canvas", which is exactly what a stage is: the dark a
+     slide is judged against. NOTE: this file is an editor, not a desk, so it is not in
      that test's DESKS array and nothing catches a literal here — the array
      means "is in the workspace grammar", and stretching it to cover one hex
      would weaken what it says. */

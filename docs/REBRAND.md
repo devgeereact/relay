@@ -349,7 +349,8 @@ Each was fixed, re-rendered by the integrator, and only then called done. **What
 touch: the release decision, the model question, or word error rate.**
 
 Shipped by that wave: six workspaces on the strip in the prototype's order (Themes folded into
-Templates as a desk, Help still a real route — `qa-inventory` says nothing became unreachable),
+Templates as a desk — and folded again, into the template model itself, by wave 2's track E:
+DECISIONS §87. Help still a real route — `qa-inventory` says nothing became unreachable),
 screen lamps and a transition-free chrome, a status bar whose every figure can say `no data`, four
 equal 178px docks, a slide grid of RENDERED slides, the AI's claims in the 286px inspector with no
 percentage on a guess, Outputs as cards that repaint what each screen is showing, a Library of real

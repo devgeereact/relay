@@ -54,44 +54,37 @@ const EMPTY = {
   // `migrateSession`: a saved session that still carries the key has it DROPPED,
   // rather than left to be re-persisted for ever by the subscriber below.
   liveFullscreen: false, // hide the shell chrome around Live
-  // Which DESK the Templates workspace is showing (docs/REBRAND.md §2). Themes
-  // stopped being a tab of its own and became the second desk here; this is which
-  // one you were last on. Persisted for the same reason `liveFullscreen` is — a
-  // volunteer who spent Tuesday evening on themes should come back to themes.
-  templatesDesk: 'templates', // 'templates' | 'themes'
 };
 
 /**
  * Fold a saved session forward onto the layout the app actually has.
  *
- * TWO cases, and they are different KINDS of change, which is why they are both
- * here rather than one being left to look after itself.
+ * SETTINGS THAT WERE DELETED ARE DROPPED, NOT MIGRATED. There is nothing left to
+ * migrate either of these to, and neither ever moved a position, a plan or a
+ * playhead:
  *
- * 1. A surface that MOVED. Somebody last on the old Themes TAB has
- *    `activeTab: 'themes'` in localStorage. `MOVED_TABS` sends them to the
- *    Templates workspace, which is where Themes went — but the workspace has two
- *    desks, and without this they would land on the wrong one and conclude the
- *    Themes surface had been deleted.
+ * * `liveDensity` backed Live's `Normal | Compact` segment, removed on the
+ *   operator's instruction (T2). It only ever changed spacing and type.
+ * * `templatesDesk` was which DESK the Templates workspace opened on, back when
+ *   Themes was the second one. Themes were folded into templates (DECISIONS
+ *   §87), so the workspace has one desk and nothing reads the key. A session
+ *   naming the old THEMES TAB is still redirected — by `MOVED_TABS`, which is a
+ *   different mechanism and is untouched: it lands that operator on the
+ *   Templates workspace, which is where the thing they were editing now lives.
  *
- * 2. A setting that was DELETED. `liveDensity` backed Live's `Normal | Compact`
- *    segment, removed on the operator's instruction (T2). It is DROPPED, not
- *    migrated — there is nothing left to migrate it to, and it only ever changed
- *    spacing and type, so no operator loses a position, a plan or a playhead.
- *
- *    Dropping it matters because of the subscriber below: the session is written
- *    back to localStorage on every change, so a key nobody reads is not inert —
- *    it is re-persisted for the life of the install, and the next person to read
- *    this file finds a stored `liveDensity: 'compact'` and has to work out
- *    whether it is a setting somebody forgot to wire up. Removing the reader
- *    without removing the key is how that fossil gets made.
+ * Dropping them matters because of the subscriber below: the session is written
+ * back to localStorage on every change, so a key nobody reads is not inert — it
+ * is re-persisted for the life of the install, and the next person to read this
+ * file finds a stored `templatesDesk: 'themes'` and has to work out whether it is
+ * a setting somebody forgot to wire up. Removing the reader without removing the
+ * key is how that fossil gets made.
  *
  * Pure, and applied to every load, so it is testable and so it cannot be skipped
  * on the corrupt-payload path.
  */
 export function migrateSession(s) {
   // eslint-disable-next-line no-unused-vars
-  const { liveDensity, ...kept } = s;
-  if (kept.activeTab === 'themes') return { ...kept, templatesDesk: 'themes' };
+  const { liveDensity, templatesDesk, ...kept } = s;
   return kept;
 }
 

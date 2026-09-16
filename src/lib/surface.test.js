@@ -838,40 +838,11 @@ describe('R3-06 · every surface goes through the ONE humaniser', () => {
     expect(msg.getAttribute('role')).toBe('alert');
   });
 
-  itMounted('ThemeEditor shows a sentence too', async () => {
-    // Was `Err("…")` verbatim — a shape a volunteer has no way to read.
-    const RUST = 'no such column: style_json (code 1)';
-    invoke.mockImplementation((cmd) => {
-      if (cmd === 'set_setting') return Promise.reject(RUST); // saveTheme persists via app_settings
-      if (cmd === 'save_theme') return Promise.reject(RUST);
-      if (cmd === 'get_setting')
-        return Promise.resolve(JSON.stringify([{ id: 7, name: 'Mine', style: {} }]));
-      return Promise.resolve([]);
-    });
-
-    const ThemeEditor = (await import('./views/themes/ThemeEditor.svelte')).default;
-    const el = mountInto(ThemeEditor, { themeId: 7 });
-    for (let i = 0; i < 6; i++) await settle();
-
-    // Save is disabled until the draft is dirty, so edit the name first — which is
-    // also the only way an operator ever reaches this button.
-    const name = el.querySelector('.te-name');
-    expect(name).toBeTruthy();
-    name.value = 'Mine, edited';
-    name.dispatchEvent(new Event('input', { bubbles: true }));
-    await tick();
-
-    const save = [...el.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Save');
-    expect(save).toBeTruthy();
-    save.click();
-    for (let i = 0; i < 6; i++) await settle();
-
-    const err = el.querySelector('.te-err');
-    expect(err).toBeTruthy();
-    expect(err.textContent.trim()).not.toBe(RUST);
-    expect(err.textContent).not.toContain('[object Object]');
-    expect(err.textContent).toMatch(/didn't work/i);
-  });
+  // The THEME EDITOR's own sentence stood here and its surface is gone: themes
+  // were folded into templates (DECISIONS §87). The claim it made — a failed save
+  // reaches a volunteer through `errors.js`, never as a raw Rust `Err` — is the
+  // same claim the TEMPLATE editor's `.te-err` makes, and that one is asserted
+  // directly above, on the surface that survived.
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1286,7 +1257,7 @@ describe('R3-12 · errors.js is the one humaniser, on every surface', () => {
     expect(f).toMatch(/role="alert"/);
   });
 
-  it('ImportReview, ThemeEditor and the TEMPLATE pair route through the humaniser, not String(e)', () => {
+  it('ImportReview and the TEMPLATE pair route through the humaniser, not String(e)', () => {
     // The template pair was added 2026-09-05. `String(e)` on a typed error from
     // `error.rs` — which serialises as `{ kind, message }` — renders literally
     // **"[object Object]"**, and six controls did it: every delete, duplicate and
@@ -1295,8 +1266,6 @@ describe('R3-12 · errors.js is the one humaniser, on every surface', () => {
     // in the set that is already written for a volunteer.
     for (const f of [
       'src/lib/views/library/ImportReview.svelte',
-      'src/lib/views/themes/ThemeEditor.svelte',
-      'src/lib/views/themes/ThemeGallery.svelte',
       'src/lib/views/templates/TemplateGallery.svelte',
       'src/lib/views/templates/TemplateEditor.svelte',
       'src/lib/views/library/Announcements.svelte',
@@ -1376,14 +1345,13 @@ describe('R3-12 · dialogs and the panic-key guard', () => {
 
 describe('R3-12 · CLOSED — every view a screen reader lands on has a heading', () => {
   // A screen-reader operator navigates by heading. The whole Library tab — five
-  // sub-views and the deck — had none, and neither did Themes or Templates.
+  // sub-views and the deck — had none, and neither did Templates.
   //
   // Inverted from the findings it replaces: these now fail if a heading is removed.
   for (const f of [
     'src/lib/views/Library.svelte',
-    'src/lib/views/themes/ThemeGallery.svelte',
-    'src/lib/views/themes/ThemeEditor.svelte',
     'src/lib/views/templates/TemplateGallery.svelte',
+    'src/lib/views/templates/TemplateEditor.svelte',
     'src/lib/views/library/Scripture.svelte',
   ]) {
     it(`${f.split('/').pop()} renders a heading`, () => {
@@ -1399,17 +1367,16 @@ describe('R3-12 · CLOSED — every view a screen reader lands on has a heading'
   // The requirement belongs to the children, and all four are asserted above.
   // Recorded rather than silently dropped from the list.
   //
-  // `Themes.svelte` used to be the second entry here and no longer exists: Themes
+  // `Themes.svelte` used to be the second entry here and no longer exists. Themes
   // became a DESK inside the Templates workspace (docs/REBRAND.md §2, DECISIONS
-  // §79), so one router now picks between four children instead of two routers
-  // picking between two each. Its children are unchanged and still asserted above.
+  // §79) and were then folded into the template model itself (DECISIONS §87), so
+  // this router now picks between two children: browse, or make.
   for (const f of ['src/lib/views/Templates.svelte']) {
     it(`${f.split('/').pop()} is a router and correctly has none`, () => {
       const t = src(f);
       expect(t).not.toMatch(/<h[1-6][\s>]/);
-      // It really is just the switch: a desk, then a mode within it.
+      // It really is just the switch: browse, or make.
       expect(t).toMatch(/mode === 'editor'/);
-      expect(t).toMatch(/desk === 'themes'/);
     });
   }
 });

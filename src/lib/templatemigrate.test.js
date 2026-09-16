@@ -14,9 +14,9 @@
 //      first visit to the Templates tab after an upgrade re-typefaced the shelf,
 //      silently, once, for good.
 //
-//   2. `themes.js`'s `theme:font` resolver read `style.font`. Every text layer in
-//      the stage, confidence and countdown starters binds to it, so on a migrated
-//      template with no theme behind it they all fell back to serif.
+//   2. The `theme:font` token resolver (`styletokens.js`) read `style.font`. Every
+//      text layer in the stage, confidence and countdown starters binds to it, so
+//      on a migrated template they all fell back to serif.
 //
 // Neither was visible from reading either file: both read a key that is real in
 // the shape they were written against and absent in the shape that now reaches
@@ -27,7 +27,7 @@ import { resolve } from 'node:path';
 import TemplateRender from './TemplateRender.svelte';
 import { migrateTemplate, migrateStyle, LEGACY_STYLE_KEYS } from './templatemodel.js';
 import { regionsToLayers } from './layers.js';
-import { applyTheme } from './themes.js';
+import { resolveTokens } from './styletokens.js';
 import { BUILTINS } from './templates.js';
 
 let host;
@@ -184,7 +184,7 @@ describe('§3.1 · an old template renders identically after migration', () => {
   });
 });
 
-describe('§3.1 · a theme token answers for the style it is given, old shape or new', () => {
+describe('§3.1 · a style token answers for the style it is given, old shape or new', () => {
   const stage = (style) => ({
     id: 7,
     name: 'Stage',
@@ -198,18 +198,21 @@ describe('§3.1 · a theme token answers for the style it is given, old shape or
 
   it('resolves `theme:font` to the template typeface after migration, not to the default', () => {
     const legacy = stage({ font: 'var(--f-display)' });
-    const before = applyTheme(legacy, null).layout.layers[0].font;
-    const after = applyTheme(migrateTemplate(legacy), null).layout.layers[0].font;
+    const before = resolveTokens(legacy).layout.layers[0].font;
+    const after = resolveTokens(migrateTemplate(legacy)).layout.layers[0].font;
     expect(before).toBe('var(--f-display)');
     expect(after).toBe('var(--f-display)');
   });
 
   it('still falls back to the renderer default when no typeface was ever chosen', () => {
-    expect(applyTheme(stage({}), null).layout.layers[0].font).toBe('var(--f-serif)');
+    expect(resolveTokens(stage({})).layout.layers[0].font).toBe('var(--f-serif)');
   });
 
-  it('a theme behind the template still supplies the face the template leaves unset', () => {
-    const themed = applyTheme(stage({}), { style: { font: 'var(--f-body)' } });
-    expect(themed.layout.layers[0].font).toBe('var(--f-body)');
+  it('reads the NEW shape as readily as the old one', () => {
+    // The two halves of the model, both answered by `resolveStyle` on the way
+    // through — which is the point: one home for the answer whether the style
+    // reaching it was written before the migration or after it.
+    expect(resolveTokens(stage({ verseFont: 'var(--f-body)' })).layout.layers[0].font)
+      .toBe('var(--f-body)');
   });
 });

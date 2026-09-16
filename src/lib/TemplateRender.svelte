@@ -74,14 +74,7 @@
 
   export let template = {};
   export let content = null; // { reference, text, translation }
-  // Optional theme (the style layer BENEATH the template — see themes.js). When
-  // present its whitelisted defaults fill the keys the template leaves unset;
-  // the template always WINS per key, so a themed render is byte-identical to a
-  // hand-styled one downstream. When ABSENT (the default) resolution is a no-op
-  // and this component behaves exactly as it did before themes existed — zero
-  // regression on every existing call site.
-  export let theme = null;
-  import { applyTheme, themeById, templateThemeRef, BUILTIN_THEMES } from './themes.js';
+  import { resolveTokens } from './styletokens.js';
   import { resolveStyle, slideBG, faceOf, fitScale, keepShrinking, FIT_STEP } from './templatemodel.js';
   import { transitionCss, transitionDuration, resolveTransition, isOverride, liveTransition } from './transitions.js';
   import { builtinById } from './templates.js';
@@ -98,18 +91,11 @@
    */
   export let depth = 0;
 
-  // The theme to apply. An EXPLICIT `theme` prop always wins (the Themes editor
-  // previewing an unsaved draft, or an output page that resolved a CUSTOM theme
-  // from the DB). Otherwise the template's own pinned theme (`style.themeRef`) is
-  // resolved against the BUILT-IN themes — which are bundled everywhere, so every
-  // surface (console previews, gallery cards, the wall) shows a builtin-themed
-  // template correctly with NO per-surface wiring. Custom themes carry no store
-  // here, so they resolve only where a caller injects them via the prop.
-  $: effectiveTheme = theme ?? themeById(templateThemeRef(template), BUILTIN_THEMES);
-  // Always run applyTheme: with a theme it merges style + resolves layer tokens;
-  // WITHOUT one it still resolves any layer theme-tokens to their literal
-  // fallbacks (a literal template hits applyTheme's fast path and is unchanged).
-  $: resolved = applyTheme(template, effectiveTheme);
+  // Resolve any layer style TOKENS (`theme:accent` and friends) against this
+  // template's own style, so a starter dropped onto a template wears that
+  // template's colours and typeface. A template with no tokenised layer hits the
+  // fast path and comes back unchanged.
+  $: resolved = resolveTokens(template);
   $: layout = resolved?.layout ?? {};
   // THE MODEL, not a bag of keys. `resolveStyle` migrates the legacy
   // whole-template properties onto their elements and fills every default in one
@@ -121,7 +107,7 @@
   // ── LAYER MODE ─────────────────────────────────────────────────────────────
   // When a template carries `layout.layers`, render the free-form layer stack;
   // otherwise fall back to the legacy region rendering below (so the built-in
-  // presets and themes are untouched). Layers are drawn back-to-front.
+  // presets are untouched). Layers are drawn back-to-front.
   $: layered = isLayered(template);
   $: layers = layered ? layout.layers : [];
 
@@ -1011,7 +997,7 @@
   })();
 
   // THE SLIDE TRANSITION (docs/REBRAND.md §8). A CUT unless the template or its
-  // theme asks for something else, because that is what an operator asked for
+  // style asks for something else, because that is what an operator asked for
   // ("quick as light, remove every animation") and what a wall should do when
   // nobody has said otherwise.
   //
@@ -1029,10 +1015,9 @@
   // so the console preview and the wall cannot disagree about it.
   //
   // The override is read from the store by DEFAULT, which is what gives every
-  // console surface the picker with no per-surface wiring — the same arrangement
-  // themes use. `Output.svelte` passes the prop explicitly instead, because a
-  // congregation screen must apply an override only when CONTENT arrives: see the
-  // snapshot comment there.
+  // console surface the picker with no per-surface wiring. `Output.svelte` passes
+  // the prop explicitly instead, because a congregation screen must apply an
+  // override only when CONTENT arrives: see the snapshot comment there.
   export let transitionOverride = undefined;
   $: activeOverride = transitionOverride === undefined ? $liveTransition : transitionOverride;
   $: resolvedTransition = resolveTransition(style, activeOverride);
@@ -1328,7 +1313,7 @@
          full-screen template with a media layer on top lets the picture fill it. -->
     <!-- ── THE SLIDE TRANSITION, ON THIS PATH TOO ─────────────────────────────
          `{#key slideKey}` + `in:slideIn` lived in the REGION branch only, so every
-         layered template cut regardless of what its style, its theme or the
+         layered template cut regardless of what its style or the
          operator's live override said — and layered is what everything new is.
          Same key, same `slideIn`, and the same already-resolved `transitionMode` /
          `transitionMs` pair the region branch reads — so the ranking of override
@@ -1411,7 +1396,6 @@
               <svelte:self
                 template={builtinById(L.templateRef)}
                 {content}
-                {theme}
                 depth={depth + 1}
               />
             </div>

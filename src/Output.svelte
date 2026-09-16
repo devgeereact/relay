@@ -4,7 +4,7 @@
   import TemplateRender from './lib/TemplateRender.svelte';
   import { parseTemplateOverride } from './lib/templates.js';
   import { isKeyedTemplate, resolveOutputTemplate, templateShows } from './lib/layers.js';
-  import { resolveThemed, parseThemes } from './lib/themes.js';
+  import { resolveTokens } from './lib/styletokens.js';
   import { markOutput } from './lib/latency.js';
   import { startBeat, paintState } from './lib/outputHealth.js';
 
@@ -61,7 +61,7 @@
   // own template `t`.
   $: override = parseTemplateOverride(content?.template_json);
   // THE TRANSPARENCY LAW WINS OVER THE OVERRIDE. A keyed channel must NEVER render
-  // opaque — an opaque content-type override (e.g. a full-screen scripture theme)
+  // opaque — an opaque content-type override (e.g. a full-screen scripture look)
   // would blot out the very camera the lower third exists to caption. So on a
   // keyed channel an opaque override is ignored: the channel keeps its own keyed
   // template and the verse still flows into its band. Opaque channels apply the
@@ -75,17 +75,13 @@
   // than nothing at all.
   $: activeTemplate =
     resolveOutputTemplate(t, override, !!content?.template_pinned) || DEFAULT_TEMPLATE;
-  // THE THEME LAYER. If the resolved template pins a theme (style.themeRef), fill
-  // its unset style keys from that theme — the same merge the editor previews, so
-  // the wall matches the editor. Custom themes are fetched on desktop (below);
-  // kiosk/OBS has no DB, so `customThemes` stays [] and only BUILT-IN themes
-  // resolve there. A template pinning a custom theme therefore themes on desktop
-  // and degrades to its own look on a kiosk — never blanks (applyTheme is safe).
-  // Style-only, so it can't change keyed-ness: isBand stays on activeTemplate.
-  let customThemes = [];
   // Set on mount; a no-op until then so onDestroy is safe if mounting threw.
   let stopBeat = () => {};
-  $: themedTemplate = resolveThemed(activeTemplate, customThemes);
+  // LAYER STYLE TOKENS. A layer bound to `theme:accent` resolves against the
+  // template's own style, so a stage or confidence starter wears whatever
+  // template it was dropped into. Style-only, so it can't change keyed-ness:
+  // isBand stays on activeTemplate.
+  $: renderedTemplate = resolveTokens(activeTemplate);
   // "Keyed" for blackout purposes — resolved on what is ACTUALLY rendering.
   $: isBand = isKeyedTemplate(activeTemplate);
   // PAGE BACKGROUND. A KEYED (lower-third) channel stays transparent so OBS/ATEM
@@ -123,21 +119,10 @@
     const tpl = await call('get_template', { id: templateId });
     t = tpl ?? null;
   }
-  // Desktop only — the operator's custom themes, so a template pinning one wears
-  // it on the real wall. Guarded: a missing command / corrupt blob leaves the
-  // set empty (builtins still resolve), never throwing on a live output page.
-  async function loadCustomThemes() {
-    try {
-      const call = await invoke();
-      customThemes = parseThemes(await call('get_setting', { key: 'themes.custom' }));
-    } catch {
-      customThemes = [];
-    }
-  }
   // Desktop only — the override already in force when this window opened. The
   // kiosk hub replays it on `hello`; a native output window has no socket, so
   // without this read a projector opened mid-service is the one screen still
-  // cutting. Guarded the same way `loadCustomThemes` is: a missing command leaves
+  // cutting. Guarded: a missing command or a backend that says nothing leaves
   // the screen following its template, never throwing on a live output page.
   async function loadLiveTransition() {
     try {
@@ -189,11 +174,6 @@
       // browser source in OBS, to the projector — and it is the leg every other
       // instrument in this codebase has had to assume was fast.
       markOutput(m.trace_id, ws);
-    } else if (m.kind === 'themes') {
-      // The operator's custom themes, pushed by the hub on connect and whenever a
-      // theme is saved. Lets THIS browser source resolve a template that pins a
-      // custom theme; builtins it already knows (bundled). Safe-parsed.
-      customThemes = parseThemes(JSON.stringify(m.themes ?? []));
     } else if (m.kind === 'transition') {
       // HOW the next thing appears. Deliberately NOT applied here: it arms the
       // next content and repaints nothing. `mode: null` clears the override and
@@ -270,7 +250,6 @@
   onMount(async () => {
     try {
       await loadTemplate();
-      await loadCustomThemes();
       await loadLiveTransition();
       const { listen } = await import('@tauri-apps/api/event');
       unlisten.push(await listen('output://content', (e) => {
@@ -347,7 +326,7 @@
 </script>
 
 <TemplateRender
-  template={themedTemplate}
+  template={renderedTemplate}
   content={visible ? content : null}
   audio={isDesktop}
   transitionOverride={appliedTransition} />

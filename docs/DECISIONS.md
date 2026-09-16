@@ -500,6 +500,11 @@ path that puts scripture on a wall.
 
 ## 27. Themes, role monitors, and portable looks (2026-07-24)
 
+> **The theme half is superseded by §87 (2026-09-16)**, which completes rather than reverses the
+> sentence below: a theme had no field a template does not have, so the layer beneath templates is
+> gone and the template is the whole style. The layer TOKENS are untouched and still resolve — see
+> `src/lib/styletokens.js`. Everything else here (role monitors, portable looks) stands.
+
 A presentation-suite build-out (the ProPresenter-style IA). The load-bearing choices:
 
 **Themes are a style layer BENEATH templates, not a parallel system.** A theme is a
@@ -3655,6 +3660,11 @@ promise is already spoken for (CLAUDE.md rule 18).
 
 ## 79. Themes is a desk inside Templates, not a workspace beside it (2026-09-14)
 
+> **Superseded by §87 (2026-09-16).** Themes were folded into the template model itself, so the
+> Templates workspace has one desk and `DeskStrip`, `session.templatesDesk` and both theme surfaces
+> are deleted. What is recorded below stands as the reasoning that got them there, and the
+> `MOVED_TABS` half of it is untouched and still load-bearing.
+
 **Context.** `docs/REBRAND.md` §2 names the workspaces the shell's strip carries, and Themes is not
 one of them. A theme is the style layer BENEATH templates (DECISIONS §27): it sets default `style`
 keys, a template overrides them key by key, and it never reaches a wall on its own. The only way to
@@ -4212,3 +4222,66 @@ cases hold the screens being taken down rather than only the windows, a failed c
 failure, `openChannelOutput` refusing under safe mode while still opening when it is off, and the shell
 rendering the failure at all — that last one a SOURCE assertion, named as such, because the shell is not
 mounted in this file.
+
+---
+
+## 87. Themes are folded into templates; the token resolver is what outlives them (2026-09-16)
+
+**Context.** §27 introduced themes as *"a style layer BENEATH templates, not a parallel system"* and
+§79 folded the surface into the Templates workspace as a second desk. This decision finishes that
+sentence rather than contradicting it: the layer is gone and the template is the whole style.
+
+**What a theme actually was.** A named bag of defaults for the exact same flat `style` keys
+`TemplateRender` already reads, filtered through a whitelist (`THEME_STYLE_KEYS`) that was a SUBSET
+of them. There was no themes table, no Rust struct, and no key a template did not already have — a
+theme persisted as one JSON blob in `app_settings['themes.custom']` and resolved at render time as
+`{ ...theme.style, ...template.style }`. So it could only ever say LESS than the template above it,
+and on a LAYERED template it said almost nothing: `LAYER_THEME_KEYS` recorded that nine of the
+fourteen controls the theme editor offered moved nothing at all, because resolution reached a
+layer's `color`, `fill` and `font` and had no path for a size, a line height, an italic, a
+background treatment or a gap. That is §69's rule arriving at the layer itself rather than at one of
+its controls: a surface whose intent nobody honours is removed, not relabelled.
+
+**What it did have was five ways to disagree with the template model** about what a screen wears —
+a second gallery, a second editor, a second store, a second export format (`.relaytheme.json`) and a
+hub frame of its own (`{"kind":"themes"}`, pushed on every kiosk `hello`). None of them was wrong;
+all of them were a second answer to a question the template already answers.
+
+**The decision.** Delete the theme model. `ensure_themes_are_inlined` (§85's wave, landed before
+this) writes each pinned theme's whitelisted style into the template that pinned it, under the same
+precedence the renderer applied, so **no look changed by construction**; a custom theme nothing
+referenced is preserved as a real template rather than discarded; a malformed snapshot leaves
+everything alone. Only then are the surfaces removed: both galleries, the desk strip, the store, the
+`sync_kiosk_themes` command, `KioskHub::{cache_themes, set_themes}`, the `themes` frame and its
+`hello` reply, and the `theme` prop on `TemplateRender`.
+
+**The half that was never about themes survives, and deleting it with the desk would have blanked
+every starter.** A layer's colour, fill or font may be a TOKEN (`theme:accent`) rather than a
+literal, so a stage, confidence or countdown starter follows whatever template it is dropped into.
+`applyTheme`'s merged `effective` object is what a token resolved against, and with no theme in the
+merge that object IS the template's own style — so `src/lib/styletokens.js` resolves the same tokens
+to the same values with one argument fewer. **The token keeps its spelling.** `theme:accent` is
+written into every saved layer in every install; renaming it would need a migration, and a migration
+is too much to pay for a nicer word.
+
+**`MOVED_TABS.themes = 'templates'` stays.** A laptop left on the old Themes tab is still a laptop
+left on it. `session.templatesDesk` is DROPPED, for the reason `session.js` already records about
+`liveDensity`: the session is written back to localStorage on every change, so a key with no reader
+is not inert — it is re-persisted for the life of the install and reads, to the next person, as a
+setting somebody forgot to wire up.
+
+**What this does not settle.** High Visibility shipped as a theme and CLAUDE.md names it as an
+accessibility feature. Its style is frozen in `src-tauri/data/legacy_themes.json` and inlined into
+any template that pinned it, and `legibility.test.js` holds its 21:1 contrast against those bytes —
+but until Track D seeds it as a template FAMILY there is no high-contrast look a church can simply
+pick from the shelf. That is a real gap for the length of this wave and it is named here rather than
+left to be discovered.
+
+### Instrument
+
+`src/lib/thememerge.test.js` — the desk is gone, the redirect still lands, a layer token still
+resolves against the template's own style, and neither the render path nor the hub carries a theme
+any more. `channels.rs`'s `FRAME_VERDICTS` and `REHEARSAL_VERDICTS` are enumerations guarded in both
+directions, so removing the publisher without removing its row fails, and vice versa;
+`ipc.test.js` and `scripts/qa-inventory.mjs` both report zero unreachable commands in either
+direction after the deletion.

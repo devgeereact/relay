@@ -931,9 +931,9 @@ fn kiosk_content_json(content: &OutputContent) -> String {
 ///
 /// Deliberately a prefix match on frames this module builds itself, not a JSON
 /// parse: it runs inside `publish`, which is on the path between a fire and the
-/// projector. `template`, `themes` and `stage_next` are excluded — the first two
-/// are already sent on hello and the third is a monitor-only extra that must not
-/// stand in for the content it accompanies.
+/// projector. `template` and `stage_next` are excluded — the first is already
+/// sent on hello and the second is a monitor-only extra that must not stand in
+/// for the content it accompanies.
 fn is_screen_frame(msg: &str) -> bool {
     // CONTAINS, not `starts_with`. `serde_json`'s default map is a BTreeMap, so
     // `kiosk_content_json` emits its keys in ALPHABETICAL order and a content frame
@@ -1184,7 +1184,7 @@ fn transition_json(t: Option<&(String, Option<u32>)>) -> String {
 ///
 /// NOT REHEARSAL-GATED, and that is a deliberate difference from every publisher
 /// above it. Those carry CONTENT; this carries configuration and paints nothing —
-/// exactly like `set_template` and `set_themes`, which are not gated either. A
+/// exactly like `set_template`, which is not gated either. A
 /// screen that receives this looks identical afterwards; it only changes how the
 /// NEXT change to it is drawn. So there is nothing of a rehearsal to leak, and
 /// gating it would instead leave every screen still armed with the transition from
@@ -1241,13 +1241,6 @@ pub struct KioskHub {
     /// per CHANNEL, overwritten by the next beat and gone on quit. It answers
     /// "is that screen alive", never "who is watching". See `OutputHealth`.
     clients: Arc<Mutex<HashMap<i64, usize>>>,
-    /// The operator's CUSTOM themes, as a JSON array string (the `themes.custom`
-    /// settings blob). Sent to every kiosk client on connect so a browser source
-    /// (which has no DB) can resolve a template that pins a custom theme — builtin
-    /// themes it already knows (bundled in the page). Always well-formed: only a
-    /// validated JSON array is ever stored (see `set_themes`), so embedding it raw
-    /// into a WS message can never corrupt the frame.
-    themes: Arc<Mutex<String>>,
     /// THE LAST FRAME THAT DECIDED WHAT IS ON THE SCREENS — content, clear or
     /// black — kept so a client that joins LATE is shown it.
     ///
@@ -1257,8 +1250,8 @@ pub struct KioskHub {
     /// reloading, a Wi-Fi blip on the lobby TV, or this hub's own 1.5 s reconnect
     /// loop all produce it, and RG-119 records the main output going away three
     /// times in one 85.5 minute service. Reproduced by opening `output.html`
-    /// while a verse was live: the page connected, was sent its template and its
-    /// themes, and painted nothing.
+    /// while a verse was live: the page connected, was sent its template, and
+    /// painted nothing.
     ///
     /// It retains the last frame of those three kinds and NOTHING else, so it can
     /// never resurrect a screen the operator cleared: `clear` and `black` are
@@ -1276,9 +1269,9 @@ pub struct KioskHub {
     /// preference and no content.
     ///
     /// Retained because a screen that joins mid-service must not be the one screen
-    /// still cutting while the rest crossfade — the same argument as the template
-    /// and the themes, which are cached and replayed here for the same reason. It
-    /// is configuration, never content: it paints nothing on its own.
+    /// still cutting while the rest crossfade — the same argument as the template,
+    /// which is cached and replayed here for the same reason. It is
+    /// configuration, never content: it paints nothing on its own.
     last_transition: TransitionSlot,
 }
 
@@ -1289,7 +1282,6 @@ impl Default for KioskHub {
             tx,
             templates: Arc::new(Mutex::new(HashMap::new())),
             clients: Arc::new(Mutex::new(HashMap::new())),
-            themes: Arc::new(Mutex::new("[]".to_string())),
             last_screen: Arc::new(Mutex::new(None)),
             last_transition: Arc::new(Mutex::new(None)),
         }
@@ -1417,35 +1409,6 @@ impl KioskHub {
     pub fn clients_handle(&self) -> ClientRegistry {
         ClientRegistry(self.clients.clone())
     }
-    /// Shared handle to the custom-themes blob, for the WS server task to read and
-    /// send to each client on `hello`.
-    pub fn themes_handle(&self) -> Arc<Mutex<String>> {
-        self.themes.clone()
-    }
-    /// Validate + store the custom-themes blob WITHOUT pushing (startup warm).
-    /// Only a well-formed JSON ARRAY is kept — anything else falls back to `[]`,
-    /// so the value embedded raw into a WS frame is always valid JSON.
-    pub fn cache_themes(&self, themes_json: &str) {
-        let safe = match serde_json::from_str::<serde_json::Value>(themes_json) {
-            Ok(v) if v.is_array() => themes_json.to_string(),
-            _ => "[]".to_string(),
-        };
-        if let Ok(mut t) = self.themes.lock() {
-            *t = safe;
-        }
-    }
-    /// Update the custom themes AND push them live to every connected client, so a
-    /// kiosk re-resolves a custom-themed template the instant the operator saves a
-    /// theme. Same validate-then-store rule as `cache_themes`.
-    pub fn set_themes(&self, themes_json: &str) {
-        self.cache_themes(themes_json);
-        let blob = self
-            .themes
-            .lock()
-            .map(|t| t.clone())
-            .unwrap_or_else(|_| "[]".into());
-        self.publish(format!(r#"{{"kind":"themes","themes":{blob}}}"#));
-    }
     /// Cache a template's JSON (no push). Used to warm the cache at startup.
     pub fn cache_template(&self, id: i64, template_json: &str) {
         if let Ok(mut m) = self.templates.lock() {
@@ -1543,7 +1506,6 @@ pub async fn run_kiosk_server(
     tx: broadcast::Sender<String>,
     templates: Arc<Mutex<HashMap<i64, String>>>,
     clients: ClientRegistry,
-    themes: Arc<Mutex<String>>,
     last_screen: Arc<Mutex<Option<String>>>,
     last_transition: TransitionSlot,
     health: OutputHealth,
@@ -1578,7 +1540,6 @@ pub async fn run_kiosk_server(
         let mut rx = tx.subscribe();
         let templates = templates.clone();
         let clients = clients.clone();
-        let themes = themes.clone();
         let last_screen = last_screen.clone();
         let last_transition = last_transition.clone();
         let health = health.clone();
@@ -1702,7 +1663,7 @@ pub async fn run_kiosk_server(
                                     // channel-keyed source follows a template swap
                                     // and a `template_id`-keyed one does not. So
                                     // the recommended URL was the one shape that
-                                    // got no themes and, worse, NO RETAINED FRAME:
+                                    // got NO RETAINED FRAME:
                                     // an OBS source restarting mid-reading came
                                     // back black and stayed black until the next
                                     // fire, which is the exact failure rule 43 and
@@ -1714,9 +1675,9 @@ pub async fn run_kiosk_server(
                                     // Registration and the template reply still
                                     // need an id — a client with no template id has
                                     // no template to be counted against, and the
-                                    // liveness count is per template id. The themes
-                                    // and the retained frame need nothing: they are
-                                    // about what is ON THE SCREENS, not about which
+                                    // liveness count is per template id. The
+                                    // retained frame needs nothing: it is about
+                                    // what is ON THE SCREENS, not about which
                                     // look this screen wears.
                                     if let Some(id) = v.get("template_id").and_then(|i| i.as_i64()) {
                                         // Replace, don't add: a client that says
@@ -1735,23 +1696,13 @@ pub async fn run_kiosk_server(
                                                 .await;
                                         }
                                     }
-                                    // Send the custom themes, so this client can
-                                    // resolve a template pinning a custom theme
-                                    // (builtins it already knows). Always a valid
-                                    // JSON array (see set_themes).
-                                    let blob = themes.lock().map(|t| t.clone()).unwrap_or_else(|_| "[]".into());
-                                    let _ = write
-                                        .send(tokio_tungstenite::tungstenite::Message::Text(
-                                            format!(r#"{{"kind":"themes","themes":{blob}}}"#),
-                                        ))
-                                        .await;
                                     // The operator's transition override, if one is
                                     // in force (DECISIONS §84). Sent BEFORE the
                                     // retained frame, so a screen that joins late
                                     // is not the only one in the building still
                                     // cutting while the rest crossfade. Like the
-                                    // template and the themes above it, this is
-                                    // configuration: on its own it paints nothing.
+                                    // template above it, this is configuration:
+                                    // on its own it paints nothing.
                                     let x = last_transition.lock().ok().and_then(|t| t.clone());
                                     if x.is_some() {
                                         let _ = write
@@ -3048,7 +2999,6 @@ mod tests {
             hub.sender(),
             hub.templates_handle(),
             hub.clients_handle(),
-            hub.themes_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             OutputHealth::default(),
@@ -3108,7 +3058,6 @@ mod tests {
             hub.sender(),
             hub.templates_handle(),
             hub.clients_handle(),
-            hub.themes_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             OutputHealth::default(),
@@ -3191,7 +3140,6 @@ mod tests {
             hub.sender(),
             hub.templates_handle(),
             hub.clients_handle(),
-            hub.themes_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             OutputHealth::default(),
@@ -3223,56 +3171,6 @@ mod tests {
         );
     }
 
-    /// A kiosk gets the operator's custom themes on connect, so a browser source
-    /// can resolve a template that pins a custom theme (builtins it bundles).
-    #[tokio::test]
-    async fn a_kiosk_client_receives_the_custom_themes_on_hello() {
-        let port = free_port();
-        let hub = KioskHub::default();
-        hub.cache_themes(r##"[{"id":3,"name":"Sanctuary","style":{"accent":"#abc"}}]"##);
-        tokio::spawn(run_kiosk_server(
-            log_only(),
-            hub.sender(),
-            hub.templates_handle(),
-            hub.clients_handle(),
-            hub.themes_handle(),
-            hub.last_screen_handle(),
-            hub.last_transition_handle(),
-            OutputHealth::default(),
-            port,
-        ));
-        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-
-        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
-            .await
-            .expect("connect");
-        let (mut write, mut read) = ws.split();
-        write
-            .send(tokio_tungstenite::tungstenite::Message::Text(
-                r#"{"kind":"hello","template_id":7}"#.to_string(),
-            ))
-            .await
-            .expect("send hello");
-
-        // Read frames until the themes frame arrives (the template frame may come
-        // first when a template is cached; here none is, so themes is first).
-        let mut got = false;
-        for _ in 0..3 {
-            let Ok(Some(Ok(msg))) =
-                tokio::time::timeout(std::time::Duration::from_secs(2), read.next()).await
-            else {
-                break;
-            };
-            let text = msg.into_text().unwrap();
-            if text.contains(r#""kind":"themes""#) {
-                assert!(text.contains("Sanctuary"), "got {text}");
-                got = true;
-                break;
-            }
-        }
-        assert!(got, "the client never received the custom themes");
-    }
-
     /// The retained-frame test above can only be trusted if the matcher agrees
     /// with what this module actually SERIALISES. It did not: `serde_json`'s map is
     /// a BTreeMap, so a content frame starts `{"content_kind":…` and the first
@@ -3302,7 +3200,6 @@ mod tests {
         assert!(!is_screen_frame(
             r#"{"kind":"stage_alert","text":"two minutes"}"#
         ));
-        assert!(!is_screen_frame(r#"{"kind":"themes","themes":[]}"#));
         assert!(!is_screen_frame(
             r#"{"kind":"template","id":1,"template":{}}"#
         ));
@@ -3328,7 +3225,6 @@ mod tests {
         ("black", true),
         ("stage_next", false),
         ("stage_alert", false),
-        ("themes", false),
         ("template", false),
         // Configuration, not content. It is retained — in its OWN slot, and
         // replayed on hello from there — because a screen that joins late must not
@@ -3457,11 +3353,6 @@ mod tests {
             "configuration, not content. A screen that receives it looks identical \
              afterwards; gating it would leave every screen armed with the \
              pre-rehearsal transition once the operator went live",
-        ),
-        (
-            "set_themes",
-            false,
-            "a palette, not content. It puts nothing a person reads on a screen",
         ),
         (
             "set_template",
@@ -3752,7 +3643,7 @@ mod tests {
     /// A SCREEN THAT JOINS LATE IS SHOWN WHAT IS ON THE SCREENS.
     ///
     /// Reproduced against the real backend: with a verse live, opening
-    /// `output.html` connected, was sent its template and its themes, and painted
+    /// `output.html` connected, was sent its template, and painted
     /// NOTHING — a black rectangle in front of a congregation until the operator
     /// happened to fire the next thing. An OBS source restarting, a kiosk page
     /// reloading, a Wi-Fi blip on the lobby TV and this hub's own reconnect loop
@@ -3767,7 +3658,6 @@ mod tests {
             hub.sender(),
             hub.templates_handle(),
             hub.clients_handle(),
-            hub.themes_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             OutputHealth::default(),
@@ -3830,7 +3720,6 @@ mod tests {
             hub.sender(),
             hub.templates_handle(),
             hub.clients_handle(),
-            hub.themes_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             OutputHealth::default(),
@@ -4004,7 +3893,6 @@ mod tests {
             hub.sender(),
             hub.templates_handle(),
             hub.clients_handle(),
-            hub.themes_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             OutputHealth::default(),
@@ -4064,7 +3952,6 @@ mod tests {
             hub.sender(),
             hub.templates_handle(),
             hub.clients_handle(),
-            hub.themes_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             OutputHealth::default(),
@@ -4135,7 +4022,6 @@ mod tests {
             hub.sender(),
             hub.templates_handle(),
             hub.clients_handle(),
-            hub.themes_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             OutputHealth::default(),
@@ -4192,7 +4078,6 @@ mod tests {
             tx,
             hub.templates_handle(),
             hub.clients_handle(),
-            hub.themes_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             OutputHealth::default(),
@@ -4374,24 +4259,6 @@ mod tests {
     }
 
     #[test]
-    fn the_themes_blob_is_only_stored_when_it_is_a_valid_json_array() {
-        let hub = KioskHub::default();
-        // A well-formed array is kept verbatim.
-        hub.cache_themes(r#"[{"id":1,"name":"Mine","style":{}}]"#);
-        assert!(hub.themes_handle().lock().unwrap().contains("Mine"));
-        // Junk, a non-array, or an object all fall back to "[]" so the value can
-        // never corrupt the WS frame it is embedded raw into.
-        for bad in [r#"not json"#, r#"{"id":1}"#, r#"42"#, r#"null"#] {
-            hub.cache_themes(bad);
-            assert_eq!(
-                hub.themes_handle().lock().unwrap().as_str(),
-                "[]",
-                "bad blob {bad}"
-            );
-        }
-    }
-
-    #[test]
     fn an_ad_hoc_output_window_is_not_mistaken_for_a_channel() {
         // `open_output_window` still mints counter labels. Reading one of those as
         // a channel id would light up an unrelated channel.
@@ -4413,7 +4280,6 @@ mod tests {
             hub.sender(),
             hub.templates_handle(),
             hub.clients_handle(),
-            hub.themes_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             OutputHealth::default(),
@@ -4467,7 +4333,6 @@ mod tests {
             hub.sender(),
             hub.templates_handle(),
             hub.clients_handle(),
-            hub.themes_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             health.clone(),
