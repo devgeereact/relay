@@ -214,15 +214,25 @@ mod tests {
             db::verse_count(&conn).unwrap() > 31_000,
             "a fresh install ships the full KJV"
         );
-        assert!(
-            !db::list_templates(&conn).unwrap().is_empty(),
-            "a fresh install ships the built-in templates"
-        );
+        // THE SHELF, BY IDENTITY RATHER THAN BY NOT BEING EMPTY. The forty are
+        // eight roles of five, and a fresh install that lost a whole role would
+        // still have passed a non-emptiness check — which is what this line was.
+        let templates = db::list_templates(&conn).unwrap();
+        assert_eq!(templates.len(), 40, "a fresh install ships the shelf");
+        for t in &templates {
+            assert!(
+                t.layout["layers"].is_array(),
+                "{}: a fresh install is seeding a region-model row again (RG-140, RG-141)",
+                t.name
+            );
+        }
 
         // Song is the ONE content-look a fresh install ships with a default, and it
-        // is deliberate: every other built-in is scripture-shaped, so a lyric
-        // rendered through one put the song title where the words should be
-        // (`templates.rs::seed_templates`, which writes `tpl_song`).
+        // is deliberate: it is the one role whose words have no reference at all, so
+        // a lyric rendered through a scripture look put the song title where the
+        // words should be. `templates.rs::ensure_lyrics_template` chooses the row
+        // and writes `tpl_song`; it used to CREATE a region-model row, and the seed
+        // it named here no longer does either.
         assert!(
             db::content_template_id(&conn, "song").unwrap().is_some(),
             "the lyrics content-look is seeded on purpose and has gone missing"
