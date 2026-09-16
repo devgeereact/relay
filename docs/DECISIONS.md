@@ -4286,3 +4286,69 @@ any more. `channels.rs`'s `FRAME_VERDICTS` and `REHEARSAL_VERDICTS` are enumerat
 directions, so removing the publisher without removing its row fails, and vice versa;
 `ipc.test.js` and `scripts/qa-inventory.mjs` both report zero unreachable commands in either
 direction after the deletion.
+
+## 88. The seed becomes five families across five kinds, and Nocturne does not survive the count (2026-09-16)
+
+**Context.** §87 folded themes into templates and named the gap it left open: *"until Track D
+seeds [High Visibility] as a template FAMILY there is no high-contrast look a church can simply
+pick from the shelf."* Before this task, `theme_templates()` carried four families — Classic,
+Aurora, Ember, Nocturne — over four content kinds (Scripture, Lyrics, Lower Third, Timer), and
+`preset_templates()` separately shipped fourteen standalone designs with no coordinated set behind
+any of them: picking `Midnight Blue` for scripture left an operator with nothing coordinated for a
+lyric, a notice or a countdown. Two galleries, twenty-plus rows between them, and neither answered
+Media or Timer as a real kind — the two entries in `CONTENT_KINDS` (`src/lib/layers.js`) the old
+seed never dressed on every family.
+
+**The decision.** Five families — Classic, Aurora, Ember, Lower Third, High Visibility — each
+answering all five content kinds (Scripture, Lyrics, Media, Announcement, Timer), named `Family ·
+Kind` so the gallery groups them visually: twenty-five rows, and `preset_templates()` is now
+permanently empty. **Nocturne is dropped, not carried to five kinds.** It was a fourth family
+competing for the same shelf space as three reduced ones; closing the two-kind gap across five
+families that already existed rather than five families including one built new kept the seed a
+deliberate set instead of a rebalancing exercise, and a shelf of five coordinated looks is one a
+volunteer can actually read start to finish. Colours are fixed per family; sizes are free per kind,
+so a lyric (scanned) and a verse (read) are not the same size but stay the same look. Aurora and
+Ember's Scripture, Lyrics and Announcement rows are the previously-seeded bytes verbatim, so a
+church already using one sees no change on update. Lower Third is now the seed's only source of
+keyed templates (`builtin_templates()`'s `Lower Third`), which the transparency law in
+`resolveOutputTemplate` depends on, and its band fills with the neutral `#101319` rather than a law
+colour, per rule 18. High Visibility is `data/legacy_themes.json`'s frozen theme, the same look
+`legibility.test.js` already holds at 21:1 — which is what closes §87's gap, with one honest
+deviation: its Announcement does not scroll (the other four families' do), because a crawl that
+stops under `prefers-reduced-motion` silently truncates a notice, and a family built for a
+low-vision or vestibular reader cannot ship the one member most likely to cut text off screen.
+
+Every one of the twenty-five rows declares all five kinds in `layout.shows`, deliberately, not as a
+shrug. `layout.shows` is a per-screen filter (`templateShows`, consulted by `Output.svelte` before
+`resolveOutputTemplate` runs), not a record of what a template was designed for — an absent list
+already means "every kind" implicitly, so writing the five down is the same behaviour with the
+filter register told the truth instead of materialising a list the first time an operator edits it.
+
+**The retirement rule, and why it is this cautious.** Twenty-one rows are frozen byte-for-byte in
+`data/retired_presets.json` — the fourteen standalone presets, six rows `theme_templates()` stops
+shipping (the `Lower Third` member the old four-kind Aurora and Ember carried, and all four
+`Nocturne · …` rows), and the shelf's old `Lower Third · Scripture`, whose name the new keyed
+family takes over. `ensure_retired_presets_are_gone` deletes a row only when its name, its
+`region_config_json` AND its `style_json` all still match what the seed shipped, AND nothing points
+at it: the four doors are the five per-kind content-look defaults, `default_template_id`, and the
+foreign keys on `output_channels` and `plan_items`. A byte mismatch means an operator edited the
+row, and edited work is not a leftover; a failed read of either settings door is treated as "a look
+is bound" and retires nothing, because the safe direction to fail in is retiring too little, not
+deleting a template a screen is wearing. A name the new seed still ships (`Lower Third ·
+Scripture`'s old namesake) is left as the pre-existing row rather than replaced, so a church
+counting its gallery does not have to diagnose a permanently missing member from scratch —
+`ensure_preset_templates` inserts by name only when the name is absent, and this name never becomes
+absent.
+
+**What this does not change.** No look moves under an existing install: every row this wave
+retires or drops is either byte-identical to what shipped before (and left alone if it was edited
+or is still referenced) or was never rendered by the family member that now shares its name.
+
+### Instrument
+
+`src-tauri/src/db/templates.rs` — `there_are_presets_across_every_screen_type` asserts
+`preset_templates()` is empty; the family suite asserts all twenty-five rows and their `shows`
+lists; `ensure_retired_presets_are_gone`'s tests cover the byte-match requirement, a preset the
+operator edited being kept, and all four reference doors asserted SEPARATELY rather than in one
+case that could pass on the first door alone — the shape of a bug this repository has had four
+times before (a guarantee checked on one surface and skipped on its twin).
