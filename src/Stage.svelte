@@ -154,6 +154,10 @@
     { key: 'countdown', label: 'Countdown' },
     { key: 'clock', label: 'Clock' },
     { key: 'elapsed', label: 'Service elapsed' },
+    // The preacher's bookkeeping. A lobby TV running this page has no business
+    // carrying it, and until this key existed there was no way to take it off —
+    // the rail was the one region on the screen with no switch behind it.
+    { key: 'programme', label: 'Programme' },
   ];
   const DEFAULT_ZONES = {
     reading: true,
@@ -162,6 +166,7 @@
     countdown: true,
     clock: true,
     elapsed: true,
+    programme: true,
   };
   const ZONE_KEY = 'relay.stage.zones';
   let zones = { ...DEFAULT_ZONES };
@@ -310,6 +315,37 @@
     if (!Number.isFinite(chosen) || chosen <= 0) return false;
     return countdownWarning(ms, null, chosen);
   }
+
+  // ── THE RAIL'S FLOOR ───────────────────────────────────────────────────────
+  //
+  // `.tmr { flex: 1 1 0 }` divided the row by however many timers were in it, with
+  // no floor: six timers on a phone in portrait is six columns of about sixty
+  // pixels, every clock on the rail illegible, and nothing anywhere saying the rail
+  // had given up. A row that cannot show every timer must SAY SO — the same shape as
+  // rule 35, one rail along.
+  //
+  // 132px is the arithmetic, not a taste: `.tval` is `92cqw / --tmrs / 6 / 0.62`, so
+  // a 132px cell puts `MM:SS` at about 32px, a little above the reading's own 26px
+  // floor. Below that the digits are inside the box and nobody across a platform can
+  // read them. At 1920 that is fourteen cells, at 1280 nine, at 1024 seven, and on a
+  // phone in portrait three.
+  //
+  // The viewport, not a measurement: `.progrow` spans the frame, and measuring the
+  // box would mean a forced layout on the one page whose job is to be still.
+  const MIN_TIMER_PX = 132;
+  let frameW = 1024;
+  $: capacity = Math.max(1, Math.floor((Number(frameW) || 1024) / MIN_TIMER_PX));
+  // The last slot is spent on the count when there is one, so the count cannot
+  // itself be the thing that gets pushed off the end. At least one clock always
+  // survives — a rail that says "6 more" and shows nothing is a rail that has told
+  // the preacher he cannot have the thing he is looking at.
+  $: progCells =
+    programme.length <= capacity
+      ? programme
+      : (() => {
+          const keep = Math.max(1, capacity - 1);
+          return [...programme.slice(0, keep), { more: programme.length - keep }];
+        })();
 
   // SERVICE ELAPSED — counts up from the epoch the fired content carries. There is
   // no epoch when no service is recording, and an absence is shown as an absence:
@@ -620,6 +656,12 @@
   });
 </script>
 
+<!-- THE ONLY THING THIS PAGE ASKS THE WINDOW FOR, and it is asked rather than
+     measured: the programme rail's floor needs to know how many clocks the frame
+     can hold at a legible size, and `getBoundingClientRect` on the row would mean a
+     forced layout on the page whose job is to be still. -->
+<svelte:window bind:innerWidth={frameW} />
+
 <div class="sr">
   <header>
     <span class="brand">Relay · Stage</span>
@@ -704,18 +746,26 @@
        means the AI is guessing; not amethyst, which means rehearsal. Slate, the
        page's own neutral — the programme is the operator's bookkeeping shown to one
        person, and it makes no claim about any screen. -->
-  {#if programme.length}
-    <div class="progrow" style="--tmrs:{programme.length}" aria-label="Programme">
-      {#each programme as t (t.id)}
-        <div class="tmr" class:warn={t.warn} class:held={t.held} data-timer-id={t.id}>
-          {#if t.label || t.held}
-            <span class="thead">
-              {#if t.label}<span class="tlabel">{t.label}</span>{/if}
-              {#if t.held}<span class="tstate">Held</span>{/if}
-            </span>
-          {/if}
-          <span class="tval" class:msg={t.words}>{t.v}</span>
-        </div>
+  {#if zones.programme && progCells.length}
+    <div class="progrow" style="--tmrs:{progCells.length}" aria-label="Programme">
+      {#each progCells as t, i (i)}
+        {#if t.more}
+          <!-- THE RAIL SAYING WHAT IT COULD NOT SHOW. Not a timer, so it carries no
+               `data-timer-id` and nothing counts it as one. -->
+          <div class="tmr tmore">
+            <span class="tval msg">+{t.more} more</span>
+          </div>
+        {:else}
+          <div class="tmr" class:warn={t.warn} class:held={t.held} data-timer-id={t.id}>
+            {#if t.label || t.held}
+              <span class="thead">
+                {#if t.label}<span class="tlabel">{t.label}</span>{/if}
+                {#if t.held}<span class="tstate">Held</span>{/if}
+              </span>
+            {/if}
+            <span class="tval" class:msg={t.words}>{t.v}</span>
+          </div>
+        {/if}
       {/each}
     </div>
   {/if}
@@ -1022,6 +1072,11 @@
     line-height: 1.15;
     font-size: min(clamp(14px, calc(92cqw / var(--tmrs) / 11 / 0.5), 30px), 9cqh);
     overflow: hidden; }
+  /* WHAT THE RAIL COULD NOT SHOW. Quiet, because it is bookkeeping about
+     bookkeeping — but present, because a rail that silently drops half the
+     programme is a rail nobody can tell from a complete one. */
+  .tmore { flex: 0 1 auto; justify-content: center; }
+  .tmore .tval.msg { color: var(--v-faint); }
   /* THE LAST MINUTE, ON THE PREACHER'S OWN PROGRAMME. Same red and same rule as
      the congregation figure beneath the reading — `.fig.warn .figv` is the
      precedent and this reuses it rather than inventing a second warning.

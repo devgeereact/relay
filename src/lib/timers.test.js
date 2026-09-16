@@ -428,3 +428,56 @@ describe('a finished programme timer says its message, and a held one says it is
     }
   });
 });
+
+describe('the programme rail has a floor', () => {
+  const at = 1_700_000_000_000;
+  const many = (n) =>
+    Array.from({ length: n }, (_, i) => entry(i + 1, `Item ${i + 1}`, i + 2, at));
+
+  it('shows every timer while there is room for every timer', async () => {
+    window.innerWidth = 1280;
+    await mountAt(at);
+    await deliver({ kind: 'timer', timers: many(6) });
+
+    expect(rows()).toHaveLength(6);
+    expect(host.querySelector('.tmore'), 'nothing was hidden, so nothing should say so').toBeNull();
+  });
+
+  it('says how many it could not show rather than shrinking them all below reading size', async () => {
+    // `.tmr { flex: 1 1 0 }` divides the row by the number of timers with no floor
+    // at all, so six timers on a phone in portrait is six columns of about sixty
+    // pixels — every clock on the rail illegible, and nothing anywhere saying that
+    // the rail had given up. A row that cannot show every timer must SAY SO.
+    window.innerWidth = 400;
+    await mountAt(at);
+    await deliver({ kind: 'timer', timers: many(6) });
+
+    const shown = rows();
+    expect(shown.length, 'the rail shrank every timer instead of stopping').toBeLessThan(6);
+    expect(shown.length, 'the rail must still show at least one clock').toBeGreaterThan(0);
+    const more = host.querySelector('.tmore');
+    expect(more, 'timers went missing and nothing said so').toBeTruthy();
+    expect(more.textContent).toContain(String(6 - shown.length));
+
+    // The cells the row divides itself by must be the cells it actually paints, or
+    // the figures are sized for a rail nobody is looking at.
+    const cells = host.querySelectorAll('.progrow .tmr').length;
+    expect(host.querySelector('.progrow').style.getPropertyValue('--tmrs').trim()).toBe(
+      String(cells),
+    );
+  });
+
+  it('takes the count away again when the screen has room', async () => {
+    window.innerWidth = 400;
+    await mountAt(at);
+    await deliver({ kind: 'timer', timers: many(6) });
+    expect(host.querySelector('.tmore')).toBeTruthy();
+
+    window.innerWidth = 1600;
+    window.dispatchEvent(new Event('resize'));
+    await tick();
+    await tick();
+    expect(rows()).toHaveLength(6);
+    expect(host.querySelector('.tmore')).toBeNull();
+  });
+});
