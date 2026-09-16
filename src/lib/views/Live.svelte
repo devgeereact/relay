@@ -598,10 +598,19 @@
         }
         await fireMedia(p.media_id, tpl, true); // keepPlan — this IS the plan's slide
       } else if (item.cue_type === 'countdown') {
+        // THE CUE'S OWN WORDS, AND NO OTHERS. These two arguments used to fall
+        // back to 'Service begins in' and 'Welcome' — the fourth copy of a pair of
+        // constants that the Planner wrote, `capture.js` defaulted to and the dock
+        // named outright. Now that the Planner can leave them blank on purpose, a
+        // fallback here would put the words back over an operator who had just
+        // taken them out, on the surface furthest from where they were typed.
+        // Blank is a real answer: the wall shows the digits alone. A cue built
+        // before this change still carries its words in its payload and still
+        // shows them.
         await startCountdown(
           Number(p.minutes) || 5,
-          p.label || 'Service begins in',
-          p.done || 'Welcome',
+          p.label ?? '',
+          p.done ?? '',
           tpl,
           true, // keepPlan — this IS the plan's slide
         );

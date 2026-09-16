@@ -1425,11 +1425,20 @@ if (!keepPlan) leavePlan();
 /** Start a pre-service countdown on every output. Outputs tick MM:SS locally
  *  from the broadcast target; `label` shows above, `doneMsg` replaces it at 0.
  *  Guarded: refuses to start a second countdown while one is still running —
- *  clear the screen (or let it finish) first. */
+ *  clear the screen (or let it finish) first.
+ *
+ *  THE WORDS DEFAULT TO NOTHING, and that is the whole of them. They used to
+ *  default to "Service begins in" and "Welcome", which meant a caller with no
+ *  field for either — the dock had none for months — put words on a wall that
+ *  nobody in the building had chosen and nobody could change. The words are
+ *  payload, not template: they ride in `content.reference` and a template's
+ *  `reference`-bound layer draws them, so a caller that has nothing to say says
+ *  nothing and the screens show the digits alone. The Planner is the surface
+ *  that does have something to say, and it passes it here. */
 export async function startCountdown(
 minutes,
-label = 'Service begins in',
-doneMsg = 'Welcome',
+label = '',
+doneMsg = '',
 templateId = null,
 keepPlan = false,
 ) {
