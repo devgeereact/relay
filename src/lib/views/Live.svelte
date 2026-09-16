@@ -191,6 +191,7 @@
     planItems,
     getSong,
     setStageNext,
+    startTimer,
     rehearsing,
     loadRehearsal,
     setRehearsal,
@@ -579,6 +580,9 @@
     const p = payloadOf(item);
     const s = slidesOf(item)[i];
     if (!s) return;
+    // Was this cue ALREADY the one on air? Read before the fire, because the take
+    // below is what makes it so — see the timer at the bottom of this function.
+    const cueWasOnAir = planOnAir && liveCueId === item.id;
     const stageNote = p.stage_note || null;
     // The template the operator set for THIS cue in the Planner. Passed on every
     // fire so a plan item renders with its own chosen look, not just the
@@ -624,6 +628,13 @@
       setLive(item.id, i);
       selId = item.id;
       flash(`Live: ${s.label}`);
+      // INSIDE the try, AFTER the take, so a fire that failed starts no clock: the
+      // cue never reached a screen, and a timer for a cue nobody is looking at is
+      // a clock the operator has to hunt down and stop mid-service. And BEFORE the
+      // "up next" hint below, which is deliberately not awaited: the clock is part
+      // of the take and the hint is a shrug, so the one that carries a guarantee
+      // goes first rather than racing the one that does not.
+      await startCueTimer(item, cueWasOnAir);
       const n = nextOf(items, item.id, i);
       // Deliberately shrugged: a missing "up next" is an absent hint, and the
       // wall — and this catch — already report anything that matters. Contrast
@@ -631,6 +642,53 @@
       setStageNext(n?.label ?? null, n?.text ?? null).catch(() => {});
     } catch (e) {
       flash(humanError(e));
+    }
+  }
+
+  /**
+   * A CUE THAT CARRIES A CLOCK STARTS IT HERE, AND NOWHERE ELSE.
+   *
+   * `plan_items.timer_minutes` is a request the Planner stores and cannot act on —
+   * that workspace may not reach an output or the preacher's monitor
+   * (`plannerbuildonly.test.js`). So the run surface is what acts on it, and this
+   * is the ONE call site: `fireSlide` is the single door a plan cue goes on air
+   * through, which is rule 36's reasoning applied to a timer. A second call beside
+   * `stepLive` or beside the grid press would be the fifth bug in this repository
+   * with that shape.
+   *
+   * THE CONDITIONS, each for its own reason:
+   *
+   * · `cueWasOnAir` — a clock starts when the cue GOES on air, not on every slide
+   *   of it. A five-section song would otherwise restart the sermon clock five
+   *   times as the operator walked it, and stepping back and forward would do it
+   *   again. The backend keeps one clock per cue as well (`start_timer` stops the
+   *   cue's previous one), so the two agree rather than one covering for the other.
+   * · `$rehearsing` — a rehearsal publishes no timers (`channels::publish_timers`
+   *   suppresses them), so a clock started here would be one the registry holds
+   *   and nobody can see, waiting to appear on the preacher's rail the moment the
+   *   service goes live. A rehearsal changes nothing about the service.
+   *
+   * It reports its own failure rather than riding in the fire's `catch`. The verse
+   * or the notice is already on the wall by this point and the fire SUCCEEDED; a
+   * flash saying otherwise would be the console lying about the congregation's
+   * screen, which is the more expensive of the two mistakes.
+   */
+  async function startCueTimer(item, cueWasOnAir) {
+    const mins = Number(item.timer_minutes) || 0;
+    if (mins <= 0 || cueWasOnAir || $rehearsing) return;
+    try {
+      await startTimer({
+        minutes: mins,
+        label: item.label,
+        // STAGE, never `both`. This is the preacher's bookkeeping; a congregation
+        // countdown is `start_countdown` and is an action an operator takes on
+        // purpose. A cue silently putting a clock on the wall is the one mistake
+        // that cannot be taken back quietly.
+        scope: 'stage',
+        planItemId: item.id,
+      });
+    } catch (e) {
+      flash(`On air — but its ${mins}-minute timer did not start: ${humanError(e)}`);
     }
   }
 

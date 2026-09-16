@@ -340,6 +340,7 @@ fn main() {
             reorder_plan,
             set_plan_section,
             set_plan_duration,
+            set_plan_timer,
             set_plan_template,
             list_songs,
             search_songs,
@@ -2256,6 +2257,17 @@ fn set_plan_duration(db: tauri::State<'_, Db>, id: i64, seconds: i64) -> error::
     db::set_plan_duration(&conn, id, seconds).map_err(Into::into)
 }
 
+/// Planner: bind a cue to a programme timer of `minutes`, or clear the binding.
+///
+/// It STORES and it starts nothing. The Planner may not reach an output or a
+/// preacher's rail (`plannerbuildonly.test.js`), so the binding is a fact about
+/// the plan and Live is what acts on it when the cue goes on air.
+#[tauri::command]
+fn set_plan_timer(db: tauri::State<'_, Db>, id: i64, minutes: Option<i64>) -> error::Result<()> {
+    let conn = db.0.lock()?;
+    db::set_plan_timer(&conn, id, minutes).map_err(Into::into)
+}
+
 /// Planner: point a cue at a specific template, or back at the channel default.
 #[tauri::command]
 fn set_plan_template(
@@ -3042,6 +3054,19 @@ fn start_timer<R: tauri::Runtime>(
         5.0
     };
     let now_ms = cd_now_ms();
+    // ONE CLOCK PER CUE. A cue that is put on air again — the operator steps back
+    // and forward, or re-takes a slide — asks for its timer to start again, not for
+    // a second one beside it. Without this, walking a plan backwards and forwards
+    // stacks a clock on the preacher's rail per press, and rule 35's floor on that
+    // rail (Track A) would be dividing the width between clocks nobody asked for.
+    // `for_plan_item` is the reader that makes it answerable; an unbound start
+    // (`plan_item_id: None`) is untouched and still makes a new timer every time.
+    if let Some(cue) = plan_item_id {
+        let reg = app.state::<timers::TimerRegistry>();
+        if let Some(previous) = reg.for_plan_item(cue) {
+            reg.stop(previous.id);
+        }
+    }
     let id = app.state::<timers::TimerRegistry>().start(timers::Timer {
         id: 0, // assigned by the registry
         label: label.trim().to_string(),
