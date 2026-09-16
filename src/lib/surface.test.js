@@ -1392,7 +1392,7 @@ describe('R3-12 · the two genuinely unlabelled controls — CLOSED 2026-08-30',
   // reintroducing either defect turns them red.
   it('the Planner stage-note textarea is named by a real <label for>', () => {
     const t = src('src/lib/views/ServicePlanner.svelte');
-    expect(t).toMatch(/<label class="r-lbl sp-flbl" for="sp-stage-note">Stage note<\/label>/);
+    expect(t).toMatch(/<label class="r-lbl sp-flbl" for="sp-stage-note">Stage Note<\/label>/);
     expect(t).toMatch(/<textarea id="sp-stage-note"/);
     // …and NOT with an aria-label, which would be a second copy of the same words.
     expect(t).not.toMatch(/sp-note[^>]*aria-label/);

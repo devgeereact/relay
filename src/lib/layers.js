@@ -33,13 +33,13 @@ export const BINDINGS = [
   { key: 'countdown', label: 'Countdown timer' },
   { key: 'clock', label: 'Clock' },
   // ROLE-MONITOR fields. These carry data that reaches OUTPUT content but is not
-  // for the congregation: the next verse coming up and the operator's private
-  // note. A congregation template simply omits these layers; a stage/confidence
+  // for the congregation: the verse coming up and the Stage Note.
+  // A congregation template simply omits these layers; a stage/confidence
   // monitor includes them. `note` has flowed to output for ages with nothing
   // rendering it; `next` fields are populated by the fire path (resolve_fire).
   { key: 'next', label: 'Next verse text' },
   { key: 'next_reference', label: 'Next reference' },
-  { key: 'note', label: 'Operator note (monitors only)' },
+  { key: 'note', label: 'Stage Note (monitors only)' },
   { key: 'elapsed', label: 'Service timer (elapsed)' },
   { key: 'remaining', label: 'Service timer (remaining)' },
   { key: 'static', label: 'Fixed text' },
@@ -670,7 +670,7 @@ function confidenceMonitor() {
         makeLayer('text', { name: 'Clock', bind: 'clock', x: 66, y: 4, w: 30, h: 8, size: 2.2, color: 'theme:accent', font: 'theme:font', align: 'right', valign: 'middle' }),
         makeLayer('text', { name: 'Verse', bind: 'verse', x: 8, y: 20, w: 84, h: 48, size: 5.2, color: 'theme:verse', font: 'theme:font', align: 'center', valign: 'middle' }),
         makeLayer('text', { name: 'Reference', bind: 'reference', x: 8, y: 69, w: 84, h: 7, size: 2.6, color: 'theme:reference', font: 'theme:font', align: 'center', valign: 'middle' }),
-        makeLayer('text', { name: 'Operator note', bind: 'note', x: 8, y: 88, w: 84, h: 9, size: 2, color: 'theme:accent', font: 'theme:font', align: 'center', valign: 'middle', italic: true }),
+        makeLayer('text', { name: 'Stage Note', bind: 'note', x: 8, y: 88, w: 84, h: 9, size: 2, color: 'theme:accent', font: 'theme:font', align: 'center', valign: 'middle', italic: true }),
       ],
       align: 'center',
     },
@@ -694,7 +694,7 @@ function preacherView() {
         makeLayer('text', { name: 'Reference', bind: 'reference', x: 6, y: 61, w: 88, h: 7, size: 2.8, color: 'theme:reference', font: 'theme:font', align: 'center', valign: 'middle', transform: 'uppercase', letterSpacing: 0.05 }),
         makeLayer('text', { name: 'Up-next label', bind: 'static', text: 'UP NEXT', x: 6, y: 72, w: 88, h: 5, size: 1.5, color: 'theme:accent', font: 'theme:font', align: 'center', valign: 'middle', transform: 'uppercase', letterSpacing: 0.14 }),
         makeLayer('text', { name: 'Next verse', bind: 'next', x: 6, y: 77, w: 88, h: 12, size: 2.4, color: 'theme:verse', font: 'theme:font', align: 'center', valign: 'top', opacity: 0.8 }),
-        makeLayer('text', { name: 'Operator note', bind: 'note', x: 6, y: 90, w: 88, h: 8, size: 2, color: 'theme:accent', font: 'theme:font', align: 'center', valign: 'middle', italic: true }),
+        makeLayer('text', { name: 'Stage Note', bind: 'note', x: 6, y: 90, w: 88, h: 8, size: 2, color: 'theme:accent', font: 'theme:font', align: 'center', valign: 'middle', italic: true }),
       ],
       align: 'center',
     },
@@ -741,7 +741,7 @@ export const STARTERS = [
   { key: 'announcement', label: 'Announcement Ticker', make: announcement, hint: 'A scrolling crawl along the bottom.' },
   { key: 'stage', label: 'Stage Display', make: stageDisplay, hint: 'Platform monitor: current verse, reference and clock. Theme-aware.' },
   { key: 'confidence', label: 'Confidence Monitor', make: confidenceMonitor, hint: 'Booth-facing "what\'s on screen now" view with clock. Theme-aware.' },
-  { key: 'preacher', label: 'Preacher View', make: preacherView, hint: 'Big centred verse, the next verse, service timer and your note.' },
+  { key: 'preacher', label: 'Preacher View', make: preacherView, hint: 'Big centred verse, the verse coming up, the service timer and your Stage Note.' },
   { key: 'timer', label: 'Countdown Timer', make: timerScreen, hint: 'Huge MM:SS for a pre-service countdown, with a label and clock.' },
   { key: 'supersource', label: 'SuperSource', make: superSource, hint: 'Camera on one side, a rendered slide on the other. Keyed — the switcher supplies the camera.' },
   { key: 'freestyle', label: 'Freestyle', make: freestyle, hint: 'A blank canvas — add layers yourself.' },

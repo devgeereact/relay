@@ -1306,7 +1306,7 @@
     // ten-thousandth short. Asking the ceiling directly is the same answer
     // (fractionally the better one — it is the true supremum of the bracket) for
     // one flush instead of the whole ladder, and a short label in a wide box —
-    // a reference line, a stage note, a name band — is the common case.
+    // a reference line, a Stage Note, a name band — is the common case.
     for (const j of jobs) write(j, j.hi);
     for (const j of jobs) {
       if (fits(j)) {

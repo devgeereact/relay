@@ -1910,7 +1910,7 @@
        THE RUNNING ORDER is the grid: every slide of every cue, in order, each
        rendered as the wall would render it, with the playhead on the cell that is
        actually on air. What the removed rail added on top of that was a cue's
-       stage note — an operator-only line for the PREACHER'S monitor, authored in
+       Stage Note — an operator-only line for the PREACHER'S monitor, authored in
        the Planner and delivered by the fire itself. It is not lost from the
        service; it is no longer previewed here. Recorded in the review note. -->
 

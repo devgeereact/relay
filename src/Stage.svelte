@@ -9,7 +9,7 @@
 
   let content = null;
   let visible = false;
-  let note = ''; // operator's confidence-monitor note for the live cue
+  let note = ''; // the live cue's Stage Note, for this monitor only
   // The Stage Message. Takes the whole screen until the operator clears it.
   // It lives here, in the stage renderer, which is what makes "no congregation
   // screen can show it" a property of the system rather than a promise: the
@@ -118,7 +118,7 @@
   // one of those three is something an OPERATOR deliberately produced FOR THE
   // PREACHER and has no other audience:
   //
-  //   · `note`    — a line typed against a cue in the Planner (`stage_note`),
+  //   · `note`    — the Stage Note, typed against a cue in the Planner,
   //                 which no congregation template renders.
   //   · `next`    — the up-next the operator published (`channels::stage_next`),
   //                 stage-only by contract.
@@ -150,7 +150,7 @@
   const ZONES = [
     { key: 'reading', label: 'Reading' },
     { key: 'next', label: 'Next' },
-    { key: 'note', label: 'Note' },
+    { key: 'note', label: 'Stage Note' },
     { key: 'countdown', label: 'Countdown' },
     { key: 'clock', label: 'Clock' },
     { key: 'elapsed', label: 'Service elapsed' },
@@ -602,7 +602,7 @@
   {/if}
 
   {#if zones.note && note}
-    <div class="noterow"><span class="note-lbl">Note</span><span class="notetxt">{note}</span></div>
+    <div class="noterow"><span class="note-lbl">Stage Note</span><span class="notetxt">{note}</span></div>
   {/if}
 
   {#if showZones}
@@ -915,7 +915,7 @@
     .fig.warn .figv, .railrow.warn { text-shadow: 0 0 .25em rgba(244, 81, 91, .85); }
   }
   @keyframes cdwarn { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
-  /* Operator's cue note — confidence-monitor only, never on the main output. */
+  /* The Stage Note — confidence-monitor only, never on the main output. */
   /* The Stage Message — docs/REBRAND.md §5. The pulse is the point: a
      platform is a bright place and a flat red panel reads as part of the set. */
   .alert {

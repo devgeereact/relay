@@ -1101,7 +1101,7 @@ try {
 }
 
 /** Manual override: fire a free-text reference now (throws if unparseable).
- *  `stageNote` is an optional confidence-monitor note for this cue.
+ *  `stageNote` is this cue's optional Stage Note, for the monitors only.
  *  `keepPlan` — when a PLAN slide is being fired (the operator stepping the plan
  *  in Slide mode), the transport must STAY on the plan. Without this, firing a
  *  scripture plan cue ran `leavePlan()` below and flipped the transport out of
@@ -1235,7 +1235,7 @@ const call = await invoke();
 await call('move_plan_item', { id, direction });
 }
 
-/** Set/clear a cue's operator stage note (confidence-monitor only; blank clears). */
+/** Set/clear a cue's Stage Note (confidence-monitor only; blank clears). */
 export async function setPlanNote(id, note) {
 const call = await invoke();
 await call('set_plan_note', { id, note: note ?? '' });
@@ -1443,7 +1443,7 @@ if (!keepPlan) leavePlan();
 
 /** Fire arbitrary content to the screens. `kind` ('song'|'announce') selects the
  *  content-type default template (per-content-type templates). `stageNote` is an
- *  optional confidence-monitor note for this cue. `templateId`, when set, is the
+ *  optional Stage Note for this cue, monitors only. `templateId`, when set, is the
  *  cue's OWN template override (Planner) — it wins over the content-type default. */
 export async function fireContent(
 label,

@@ -155,7 +155,7 @@ describe('zones — everything the operator sent, and nothing they did not', () 
     expect(container.querySelector('.noterow')).toBeTruthy();
 
     await click('Zones');
-    await click('Note');
+    await click('Stage Note');
     await tick();
     expect(container.querySelector('.noterow')).toBeNull();
     expect(JSON.parse(localStorage.getItem(ZONE_KEY)).note).toBe(false);
