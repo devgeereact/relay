@@ -1,0 +1,167 @@
+{
+  "themes": [
+    {
+      "id": -1,
+      "name": "Modern Dark",
+      "style": {
+        "font": "var(--f-display)",
+        "accent": "#22d3ee",
+        "verseColor": "#ffffff",
+        "refColor": "#22d3ee",
+        "background": "radial-gradient(120% 140% at 50% 30%, #16181d, #06070a)",
+        "verseSize": "6",
+        "refSize": "2.6",
+        "verseLineHeight": "1.3",
+        "refGap": "1.4",
+        "verseShadow": "0.35",
+        "transitionMs": "250",
+        "italicRef": false
+      }
+    },
+    {
+      "id": -2,
+      "name": "Minimal",
+      "style": {
+        "font": "var(--f-body)",
+        "accent": "#8a8a8a",
+        "verseColor": "#f2f2f2",
+        "refColor": "#b3b3b3",
+        "background": "#0b0b0d",
+        "verseSize": "5.4",
+        "refSize": "2.2",
+        "verseLineHeight": "1.36",
+        "refGap": "1.2",
+        "verseShadow": "0",
+        "transitionMs": "200",
+        "italicRef": false
+      }
+    },
+    {
+      "id": -3,
+      "name": "Light",
+      "style": {
+        "font": "var(--f-body)",
+        "accent": "#b4531f",
+        "verseColor": "#161310",
+        "refColor": "#b4531f",
+        "background": "linear-gradient(180deg, #f6f1e8, #e9e1d2)",
+        "verseSize": "5.4",
+        "refSize": "2.4",
+        "verseLineHeight": "1.34",
+        "refGap": "1.3",
+        "verseShadow": "0",
+        "transitionMs": "250",
+        "italicRef": true
+      }
+    },
+    {
+      "id": -4,
+      "name": "Classic",
+      "style": {
+        "font": "var(--f-serif)",
+        "accent": "#ffb000",
+        "verseColor": "#f4e4c8",
+        "refColor": "#ffb000",
+        "background": "radial-gradient(120% 140% at 50% 30%, #2a2013, #0b0906)",
+        "verseSize": "5.5",
+        "refSize": "2.6",
+        "verseLineHeight": "1.32",
+        "refGap": "1.4",
+        "verseShadow": "0.4",
+        "transitionMs": "300",
+        "italicRef": true
+      }
+    },
+    {
+      "id": -5,
+      "name": "Youth",
+      "style": {
+        "font": "var(--f-display)",
+        "accent": "#a855f7",
+        "verseColor": "#ffffff",
+        "refColor": "#f0abfc",
+        "background": "linear-gradient(150deg, #1e1033, #2a0f45 55%, #0c0713)",
+        "verseSize": "6.4",
+        "refSize": "2.8",
+        "verseLineHeight": "1.26",
+        "refGap": "1.5",
+        "verseShadow": "0.5",
+        "transitionMs": "220",
+        "italicRef": false
+      }
+    },
+    {
+      "id": -6,
+      "name": "Conference",
+      "style": {
+        "font": "var(--f-head)",
+        "accent": "#38bdf8",
+        "verseColor": "#eef4f8",
+        "refColor": "#38bdf8",
+        "background": "linear-gradient(160deg, #0f1c2b, #091320)",
+        "verseSize": "5.8",
+        "refSize": "2.5",
+        "verseLineHeight": "1.3",
+        "refGap": "1.4",
+        "verseShadow": "0.3",
+        "transitionMs": "250",
+        "italicRef": false
+      }
+    },
+    {
+      "id": -7,
+      "name": "Wedding",
+      "style": {
+        "font": "var(--f-serif)",
+        "accent": "#c99a6a",
+        "verseColor": "#f6ede2",
+        "refColor": "#c99a6a",
+        "background": "linear-gradient(180deg, #241a1d, #140d10)",
+        "verseSize": "5.2",
+        "refSize": "2.4",
+        "verseLineHeight": "1.4",
+        "refGap": "1.6",
+        "verseShadow": "0.25",
+        "transitionMs": "320",
+        "italicRef": true
+      }
+    },
+    {
+      "id": -8,
+      "name": "Livestream",
+      "style": {
+        "font": "var(--f-display)",
+        "accent": "#f43f5e",
+        "verseColor": "#ffffff",
+        "refColor": "#f43f5e",
+        "background": "#000000",
+        "verseSize": "6",
+        "refSize": "2.6",
+        "verseLineHeight": "1.28",
+        "refGap": "1.3",
+        "verseShadow": "0.6",
+        "transitionMs": "200",
+        "italicRef": false
+      }
+    },
+    {
+      "id": -9,
+      "name": "High Visibility",
+      "style": {
+        "font": "var(--f-display)",
+        "accent": "#ffffff",
+        "verseColor": "#ffffff",
+        "refColor": "#ffffff",
+        "background": "#000000",
+        "verseSize": "8",
+        "refSize": "3.2",
+        "verseLineHeight": "1.4",
+        "refGap": "1.6",
+        "verseShadow": "0",
+        "refShadow": "0",
+        "transitionMs": "0",
+        "italicRef": false
+      }
+    }
+  ]
+}
