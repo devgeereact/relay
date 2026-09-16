@@ -38,10 +38,20 @@ const { templates } = await import('../../stores/capture.js');
 const settle = () => new Promise((r) => setTimeout(r, 0));
 
 let host;
+// The instance `mount()` last created, so `afterEach` can `$destroy()` it.
+// `host.remove()` alone only detaches the DOM node — it does not run the
+// component's `onDestroy`, so the 400ms `liveTimer` `scheduleLive()` arms on
+// every `edit = edit` (every drag frame, every click) keeps firing into a torn-
+// down jsdom long after the test that armed it has finished, throwing
+// "document is not defined" from an unrelated later file in the same worker.
+// `TemplateEditor.svelte`'s own `onDestroy(() => clearTimeout(liveTimer))` is
+// correct; this file just never called it.
+let cmp;
 function mount() {
   host = document.createElement('div');
   document.body.appendChild(host);
-  return new TemplateEditor({ target: host, props: { templateId: 11 } });
+  cmp = new TemplateEditor({ target: host, props: { templateId: 11 } });
+  return cmp;
 }
 
 const rows = () => [...host.querySelectorAll('.te-layer')];
@@ -72,6 +82,8 @@ describe('the layer list', () => {
   });
 
   afterEach(() => {
+    cmp?.$destroy();
+    cmp = null;
     host?.remove();
     host = null;
   });
@@ -163,6 +175,8 @@ describe('direct manipulation on the canvas', () => {
   });
 
   afterEach(() => {
+    cmp?.$destroy();
+    cmp = null;
     host?.remove();
     host = null;
   });
@@ -235,6 +249,8 @@ describe('S1 · the layer rail', () => {
   });
 
   afterEach(() => {
+    cmp?.$destroy();
+    cmp = null;
     host?.remove();
     host = null;
   });
@@ -334,6 +350,8 @@ describe('S1 · drag to reorder, driven through the arrows that already work', (
   });
 
   afterEach(() => {
+    cmp?.$destroy();
+    cmp = null;
     host?.remove();
     host = null;
   });
@@ -415,6 +433,8 @@ describe('S1 · the readability panel folds, and its one visible line is a real 
   };
 
   afterEach(() => {
+    cmp?.$destroy();
+    cmp = null;
     host?.remove();
     host = null;
   });
@@ -489,6 +509,8 @@ describe('S1 · the inspector opens on the selected object, not on the template'
   });
 
   afterEach(() => {
+    cmp?.$destroy();
+    cmp = null;
     host?.remove();
     host = null;
   });
@@ -502,7 +524,14 @@ describe('S1 · the inspector opens on the selected object, not on the template'
     await settle();
     const s = sections();
     expect(s[0], 'the panel still opens on the template').not.toBe('Template');
-    expect(s[s.length - 1], 'the template section is not at the foot').toBe('Template');
+    // `Template` is the trailing GROUP, not necessarily the last heading in it:
+    // task 8 gave `Content this template renders` its own `<h3 class="te-sec">`
+    // nested inside the Template group, so the group's last two headings are
+    // `Template` then its own subheading, in that order.
+    expect(s.slice(s.indexOf('Template')), 'the template group is not at the foot').toEqual([
+      'Template',
+      'Content this template renders',
+    ]);
     expect(s).toContain('Position');
   });
 
@@ -510,11 +539,12 @@ describe('S1 · the inspector opens on the selected object, not on the template'
     mount();
     await settle();
     expect(host.querySelector('#te-name'), 'the template name field went missing').toBeTruthy();
-    // Two registers of five chips: the global binding, then the per-template
-    // filter. Neither is inert (agent S2 checked both readers), and the second
-    // no longer calls a template a screen.
-    const labels = [...host.querySelectorAll('.te-showlbl')].map((l) => l.textContent.trim());
-    expect(labels).toEqual(['Used for', 'Content this template renders']);
+    // Two facts, two shapes (task 8): `Used for` is the global binding and stays
+    // a chip grid; `Content this template renders` is the per-template filter
+    // and gets its own `<h3>` section, not a second identical chip row — see
+    // `showsregister.test.js` for the distinction itself.
+    expect(host.querySelector('.te-showlbl').textContent.trim()).toBe('Used for');
+    expect(host.querySelector('.te-showsec').textContent.trim()).toBe('Content this template renders');
     expect(host.textContent).not.toMatch(/Shows on this screen/);
   });
 });
@@ -531,6 +561,8 @@ describe('S1 · the alignment strip writes percentages, and only where they mean
   });
 
   afterEach(() => {
+    cmp?.$destroy();
+    cmp = null;
     host?.remove();
     host = null;
   });
