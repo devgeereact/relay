@@ -3919,3 +3919,64 @@ fn a_congregation_countdown_never_appears_in_the_programme_rail() {
         );
     }
 }
+
+/// A BLACKOUT ANSWERS THE SAME WAY AS A CLEAR.
+///
+/// `a_clear_takes_the_congregation_timer_and_leaves_the_programme_timer` already
+/// presses `blackout` in its second half, and that half does catch a `black` that
+/// forgets to stop the congregation timer. It catches it on an app where a CLEAR
+/// HAS ALREADY RUN, and under a name that claims the clear. Two things follow from
+/// that, and both are the reason this test exists beside it rather than inside it.
+///
+/// The first is ordering. `stop_congregation_timers` had already been called once
+/// down the clear path before the blackout half started, so the blackout was only
+/// ever asked the question second. A control that behaves correctly on a registry
+/// something else has already touched, and wrongly on a fresh one, is not a shape
+/// anybody would predict — which is exactly why it should not be left untested.
+/// Here the app has never seen a panic control before `blackout` is pressed.
+///
+/// The second is the name. `Stage.svelte`'s clear/black branch says in as many
+/// words that if Relay ever lets the stage survive a panic, it must survive BOTH
+/// controls, deliberately, in both branches, "not by one of them being forgotten"
+/// — and the guarantee for the harsher of the two was carried by the tail of a
+/// test named after the milder one. A guarantee is only kept on the doors you
+/// checked, and a door nobody named is the one that gets tidied away.
+///
+/// DECISIONS §89.
+#[test]
+fn a_blackout_answers_the_same_way_as_a_clear() {
+    let app = app();
+    let h = app.handle().clone();
+
+    let programme = start_timer(
+        h.clone(),
+        20.0,
+        "Sermon".into(),
+        "Wrap up".into(),
+        "stage".into(),
+        None,
+        None,
+    )
+    .expect("a programme timer");
+    start_five(&h);
+    settle();
+    assert_eq!(
+        list_timers(h.clone()).expect("list").len(),
+        2,
+        "the fixture needs one timer of each scope for the question to mean anything"
+    );
+
+    // The FIRST panic control this app has seen, and it is the harsher one.
+    blackout(h.clone()).expect("black");
+    settle();
+    assert_eq!(
+        list_timers(h.clone())
+            .expect("list")
+            .iter()
+            .map(|t| t.timer.id)
+            .collect::<Vec<_>>(),
+        vec![programme],
+        "a blackout must take the congregation timer and leave the programme one, \
+         on a registry no other panic control has touched first"
+    );
+}
