@@ -1136,6 +1136,38 @@ fn points_at_a_template(conn: &Connection, table: &str) -> rusqlite::Result<bool
 /// consequence rather than a bug, but a church counting its gallery should not
 /// have to derive it. The loop at the end of this function says it once per boot,
 /// and `data/retired_presets.json`'s `_readme` records it beside the bytes.
+/// Is the RETIRED row of this name still in the table — name AND BYTES?
+///
+/// THE QUESTION MATTERS MORE THAN THE QUERY. Its one caller prints the single
+/// diagnostic for the one permanent consequence of this wave: a name the seed
+/// still ships that could not be installed because the old row of that name had
+/// to be kept. Asking only "is a row of this name present" answers a DIFFERENT
+/// question, and answers it wrong on every healthy install from the second boot
+/// onwards — boot 1 deletes the retired row and `ensure_preset_templates` inserts
+/// the family's own member of that name a line later, so the name is present for
+/// ever after and the line printed "is not installed" over an install where the
+/// template demonstrably is. A sentence that reads the same whether the thing
+/// behind it is fine or broken is not a diagnostic (rule 35).
+///
+/// The triple is the same one the DELETE above it matches on, which is what makes
+/// the two agree by construction rather than by reading alike. It is a function so
+/// that the tests can ask it the question the migration asks, rather than a
+/// question of their own that no edit to this file could ever falsify.
+fn retired_row_is_still_present(
+    conn: &Connection,
+    name: &str,
+    layout: &str,
+    style: &str,
+) -> rusqlite::Result<bool> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM templates
+          WHERE name = ?1 AND region_config_json = ?2 AND style_json = ?3",
+        (name, layout, style),
+        |r| r.get(0),
+    )?;
+    Ok(n > 0)
+}
+
 pub(super) fn ensure_retired_presets_are_gone(conn: &Connection) -> rusqlite::Result<()> {
     let retired = retired_presets();
     if retired.is_empty() {
@@ -1202,16 +1234,11 @@ pub(super) fn ensure_retired_presets_are_gone(conn: &Connection) -> rusqlite::Re
     // costs one COUNT per contested name per boot, and there is exactly one
     // contested name: the whole-triple disjointness of the two lists is asserted
     // by `the_frozen_record_parses_and_names_nothing_the_seed_still_ships`.
-    for (name, _, _) in &retired {
+    for (name, layout, style) in &retired {
         if !all_presets().any(|(n, _, _)| n == name.as_str()) {
             continue;
         }
-        let kept: i64 = tx.query_row(
-            "SELECT COUNT(*) FROM templates WHERE name = ?1",
-            [name],
-            |r| r.get(0),
-        )?;
-        if kept > 0 {
+        if retired_row_is_still_present(&tx, name, layout, style)? {
             eprintln!(
                 "templates: {name:?} is kept as the retired row (it is in use, or it was \
                  edited), so the seeded template of that name is not installed"
@@ -2594,6 +2621,86 @@ mod retired_preset_tests {
             .query_row("SELECT COUNT(*) FROM templates", [], |r| r.get(0))
             .unwrap();
         assert_eq!(before, after);
+    }
+
+    /// The single name that is on BOTH the retired list and the seed list. There is
+    /// exactly one; `the_frozen_record_parses_and_names_nothing_the_seed_still_ships`
+    /// asserts the whole-triple disjointness that makes it so.
+    fn the_contested_name() -> (String, String, String) {
+        let mut both: Vec<(String, String, String)> = retired_presets()
+            .into_iter()
+            .filter(|(n, _, _)| all_presets().any(|(sn, _, _)| sn == n.as_str()))
+            .collect();
+        assert_eq!(
+            both.len(),
+            1,
+            "exactly one name is on both lists; if that changed, so has the premise of these tests"
+        );
+        both.remove(0)
+    }
+
+    #[test]
+    fn the_contested_name_reports_nothing_once_the_retired_row_is_actually_gone() {
+        // RULE 35, IN A LOG. `ensure_retired_presets_are_gone` prints one line for the
+        // single name on both lists — `Lower Third · Scripture` — when the retired row
+        // is KEPT and the seeded family member of that name therefore cannot be
+        // installed. That line is the only diagnostic for the one permanent
+        // consequence of this wave, so it has to be able to be silent.
+        //
+        // It could not. The count asked "is a row of this name present", and on a
+        // healthy install the answer is yes from the second boot onwards: boot 1
+        // deletes the retired row and `ensure_preset_templates` inserts the family's
+        // own member of that name a line later, so the name is present for ever after
+        // and the message printed over an install where the template demonstrably IS
+        // installed. The question it means to ask is "is the RETIRED row still there",
+        // which is a name AND BYTES question — the one the DELETE above it already
+        // asks.
+        //
+        // Asserted as the predicate rather than as captured stderr: the old count
+        // returns 1 here and the new one returns 0.
+        let (name, layout, style) = the_contested_name();
+
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate(&conn, true).unwrap();
+        // An install that still carries the old row, as an older version seeded it.
+        insert_retired_fixture(&conn, &name);
+        assert_eq!(count_named(&conn, &name), 2, "the fixture did not land");
+
+        ensure_retired_presets_are_gone(&conn).unwrap();
+        ensure_preset_templates(&conn).unwrap();
+
+        // The family member of that name is installed — which is exactly what made the
+        // old count non-zero, and the sentence it guards false.
+        assert_eq!(
+            count_named(&conn, &name),
+            1,
+            "the seeded family member of the contested name is missing"
+        );
+        assert!(
+            !retired_row_is_still_present(&conn, &name, &layout, &style).unwrap(),
+            "the retired row is gone, so nothing may be reported as kept"
+        );
+    }
+
+    #[test]
+    fn the_contested_name_still_reports_when_the_retired_row_really_is_kept() {
+        // The other half: silence has to mean something. A retired row the migration
+        // may not touch — here, the operator's configured default — is the case the
+        // line exists to announce, and the narrower count must still find it.
+        let (name, layout, style) = the_contested_name();
+
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate(&conn, true).unwrap();
+        let id = insert_retired_fixture(&conn, &name);
+        set_setting(&conn, "default_template_id", &id.to_string()).unwrap();
+
+        ensure_retired_presets_are_gone(&conn).unwrap();
+        ensure_preset_templates(&conn).unwrap();
+
+        assert!(
+            retired_row_is_still_present(&conn, &name, &layout, &style).unwrap(),
+            "the retired row is the operator's default: it must be kept, and reported"
+        );
     }
 
     #[test]
