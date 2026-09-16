@@ -33,21 +33,32 @@
   // one (docs/REBRAND.md §3.2). Carried through so a press on the object strip
   // opens the editor on that object rather than on nothing.
   let editingLayerId = null;
+  // A NEW TEMPLATE THAT DOES NOT EXIST YET. The gallery builds a starter in
+  // memory and dispatches it with `id: null` rather than inserting it first, so
+  // opening the editor to LOOK at a starter no longer leaves a row behind. The
+  // router carries it across the boundary; the editor renders it exactly as it
+  // renders a saved row and decides what Save and Discard mean.
+  let draft = null;
 
   function openEditor(e) {
-    editingId = e.detail.id;
-    editingLayerId = e.detail.layerId ?? null;
+    editingId = e.detail?.id ?? null;
+    editingLayerId = e.detail?.layerId ?? null;
+    // An `edit` with no id and a layout IS the draft. An `edit` with no id and
+    // nothing else would be a bug in a caller, and is left to the editor's own
+    // "could not be loaded" rather than silently becoming an empty template.
+    draft = editingId == null && e.detail?.layout ? e.detail : null;
     mode = 'editor';
   }
   function backToGallery() {
     mode = 'gallery';
     editingId = null;
     editingLayerId = null;
+    draft = null;
   }
 </script>
 
 {#if mode === 'editor'}
-  <TemplateEditor templateId={editingId} layerId={editingLayerId} on:back={backToGallery} />
+  <TemplateEditor templateId={editingId} {draft} layerId={editingLayerId} on:back={backToGallery} />
 {:else}
   <TemplateGallery on:edit={openEditor} />
 {/if}

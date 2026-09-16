@@ -45,9 +45,39 @@
    *  exactly as before; an id that is not on this template is ignored rather
    *  than selecting the wrong object. */
   export let layerId = null;
+  /** A TEMPLATE THAT DOES NOT EXIST YET — `{ id: null, name, layout, style }`,
+   *  built in memory by the gallery's New menu and handed straight here.
+   *
+   *  `newFrom` used to INSERT the starter and open the editor on the row, so
+   *  looking at a starting point created one, and abandoning the editor left a
+   *  template a church never asked for. A draft renders exactly as a saved row
+   *  does, with three differences: the header says it is unsaved, Save inserts,
+   *  and Discard writes nothing. Everything else in this file — the canvas, the
+   *  layer list, undo, the properties panel — treats it as an ordinary
+   *  template, which is the whole point: a draft that rendered differently
+   *  would be a second editor. */
+  export let draft = null;
   const dispatch = createEventDispatcher();
 
   let edit = null;
+  /** True while `edit` has never been written to the database. It is not
+   *  `!edit.id`: a saved template always has one, and the moment Save returns an
+   *  id this is false and the editor behaves exactly as it always has. */
+  let isDraft = false;
+  /** Has anybody changed the draft since it was built? A false positive here
+   *  costs one extra press on the way out; a false negative loses the work, so
+   *  this is deliberately set by the same reactive block that schedules the live
+   *  apply rather than by a signature comparison that lags 400ms behind the
+   *  keystroke. */
+  let draftTouched = false;
+  let draftBaseline = false;
+  /** The two-step that guards the accidental door. Rule 41: never confirm() —
+   *  Tauri's webview returns false from it without showing anything, which is
+   *  how a two-step delete once deleted nothing and reported success. This is a
+   *  button that changes what it says, not an overlay, so it takes nothing from
+   *  `Esc` and paints over nothing (rules 15 and 44). */
+  let leaveArmed = false;
+  let leaveTimer = 0;
   let saving = false;
   let savedTick = false;
   let err = '';
@@ -57,7 +87,8 @@
   onMount(async () => {
     loadContentTemplates();
     if (!$templates.length) await loadTemplates();
-    load(templateId);
+    if (draft) loadDraft(draft);
+    else load(templateId);
     // Land on the object the caller named — but only if this template really has
     // it. An id from somewhere else would select nothing and leave the panel
     // showing another object's properties under that object's name.
@@ -176,6 +207,24 @@
     edit.layout ??= {};
     edit.style ??= {};
     selId = layered ? edit.layout.layers[0]?.id ?? null : null;
+    lastSig = sigOf(edit);
+    past = [];
+    future = [];
+  }
+
+  /** Open on a template that has no row yet. Same private clone, same history
+   *  reset, same change-detector baseline as `load` — the only difference is
+   *  that there was nothing to read it from. */
+  function loadDraft(d) {
+    edit = JSON.parse(JSON.stringify({ id: null, name: d.name ?? 'New template', layout: d.layout ?? {}, style: d.style ?? {} }));
+    edit.layout ??= {};
+    edit.style ??= {};
+    isDraft = true;
+    draftTouched = false;
+    // The assignment above will run `$: if (edit) scheduleLive()` once; that run
+    // is the baseline, not an edit.
+    draftBaseline = true;
+    selId = isLayered(edit) ? edit.layout.layers[0]?.id ?? null : null;
     lastSig = sigOf(edit);
     past = [];
     future = [];
@@ -809,6 +858,16 @@
   // template is serialised ONCE, when the drag settles, inside the timer.
   $: if (edit) scheduleLive();
   function scheduleLive() {
+    // A DRAFT'S FIRST RUN IS ITS BASELINE. `loadDraft` assigns `edit`, which
+    // fires this block once before anybody has touched anything. Every run
+    // after that is a real change — the block re-runs on `edit = edit`, which
+    // is what every mutation in this file does. Marking it HERE rather than by
+    // comparing signatures keeps the promise the timer below makes (serialise
+    // once, when the drag settles) while still being true the instant a
+    // keystroke lands: a guard that is 400ms behind the operator is a guard
+    // that loses the work it exists to protect.
+    if (draftBaseline) draftBaseline = false;
+    else if (isDraft) draftTouched = true;
     clearTimeout(liveTimer);
     liveTimer = setTimeout(() => {
       const sig = sigOf(edit);
@@ -824,6 +883,12 @@
   }
   async function applyLive() {
     if (!edit || !$capture.available) return;
+    // A DRAFT IS NOT LIVE-SAVED. The autosave exists because editing a template
+    // repaints every screen already wearing it, and a draft is worn by nothing:
+    // there is no screen to keep in step and no row to keep in step with. Saving
+    // one here would put the row back that this whole path exists to withhold —
+    // the first keystroke would create the template Discard promises not to.
+    if (isDraft) return;
     saving = true;
     try {
       const id = await saveTemplate(edit);
@@ -834,9 +899,32 @@
     } catch (e) { err = 'Live update failed: ' + e; }
     saving = false;
   }
+  /** Insert the draft. This is the call `newFrom` used to make before anybody
+   *  had seen the template — made here, by the person who meant it. */
+  async function saveDraft() {
+    if (!edit || !$capture.available) return;
+    saving = true;
+    try {
+      const id = await saveTemplate(edit);
+      edit.id = id;
+      edit = edit;
+      // From this point the editor holds a real row and everything that was
+      // withheld from a draft — the live apply, History, Test on screens —
+      // is simply on, because it is an ordinary template now.
+      isDraft = false;
+      draftTouched = false;
+      lastSig = sigOf(edit);
+      savedTick = true;
+      setTimeout(() => (savedTick = false), 1400);
+      err = '';
+    } catch (e) { err = 'Save failed: ' + humanError(e); }
+    saving = false;
+  }
+
   async function saveNow() {
     clearTimeout(liveTimer);
-    await applyLive();
+    if (isDraft) await saveDraft();
+    else await applyLive();
     // An explicit Save banks a restore point (deduped) — distinct from the live
     // autosave, which must NOT spam the history on every drag.
     if (edit?.id) {
@@ -949,6 +1037,37 @@
     else if ((e.key === 'z' && e.shiftKey) || e.key === 'y') { e.preventDefault(); redo(); }
   }
 
+  // ── LEAVING ───────────────────────────────────────────────────────────────
+  //
+  // Back is the accidental door and Discard is the deliberate one, so only Back
+  // is guarded. A saved template is already on disk, so Back leaves at once as
+  // it always has; a draft nobody has touched has nothing to lose, so it leaves
+  // at once too. A DIRTY draft arms: the button says what a second press costs,
+  // and says it in the app. Never confirm() (rule 41), and never an overlay —
+  // an overlay would take `Esc` from the shell and would have to give it back
+  // (rule 44), for a question a button can ask on its own.
+  function disarmLeave() {
+    clearTimeout(leaveTimer);
+    leaveTimer = 0;
+    leaveArmed = false;
+  }
+  function goBack() {
+    if (isDraft && draftTouched && !leaveArmed) {
+      leaveArmed = true;
+      clearTimeout(leaveTimer);
+      leaveTimer = setTimeout(() => (leaveArmed = false), 4000);
+      return;
+    }
+    disarmLeave();
+    dispatch('back');
+  }
+  /** Close a draft, writing nothing. It says what it does, so it does it. */
+  function discardDraft() {
+    disarmLeave();
+    dispatch('back');
+  }
+  onDestroy(() => clearTimeout(leaveTimer));
+
   // ── Preview / test on the real screens (Decision §26) ──────────────────────
   let fsPreview = false;   // in-console fullscreen preview overlay (reaches no output)
   let testing = false;
@@ -957,7 +1076,12 @@
     testing = true;
     err = '';
     try {
-      if (!edit.id) await applyLive(); // a never-saved template has no id yet
+      // A never-saved EDIT (an autosave that has not landed yet) still has no
+      // id; settle it first. A DRAFT is a different thing — its control is
+      // disabled for exactly this reason, the same way History is, because
+      // putting a draft on the congregation's screens would mean creating the
+      // row that Discard promises not to.
+      if (!edit.id) await applyLive();
       await testTemplateOnOutputs(edit.id);
     } catch (e) {
       err = 'Test failed: ' + humanError(e);
@@ -974,11 +1098,23 @@
 
 <div class="te-shell">
   <header class="te-top">
-    <button class="r-btn ghost sm" on:click={() => dispatch('back')}>
-      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-      Back to Templates
+    <!-- THE ACCIDENTAL DOOR. For a saved template it leaves immediately, as it
+         always has. For a draft somebody has changed it arms once and says what
+         the second press costs — in the app, on the button, with no overlay and
+         no confirm() (rules 41 and 44). -->
+    <button class="r-btn ghost sm" class:armed={leaveArmed} on:click={goBack}
+      on:blur={() => leaveArmed && disarmLeave()}>
+      {#if !leaveArmed}
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+      {/if}
+      {leaveArmed ? 'Leave without saving?' : 'Back to Templates'}
     </button>
     {#if edit}<span class="te-name">{edit.name}</span><span class="te-sub r-mono">{layered ? layers.length + ' layers' : 'legacy'} · 1920×1080</span>{/if}
+    <!-- NOT SAVED YET, said where the name is, because that is the fact the rest
+         of this header is about. It is neutral: amber means ON AIR (rule 18) and
+         red means destructive, and an unsaved draft is neither — it is a
+         template that has not happened yet. -->
+    {#if isDraft}<span class="te-unsaved">Not saved yet</span>{/if}
     {#if edit && layered}
       <div class="te-undo">
         <button class="r-iconbtn te-zbtn" on:click={undo} disabled={!canUndo} title="Undo (Ctrl/⌘+Z)" aria-label="Undo">
@@ -997,7 +1133,12 @@
     </div>
     <button class="r-btn ghost sm" class:on={previewMode} on:click={() => (previewMode = !previewMode)}>{previewMode ? 'Editing' : 'Preview'}</button>
     <button class="r-btn ghost sm" on:click={() => (fsPreview = true)} disabled={!edit} title="Preview this template fullscreen in the console — reaches no output">Fullscreen</button>
-    <button class="r-btn ghost sm" on:click={testOnScreens} disabled={testing || !$capture.available || !edit} title="Put a sample verse on the live screens with this template — clear it with Esc">
+    <!-- A DRAFT CANNOT BE TESTED ON THE REAL SCREENS, for the same reason
+         History is dark for one: both need a row, and creating that row is the
+         thing Discard promises not to do. Disabled with the reason on it, which
+         is the precedent History already set two buttons along. -->
+    <button class="r-btn ghost sm" on:click={testOnScreens} disabled={testing || !$capture.available || !edit || isDraft}
+      title={isDraft ? 'Save this template first — testing it puts it on the live screens, which needs a saved template' : 'Put a sample verse on the live screens with this template — clear it with Esc'}>
       {testing ? 'Testing…' : 'Test on screens'}
     </button>
     <span class="te-histwrap">
@@ -1027,8 +1168,16 @@
         </div>
       {/if}
     </span>
-    <button class="r-btn primary sm" on:click={saveNow} disabled={saving || !$capture.available || !edit} title="Edits apply to live outputs automatically; an explicit Save also banks a restore point">
-      {saving ? 'Saving…' : savedTick ? 'Saved · live ✓' : 'Save Template'}
+    <!-- THE DELIBERATE DOOR OUT OF A DRAFT. It writes nothing, and it is the
+         only control here that says so, which is why it exists beside a Back
+         button that also leaves: one of the two is an answer and the other is a
+         navigation. -->
+    {#if isDraft}
+      <button class="r-btn ghost sm" on:click={discardDraft} title="Close without saving — this template has never been written, so nothing is deleted">Discard</button>
+    {/if}
+    <button class="r-btn primary sm" on:click={saveNow} disabled={saving || !$capture.available || !edit}
+      title={isDraft ? 'Create this template. Until you do, nothing has been written.' : 'Edits apply to live outputs automatically; an explicit Save also banks a restore point'}>
+      {saving ? 'Saving…' : savedTick ? 'Saved · live ✓' : isDraft ? 'Save template' : 'Save Template'}
     </button>
   </header>
 
@@ -1780,6 +1929,17 @@
   .te-histempty{ padding:9px 10px; font-size:var(--v-fs-cap); line-height:1.5; color:var(--v-faint); }
   .te-histempty b{ color:var(--v-dim); }
   .te-sub{ font-size:var(--v-fs-cap); color:var(--v-faint); }
+  /* NOT SAVED YET. A neutral chip, deliberately: amber is ON AIR and nothing
+     else (rule 18, DECISIONS §21) and red is destructive; a template that has
+     not been created is neither dangerous nor live. The dashed edge is what
+     separates it from the solid chips elsewhere in the product, which all state
+     something that IS true of a stored thing. */
+  .te-unsaved{ padding:2px 8px; border-radius:var(--v-r-sm); border:1px dashed var(--v-line2);
+    background:var(--v-surf2); color:var(--v-dim); font-size:var(--v-fs-cap); letter-spacing:.02em; white-space:nowrap; }
+  /* THE ARMED BACK BUTTON. It is asking a question, so it reads as one rather
+     than as the destructive act — nothing is being deleted, because nothing was
+     ever written. */
+  .te-top .r-btn.armed{ border-color:var(--v-accent-line); background:var(--v-accent-soft); color:var(--v-txt); }
   .te-undo{ display:inline-flex; align-items:center; gap:2px; margin-left:10px; }
   .te-zoom{ display:flex; align-items:center; gap:4px; }
   /* CONVERTED — B2. Undo · Redo · zoom out · zoom in were a hand-rolled 26px
