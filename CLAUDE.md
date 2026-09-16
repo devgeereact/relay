@@ -104,7 +104,8 @@ Every audio bug so far was invisible in the code and reproducible only with a sp
 │   docs/qa/  HOW IT IS CHECKED. QA_HARNESS · RELAY_GAP (the RG register) ·
 │          LAUNCH_CHECKLIST
 │          qa/audits/ — FROZEN evidence; closures go in a fix log, never in the
-│             findings. Seven dated audits, one of them a retired product audit.
+│             findings. Eight dated audits, one of them a retired product audit
+│             and one a rendered design pass (`ls docs/qa/audits | wc -l`).
 │             A frozen document cannot follow a file that moves, so `crossrefs.test.js`
 │             carries a MOVED redirect map honoured ONLY for these files
 │   docs/data/schema.sql — `include_str!`d, so it IS the shipped baseline schema
