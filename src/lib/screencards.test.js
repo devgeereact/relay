@@ -227,10 +227,13 @@ describe('§2 · the desk starts where the prototype starts, and fits three card
     // both seams moved on every tab press. Reading the token here means this
     // arithmetic checks the width that actually ships, which a literal could
     // only ever agree with by coincidence.
-    const sheet = read('app.css');
+    // The track tokens live in `tokens.css` since wave 5, Track E split the
+    // palette out of the console's sheet; both halves are read so a token that
+    // moves back does not make this pass by absence.
+    const sheet = read('tokens.css') + read('app.css');
     const token = (name) => {
       const m = sheet.match(new RegExp(`--${name}\\s*:\\s*(\\d+)px`));
-      if (!m) throw new Error(`no --${name} in app.css — the desk's track tokens moved`);
+      if (!m) throw new Error(`no --${name} in the stylesheet — the desk's track tokens moved`);
       return parseInt(m[1], 10);
     };
     const px = (v) => {

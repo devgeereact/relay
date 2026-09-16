@@ -1,0 +1,298 @@
+/* Relay — THE SHARED TOKEN SHEET.
+ *
+ * The palette, the type ramp and the spacing/radius/shadow scales. Nothing else.
+ *
+ * WHY THIS FILE EXISTS (wave 5, Track E — the seal). Every entry point used to
+ * import `app.css`, which is the operator console's whole stylesheet. Svelte does
+ * not scope a global stylesheet, so every unscoped console rule in it was live on
+ * `output.html` and `stage.html` too: `.prev-main .verse`, `.prev-stage .verse`,
+ * `.prev-stream .lower-third`, `.prev-lobby .verse`, `.tmpl-row.active` and
+ * `.toggle.on` were all sitting on the congregation's screen, waiting for a class
+ * name to collide. `app.css` recorded that removing them needed "eyes on a
+ * running app, and this machine cannot screenshot one" — so they are not removed.
+ * They stay where they belong, in the console's sheet, and the congregation-facing
+ * pages stop importing that sheet at all.
+ *
+ * WHAT IS DELIBERATELY NOT SEALED: the palette. `output.js` and `stage.js` import
+ * THIS file and the self-hosted fonts, so a screen stays on the same colours and
+ * the same type as the console driving it, and a legacy template row still
+ * holding `var(--f-serif)` still resolves. The seal is against RULES and against
+ * TEMPLATE DATA, never against the palette.
+ *
+ * THE RULE THAT KEEPS IT TRUE: this file may declare custom properties and
+ * nothing else. No class selector, no id, no state. `src/lib/seal.test.js` fails
+ * on the first one, which is what makes the seal hold against a rule somebody
+ * adds next year rather than only against the six that were found.
+ *
+ * Fonts are self-hosted via @fontsource (imported in `src/lib/fonts.js`) — never a
+ * CDN. Offline-first is non-negotiable (CLAUDE.md).
+ */
+:root{
+  /* Neutrals, aliased to the design system's 950→500 ramp. `--bg` is what the
+     BODY and the output-window canvas paint, so it is the deepest step. */
+  --bg:var(--v-void); --surface:var(--v-surf); --surface2:var(--v-surf2); --surface3:var(--v-surf3);
+  --border:var(--v-line2); --border-soft:var(--v-line);
+  --text:var(--v-txt); --text-dim:var(--v-dim);
+  /* #5f6470 failed WCAG AA on every surface it sits on — 2.27:1 at worst.
+     This is the LEGACY palette (the app moved to --v-*), and the rules below it are
+     mostly orphaned — but Svelte does NOT scope a global stylesheet, so deleting them
+     wholesale could silently restyle any component using a generic class name (.tab,
+     .dot, .live, .chip all still exist somewhere). That needs eyes on a running app,
+     and this machine cannot screenshot one. So the gun is unloaded rather than
+     removed: 4.54:1 at worst now. Delete the dead rules when someone can look —
+     they are in `app.css`, not here, and since wave 5's Track E they can restyle
+     only the console. The half that could not wait for eyes was the half that
+     reached a congregation, and that half is sealed. */
+  --text-faint:var(--v-faint);
+  /* Every legacy colour name is now an ALIAS of the design-system token it maps to.
+     They are kept (rather than deleted) because they are still referenced from
+     places a grep does not reach cleanly — `TemplateRender` builds an inline
+     `--accent`, `Channels` picks chip colours from an array, and the output window
+     shares this file — which it still does, this file being the shared half of the
+     stylesheet. Aliasing means anything still on an old name is on-brand by
+     construction, and there is exactly ONE place any of these hexes live. */
+  --amber:var(--v-amber);   --amber-soft:var(--v-amber-soft);
+  --green:var(--v-emerald); --green-soft:var(--v-emerald-soft);
+  --teal:var(--v-cyan);     --teal-soft:var(--v-cyan-soft);
+  --violet:var(--v-amethyst); --violet-soft:var(--v-amethyst-soft);
+  --rose:var(--v-red);      --rose-soft:var(--v-red-soft);
+  --red:var(--v-red);       --red-soft:var(--v-red-soft);
+  /* The design sheet publishes ONE UI family: Inter. `--f-display` (Space Grotesk)
+     is aliased to it rather than deleted — templates.js and a couple of views still
+     name it, and a font that is only in the bundle for one preset is dead weight. */
+  --f-display:'Inter',system-ui,sans-serif; --f-body:'Inter',sans-serif;
+  --f-serif:'Fraunces',serif;
+  /* `--f-mono` is NOT declared here. It used to be, as 'JetBrains Mono', and it
+     was dead the whole time: the design-system :root below is later in the same
+     file at the same specificity, so its 'IBM Plex Mono' won. A reader looking
+     up the console's figure face found this line first and read the wrong
+     answer, and a reorder of the two blocks would have silently changed every
+     clock, confidence and latency in the app. It is declared ONCE now, below.
+     JetBrains Mono stays in the bundle because TEMPLATES offer it by name
+     (`TemplateEditor.svelte`) — an operator's saved choice, not chrome. */
+}
+*{box-sizing:border-box;}
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+
+   RELAY STUDIO — the control-room rebrand (docs/REBRAND.md, phase 1).
+   Global shell + shared component system. Fit-to-screen, retina, responsive.
+   The token NAMES are stable, so the output window (which shares this file via
+   output.js and relies on --f-serif/--bg) and Stage move with the console
+   rather than being left on an older palette.
+   ══════════════════════════════════════════════════════════════════════════ */
+:root{
+  /* ══ RELAY STUDIO — the rebrand palette (docs/REBRAND.md §1) ══════════════
+     The grammar is a control room: OBS Studio's studio split and dock row
+     crossed with ProPresenter's object inspector. Dark only, because the booth
+     is dark and the wall is black.
+
+     The NAMES are unchanged, so every consumer moves together — the console,
+     the output window (via output.js) and Stage (via stage.js) all read these.
+     What changed is the tuning: the neutral ramp carries a slight blue cast so
+     a grey surface reads as equipment rather than as paper, and the semantic
+     colours were re-measured against it.
+
+     WHAT DID NOT CHANGE IS THE LAW. Amber still means ON AIR and nothing else,
+     amethyst still means rehearsal, cyan is still a guess and grey is still
+     CUED (CLAUDE.md rule 18, DECISIONS §21). A rebrand may retune a hex; it may
+     not move a promise onto a different colour. */
+
+  /* ── Neutrals, deepest to lightest ────────────────────────────────────── */
+  --v-void:#131418;   /* shell + main + the output-window canvas */
+  --v-bg:#1a1c21;     /* sidebar, dock, top bar, input fields    */
+  --v-surf:#212429;   /* default card                            */
+  --v-surf2:#292d34;  /* raised / selected card                  */
+  --v-surf3:#343942;  /* hover, lightest chrome                  */
+  --v-500:#3a404a;    /* edge — a visible hairline on a card     */
+  /* The seam between two regions is DARKER than either of them. A control room
+     divides by shadow, not by a light rule: a pale divider on a dark desk is the
+     first thing the eye goes to, and nothing on this desk deserves that. */
+  --v-rule:#0c0d10;
+  --v-line:rgba(255,255,255,.075); --v-line2:rgba(255,255,255,.13);
+
+  /* ── Text ramp: primary / secondary / muted ───────────────────────────────
+     Every one of these is measured against every surface it can sit on by
+     `tokencontrast.test.js` (RG-74), which requires a hex literal here and
+     WCAG AA's 4.5:1 body bar. It has caught two real failures already.
+
+     THE PROTOTYPE'S MUTED STEP DID NOT SURVIVE THAT TEST. It was #7e8695, which
+     measures 4.25:1 on --v-surf and 3.77:1 on --v-surf2 — below AA on two of the
+     four surfaces muted text is actually placed on. The repository's rule wins
+     over the prototype (REBRAND.md, Context), so it is lifted to #8c94a1: same
+     hue, 4.52:1 at worst, and indistinguishable at a glance.
+
+     The measured matrix, at 4.5:1:
+       --v-txt   on void 15.28 · bg 14.15 · surf 12.92 · surf2 11.48
+       --v-dim   on void  8.43 · bg  7.81 · surf  7.13 · surf2  6.33
+       --v-faint on void  6.02 · bg  5.57 · surf  5.09 · surf2  4.52
+     --v-faint on --v-surf3 is 3.79 and NOTHING pairs them; the test asserts that
+     stays true, because clearing surf3 needs ~#9b9ba6 and collapses muted into
+     --v-dim. */
+  --v-txt:#e8eaee; --v-dim:#a9b0bc; --v-faint:#8c94a1;
+  --v-disabled:#5a6270; --v-inverse:#131418;
+
+  /* ── The four colours that carry a promise ────────────────────────────────
+     Retuned, not reassigned. Each has a soft fill (a chip's background) and a
+     line (its border) so no component has to hand-write an rgba() of it — five
+     rules drifted from the token that way before. */
+  /* ON AIR. The congregation is looking at this right now. */
+  --v-amber:#ffa31a; --v-amber2:#ffc266; --v-amber-ink:#251700;
+  --v-amber-soft:rgba(255,163,26,.15); --v-amber-line:rgba(255,163,26,.45);
+  --v-amber-glow:rgba(255,163,26,.42);
+  /* A GUESS — a paraphrase or semantic match, never a heard reference. */
+  --v-cyan:#4cc9f0; --v-cyan-soft:rgba(76,201,240,.15); --v-cyan-line:rgba(76,201,240,.4);
+  /* REHEARSAL — this cannot reach the congregation. No longer doing double duty
+     as the interactive accent: chrome moved to steel blue below, so amethyst now
+     means one thing again. */
+  --v-amethyst:#a96bf5; --v-amethyst2:#c49bfa; --v-amethyst-mute:#4a4658;
+  --v-amethyst-soft:rgba(169,107,245,.16); --v-amethyst-line:rgba(169,107,245,.45);
+  /* CUED — where the transport resumes, and NOT on screen. */
+  --v-grey:#8a929e; --v-grey-soft:rgba(138,146,158,.16);
+
+  /* ── The rest of the semantic set ─────────────────────────────────────── */
+  --v-emerald:#3fcf6a; --v-emerald-soft:rgba(63,207,106,.14); --v-emerald-line:rgba(63,207,106,.4);
+  /* Destructive, and the stage alert. --v-rose is the same colour under its
+     older name; both are kept because the output window shares this file. */
+  --v-red:#f4515b; --v-red-soft:rgba(244,81,91,.15); --v-red-line:rgba(244,81,91,.5);
+  --v-rose:#f4515b; --v-rose-soft:rgba(244,81,91,.15);
+
+  /* ── SELECTION — the thing you are working on ─────────────────────────────
+     Steel blue. The selected tab, a focus ring, a switch that is on, the filled
+     part of a slider, the transcript line being read right now.
+
+     This is the rebrand's one structural colour change. Interactive chrome used
+     to be amethyst, which was already an improvement on amber — but it meant the
+     rehearsal colour was also lit on every hover, every switch and every primary
+     button, in a product where telling a rehearsal from a live service is a
+     safety distinction. A colour that carries a promise cannot also be the
+     default for "clicked". So selection gets its own colour, and the promise
+     colours are now used ONLY where they mean what they say.
+
+     White on --v-sel-fill (#2e6fd4) is 4.84:1 — above AA for button text. The
+     lighter --v-sel is for borders, dots and text on a dark surface, where it is
+     the thing being read rather than the thing behind it. */
+  --v-sel:#5b9cf8; --v-sel-fill:#2e6fd4; --v-sel-ink:#ffffff;
+  --v-sel-soft:rgba(91,156,248,.16); --v-sel-line:rgba(91,156,248,.45);
+  --v-sel-glow:rgba(91,156,248,.5);
+  /* The --v-accent* family is the SAME colour under the name several hundred
+     rules already use. Kept as aliases rather than renamed, so the whole console
+     moves in one edit and nothing is left behind on a stale hex. */
+  --v-accent:var(--v-sel);
+  --v-accent2:#8bbcff;
+  --v-accent-fill:var(--v-sel-fill);
+  --v-accent-ink:var(--v-sel-ink);
+  --v-accent-soft:var(--v-sel-soft);
+  --v-accent-line:var(--v-sel-line);
+  --v-accent-glow:var(--v-sel-glow);
+
+  /* ── Collection colours (the Library) ─────────────────────────────────────
+     A collection is a KIND of content, so it borrows the colour that kind
+     already wears on the wall. None of these is a status: they tint an icon and
+     a row's left edge, never a badge that could be mistaken for ON AIR. */
+  --v-col-scripture:var(--v-amber);
+  --v-col-song:var(--v-sel);
+  --v-col-notice:var(--v-red);
+  --v-col-media:var(--v-amethyst);
+
+  /* ── Radius. 3px, and 5px for the things that hold other things ───────────
+     No pills on buttons, tabs or cards: a pill in a control room reads as a toy.
+     --v-r-round survives for the two shapes that are genuinely round — a slider
+     thumb and a status dot — and for nothing else. */
+  --v-r-sm:3px; --v-r-md:3px; --v-r-lg:5px; --v-r-xl:5px; --v-r-2xl:6px;
+  --v-r-round:99px;
+
+  /* Spacing (8pt grid) */
+  --v-sp-xs:4px; --v-sp-sm:8px; --v-sp-md:16px; --v-sp-lg:24px; --v-sp-xl:32px;
+  --v-sp-2xl:48px; --v-sp-3xl:64px; --v-sp-4xl:96px; --v-sp-5xl:128px;
+
+  /* Elevation — a dark room, so shadows are for depth, never for decoration. */
+  --v-shadow-sm:0 1px 2px rgba(0,0,0,.45);
+  --v-shadow-md:0 4px 16px rgba(0,0,0,.5);
+  --v-shadow-lg:0 20px 60px -24px #000;
+
+  /* Motion. One duration and one curve for every piece of chrome, so the desk
+     feels like one instrument. Honoured against prefers-reduced-motion below. */
+  --v-dur:120ms; --v-ease:cubic-bezier(.2,.7,.3,1);
+
+  /* ── TYPOGRAPHY ───────────────────────────────────────────────────────────
+     Inter for the interface, IBM Plex Mono for EVERY figure — a clock, a
+     confidence, a latency, a verse number — because tabular digits mean a
+     changing number never reflows the row beside it. Fraunces is the serif the
+     scripture templates render in; it is template content, not chrome, and the
+     console does not use it.
+
+     --f-display (Space Grotesk) and --f-head (Playfair) are aliases of Inter,
+     kept because templates.js and a few views still name them. */
+  --f-head:'Inter',system-ui,-apple-system,sans-serif;
+  --f-mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,monospace;
+
+  /* The scale is DENSER than the one it replaces: 11–12px is the control-room
+     register, and the old 14px body pushed the dock row and the status bar off
+     the bottom of a 1366×768 booth laptop. */
+  --v-fs-d1:30px;  --v-lh-d1:34px;   /* Display — a splash, a gate           */
+  --v-fs-d2:21px;  --v-lh-d2:26px;   /* Page title                           */
+  --v-fs-h1:17px;  --v-lh-h1:22px;   /* Section heading                      */
+  --v-fs-h2:14px;  --v-lh-h2:19px;   /* Card heading                         */
+  /* ── The four steps the console proper actually uses, added wave 5 (M1).
+     The reference type scale is nine steps and six of them were already here
+     (12.5 · 12 · 11.5 · 11 · 9.5, plus 11 mono). The other four had NO token at
+     all, which is why a hundred and one hand-typed sizes survived wave 4's
+     sweep: there was nothing to convert them TO. They are named for their role
+     rather than for a position in a heading ladder, because that is what they
+     are — the ladder above ends at `h3` and these sit beside it, not under it.
+
+     THE LADDER IS NOT A COMPLETE INVENTORY OF WHAT RENDERS, and saying so here
+     is cheaper than discovering it again. 10px became a real step below
+     (`--v-fs-b3`) once the widened scan showed twenty-seven of them in one role;
+     10.5px, 8px, 7px, 16px, 18px and 22px are still typed by hand, and those are
+     genuinely one-control decisions rather than a missing step — eight distinct
+     judgements that happened to land near each other. Converting one is a
+     restyle decision about that control, not a sweep, so they are left visible
+     rather than rounded into a neighbouring step to make a scanner quiet. */
+  --v-fs-ttl:15px; --v-lh-ttl:20px;  /* Object title — a settings page head, a
+                                        claim's reference. 600, -.012em.     */
+  --v-fs-h3:12.5px;--v-lh-h3:17px;   /* Row heading                          */
+  --v-fs-pr:13px;  --v-lh-pr:20px;   /* Prose — a paragraph, a standfirst.
+                                        13/1.55, the one step that is a
+                                        READING size rather than a UI one.   */
+  --v-fs-b1:12px;  --v-lh-b1:17px;   /* Body — the default                   */
+  --v-fs-b2:11.5px;--v-lh-b2:16px;   /* Body, secondary                      */
+  --v-fs-lbl:11px; --v-lh-lbl:15px;  /* Label                                */
+  /* THE TWO VERTICAL RULES OF THE DESK.
+     Measured at 1280 before these existed: left rails of 180/206/206/206/212 and
+     inspectors of 250/276/312/320/330, so BOTH seams moved on every tab press —
+     Live to Planner shifted the left one 26px and the right one 80px.
+     `WorkspaceFrame`'s own comment says an operator moving between the run
+     surface and a desk "should not be able to tell that two people built them".
+     One token each, referenced by the frame and by Live's hand-built desk. */
+  --v-rail:206px; --v-insp:300px;
+  --v-fs-b3:10px;  --v-lh-b3:14px;   /* Sub-label — the quieter line UNDER a
+                                        label. Added wave 5 (2026-09-15) after
+                                        the grammar scan was widened from six
+                                        desks to every view and reported 39
+                                        off-scale literals, of which TWENTY-SEVEN
+                                        were 10px, in one visual role, across
+                                        fourteen files. That is the definition of
+                                        a step the ladder did not publish — the
+                                        same finding that produced `ttl`, `pr`,
+                                        `fig` and `kind` above — and not
+                                        twenty-seven restyle decisions. The
+                                        reference uses 10px more than any other
+                                        size it omits from the nine-step table.
+                                        Converting is behaviour-preserving: every
+                                        one of them already rendered at 10px.   */
+  --v-fs-cap:9.5px;--v-lh-cap:13px;  /* Caption / the uppercase key line     */
+  --v-fs-mono:11px;--v-lh-mono:15px; /* Mono row                             */
+  --v-fs-fig:9px;  --v-lh-fig:12px;  /* Figure — a count, a unit, a key cap.
+                                        Mono, and never a sentence: at 9px a
+                                        line of prose is not readable at a
+                                        booth's viewing distance.            */
+  --v-fs-kind:8.5px;--v-lh-kind:11px;/* Kind chip — the smallest thing in the
+                                        product. Mono, uppercase, .09em, and
+                                        only ever ONE WORD.                  */
+  --v-tr-tight:-.022em; --v-tr-h2:-.01em; --v-tr-wide:.02em;
+  --v-tr-ttl:-.012em;  /* the object title, per the reference scale */
+  --v-tr-caps:.09em;   /* the uppercase caption line, and only that */
+}

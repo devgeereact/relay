@@ -27,7 +27,13 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { contrastRatio, parseColor } from './legibility.js';
 
-const css = readFileSync(resolve(__dirname, '../app.css'), 'utf8');
+// BOTH HALVES OF THE STYLESHEET: the console's own sheet PLUS the shared token sheet it imports. Wave 5,
+// Track E moved the palette into `src/tokens.css` so `output.html` and
+// `stage.html` could take the tokens without taking the console's rules; a
+// scanner that reads one of the two files now reads half the stylesheet.
+const css = ['../tokens.css', '../app.css']
+  .map((f) => readFileSync(resolve(__dirname, f), 'utf8'))
+  .join('\n');
 
 /**
  * Read a `--token:#hex;` declaration out of app.css, as the {r,g,b} `contrastRatio`

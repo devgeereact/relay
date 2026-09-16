@@ -29,7 +29,13 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, join, extname } from 'node:path';
 
 const SRC = resolve(__dirname, '..');
-const CSS = resolve(SRC, 'app.css');
+// THE STYLESHEET IS TWO FILES. `src/app.css` is the console's, and it starts by
+// importing `src/tokens.css`, which is where the palette lives — wave 5, Track E
+// put it in its own file so the output and stage pages could take the tokens
+// without taking the console's unscoped rules with them. A definition scanner
+// that read only `app.css` would report the whole palette as undefined, so it
+// reads both, in import order.
+const CSS = [resolve(SRC, 'tokens.css'), resolve(SRC, 'app.css')];
 
 /** Every file a `--v-*` can be written in: components, the stylesheets, the JS. */
 const EXTS = new Set(['.svelte', '.css', '.js', '.html']);
@@ -65,7 +71,7 @@ const FILES = walk(SRC);
 const DEFINE_RE = /[;{]\s*(--v-[a-z0-9-]+)\s*:/g;
 const USE_RE = /var\(\s*(--v-[a-z0-9-]+)/g;
 
-function defined(src = readFileSync(CSS, 'utf8')) {
+function defined(src = CSS.map((f) => readFileSync(f, 'utf8')).join('\n')) {
   const out = new Set();
   for (const m of strip(src).matchAll(DEFINE_RE)) out.add(m[1]);
   return out;
@@ -92,6 +98,7 @@ describe('every --v-* a component reaches for is defined in app.css', () => {
   it('the scanner reads the whole tree, not one file', () => {
     expect(FILES.length).toBeGreaterThan(80);
     expect(FILES.some((f) => f.endsWith('app.css'))).toBe(true);
+    expect(FILES.some((f) => f.endsWith('tokens.css'))).toBe(true);
     expect(FILES.some((f) => f.endsWith('App.svelte'))).toBe(true);
     // Both of the real defects were several directories down. A walker that
     // stopped at the first level would still satisfy everything above this line.

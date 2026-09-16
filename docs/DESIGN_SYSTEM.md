@@ -5,10 +5,11 @@ component vocabulary. For the *why* behind any rule here follow the link into
 [DECISIONS.md](DECISIONS.md); for how the pieces fit see [ARCHITECTURE.md](ARCHITECTURE.md);
 for the entities being rendered see [DATA_MODEL.md](DATA_MODEL.md).
 
-**The source of truth is [`src/app.css`](../src/app.css), not this page.** That file is the
-shipped stylesheet and it carries the reasoning inline, at each token. This document is the map
-and the rules a reader needs *before* opening it. If the two disagree, `app.css` is right and
-this page is a bug.
+**The source of truth is the shipped stylesheet, not this page.** It is two files:
+[`src/tokens.css`](../src/tokens.css) carries the palette, the type ramp and the spacing scales,
+and [`src/app.css`](../src/app.css) imports it and adds the console's own rules. Both carry the
+reasoning inline, at each token. This document is the map and the rules a reader needs *before*
+opening them. If the two disagree, the stylesheet is right and this page is a bug.
 
 ---
 
@@ -25,14 +26,23 @@ Those are different design problems and Relay keeps them in different systems:
 
 | | Console chrome | Output surfaces |
 |---|---|---|
-| Styled by | `src/app.css` — one global stylesheet | **Templates**, resolved by `TemplateRender.svelte`. There is no separate theme layer any more: a theme had no field a template does not already have, so the two were folded into one (DECISIONS §87) |
+| Styled by | `src/app.css` — the console's global stylesheet, which imports `src/tokens.css` | **Templates**, resolved by `TemplateRender.svelte`. There is no separate theme layer any more: a theme had no field a template does not already have, so the two were folded into one (DECISIONS §87) |
 | Who changes it | Only a developer | The operator, in the app, per screen |
 | Units | `px` | **`cqw`** — so a template looks identical at any output size |
 | Background | Always dark | Whatever the template says, **including transparent** (so it keys out in OBS) |
 
 Never style an output surface from `app.css`, and never put a console token into a template.
-The one file both share is `app.css` itself (the output window imports it for its reset), which
-is why deleting a legacy rule from it is riskier than it looks — see §6.
+**Both halves of that sentence used to be unenforceable, and both are enforced now** (wave 5,
+Track E). `output.js` and `stage.js` imported `app.css` in full, and Svelte does not scope a
+global stylesheet, so every unscoped console rule in it was live on `output.html` and
+`stage.html` — a class-name collision away from painting on a wall. They now import
+`src/tokens.css`, which may declare custom properties and nothing else, so the palette is still
+shared and no rule can cross. And a seeded `style_json` stored `"font":"var(--f-serif)"`, a
+token declared in the console's chrome: `--f-display` was re-aliased once, from Space Grotesk to
+Inter, and silently changed the typeface of every template naming it. Templates name real
+families; `ensure_templates_name_real_families` carries that to an install that already exists.
+`src/lib/seal.test.js` fails on the first rule added to the shared sheet and on the first
+app-chrome token written back into template data.
 
 ---
 
@@ -318,8 +328,8 @@ read *"the screens may still be live"* is motion for its own sake.
 
 ## 6. The legacy palette — why the dead CSS is still there
 
-`app.css` opens with a legacy `:root` block. Every legacy colour name is now an **alias** of the
-design-system token it maps to (`--amber` → `--v-amber`, and so on), so anything still on an old
+`src/tokens.css` opens with a legacy `:root` block. Every legacy colour name is now an **alias**
+of the design-system token it maps to (`--amber` → `--v-amber`, and so on), so anything still on an old
 name is on-brand by construction and each hex lives in exactly one place.
 
 89 orphaned rules were deleted by checking every class name against every class a component
@@ -331,6 +341,15 @@ window — which the build machine cannot produce.
 
 So the gun is unloaded rather than removed: the contrast failure is fixed, and the rules stay
 until someone can look at a running app. Tracked in [KNOWN_ISSUES.md](KNOWN_ISSUES.md) §4.
+
+**What wave 5 changed is the blast radius, not the rules.** Six of the survivors —
+`.prev-main .verse`, `.prev-stage .verse`, `.prev-stream .lower-third`, `.prev-lobby .verse`,
+`.tmpl-row.active` and `.toggle.on` — were reaching `output.html` and `stage.html` as well as the
+console, because both entry points imported this file. They are still here, still un-deleted, and
+they can now only restyle the console: the congregation-facing pages import `src/tokens.css`
+instead, and the built bundles show it (`dist/output.html` and `dist/stage.html` reference the
+token sheet, not the console's). The judgement that deleting them needs eyes on a running app is
+unchanged.
 
 ---
 

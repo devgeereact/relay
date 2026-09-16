@@ -44,8 +44,8 @@ use channels::seed_channels;
 use serde_json::Value;
 use templates::{
     ensure_lower_third_band_is_not_a_law_colour, ensure_lyrics_template, ensure_preset_templates,
-    ensure_retired_presets_are_gone, ensure_themes_are_inlined, reset_builtin_templates,
-    seed_templates,
+    ensure_retired_presets_are_gone, ensure_templates_name_real_families,
+    ensure_themes_are_inlined, reset_builtin_templates, seed_templates,
 };
 #[cfg(test)]
 use verses::clean_verse;
@@ -372,6 +372,12 @@ fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
     // look it had, written into its own style. See templates.rs for why it is one
     // transaction and what a dangling ref does.
     ensure_themes_are_inlined(conn)?;
+    // A template names a real family; the operator console names tokens. Seeds
+    // that stopped storing `var(--f-serif)` reach a fresh install and no existing
+    // one, so the rows a church already has are rewritten here. LAST of the
+    // template migrations, and after the retirement in particular, which matches
+    // a leftover row by its BYTES — see the function's own note. Wave 5, Track E.
+    ensure_templates_name_real_families(conn)?;
     ensure_service_plans(conn)?; // Planner
     ensure_songs(conn)?; // Lyrics
     ensure_saved_scripture(conn)?; // Library
@@ -1023,8 +1029,112 @@ mod tests {
             "the lyrics template is missing from the seed"
         );
         assert_eq!(ts[0].name, "Classic Serif");
-        assert_eq!(ts[0].style["font"], "var(--f-serif)");
+        // A REAL FAMILY, not `var(--f-serif)`. A seeded style storing an
+        // app-chrome token is a template whose typeface the console's stylesheet
+        // decides — and `--f-display` was re-aliased from Space Grotesk to Inter
+        // exactly that way, changing every template naming it without touching
+        // one. Wave 5, Track E; `ensure_templates_name_real_families` carries the
+        // same guarantee to a church that already has Relay installed.
+        assert_eq!(ts[0].style["font"], "Fraunces");
         assert_eq!(ts[0].layout["align"], "center");
+    }
+
+    #[test]
+    fn no_seeded_template_names_an_app_chrome_token() {
+        // THE SEAL, asserted where it cannot be argued with: over the rows a
+        // fresh install actually has, not over the source that wrote them. A
+        // template's style is data that reaches a congregation's screen, and
+        // `var(--f-serif)` / `var(--v-amber)` are declared in the operator
+        // console's stylesheet — so a row naming one renders in whatever the
+        // console aliases that name to today. `--f-display` was re-aliased once,
+        // from Space Grotesk to Inter, and silently changed the typeface of every
+        // template naming it.
+        //
+        // Reading the ROWS is what makes this hold against a seed list that is
+        // rewritten: it does not care how many templates there are, what they are
+        // called, or whether they are region-model or layer-model. Wave 5, Track E.
+        //
+        // IT IS THE END-TO-END HALF AND NOT THE WHOLE TEST, and the difference was
+        // measured rather than reasoned. Putting `var(--f-serif)` back into
+        // `builtin_templates()` leaves this green, because
+        // `ensure_templates_name_real_families` runs inside `fresh_db()` and
+        // repairs the row before the assertion reads it. What it does catch is a
+        // row arriving by a door the migration does not cover. The half that fails
+        // on a bad seed is `templates::preset_template_tests::
+        // no_seed_list_writes_an_app_chrome_token`, and neither replaces the other.
+        let conn = fresh_db();
+        let mut offenders: Vec<String> = Vec::new();
+        for t in list_templates(&conn).unwrap() {
+            for (what, json) in [("style", &t.style), ("layout", &t.layout)] {
+                let text = json.to_string();
+                if text.contains("var(--") {
+                    offenders.push(format!("{} ({what}): {text}", t.name));
+                }
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "a seeded template names an app-chrome token; templates name real \
+             families (wave 5, Track E):\n{}",
+            offenders.join("\n")
+        );
+    }
+
+    #[test]
+    fn an_existing_install_stops_naming_app_chrome_tokens_and_the_fix_is_retryable() {
+        // The other half: emptying the seed lists reaches a FRESH install and no
+        // existing one. A church already running Relay has rows holding the token,
+        // in both columns — a region template keeps one face in `style_json`, a
+        // layer template keeps one per layer inside `region_config_json`.
+        let conn = fresh_db();
+        conn.execute(
+            "INSERT INTO templates (name, region_config_json, style_json) VALUES (?1, ?2, ?3)",
+            (
+                "A church's own",
+                r##"{"layers":[{"id":"a","type":"text","font":"var(--f-display)"},
+                     {"id":"b","type":"text","font":"var(--f-mono)"}]}"##,
+                r##"{"font":"var(--f-serif)","verseFont":"var(--f-body)","accent":"#e8a33d"}"##,
+            ),
+        )
+        .unwrap();
+
+        let faces = |conn: &rusqlite::Connection| -> (String, String) {
+            conn.query_row(
+                "SELECT style_json, region_config_json FROM templates WHERE name = ?1",
+                ["A church's own"],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap()
+        };
+
+        ensure_templates_name_real_families(&conn).unwrap();
+        let (style, layout) = faces(&conn);
+        assert!(
+            !style.contains("var(--"),
+            "the style still names a token: {style}"
+        );
+        assert!(
+            !layout.contains("var(--"),
+            "a layer still names a token: {layout}"
+        );
+        // The family each token already rendered as — the wall does not move.
+        assert!(style.contains(r#""font":"Fraunces""#), "{style}");
+        assert!(style.contains(r#""verseFont":"Inter""#), "{style}");
+        assert!(layout.contains(r#""font":"Inter""#), "{layout}");
+        assert!(layout.contains(r#""font":"IBM Plex Mono""#), "{layout}");
+        // …and nothing else in the row was touched.
+        assert!(style.contains(r##""accent":"#e8a33d""##), "{style}");
+
+        // Rule 25: a second run is a no-op and a third is identical to the second.
+        ensure_templates_name_real_families(&conn).unwrap();
+        let twice = faces(&conn);
+        ensure_templates_name_real_families(&conn).unwrap();
+        assert_eq!(
+            twice,
+            faces(&conn),
+            "re-running the migration changed a row"
+        );
+        assert_eq!(twice, (style, layout), "the second run was not a no-op");
     }
 
     #[test]

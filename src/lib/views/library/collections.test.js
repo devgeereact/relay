@@ -21,7 +21,10 @@ import Collections from './Collections.svelte';
 const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
 const bar = read('./Collections.svelte');
 const shell = read('../Library.svelte');
-const css = read('../../../app.css');
+// Both halves of the stylesheet — the palette moved into `tokens.css` in wave 5,
+// Track E so the congregation-facing pages could take the tokens and none of the
+// console's rules.
+const css = read('../../../tokens.css') + read('../../../app.css');
 
 /** Markup and rules only. This file EXPLAINS the colour law in prose, and a grep
     a comment can trip is a grep that will trip on the next comment. */

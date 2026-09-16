@@ -128,17 +128,27 @@ fn row_to_template(r: &rusqlite::Row) -> rusqlite::Result<Template> {
 /// The four built-in output templates (SPEC §5, cqw sizes). Match the frontend
 /// defaults in src/lib/templates.js. Source of truth for both fresh seed and
 /// the in-place migration.
+///
+/// EVERY `font` HERE IS A REAL FAMILY, never an app-chrome token (wave 5,
+/// Track E). These styles used to store `var(--f-serif)` / `var(--f-display)` /
+/// `var(--f-body)`, which are declared in the operator console's stylesheet — so
+/// the typeface on a congregation's wall was decided by an edit to the app's
+/// chrome, and `--f-display` proved it by being re-aliased from Space Grotesk to
+/// Inter without one template being touched. The replacements are the families
+/// those tokens already resolved to, so nothing rendered differently.
+/// `ensure_templates_name_real_families` carries the same change to an install
+/// that already exists, because emptying a seed list reaches neither.
 fn builtin_templates() -> &'static [(&'static str, &'static str, &'static str)] {
     &[
         (
             "Classic Serif",
             r##"{"regions":["verse_text","reference"],"align":"center","lowerThird":false,"refFirst":false}"##,
-            r##"{"font":"var(--f-serif)","background":"radial-gradient(120% 140% at 50% 30%, #2a2013, #0b0906)","accent":"#e8a33d","verseColor":"#f4e4c8","verseSize":"5.5","refSize":"2.6","italicRef":true}"##,
+            r##"{"font":"Fraunces","background":"radial-gradient(120% 140% at 50% 30%, #2a2013, #0b0906)","accent":"#e8a33d","verseColor":"#f4e4c8","verseSize":"5.5","refSize":"2.6","italicRef":true}"##,
         ),
         (
             "Stage Mono",
             r##"{"regions":["reference","verse_text"],"align":"left","lowerThird":false,"refFirst":true}"##,
-            r##"{"font":"var(--f-display)","background":"#000000","accent":"#4fa8c9","verseColor":"#ffffff","verseSize":"6","refSize":"2.6","italicRef":false}"##,
+            r##"{"font":"Inter","background":"#000000","accent":"#4fa8c9","verseColor":"#ffffff","verseSize":"6","refSize":"2.6","italicRef":false}"##,
         ),
         (
             "Lower Third",
@@ -149,7 +159,7 @@ fn builtin_templates() -> &'static [(&'static str, &'static str, &'static str)] 
             // `#8b5cf6` there (two purples for one template), and amethyst is
             // rule 18's rehearsal colour either way. The family replaced the
             // `Lower Third Night` preset this line used to point at.
-            r##"{"font":"var(--f-body)","background":"transparent","accent":"#101319","verseColor":"#f2f4f8","verseSize":"2.6","refSize":"1.7","italicRef":false}"##,
+            r##"{"font":"Inter","background":"transparent","accent":"#101319","verseColor":"#f2f4f8","verseSize":"2.6","refSize":"1.7","italicRef":false}"##,
         ),
         (
             // WORSHIP LYRICS — the fifth built-in, and the one every previous
@@ -174,12 +184,12 @@ fn builtin_templates() -> &'static [(&'static str, &'static str, &'static str)] 
             //     scanned in a second and a half between breaths.
             "Worship Lyrics",
             r##"{"regions":["verse_text"],"align":"center","lowerThird":false,"refFirst":false}"##,
-            r##"{"font":"var(--f-body)","background":"#07070a","accent":"#ffffff","verseColor":"#ffffff","verseSize":"9","refSize":"2","italicRef":false}"##,
+            r##"{"font":"Inter","background":"#07070a","accent":"#ffffff","verseColor":"#ffffff","verseSize":"9","refSize":"2","italicRef":false}"##,
         ),
         (
             "Lobby Warm",
             r##"{"regions":["reference","verse_text"],"align":"center","lowerThird":false,"refFirst":false}"##,
-            r##"{"font":"var(--f-serif)","background":"linear-gradient(160deg, #241419, #120a0e)","accent":"#e27d93","verseColor":"#f0dfe3","verseSize":"4","refSize":"2","italicRef":false}"##,
+            r##"{"font":"Fraunces","background":"linear-gradient(160deg, #241419, #120a0e)","accent":"#e27d93","verseColor":"#f0dfe3","verseSize":"4","refSize":"2","italicRef":false}"##,
         ),
     ]
 }
@@ -397,10 +407,10 @@ fn theme_templates() -> &'static [(&'static str, &'static str, &'static str)] {
     // one, `isKeyedTemplate` still answers the same, and the `shows` list is
     // untouched. `upgradeLegacyToLayers` skips a template that is already layered,
     // so an install that has run it and one that has not now agree.
-    const TIMER_CLASSIC: &str = r##"{"regions":["reference","verse_text"],"align":"center","lowerThird":false,"refFirst":true,"shows":["scripture","song","media","announce","countdown"],"layers":[{"id":"clt-background","type":"background","name":"Background","visible":true,"x":0,"y":0,"w":100,"h":100,"fill":"radial-gradient(120% 140% at 50% 30%, #2a2013, #0b0906)","image":null,"opacity":1,"dim":0},{"id":"clt-reference","type":"text","name":"Reference","visible":true,"x":8,"y":24,"w":84,"h":10,"bind":"reference","font":"var(--f-body)","color":"#e8a33d","size":2.6,"align":"center","valign":"middle","transform":"uppercase","lineHeight":1.2,"letterSpacing":0.06,"shadow":0,"italic":false,"scroll":false,"text":""},{"id":"clt-verse","type":"text","name":"Verse","visible":true,"x":8,"y":36,"w":84,"h":52,"bind":"verse","font":"var(--f-body)","color":"#f4e4c8","size":5,"align":"center","valign":"middle","transform":"none","lineHeight":1.32,"letterSpacing":0,"shadow":0,"italic":false,"scroll":false,"text":"","quote":true}]}"##;
-    const TIMER_AURORA: &str = r##"{"regions":["reference","verse_text"],"align":"center","lowerThird":false,"refFirst":true,"shows":["scripture","song","media","announce","countdown"],"layers":[{"id":"aut-background","type":"background","name":"Background","visible":true,"x":0,"y":0,"w":100,"h":100,"fill":"radial-gradient(130% 130% at 50% 15%, #0b3330, #04110f)","image":null,"opacity":1,"dim":0},{"id":"aut-reference","type":"text","name":"Reference","visible":true,"x":8,"y":24,"w":84,"h":10,"bind":"reference","font":"var(--f-display)","color":"#6ee7c4","size":2.6,"align":"center","valign":"middle","transform":"uppercase","lineHeight":1.2,"letterSpacing":0.06,"shadow":0.4,"italic":false,"scroll":false,"text":""},{"id":"aut-verse","type":"text","name":"Verse","visible":true,"x":8,"y":36,"w":84,"h":52,"bind":"verse","font":"var(--f-display)","color":"#eafff8","size":5,"align":"center","valign":"middle","transform":"none","lineHeight":1.32,"letterSpacing":0,"shadow":0.4,"italic":false,"scroll":false,"text":"","quote":true}]}"##;
-    const TIMER_EMBER: &str = r##"{"regions":["reference","verse_text"],"align":"center","lowerThird":false,"refFirst":true,"shows":["scripture","song","media","announce","countdown"],"layers":[{"id":"emt-background","type":"background","name":"Background","visible":true,"x":0,"y":0,"w":100,"h":100,"fill":"radial-gradient(130% 130% at 50% 18%, #3a1508, #140603)","image":null,"opacity":1,"dim":0},{"id":"emt-reference","type":"text","name":"Reference","visible":true,"x":8,"y":24,"w":84,"h":10,"bind":"reference","font":"var(--f-display)","color":"#ffb066","size":2.6,"align":"center","valign":"middle","transform":"uppercase","lineHeight":1.2,"letterSpacing":0.06,"shadow":0.45,"italic":false,"scroll":false,"text":""},{"id":"emt-verse","type":"text","name":"Verse","visible":true,"x":8,"y":36,"w":84,"h":52,"bind":"verse","font":"var(--f-display)","color":"#fdeede","size":5,"align":"center","valign":"middle","transform":"none","lineHeight":1.32,"letterSpacing":0,"shadow":0.45,"italic":false,"scroll":false,"text":"","quote":true}]}"##;
-    const TIMER_HIVIS: &str = r##"{"regions":["reference","verse_text"],"align":"center","lowerThird":false,"refFirst":true,"shows":["scripture","song","media","announce","countdown"],"layers":[{"id":"hvt-background","type":"background","name":"Background","visible":true,"x":0,"y":0,"w":100,"h":100,"fill":"#000000","image":null,"opacity":1,"dim":0},{"id":"hvt-reference","type":"text","name":"Reference","visible":true,"x":8,"y":24,"w":84,"h":10,"bind":"reference","font":"var(--f-display)","color":"#ffffff","size":3.2,"align":"center","valign":"middle","transform":"uppercase","lineHeight":1.2,"letterSpacing":0.06,"shadow":0,"italic":false,"scroll":false,"text":""},{"id":"hvt-verse","type":"text","name":"Verse","visible":true,"x":8,"y":36,"w":84,"h":52,"bind":"verse","font":"var(--f-display)","color":"#ffffff","size":6,"align":"center","valign":"middle","transform":"none","lineHeight":1.4,"letterSpacing":0,"shadow":0,"italic":false,"scroll":false,"text":"","quote":true}]}"##;
+    const TIMER_CLASSIC: &str = r##"{"regions":["reference","verse_text"],"align":"center","lowerThird":false,"refFirst":true,"shows":["scripture","song","media","announce","countdown"],"layers":[{"id":"clt-background","type":"background","name":"Background","visible":true,"x":0,"y":0,"w":100,"h":100,"fill":"radial-gradient(120% 140% at 50% 30%, #2a2013, #0b0906)","image":null,"opacity":1,"dim":0},{"id":"clt-reference","type":"text","name":"Reference","visible":true,"x":8,"y":24,"w":84,"h":10,"bind":"reference","font":"Inter","color":"#e8a33d","size":2.6,"align":"center","valign":"middle","transform":"uppercase","lineHeight":1.2,"letterSpacing":0.06,"shadow":0,"italic":false,"scroll":false,"text":""},{"id":"clt-verse","type":"text","name":"Verse","visible":true,"x":8,"y":36,"w":84,"h":52,"bind":"verse","font":"Inter","color":"#f4e4c8","size":5,"align":"center","valign":"middle","transform":"none","lineHeight":1.32,"letterSpacing":0,"shadow":0,"italic":false,"scroll":false,"text":"","quote":true}]}"##;
+    const TIMER_AURORA: &str = r##"{"regions":["reference","verse_text"],"align":"center","lowerThird":false,"refFirst":true,"shows":["scripture","song","media","announce","countdown"],"layers":[{"id":"aut-background","type":"background","name":"Background","visible":true,"x":0,"y":0,"w":100,"h":100,"fill":"radial-gradient(130% 130% at 50% 15%, #0b3330, #04110f)","image":null,"opacity":1,"dim":0},{"id":"aut-reference","type":"text","name":"Reference","visible":true,"x":8,"y":24,"w":84,"h":10,"bind":"reference","font":"Inter","color":"#6ee7c4","size":2.6,"align":"center","valign":"middle","transform":"uppercase","lineHeight":1.2,"letterSpacing":0.06,"shadow":0.4,"italic":false,"scroll":false,"text":""},{"id":"aut-verse","type":"text","name":"Verse","visible":true,"x":8,"y":36,"w":84,"h":52,"bind":"verse","font":"Inter","color":"#eafff8","size":5,"align":"center","valign":"middle","transform":"none","lineHeight":1.32,"letterSpacing":0,"shadow":0.4,"italic":false,"scroll":false,"text":"","quote":true}]}"##;
+    const TIMER_EMBER: &str = r##"{"regions":["reference","verse_text"],"align":"center","lowerThird":false,"refFirst":true,"shows":["scripture","song","media","announce","countdown"],"layers":[{"id":"emt-background","type":"background","name":"Background","visible":true,"x":0,"y":0,"w":100,"h":100,"fill":"radial-gradient(130% 130% at 50% 18%, #3a1508, #140603)","image":null,"opacity":1,"dim":0},{"id":"emt-reference","type":"text","name":"Reference","visible":true,"x":8,"y":24,"w":84,"h":10,"bind":"reference","font":"Inter","color":"#ffb066","size":2.6,"align":"center","valign":"middle","transform":"uppercase","lineHeight":1.2,"letterSpacing":0.06,"shadow":0.45,"italic":false,"scroll":false,"text":""},{"id":"emt-verse","type":"text","name":"Verse","visible":true,"x":8,"y":36,"w":84,"h":52,"bind":"verse","font":"Inter","color":"#fdeede","size":5,"align":"center","valign":"middle","transform":"none","lineHeight":1.32,"letterSpacing":0,"shadow":0.45,"italic":false,"scroll":false,"text":"","quote":true}]}"##;
+    const TIMER_HIVIS: &str = r##"{"regions":["reference","verse_text"],"align":"center","lowerThird":false,"refFirst":true,"shows":["scripture","song","media","announce","countdown"],"layers":[{"id":"hvt-background","type":"background","name":"Background","visible":true,"x":0,"y":0,"w":100,"h":100,"fill":"#000000","image":null,"opacity":1,"dim":0},{"id":"hvt-reference","type":"text","name":"Reference","visible":true,"x":8,"y":24,"w":84,"h":10,"bind":"reference","font":"Inter","color":"#ffffff","size":3.2,"align":"center","valign":"middle","transform":"uppercase","lineHeight":1.2,"letterSpacing":0.06,"shadow":0,"italic":false,"scroll":false,"text":""},{"id":"hvt-verse","type":"text","name":"Verse","visible":true,"x":8,"y":36,"w":84,"h":52,"bind":"verse","font":"Inter","color":"#ffffff","size":6,"align":"center","valign":"middle","transform":"none","lineHeight":1.4,"letterSpacing":0,"shadow":0,"italic":false,"scroll":false,"text":"","quote":true}]}"##;
     // The keyed family replaces each of the five with its banded twin. On a band
     // `accent` IS the fill and `verseColor` the text, and `background` stays
     // `transparent` — the camera underneath is the point.
@@ -453,27 +463,27 @@ fn theme_templates() -> &'static [(&'static str, &'static str, &'static str)] {
         (
             "Classic · Scripture",
             SCRIPTURE,
-            r##"{"font":"var(--f-serif)","background":"radial-gradient(120% 140% at 50% 30%, #2a2013, #0b0906)","accent":"#e8a33d","verseColor":"#f4e4c8","verseSize":"5.5","refSize":"2.6","italicRef":true}"##,
+            r##"{"font":"Fraunces","background":"radial-gradient(120% 140% at 50% 30%, #2a2013, #0b0906)","accent":"#e8a33d","verseColor":"#f4e4c8","verseSize":"5.5","refSize":"2.6","italicRef":true}"##,
         ),
         (
             "Classic · Lyrics",
             LYRIC,
-            r##"{"font":"var(--f-body)","background":"radial-gradient(120% 140% at 50% 30%, #2a2013, #0b0906)","accent":"#e8a33d","verseColor":"#f4e4c8","verseSize":"8.5","refSize":"2","italicRef":false,"verseLineHeight":1.2}"##,
+            r##"{"font":"Inter","background":"radial-gradient(120% 140% at 50% 30%, #2a2013, #0b0906)","accent":"#e8a33d","verseColor":"#f4e4c8","verseSize":"8.5","refSize":"2","italicRef":false,"verseLineHeight":1.2}"##,
         ),
         (
             "Classic · Media",
             MEDIA,
-            r##"{"font":"var(--f-body)","background":"radial-gradient(120% 140% at 50% 30%, #2a2013, #0b0906)","accent":"#e8a33d","verseColor":"#f4e4c8","verseSize":"5.5","refSize":"2.6","italicRef":false}"##,
+            r##"{"font":"Inter","background":"radial-gradient(120% 140% at 50% 30%, #2a2013, #0b0906)","accent":"#e8a33d","verseColor":"#f4e4c8","verseSize":"5.5","refSize":"2.6","italicRef":false}"##,
         ),
         (
             "Classic · Announcement",
             ANNOUNCE,
-            r##"{"font":"var(--f-body)","background":"radial-gradient(120% 140% at 50% 30%, #2a2013, #0b0906)","accent":"#e8a33d","verseColor":"#f4e4c8","verseSize":"3.4","refSize":"2.6","italicRef":false,"refTransform":"uppercase","refLetterSpacing":0.06,"scroll":true}"##,
+            r##"{"font":"Inter","background":"radial-gradient(120% 140% at 50% 30%, #2a2013, #0b0906)","accent":"#e8a33d","verseColor":"#f4e4c8","verseSize":"3.4","refSize":"2.6","italicRef":false,"refTransform":"uppercase","refLetterSpacing":0.06,"scroll":true}"##,
         ),
         (
             "Classic · Timer",
             TIMER_CLASSIC,
-            r##"{"font":"var(--f-body)","background":"radial-gradient(120% 140% at 50% 30%, #2a2013, #0b0906)","accent":"#e8a33d","verseColor":"#f4e4c8","verseSize":"5","refSize":"2.6","italicRef":false,"refTransform":"uppercase","refLetterSpacing":0.06}"##,
+            r##"{"font":"Inter","background":"radial-gradient(120% 140% at 50% 30%, #2a2013, #0b0906)","accent":"#e8a33d","verseColor":"#f4e4c8","verseSize":"5","refSize":"2.6","italicRef":false,"refTransform":"uppercase","refLetterSpacing":0.06}"##,
         ),
         // ── Aurora — teal / emerald ───────────────────────────────────────────
         // The first three are the previously-seeded rows byte for byte, so a
@@ -483,54 +493,54 @@ fn theme_templates() -> &'static [(&'static str, &'static str, &'static str)] {
         (
             "Aurora · Scripture",
             SCRIPTURE,
-            r##"{"font":"var(--f-serif)","background":"radial-gradient(130% 130% at 50% 15%, #0b3330, #04110f)","accent":"#6ee7c4","verseColor":"#eafff8","verseSize":"5.2","refSize":"2.5","italicRef":true,"textShadow":0.5,"verseLineHeight":1.34}"##,
+            r##"{"font":"Fraunces","background":"radial-gradient(130% 130% at 50% 15%, #0b3330, #04110f)","accent":"#6ee7c4","verseColor":"#eafff8","verseSize":"5.2","refSize":"2.5","italicRef":true,"textShadow":0.5,"verseLineHeight":1.34}"##,
         ),
         (
             "Aurora · Lyrics",
             LYRIC,
-            r##"{"font":"var(--f-display)","background":"linear-gradient(165deg, #08302b, #03110f)","accent":"#ffffff","verseColor":"#ffffff","verseSize":"8.5","refSize":"2","textShadow":0.4,"verseLineHeight":1.2}"##,
+            r##"{"font":"Inter","background":"linear-gradient(165deg, #08302b, #03110f)","accent":"#ffffff","verseColor":"#ffffff","verseSize":"8.5","refSize":"2","textShadow":0.4,"verseLineHeight":1.2}"##,
         ),
         (
             "Aurora · Media",
             MEDIA,
-            r##"{"font":"var(--f-display)","background":"linear-gradient(180deg, #0b3330, #04110f)","accent":"#6ee7c4","verseColor":"#eafff8","verseSize":"5.2","refSize":"2.5","textShadow":0.4}"##,
+            r##"{"font":"Inter","background":"linear-gradient(180deg, #0b3330, #04110f)","accent":"#6ee7c4","verseColor":"#eafff8","verseSize":"5.2","refSize":"2.5","textShadow":0.4}"##,
         ),
         (
             "Aurora · Announcement",
             ANNOUNCE,
-            r##"{"font":"var(--f-display)","background":"linear-gradient(180deg, #0b3330, #04110f)","accent":"#6ee7c4","verseColor":"#eafff8","verseSize":"3.4","refSize":"2.6","refTransform":"uppercase","refLetterSpacing":0.06,"scroll":true,"textShadow":0.4}"##,
+            r##"{"font":"Inter","background":"linear-gradient(180deg, #0b3330, #04110f)","accent":"#6ee7c4","verseColor":"#eafff8","verseSize":"3.4","refSize":"2.6","refTransform":"uppercase","refLetterSpacing":0.06,"scroll":true,"textShadow":0.4}"##,
         ),
         (
             "Aurora · Timer",
             TIMER_AURORA,
-            r##"{"font":"var(--f-display)","background":"radial-gradient(130% 130% at 50% 15%, #0b3330, #04110f)","accent":"#6ee7c4","verseColor":"#eafff8","verseSize":"5","refSize":"2.6","refTransform":"uppercase","refLetterSpacing":0.06,"textShadow":0.4}"##,
+            r##"{"font":"Inter","background":"radial-gradient(130% 130% at 50% 15%, #0b3330, #04110f)","accent":"#6ee7c4","verseColor":"#eafff8","verseSize":"5","refSize":"2.6","refTransform":"uppercase","refLetterSpacing":0.06,"textShadow":0.4}"##,
         ),
         // ── Ember — amber / crimson ───────────────────────────────────────────
         // Same terms as Aurora: three carried forward verbatim, two new.
         (
             "Ember · Scripture",
             SCRIPTURE,
-            r##"{"font":"var(--f-serif)","background":"radial-gradient(130% 130% at 50% 18%, #3a1508, #140603)","accent":"#ffb066","verseColor":"#fdeede","verseSize":"5.2","refSize":"2.5","italicRef":true,"textShadow":0.55,"verseLineHeight":1.34}"##,
+            r##"{"font":"Fraunces","background":"radial-gradient(130% 130% at 50% 18%, #3a1508, #140603)","accent":"#ffb066","verseColor":"#fdeede","verseSize":"5.2","refSize":"2.5","italicRef":true,"textShadow":0.55,"verseLineHeight":1.34}"##,
         ),
         (
             "Ember · Lyrics",
             LYRIC,
-            r##"{"font":"var(--f-display)","background":"linear-gradient(165deg, #2c0f06, #130603)","accent":"#ffffff","verseColor":"#ffffff","verseSize":"8.5","refSize":"2","textShadow":0.45,"verseLineHeight":1.2}"##,
+            r##"{"font":"Inter","background":"linear-gradient(165deg, #2c0f06, #130603)","accent":"#ffffff","verseColor":"#ffffff","verseSize":"8.5","refSize":"2","textShadow":0.45,"verseLineHeight":1.2}"##,
         ),
         (
             "Ember · Media",
             MEDIA,
-            r##"{"font":"var(--f-display)","background":"linear-gradient(180deg, #3a1508, #140603)","accent":"#ffb066","verseColor":"#fdeede","verseSize":"5.2","refSize":"2.5","textShadow":0.45}"##,
+            r##"{"font":"Inter","background":"linear-gradient(180deg, #3a1508, #140603)","accent":"#ffb066","verseColor":"#fdeede","verseSize":"5.2","refSize":"2.5","textShadow":0.45}"##,
         ),
         (
             "Ember · Announcement",
             ANNOUNCE,
-            r##"{"font":"var(--f-display)","background":"linear-gradient(180deg, #3a1508, #140603)","accent":"#ffb066","verseColor":"#fdeede","verseSize":"3.4","refSize":"2.6","refTransform":"uppercase","refLetterSpacing":0.06,"scroll":true,"textShadow":0.45}"##,
+            r##"{"font":"Inter","background":"linear-gradient(180deg, #3a1508, #140603)","accent":"#ffb066","verseColor":"#fdeede","verseSize":"3.4","refSize":"2.6","refTransform":"uppercase","refLetterSpacing":0.06,"scroll":true,"textShadow":0.45}"##,
         ),
         (
             "Ember · Timer",
             TIMER_EMBER,
-            r##"{"font":"var(--f-display)","background":"radial-gradient(130% 130% at 50% 18%, #3a1508, #140603)","accent":"#ffb066","verseColor":"#fdeede","verseSize":"5","refSize":"2.6","refTransform":"uppercase","refLetterSpacing":0.06,"textShadow":0.45}"##,
+            r##"{"font":"Inter","background":"radial-gradient(130% 130% at 50% 18%, #3a1508, #140603)","accent":"#ffb066","verseColor":"#fdeede","verseSize":"5","refSize":"2.6","refTransform":"uppercase","refLetterSpacing":0.06,"textShadow":0.45}"##,
         ),
         // ── Lower Third — the keyed family ────────────────────────────────────
         // Palette from `builtin_templates()`'s `Lower Third`. `background` is
@@ -540,27 +550,27 @@ fn theme_templates() -> &'static [(&'static str, &'static str, &'static str)] {
         (
             "Lower Third · Scripture",
             BAND_SCRIPTURE,
-            r##"{"font":"var(--f-body)","background":"transparent","accent":"#101319","verseColor":"#f2f4f8","verseSize":"2.6","refSize":"1.7","italicRef":false}"##,
+            r##"{"font":"Inter","background":"transparent","accent":"#101319","verseColor":"#f2f4f8","verseSize":"2.6","refSize":"1.7","italicRef":false}"##,
         ),
         (
             "Lower Third · Lyrics",
             BAND_LYRIC,
-            r##"{"font":"var(--f-body)","background":"transparent","accent":"#101319","verseColor":"#f2f4f8","verseSize":"3","refSize":"1.7","italicRef":false}"##,
+            r##"{"font":"Inter","background":"transparent","accent":"#101319","verseColor":"#f2f4f8","verseSize":"3","refSize":"1.7","italicRef":false}"##,
         ),
         (
             "Lower Third · Media",
             BAND_MEDIA,
-            r##"{"font":"var(--f-body)","background":"transparent","accent":"#101319","verseColor":"#f2f4f8","verseSize":"2.6","refSize":"1.7","italicRef":false}"##,
+            r##"{"font":"Inter","background":"transparent","accent":"#101319","verseColor":"#f2f4f8","verseSize":"2.6","refSize":"1.7","italicRef":false}"##,
         ),
         (
             "Lower Third · Announcement",
             BAND_ANNOUNCE,
-            r##"{"font":"var(--f-body)","background":"transparent","accent":"#101319","verseColor":"#f2f4f8","verseSize":"2.2","refSize":"1.5","italicRef":false,"refTransform":"uppercase","refLetterSpacing":0.08,"scroll":true}"##,
+            r##"{"font":"Inter","background":"transparent","accent":"#101319","verseColor":"#f2f4f8","verseSize":"2.2","refSize":"1.5","italicRef":false,"refTransform":"uppercase","refLetterSpacing":0.08,"scroll":true}"##,
         ),
         (
             "Lower Third · Timer",
             BAND_TIMER,
-            r##"{"font":"var(--f-body)","background":"transparent","accent":"#101319","verseColor":"#f2f4f8","verseSize":"2.6","refSize":"1.7","italicRef":false}"##,
+            r##"{"font":"Inter","background":"transparent","accent":"#101319","verseColor":"#f2f4f8","verseSize":"2.6","refSize":"1.7","italicRef":false}"##,
         ),
         // ── High Visibility — the answer to a lit room and a cheap lens ───────
         // Every key is taken from `data/legacy_themes.json`'s frozen
@@ -600,27 +610,27 @@ fn theme_templates() -> &'static [(&'static str, &'static str, &'static str)] {
         (
             "High Visibility · Scripture",
             SCRIPTURE,
-            r##"{"font":"var(--f-display)","background":"#000000","accent":"#ffffff","verseColor":"#ffffff","refColor":"#ffffff","verseSize":"8","refSize":"3.2","verseLineHeight":"1.4","refGap":"1.6","verseShadow":"0","refShadow":"0","transitionMs":"0","italicRef":false}"##,
+            r##"{"font":"Inter","background":"#000000","accent":"#ffffff","verseColor":"#ffffff","refColor":"#ffffff","verseSize":"8","refSize":"3.2","verseLineHeight":"1.4","refGap":"1.6","verseShadow":"0","refShadow":"0","transitionMs":"0","italicRef":false}"##,
         ),
         (
             "High Visibility · Lyrics",
             LYRIC,
-            r##"{"font":"var(--f-display)","background":"#000000","accent":"#ffffff","verseColor":"#ffffff","refColor":"#ffffff","verseSize":"9","refSize":"3.2","verseLineHeight":"1.4","refGap":"1.6","verseShadow":"0","refShadow":"0","transitionMs":"0","italicRef":false}"##,
+            r##"{"font":"Inter","background":"#000000","accent":"#ffffff","verseColor":"#ffffff","refColor":"#ffffff","verseSize":"9","refSize":"3.2","verseLineHeight":"1.4","refGap":"1.6","verseShadow":"0","refShadow":"0","transitionMs":"0","italicRef":false}"##,
         ),
         (
             "High Visibility · Media",
             MEDIA,
-            r##"{"font":"var(--f-display)","background":"#000000","accent":"#ffffff","verseColor":"#ffffff","refColor":"#ffffff","verseSize":"8","refSize":"3.2","verseLineHeight":"1.4","refGap":"1.6","verseShadow":"0","refShadow":"0","transitionMs":"0","italicRef":false}"##,
+            r##"{"font":"Inter","background":"#000000","accent":"#ffffff","verseColor":"#ffffff","refColor":"#ffffff","verseSize":"8","refSize":"3.2","verseLineHeight":"1.4","refGap":"1.6","verseShadow":"0","refShadow":"0","transitionMs":"0","italicRef":false}"##,
         ),
         (
             "High Visibility · Announcement",
             ANNOUNCE,
-            r##"{"font":"var(--f-display)","background":"#000000","accent":"#ffffff","verseColor":"#ffffff","refColor":"#ffffff","verseSize":"4","refSize":"3.2","verseLineHeight":"1.4","refGap":"1.6","verseShadow":"0","refShadow":"0","transitionMs":"0","italicRef":false,"refTransform":"uppercase","refLetterSpacing":0.06}"##,
+            r##"{"font":"Inter","background":"#000000","accent":"#ffffff","verseColor":"#ffffff","refColor":"#ffffff","verseSize":"4","refSize":"3.2","verseLineHeight":"1.4","refGap":"1.6","verseShadow":"0","refShadow":"0","transitionMs":"0","italicRef":false,"refTransform":"uppercase","refLetterSpacing":0.06}"##,
         ),
         (
             "High Visibility · Timer",
             TIMER_HIVIS,
-            r##"{"font":"var(--f-display)","background":"#000000","accent":"#ffffff","verseColor":"#ffffff","refColor":"#ffffff","verseSize":"6","refSize":"3.2","verseLineHeight":"1.4","refGap":"1.6","verseShadow":"0","refShadow":"0","transitionMs":"0","italicRef":false,"refTransform":"uppercase","refLetterSpacing":0.06}"##,
+            r##"{"font":"Inter","background":"#000000","accent":"#ffffff","verseColor":"#ffffff","refColor":"#ffffff","verseSize":"6","refSize":"3.2","verseLineHeight":"1.4","refGap":"1.6","verseShadow":"0","refShadow":"0","transitionMs":"0","italicRef":false,"refTransform":"uppercase","refLetterSpacing":0.06}"##,
         ),
     ]
 }
@@ -753,6 +763,67 @@ pub(super) fn ensure_lower_third_band_is_not_a_law_colour(
             AND style_json LIKE '%#1c1224%'",
         [],
     )?;
+    Ok(())
+}
+
+/// THE FIVE APP-CHROME TOKENS A SHIPPED TEMPLATE MAY STILL BE HOLDING, and the
+/// real family each of them renders as today.
+///
+/// `--f-display` was Space Grotesk and is now an alias of Inter, so a template
+/// that named it renders in Inter; mapping it anywhere else would CHANGE a wall
+/// rather than seal it. That re-alias is the whole argument for this migration:
+/// it was an edit to the operator console's stylesheet, and it silently changed
+/// the typeface of every template naming the token.
+const CHROME_FACES: &[(&str, &str)] = &[
+    ("var(--f-serif)", "Fraunces"),
+    ("var(--f-display)", "Inter"),
+    ("var(--f-body)", "Inter"),
+    ("var(--f-head)", "Inter"),
+    ("var(--f-mono)", "IBM Plex Mono"),
+];
+
+/// A TEMPLATE NAMES A REAL FAMILY; THE CONSOLE NAMES TOKENS (wave 5, Track E).
+///
+/// Emptying the seed lists of `var(--f-*)` reaches a fresh install and no
+/// existing one — the same asymmetry `ensure_lower_third_band_is_not_a_law_colour`
+/// above exists for. Every church already running Relay has rows whose
+/// `style_json` (and, on a layer template, whose `region_config_json`) stores an
+/// operator-console token, and those rows are rendered on a wall by a page that
+/// resolves the token against whatever the console's stylesheet aliases it to
+/// this week.
+///
+/// Both columns are rewritten, because the two models keep a face in different
+/// places: a region template has one `style.font`, a layer template has a `font`
+/// per layer inside its layout. The substitution is literal and the replacements
+/// contain no token, so a second run matches nothing and a third is identical to
+/// the second (rule 25).
+///
+/// NOTHING A PERSON CHOSE IS LOST. Each replacement is the family the token
+/// already resolved to, so no wall moves; what moves is who decides. An operator
+/// who picked a face in the editor picked a real family already — the editor's
+/// list has offered `Fraunces` and `Inter` by name for as long as it has existed,
+/// and it labels these tokens as the legacy values they are.
+///
+/// ORDERING: this runs AFTER `ensure_retired_presets_are_gone`, which decides
+/// whether a row is a leftover by comparing its BYTES with what the seed wrote.
+/// Rewriting a byte first would make that comparison match nothing, and a
+/// migration that silently retires nothing is the trap rule 43 records. A row the
+/// retirement deliberately KEEPS (because a channel or a plan cue points at it) is
+/// rewritten here and can no longer be byte-matched later — which is correct: a
+/// row in use is somebody's template, not a leftover.
+pub(super) fn ensure_templates_name_real_families(conn: &Connection) -> rusqlite::Result<()> {
+    for (token, family) in CHROME_FACES {
+        for column in ["style_json", "region_config_json"] {
+            conn.execute(
+                &format!(
+                    "UPDATE templates
+                        SET {column} = replace({column}, ?1, ?2)
+                      WHERE {column} LIKE '%' || ?1 || '%'"
+                ),
+                (token, family),
+            )?;
+        }
+    }
     Ok(())
 }
 
@@ -1450,6 +1521,47 @@ mod preset_template_tests {
         conn.execute_batch(SCHEMA).unwrap();
         conn.execute_batch("COMMIT;").ok();
         conn
+    }
+
+    #[test]
+    fn no_seed_list_writes_an_app_chrome_token() {
+        // THE SEAL, AT THE SOURCE. Its sibling in `db/mod.rs` asks the same
+        // question of a seeded database, and that one CANNOT FAIL on a bad seed:
+        // `ensure_templates_name_real_families` runs during `fresh_db()` and
+        // repairs the row before the assertion reads it. Putting a token back in
+        // `builtin_templates()` was the check that found this — the DB test stayed
+        // green, which is a test that cannot fail, which is a theory nobody tested.
+        // So the rule is asserted in both places, and this is the half that fails
+        // when somebody WRITES one.
+        //
+        // `var(--f-serif)` and friends are declared in the operator console's
+        // stylesheet. A template naming one renders in whatever the console
+        // aliases that name to today — and `--f-display` was re-aliased from Space
+        // Grotesk to Inter exactly that way, changing the typeface of every
+        // template naming it without one template being edited. Wave 5, Track E.
+        let mut offenders: Vec<String> = Vec::new();
+        for (name, layout, style) in builtin_templates()
+            .iter()
+            .map(|(n, l, s)| (*n, *l, *s))
+            .chain(all_presets())
+        {
+            for (what, text) in [("layout", layout), ("style", style)] {
+                if text.contains("var(--") {
+                    offenders.push(format!("{name} ({what})"));
+                }
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "a seed list writes an app-chrome token; a template names a real \
+             family (wave 5, Track E): {offenders:?}"
+        );
+        // …and the scanner is looking at something. A seed list that emptied would
+        // satisfy the assertion above by saying nothing at all.
+        assert!(
+            builtin_templates().len() + all_presets().count() > 20,
+            "the seed lists went missing, so the assertion above proved nothing"
+        );
     }
 
     #[test]

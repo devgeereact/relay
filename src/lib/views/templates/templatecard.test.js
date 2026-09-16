@@ -79,7 +79,13 @@ const px = (v) => (v && /^-?[\d.]+px$/.test(v.trim()) ? parseFloat(v) : null);
 // Design tokens this file prices against, from `src/app.css`. Read, not copied,
 // so a retuned type scale reaches the arithmetic instead of silently invalidating
 // it — the same reason `check-updater.mjs` reads the endpoint out of the config.
-const APPCSS = readFileSync(resolve('src/app.css'), 'utf8');
+// Both halves: the console's own sheet PLUS the shared token sheet it imports. Wave 5,
+// Track E moved the palette into `src/tokens.css` so `output.html` and
+// `stage.html` could take the tokens without taking the console's rules; a
+// scanner that reads one of the two files now reads half the stylesheet.
+const APPCSS = ['src/tokens.css', 'src/app.css']
+  .map((f) => readFileSync(resolve(f), 'utf8'))
+  .join('\n');
 const token = (name) => {
   const m = new RegExp(`${name}\\s*:\\s*([\\d.]+)px`).exec(APPCSS);
   return m ? parseFloat(m[1]) : null;
