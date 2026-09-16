@@ -609,6 +609,10 @@ struct FrozenTheme {
 /// rather than a style blob with no regions.
 const ORPHAN_THEME_LAYOUT: &str = r##"{"regions":["verse_text","reference"],"align":"center","lowerThird":false,"refFirst":false}"##;
 
+/// One of the operator's own themes as it comes out of `app_settings`: its id,
+/// the name it will be preserved under if nothing referenced it, and its style.
+type CustomTheme = (i64, String, serde_json::Map<String, Value>);
+
 /// INLINE EVERY THEME A TEMPLATE POINTED AT, THEN DROP THE THEMES.
 ///
 /// A theme reached a screen exactly one way: a template's `style.themeRef`,
@@ -649,11 +653,25 @@ const ORPHAN_THEME_LAYOUT: &str = r##"{"regions":["verse_text","reference"],"ali
 /// Idempotent: a second run finds no `themeRef` to act on and no
 /// `themes.custom` to preserve.
 pub(super) fn ensure_themes_are_inlined(conn: &Connection) -> rusqlite::Result<()> {
-    // A MALFORMED SNAPSHOT MUST NOT STOP THE APP BOOTING. With no known themes
-    // every ref is dropped without inlining, which is exactly what a dangling
-    // ref already did on screen. It cannot ship broken: `legacythemes.test.js`
-    // reads the same bytes.
-    let (whitelist, mut known) = match serde_json::from_str::<FrozenThemes>(LEGACY_THEMES_JSON) {
+    inline_themes(conn, LEGACY_THEMES_JSON)
+}
+
+/// The body, taking the snapshot as an argument so the malformed-file path is a
+/// thing a test can actually drive. Reading it from a `const` made the one branch
+/// that decides whether an operator's themes survive a broken build the one branch
+/// no test could reach.
+fn inline_themes(conn: &Connection, snapshot: &str) -> rusqlite::Result<()> {
+    // A MALFORMED SNAPSHOT MUST NOT STOP THE APP BOOTING, AND MUST NOT DESTROY
+    // ANYTHING EITHER. It returns having touched nothing at all. A `themeRef`
+    // left in a style is harmless (the renderer ignores the key, and with no
+    // themes to resolve it against a template shows its own look, which is what
+    // a dangling ref always did), so the whole job simply waits for a release
+    // that fixes the file, with the operator's themes still in `app_settings`.
+    // The earlier version of this branch carried on with no known themes: it
+    // dropped every ref, inlined nothing, and then deleted `themes.custom`,
+    // which is a look changing AND the look being erased. It cannot ship broken:
+    // `legacythemes.test.js` reads the same bytes.
+    let (whitelist, mut known) = match serde_json::from_str::<FrozenThemes>(snapshot) {
         Ok(f) => (
             f.style_keys,
             f.themes
@@ -662,8 +680,8 @@ pub(super) fn ensure_themes_are_inlined(conn: &Connection) -> rusqlite::Result<(
                 .collect::<Vec<_>>(),
         ),
         Err(e) => {
-            eprintln!("legacy_themes.json could not be read ({e}); refs will be dropped");
-            (Vec::new(), Vec::new())
+            eprintln!("legacy_themes.json could not be read ({e}); themes are left alone");
+            return Ok(());
         }
     };
     let whitelisted = |k: &String| whitelist.iter().any(|w| w == k);
@@ -673,7 +691,11 @@ pub(super) fn ensure_themes_are_inlined(conn: &Connection) -> rusqlite::Result<(
     // `parseThemes` skipped it too and a template pointing at one was already
     // rendering as a dangling ref.
     let custom_raw = get_setting(conn, "themes.custom")?;
-    let custom: Vec<(i64, String, serde_json::Map<String, Value>)> = custom_raw
+    // `None` here means the blob did not parse, which is NOT the same as an
+    // operator with no custom themes. Only the second may have its key deleted:
+    // destroying a blob nobody could read is destroying the only copy of
+    // whatever was in it.
+    let parsed: Option<Vec<CustomTheme>> = custom_raw
         .as_deref()
         .and_then(|raw| serde_json::from_str::<Vec<Value>>(raw).ok())
         .map(|list| {
@@ -686,14 +708,19 @@ pub(super) fn ensure_themes_are_inlined(conn: &Connection) -> rusqlite::Result<(
                     Some((id, name.to_string(), style))
                 })
                 .collect()
-        })
-        .unwrap_or_default();
+        });
+    let custom: &[CustomTheme] = parsed.as_deref().unwrap_or(&[]);
     known.extend(custom.iter().map(|(id, _, s)| (*id, s.clone())));
 
     let tx = conn.unchecked_transaction()?;
 
+    // ONLY the styles that can possibly carry a ref. After the one-off pass this
+    // matches nothing, and the scan costs a `LIKE` rather than every template's
+    // style blob through serde on every boot: a single blob in this repository
+    // has reached 13 MB (a `data:` URL background), and a church can have many.
     let rows: Vec<(i64, String)> = {
-        let mut stmt = tx.prepare("SELECT id, style_json FROM templates")?;
+        let mut stmt =
+            tx.prepare("SELECT id, style_json FROM templates WHERE style_json LIKE '%themeRef%'")?;
         let it = stmt.query_map([], |r| Ok((r.get(0)?, r.get::<_, String>(1)?)))?;
         it.collect::<rusqlite::Result<Vec<_>>>()?
     };
@@ -711,11 +738,21 @@ pub(super) fn ensure_themes_are_inlined(conn: &Connection) -> rusqlite::Result<(
         };
         if let Some(theme_ref) = theme_ref.as_i64() {
             if let Some((_, theme_style)) = known.iter().find(|(tid, _)| *tid == theme_ref) {
-                inlined.push(theme_ref);
+                let mut kept = 0usize;
                 for (k, v) in theme_style {
-                    if whitelisted(k) {
-                        style.entry(k.clone()).or_insert_with(|| v.clone());
+                    if whitelisted(k) && !style.contains_key(k) {
+                        style.insert(k.clone(), v.clone());
+                        kept += 1;
                     }
+                }
+                // `inlined` means A KEY OF THIS THEME NOW LIVES IN A TEMPLATE, not
+                // merely that the id matched. A theme whose keys were all off the
+                // whitelist, or all already set by the template itself, gave this
+                // template nothing: counting it as preserved here would skip it in
+                // the loop below and then delete it, which is the operator's look
+                // erased on the strength of a match that saved none of it.
+                if kept > 0 {
+                    inlined.push(theme_ref);
                 }
             }
         }
@@ -728,35 +765,62 @@ pub(super) fn ensure_themes_are_inlined(conn: &Connection) -> rusqlite::Result<(
         )?;
     }
 
-    for (id, name, style) in &custom {
+    for (id, name, style) in custom {
         if inlined.contains(id) {
             continue; // already preserved, inside the template that used it
         }
-        let present: i64 = tx.query_row(
-            "SELECT COUNT(*) FROM templates WHERE name = ?1",
-            [name],
-            |r| r.get(0),
-        )?;
-        if present > 0 {
-            continue;
+        // A TAKEN NAME IS RENAMED, NEVER SKIPPED. Two custom themes can share a
+        // name, and one can share a name with a template that already exists;
+        // skipping on a collision meant the key was deleted a few lines later
+        // and a look the operator built was gone, silently and with no way
+        // back. Nothing this migration touches is discarded, so the theme goes
+        // in under a name that is free and the line below says which one.
+        let mut chosen = name.clone();
+        if name_is_taken(&tx, &chosen)? {
+            chosen = format!("{name} (theme)");
+            let mut n = 2;
+            while name_is_taken(&tx, &chosen)? {
+                chosen = format!("{name} (theme {n})");
+                n += 1;
+            }
         }
-        eprintln!("themes: keeping {name:?} as a template (nothing referenced it)");
+        if chosen == *name {
+            eprintln!("themes: keeping {name:?} as a template (nothing referenced it)");
+        } else {
+            eprintln!(
+                "themes: keeping {name:?} as a template named {chosen:?} (the name was taken)"
+            );
+        }
         // NOT whitelist-filtered, deliberately: this one never rendered, so
         // there is no look to reproduce, only saved work to keep whole.
         tx.execute(
             "INSERT INTO templates (name, region_config_json, style_json) VALUES (?1, ?2, ?3)",
             (
-                name,
+                &chosen,
                 ORPHAN_THEME_LAYOUT,
                 Value::Object(style.clone()).to_string(),
             ),
         )?;
     }
-    if custom_raw.is_some() {
+    // Gated on having PARSED the blob, not on its being present. An unreadable
+    // blob is left exactly where it is: it is the only copy of whatever the
+    // operator saved, and this migration cannot preserve what it cannot read.
+    if parsed.is_some() {
         tx.execute("DELETE FROM app_settings WHERE key = 'themes.custom'", [])?;
     }
 
     tx.commit()
+}
+
+/// Whether a template of this exact name already exists. Its own function only so
+/// the rename loop above reads as the one question it asks repeatedly.
+fn name_is_taken(conn: &Connection, name: &str) -> rusqlite::Result<bool> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM templates WHERE name = ?1",
+        [name],
+        |r| r.get(0),
+    )?;
+    Ok(n > 0)
 }
 
 pub(super) fn ensure_preset_templates(conn: &Connection) -> rusqlite::Result<()> {
@@ -1560,5 +1624,225 @@ mod theme_inlining_tests {
             )
             .unwrap();
         assert_eq!(orphan, 0, "a referenced theme was duplicated as a template");
+    }
+    #[test]
+    fn a_snapshot_that_will_not_parse_leaves_every_theme_exactly_where_it_was() {
+        // FINDING 1. The old bail-out carried on with no known themes: it dropped
+        // every ref, inlined nothing, and then deleted `themes.custom`. That is
+        // the operator's look changed AND the only copy of it erased, on a boot
+        // where the one thing Relay knew was that it could not read its own
+        // snapshot. It must touch nothing: a ref left in a style renders exactly
+        // as a dropped one would, and a release can fix the file later.
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate(&conn, true).unwrap();
+        let blob = r##"[{"id":5,"name":"Harvest","style":{"accent":"#e08b2a"}}]"##;
+        set_setting(&conn, "themes.custom", blob).unwrap();
+        conn.execute(
+            "INSERT INTO templates (name, region_config_json, style_json) VALUES (?1, ?2, ?3)",
+            (
+                "Themed",
+                r##"{"regions":["verse_text"]}"##,
+                r##"{"themeRef":5}"##,
+            ),
+        )
+        .unwrap();
+
+        inline_themes(&conn, "{ this is not the snapshot }").unwrap();
+
+        let style: String = conn
+            .query_row(
+                "SELECT style_json FROM templates WHERE name = 'Themed'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(style.contains("themeRef"), "the ref was dropped: {style}");
+        assert_eq!(
+            get_setting(&conn, "themes.custom").unwrap().as_deref(),
+            Some(blob),
+            "the operator's themes were deleted by a run that preserved nothing"
+        );
+        let orphan: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM templates WHERE name = 'Harvest'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(orphan, 0, "nothing should have been written at all");
+    }
+
+    #[test]
+    fn the_shipped_snapshot_parses_so_that_branch_is_never_taken_in_a_real_build() {
+        // The bail-out above is for a broken build, not for a normal one. This is
+        // the Rust half of the guard; `legacythemes.test.js` reads the same bytes.
+        serde_json::from_str::<FrozenThemes>(LEGACY_THEMES_JSON)
+            .expect("the shipped snapshot must parse");
+    }
+
+    #[test]
+    fn a_theme_that_ended_up_contributing_no_key_is_still_preserved() {
+        // FINDING 2. `inlined` used to mean "the id matched". A theme whose keys
+        // are all off the whitelist matches, contributes nothing, and was then
+        // skipped by the preservation loop and deleted: the look was erased on
+        // the strength of a match that saved none of it.
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate(&conn, true).unwrap();
+        set_setting(
+            &conn,
+            "themes.custom",
+            r##"[{"id":5,"name":"Harvest","style":{"scroll":true}}]"##,
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO templates (name, region_config_json, style_json) VALUES (?1, ?2, ?3)",
+            (
+                "Themed",
+                r##"{"regions":["verse_text"]}"##,
+                r##"{"themeRef":5}"##,
+            ),
+        )
+        .unwrap();
+        ensure_themes_are_inlined(&conn).unwrap();
+        let kept: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM templates WHERE name = 'Harvest'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(kept, 1, "a theme that saved nothing anywhere was deleted");
+    }
+
+    #[test]
+    fn a_taken_name_is_renamed_rather_than_the_look_being_thrown_away() {
+        // FINDING 3. Two themes called "Harvest", and the second used to be
+        // skipped and then deleted with the key: silent, irreversible, and a look
+        // the operator built. Both survive, under names that are free.
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate(&conn, true).unwrap();
+        set_setting(
+            &conn,
+            "themes.custom",
+            r##"[{"id":5,"name":"Harvest","style":{"accent":"#111111"}},
+                 {"id":6,"name":"Harvest","style":{"accent":"#222222"}},
+                 {"id":7,"name":"Harvest","style":{"accent":"#333333"}}]"##,
+        )
+        .unwrap();
+        ensure_themes_are_inlined(&conn).unwrap();
+        for (name, colour) in [
+            ("Harvest", "#111111"),
+            ("Harvest (theme)", "#222222"),
+            ("Harvest (theme 2)", "#333333"),
+        ] {
+            let style: String = conn
+                .query_row(
+                    "SELECT style_json FROM templates WHERE name = ?1",
+                    [name],
+                    |r| r.get(0),
+                )
+                .unwrap_or_else(|e| panic!("{name} was not kept: {e}"));
+            assert!(
+                style.contains(colour),
+                "{name} holds the wrong look: {style}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_failure_part_way_through_rolls_back_and_the_next_boot_completes_it() {
+        // FINDING 4, and rule 25 proper. Running it three times cleanly proves
+        // idempotency, not retryability. This kills it MID-RUN: TWO themed
+        // templates, and a trigger that lets the first through and aborts the
+        // second. Without one transaction around the whole thing the first
+        // rewrite stands, committed, while `themes.custom` still holds the theme
+        // it came from, and a retry landing there duplicates every custom theme.
+        // Modelled on `db::tests::foreign_keys_are_on_again_afterwards_and_no_
+        // transaction_is_left_open`.
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate(&conn, true).unwrap();
+        let blob = r##"[{"id":5,"name":"Harvest","style":{"accent":"#e08b2a"}}]"##;
+        set_setting(&conn, "themes.custom", blob).unwrap();
+        for name in ["First", "Second"] {
+            conn.execute(
+                "INSERT INTO templates (name, region_config_json, style_json) VALUES (?1, ?2, ?3)",
+                (
+                    name,
+                    r##"{"regions":["verse_text"]}"##,
+                    r##"{"themeRef":-1}"##,
+                ),
+            )
+            .unwrap();
+        }
+        conn.execute_batch(
+            "CREATE TRIGGER boom BEFORE UPDATE ON templates WHEN NEW.name = 'Second'
+             BEGIN SELECT RAISE(ABORT, 'boom'); END;",
+        )
+        .unwrap();
+
+        assert!(
+            ensure_themes_are_inlined(&conn).is_err(),
+            "the failure must be reported, not swallowed"
+        );
+        assert!(
+            conn.is_autocommit(),
+            "a transaction was left open; the PRAGMA that follows would no-op inside it"
+        );
+        let read = |name: &str| -> String {
+            conn.query_row(
+                "SELECT style_json FROM templates WHERE name = ?1",
+                [name],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        // THE ONE THAT SUCCEEDED MUST HAVE BEEN UNDONE TOO.
+        assert!(
+            read("First").contains("themeRef"),
+            "a half-run was committed: {}",
+            read("First")
+        );
+        assert!(read("Second").contains("themeRef"));
+        assert_eq!(
+            get_setting(&conn, "themes.custom").unwrap().as_deref(),
+            Some(blob),
+            "the themes were deleted by a run that rolled back"
+        );
+
+        // The next boot, with whatever broke it gone.
+        conn.execute_batch("DROP TRIGGER boom;").unwrap();
+        ensure_themes_are_inlined(&conn).expect("the retry must complete");
+        for name in ["First", "Second"] {
+            let v: serde_json::Value = serde_json::from_str(&read(name)).unwrap();
+            assert!(v.get("themeRef").is_none(), "{name} kept its ref");
+            assert_eq!(v["accent"], "#22d3ee", "the retry inlined the wrong look");
+        }
+        assert!(get_setting(&conn, "themes.custom").unwrap().is_none());
+        // And exactly one copy of the preserved theme, not one per retry.
+        let harvest: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM templates WHERE name = 'Harvest'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(harvest, 1);
+    }
+    #[test]
+    fn an_unreadable_themes_blob_is_left_alone_rather_than_destroyed() {
+        // The DELETE used to be gated on the key being PRESENT. A blob that will
+        // not parse preserves nothing and is then the only copy of whatever the
+        // operator saved, so deleting it is the one irreversible thing this
+        // migration could do to data it never even read.
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate(&conn, true).unwrap();
+        let junk = "[{\"id\":5, truncated";
+        set_setting(&conn, "themes.custom", junk).unwrap();
+        ensure_themes_are_inlined(&conn).unwrap();
+        assert_eq!(
+            get_setting(&conn, "themes.custom").unwrap().as_deref(),
+            Some(junk),
+            "an unreadable blob was destroyed"
+        );
     }
 }
