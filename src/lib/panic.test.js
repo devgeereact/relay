@@ -23,9 +23,8 @@ import { installShortcuts } from './shortcuts.js';
 const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a) => invoke(...a) }));
 
-const { clearScreens, blackScreen, panicError, dismissPanicError, capture } = await import(
-  './stores/capture.js'
-);
+const { clearScreens, blackScreen, panicError, dismissPanicError, capture, stageAlert } =
+  await import('./stores/capture.js');
 
 describe('panic controls tell the truth', () => {
   beforeEach(() => {
@@ -213,5 +212,55 @@ describe('removing Emergency Stop left both of its paths standing', () => {
     const css = readFileSync(resolve(process.cwd(), 'src/app.css'), 'utf8');
     expect(css).toMatch(/\.shell\.chromeless \.topbar-v,/);
     expect(app).toContain('{#if !liveFullscreen}<Dock />{/if}');
+  });
+});
+
+// ── THE CONSOLE'S MIRROR OF THE WORD TO THE PREACHER ─────────────────────────
+//
+// DECISIONS §89 decided that a panic control takes back every sentence anybody put
+// on a screen and stops none of the clocks, so `Stage.svelte` now clears `alert` on
+// `clear` and on `black`. `stageAlert` is the console's mirror of what Relay SENT,
+// and until §89 it was right to survive a panic, because the alert did. It is not
+// right any more: Quick tools paints an "on stage" badge and enables **Take down**
+// from this store, so after Esc the operator was offered a control for a word that
+// was already down, under a comment claiming the badge says "what the preacher's
+// monitor is painting at that moment". Rule 35, on the one surface that could have
+// told them. RG-145.
+//
+// The mirror is cleared only on SUCCESS, the same discipline `sendStageAlert`
+// documents for itself: a panic that failed has taken nothing off any screen, and a
+// console that said otherwise would be the failure rule 15 exists for, one surface
+// along. Both cases below were watched to fail by removing the `stageAlert.set(null)`
+// from `panicRun`'s success branch.
+describe('a panic control takes the console mirror of the word with it (RG-145)', () => {
+  beforeEach(() => {
+    invoke.mockReset();
+    panicError.set(null);
+    stageAlert.set('Wrap up in 5');
+    capture.update((s) => ({ ...s, available: true }));
+  });
+
+  it('clearScreens lets go of the word it can no longer see', async () => {
+    invoke.mockResolvedValue(null);
+    expect(await clearScreens()).toBe(true);
+    expect(
+      get(stageAlert),
+      'Quick tools still offers Take down for a word that is already down',
+    ).toBe(null);
+  });
+
+  it('blackout answers the same way', async () => {
+    invoke.mockResolvedValue(null);
+    expect(await blackScreen()).toBe(true);
+    expect(get(stageAlert)).toBe(null);
+  });
+
+  it('a panic that FAILED leaves the mirror alone, because nothing came off a screen', async () => {
+    invoke.mockRejectedValue('emit failed');
+    expect(await clearScreens()).toBe(false);
+    expect(
+      get(stageAlert),
+      'a failed clear claimed to have taken the word off the preacher\'s monitor',
+    ).toBe('Wrap up in 5');
   });
 });

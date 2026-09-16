@@ -2645,6 +2645,16 @@ try {
   const call = await invoke();
   await call(cmd);
   panicError.set(null);
+  // AND THE CONSOLE'S MIRROR OF THE WORD TO THE PREACHER GOES WITH IT (RG-145).
+  // DECISIONS §89: a panic control takes back every sentence anybody put on a
+  // screen, so `Stage.svelte` clears the alert on both controls. This store is what
+  // Quick tools paints its "on stage" badge and its Take down button from, so
+  // leaving it set offered the operator a control for a word that was already down,
+  // under a comment claiming the badge says what the monitor is painting right now.
+  // After the call resolves and never before — the same discipline `sendStageAlert`
+  // keeps — because a panic that FAILED has taken nothing off any screen, and a
+  // console that said otherwise is rule 15 one surface along.
+  stageAlert.set(null);
   return true;
 } catch (e) {
   // In a plain browser there is no backend AND no output screen, so there is
