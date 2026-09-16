@@ -348,11 +348,6 @@ export function setCountdownWarnDefault(ms) {
   return warnDefaultMs;
 }
 
-/** What the rule would use right now, absent a figure chosen for one timer. */
-export function countdownWarnDefault() {
-  return warnDefaultMs;
-}
-
 /**
  * Is this countdown inside its warning window?
  *
