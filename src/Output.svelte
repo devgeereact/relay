@@ -192,6 +192,14 @@
       // kind (e.g. a stage monitor set to scripture + songs + timer only, and a
       // picture just fired), ignore it and hold what's already up — the online
       // wall shows the picture, this screen keeps the passage.
+      //
+      // SITE 8 OF THE CONTENT-KIND SWEEP, THE KIOSK DOOR. Nothing changed: a
+      // congregation timer arrives as `countdown`, which every `shows` list names,
+      // and a programme timer is never published as content so it cannot reach this
+      // page by any route. The TWIN of this line is the `output://content` listener
+      // in `onMount` — the native window has the Tauri bridge and no socket, so a
+      // filter written here and not there is the "guarantee kept on one door"
+      // mistake, on the two screens most often in the same room.
       if (m.content_kind && !templateShows(t, m.content_kind)) return;
       // The override takes effect WITH the content, never before it — see the
       // snapshot comment at the top of this file.
@@ -292,7 +300,10 @@
       const { listen } = await import('@tauri-apps/api/event');
       unlisten.push(await listen('output://content', (e) => {
         // Per-screen visibility (see applyMessage) — hold what's up if this screen
-        // doesn't show the fired kind.
+        // doesn't show the fired kind. SITE 8's other half: the kiosk protocol
+        // renames `kind` to `content_kind`, so the two doors read a differently
+        // named field off differently shaped messages and only the rule is shared.
+        // Swept with the kiosk door and needed nothing for the same reason.
         if (e.payload?.kind && !templateShows(t, e.payload.kind)) return;
         appliedTransition = pendingTransition;
         content = e.payload;

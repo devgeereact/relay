@@ -3173,6 +3173,16 @@ fn show_timer<R: tauri::Runtime>(
         cue_or_content_tpl(&conn, template_id, "countdown")
     };
     broadcast_with_clock(&app, countdown_content(&timer, tid, tjson, tpinned))?;
+    // ── SITE 11 OF THE CONTENT-KIND SWEEP. NOTHING CHANGED, AND WHY ───────────
+    //
+    // `cues.type` is free-form TEXT with no CHECK (docs/data/schema.sql), so a new
+    // value would need no migration — and none is written. Putting a timer back is
+    // recorded as `"countdown"`, the same value `start_countdown` writes, because
+    // it is the same thing appearing on the same screens; a service history that
+    // called the two different things would be making a distinction a reader of the
+    // history cannot act on. Nothing writes a sixth `plan_items.cue_type` either,
+    // so the enumerating comment at `schema.sql`'s `cue_type` column is still
+    // accurate and is deliberately left alone.
     persist_cue(&app, "countdown", None);
     Ok(())
 }
@@ -3314,6 +3324,16 @@ fn fire_media<R: tauri::Runtime>(
 /// rather than the channel's, so the intent (a deliberate, non-default look)
 /// degrades to the next best thing instead of to whatever the channel happens to
 /// be set to.
+///
+/// ── SITE 3 OF THE CONTENT-KIND SWEEP. NOTHING CHANGED HERE, AND WHY ──────────
+///
+/// `kind` here is a lookup key into the content-look register, so a kind with no
+/// row simply falls through to the configured default — it is never silently
+/// unstyled. The timer registry adds no key: `start_countdown` and `show_timer`
+/// both ask for `"countdown"`, which is the row that already exists, because a
+/// congregation timer's content kind did not change. A `Stage`-scoped timer asks
+/// nothing of this function: it renders on the stage page, which has no
+/// congregation template to resolve, and `show_timer` refuses to project one.
 fn cue_or_content_tpl(
     conn: &rusqlite::Connection,
     cue_template_id: Option<i64>,
@@ -3385,6 +3405,16 @@ mod cue_or_content_tpl_tests {
 }
 
 /// The default template ids mapped to each content type.
+///
+/// ── SITE 4 OF THE CONTENT-KIND SWEEP. NOTHING CHANGED HERE, AND WHY ──────────
+///
+/// Five hard-coded fields, and a kind missing from them gets no row in the
+/// content-look UI — an operator can never choose its look, silently. The timer
+/// registry adds no field: a congregation timer is still `countdown`, which is
+/// already the fifth row, and a `Stage` timer has no congregation look to set.
+/// The list here must stay in step with `CONTENT_KINDS` in `src/lib/layers.js`,
+/// which is the canonical vocabulary; the two are mirrored by hand and no test
+/// links them, so a sixth kind has to be written in both places.
 #[derive(serde::Serialize)]
 struct ContentTemplates {
     scripture: Option<i64>,
