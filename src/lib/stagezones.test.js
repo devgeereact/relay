@@ -380,7 +380,7 @@ describe('the reading is sized to the room and to the passage', () => {
   });
 });
 
-describe('a word to the preacher', () => {
+describe('the Stage Message', () => {
   // S3 · A MESSAGE THAT DOES NOT FIT IS A MESSAGE NOBODY READ.
   //
   // §5 fixes the type at 8.5cqw and the panel at `overflow: hidden`, which is the

@@ -278,7 +278,7 @@ describe('a held countdown holds on the wall', () => {
   });
 });
 
-describe('the word to the preacher survives the dock being destroyed', () => {
+describe('the Stage Message survives the dock being destroyed', () => {
   // The shell renders the dock as `{#if !liveFullscreen}<Dock />{/if}`. Pressing
   // Full screen destroys it. With the "did we send one" flag living in the
   // component, a word still on the preacher's monitor came back as "nothing sent"

@@ -10,7 +10,7 @@
   let content = null;
   let visible = false;
   let note = ''; // operator's confidence-monitor note for the live cue
-  // A WORD TO THE PREACHER. Takes the whole screen until the operator clears it.
+  // The Stage Message. Takes the whole screen until the operator clears it.
   // It lives here, in the stage renderer, which is what makes "no congregation
   // screen can show it" a property of the system rather than a promise: the
   // output page has an explicit `false` verdict for this message kind
@@ -125,7 +125,7 @@
   //   · `elapsed` — the service clock, which only exists while a service is
   //                 actually recording.
   //
-  // So the operator typed a word to the preacher, the console showed it had gone,
+  // So the operator typed a Stage Message, the console showed it had gone,
   // and the preacher's screen showed nothing — because of a switch on a device the
   // operator cannot see, which nobody had been told to find. Nothing anywhere
   // reports that. That is rule 35's shape on the one screen whose reader cannot
@@ -371,7 +371,7 @@
     Math.max(16, Math.round((6.5 + Math.sqrt(6.5 * 6.5 + 4 * 6.5 * verseChars)) / 2)),
   );
 
-  // A WORD TO THE PREACHER, SIZED TO ITS LENGTH.
+  // The Stage Message, SIZED TO ITS LENGTH.
   //
   // §5 fixes the type at 8.5cqw and the panel at `overflow: hidden`, which is the
   // right pair for the message §5 describes ("Wrap up — 5 minutes"). It is the
@@ -916,7 +916,7 @@
   }
   @keyframes cdwarn { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
   /* Operator's cue note — confidence-monitor only, never on the main output. */
-  /* A WORD TO THE PREACHER — docs/REBRAND.md §5. The pulse is the point: a
+  /* The Stage Message — docs/REBRAND.md §5. The pulse is the point: a
      platform is a bright place and a flat red panel reads as part of the set. */
   .alert {
     /* FIXED, and above everything. This is read by somebody mid-sentence in front

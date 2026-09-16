@@ -1967,7 +1967,7 @@ return guardedRead('listOutputChannels', async (call) => {
 export const stageAlert = writable(null);
 
 /**
- * A WORD TO THE PREACHER — one line, the whole stage monitor, and no other
+ * The Stage Message — one line, the whole stage monitor, and no other
  * screen (docs/REBRAND.md §5). Empty or whitespace clears it.
  *
  * GROUP 1 (throws). The operator is sending a message to a person and is looking
