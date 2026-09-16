@@ -2505,13 +2505,23 @@ export async function applySafeMode(on) {
 export const readErrors = writable({});
 
 /** Run a GROUP 2 read, remembering why it failed instead of discarding it. */
-async function guardedRead(key, run, fallback) {
+async function guardedRead(key, run, fallback, onFail) {
 try {
   const value = await run(await invoke());
   readErrors.update((m) => (m[key] ? { ...m, [key]: null } : m));
   return value;
 } catch (e) {
   readErrors.update((m) => ({ ...m, [key]: e }));
+  // THE FOURTH ARGUMENT WAS BEING DROPPED ON THE FLOOR, AND TWO CALL SITES WERE
+  // ALREADY PASSING IT. A fallback VALUE cannot carry a side effect: a read that
+  // populates a store has nothing to hand back, so letting go of the stale value
+  // is something the catch has to DO. Without this, `loadDefaultTemplate` left
+  // `defaultTemplateId` holding an id the backend could no longer confirm and
+  // `loadServiceTarget` left the stopwatch counting against a length nobody had
+  // answered for — each under a comment saying the reset was explicit. Pinned by
+  // `readstates.test.js`, "a failed read resets the store its call site asked to
+  // reset". Optional: most reads degrade to a value and want nothing here.
+  if (typeof onFail === 'function') onFail();
   return fallback;
 }
 }

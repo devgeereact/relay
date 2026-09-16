@@ -407,3 +407,50 @@ describe('Settings → the Sentry DSN', () => {
     expect(text(el)).not.toMatch(/Not saved yet/);
   });
 });
+
+// ── A RESET THE READ GUARD SILENTLY DROPPED ──────────────────────────────────
+//
+// `guardedRead(key, run, fallback)` takes three arguments. Two call sites pass a
+// FOURTH — a closure that resets the store — and each carries a comment saying in
+// as many words that a fallback VALUE cannot carry a side effect, so "the reset is
+// explicit". It was not explicit; it was dropped on the floor. A failed read left
+// `defaultTemplateId` holding an id the backend could no longer confirm and
+// `serviceTargetMinutes` holding a length nobody had answered for, which is the
+// same shape as rule 35: the store says the same thing whether the read worked or
+// not. Found while auditing wave 3's Track D.
+//
+// Both cases below were watched to go RED by removing the `onFail` call from
+// `guardedRead`'s catch, which is the defect exactly as it shipped.
+describe('a failed read resets the store its call site asked to reset', () => {
+  it('the configured default template is let go rather than kept stale', async () => {
+    const { loadDefaultTemplate, defaultTemplateId } = cap;
+
+    invoke.mockResolvedValue('7');
+    await loadDefaultTemplate();
+    expect(get(defaultTemplateId), 'the good read never landed').toBe(7);
+
+    invoke.mockRejectedValue(new Error('database is locked'));
+    await loadDefaultTemplate();
+
+    expect(
+      get(defaultTemplateId),
+      'a failed read left the store holding an id the backend could not confirm',
+    ).toBe(null);
+  });
+
+  it('the service length is let go rather than kept stale', async () => {
+    const { loadServiceTarget, serviceTargetMinutes } = cap;
+
+    invoke.mockResolvedValue('75');
+    await loadServiceTarget();
+    expect(get(serviceTargetMinutes), 'the good read never landed').toBe(75);
+
+    invoke.mockRejectedValue(new Error('database is locked'));
+    await loadServiceTarget();
+
+    expect(
+      get(serviceTargetMinutes),
+      'a failed read left the on-air stopwatch counting against a target nobody answered for',
+    ).toBe(0);
+  });
+});
