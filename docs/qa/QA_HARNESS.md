@@ -20,6 +20,56 @@ every edit: `.claude/hooks/relay-fast-gate.mjs`, path-filtered and report-only (
 
 ## 0. Current inventory
 
+Re-measured **2026-09-16**, on `feat/wave5-track-j` — the wave 5 integration branch with all
+seven code tracks merged (A the forty seeded looks, B/F/H the editor, C channel roles, D the
+names, E the seal, G the bare timer, I starter content), taken during the browser-driven pass
+that wave's plan leaves to integration. Seven tracks deliberately did not touch this section,
+because all seven were moving the same numbers and a register that is rewritten seven times in
+one wave records the last agent's worktree rather than the assembled tree. `npm run build` ran
+first, per RG-127.
+
+| Count | Value | Command |
+|---|---|---|
+| Rust tests | **809 passed / 0 failed / 16 ignored** | `cd src-tauri && cargo test` |
+| Frontend tests | **2417 passed, 157 files** | `npx vitest run` |
+| `e2e.rs` tests | **67 passed / 0 ignored** | `cd src-tauri && cargo test e2e::` |
+| Registered commands | **140** | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
+| qa-inventory | 140/140 addressed, 0 handlerless, 0 unnamed | `node scripts/qa-inventory.mjs` |
+
+`cargo fmt --all`, `clippy --all-targets -- -D warnings` and `npm run build` all clean on the
+same tree.
+
+**The delta is taken from the row immediately below** (784 / 0 / 16 Rust; 2254 passing; 139
+commands; 66 `e2e.rs`), measured on `feat/wave2-integration` at `2ec8000`, which is the point
+this wave forks from. Since then: **+25 Rust**, **+163 frontend**, **+1 `e2e.rs`** and **+1
+registered command**.
+
+**The command delta was derived rather than assumed**, because a net figure hides a swap —
+that is what the row below had to correct last time. Diffing the `#[tauri::command]` functions
+at `2ec8000` against this tree gives exactly one addition, `set_channel_role` (Track C), and
+no removal. One signature changed shape (`delete_channel` became generic over
+`tauri::Runtime`) without changing the count.
+
+**The frontend file delta does not reconcile with the row below, and the row below is the one
+that is wrong.** `git ls-tree -r --name-only <ref> -- src | grep -cE '\.test\.js$'` reads
+**144** at `2ec8000` and **157** here, and the diff is thirteen files added and none removed:
+`bundledbackgrounds`, `bundledmedia`, `channelroles`, `names`, `outputdefault`, `seal`,
+`shelfcontrast`, `stagealertpanic`, `stagemessage`, `timerwords`, and under
+`views/templates/` `contentlookwriters`, `editorlayout` and `templatedraft`. The runner and
+the tree agree at 157 on this branch; the row below recorded **145** against a tree that held
+144. It is one file, and it is recorded here rather than silently smoothed over, because a
+count that disagrees with its own tree is precisely what this section exists to catch and the
+correction is worthless if the next reader cannot see which figure moved.
+
+qa-inventory's one orphan component, `src/lib/__r6probe.svelte`, is the pre-existing,
+deliberate test probe `docs/RELAY_V1_AUDIT.md` already names — unchanged by this wave, and
+already excluded by name from `r6-contracts.test.js`'s own walk of `src/`.
+
+Neither suite failed. The counts above are what each runner's own summary line reported.
+`docs/qa/audits/DESIGN-2026-09-16-WAVE5.md` §9 is the same table, taken in the same run.
+
+---
+
 Re-measured **2026-09-16**, on `feat/wave2-integration` — the whole of Wave 2 (six tracks,
 fifteen tasks) merged into one tree, plus the final whole-branch fix pass. The block this
 replaces was measured on `feat/wave2-track-d` alone, BEFORE tracks A, B and C merged, and every
