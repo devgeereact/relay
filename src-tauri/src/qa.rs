@@ -1169,7 +1169,6 @@ mod cold_start {
             delete_channel(
                 h.clone(),
                 h.state::<Db>(),
-                h.state::<channels::KioskHub>(),
                 h.state::<servicelock::ServiceLock>(),
                 id,
             )

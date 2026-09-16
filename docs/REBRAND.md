@@ -158,8 +158,12 @@ bottom**.
 - Beside the reading the countdown is **three stacked pairs** (HH / MM / SS), each filling the rail;
   the rail is its own container so the figure is a share of the rail, not the frame.
 - **Word to the preacher**: an operator types a line and sends it to the **stage only** — the whole
-  screen, red pulsing `#C8121C` → `#7A0A11`, 8.5cqw white type with a black shadow. It exists inside
-  the stage renderer, so no congregation screen can show it.
+  screen, red pulsing `#C8121C` → `#7A0A11`, 8.5cqw white type with a black shadow. **No
+  congregation screen can show it, and the reason changed in wave 5** (DECISIONS §89): it used to be
+  that it existed only inside the stage renderer, which was true and was a guarantee by omission.
+  A `stage_message` layer binding ends the omission, so `Output.svelte` now REFUSES the frame unless
+  its own channel's role is `stage` — at the receiver, because the kiosk hub records nothing about
+  who connected (DECISIONS §35) and so cannot address one screen.
 
 ## 6 · SuperSource
 
@@ -508,7 +512,12 @@ likely to carry a gradient is a lower-third band, and that is the layer keyed ov
 **Phase 6 built the half that carries a guarantee.** "A word to the preacher" is a new hub
 message rather than content, which is what makes *no congregation screen can show it* a property
 of the system: `r6-contracts.test.js` requires every hub message to have an explicit verdict per
-client, and the output page's verdict is `false`. It is suppressed in a rehearsal like every
+client, and the output page's verdict was `false` — it had no branch for the frame at all. **Wave 5
+moved that verdict to `true` and moved the guarantee with it** (DECISIONS §89). A `stage_message`
+layer binding means a renderer reads the value, so an absence stopped protecting anything: the page
+now has a branch that refuses the frame unless its own channel's role is `stage`, and
+`src/lib/stagemessage.test.js` holds the claim by driving the real page and asserting on what it
+PAINTS, which is a thing a source scan cannot reach. It is suppressed in a rehearsal like every
 other publisher here — the defect `stage_next` had once, where the wall does not move so the
 sandbox looks intact while the preacher's own tablet is handed a practice message. It is
 deliberately **not retained** (rule 43 retains what decides what a screen is SHOWING): a tablet

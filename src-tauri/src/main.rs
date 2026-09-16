@@ -5699,7 +5699,6 @@ fn set_channel_display(
 fn set_channel_role<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     db: tauri::State<'_, Db>,
-    kiosk: tauri::State<'_, channels::KioskHub>,
     id: i64,
     role: Option<String>,
 ) -> error::Result<()> {
@@ -5721,20 +5720,24 @@ fn set_channel_role<R: tauri::Runtime>(
         }
         db::channel_roles_json(&conn)?
     };
-    publish_channel_roles(&app, &kiosk, &roles);
+    publish_channel_roles(&app, &roles);
     Ok(())
 }
 
 /// The two doors, once. Called by every command that can change the role map.
-fn publish_channel_roles<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
-    kiosk: &channels::KioskHub,
-    roles_json: &str,
-) {
+///
+/// The hub is reached through `try_state`, not taken as a `State` parameter: a
+/// headless Relay manages no hub — that is the "no LAN" case `qa::bare_app`
+/// deliberately reproduces — and a `State` argument panics there instead of
+/// quietly doing nothing, which is what `channels::publish_kiosk` and
+/// `channels::transition` already do for the same reason.
+fn publish_channel_roles<R: tauri::Runtime>(app: &tauri::AppHandle<R>, roles_json: &str) {
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(roles_json) {
         let _ = app.emit("output://channel_roles", serde_json::json!({ "roles": v }));
     }
-    kiosk.set_channel_roles(roles_json);
+    if let Some(hub) = app.try_state::<channels::KioskHub>() {
+        hub.set_channel_roles(roles_json);
+    }
 }
 
 /// Add an output channel. Returns its id.
@@ -5763,7 +5766,6 @@ fn add_channel(
 fn delete_channel<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     db: tauri::State<'_, Db>,
-    kiosk: tauri::State<'_, channels::KioskHub>,
     lock: tauri::State<'_, servicelock::ServiceLock>,
     id: i64,
 ) -> error::Result<()> {
@@ -5777,7 +5779,7 @@ fn delete_channel<R: tauri::Runtime>(
         db::delete_channel(&conn, id)?;
         db::channel_roles_json(&conn)?
     };
-    publish_channel_roles(&app, &kiosk, &roles);
+    publish_channel_roles(&app, &roles);
     Ok(())
 }
 
