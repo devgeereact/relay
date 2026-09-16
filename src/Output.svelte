@@ -139,6 +139,31 @@
       noteTransition(null, null);
     }
   }
+  // Desktop only — the configured default already in force when this window
+  // opened, on exactly the same argument as `loadLiveTransition` above and for
+  // exactly the same reason. The kiosk hub seeds `defaultTpl` on `hello`; a
+  // native output window has no socket and was seeded by NOTHING, so a projector
+  // opened through `open_channel_output` on a channel that follows the content
+  // look rendered the bundled Classic Serif until the operator happened to CHANGE
+  // the default and `output://default_template` fired. That is the half of "the
+  // default does not activate on all screens" this wave exists to close, hidden
+  // because the other half works. Guarded the same way: a missing command or a
+  // backend that says nothing leaves this screen following its template, never
+  // throwing on a live output page.
+  async function loadDefaultTemplate() {
+    try {
+      const call = await invoke();
+      const raw = await call('get_setting', { key: 'default_template_id' });
+      const id = parseInt(raw, 10);
+      if (!Number.isFinite(id)) {
+        defaultTpl = null;
+        return;
+      }
+      defaultTpl = (await call('get_template', { id })) ?? null;
+    } catch {
+      defaultTpl = null;
+    }
+  }
   async function fetchTemplate(id) {
     try {
       const call = await invoke();
@@ -263,6 +288,7 @@
     try {
       await loadTemplate();
       await loadLiveTransition();
+      await loadDefaultTemplate();
       const { listen } = await import('@tauri-apps/api/event');
       unlisten.push(await listen('output://content', (e) => {
         // Per-screen visibility (see applyMessage) — hold what's up if this screen
