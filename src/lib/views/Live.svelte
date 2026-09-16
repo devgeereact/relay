@@ -132,7 +132,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { describeScreen } from '../outputHealth.js';
   import TemplateRender from '../TemplateRender.svelte';
-  import { resolveOutputTemplate, isKeyedTemplate } from '../layers.js';
+  import { resolveOutputTemplate, isKeyedTemplate, formatCountdown } from '../layers.js';
   import ModelSetup from '../ModelSetup.svelte';
   import { registerContext } from '../shortcuts.js';
   import { t } from '../i18n.js';
@@ -197,7 +197,14 @@
     verseRepeatCount,
     chapterVerses,
     readErrors,
+    startTimer,
+    listTimers,
+    stopTimer,
   } from '../stores/capture.js';
+  // The programme timer's two pure questions — which rows belong here, and how
+  // long is left on one. `timerRemainingMs` ENDS in `countdownRemainingMs`, which
+  // stays the only countdown arithmetic on this side of the bridge.
+  import { stageTimers, timerRemainingMs } from '../timers.js';
 
   // ── the plan being RUN (not edited) ──────────────────────────────────────
   let plans = [];
@@ -408,6 +415,124 @@
     wasDown = nowDown;
   }
 
+  // ── THE PROGRAMME TIMER ────────────────────────────────────────────────────
+  //
+  // A clock for the PREACHER, with a life of its own: it survives a verse, a song
+  // and a notice, because it is never the live content the way the congregation
+  // countdown is. The registry behind it (`timers.rs`) is reachable through
+  // `start_timer` / `list_timers` / `stop_timer`, and a registry no rendered
+  // control can get to is a command nobody calls — which this repository counts
+  // as attack surface nobody is watching rather than as a feature. This is the
+  // control.
+  //
+  // ── WHERE IT IS, AND THE FOUR PLACES IT CANNOT BE ──────────────────────────
+  //
+  // Every obvious home for this is already spoken for, each by a rule with more
+  // weight than a preference, so the search is written down rather than left to
+  // be repeated:
+  //
+  //   · **Quick tools**, beside `Word to the preacher` — the other tool that is
+  //     about the stage monitor and nothing else, and semantically the right
+  //     home. `docs/REBRAND.md` §2 says that card holds THREE things that change
+  //     during a service, the emergency announcement was taken out of it on the
+  //     operator's instruction (2026-09-14, L3) for being a fourth, and
+  //     `quicktools.test.js` pins the count. Putting a fourth back is an operator
+  //     decision, not an agent's.
+  //   · **The Controls card** — it never scrolls, because an operator may never
+  //     have to scroll to reach `Clear screens`, and a list whose length is
+  //     decided by how many timers somebody started is exactly what would make it.
+  //   · **The rack** — nothing may be added that could grow tall enough to push
+  //     TAKE or the arrows, and at ~118px a name, a figure and a Stop do not fit.
+  //   · **The inspector column** — `docs/REBRAND.md` §2 gives it ONE pane, four
+  //     things were moved out of it for competing with the AI's claims, and
+  //     `livedesk.test.js` counts the panes. Tried, and it turned that test red.
+  //
+  // So it is one wrapping row in the stage column, between the monitors and the
+  // slide grid: on the run surface, costing the grid a single row of height, and
+  // taking nothing away from any control an operator reaches for without looking.
+  // The cost worth writing down is that unlike the dock this exists only on the
+  // Live workspace, so an operator editing a template cannot stop a programme
+  // timer without coming back here. Whether that trade is right, or whether Quick
+  // tools should become four, is an operator's call and is flagged as one.
+  //
+  // ── WHAT IT DOES NOT SAY, AND WHY (rule 35) ────────────────────────────────
+  //
+  // No colour and no badge. Amber means ON AIR and is never allowed to lie; cyan
+  // means a guess; amethyst means rehearsal. A row here could honestly wear none
+  // of them, because the only facts this band has are the registry's — a timer
+  // EXISTS and this much is left on it. Whether a stage tablet is painting one is
+  // not a fact available on this side, so the band claims it in no words and in
+  // no colour. A badge that says "on stage" whatever is happening is not a badge.
+  //
+  // What it does distinguish is the three things the list can mean, because a
+  // failed read answering `[]` renders exactly like a quiet Sunday:
+  //   not asked yet → "Reading…"   ·   asked, none → "No programme timer."
+  //   asked, refused → the reason, and the LAST GOOD LIST is kept on screen
+  // `listTimers` throws for that reason (contract group 1) and this band must not
+  // undo it by catching into an empty array.
+  let ptMins = 25;
+  let ptName = '';
+  /** `null` = never read. `[]` = read, and there are none. The two differ. */
+  let ptTimers = null;
+  let ptErr = '';
+  let ptBusy = false;
+  let ptNow = Date.now();
+
+  async function loadProgrammeTimers() {
+    try {
+      const rows = stageTimers(await listTimers());
+      if (dead) return;
+      ptTimers = rows;
+      ptErr = '';
+    } catch (e) {
+      if (dead) return;
+      // The list is NOT emptied. What was last known to be running is better
+      // information than a blank panel, and the reason sits above it.
+      ptErr = humanError(e);
+    }
+  }
+
+  async function startProgrammeTimer() {
+    ptBusy = true;
+    ptErr = '';
+    try {
+      // `start_timer` creates the timer and publishes nothing. Putting a clock in
+      // front of a congregation is `startCountdown` or `showTimer`, and neither is
+      // reachable from here on purpose.
+      await startTimer({ minutes: Number(ptMins), label: ptName.trim(), scope: 'stage' });
+      ptName = '';
+      await loadProgrammeTimers();
+    } catch (e) {
+      ptErr = humanError(e);
+    }
+    ptBusy = false;
+  }
+
+  async function stopProgrammeTimer(id) {
+    ptBusy = true;
+    ptErr = '';
+    try {
+      await stopTimer(id);
+      await loadProgrammeTimers();
+    } catch (e) {
+      ptErr = humanError(e);
+    }
+    ptBusy = false;
+  }
+
+  // Read every two seconds; TICK every half second. The figures are arithmetic
+  // this side already owns, so asking the engine for them at the speed of a clock
+  // would be a round trip per second for a whole service to learn something
+  // already known. There is no `timer://` event to subscribe to, so a poll is
+  // what there is; when one arrives this becomes a listener and both intervals go.
+  const ptTick = setInterval(() => (ptNow = Date.now()), 500);
+  const ptPoll = setInterval(loadProgrammeTimers, 2000);
+  $: ptRows = (ptTimers ?? []).map((t) => ({
+    id: t.id,
+    label: (t.label ?? '').trim(),
+    left: timerRemainingMs(t, ptNow),
+  }));
+
   // HAS THIS VIEW ALREADY GONE AWAY? `onMount` is async and Svelte does not wait
   // for it: `onDestroy` runs the instant the operator switches workspace, which
   // can be in the middle of the awaits below. Every step after an await has to
@@ -515,6 +640,11 @@
     // Only now: everything above IS the restore, and a watcher armed before it
     // would race the mount for the same plan.
     if (!dead) watchChosenPlan = true;
+
+    // LAST, and not awaited by anything above it. Nothing an operator sees during
+    // the restore depends on the timer list, and a round trip in front of the
+    // plan restore would delay the one thing this mount exists to get right.
+    if (!dead) await loadProgrammeTimers();
   });
 
   // ── LOAD WHOLE PLAN, FROM QUICK TOOLS ──────────────────────────────────────
@@ -547,6 +677,8 @@
     clearTimeout(liveMsgT);
     unsubLive?.();
     clearTimeout(relatedT); // a pending poll must not fire into a destroyed view
+    clearInterval(ptTick);
+    clearInterval(ptPoll);
     // A view that has gone away must not put scripture on a wall a beat later.
     gridPress.cancel();
   });
@@ -1726,6 +1858,72 @@
 
   </div>
 
+  <!-- ══════ A CLOCK FOR THE PREACHER ══════════════════════════════════════
+       The operator's surface for the timer registry: start one, see what is
+       running, stop the one under your finger. See the block comment on
+       `loadProgrammeTimers` for why it is here rather than anywhere more
+       obvious, and for what it deliberately does not claim.
+
+       ONE ROW, `flex: 0 0 auto`, AND IT WRAPS RATHER THAN SCROLLING. The slide
+       grid below keeps `flex: 1 1 0` and takes everything left, so this costs it
+       one row of height and nothing else. A list that could grow without bound
+       would eat the surface an operator picks from most often, so the running
+       timers are inline chips on the same row as the control that starts them. -->
+  <div class="pt-band">
+    <span class="pt-lbl">Programme timer</span>
+    <input
+      class="r-input pt-min"
+      type="number"
+      min="1"
+      max="240"
+      bind:value={ptMins}
+      aria-label="Programme timer minutes" />
+    <span class="pt-unit">min</span>
+    <input
+      class="r-input pt-name-in"
+      type="text"
+      bind:value={ptName}
+      placeholder="Sermon · Notices"
+      autocomplete="off"
+      aria-label="Programme timer name"
+      on:keydown={(e) => e.key === 'Enter' && startProgrammeTimer()} />
+    <button
+      class="r-btn sm primary"
+      on:click={startProgrammeTimer}
+      disabled={ptBusy || !$capture.available || !(Number(ptMins) > 0)}
+      title="Start a clock for the preacher's monitor. It puts nothing on a congregation screen."
+      >Start timer</button>
+    <span class="pt-spring"></span>
+    <!-- THREE ANSWERS, NOT TWO. A failed read keeps whatever was last known to be
+         running and says the reason beside it; it never reports a quiet programme
+         it was not told about (rule 35). -->
+    {#if ptErr}<span class="pt-err" role="alert">{ptErr}</span>{/if}
+    {#if ptTimers == null && !ptErr}
+      <span class="pt-cap">Reading…</span>
+    {:else if ptRows.length}
+      {#each ptRows as t (t.id)}
+        <span class="pt-chip">
+          <!-- A timer with no name shows its figure alone rather than a collapsed
+               box with nothing in it. A later track makes label-less the default
+               supply, so this survives it already. -->
+          {#if t.label}<span class="pt-name">{t.label}</span>{/if}
+          <!-- NO GLYPH STANDS IN FOR A FIGURE. A dash in a value slot cannot tell
+               "there is no deadline" from "we have not asked yet"; the words can,
+               and this surface already forbids the glyph. -->
+          <span class="pt-fig r-mono">{t.left == null ? 'no deadline' : formatCountdown(t.left)}</span>
+          <button
+            class="r-btn sm ghost"
+            on:click={() => stopProgrammeTimer(t.id)}
+            disabled={ptBusy}
+            aria-label={t.label ? `Stop ${t.label}` : 'Stop this timer'}
+            title="Take this timer off. It touches no screen.">Stop</button>
+        </span>
+      {/each}
+    {:else if !ptErr}
+      <span class="pt-cap">No programme timer.</span>
+    {/if}
+  </div>
+
   <!-- ══════ THE SLIDE GRID — full width, directly under the monitors ══════
        It was one fifth-width card in a row of five, which made every cell too
        small to read and forced a click just to identify a slide. It is the thing
@@ -2264,6 +2462,41 @@
      column with nothing under it. One child, one rule. */
   .insp-col{display:flex; flex-direction:column; gap:var(--v-sp-sm); min-height:0; min-width:0}
   .insp-col > .pane{flex:1 1 auto; min-height:0}
+  /* ── THE PROGRAMME TIMER ───────────────────────────────────────────────────
+     ONE ROW THAT WRAPS, never a list that scrolls. The slide grid under it keeps
+     `flex: 1 1 0` and takes everything left, so this costs the surface an
+     operator picks from most often one row of height and nothing more.
+
+     NO STATE COLOUR ANYWHERE IN HERE, DELIBERATELY. Amber is ON AIR, cyan is a
+     guess, amethyst is rehearsal. The only facts this band holds are the
+     registry's — a timer exists, this much is left — and whether a stage tablet
+     is painting one is not among them. A chip that wore any of the three would be
+     making a claim nothing here can check (rule 35), so it wears none. */
+  .pt-band{flex:0 0 auto; display:flex; align-items:center; flex-wrap:wrap;
+    gap:var(--v-sp-xs); min-width:0}
+  .pt-lbl{flex:0 0 auto; font-family:var(--f-mono); font-size:var(--v-fs-cap);
+    letter-spacing:var(--v-tr-caps); color:var(--v-faint)}
+  .pt-min{width:54px; flex:0 0 auto}
+  .pt-unit{flex:0 0 auto; font-family:var(--f-mono); font-size:var(--v-fs-cap); color:var(--v-faint)}
+  .pt-name-in{flex:0 1 180px; min-width:0}
+  .pt-spring{flex:1 1 auto; min-width:0}
+  .pt-chip{display:flex; align-items:center; gap:var(--v-sp-xs); min-width:0;
+    padding:2px 4px 2px 8px; border:1px solid var(--v-line);
+    border-radius:var(--v-r-sm); background:var(--v-surf)}
+  /* The name TRUNCATES rather than pushing the figure and Stop out of the chip.
+     A run surface once rendered a failing screen's name seven pixels wide by
+     letting a sibling win the row; the figure and the control are the two things
+     that must survive a long name, so they hold their size and the name is the
+     one thing allowed to shrink. */
+  .pt-name{flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap; font-size:var(--v-fs-b2); color:var(--v-ink)}
+  .pt-fig{flex:0 0 auto; font-size:var(--v-fs-b2); color:var(--v-dim)}
+  .pt-chip > :global(button){flex:0 0 auto}
+  .pt-cap{flex:0 0 auto; font-family:var(--f-mono); font-size:var(--v-fs-cap);
+    letter-spacing:var(--v-tr-caps); color:var(--v-faint)}
+  /* The reason a read failed, BESIDE whatever was last known to be running, so
+     the operator sees both the stale list and why it is stale. */
+  .pt-err{flex:0 1 auto; min-width:0; font-size:var(--v-fs-cap); color:var(--v-red)}
 
   /* THE GRID TAKES WHAT IS LEFT. It shared the stage with a SERVICE PLAN pane
      and the two split the remaining height 1.15 : 1; the plan pane has gone —
