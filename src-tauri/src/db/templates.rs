@@ -249,136 +249,156 @@ pub(super) fn ensure_lyrics_template(conn: &Connection) -> rusqlite::Result<()> 
     Ok(())
 }
 
-/// Ready-to-use preset templates, added on top of the five built-ins.
+/// THE STANDALONE PRESETS — RETIRED. This list is deliberately empty.
 ///
-/// Every one is a real, complete template the operator can put on a wall as-is —
-/// not a placeholder. The whole set is built around one constraint the model
-/// imposes and one the room imposes:
+/// Fourteen ready-to-use designs used to ship here, each a complete template but
+/// each a look on its own: pick `Midnight Blue` for scripture and you had nothing
+/// coordinated to put a lyric, a notice or a countdown on. The five families in
+/// `theme_templates()` answer all five content kinds in one palette, which is
+/// what an operator was actually reaching for, and twenty-five coordinated rows
+/// plus fourteen loose ones is a gallery nobody can read.
 ///
-///   - the model has **no image asset store**, so a background is a CSS gradient
-///     or a solid, never a photo. Gradients are what keep the words legible: a
-///     photo behind scripture is the single most common way a verse becomes
-///     unreadable, so these deliberately don't use one;
-///   - a projector in a LIT room needs contrast, not decoration. Every preset is
-///     light text on a dark field (or a solid band for a lower third), because
-///     that is the combination that survives ambient light and a cheap lens.
+/// The fourteen, named so the retirement migration can be read against this list
+/// rather than against a commit message:
 ///
-/// Sizes are `cqw`, so they scale to any output, and TemplateRender auto-shrinks
-/// anything that would overflow — a long verse is safe at these sizes.
+///   `Midnight Blue` · `Royal Amethyst` · `Deep Teal` · `Crimson Grace` ·
+///   `Emerald Word` · `Indigo Night` · `Slate Minimal` · `Pure Contrast` ·
+///   `Lyric Bold` · `Lyric Glow` · `Lower Third Light` · `Lower Third Night` ·
+///   `Stage Confidence` · `Lobby Sunrise`
 ///
-/// Kept SEPARATE from `builtin_templates()` and added by name (never by id), so
-/// the five originals keep their stable ids and a church's channel/plan foreign
-/// keys are never repointed.
+/// Their exact bytes are frozen in `data/retired_presets.json`, because seeds
+/// insert BY NAME and only when absent: emptying this list reaches a fresh
+/// install and no existing one, so removing them from a church that already has
+/// them is a migration, and that migration matches on bytes so it can tell a
+/// leftover from a row somebody edited.
+///
+/// The function stays rather than being deleted. `region_presets()` chains it,
+/// `there_are_presets_across_every_screen_type` asserts it is empty, and a
+/// standalone preset that is genuinely not a family member — a one-off a church
+/// asks for by name — has somewhere to go that is not the middle of a family.
 fn preset_templates() -> &'static [(&'static str, &'static str, &'static str)] {
-    // Scripture layout: reference + verse, centered. The common case.
-    const SCRIPTURE: &str = r##"{"regions":["verse_text","reference"],"align":"center","lowerThird":false,"refFirst":false}"##;
-    // Lyric layout: verse text ONLY, no citation — a room does not sing the title.
-    const LYRIC: &str =
-        r##"{"regions":["verse_text"],"align":"center","lowerThird":false,"refFirst":false}"##;
-    // Lower-third band: transparent, pinned bottom, keys out for OBS/ATEM.
-    const BAND: &str = r##"{"regions":["verse_text","reference"],"align":"center","lowerThird":true,"refFirst":false}"##;
-    // Stage/confidence: reference first, left-aligned, for the preacher's monitor.
-    const STAGE: &str = r##"{"regions":["reference","verse_text"],"align":"left","lowerThird":false,"refFirst":true}"##;
-
-    &[
-        // ── Scripture, dark colorways (light text, high contrast) ──────────────
-        (
-            "Midnight Blue",
-            SCRIPTURE,
-            r##"{"font":"var(--f-serif)","background":"radial-gradient(130% 130% at 50% 18%, #12253f, #05080f)","accent":"#f0b74a","verseColor":"#eef2f8","verseSize":"5.2","refSize":"2.5","italicRef":true}"##,
-        ),
-        (
-            "Royal Amethyst",
-            SCRIPTURE,
-            r##"{"font":"var(--f-serif)","background":"linear-gradient(155deg, #2a1a45, #0e0818)","accent":"#b79bff","verseColor":"#f2ecff","verseSize":"5.2","refSize":"2.5","italicRef":true}"##,
-        ),
-        (
-            "Deep Teal",
-            SCRIPTURE,
-            r##"{"font":"var(--f-display)","background":"linear-gradient(160deg, #06231f, #03100d)","accent":"#46d6b3","verseColor":"#e8fbf5","verseSize":"5.2","refSize":"2.4","italicRef":false}"##,
-        ),
-        (
-            "Crimson Grace",
-            SCRIPTURE,
-            r##"{"font":"var(--f-serif)","background":"radial-gradient(120% 130% at 50% 22%, #3a0f16, #120507)","accent":"#f08a7a","verseColor":"#fbe9e6","verseSize":"5.2","refSize":"2.5","italicRef":true}"##,
-        ),
-        (
-            "Emerald Word",
-            SCRIPTURE,
-            r##"{"font":"var(--f-display)","background":"radial-gradient(120% 130% at 50% 22%, #0c2a1c, #05100b)","accent":"#56d98f","verseColor":"#eafff4","verseSize":"5.2","refSize":"2.4","italicRef":false}"##,
-        ),
-        (
-            "Indigo Night",
-            SCRIPTURE,
-            r##"{"font":"var(--f-serif)","background":"linear-gradient(155deg, #141a3a, #070912)","accent":"#8fa2ff","verseColor":"#eef0ff","verseSize":"5.2","refSize":"2.5","italicRef":true}"##,
-        ),
-        (
-            "Slate Minimal",
-            SCRIPTURE,
-            r##"{"font":"var(--f-body)","background":"linear-gradient(180deg, #1a1f26, #0b0e12)","accent":"#9fb4c9","verseColor":"#eef1f5","verseSize":"5","refSize":"2.4","italicRef":false}"##,
-        ),
-        (
-            "Pure Contrast",
-            SCRIPTURE,
-            r##"{"font":"var(--f-display)","background":"#000000","accent":"#7fd4ff","verseColor":"#ffffff","verseSize":"5.4","refSize":"2.5","italicRef":false}"##,
-        ),
-        // ── Songs / lyrics (verse only, large, no reference) ───────────────────
-        (
-            "Lyric Bold",
-            LYRIC,
-            r##"{"font":"var(--f-body)","background":"#060608","accent":"#ffffff","verseColor":"#ffffff","verseSize":"9","refSize":"2","italicRef":false}"##,
-        ),
-        (
-            "Lyric Glow",
-            LYRIC,
-            r##"{"font":"var(--f-body)","background":"radial-gradient(120% 120% at 50% 35%, #241548, #08040f)","accent":"#c9a6ff","verseColor":"#ffffff","verseSize":"8.5","refSize":"2","italicRef":false}"##,
-        ),
-        // ── Lower thirds (solid band, dark-on-light and light-on-dark) ─────────
-        (
-            // On a band `accent` IS the band fill and `verseColor` the text.
-            "Lower Third Light",
-            BAND,
-            r##"{"font":"var(--f-body)","background":"transparent","accent":"#f4f4f6","verseColor":"#12151b","verseSize":"2.6","refSize":"1.6","italicRef":false}"##,
-        ),
-        (
-            "Lower Third Night",
-            BAND,
-            r##"{"font":"var(--f-body)","background":"transparent","accent":"#101319","verseColor":"#f2f4f8","verseSize":"2.6","refSize":"1.6","italicRef":false}"##,
-        ),
-        // ── Stage / confidence monitor (ref-first, left, big) ──────────────────
-        (
-            "Stage Confidence",
-            STAGE,
-            r##"{"font":"var(--f-display)","background":"#000000","accent":"#62c9ff","verseColor":"#ffffff","verseSize":"6","refSize":"2.6","italicRef":false}"##,
-        ),
-        // ── Lobby / pre-service (warm, gentle) ─────────────────────────────────
-        (
-            "Lobby Sunrise",
-            SCRIPTURE,
-            r##"{"font":"var(--f-serif)","background":"linear-gradient(160deg, #2b1a12, #0f0a08)","accent":"#f0a85c","verseColor":"#f6e7d6","verseSize":"4.6","refSize":"2.2","italicRef":true}"##,
-        ),
-    ]
+    &[]
 }
 
-/// Cohesive THEME families — each is a coordinated set (scripture · lyrics ·
-/// lower-third · announcement) sharing one palette, so an operator can dress a
-/// whole service in one look instead of matching four templates by hand. Named
-/// `Theme · Kind` so the gallery groups them visually.
+/// THE FIVE FAMILIES — a coordinated set for every kind of content a service
+/// fires, so an operator picks a LOOK once instead of matching five templates by
+/// hand. Named `Family · Kind` so the gallery groups them visually.
 ///
-/// These also exercise the style properties the editor now exposes — a soft text
-/// shadow for legibility over a gradient, an uppercase lower third, and a
-/// scrolling announcement ticker — so a fresh install ships working examples of
-/// each rather than only documenting them.
+/// This is what replaced the theme layer. A theme had no field a template does
+/// not already have (DECISIONS §87), so the thing carrying "a look somebody
+/// picked" had to become the coordinated family, and a family is only a look you
+/// can pick if it answers every kind. `CONTENT_KINDS` (src/lib/layers.js) has
+/// five; the seed had four, and the two it never covered — Media and Timer —
+/// were exactly the two an operator could not dress.
+///
+/// Five families, five kinds, twenty-five rows:
+///
+///   · **Classic** — the serif look Relay opens with, carried forward from
+///     `builtin_templates()`'s `Classic Serif`.
+///   · **Aurora** — teal / emerald. Its Scripture, Lyrics and Announcement are
+///     the previously-seeded rows VERBATIM, so a church already using one sees
+///     no change on update.
+///   · **Ember** — amber / crimson, on the same terms.
+///   · **Lower Third** — the keyed family, from `builtin_templates()`'s
+///     `Lower Third`. It is now the only source of keyed templates in the seed,
+///     which the transparency law in `resolveOutputTemplate` depends on.
+///   · **High Visibility** — the answer to a lit room and a cheap lens, taken
+///     from `data/legacy_themes.json`'s frozen `High Visibility` theme, which is
+///     the same look `src/lib/legibility.test.js` already measures at 21:1.
+///
+/// COLOURS ARE FIXED PER FAMILY; SIZES ARE FREE PER KIND. That is what makes a
+/// family a set rather than five templates that happen to share a prefix — a
+/// lyric is scanned in a second and a verse is read, so they are not the same
+/// size, but they are the same look. No member invents a colour its family does
+/// not already carry.
+///
+/// NO SEEDED TEMPLATE WEARS A LAW COLOUR ON ITS BAND (rule 18): the keyed family
+/// fills with `#101319`, the neutral `ensure_lower_third_band_is_not_a_law_colour`
+/// already enforces, because a seeded band shipped in amethyst once and amethyst
+/// means rehearsal.
+///
+/// Each layout writes its own `shows` list down. `templateShows` returns true for
+/// every kind when `layout.shows` is absent, so a template that stays silent
+/// claims all five — and the operator's first click in the editor then looks like
+/// it wiped four.
 fn theme_templates() -> &'static [(&'static str, &'static str, &'static str)] {
-    const SCRIPTURE: &str = r##"{"regions":["verse_text","reference"],"align":"center","lowerThird":false,"refFirst":false}"##;
-    const LYRIC: &str =
-        r##"{"regions":["verse_text"],"align":"center","lowerThird":false,"refFirst":false}"##;
-    const BAND: &str = r##"{"regions":["verse_text","reference"],"align":"center","lowerThird":true,"refFirst":false}"##;
-    // Announcement: title above a scrolling body line (a ticker).
-    const ANNOUNCE: &str = r##"{"regions":["reference","verse_text"],"align":"center","lowerThird":false,"refFirst":true}"##;
+    // FULL-SCREEN SCRIPTURE — verse and reference, centred. The common case.
+    const SCRIPTURE: &str = r##"{"regions":["verse_text","reference"],"align":"center","lowerThird":false,"refFirst":false,"shows":["scripture"]}"##;
+    // LYRIC — the words alone. A room does not sing the title.
+    const LYRIC: &str = r##"{"regions":["verse_text"],"align":"center","lowerThird":false,"refFirst":false,"shows":["song"]}"##;
+    // MEDIA — a fired picture or video fills the frame. The regions list is what
+    // the template would show if it were handed anything else, which for a screen
+    // declaring `shows:["media"]` is nothing: `TemplateRender`'s region branch
+    // takes the media path before any region is rendered, and `fire_media` carries
+    // a url and nothing else (no reference, no text). So there is no caption here,
+    // and a caption layer would be a line blank at every fire.
+    const MEDIA: &str = r##"{"regions":["reference"],"align":"center","lowerThird":false,"refFirst":true,"shows":["media"]}"##;
+    // ANNOUNCEMENT — a title over a scrolling body line (the ticker).
+    const ANNOUNCE: &str = r##"{"regions":["reference","verse_text"],"align":"center","lowerThird":false,"refFirst":true,"shows":["announce"]}"##;
+    // TIMER — the countdown, with its label above it. The renderer draws the
+    // digits at `verseSize * 2`, so a Timer's `verseSize` is HALF the size the
+    // clock ends up.
+    const TIMER: &str = r##"{"regions":["reference","verse_text"],"align":"center","lowerThird":false,"refFirst":true,"shows":["countdown"]}"##;
+    // The keyed family replaces each of the five with its banded twin. On a band
+    // `accent` IS the fill and `verseColor` the text, and `background` stays
+    // `transparent` — the camera underneath is the point.
+    const BAND_SCRIPTURE: &str = r##"{"regions":["verse_text","reference"],"align":"center","lowerThird":true,"refFirst":false,"shows":["scripture"]}"##;
+    const BAND_LYRIC: &str = r##"{"regions":["verse_text"],"align":"center","lowerThird":true,"refFirst":false,"shows":["song"]}"##;
+    // TWO BANDED MEMBERS DO SOMETHING WORTH KNOWING BEFORE YOU PICK THEM, and
+    // both are the renderer's existing, deliberate behaviour rather than a defect
+    // introduced here:
+    //
+    //   · `Lower Third · Media` paints the picture FULL FRAME. The region branch
+    //     answers `content.media_url` before it ever reaches the band, so this is
+    //     a keyed screen that stops being keyed for the duration of a picture.
+    //     It exists because a family must answer every kind, and because a screen
+    //     told `shows:["media"]` was told to show the picture.
+    //   · `Lower Third · Timer` paints NOTHING. `countdownAllowed` is
+    //     `!!countdownTo && !bandMode`: a countdown never reaches a lower third,
+    //     because the band is keyed over a live camera and a clock ticking across
+    //     the preacher belongs on the lobby screen. The member exists so the
+    //     family is complete and so an operator who assigns it gets the same
+    //     clean camera the transparency law would have given them anyway.
+    const BAND_MEDIA: &str = r##"{"regions":["reference"],"align":"center","lowerThird":true,"refFirst":true,"shows":["media"]}"##;
+    const BAND_ANNOUNCE: &str = r##"{"regions":["reference","verse_text"],"align":"center","lowerThird":true,"refFirst":true,"shows":["announce"]}"##;
+    const BAND_TIMER: &str = r##"{"regions":["reference","verse_text"],"align":"center","lowerThird":true,"refFirst":true,"shows":["countdown"]}"##;
 
     &[
-        // ── Aurora — teal / emerald ────────────────────────────────────────────
+        // ── Classic — the serif look Relay opens with ─────────────────────────
+        // Palette from `builtin_templates()`'s `Classic Serif`, unchanged. The
+        // serif is the reading face and carries the verse; the other four kinds
+        // are scanned rather than read, which is the argument `Worship Lyrics`
+        // already makes in this file, so they take the body face.
+        (
+            "Classic · Scripture",
+            SCRIPTURE,
+            r##"{"font":"var(--f-serif)","background":"radial-gradient(120% 140% at 50% 30%, #2a2013, #0b0906)","accent":"#e8a33d","verseColor":"#f4e4c8","verseSize":"5.5","refSize":"2.6","italicRef":true}"##,
+        ),
+        (
+            "Classic · Lyrics",
+            LYRIC,
+            r##"{"font":"var(--f-body)","background":"radial-gradient(120% 140% at 50% 30%, #2a2013, #0b0906)","accent":"#e8a33d","verseColor":"#f4e4c8","verseSize":"8.5","refSize":"2","italicRef":false,"verseLineHeight":1.2}"##,
+        ),
+        (
+            "Classic · Media",
+            MEDIA,
+            r##"{"font":"var(--f-body)","background":"radial-gradient(120% 140% at 50% 30%, #2a2013, #0b0906)","accent":"#e8a33d","verseColor":"#f4e4c8","verseSize":"5.5","refSize":"2.6","italicRef":false}"##,
+        ),
+        (
+            "Classic · Announcement",
+            ANNOUNCE,
+            r##"{"font":"var(--f-body)","background":"radial-gradient(120% 140% at 50% 30%, #2a2013, #0b0906)","accent":"#e8a33d","verseColor":"#f4e4c8","verseSize":"3.4","refSize":"2.6","italicRef":false,"refTransform":"uppercase","refLetterSpacing":0.06,"scroll":true}"##,
+        ),
+        (
+            "Classic · Timer",
+            TIMER,
+            r##"{"font":"var(--f-body)","background":"radial-gradient(120% 140% at 50% 30%, #2a2013, #0b0906)","accent":"#e8a33d","verseColor":"#f4e4c8","verseSize":"5","refSize":"2.6","italicRef":false,"refTransform":"uppercase","refLetterSpacing":0.06}"##,
+        ),
+        // ── Aurora — teal / emerald ───────────────────────────────────────────
+        // The first three are the previously-seeded rows byte for byte, so a
+        // church already pointing a screen at one sees nothing change. Media and
+        // Timer are new and borrow their grounds from the two above rather than
+        // introducing a colour the family does not have.
         (
             "Aurora · Scripture",
             SCRIPTURE,
@@ -390,16 +410,22 @@ fn theme_templates() -> &'static [(&'static str, &'static str, &'static str)] {
             r##"{"font":"var(--f-display)","background":"linear-gradient(165deg, #08302b, #03110f)","accent":"#ffffff","verseColor":"#ffffff","verseSize":"8.5","refSize":"2","textShadow":0.4,"verseLineHeight":1.2}"##,
         ),
         (
-            "Aurora · Lower Third",
-            BAND,
-            r##"{"font":"var(--f-body)","background":"transparent","accent":"#eafaf5","verseColor":"#0c211d","verseSize":"2.6","refSize":"1.5","refTransform":"uppercase","refLetterSpacing":0.08}"##,
+            "Aurora · Media",
+            MEDIA,
+            r##"{"font":"var(--f-display)","background":"linear-gradient(180deg, #0b3330, #04110f)","accent":"#6ee7c4","verseColor":"#eafff8","verseSize":"5.2","refSize":"2.5","textShadow":0.4}"##,
         ),
         (
             "Aurora · Announcement",
             ANNOUNCE,
             r##"{"font":"var(--f-display)","background":"linear-gradient(180deg, #0b3330, #04110f)","accent":"#6ee7c4","verseColor":"#eafff8","verseSize":"3.4","refSize":"2.6","refTransform":"uppercase","refLetterSpacing":0.06,"scroll":true,"textShadow":0.4}"##,
         ),
-        // ── Ember — amber / crimson ────────────────────────────────────────────
+        (
+            "Aurora · Timer",
+            TIMER,
+            r##"{"font":"var(--f-display)","background":"radial-gradient(130% 130% at 50% 15%, #0b3330, #04110f)","accent":"#6ee7c4","verseColor":"#eafff8","verseSize":"5","refSize":"2.6","refTransform":"uppercase","refLetterSpacing":0.06,"textShadow":0.4}"##,
+        ),
+        // ── Ember — amber / crimson ───────────────────────────────────────────
+        // Same terms as Aurora: three carried forward verbatim, two new.
         (
             "Ember · Scripture",
             SCRIPTURE,
@@ -411,35 +437,89 @@ fn theme_templates() -> &'static [(&'static str, &'static str, &'static str)] {
             r##"{"font":"var(--f-display)","background":"linear-gradient(165deg, #2c0f06, #130603)","accent":"#ffffff","verseColor":"#ffffff","verseSize":"8.5","refSize":"2","textShadow":0.45,"verseLineHeight":1.2}"##,
         ),
         (
-            "Ember · Lower Third",
-            BAND,
-            r##"{"font":"var(--f-body)","background":"transparent","accent":"#1a0d06","verseColor":"#ffe9d2","verseSize":"2.6","refSize":"1.5","refTransform":"uppercase","refLetterSpacing":0.08}"##,
+            "Ember · Media",
+            MEDIA,
+            r##"{"font":"var(--f-display)","background":"linear-gradient(180deg, #3a1508, #140603)","accent":"#ffb066","verseColor":"#fdeede","verseSize":"5.2","refSize":"2.5","textShadow":0.45}"##,
         ),
         (
             "Ember · Announcement",
             ANNOUNCE,
             r##"{"font":"var(--f-display)","background":"linear-gradient(180deg, #3a1508, #140603)","accent":"#ffb066","verseColor":"#fdeede","verseSize":"3.4","refSize":"2.6","refTransform":"uppercase","refLetterSpacing":0.06,"scroll":true,"textShadow":0.45}"##,
         ),
-        // ── Nocturne — indigo / blue ───────────────────────────────────────────
         (
-            "Nocturne · Scripture",
+            "Ember · Timer",
+            TIMER,
+            r##"{"font":"var(--f-display)","background":"radial-gradient(130% 130% at 50% 18%, #3a1508, #140603)","accent":"#ffb066","verseColor":"#fdeede","verseSize":"5","refSize":"2.6","refTransform":"uppercase","refLetterSpacing":0.06,"textShadow":0.45}"##,
+        ),
+        // ── Lower Third — the keyed family ────────────────────────────────────
+        // Palette from `builtin_templates()`'s `Lower Third`. `background` is
+        // `transparent` in all five, which is not decoration: a keyed channel that
+        // paints a background covers the camera it exists to caption. The band
+        // fill is `#101319` — neutral, and deliberately not a law colour.
+        (
+            "Lower Third · Scripture",
+            BAND_SCRIPTURE,
+            r##"{"font":"var(--f-body)","background":"transparent","accent":"#101319","verseColor":"#f2f4f8","verseSize":"2.6","refSize":"1.7","italicRef":false}"##,
+        ),
+        (
+            "Lower Third · Lyrics",
+            BAND_LYRIC,
+            r##"{"font":"var(--f-body)","background":"transparent","accent":"#101319","verseColor":"#f2f4f8","verseSize":"3","refSize":"1.7","italicRef":false}"##,
+        ),
+        (
+            "Lower Third · Media",
+            BAND_MEDIA,
+            r##"{"font":"var(--f-body)","background":"transparent","accent":"#101319","verseColor":"#f2f4f8","verseSize":"2.6","refSize":"1.7","italicRef":false}"##,
+        ),
+        (
+            "Lower Third · Announcement",
+            BAND_ANNOUNCE,
+            r##"{"font":"var(--f-body)","background":"transparent","accent":"#101319","verseColor":"#f2f4f8","verseSize":"2.2","refSize":"1.5","italicRef":false,"refTransform":"uppercase","refLetterSpacing":0.08,"scroll":true}"##,
+        ),
+        (
+            "Lower Third · Timer",
+            BAND_TIMER,
+            r##"{"font":"var(--f-body)","background":"transparent","accent":"#101319","verseColor":"#f2f4f8","verseSize":"2.6","refSize":"1.7","italicRef":false}"##,
+        ),
+        // ── High Visibility — the answer to a lit room and a cheap lens ───────
+        // Every key is taken from `data/legacy_themes.json`'s frozen
+        // `High Visibility` theme, which is the look a church that chose that
+        // theme now carries inlined inside its own template, and which
+        // `src/lib/legibility.test.js` measures at 21:1. White on pure black in
+        // all five kinds, no shadow (a soft edge IS a contrast reduction) and no
+        // transition (long enough to notice is long enough to disorient). The
+        // reference is the SAME white as the verse rather than a tint, because a
+        // coloured reference on black is the first thing to disappear for
+        // somebody with low vision and it is the least important text on screen.
+        //
+        // Its Announcement is the one member that does NOT scroll. A crawl is a
+        // moving target with a reading speed somebody else chose, which is the
+        // opposite of what this family is for; a static notice at 4cqw is the
+        // high-visibility answer. The other four families ship the ticker.
+        (
+            "High Visibility · Scripture",
             SCRIPTURE,
-            r##"{"font":"var(--f-serif)","background":"radial-gradient(130% 130% at 50% 15%, #141a3a, #05070f)","accent":"#9db4ff","verseColor":"#eef1ff","verseSize":"5.2","refSize":"2.5","italicRef":true,"textShadow":0.5,"verseLineHeight":1.34}"##,
+            r##"{"font":"var(--f-display)","background":"#000000","accent":"#ffffff","verseColor":"#ffffff","refColor":"#ffffff","verseSize":"8","refSize":"3.2","verseLineHeight":"1.4","refGap":"1.6","verseShadow":"0","refShadow":"0","transitionMs":"0","italicRef":false}"##,
         ),
         (
-            "Nocturne · Lyrics",
+            "High Visibility · Lyrics",
             LYRIC,
-            r##"{"font":"var(--f-display)","background":"linear-gradient(165deg, #10163a, #04060f)","accent":"#ffffff","verseColor":"#ffffff","verseSize":"8.5","refSize":"2","textShadow":0.4,"verseLineHeight":1.2}"##,
+            r##"{"font":"var(--f-display)","background":"#000000","accent":"#ffffff","verseColor":"#ffffff","refColor":"#ffffff","verseSize":"9","refSize":"3.2","verseLineHeight":"1.4","refGap":"1.6","verseShadow":"0","refShadow":"0","transitionMs":"0","italicRef":false}"##,
         ),
         (
-            "Nocturne · Lower Third",
-            BAND,
-            r##"{"font":"var(--f-body)","background":"transparent","accent":"#0d1226","verseColor":"#e6ecff","verseSize":"2.6","refSize":"1.5","refTransform":"uppercase","refLetterSpacing":0.08}"##,
+            "High Visibility · Media",
+            MEDIA,
+            r##"{"font":"var(--f-display)","background":"#000000","accent":"#ffffff","verseColor":"#ffffff","refColor":"#ffffff","verseSize":"8","refSize":"3.2","verseLineHeight":"1.4","refGap":"1.6","verseShadow":"0","refShadow":"0","transitionMs":"0","italicRef":false}"##,
         ),
         (
-            "Nocturne · Announcement",
+            "High Visibility · Announcement",
             ANNOUNCE,
-            r##"{"font":"var(--f-display)","background":"linear-gradient(180deg, #141a3a, #05070f)","accent":"#9db4ff","verseColor":"#eef1ff","verseSize":"3.4","refSize":"2.6","refTransform":"uppercase","refLetterSpacing":0.06,"scroll":true,"textShadow":0.4}"##,
+            r##"{"font":"var(--f-display)","background":"#000000","accent":"#ffffff","verseColor":"#ffffff","refColor":"#ffffff","verseSize":"4","refSize":"3.2","verseLineHeight":"1.4","refGap":"1.6","verseShadow":"0","refShadow":"0","transitionMs":"0","italicRef":false,"refTransform":"uppercase","refLetterSpacing":0.06}"##,
+        ),
+        (
+            "High Visibility · Timer",
+            TIMER,
+            r##"{"font":"var(--f-display)","background":"#000000","accent":"#ffffff","verseColor":"#ffffff","refColor":"#ffffff","verseSize":"6","refSize":"3.2","verseLineHeight":"1.4","refGap":"1.6","verseShadow":"0","refShadow":"0","transitionMs":"0","italicRef":false,"refTransform":"uppercase","refLetterSpacing":0.06}"##,
         ),
     ]
 }
@@ -1073,14 +1153,22 @@ mod preset_template_tests {
 
     #[test]
     fn there_are_presets_across_every_screen_type() {
-        // Standalone presets (10–15) plus the theme families. Guard that each
-        // derived kind is represented, so a future edit can't quietly drop a
-        // category, and that the standalone set stays in its stated range.
+        // The families are now the whole region-model seed. The standalone
+        // presets were retired into them, so this asserts the ABSENCE rather than
+        // a range: a count of twelve-to-fifteen loose looks would mean somebody
+        // re-seeded a list whose rows a migration is busy deleting from every
+        // existing install, which is a row deleted and re-inserted under a new id
+        // on every boot, repointing whatever channel or plan cue pointed at it.
         assert!(
-            (12..=15).contains(&preset_templates().len()),
-            "expected 12–15 standalone presets, got {}",
+            preset_templates().is_empty(),
+            "the standalone presets were retired into the five families; {} came back",
             preset_templates().len()
         );
+
+        // Kind coverage still has to hold, and it is the reason this test did not
+        // simply go away with the list it used to count: the families must between
+        // them still cover the shapes a screen can be, so a future edit cannot
+        // quietly drop a category.
 
         let kind = |layout: &str| -> &'static str {
             let v: serde_json::Value = serde_json::from_str(layout).unwrap();
@@ -1113,38 +1201,103 @@ mod preset_template_tests {
     }
 
     #[test]
-    fn every_theme_is_a_complete_coordinated_family() {
-        // A theme is a SET — scripture, lyrics, lower-third and announcement all
-        // sharing a look. A half-built theme (missing the announcement, say) is
-        // worse than none, because the operator picks it and one content type
-        // falls back to a mismatched default mid-service.
+    fn every_family_is_complete_across_every_content_kind() {
+        // A FAMILY IS A SET. An operator picks a look and fires five kinds of
+        // content at it over a morning; a family missing its Timer means the
+        // pre-service countdown falls back to a mismatched default in front of
+        // a filling room, which is worse than the family not existing.
+        //
+        // Five kinds, because CONTENT_KINDS has five (src/lib/layers.js:228) and
+        // the seed had four — Media and Timer were the two nobody could pick a
+        // coordinated look for.
         use std::collections::HashSet;
-        let mut themes: HashSet<&str> = HashSet::new();
+        let mut families: HashSet<&str> = HashSet::new();
         for (name, _, _) in theme_templates() {
-            if let Some((theme, _)) = name.split_once(" · ") {
-                themes.insert(theme);
-            } else {
-                panic!("theme template {name:?} is not named 'Theme · Kind'");
+            match name.split_once(" · ") {
+                Some((f, _)) => {
+                    families.insert(f);
+                }
+                None => panic!("seed template {name:?} is not named 'Family · Kind'"),
             }
         }
-        assert!(!themes.is_empty(), "no themes defined");
-        for theme in themes {
-            for kind in ["Scripture", "Lyrics", "Lower Third", "Announcement"] {
-                let want = format!("{theme} · {kind}");
+        let mut want: Vec<&str> = vec![
+            "Classic",
+            "Aurora",
+            "Ember",
+            "Lower Third",
+            "High Visibility",
+        ];
+        want.sort();
+        let mut got: Vec<&str> = families.into_iter().collect();
+        got.sort();
+        assert_eq!(
+            got, want,
+            "the five families are fixed by DECISIONS, not by taste"
+        );
+        for family in &want {
+            for kind in ["Scripture", "Lyrics", "Media", "Announcement", "Timer"] {
+                let name = format!("{family} · {kind}");
                 assert!(
-                    theme_templates().iter().any(|(n, _, _)| *n == want),
-                    "theme {theme:?} is missing its {kind} template"
+                    theme_templates().iter().any(|(n, _, _)| *n == name),
+                    "family {family:?} is missing its {kind} template"
                 );
             }
         }
-        // At least one announcement template scrolls — the ticker the editor's
-        // scroll control drives has a real, seeded example.
+        assert_eq!(theme_templates().len(), 25);
+        // CARRIED OVER from `every_theme_is_a_complete_coordinated_family`, which
+        // this test replaces. Nothing else in either suite holds it, and the
+        // ticker is a real render path (`TemplateRender.svelte`'s `scroll` branch)
+        // whose only seeded example lives here. Dropping it with the old test
+        // would have been coverage lost silently in a rename.
         assert!(
             theme_templates()
                 .iter()
                 .any(|(_, _, style)| style.contains("\"scroll\":true")),
-            "no theme ships a scrolling announcement"
+            "no family ships a scrolling announcement"
         );
+    }
+
+    #[test]
+    fn every_seeded_template_says_which_kinds_it_renders() {
+        // `templateShows` returns true for EVERY kind when `layout.shows` is
+        // absent (src/lib/layers.js:246), so a seeded template starts with all
+        // five ticked in the editor and the operator's first click looks like it
+        // wiped four. Writing the list down is what stops the render lying about
+        // what the click did — and a Lower Third family that quietly claimed to
+        // render full-screen media was never true either.
+        for (name, layout, _) in theme_templates() {
+            let v: serde_json::Value =
+                serde_json::from_str(layout).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let shows = v["shows"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{name} has no shows list"));
+            assert!(
+                !shows.is_empty(),
+                "{name}: an empty list shows nothing at all"
+            );
+            for k in shows {
+                let k = k.as_str().unwrap_or("");
+                assert!(
+                    ["scripture", "song", "media", "announce", "countdown"].contains(&k),
+                    "{name}: {k:?} is not a content kind"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_keyed_family_is_keyed_in_every_kind() {
+        // The transparency law (src/lib/layers.js:262) needs keyed templates to
+        // exist at all, and this is now the only family that supplies them.
+        for (name, layout, _) in theme_templates() {
+            if let Some(rest) = name.strip_prefix("Lower Third · ") {
+                let v: serde_json::Value = serde_json::from_str(layout).unwrap();
+                assert_eq!(
+                    v["lowerThird"], true,
+                    "Lower Third · {rest} is not keyed, so the family cannot caption a camera"
+                );
+            }
+        }
     }
 
     #[test]
@@ -1283,7 +1436,15 @@ mod preset_template_tests {
                 }
             }
         }
-        assert!(bands >= 2, "the shelf lost its lower thirds");
+        // ONE, not two. `Lower Third · Scripture` left this shelf when the five
+        // families landed — the keyed family's member takes that exact name, and
+        // a seed that inserts by name cannot hold both. `Lower Third · Lyric` is
+        // what keeps a real band, with real declared members, in the seed and
+        // therefore under this check; if it ever goes too, the layer model's
+        // `members` contract (DECISIONS §75) has no shipped example left and this
+        // assertion is the thing that says so rather than passing over an empty
+        // set.
+        assert!(bands >= 1, "the shelf lost its lower thirds");
     }
 
     /// A composite's fill must be a BUILT-IN (DECISIONS §74): a kiosk or OBS page

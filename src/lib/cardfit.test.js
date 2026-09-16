@@ -254,7 +254,14 @@ describe('rule 37 has an instrument on the path that ships', () => {
   // mount, rule 37's report covered NOTHING a church renders. Live's "may not be
   // readable from the back" line could not fire for any template on the shelf,
   // and it read exactly the same as a look that was working: rule 35.
-  const layered = SHELF.find((t) => /Lower Third · Scripture/.test(t.name));
+  // `Lower Third · Scripture` left the shelf when the coordinated Lower Third
+  // family took that exact name (a seed inserts by name, so both could not
+  // ship). `Lower Third · Lyric` is the remaining band: same layer model, same
+  // `.ltext` box inside a declared-membership band, so the fit path under test
+  // is unchanged. Asserted present rather than assumed, because `mount(undefined)`
+  // renders nothing and every assertion below would fail for the wrong reason.
+  const layered = SHELF.find((t) => /Lower Third · Lyric/.test(t.name));
+  if (!layered) throw new Error('the shelf has no layered band left to fit');
 
   it('a layered template reports its fit, like a region one always has', async () => {
     let seen = null;
@@ -328,7 +335,14 @@ describe('rule 37 has an instrument on the path that ships', () => {
 // ever answered "did we shrink past 45%?", never "does it actually fit", so the
 // most reassuring possible report sat over the worst possible outcome. Rule 35.
 describe('a fit that still clips says so', () => {
-  const layered = SHELF.find((t) => /Lower Third · Scripture/.test(t.name));
+  // `Lower Third · Scripture` left the shelf when the coordinated Lower Third
+  // family took that exact name (a seed inserts by name, so both could not
+  // ship). `Lower Third · Lyric` is the remaining band: same layer model, same
+  // `.ltext` box inside a declared-membership band, so the fit path under test
+  // is unchanged. Asserted present rather than assumed, because `mount(undefined)`
+  // renders nothing and every assertion below would fail for the wrong reason.
+  const layered = SHELF.find((t) => /Lower Third · Lyric/.test(t.name));
+  if (!layered) throw new Error('the shelf has no layered band left to fit');
 
   /** Make the rendered boxes report an overflow jsdom cannot produce on its own.
    *  jsdom does no layout, so every box measures 0 — this drives the component's

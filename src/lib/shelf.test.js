@@ -48,8 +48,15 @@ const ROLE_OF = {
   // DECLARED in Relay. The scrolling ticker is the shape that derives as one.
   'Notice Board': 'scripture',
   'Media Frame': 'media',
+  // `Lower Third · Scripture` used to sit here and is gone. The five coordinated
+  // families seed a keyed member under that EXACT name, and the seed inserts by
+  // name, so the two could not both exist — whichever reached the database first
+  // would silently be the only one an operator ever saw. Its bytes are frozen in
+  // `src-tauri/data/retired_presets.json` so the migration can clear the old
+  // layer-model row out of installs that already have it. `Lower Third · Lyric`
+  // is the band that stays, and it is what keeps a real `members` list
+  // (DECISIONS §75) under test on this shelf.
   'Lower Third · Lyric': 'lower-third',
-  'Lower Third · Scripture': 'lower-third',
   'SuperSource · Word right': 'supersource',
   'SuperSource · Word left': 'supersource',
   'Stage · Large type': 'stage',
@@ -93,7 +100,11 @@ function boxOf(el) {
 }
 
 describe('the shelf file', () => {
-  it('is the eight looks the prototype ships that Relay did not have', () => {
+  it('is the seven looks the prototype ships that Relay did not have', () => {
+    // Seven since the coordinated families landed; it was eight. The table above
+    // says which one left and why, and this assertion is still name-for-name
+    // against it rather than a count, so a look going missing cannot pass by
+    // being replaced with another.
     expect(SHELF.map((t) => t.name)).toEqual(Object.keys(ROLE_OF));
   });
 
@@ -148,13 +159,18 @@ describe('every shelf look renders through the one renderer', () => {
   });
 
   it('lays a band out and gives its words boxes the band computed', () => {
-    const el = mount(byName('Lower Third · Scripture'));
+    // Was asserted against `Lower Third · Scripture`, which the coordinated
+    // families took the name of. `Lower Third · Lyric` is the shelf's remaining
+    // band and carries the same declared-membership shape, so the §75 geometry is
+    // still measured against real seeded bytes rather than a fixture.
+    const tpl = byName('Lower Third · Lyric');
+    expect(tpl, 'the shelf has no band left to measure').toBeTruthy();
+    const el = mount(tpl);
     const band = el.querySelector('.lband');
     expect(band).toBeTruthy();
     // §75: the band runs from its own `top` to the BOTTOM edge.
     const b = boxOf(band);
     expect(b.y + b.h).toBeCloseTo(100, 4);
-    expect(el.textContent).toContain('John 3:16');
   });
 
   it('a lyric band carries the words and NO reference at all', () => {
@@ -163,10 +179,15 @@ describe('every shelf look renders through the one renderer', () => {
     expect(el.textContent).not.toContain('John 3:16');
   });
 
-  it('both lower thirds are KEYED — no background, so the camera survives', () => {
-    for (const n of ['Lower Third · Lyric', 'Lower Third · Scripture']) {
-      expect(isKeyedTemplate(byName(n)), n).toBe(true);
-    }
+  it('the lower third is KEYED — no background, so the camera survives', () => {
+    // `isKeyedTemplate(undefined)` is TRUE (nothing paints the frame, because
+    // there is no frame), so a missing subject would pass this silently. The
+    // lookup is asserted first for exactly that reason — this test used to name
+    // two templates and would have gone on passing over one that no longer
+    // existed.
+    const tpl = byName('Lower Third · Lyric');
+    expect(tpl, 'the shelf has no lower third left').toBeTruthy();
+    expect(isKeyedTemplate(tpl)).toBe(true);
   });
 
   it('a composite renders a REAL inner template, not a picture of one', () => {

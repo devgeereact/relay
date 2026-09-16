@@ -18,7 +18,15 @@
     "WHAT IS NOT HERE, AND WHY: the prototype's other eleven starters. Nine already ship under Relay's",
     "own names and one ships under the same name; duplicating a look an operator already has is a",
     "shelf that is harder to read, not a shelf that is fuller. The diff is in the commit message and",
-    "the review note."
+    "the review note.",
+    "",
+    "SEVEN, NOT EIGHT. `Lower Third \u00b7 Scripture` left this shelf when the five coordinated families",
+    "landed: the family's keyed member takes that exact name, and two templates cannot share one —",
+    "seeds insert BY NAME, so the second is simply never inserted and an operator sees whichever got",
+    "there first. Its frozen bytes are in `retired_presets.json` so the migration can remove the old",
+    "layer-model row from installs that already have it. The remaining seven stay because no family",
+    "member can express their SHAPE: the region model has no composite, no monitor-only binding and",
+    "no way to inset a picture inside a frame. `Lower Third \u00b7 Lyric` stays as the shelf's band."
   ],
   "templates": [
 
@@ -79,26 +87,6 @@
             "fill": "#05070c", "opacity": 0.86, "radius": 0
           },
           { "id": "lyb-words", "type": "text", "name": "Words", "bind": "verse", "x": 8, "y": 72, "w": 84, "h": 18, "font": "var(--f-body)", "color": "#ffffff", "size": 3.2, "align": "left", "valign": "middle", "lineHeight": 1.16, "letterSpacing": 0, "shadow": 0, "italic": false }
-        ]
-      },
-      "style": {}
-    },
-
-    {
-      "name": "Lower Third · Scripture",
-      "_proto": "id 15 — the verse with its reference BELOW, right-aligned and tracked so it reads as a citation and not as a second sentence. Serif, band from top 62, fill #0A0906 at 90%, baseline lift 4.4.",
-      "layout": {
-        "align": "left",
-        "layers": [
-          {
-            "id": "lbb-band", "type": "band", "name": "Band",
-            "x": 5, "y": 62, "w": 90, "h": 38,
-            "top": 62, "side": 5, "pad": 3, "lift": 4.4, "grow": 16,
-            "members": ["lbb-verse", "lbb-ref"],
-            "fill": "#0a0906", "opacity": 0.9, "radius": 0
-          },
-          { "id": "lbb-verse", "type": "text", "name": "Verse", "bind": "verse", "x": 8, "y": 70, "w": 84, "h": 14, "font": "var(--f-serif)", "color": "#fff7e8", "size": 3.0, "align": "left", "valign": "middle", "lineHeight": 1.2, "letterSpacing": 0, "shadow": 0, "italic": false },
-          { "id": "lbb-ref", "type": "text", "name": "Reference", "bind": "reference", "x": 8, "y": 85, "w": 84, "h": 6, "font": "var(--f-serif)", "color": "#ffa31a", "size": 1.7, "align": "right", "valign": "middle", "lineHeight": 1.1, "letterSpacing": 0.08, "shadow": 0, "italic": false }
         ]
       },
       "style": {}
