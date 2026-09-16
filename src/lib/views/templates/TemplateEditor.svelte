@@ -1687,15 +1687,21 @@
                scripture, songs and the timer — when a picture or an announcement
                fires, a screen wearing this template ignores it and holds what it
                had. This is the paragraph that used to sit over `Used for`. -->
-          <span class="r-lbl te-showlbl">Content this template renders</span>
-          <div class="te-showgrid">
+          <h3 class="te-sec te-showsec">Content this template renders</h3>
+          <p class="te-fnote te-showintro">An unticked kind is not blanked — a screen wearing this template holds what it already had.</p>
+          <div class="te-showlist">
             {#each CONTENT_KINDS as k}
-              <button class="te-showchip" class:on={templateShows(edit, k.key)} on:click={() => toggleShows(k.key)}>
-                <span class="te-showtick" aria-hidden="true">{templateShows(edit, k.key) ? '✓' : ''}</span>{k.label}
+              <button
+                class="te-showrow"
+                role="switch"
+                aria-checked={templateShows(edit, k.key)}
+                on:click={() => toggleShows(k.key)}
+              >
+                <span class="te-showname">{k.label}</span>
+                <span class="te-showstate" aria-hidden="true">{templateShows(edit, k.key) ? 'Shows' : 'Ignores'}</span>
               </button>
             {/each}
           </div>
-          <p class="te-fnote">An unticked kind is not blanked — a screen wearing this template holds what it already had.</p>
         </div>
         {#if err}<div class="te-err" role="alert">{err}</div>{/if}
       </aside>
@@ -2083,7 +2089,7 @@
      the cell has no image to be its own ground. */
   .te-bgnone{ display:grid; place-items:center; background:var(--v-surf2); color:var(--v-faint); font-size:var(--v-fs-pr); }
   .te-bgnone:hover{ color:var(--v-rose); }
-  /* Per-screen content visibility chips */
+  /* `Used for` chips — a GLOBAL binding, unchanged (task 8). */
   .te-showlbl{ margin-top:4px; }
   .te-showgrid{ display:flex; flex-wrap:wrap; gap:6px; }
   /* A CHIP, not a button — a tick plus a label, wrapping in a grid, each one an
@@ -2094,6 +2100,23 @@
   .te-showchip:hover{ color:var(--v-txt); border-color:var(--v-accent-line); }
   .te-showchip.on{ background:var(--v-accent-soft); border-color:var(--v-accent-line); color:var(--v-txt); }
   .te-showtick{ width:9px; text-align:center; color:var(--v-emerald); font-weight:700; }
+  /* `Content this template renders` — a PER-TEMPLATE filter, and deliberately
+     NOT a second chip grid (task 8). It used to be a second `.te-showgrid` over
+     the same five labels, and because an absent `layout.shows` reads as "shows
+     everything", the first click materialised the list as all-minus-one — four
+     chips going dark at once, reported as "clicking a content look activates
+     all". A vertical switch list under its own heading cannot be mistaken for
+     the binding above it. */
+  .te-showlist{ display:flex; flex-direction:column; gap:2px; }
+  /* A SWITCH ROW, not a button — one per content kind, the whole row is the
+     target (same shape as `.te-swrow`'s Italic/Scroll rows above). */
+  .te-showrow{ display:flex; align-items:center; justify-content:space-between; gap:10px; width:100%; padding:7px 10px; border:1px solid var(--v-line); border-radius:var(--v-r-md); background:var(--v-surf2); color:var(--v-txt); font:inherit; text-align:left; cursor:pointer; }
+  .te-showrow:hover{ border-color:var(--v-line2); }
+  .te-showrow[aria-checked='false']{ color:var(--v-dim); }
+  /* NEVER A LAW COLOUR. Amber is ON AIR, amethyst is rehearsal, cyan is a guess
+     (rule 18 · DESIGN_SYSTEM §1.1). This is a configuration switch in an editor:
+     it says Shows or Ignores in words, so the state reads without colour. */
+  .te-showstate{ font-size:0.85em; letter-spacing:0.04em; text-transform:uppercase; }
   .te-alignrow{ display:flex; gap:6px; }
   /* CONVERTED — B2. Centre H · Centre V · Centre is three equal buttons in one
      row, which is the definition of the shared control, and it was drawing a
