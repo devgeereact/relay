@@ -1886,6 +1886,47 @@ pub async fn run_kiosk_server(
 /// build runs `npm run build` first).
 static DIST: include_dir::Dir = include_dir::include_dir!("$CARGO_MANIFEST_DIR/../dist");
 
+/// Where the pictures Relay ships live inside the bundle.
+///
+/// The frontend half of this constant is `BUNDLED_BACKGROUND_DIR` in
+/// `src/lib/bundledbackgrounds.js`, which is what puts them there: the build
+/// emits `src/backgrounds/*` at a stable, unhashed path precisely so the seed
+/// can name one and this server can serve it (DECISIONS §90).
+pub(crate) const BUNDLED_BACKGROUND_DIR: &str = "backgrounds";
+
+/// The bundled pictures, by served file name, in a stable order.
+///
+/// Read out of the embedded bundle rather than from a list written down twice.
+/// Vite sanitises the served name (`02 Emerald …jpg` becomes
+/// `02_Emerald_…jpg`) and nothing in Rust needs to know that rule as long as it
+/// reads the answer instead of re-deriving it.
+///
+/// Empty when `dist/` was built without the folder — which is the same
+/// condition RG-127 already describes, and `db::starter`'s own tests say so in
+/// words rather than seeding nothing in silence.
+pub(crate) fn bundled_backgrounds() -> Vec<&'static str> {
+    let Some(dir) = DIST.get_dir(BUNDLED_BACKGROUND_DIR) else {
+        return Vec::new();
+    };
+    let mut names: Vec<&'static str> = dir
+        .files()
+        .filter_map(|f| f.path().file_name().and_then(|n| n.to_str()))
+        .collect();
+    names.sort_unstable();
+    names
+}
+
+/// Does the bundle hold this path? The one honest way to check that a seeded
+/// row points at something a screen can actually load.
+///
+/// Test-only: the serving path asks `DIST` for the file it was actually sent,
+/// and a second production caller asking the same question a moment earlier
+/// would be a check that can disagree with the answer.
+#[cfg(test)]
+pub(crate) fn bundle_holds(path: &str) -> bool {
+    DIST.get_file(path).is_some()
+}
+
 fn mime_for(path: &str) -> &'static str {
     match path.rsplit('.').next().unwrap_or("") {
         "html" => "text/html; charset=utf-8",
