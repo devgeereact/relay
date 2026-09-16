@@ -319,16 +319,28 @@
   // row of chips that also SET it, two headings up. One of the two could act;
   // the other only agreed with it.
 
-  // New template = pick a starting point (a layer stack), save it, open the editor.
+  // New template = pick a starting point (a layer stack) and open the editor on
+  // it AS A DRAFT. Nothing is written here.
+  //
+  // It used to `saveTemplate` first and open the editor on the row it had just
+  // inserted, which made "what does Countdown Timer look like?" an act of
+  // creation: the only way to see a starter was to own one, and the only way to
+  // change your mind was to notice and go back and delete it. Because the shelf
+  // seeds BY NAME, the rows that accumulated sat beside the built-in of the same
+  // name and were indistinguishable from it in the grid.
+  //
+  // The draft carries `id: null`, which is exactly what `upsert_template` reads
+  // as "insert" — so Save in the editor is the same call this used to make, made
+  // by the person who meant it. `selId` is deliberately NOT moved: there is no
+  // row to select, and pointing the inspector at an id that does not exist is
+  // how the import path once showed a successful action as an empty panel.
   let newOpen = false;
-  async function newFrom(starter) {
+  function newFrom(starter) {
     newOpen = false;
     err = '';
     try {
       const t = starter.make();
-      const id = await saveTemplate({ name: starter.label, layout: t.layout, style: t.style });
-      selId = id;
-      dispatch('edit', { id });
+      dispatch('edit', { id: null, name: starter.label, layout: t.layout, style: t.style });
     } catch (e) { err = humanError(e); }
   }
   async function duplicate(t) {

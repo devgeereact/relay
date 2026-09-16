@@ -19,7 +19,6 @@
     alignLayer, spaceEvenly, isMovable, movableLayers,
   } from '../../layerops.js';
   import { BUILTINS } from '../../templates.js';
-  import { contentTemplates, setContentTemplate, loadContentTemplates } from '../../stores/capture.js';
   import TemplateRender from '../../TemplateRender.svelte';
   import { reviewTemplate, PREVIEW_DISTANCES_M, previewScale } from '../../legibility.js';
   import TemplatePreviewOverlay from '../../TemplatePreviewOverlay.svelte';
@@ -45,19 +44,89 @@
    *  exactly as before; an id that is not on this template is ignored rather
    *  than selecting the wrong object. */
   export let layerId = null;
+  /** A TEMPLATE THAT DOES NOT EXIST YET — `{ id: null, name, layout, style }`,
+   *  built in memory by the gallery's New menu and handed straight here.
+   *
+   *  `newFrom` used to INSERT the starter and open the editor on the row, so
+   *  looking at a starting point created one, and abandoning the editor left a
+   *  template a church never asked for. A draft renders exactly as a saved row
+   *  does, with three differences: the header says it is unsaved, Save inserts,
+   *  and Discard writes nothing. Everything else in this file — the canvas, the
+   *  layer list, undo, the properties panel — treats it as an ordinary
+   *  template, which is the whole point: a draft that rendered differently
+   *  would be a second editor. */
+  export let draft = null;
   const dispatch = createEventDispatcher();
 
   let edit = null;
+  /** True while `edit` has never been written to the database. It is not
+   *  `!edit.id`: a saved template always has one, and the moment Save returns an
+   *  id this is false and the editor behaves exactly as it always has. */
+  let isDraft = false;
+  /** Has anybody changed the draft since it was built? A false positive here
+   *  costs one extra press on the way out; a false negative loses the work, so
+   *  this is deliberately set by the same reactive block that schedules the live
+   *  apply rather than by a signature comparison that lags 400ms behind the
+   *  keystroke. */
+  let draftTouched = false;
+  let draftBaseline = false;
+  /** The two-step that guards the accidental door. Rule 41: never confirm() —
+   *  Tauri's webview returns false from it without showing anything, which is
+   *  how a two-step delete once deleted nothing and reported success. This is a
+   *  button that changes what it says, not an overlay, so it takes nothing from
+   *  `Esc` and paints over nothing (rules 15 and 44). */
+  let leaveArmed = false;
+  let leaveTimer = 0;
   let saving = false;
   let savedTick = false;
   let err = '';
   let selId = null;
+  // THE ADD-LAYER MENU IS POSITIONED FIXED, anchored to the button's screen rect.
+  //
+  // It used to be `position:absolute; top:28px; right:0` inside `.te-addwrap`,
+  // which sits inside `.te-pane{overflow:hidden}` — so the pane clipped it.
+  // Measured in Chrome at 1280×640: the menu is 591px tall (seventeen items —
+  // four layer types and thirteen bindings), the layers pane ends at y=626, and
+  // 57px of the menu was cut off. `elementFromPoint` over the centre of the last
+  // item ("Service timer (remaining)") returned **null**: the item was not
+  // merely hidden, nothing could click it. `TemplateGallery` abandoned this
+  // exact construction for the same reason after measuring it (its comment at
+  // `openMenu` says so); this is the pane it was still living in.
+  //
+  // Fixed positioning escapes every overflow context, and the menu is taller
+  // than some windows are, so it also clamps to the viewport and keeps its own
+  // scroll. A fixed menu detaches from a scrolled or resized page, so both close
+  // it — the same pair the gallery's row menu uses.
   let addOpen = false;
+  let addPos = { x: 0, y: 0 };
+  const ADD_MENU_W = 186;
+  function toggleAdd(e) {
+    if (addOpen) { addOpen = false; return; }
+    const r = e.currentTarget.getBoundingClientRect();
+    const margin = 8;
+    // The real height, measured once it is up, would be circular; this is the
+    // menu's own content height and the clamp below handles the rest.
+    const H = Math.min(591, window.innerHeight - margin * 2);
+    let y = r.bottom + 4;
+    if (y + H > window.innerHeight - margin) y = Math.max(margin, window.innerHeight - margin - H);
+    addPos = { x: Math.max(margin, r.right - ADD_MENU_W), y };
+    addOpen = true;
+  }
+  const closeAdd = () => { addOpen = false; };
+  onMount(() => {
+    window.addEventListener('resize', closeAdd);
+    // Capture, because the page scrolls in `.mainscroll` rather than on window.
+    window.addEventListener('scroll', closeAdd, true);
+    return () => {
+      window.removeEventListener('resize', closeAdd);
+      window.removeEventListener('scroll', closeAdd, true);
+    };
+  });
 
   onMount(async () => {
-    loadContentTemplates();
     if (!$templates.length) await loadTemplates();
-    load(templateId);
+    if (draft) loadDraft(draft);
+    else load(templateId);
     // Land on the object the caller named — but only if this template really has
     // it. An id from somewhere else would select nothing and leave the panel
     // showing another object's properties under that object's name.
@@ -176,6 +245,24 @@
     edit.layout ??= {};
     edit.style ??= {};
     selId = layered ? edit.layout.layers[0]?.id ?? null : null;
+    lastSig = sigOf(edit);
+    past = [];
+    future = [];
+  }
+
+  /** Open on a template that has no row yet. Same private clone, same history
+   *  reset, same change-detector baseline as `load` — the only difference is
+   *  that there was nothing to read it from. */
+  function loadDraft(d) {
+    edit = JSON.parse(JSON.stringify({ id: null, name: d.name ?? 'New template', layout: d.layout ?? {}, style: d.style ?? {} }));
+    edit.layout ??= {};
+    edit.style ??= {};
+    isDraft = true;
+    draftTouched = false;
+    // The assignment above will run `$: if (edit) scheduleLive()` once; that run
+    // is the baseline, not an edit.
+    draftBaseline = true;
+    selId = isLayered(edit) ? edit.layout.layers[0]?.id ?? null : null;
     lastSig = sigOf(edit);
     past = [];
     future = [];
@@ -527,20 +614,22 @@
     delete edit.layout.noMedia; // superseded by the explicit list
     edit = edit;
   }
-  // USED FOR. Which kinds of content wear this template on any screen set to
-  // follow the content look (DECISIONS §70). Toggling writes through
-  // `setContentTemplate`, which is the ONE writer of that map — three surfaces
-  // used to each hold their own copy and overwrite one another.
-  let lookErr = '';
-  async function toggleUsedFor(kind) {
-    const mine = $contentTemplates[kind] === edit?.id;
-    lookErr = '';
-    try {
-      await setContentTemplate(kind, mine ? null : edit.id);
-    } catch (e) {
-      lookErr = humanError(e);
-    }
-  }
+  // THE CONTENT LOOK IS NOT SET FROM HERE. `toggleUsedFor` and its "Used for"
+  // chip grid used to sit directly above `Content this template renders`, and
+  // the two were visually identical five-chip rows over the same five
+  // `CONTENT_KINDS` labels while being entirely different facts — one a global
+  // binding, one a per-template filter. That is the whole reason the first click
+  // on one looked like it had activated all five on the other. Wave 2 gave the
+  // filter a different control shape; this wave removes the register it was
+  // being confused with, because nothing in this editor needs to write it.
+  //
+  // The feature is not deleted, only its second writer. `Channels.svelte` keeps
+  // the one authoritative content-look matrix, the gallery's inspector keeps the
+  // per-template control on the surface an operator browses from, and both go
+  // through `setContentTemplate` — still the ONE writer (DECISIONS §25, §70).
+  // Nothing in the engine moved: `tpl_{kind}`, `set_content_template`,
+  // `ContentTemplates`, `cue_or_content_tpl` and `resolveOutputTemplate` are
+  // untouched, and §29's resolution order is unchanged.
   function set(k, v) { if (sel) { sel[k] = v; edit = edit; } }
   /** A geometry number, clamped to the canvas so an object cannot be typed off it. */
   function geom(k, v) {
@@ -809,6 +898,16 @@
   // template is serialised ONCE, when the drag settles, inside the timer.
   $: if (edit) scheduleLive();
   function scheduleLive() {
+    // A DRAFT'S FIRST RUN IS ITS BASELINE. `loadDraft` assigns `edit`, which
+    // fires this block once before anybody has touched anything. Every run
+    // after that is a real change — the block re-runs on `edit = edit`, which
+    // is what every mutation in this file does. Marking it HERE rather than by
+    // comparing signatures keeps the promise the timer below makes (serialise
+    // once, when the drag settles) while still being true the instant a
+    // keystroke lands: a guard that is 400ms behind the operator is a guard
+    // that loses the work it exists to protect.
+    if (draftBaseline) draftBaseline = false;
+    else if (isDraft) draftTouched = true;
     clearTimeout(liveTimer);
     liveTimer = setTimeout(() => {
       const sig = sigOf(edit);
@@ -824,6 +923,12 @@
   }
   async function applyLive() {
     if (!edit || !$capture.available) return;
+    // A DRAFT IS NOT LIVE-SAVED. The autosave exists because editing a template
+    // repaints every screen already wearing it, and a draft is worn by nothing:
+    // there is no screen to keep in step and no row to keep in step with. Saving
+    // one here would put the row back that this whole path exists to withhold —
+    // the first keystroke would create the template Discard promises not to.
+    if (isDraft) return;
     saving = true;
     try {
       const id = await saveTemplate(edit);
@@ -834,9 +939,32 @@
     } catch (e) { err = 'Live update failed: ' + e; }
     saving = false;
   }
+  /** Insert the draft. This is the call `newFrom` used to make before anybody
+   *  had seen the template — made here, by the person who meant it. */
+  async function saveDraft() {
+    if (!edit || !$capture.available) return;
+    saving = true;
+    try {
+      const id = await saveTemplate(edit);
+      edit.id = id;
+      edit = edit;
+      // From this point the editor holds a real row and everything that was
+      // withheld from a draft — the live apply, History, Test on screens —
+      // is simply on, because it is an ordinary template now.
+      isDraft = false;
+      draftTouched = false;
+      lastSig = sigOf(edit);
+      savedTick = true;
+      setTimeout(() => (savedTick = false), 1400);
+      err = '';
+    } catch (e) { err = 'Save failed: ' + humanError(e); }
+    saving = false;
+  }
+
   async function saveNow() {
     clearTimeout(liveTimer);
-    await applyLive();
+    if (isDraft) await saveDraft();
+    else await applyLive();
     // An explicit Save banks a restore point (deduped) — distinct from the live
     // autosave, which must NOT spam the history on every drag.
     if (edit?.id) {
@@ -949,6 +1077,37 @@
     else if ((e.key === 'z' && e.shiftKey) || e.key === 'y') { e.preventDefault(); redo(); }
   }
 
+  // ── LEAVING ───────────────────────────────────────────────────────────────
+  //
+  // Back is the accidental door and Discard is the deliberate one, so only Back
+  // is guarded. A saved template is already on disk, so Back leaves at once as
+  // it always has; a draft nobody has touched has nothing to lose, so it leaves
+  // at once too. A DIRTY draft arms: the button says what a second press costs,
+  // and says it in the app. Never confirm() (rule 41), and never an overlay —
+  // an overlay would take `Esc` from the shell and would have to give it back
+  // (rule 44), for a question a button can ask on its own.
+  function disarmLeave() {
+    clearTimeout(leaveTimer);
+    leaveTimer = 0;
+    leaveArmed = false;
+  }
+  function goBack() {
+    if (isDraft && draftTouched && !leaveArmed) {
+      leaveArmed = true;
+      clearTimeout(leaveTimer);
+      leaveTimer = setTimeout(() => (leaveArmed = false), 4000);
+      return;
+    }
+    disarmLeave();
+    dispatch('back');
+  }
+  /** Close a draft, writing nothing. It says what it does, so it does it. */
+  function discardDraft() {
+    disarmLeave();
+    dispatch('back');
+  }
+  onDestroy(() => clearTimeout(leaveTimer));
+
   // ── Preview / test on the real screens (Decision §26) ──────────────────────
   let fsPreview = false;   // in-console fullscreen preview overlay (reaches no output)
   let testing = false;
@@ -957,7 +1116,12 @@
     testing = true;
     err = '';
     try {
-      if (!edit.id) await applyLive(); // a never-saved template has no id yet
+      // A never-saved EDIT (an autosave that has not landed yet) still has no
+      // id; settle it first. A DRAFT is a different thing — its control is
+      // disabled for exactly this reason, the same way History is, because
+      // putting a draft on the congregation's screens would mean creating the
+      // row that Discard promises not to.
+      if (!edit.id) await applyLive();
       await testTemplateOnOutputs(edit.id);
     } catch (e) {
       err = 'Test failed: ' + humanError(e);
@@ -974,11 +1138,23 @@
 
 <div class="te-shell">
   <header class="te-top">
-    <button class="r-btn ghost sm" on:click={() => dispatch('back')}>
-      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-      Back to Templates
+    <!-- THE ACCIDENTAL DOOR. For a saved template it leaves immediately, as it
+         always has. For a draft somebody has changed it arms once and says what
+         the second press costs — in the app, on the button, with no overlay and
+         no confirm() (rules 41 and 44). -->
+    <button class="r-btn ghost sm" class:armed={leaveArmed} on:click={goBack}
+      on:blur={() => leaveArmed && disarmLeave()}>
+      {#if !leaveArmed}
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+      {/if}
+      {leaveArmed ? 'Leave without saving?' : 'Back to Templates'}
     </button>
     {#if edit}<span class="te-name">{edit.name}</span><span class="te-sub r-mono">{layered ? layers.length + ' layers' : 'legacy'} · 1920×1080</span>{/if}
+    <!-- NOT SAVED YET, said where the name is, because that is the fact the rest
+         of this header is about. It is neutral: amber means ON AIR (rule 18) and
+         red means destructive, and an unsaved draft is neither — it is a
+         template that has not happened yet. -->
+    {#if isDraft}<span class="te-unsaved">Not saved yet</span>{/if}
     {#if edit && layered}
       <div class="te-undo">
         <button class="r-iconbtn te-zbtn" on:click={undo} disabled={!canUndo} title="Undo (Ctrl/⌘+Z)" aria-label="Undo">
@@ -997,7 +1173,12 @@
     </div>
     <button class="r-btn ghost sm" class:on={previewMode} on:click={() => (previewMode = !previewMode)}>{previewMode ? 'Editing' : 'Preview'}</button>
     <button class="r-btn ghost sm" on:click={() => (fsPreview = true)} disabled={!edit} title="Preview this template fullscreen in the console — reaches no output">Fullscreen</button>
-    <button class="r-btn ghost sm" on:click={testOnScreens} disabled={testing || !$capture.available || !edit} title="Put a sample verse on the live screens with this template — clear it with Esc">
+    <!-- A DRAFT CANNOT BE TESTED ON THE REAL SCREENS, for the same reason
+         History is dark for one: both need a row, and creating that row is the
+         thing Discard promises not to do. Disabled with the reason on it, which
+         is the precedent History already set two buttons along. -->
+    <button class="r-btn ghost sm" on:click={testOnScreens} disabled={testing || !$capture.available || !edit || isDraft}
+      title={isDraft ? 'Save this template first — testing it puts it on the live screens, which needs a saved template' : 'Put a sample verse on the live screens with this template — clear it with Esc'}>
       {testing ? 'Testing…' : 'Test on screens'}
     </button>
     <span class="te-histwrap">
@@ -1027,8 +1208,16 @@
         </div>
       {/if}
     </span>
-    <button class="r-btn primary sm" on:click={saveNow} disabled={saving || !$capture.available || !edit} title="Edits apply to live outputs automatically; an explicit Save also banks a restore point">
-      {saving ? 'Saving…' : savedTick ? 'Saved · live ✓' : 'Save Template'}
+    <!-- THE DELIBERATE DOOR OUT OF A DRAFT. It writes nothing, and it is the
+         only control here that says so, which is why it exists beside a Back
+         button that also leaves: one of the two is an answer and the other is a
+         navigation. -->
+    {#if isDraft}
+      <button class="r-btn ghost sm" on:click={discardDraft} title="Close without saving — this template has never been written, so nothing is deleted">Discard</button>
+    {/if}
+    <button class="r-btn primary sm" on:click={saveNow} disabled={saving || !$capture.available || !edit}
+      title={isDraft ? 'Create this template. Until you do, nothing has been written.' : 'Edits apply to live outputs automatically; an explicit Save also banks a restore point'}>
+      {saving ? 'Saving…' : savedTick ? 'Saved · live ✓' : isDraft ? 'Save template' : 'Save Template'}
     </button>
   </header>
 
@@ -1051,7 +1240,7 @@
         <div class="te-panehead">
           <span class="r-lbl">Layers</span>
           <div class="te-addwrap">
-            <button class="r-iconbtn te-addbtn" on:click|stopPropagation={() => (addOpen = !addOpen)} aria-label="Add layer">＋</button>
+            <button class="r-iconbtn te-addbtn" on:click|stopPropagation={toggleAdd} aria-expanded={addOpen} aria-haspopup="menu" aria-label="Add layer">＋</button>
             {#if addOpen}
               <!-- The click handler is not an interaction: it stops the document-level
                    outside-click closer from seeing a click on the menu itself. Every real
@@ -1062,7 +1251,7 @@
                    returns for every key that is not Escape, so Space still means advance
                    (rule 11) for as long as a menu is open. -->
               <!-- svelte-ignore a11y-click-events-have-key-events -->
-              <div class="te-addmenu" on:click|stopPropagation role="menu" tabindex="-1">
+              <div class="te-addmenu" style="left:{addPos.x}px; top:{addPos.y}px" on:click|stopPropagation role="menu" tabindex="-1">
                 <div class="te-addsec r-lbl">Add layer</div>
                 {#each LAYER_TYPES as t}
                   <button class="te-addmi" on:click={() => addLayer(t.type)}><span class="te-addico">{t.icon}</span>{t.label}</button>
@@ -1083,7 +1272,12 @@
                  target; `dragover` has to preventDefault or the browser refuses
                  the drop, and it only does so where the drop is legal, so a row
                  in another order shows no line and takes nothing. -->
+            <!-- `armed` on the ROW, not only on the button: the action cluster
+                 is revealed on hover, so an armed `Sure?` on a row the pointer
+                 has left was measured at opacity 0 — a question asked of
+                 somebody who can no longer see it, still live for four seconds. -->
             <div class="te-layer" class:sel={selId === L.id} class:off={L.visible === false} class:inband={row.member}
+              class:armed={armedDelete === L.id}
               class:dragging={dragId === L.id} class:dropto={overId === L.id}
               draggable={!L.locked}
               on:dragstart={(e) => onRowDragStart(e, L)}
@@ -1645,43 +1839,21 @@
                all of them belong to. -->
           <h3 class="te-sec te-templatesec">Template</h3>
           <div class="te-frow"><label class="te-fk" for="te-name">Name</label><input id="te-name" class="r-input te-fv" bind:value={edit.name} /></div>
-          <!-- ── TWO REGISTERS OF FIVE CHIPS, AND THEY ARE NOT THE SAME FACT ──
-               Found by agent S2 while auditing the gallery, and reported here
-               because both live in this file. They read as one fact printed
-               twice because they were two identical neutral chip rows over the
-               same five `CONTENT_KINDS` labels — and because the paragraph
-               explaining the SECOND one was attached to the FIRST, so the next
-               reader inherited the same confusion the render produced. The
-               comment is now on the register it describes.
+          <!-- "USED FOR" WAS HERE, AND IS NOW IN TWO PLACES INSTEAD OF THREE.
+               It was a chip grid writing the GLOBAL content look
+               (`setContentTemplate`, DECISIONS §70), rendered immediately above
+               the per-template filter below — two identical five-chip rows over
+               the same five `CONTENT_KINDS` labels, stating facts that have
+               nothing to do with each other. An operator's first click on the
+               filter made four chips go dark at once, which is exactly what was
+               reported as "clicking a content look activates all"; nothing was
+               wrong with either handler, the render was telling them something
+               false about what they had just done.
 
-                 · USED FOR is a GLOBAL BINDING, written by `setContentTemplate`
-                   (DECISIONS §70): when scripture fires, every screen set to
-                   *Follow the content look* wears THIS template. It says nothing
-                   about how this template renders.
-                 · The one below is a PER-TEMPLATE FILTER on `layout.shows`, read
-                   at runtime by `Output.svelte` and `layers.js::templateShows`.
-
-               The label below was **"Shows on this screen"**, and the word
-               *screen* was the damage: the thing in hand is a TEMPLATE, and
-               several screens can wear it. `Used for` keeps its name — it is a
-               term of art carried by `docs/REBRAND.md` §3.3, DECISIONS §70, the
-               gallery card and `inspectorobjects.test.js`, and renaming it here
-               alone would make two surfaces call one binding two things. -->
-          <span class="r-lbl te-showlbl">Used for</span>
-          <div class="te-showgrid">
-            {#each CONTENT_KINDS as k}
-              <button
-                class="te-showchip"
-                class:on={$contentTemplates[k.key] === edit.id}
-                on:click={() => toggleUsedFor(k.key)}
-              >
-                <span class="te-showtick" aria-hidden="true">{$contentTemplates[k.key] === edit.id ? '✓' : ''}</span>{k.label}
-              </button>
-            {/each}
-          </div>
-          <p class="te-fnote">A kind ticked here wears this template on every screen set to <b>Follow the content look</b>. A screen with a look of its own keeps it.</p>
-          {#if lookErr}<p class="te-fwarn" role="alert">{lookErr}</p>{/if}
-
+               `Channels.svelte` keeps the authoritative matrix and the gallery
+               inspector keeps the per-template control, so the feature is
+               intact and the editor simply no longer writes it. Nothing in the
+               engine changed. -->
           <!-- WHAT A SCREEN WEARING THIS TEMPLATE WILL RENDER. An online wall
                shows everything; a stage / confidence monitor might show only
                scripture, songs and the timer — when a picture or an announcement
@@ -1780,6 +1952,17 @@
   .te-histempty{ padding:9px 10px; font-size:var(--v-fs-cap); line-height:1.5; color:var(--v-faint); }
   .te-histempty b{ color:var(--v-dim); }
   .te-sub{ font-size:var(--v-fs-cap); color:var(--v-faint); }
+  /* NOT SAVED YET. A neutral chip, deliberately: amber is ON AIR and nothing
+     else (rule 18, DECISIONS §21) and red is destructive; a template that has
+     not been created is neither dangerous nor live. The dashed edge is what
+     separates it from the solid chips elsewhere in the product, which all state
+     something that IS true of a stored thing. */
+  .te-unsaved{ padding:2px 8px; border-radius:var(--v-r-sm); border:1px dashed var(--v-line2);
+    background:var(--v-surf2); color:var(--v-dim); font-size:var(--v-fs-cap); letter-spacing:.02em; white-space:nowrap; }
+  /* THE ARMED BACK BUTTON. It is asking a question, so it reads as one rather
+     than as the destructive act — nothing is being deleted, because nothing was
+     ever written. */
+  .te-top .r-btn.armed{ border-color:var(--v-accent-line); background:var(--v-accent-soft); color:var(--v-txt); }
   .te-undo{ display:inline-flex; align-items:center; gap:2px; margin-left:10px; }
   .te-zoom{ display:flex; align-items:center; gap:4px; }
   /* CONVERTED — B2. Undo · Redo · zoom out · zoom in were a hand-rolled 26px
@@ -1808,9 +1991,28 @@
 
   .te-pane{ display:flex; flex-direction:column; min-height:0; overflow:hidden; background:var(--v-surf); border:1px solid var(--v-line); border-radius:var(--v-r-lg); }
   .te-panehead{ display:flex; align-items:center; justify-content:space-between; gap:8px; padding:11px 13px; border-bottom:1px solid var(--v-line); flex:0 0 auto; }
-  /* The object strip WRAPS. A tab that has scrolled out of sight behind a
-     hidden scrollbar is a tab nobody knows is there. */
-  .te-objtabs{ display:flex; flex-wrap:wrap; gap:3px; padding:7px 9px 0; }
+  /* The object strip WRAPS, and is BOUNDED.
+     ────────────────────────────────────────────────────────────────────────
+     It wraps because a tab that has scrolled out of sight behind a hidden
+     HORIZONTAL scrollbar is a tab nobody knows is there. That reason is intact
+     and is why this is not a one-line scrolling strip.
+
+     What it did not have was a ceiling. It sat inside `.te-pane{overflow:hidden}`
+     as an auto-height flex item, and only `.te-designbody` carried `min-height:0`
+     — so the strip took whatever it wanted and the properties body paid for all
+     of it. Measured in Chrome at 1280×640 on a twenty-four-object template: the
+     strip was **292px of a 654px pane** and the properties body was left **254px
+     to hold 1379px**. The object an operator had just clicked was named at the
+     top and its properties were in a 254px slot underneath.
+
+     So: a ceiling of about three rows, and past that the strip scrolls
+     VERTICALLY with a visible scrollbar in a box whose top and bottom an
+     operator can see. That is a different thing from the horizontal hiding the
+     comment above warns about, and it is strictly better than the alternative
+     it replaces, which was hiding the whole panel rather than one tab. */
+  .te-objtabs{ display:flex; flex-wrap:wrap; gap:3px; padding:7px 9px 0;
+    flex:0 1 auto; min-height:0; max-height:88px; overflow-y:auto; }
+  .te-objtab{ flex:0 0 auto; }
   /* A TAB, not a button. `role="tab"` inside a `role="tablist"`, and the strip
      WRAPS rather than scrolls (see the markup). A tab is sized by its label and
      carries a selected state that a button variant does not have. */
@@ -1844,7 +2046,15 @@
      is the surface. Named so the next shape census can tell this from drift. */
   .te-addmi{ display:flex; align-items:center; gap:9px; text-align:left; padding:7px 9px; border:0; background:none; color:var(--v-txt); font-size:var(--v-fs-b2); border-radius:var(--v-r-sm); cursor:pointer; }
   .te-addmi:hover{ background:var(--v-surf3); }
-  .te-addmenu{ position:absolute; top:28px; right:0; z-index:30; width:186px; background:var(--v-surf2); border:1px solid var(--v-line2); border-radius:var(--v-r-md); box-shadow:var(--v-shadow-lg); padding:5px; display:flex; flex-direction:column; }
+  /* FIXED, not absolute — see `toggleAdd`. The menu is seventeen items tall and
+     lived inside `.te-pane{overflow:hidden}`, which cut 57px off it at 1280×640
+     and made the last item unclickable (measured, Chrome, `elementFromPoint`
+     returned null over its centre). `max-height` + its own scroll is for the
+     windows it is simply taller than; nothing is reachable only by being
+     off-screen. */
+  .te-addmenu{ position:fixed; z-index:30; width:186px; max-height:calc(100vh - 16px); overflow-y:auto;
+    background:var(--v-surf2); border:1px solid var(--v-line2); border-radius:var(--v-r-md); box-shadow:var(--v-shadow-lg); padding:5px; display:flex; flex-direction:column; }
+  .te-addmi{ flex:0 0 auto; }
   .te-addico{ width:16px; text-align:center; color:var(--v-faint); font-family:var(--f-mono); }
   .te-addsec{ padding:6px 8px 3px; }
 
@@ -1930,11 +2140,35 @@
   .te-lbtns{ grid-column:3; grid-row:2; justify-self:end; display:flex; gap:1px;
     opacity:0; transition:opacity .12s; }
   .te-layer:hover .te-lbtns, .te-layer.sel .te-lbtns{ opacity:1; }
+  /* AN ARMED ROW SHOWS ITS BUTTONS, whether or not the pointer is still on it.
+     `.te-lbtns` is revealed on hover, which is right for five affordances that
+     are undoable — and wrong for the four seconds after one of them has been
+     armed: measured `opacity: 0` over a live `Sure?`, so the question was asked
+     of somebody who could no longer see it, and the next click in that spot
+     deleted the object. */
+  .te-layer.armed .te-lbtns{ opacity:1; }
   /* A ROW AFFORDANCE, not a button — shown · locked · forward · back · delete,
      20px, inside a two-line list row. The shared button would not fit, and
      giving each one a fill and an edge would turn every layer row into a
      toolbar. The armed `Sure?` state is the two-step delete (rule 41). */
   .te-lmini{ width:20px; height:20px; display:grid; place-items:center; border:0; background:none; color:var(--v-faint); cursor:pointer; border-radius:var(--v-r-sm); font-size:var(--v-fs-lbl); }
+  /* THE ARMED STATE, WHICH THIS ROW NEVER HAD.
+     ────────────────────────────────────────────────────────────────────────
+     The only `.armed` rule in this file was `.te-objacts .armed`, scoped to the
+     INSPECTOR's action row, so the layer row's button carried the class and got
+     nothing from it. Measured in Chrome: the box stayed **20px wide** while
+     `Sure?` wanted **30px** (scrollWidth 36 against clientWidth 20), `overflow`
+     computed `visible`, and the word spilled sideways over the ↓ button beside
+     it — in the ordinary grey `--v-faint`, with a transparent background, so
+     the one state in this list that destroys something looked exactly like the
+     four that do not.
+
+     Width first (the word decides the box, not the other way round), then the
+     colour the confirm is owed. Red, not amber: amber means ON AIR and nothing
+     else (rule 18, DECISIONS §21). */
+  .te-lmini.armed{ width:auto; min-width:44px; padding:0 7px; background:var(--v-red);
+    color:#fff; font-weight:600; white-space:nowrap; }
+  .te-lmini.armed:hover{ background:var(--v-red); color:#fff; }
   .te-lmini:hover{ color:var(--v-txt); background:var(--v-surf3); }
   .te-lmini.danger:hover{ color:var(--v-rose); }
   /* A hidden layer's eye is dimmer than the rest of the row is, so "hidden"
@@ -2098,8 +2332,10 @@
      as a row of actions if it wore the button shape. */
   .te-showchip{ display:inline-flex; align-items:center; gap:5px; padding:6px 10px; border-radius:var(--v-r-md); background:var(--v-surf2); border:1px solid var(--v-line2); color:var(--v-faint); font-size:var(--v-fs-cap); cursor:pointer; }
   .te-showchip:hover{ color:var(--v-txt); border-color:var(--v-accent-line); }
-  .te-showchip.on{ background:var(--v-accent-soft); border-color:var(--v-accent-line); color:var(--v-txt); }
-  .te-showtick{ width:9px; text-align:center; color:var(--v-emerald); font-weight:700; }
+  /* `.te-showchip.on` and `.te-showtick` went with the "Used for" grid. What is
+     left of `.te-showlbl` / `.te-showgrid` / `.te-showchip` belongs to "Words in
+     this band", which reuses the shape for a flex-wrap chip row and has never
+     had a ticked state. */
   /* `Content this template renders` — a PER-TEMPLATE filter, and deliberately
      NOT a second chip grid (task 8). It used to be a second `.te-showgrid` over
      the same five labels, and because an absent `layout.shows` reads as "shows

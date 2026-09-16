@@ -539,11 +539,14 @@ describe('S1 · the inspector opens on the selected object, not on the template'
     mount();
     await settle();
     expect(host.querySelector('#te-name'), 'the template name field went missing').toBeTruthy();
-    // Two facts, two shapes (task 8): `Used for` is the global binding and stays
-    // a chip grid; `Content this template renders` is the per-template filter
-    // and gets its own `<h3>` section, not a second identical chip row — see
-    // `showsregister.test.js` for the distinction itself.
-    expect(host.querySelector('.te-showlbl').textContent.trim()).toBe('Used for');
+    // ONE register here now, not two. `Used for` — the global content-look
+    // binding — left this editor: it was a chip grid directly above a
+    // visually identical one over the same five labels, stating a fact that
+    // has nothing to do with it. `Content this template renders` is the
+    // per-template filter on `layout.shows` and stays, with its own `<h3>`.
+    // See `showsregister.test.js` for the distinction itself, and
+    // `Channels.svelte` for where the binding is set.
+    expect(host.textContent).not.toMatch(/Used for/);
     expect(host.querySelector('.te-showsec').textContent.trim()).toBe('Content this template renders');
     expect(host.textContent).not.toMatch(/Shows on this screen/);
   });
