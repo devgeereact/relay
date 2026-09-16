@@ -67,3 +67,27 @@ export function bundledAssetFileName(info) {
   const source = origins.find((n) => String(n).replace(/\\/g, '/').includes(SOURCE));
   return `${BUNDLED_BACKGROUND_DIR}/${bundledBackgroundName(source)}`;
 }
+
+/** The `media_assets.path` prefix that marks a picture Relay ships. */
+export const BUNDLED_PREFIX = 'bundled:';
+
+/**
+ * Where a `media_assets` row's file is served from.
+ *
+ * THE SAME RULE AS `main.rs::media_url`, and it has to be, because there are two
+ * doors and only two: the backend builds this URL for every output screen, and
+ * the Library's media pane builds it again for the thumbnail — the file itself,
+ * because nothing in this codebase generates a thumbnail. An imported file lives
+ * under `/media/<id>`; a bundled picture has no file there at all and is served
+ * out of the bundle at the path its marker names (DECISIONS §90).
+ *
+ * A row with no `path` is served by id, which is what every row did before
+ * bundled ones existed.
+ */
+export function mediaUrl(host, asset) {
+  const path = asset?.path ?? '';
+  if (path.startsWith(BUNDLED_PREFIX)) {
+    return `http://${host}:8032/${path.slice(BUNDLED_PREFIX.length)}`;
+  }
+  return `http://${host}:8032/media/${asset?.id}`;
+}
