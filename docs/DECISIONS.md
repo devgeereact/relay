@@ -4552,4 +4552,14 @@ launch after the operator deletes a starter notice, which does not bring it back
 still asserts zero for songs, saved verses and the demo ledger.
 `main::media_url_tests` holds the two ways a media row becomes a URL, and that a bundled row has no
 file to delete. `src/lib/bundledbackgrounds.test.js` holds the build rule, including that a served
-name never needs URL-encoding.
+name never needs URL-encoding, and holds the Rust and JavaScript halves of the URL rule to the same
+prefix and the same two forms — they are two languages and cannot share an implementation.
+`src/lib/bundledmedia.test.js` holds the SECOND door: it mounts the real Library media pane and
+reads the `src` a browser would fetch, because that pane renders the file itself as the thumbnail
+and a rule kept only in Rust would have made every seeded picture a broken image on the shelf it
+ships into.
+
+`demo.rs`'s own product code is untouched by all of this; five of its TESTS moved, because they
+asked whether tables were empty or read the only media row, which was exact while a fresh install
+had nothing in it. They measure the demo dataset as a delta and scope every row to the ledger now,
+which is the claim they were always making.
