@@ -446,7 +446,7 @@
     // now, and the panic key and a spoken clear never went through it anyway. What
     // must still happen when the wall goes clear, however it was cleared:
     //   · a press armed a beat ago must not paint a verse over a cleared wall
-    //   · the preacher's "up next" must not outlive the content it was about
+    //   · the preacher's "Up Next" must not outlive the content it was about
     // The second one reports its own failure, because until 2026-08-14 nothing
     // anywhere did and a preacher read a stale hint for a whole service.
     let wasLive = !!get(live);
@@ -455,7 +455,7 @@
       if (wasLive && !now) {
         gridPress.cancel();
         setStageNext(null, null).catch((e) =>
-          flash(`The preacher's stage monitor may still show the old "up next" — ${humanError(e)}`),
+          flash(`The preacher's stage monitor may still show the old "Up Next" — ${humanError(e)}`),
         );
       }
       wasLive = now;
@@ -625,7 +625,7 @@
       selId = item.id;
       flash(`Live: ${s.label}`);
       const n = nextOf(items, item.id, i);
-      // Deliberately shrugged: a missing "up next" is an absent hint, and the
+      // Deliberately shrugged: a missing "Up Next" is an absent hint, and the
       // wall — and this catch — already report anything that matters. Contrast
       // the CLEAR below, which cannot be shrugged.
       setStageNext(n?.label ?? null, n?.text ?? null).catch(() => {});

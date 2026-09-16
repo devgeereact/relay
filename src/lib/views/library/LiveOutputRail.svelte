@@ -25,7 +25,7 @@
   //
   // ── WHAT DID NOT LEAVE ────────────────────────────────────────────────────
   //
-  // UP NEXT. Nothing else in Relay renders the queue, reorders it, clears it or
+  // Up Next. Nothing else in Relay renders the queue, reorders it, clears it or
   // fires from it, and five Library panes have an "Add to queue" control feeding
   // it. Deleting this pane would have turned all five into controls that do
   // nothing — the exact failure `VerseDeck`'s `can.select` note describes.
@@ -87,9 +87,9 @@
   }
 </script>
 
-<aside class="lo rw-pane" aria-label="Up next">
+<aside class="lo rw-pane" aria-label="Up Next">
   <header class="rw-panehead">
-    <h2 class="rw-panettl">Up next</h2>
+    <h2 class="rw-panettl">Up Next</h2>
     <span class="rw-spring"></span>
     {#if queue.length}
       <span class="r-mono lo-count">{queue.length}</span>

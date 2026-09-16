@@ -2509,7 +2509,7 @@ export function dismissAudioError() {
 capture.update((s) => ({ ...s, audioError: null }));
 }
 
-/** Push the "up next" preview to the stage/confidence monitor (null clears).
+/** Push the "Up Next" preview to the stage/confidence monitor (null clears).
  *
  *  GROUP 1 (THROWS), moved out of GROUP 2 on 2026-08-14 (R5-8) — and the reason is
  *  a correction to the group rule itself, not just to this wrapper.
@@ -2517,7 +2517,7 @@ capture.update((s) => ({ ...s, audioError: null }));
  *  GROUP 2's test is *"can the congregation see the difference?"*. For this call the
  *  honest answer is **no, but the preacher can, and he is the one acting on it.**
  *  The stage monitor is a real screen on a stand in front of a person, and
- *  `setStageNext(null, null)` is how the "up next" panel comes DOWN. A swallowed
+ *  `setStageNext(null, null)` is how the "Up Next" panel comes DOWN. A swallowed
  *  failure there leaves a preacher reading a stale next-verse for the rest of the
  *  service with nothing, anywhere, reporting it.
  *

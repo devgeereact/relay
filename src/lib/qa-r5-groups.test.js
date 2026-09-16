@@ -163,7 +163,7 @@ describe('the sensitivity dial may not report a position it did not reach', () =
 // `setStageNext` publishes to (and clears) the preacher's stage monitor — a real
 // screen, on a stand, in front of a person. It is GROUP 2 (swallows). A failed
 // CLEAR is the bad direction: `Live.svelte` calls `setStageNext(null, null)` to
-// take the "up next" panel down, and if that call fails the preacher keeps reading
+// take the "Up Next" panel down, and if that call fails the preacher keeps reading
 // a stale next-verse for the rest of the service with nothing reporting it.
 describe('the stage monitor is a screen, and clearing it can fail silently', () => {
   it('setStageNext surfaces a failed clear', async () => {
@@ -176,7 +176,7 @@ describe('the stage monitor is a screen, and clearing it can fail silently', () 
     invoke.mockRejectedValue('kiosk hub is gone');
     await expect(
       store.setStageNext(null, null),
-      'clearing the preacher\'s "up next" panel failed and nothing anywhere says ' +
+      'clearing the preacher\'s "Up Next" panel failed and nothing anywhere says ' +
         'so — the stage monitor keeps showing the previous verse.',
     ).rejects.toBeTruthy();
   });
