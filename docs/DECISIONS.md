@@ -4291,32 +4291,37 @@ direction after the deletion.
 
 **Context.** §87 folded themes into templates and named the gap it left open: *"until Track D
 seeds [High Visibility] as a template FAMILY there is no high-contrast look a church can simply
-pick from the shelf."* Before this task, `theme_templates()` carried four families — Classic,
-Aurora, Ember, Nocturne — over four content kinds (Scripture, Lyrics, Lower Third, Timer), and
-`preset_templates()` separately shipped fourteen standalone designs with no coordinated set behind
-any of them: picking `Midnight Blue` for scripture left an operator with nothing coordinated for a
-lyric, a notice or a countdown. Two galleries, twenty-plus rows between them, and neither answered
-Media or Timer as a real kind — the two entries in `CONTENT_KINDS` (`src/lib/layers.js`) the old
-seed never dressed on every family.
+pick from the shelf."* Before this task, `theme_templates()` carried three families — Aurora,
+Ember, Nocturne — over four kinds each (Scripture, Lyrics, Lower Third, Announcement), and neither
+Classic nor Lower Third was a family at all: `builtin_templates()` shipped `Classic Serif` and
+`Lower Third` as single, uncoordinated rows. `preset_templates()` separately shipped fourteen more
+standalone designs with no coordinated set behind any of them: picking `Midnight Blue` for
+scripture left an operator with nothing coordinated for a lyric, a notice or a countdown. Two
+galleries plus two orphaned builtins, and nothing anywhere answered Media or Timer as a kind — two
+of the five entries in `CONTENT_KINDS` (`src/lib/layers.js`) no family had ever dressed.
 
 **The decision.** Five families — Classic, Aurora, Ember, Lower Third, High Visibility — each
 answering all five content kinds (Scripture, Lyrics, Media, Announcement, Timer), named `Family ·
 Kind` so the gallery groups them visually: twenty-five rows, and `preset_templates()` is now
-permanently empty. **Nocturne is dropped, not carried to five kinds.** It was a fourth family
-competing for the same shelf space as three reduced ones; closing the two-kind gap across five
-families that already existed rather than five families including one built new kept the seed a
-deliberate set instead of a rebalancing exercise, and a shelf of five coordinated looks is one a
-volunteer can actually read start to finish. Colours are fixed per family; sizes are free per kind,
-so a lyric (scanned) and a verse (read) are not the same size but stay the same look. Aurora and
-Ember's Scripture, Lyrics and Announcement rows are the previously-seeded bytes verbatim, so a
-church already using one sees no change on update. Lower Third is now the seed's only source of
-keyed templates (`builtin_templates()`'s `Lower Third`), which the transparency law in
-`resolveOutputTemplate` depends on, and its band fills with the neutral `#101319` rather than a law
-colour, per rule 18. High Visibility is `data/legacy_themes.json`'s frozen theme, the same look
-`legibility.test.js` already holds at 21:1 — which is what closes §87's gap, with one honest
-deviation: its Announcement does not scroll (the other four families' do), because a crawl that
-stops under `prefers-reduced-motion` silently truncates a notice, and a family built for a
-low-vision or vestibular reader cannot ship the one member most likely to cut text off screen.
+permanently empty. Classic and Lower Third are promoted from single `builtin_templates()` rows into
+full families rather than staying loose: a lower third is not a sixth content kind, it is a keyed
+variant, and the transparency law in `resolveOutputTemplate` depends on keyed templates existing at
+all — so making it a family gives every one of the five kinds a keyed option, strictly more
+capability than the keyed rows shipping before this wave. High Visibility is a family for the same
+reason it could not stay a lone extra: CLAUDE.md already names it an accessibility feature beside
+`legibility.js` and the distance preview, and an accessibility look that answers only one kind is
+not one a service can actually be run on. **Nocturne is dropped, not carried to five kinds** — its
+style keys sit close enough to Ember's and Classic's that keeping it would have cost a slot the
+other two use better, rather than adding real variety to the shelf. Colours are fixed per family;
+sizes are free per kind, so a lyric (scanned) and a verse (read) are not the same size but stay the
+same look. Aurora and Ember's Scripture, Lyrics and Announcement rows are the previously-seeded
+bytes verbatim, so a church already using one sees no change on update. Lower Third's band fills
+with the neutral `#101319` rather than a law colour, per rule 18. High Visibility is
+`data/legacy_themes.json`'s frozen theme, the same look `legibility.test.js` already holds at
+21:1 — which is what closes §87's gap, with one honest deviation: its Announcement does not scroll
+(the other four families' do), because a crawl that stops under `prefers-reduced-motion` silently
+truncates a notice, and a family built for a low-vision or vestibular reader cannot ship the one
+member most likely to cut text off screen.
 
 Every one of the twenty-five rows declares all five kinds in `layout.shows`, deliberately, not as a
 shrug. `layout.shows` is a per-screen filter (`templateShows`, consulted by `Output.svelte` before
