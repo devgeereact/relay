@@ -319,26 +319,67 @@ export function formatCountdown(ms, mode = 'auto') {
   return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`;
 }
 
-/** How long is left is a countdown's business; WHEN TO WORRY is this. */
+/** How long is left is a countdown's business; WHEN TO WORRY is this.
+ *  The SHIPPED figure — what a church that has never opened Settings gets. */
 export const COUNTDOWN_WARN_MS = 60_000;
+
+/**
+ * The DEFAULT warning window in force on this machine — the shipped minute until
+ * an operator sets `Settings → General → Countdown warning`, which is persisted in
+ * the settings KV under `countdown.warn_ms`.
+ *
+ * It lives here, as one number behind one setter, because the three surfaces that
+ * ask the rule (the wall through `TemplateRender`, the preacher's page through
+ * `Stage.svelte`, and the dock) each call `countdownWarning` with two arguments
+ * and must not be able to disagree about the third. `stores/capture.js` is the
+ * ONE writer: it reads and writes the row, and applies the figure here.
+ *
+ * Deliberately NOT a store. `layers.js` is imported by the output and stage pages,
+ * which have no Tauri bridge and no console state; a store here would drag the
+ * whole capture module into two bundles that cannot use it.
+ */
+let warnDefaultMs = COUNTDOWN_WARN_MS;
+
+/** Apply the configured default. Anything not a positive number is the shipped
+ *  minute rather than a window of zero, which is a colour that never comes on. */
+export function setCountdownWarnDefault(ms) {
+  const n = Number(ms);
+  warnDefaultMs = Number.isFinite(n) && n > 0 ? n : COUNTDOWN_WARN_MS;
+  return warnDefaultMs;
+}
 
 /**
  * Is this countdown inside its warning window?
  *
- * The last minute — or the last tenth of a countdown shorter than ten minutes,
- * because a minute's warning on a two-minute countdown is a colour that is on for
- * half its life and therefore says nothing.
+ * `warnMs` is the figure somebody CHOSE — a timer's own threshold, or a cue's.
+ * When one is given it is used as asked and nothing scales it: the tenth rule
+ * below exists because nobody had chosen the minute, and that reason does not
+ * survive somebody choosing.
  *
- * A rule rather than a setting, deliberately: the control belongs in the Settings
- * pass, and a setting with nowhere to set it is worse than a sensible default.
+ * Absent (the ordinary case: the three call sites pass two arguments), the rule
+ * is what it has always been — the last minute, or the last tenth of a countdown
+ * shorter than ten minutes, because a minute's warning on a two-minute countdown
+ * is a colour that is on for half its life and therefore says nothing.
+ *
+ * This USED to say the threshold was a rule rather than a setting, deliberately,
+ * because the control belonged in the Settings pass and a setting with nowhere to
+ * set it is worse than a sensible default. That pass has happened. The MINUTE in
+ * the rule below is now `warnDefaultMs`, which is `Settings → General → Countdown
+ * warning`, persisted under `countdown.warn_ms` and applied through
+ * `setCountdownWarnDefault`; `warnMs` is a figure chosen for one timer, which
+ * beats both. Two authorities, ranked once, here.
  */
-export function countdownWarning(remainingMs, totalMs = null) {
+export function countdownWarning(remainingMs, totalMs = null, warnMs = null) {
   const left = Number(remainingMs);
   if (!Number.isFinite(left) || left <= 0) return false;
+  const chosen = Number(warnMs);
+  // A blank field, a cleared setting or a failed parse is an ABSENT threshold,
+  // never a window of zero — which would be a warning colour that never comes on.
+  if (Number.isFinite(chosen) && chosen > 0) return left <= chosen;
   const span = Number(totalMs);
   const window = Number.isFinite(span) && span > 0
-    ? Math.min(COUNTDOWN_WARN_MS, span / 10)
-    : COUNTDOWN_WARN_MS;
+    ? Math.min(warnDefaultMs, span / 10)
+    : warnDefaultMs;
   return left <= window;
 }
 
