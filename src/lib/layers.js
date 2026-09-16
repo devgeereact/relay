@@ -319,22 +319,35 @@ export function formatCountdown(ms, mode = 'auto') {
   return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`;
 }
 
-/** How long is left is a countdown's business; WHEN TO WORRY is this. */
+/** How long is left is a countdown's business; WHEN TO WORRY is this.
+ *  The SHIPPED figure — what a church that has never opened Settings gets. */
 export const COUNTDOWN_WARN_MS = 60_000;
 
 /**
  * Is this countdown inside its warning window?
  *
- * The last minute — or the last tenth of a countdown shorter than ten minutes,
- * because a minute's warning on a two-minute countdown is a colour that is on for
- * half its life and therefore says nothing.
+ * `warnMs` is the figure somebody CHOSE — a timer's own threshold, or a cue's.
+ * When one is given it is used as asked and nothing scales it: the tenth rule
+ * below exists because nobody had chosen the minute, and that reason does not
+ * survive somebody choosing.
  *
- * A rule rather than a setting, deliberately: the control belongs in the Settings
- * pass, and a setting with nowhere to set it is worse than a sensible default.
+ * Absent (the ordinary case: the three call sites pass two arguments), the rule
+ * is what it has always been — the last minute, or the last tenth of a countdown
+ * shorter than ten minutes, because a minute's warning on a two-minute countdown
+ * is a colour that is on for half its life and therefore says nothing.
+ *
+ * This USED to say the threshold was a rule rather than a setting, deliberately,
+ * because the control belonged in the Settings pass and a setting with nowhere to
+ * set it is worse than a sensible default. That pass is this wave: the override
+ * is the door a chosen figure comes through.
  */
-export function countdownWarning(remainingMs, totalMs = null) {
+export function countdownWarning(remainingMs, totalMs = null, warnMs = null) {
   const left = Number(remainingMs);
   if (!Number.isFinite(left) || left <= 0) return false;
+  const chosen = Number(warnMs);
+  // A blank field, a cleared setting or a failed parse is an ABSENT threshold,
+  // never a window of zero — which would be a warning colour that never comes on.
+  if (Number.isFinite(chosen) && chosen > 0) return left <= chosen;
   const span = Number(totalMs);
   const window = Number.isFinite(span) && span > 0
     ? Math.min(COUNTDOWN_WARN_MS, span / 10)
