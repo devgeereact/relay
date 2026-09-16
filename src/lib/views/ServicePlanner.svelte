@@ -283,10 +283,19 @@
       await refresh();
     });
   }
+  // THE WORDS BESIDE THE CLOCK ARE THE OPERATOR'S, AND THIS IS WHERE THEY ARE
+  // TYPED. Both fields were written here as constants — 'Service begins in' and
+  // 'Welcome' — with no control anywhere in Relay to edit them, so every church
+  // ran the same two sentences whether or not they meant them. They are payload
+  // (`content.reference` and `countdown_done`), not template: blank is a real
+  // answer and it shows the digits alone, which is what the console's own Start
+  // sends. A cue that wants words asks for them here.
   let cdAddMin = 5;
+  let cdAddLabel = '';
+  let cdAddDone = '';
   async function addCountdownCue() {
     const m = Number(cdAddMin) || 5;
-    const payload = { minutes: m, label: 'Service begins in', done: 'Welcome' };
+    const payload = { minutes: m, label: cdAddLabel.trim(), done: cdAddDone.trim() };
     await act(async () => {
       await addPlanItem(openPlan.id, 'countdown', `Countdown · ${m} min`, payload);
       // A countdown is the one cue type whose length is known at build time, so it
@@ -810,6 +819,25 @@
             <span class="sp-cdunit r-mono">min</span>
             <button class="r-btn ghost sm sp-cdgo" on:click={addCountdownCue}>＋ Add</button>
           </div>
+          <!-- THE WORDS, AND THEY ARE OPTIONAL. A countdown's label and its
+               message at zero are payload the operator writes, and until now they
+               were two constants nothing could edit — so this is the interface
+               that never existed rather than a new feature. Blank is a real
+               answer: it puts the digits on the wall and nothing else, which is
+               what the console's own Start now sends.
+               A VISIBLE LABEL, BOUND BY `for`/`id`. A placeholder is not an
+               accessible name — it is unread by some screen readers and it
+               disappears the moment somebody types — and this planner has already
+               had that defect once, on the two controls in its inspector. -->
+          <div class="sp-cdwords">
+            <label class="r-lbl sp-cdwlbl" for="sp-cdlabel">Words above the clock</label>
+            <input id="sp-cdlabel" class="r-input sp-cdw" maxlength="60" bind:value={cdAddLabel}
+              placeholder="Optional — e.g. Service begins in" />
+            <label class="r-lbl sp-cdwlbl" for="sp-cddone">Words at zero</label>
+            <input id="sp-cddone" class="r-input sp-cdw" maxlength="60" bind:value={cdAddDone}
+              placeholder="Optional — e.g. Welcome" />
+            <p class="sp-fhelp sp-cdhelp">Leave both blank for a timer that shows the digits alone.</p>
+          </div>
           <div class="sp-results">
             {#if addSearching}
               <div class="sp-hint">Searching…</div>
@@ -1268,6 +1296,17 @@
     background:var(--v-surf); color:var(--v-txt); font-family:var(--f-mono); font-size:var(--v-fs-b2); text-align:center; }
   .sp-cdunit{ font-size:var(--v-fs-lbl); color:var(--v-faint); margin-left:-3px; }
   .sp-cdgo{ margin-left:auto; }
+
+  /* The words rail sits UNDER the minutes row rather than beside it: three
+     controls and a button already fill a 12px-gutter row at this pane's narrowest,
+     and a wrapping flex of fixed-width boxes is how the countdown figure ended up
+     beside its own caption in the dock. Two rows, each a label over its field. */
+  .sp-cdwords{ display:flex; flex-direction:column; gap:3px; padding:8px 12px 10px;
+    border-bottom:1px solid var(--v-line); background:var(--v-surf2); }
+  .sp-cdwlbl{ margin-top:4px; }
+  .sp-cdwlbl:first-child{ margin-top:0; }
+  .sp-cdw{ width:100%; }
+  .sp-cdhelp{ margin-top:7px; }
 
   /* The add panel's kind dot. One neutral for every kind, like the row chip: the
      heading above each group names the kind, and a dot that borrowed a colour

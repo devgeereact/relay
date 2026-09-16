@@ -620,9 +620,17 @@
     }
     // Start puts a new countdown up; Reset and ± re-aim the one already there,
     // which `startCountdown` deliberately refuses to do.
+    //
+    // DIGITS ALONE, AND NO WORDS AT ALL. This call used to name two constants —
+    // 'Service begins in' and 'Welcome' — and there was no field anywhere in this
+    // card, or in Relay, to type anything else. The words beside a clock are
+    // payload (`content.reference`), so a surface with no control for them has
+    // nothing to say about them; supplying a guess on the operator's behalf is a
+    // control that decides something the operator was never asked. A cue that
+    // wants words says so in the Planner, and fires them through Live.
     run(() =>
       action === 'start'
-        ? startCountdown(r.broadcastMs / 60_000, 'Service begins in', 'Welcome')
+        ? startCountdown(r.broadcastMs / 60_000)
         : adjustCountdown(r.broadcastMs),
     );
   }
