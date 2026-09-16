@@ -55,7 +55,15 @@ const CONTENT = { reference: 'Romans 8:28', text: 'And we know that all things w
  * not about a fixture that agrees with the code.
  */
 function seedBlobs() {
-  const src = readFileSync(resolve(__dirname, '../../src-tauri/src/db/templates.rs'), 'utf8');
+  const file = readFileSync(resolve(__dirname, '../../src-tauri/src/db/templates.rs'), 'utf8');
+  // A SEED IS PRODUCTION CODE, so stop at the first test module. The literals
+  // below that line are fixtures other tests argue from, and one of them is a
+  // deliberately half-built style ({themeRef, verseColor} and nothing else) that
+  // this file would otherwise read as a shipped design and then fail for not
+  // carrying the legacy keys no shipped design is allowed to be missing. The cut
+  // is asserted below so the scanner cannot silently narrow to nothing.
+  const cut = file.search(/\n#\[cfg\(test\)\]\nmod /);
+  const src = cut === -1 ? file : file.slice(0, cut);
   const out = [];
   for (const m of src.matchAll(/r##"(\{.*?\})"##/gs)) {
     try {
@@ -78,6 +86,12 @@ describe('the fixtures this file argues from are real', () => {
   it('finds the seeded styles in the Rust seed, and they carry the legacy keys', () => {
     const styles = seededStyles();
     expect(styles.length).toBeGreaterThan(20);
+    // The test-module cut found a real boundary. Without this, a rename of the
+    // first `mod …_tests` would silently widen the scan back over the fixtures,
+    // or a stray match would narrow it, and either way this file would be
+    // arguing from something other than the seed it names.
+    const raw = readFileSync(resolve(__dirname, '../../src-tauri/src/db/templates.rs'), 'utf8');
+    expect(raw.search(/\n#\[cfg\(test\)\]\nmod /)).toBeGreaterThan(0);
     // Layouts are in there too, and finding none of them would mean the scanner
     // had narrowed to something that happens to agree with it.
     expect(seededLayouts().length).toBeGreaterThan(5);

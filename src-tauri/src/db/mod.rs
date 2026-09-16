@@ -44,7 +44,7 @@ use channels::seed_channels;
 use serde_json::Value;
 use templates::{
     ensure_lower_third_band_is_not_a_law_colour, ensure_lyrics_template, ensure_preset_templates,
-    reset_builtin_templates, seed_templates,
+    ensure_themes_are_inlined, reset_builtin_templates, seed_templates,
 };
 #[cfg(test)]
 use verses::clean_verse;
@@ -358,6 +358,10 @@ fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
                                     // the function's own note. The band only became visible this wave, and on an
                                     // existing install it would have become visible in the REHEARSAL colour.
     ensure_lower_third_band_is_not_a_law_colour(conn)?;
+    // Themes were folded into templates: every template that pinned one keeps the
+    // look it had, written into its own style. See templates.rs for why it is one
+    // transaction and what a dangling ref does.
+    ensure_themes_are_inlined(conn)?;
     ensure_service_plans(conn)?; // Planner
     ensure_songs(conn)?; // Lyrics
     ensure_saved_scripture(conn)?; // Library

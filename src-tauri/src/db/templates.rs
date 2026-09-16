@@ -4,6 +4,7 @@
 //! single renderer that consumes these, so a template looks identical in the
 //! editor preview and on a 4K wall.
 
+use super::settings::get_setting;
 use rusqlite::Connection;
 use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
@@ -572,6 +573,190 @@ pub(super) fn ensure_lower_third_band_is_not_a_law_colour(
         [],
     )?;
     Ok(())
+}
+
+/// THE THEMES AS THEY STOOD WHEN THEY WERE FOLDED INTO TEMPLATES.
+///
+/// A FROZEN SNAPSHOT on purpose: the migration below inlines the values a
+/// template actually rendered with, so it must not read a definition that keeps
+/// moving. The file carries two required fields, `themes` (the nine builtins,
+/// ids -1 to -9) and `style_keys` (the whitelist `applyTheme` filtered a theme
+/// through at render time). Its own `_readme` says why. Pinned against the live
+/// table by `src/lib/legacythemes.test.js` for as long as both exist.
+const LEGACY_THEMES_JSON: &str = include_str!("../../data/legacy_themes.json");
+
+#[derive(Deserialize)]
+struct FrozenThemes {
+    /// `THEME_STYLE_KEYS` from `src/lib/themes.js`. Required: a snapshot without
+    /// it cannot reproduce what reached a screen, and guessing is how a look
+    /// changes on an update.
+    style_keys: Vec<String>,
+    themes: Vec<FrozenTheme>,
+}
+
+/// Only the id and the style travel. A builtin theme's NAME is never needed
+/// here: a builtin could reach a wall only through a template's `themeRef`, so
+/// it has nothing to be preserved as. The custom themes, which do, carry their
+/// own names out of `app_settings`.
+#[derive(Deserialize)]
+struct FrozenTheme {
+    id: i64,
+    style: serde_json::Map<String, Value>,
+}
+
+/// The layout a preserved custom theme becomes: the same scripture shape every
+/// seeded theme family uses, so the operator's look opens as a usable template
+/// rather than a style blob with no regions.
+const ORPHAN_THEME_LAYOUT: &str = r##"{"regions":["verse_text","reference"],"align":"center","lowerThird":false,"refFirst":false}"##;
+
+/// INLINE EVERY THEME A TEMPLATE POINTED AT, THEN DROP THE THEMES.
+///
+/// A theme reached a screen exactly one way: a template's `style.themeRef`,
+/// resolved at render time as `{ ...theme.style, ...template.style }`
+/// (`applyTheme`). Writing that same merge into the template leaves the
+/// effective look unchanged BY CONSTRUCTION. The template's own keys still win
+/// and only the keys it left unset are filled, which is the precedence the
+/// renderer already applied.
+///
+/// Three details the merge would be wrong without:
+///
+/// * **The theme side is filtered to `style_keys`.** `applyTheme` copied only
+///   the whitelisted keys, so a key off that list was dropped on the way to the
+///   screen (`templatedoors.test.js`, "the theme door"). Inlining one would put
+///   a value on a wall that never received it. The nine builtins are all inside
+///   the list; a church's own imported theme need not be. The TEMPLATE's own
+///   keys are never filtered, because they were never filtered.
+/// * **A dangling ref is dropped and nothing is invented.** `resolveThemed`
+///   degraded to the template's own look rather than blanking, so that is what
+///   the wall was already doing and what the migration must agree with.
+/// * **A custom theme nothing referenced becomes a template.** It changed no
+///   screen (there is no active-theme concept), but it is a look the operator
+///   built and the key it lives in is being deleted. Added BY NAME and only when
+///   absent, like every other seed.
+///
+/// Retryable (rule 25). There is no scratch table to strand, and the whole
+/// thing, the rewrites, the preserved themes and the removal of
+/// `themes.custom`, is ONE transaction: a failure or a process death anywhere
+/// leaves the database exactly as it was, and the next boot runs a clean first
+/// attempt. That atomicity is not a tidiness point. Rewriting the templates and
+/// deleting the setting in two steps has a window in which the refs are gone but
+/// `themes.custom` is still there, and a retry landing in it would find no ref
+/// pointing at any custom theme and duplicate every one of them as a template.
+/// `unchecked_transaction` rolls back when it is dropped, so every error path
+/// out of here, `?` included, closes the transaction rather than leaving it open
+/// for the `PRAGMA foreign_keys = ON` that follows to no-op inside.
+///
+/// Idempotent: a second run finds no `themeRef` to act on and no
+/// `themes.custom` to preserve.
+pub(super) fn ensure_themes_are_inlined(conn: &Connection) -> rusqlite::Result<()> {
+    // A MALFORMED SNAPSHOT MUST NOT STOP THE APP BOOTING. With no known themes
+    // every ref is dropped without inlining, which is exactly what a dangling
+    // ref already did on screen. It cannot ship broken: `legacythemes.test.js`
+    // reads the same bytes.
+    let (whitelist, mut known) = match serde_json::from_str::<FrozenThemes>(LEGACY_THEMES_JSON) {
+        Ok(f) => (
+            f.style_keys,
+            f.themes
+                .into_iter()
+                .map(|t| (t.id, t.style))
+                .collect::<Vec<_>>(),
+        ),
+        Err(e) => {
+            eprintln!("legacy_themes.json could not be read ({e}); refs will be dropped");
+            (Vec::new(), Vec::new())
+        }
+    };
+    let whitelisted = |k: &String| whitelist.iter().any(|w| w == k);
+
+    // The operator's own themes, from the key that is about to be deleted. An
+    // entry with no numeric id or no style object is skipped, because
+    // `parseThemes` skipped it too and a template pointing at one was already
+    // rendering as a dangling ref.
+    let custom_raw = get_setting(conn, "themes.custom")?;
+    let custom: Vec<(i64, String, serde_json::Map<String, Value>)> = custom_raw
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<Vec<Value>>(raw).ok())
+        .map(|list| {
+            list.into_iter()
+                .filter_map(|t| {
+                    let id = t.get("id").and_then(Value::as_i64)?;
+                    let style = t.get("style").and_then(Value::as_object)?.clone();
+                    let name = t.get("name").and_then(Value::as_str).unwrap_or("").trim();
+                    let name = if name.is_empty() { "Theme" } else { name };
+                    Some((id, name.to_string(), style))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    known.extend(custom.iter().map(|(id, _, s)| (*id, s.clone())));
+
+    let tx = conn.unchecked_transaction()?;
+
+    let rows: Vec<(i64, String)> = {
+        let mut stmt = tx.prepare("SELECT id, style_json FROM templates")?;
+        let it = stmt.query_map([], |r| Ok((r.get(0)?, r.get::<_, String>(1)?)))?;
+        it.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    let mut inlined: Vec<i64> = Vec::new();
+    for (id, style_json) in rows {
+        let Ok(Value::Object(mut style)) = serde_json::from_str::<Value>(&style_json) else {
+            continue; // not a style object: leave it exactly as it is
+        };
+        // The key is reserved, the renderer already ignored it, and it is being
+        // retired, so it is removed whatever it held. Only a NUMBER ever named a
+        // theme (`templateThemeRef` returns null for anything else), so only a
+        // number can inline one.
+        let Some(theme_ref) = style.remove("themeRef") else {
+            continue; // nothing pinned here: no write, which is the idempotency
+        };
+        if let Some(theme_ref) = theme_ref.as_i64() {
+            if let Some((_, theme_style)) = known.iter().find(|(tid, _)| *tid == theme_ref) {
+                inlined.push(theme_ref);
+                for (k, v) in theme_style {
+                    if whitelisted(k) {
+                        style.entry(k.clone()).or_insert_with(|| v.clone());
+                    }
+                }
+            }
+        }
+        let Ok(next) = serde_json::to_string(&Value::Object(style)) else {
+            continue; // unserialisable: better the old look than an empty one
+        };
+        tx.execute(
+            "UPDATE templates SET style_json = ?1 WHERE id = ?2",
+            (next, id),
+        )?;
+    }
+
+    for (id, name, style) in &custom {
+        if inlined.contains(id) {
+            continue; // already preserved, inside the template that used it
+        }
+        let present: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM templates WHERE name = ?1",
+            [name],
+            |r| r.get(0),
+        )?;
+        if present > 0 {
+            continue;
+        }
+        eprintln!("themes: keeping {name:?} as a template (nothing referenced it)");
+        // NOT whitelist-filtered, deliberately: this one never rendered, so
+        // there is no look to reproduce, only saved work to keep whole.
+        tx.execute(
+            "INSERT INTO templates (name, region_config_json, style_json) VALUES (?1, ?2, ?3)",
+            (
+                name,
+                ORPHAN_THEME_LAYOUT,
+                Value::Object(style.clone()).to_string(),
+            ),
+        )?;
+    }
+    if custom_raw.is_some() {
+        tx.execute("DELETE FROM app_settings WHERE key = 'themes.custom'", [])?;
+    }
+
+    tx.commit()
 }
 
 pub(super) fn ensure_preset_templates(conn: &Connection) -> rusqlite::Result<()> {
@@ -1146,5 +1331,234 @@ mod preset_template_tests {
             )
             .expect("read");
         assert_eq!(lt, twice, "running it twice must be a no-op");
+    }
+}
+
+#[cfg(test)]
+mod theme_inlining_tests {
+    use super::*;
+    use crate::db::settings::set_setting;
+
+    #[test]
+    fn a_themed_template_keeps_exactly_the_look_it_had() {
+        // `{ ...theme.style, ...template.style }` is what `applyTheme` computed at
+        // render time, so inlining it is the effective look BY CONSTRUCTION — the
+        // template's own keys still win, and only the keys it left unset are filled.
+        // Anything else here is a church's wall changing appearance on an update,
+        // with nothing in the building able to say why.
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate(&conn, true).unwrap();
+        conn.execute(
+            "INSERT INTO templates (name, region_config_json, style_json) VALUES (?1, ?2, ?3)",
+            (
+                "Themed",
+                r#"{"regions":["verse_text","reference"]}"#,
+                // Pins Modern Dark (-1) and overrides ONE of its keys.
+                r##"{"themeRef":-1,"verseColor":"#ff0000"}"##,
+            ),
+        )
+        .unwrap();
+        ensure_themes_are_inlined(&conn).unwrap();
+        let style: String = conn
+            .query_row(
+                "SELECT style_json FROM templates WHERE name = 'Themed'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&style).unwrap();
+        assert!(v.get("themeRef").is_none(), "the ref must be gone");
+        assert_eq!(
+            v["verseColor"], "#ff0000",
+            "the template's own key still wins"
+        );
+        assert_eq!(v["accent"], "#22d3ee", "the theme's unset keys are inlined");
+    }
+
+    #[test]
+    fn an_unknown_theme_ref_is_dropped_without_touching_the_style() {
+        // A dangling ref already rendered as the template's own look (`resolveThemed`
+        // degrades rather than blanking). The migration must agree with what the
+        // wall was doing, not invent a look for it.
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate(&conn, true).unwrap();
+        conn.execute(
+            "INSERT INTO templates (name, region_config_json, style_json) VALUES (?1, ?2, ?3)",
+            (
+                "Dangling",
+                r#"{"regions":["verse_text"]}"#,
+                r##"{"themeRef":123456,"verseColor":"#abc"}"##,
+            ),
+        )
+        .unwrap();
+        ensure_themes_are_inlined(&conn).unwrap();
+        let style: String = conn
+            .query_row(
+                "SELECT style_json FROM templates WHERE name = 'Dangling'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&style).unwrap();
+        assert!(v.get("themeRef").is_none());
+        assert_eq!(v["verseColor"], "#abc");
+        assert_eq!(v.as_object().unwrap().len(), 1, "no keys invented");
+    }
+
+    #[test]
+    fn a_custom_theme_nothing_referenced_becomes_a_template_rather_than_being_lost() {
+        // A custom theme's ONLY effect anywhere is through a template's themeRef
+        // (there is no active-theme concept). One that nothing references therefore
+        // changed no screen — but it is still a look the operator built, and the
+        // key it lives in is about to be deleted. It becomes one real template,
+        // named after the theme.
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate(&conn, true).unwrap();
+        set_setting(
+            &conn,
+            "themes.custom",
+            r##"[{"id":5,"name":"Harvest","style":{"accent":"#e08b2a","verseColor":"#fff5e6"}}]"##,
+        )
+        .unwrap();
+        ensure_themes_are_inlined(&conn).unwrap();
+        let style: String = conn
+            .query_row(
+                "SELECT style_json FROM templates WHERE name = 'Harvest'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(style.contains("#e08b2a"));
+        assert!(
+            get_setting(&conn, "themes.custom").unwrap().is_none(),
+            "the key is dropped once its contents are preserved"
+        );
+    }
+
+    #[test]
+    fn inlining_is_retryable_and_idempotent() {
+        // Rule 25. Run it three times: the second and third must be no-ops, not
+        // errors, and must not stack a second copy of the theme's keys or a second
+        // template per custom theme. A migration that fails every boot after a
+        // half-run is a church whose app will not start.
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate(&conn, true).unwrap();
+        conn.execute(
+            "INSERT INTO templates (name, region_config_json, style_json) VALUES (?1, ?2, ?3)",
+            (
+                "Themed",
+                r#"{"regions":["verse_text"]}"#,
+                r#"{"themeRef":-1}"#,
+            ),
+        )
+        .unwrap();
+        ensure_themes_are_inlined(&conn).unwrap();
+        let after_one: String = conn
+            .query_row(
+                "SELECT style_json FROM templates WHERE name = 'Themed'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        ensure_themes_are_inlined(&conn).unwrap();
+        ensure_themes_are_inlined(&conn).unwrap();
+        let after_three: String = conn
+            .query_row(
+                "SELECT style_json FROM templates WHERE name = 'Themed'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(after_one, after_three);
+        let n: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM templates WHERE name = 'Themed'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 1);
+    }
+    #[test]
+    fn a_theme_key_the_wall_never_received_is_not_inlined() {
+        // `applyTheme` copied only `THEME_STYLE_KEYS` off a theme, so a key
+        // outside that list was dropped on the way to the screen: the theme
+        // editor could show it and the wall never painted it (`templatedoors
+        // .test.js`, "the theme door"). Inlining one would be a value appearing
+        // on a congregation screen for the first time, on an update, because of
+        // a migration whose entire promise is that nothing changes. The nine
+        // builtins are all inside the list; an imported custom theme need not be.
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate(&conn, true).unwrap();
+        set_setting(
+            &conn,
+            "themes.custom",
+            r##"[{"id":7,"name":"Imported","style":{"accent":"#0f0","scroll":true}}]"##,
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO templates (name, region_config_json, style_json) VALUES (?1, ?2, ?3)",
+            (
+                "Ticker",
+                r##"{"regions":["verse_text"]}"##,
+                r##"{"themeRef":7}"##,
+            ),
+        )
+        .unwrap();
+        ensure_themes_are_inlined(&conn).unwrap();
+        let style: String = conn
+            .query_row(
+                "SELECT style_json FROM templates WHERE name = 'Ticker'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&style).unwrap();
+        assert_eq!(v["accent"], "#0f0", "a whitelisted key is inlined");
+        assert!(
+            v.get("scroll").is_none(),
+            "a key applyTheme filtered out must not reach the wall now: {style}"
+        );
+    }
+
+    #[test]
+    fn a_custom_theme_a_template_used_is_not_also_kept_as_a_second_template() {
+        // The two halves are one transaction for this reason among others: a
+        // theme preserved INSIDE the template that used it must not also appear
+        // beside it as a duplicate look the operator never made.
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate(&conn, true).unwrap();
+        set_setting(
+            &conn,
+            "themes.custom",
+            r##"[{"id":9,"name":"Harvest","style":{"accent":"#e08b2a"}}]"##,
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO templates (name, region_config_json, style_json) VALUES (?1, ?2, ?3)",
+            (
+                "Autumn",
+                r##"{"regions":["verse_text"]}"##,
+                r##"{"themeRef":9}"##,
+            ),
+        )
+        .unwrap();
+        ensure_themes_are_inlined(&conn).unwrap();
+        let used: String = conn
+            .query_row(
+                "SELECT style_json FROM templates WHERE name = 'Autumn'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(used.contains("#e08b2a"), "the look was not inlined: {used}");
+        let orphan: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM templates WHERE name = 'Harvest'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(orphan, 0, "a referenced theme was duplicated as a template");
     }
 }
