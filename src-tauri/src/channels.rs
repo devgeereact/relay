@@ -993,58 +993,90 @@ fn note_wall<R: tauri::Runtime>(app: &tauri::AppHandle<R>, on_air: bool, black: 
     }
 }
 
-/// THE COUNTDOWN THAT IS IN FRONT OF THE OPERATOR, so the transport can re-aim or
-/// HOLD it without rebuilding it from a mirror.
+/// WHAT IS IN FRONT OF THE OPERATOR RIGHT NOW — the live content itself, whatever
+/// kind it is, or None over a cleared or blacked wall.
+///
+/// **This used to be `CountdownState`, and the difference is the whole of wave 3.**
+/// It held an `Option<OutputContent>` filtered down to countdowns, so the countdown
+/// had no existence apart from being the live content: fire a verse, a song or a
+/// notice and it was forgotten, `adjust_countdown` answered "Nothing is counting
+/// down.", and there was no way back. That was never a decision anybody took — it
+/// was a consequence of where the state lived. A timer's facts live in
+/// `timers::TimerRegistry` now and have a lifetime of their own; what remains here
+/// is the smaller, honest question this slot can actually answer: **is that timer
+/// what the screens are showing at this moment?**
 ///
 /// Reset and ±1 used to be assembled in the console out of `$live` — the label, the
 /// done message and the template all read back off the event and handed to
 /// `start_countdown` again. That works exactly as long as every caller remembers
 /// every field, and a paused countdown adds one more thing to forget: a `+1` that
 /// dropped `countdown_paused_ms` would quietly restart a held timer in front of a
-/// congregation. The engine owns the countdown instead, and the transport asks it to
-/// change one thing about it.
+/// congregation. The engine carries it instead, and the transport asks it to change
+/// one thing about it.
 ///
 /// Maintained at the SAME three doors as [`WallState`] — `broadcast_content`, `clear`
 /// and `black` — so it cannot drift (rule 36), with one deliberate difference: it is
 /// noted BEFORE the rehearsal branch, not after. `WallState` answers "what can a
-/// congregation see", so a rehearsal must not touch it. This answers "what countdown
-/// is the operator looking at", and in a rehearsal that is the console's own copy —
-/// which the console already mirrors, and on which ±1 works today. Noting it after
-/// the branch would take the transport away in rehearsal, which is the one place an
+/// congregation see", so a rehearsal must not touch it. This answers "what is the
+/// operator looking at", and in a rehearsal that is the console's own copy — which
+/// the console already mirrors, and on which ±1 works today. Noting it after the
+/// branch would take the transport away in rehearsal, which is the one place an
 /// operator is meant to be practising with it.
 ///
 /// **Lock discipline:** innermost, and never held across an emit (rule 2). Every
 /// reader clones and releases before it broadcasts.
 #[derive(Default)]
-pub struct CountdownState(pub std::sync::Mutex<Option<OutputContent>>);
+pub struct LiveContent(pub std::sync::Mutex<Option<OutputContent>>);
 
-/// The countdown currently in front of the operator, or None when there is not one.
+/// The content currently in front of the operator, or None over a cleared wall.
 /// A clone, taken under the lock and returned with the lock released.
-pub fn live_countdown<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Option<OutputContent> {
-    app.try_state::<CountdownState>()
+pub fn live_content<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Option<OutputContent> {
+    app.try_state::<LiveContent>()
         .and_then(|s| s.0.lock().ok().and_then(|g| g.clone()))
 }
 
-/// Remember (or forget) the countdown at one of the three doors. Anything that is
-/// not a countdown forgets it, which is the whole point: a verse, a song or a notice
-/// replaced the countdown, so there is no longer one to re-aim.
-fn note_countdown<R: tauri::Runtime>(app: &tauri::AppHandle<R>, content: Option<&OutputContent>) {
-    let Some(state) = app.try_state::<CountdownState>() else {
+/// Record what is on the screens at one of the three doors.
+///
+/// **There is no filter here, and its absence is the fix.** The old version kept the
+/// content only while it was a countdown, which made "is there a countdown" and "is
+/// a countdown on the screens" the same question — so the answer to the first was
+/// lost every time the answer to the second changed.
+fn note_live_content<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    content: Option<&OutputContent>,
+) {
+    let Some(state) = app.try_state::<LiveContent>() else {
         return;
     };
-    let next = content
-        .filter(|c| c.countdown_to.is_some() && c.kind.as_deref() == Some("countdown"))
-        .cloned();
+    let next = content.cloned();
     if let Ok(mut g) = state.0.lock() {
         *g = next;
     };
 }
 
+/// A PANIC CONTROL TAKES EVERY CONGREGATION TIMER, AND ASKS NOTHING.
+///
+/// `clear` and `black` take back every congregation screen totally, and a timer
+/// projected onto those screens goes with them — the guarantee DECISIONS §27 states,
+/// unchanged. The split between congregation and programme timers is a property of
+/// the timer (`timers::Scope`), never a question asked here: a panic control that
+/// has to work out which screen it is talking to is a panic control that can fail to
+/// answer, and rule 15 does not allow one of those.
+///
+/// A no-op when the registry is not managed, exactly like `note_wall`.
+fn stop_congregation_timers<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    if let Some(reg) = app.try_state::<crate::timers::TimerRegistry>() {
+        // Takes and releases its own lock, so nothing is held across the emits
+        // below (rule 2).
+        reg.stop_scope(crate::timers::Scope::Both);
+    }
+}
+
 pub fn broadcast_content<R: tauri::Runtime>(app: &tauri::AppHandle<R>, content: OutputContent) {
     let json = kiosk_content_json(&content);
-    // BEFORE the rehearsal branch, deliberately — see `CountdownState`. The lock is
+    // BEFORE the rehearsal branch, deliberately — see `LiveContent`. The lock is
     // taken and released here, never held across the emit below (rule 2).
-    note_countdown(app, Some(&content));
+    note_live_content(app, Some(&content));
     if rehearsing(app) {
         // Content-free by design: the reference is congregation/sermon data and this
         // log is written to disk. What matters operationally is only that the
@@ -1071,9 +1103,10 @@ pub fn broadcast_content<R: tauri::Runtime>(app: &tauri::AppHandle<R>, content: 
 /// panic control that reports a success it did not achieve is worse than one that
 /// is missing: the operator stops looking at the screen and trusts the toast.
 pub fn clear<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
-    // The countdown left the operator's screen either way, rehearsal or not — so it
+    // The content left the operator's screen either way, rehearsal or not — so it
     // is forgotten on both paths here, exactly as it is remembered on both above.
-    note_countdown(app, None);
+    note_live_content(app, None);
+    stop_congregation_timers(app);
     if rehearsing(app) {
         return app
             .emit_to(CONSOLE, "output://clear", ())
@@ -1090,7 +1123,8 @@ pub fn clear<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String>
 ///
 /// Returns Err for the same reason `clear` does — see above.
 pub fn black<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
-    note_countdown(app, None);
+    note_live_content(app, None);
+    stop_congregation_timers(app);
     if rehearsing(app) {
         return app
             .emit_to(CONSOLE, "output://black", ())

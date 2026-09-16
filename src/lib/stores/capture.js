@@ -21,7 +21,8 @@
 //   allowed to do, or whether the microphone is live. `manualFire`, `confirmDetection`,
 //   `setDetection`, `setRehearsal`, `navVerse`, `startCapture`, `stopCapture`,
 //   `fireContent`, `startCountdown`, `adjustCountdown`, `endService`, `setSttLanguage`,
-//   `setDefaultTemplate`.
+//   `setDefaultTemplate`, and the five timer wrappers — `startTimer`, `adjustTimer`,
+//   `stopTimer`, `listTimers`, `showTimer` (held there by `timerwrappers.test.js`).
 //   The caller MUST handle it and tell the operator.
 //   `setDefaultTemplate` was missed when it stopped being a bare `set_setting` and
 //   became the `set_default_template` COMMAND — which writes the row, pushes the
@@ -1443,6 +1444,103 @@ if (countdownRunning()) {
 const call = await invoke();
 await call('start_countdown', { minutes, label, doneMsg, templateId });
 if (!keepPlan) leavePlan();
+}
+
+// ── TIMERS ────────────────────────────────────────────────────────────────────
+//
+// A timer has an identity and a lifetime of its own (`src-tauri/src/timers.rs`).
+// `startCountdown` above is still the dock's one-press congregation countdown and
+// still creates one; these five address timers by id, which is what lets a console
+// show several and move the one the operator is pointing at.
+//
+// **All five are GROUP 1 — THROWS.** They change what is on a screen, what a
+// preacher is being told, or what an operator believes about either, and a failure
+// the caller cannot see is a control that lies about what it did. `timerwrappers.
+// test.js` is what holds them in this group; a comment on its own does not.
+
+/**
+ * START A TIMER AND HAND BACK ITS IDENTITY. It puts nothing in front of anybody.
+ *
+ * `scope` is `'both'` (a congregation countdown) or `'stage'` (a programme timer
+ * for the preacher's monitor). Putting a `'both'` timer on the screens is
+ * `showTimer`; there are exactly two doors onto a congregation wall and this is
+ * deliberately not one of them.
+ *
+ * THROWS (contract group 1).
+ */
+export async function startTimer({
+minutes,
+label = '',
+doneMsg = '',
+scope = 'both',
+warnMs = null,
+planItemId = null,
+}) {
+const call = await invoke();
+return call('start_timer', { minutes, label, doneMsg, scope, warnMs, planItemId });
+}
+
+/**
+ * RE-AIM OR HOLD ONE TIMER, BY ITS IDENTITY.
+ *
+ * `adjustCountdown` is this same action aimed at "whichever congregation countdown
+ * is running", which is what the dock's transport means. This one names the timer.
+ *
+ * It repaints a wall only when that timer is what the screens are already showing.
+ * Changing a number on a timer that is not up must not put it up — the way back is
+ * `showTimer`, an action that says what it does.
+ *
+ * THROWS (contract group 1).
+ */
+export async function adjustTimer(timerId, { remainingMs = null, paused = null } = {}) {
+const call = await invoke();
+await call('adjust_timer', { timerId, remainingMs, paused });
+}
+
+/**
+ * TAKE A TIMER OFF THE REGISTRY. It does not touch a screen — `Clear screens` is
+ * how a wall is taken back, and it is one key away at every moment (rule 15).
+ *
+ * THROWS (contract group 1).
+ */
+export async function stopTimer(timerId) {
+const call = await invoke();
+await call('stop_timer', { timerId });
+}
+
+/**
+ * EVERY TIMER, OLDEST FIRST, WITH HOW LONG IS LEFT ON EACH.
+ *
+ * THROWS (contract group 1) — and this one is worth saying out loud, because the
+ * obvious swallow returns `[]`, which is exactly what a console with no timers
+ * renders. A broken bridge would look like a quiet Sunday on the one surface an
+ * operator would use to find a clock counting down to the wrong thing.
+ *
+ * `remaining_ms` on each row is the engine's own figure. The frontend still ticks
+ * through `countdown.js::countdownRemainingMs`, which stays the only arithmetic on
+ * this side of the bridge.
+ */
+export async function listTimers() {
+const call = await invoke();
+return call('list_timers');
+}
+
+/**
+ * PUT A CONGREGATION TIMER BACK IN FRONT OF PEOPLE — the explicit way back.
+ *
+ * A timer outlives the content that replaced it now, so after a reading there is
+ * something to return to. This is how an operator returns to it, on purpose. It
+ * carries whatever the timer says NOW, so what goes back up is the figure in the
+ * list rather than the length it started as. A `'stage'` timer is refused by the
+ * engine, in words: it has no congregation wire form.
+ *
+ * THROWS (contract group 1) — it is one of two doors onto a congregation wall, so
+ * a failure nobody is told about is an operator believing in a countdown that is
+ * not there.
+ */
+export async function showTimer(timerId, templateId = null) {
+const call = await invoke();
+await call('show_timer', { timerId, templateId });
 }
 
 /** Fire arbitrary content to the screens. `kind` ('song'|'announce') selects the
