@@ -581,15 +581,22 @@ pub(super) fn ensure_lower_third_band_is_not_a_law_colour(
 /// template actually rendered with, so it must not read a definition that keeps
 /// moving. The file carries two required fields, `themes` (the nine builtins,
 /// ids -1 to -9) and `style_keys` (the whitelist `applyTheme` filtered a theme
-/// through at render time). Its own `_readme` says why. Pinned against the live
-/// table by `src/lib/legacythemes.test.js` for as long as both exist.
+/// through at render time). Its own `_readme` says why. It was pinned against
+/// the live JS table by `src/lib/legacythemes.test.js` while both existed; that
+/// table is now deleted (DECISIONS §87) and this file is the only copy, so what
+/// holds it is `the_shipped_snapshot_parses_so_that_branch_is_never_taken_in_a_real_build`
+/// below — which is the guard that matters, because a snapshot that stops
+/// parsing makes this whole migration a silent no-op.
 const LEGACY_THEMES_JSON: &str = include_str!("../../data/legacy_themes.json");
 
 #[derive(Deserialize)]
 struct FrozenThemes {
-    /// `THEME_STYLE_KEYS` from `src/lib/themes.js`. Required: a snapshot without
-    /// it cannot reproduce what reached a screen, and guessing is how a look
-    /// changes on an update.
+    /// `THEME_STYLE_KEYS` as `src/lib/themes.js` carried it at the moment it was
+    /// frozen. That file is gone (DECISIONS §87 — themes were folded into
+    /// templates once this migration had run), so the snapshot is the only copy,
+    /// which is the point of a snapshot. Required: without it this cannot
+    /// reproduce what reached a screen, and guessing is how a look changes on an
+    /// update.
     style_keys: Vec<String>,
     themes: Vec<FrozenTheme>,
 }

@@ -594,7 +594,7 @@ count. This is the audit's starting line.
 | Layer | Present today | Where |
 |---|---|---|
 | **A — Command E2E** | Yes. **38 tests, 0 ignored** (`cargo test e2e::`) driving the real commands against a real in-memory DB through the real router and pipeline | `src-tauri/src/e2e.rs` |
-| **B — Component mount** | Yes, and **no longer under-used: 14 files mount a real component** (`grep -rln 'new [A-Z][A-Za-z]*({' src/lib/*.test.js`) | `inspector`, `layers`, `liveoutputrail`, `arrangements`, `firstrunmic`, `lowerthird`, `qa-r5-onair`, `qa-r5-template-injection`, `r2livepath`, `r6-lifecycle-probe`, `rendercontent`, `templatestyle`, `themerender`, `surface` |
+| **B — Component mount** | Yes, and **no longer under-used: 14 files mount a real component** (`grep -rln 'new [A-Z][A-Za-z]*({' src/lib/*.test.js`) | `inspector`, `layers`, `liveoutputrail`, `arrangements`, `firstrunmic`, `lowerthird`, `qa-r5-onair`, `qa-r5-template-injection`, `r2livepath`, `r6-lifecycle-probe`, `rendercontent`, `templatestyle`, `surface` |
 | **C — Static contract** | Yes, one exemplar | `src/lib/ipc.test.js` — command names both directions, event listeners, and a `greet`-has-one-caller assertion |
 | **D — Live app** | Exists as a surface, is not exercised by any test | `channels.rs` serves `:8032`; `main.rs::remote_api` handles `search / fire / next / prev / clear / black / live`. Kiosk hub on `:8031` |
 | **E — Human** | The bench harness is built and pointed at nothing | `bench/README.md` says what to record; `bench/.gitignore` refuses to let sermon audio into the repo |

@@ -82,7 +82,6 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       black: true, // a panic control
       channel_template: true,
       template: true,
-      themes: true,
       stage_next: false, // monitor-only field; no congregation template renders it
       // A WORD TO THE PREACHER is for the platform, not the room. This `false` is
       // the guarantee in docs/REBRAND.md §5 — "it exists inside the stage renderer,
@@ -103,7 +102,6 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       stage_alert: true, // the whole point of the message
       channel_template: false, // the stage page has one fixed look
       template: false,
-      themes: false,
       // DELIBERATELY NOT, and for the same reason the three above are not: the
       // stage page has one fixed look and does not render through
       // `TemplateRender`, so there is no slide for a transition to be of. It is
@@ -128,6 +126,26 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       if (expected[kind] && !handled) problems.push(`${file} ignores "${kind}"`);
       if (!expected[kind] && handled) {
         problems.push(`${file} now handles "${kind}" — update the expectation and say why`);
+      }
+    }
+  }
+
+  // AND THE OTHER DIRECTION, which this table did not have.
+  //
+  // The loop above walks the kinds the hub PUBLISHES and requires a verdict for
+  // each. A verdict for a kind nobody publishes any more is invisible to it —
+  // and that is not hypothetical: `themes` sat here with a verdict on both
+  // clients after the hub frame was deleted (DECISIONS §87), reading as a
+  // guarantee about a message that no longer exists. `channels.rs`'s
+  // `FRAME_VERDICTS` has carried the reverse guard for exactly this reason since
+  // it was written ("a verdict about nothing"); this is its client-side twin and
+  // was missing it. Watched to fail by putting the `themes` rows back.
+  for (const [file, expected] of Object.entries(EXPECTED)) {
+    for (const kind of Object.keys(expected)) {
+      if (!published.includes(kind) && !INBOUND.includes(kind)) {
+        problems.push(
+          `${file}: a verdict is recorded for "${kind}", which the hub no longer publishes`,
+        );
       }
     }
   }
