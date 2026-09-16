@@ -552,7 +552,7 @@ describe('P1/W3 · the slide is the first thing in the inspector', () => {
     // slide, then LABEL/SECTION/DURATION, then Kind/Template/Fires, then the
     // actions. Relay keeps the tabs because they carry function the prototype
     // never had (rule 39's stale-arrangement warning lives on Slides, and the
-    // operator-only stage note on Notes), but a panel whose whole job is
+    // operator-only Stage Note on Notes), but a panel whose whole job is
     // answering "what does this put on the wall?" may not open on three buttons.
     //
     // Fails with the preview moved back under the tab strip.

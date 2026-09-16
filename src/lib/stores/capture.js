@@ -1101,7 +1101,7 @@ try {
 }
 
 /** Manual override: fire a free-text reference now (throws if unparseable).
- *  `stageNote` is an optional confidence-monitor note for this cue.
+ *  `stageNote` is this cue's optional Stage Note, for the monitors only.
  *  `keepPlan` — when a PLAN slide is being fired (the operator stepping the plan
  *  in Slide mode), the transport must STAY on the plan. Without this, firing a
  *  scripture plan cue ran `leavePlan()` below and flipped the transport out of
@@ -1235,7 +1235,7 @@ const call = await invoke();
 await call('move_plan_item', { id, direction });
 }
 
-/** Set/clear a cue's operator stage note (confidence-monitor only; blank clears). */
+/** Set/clear a cue's Stage Note (confidence-monitor only; blank clears). */
 export async function setPlanNote(id, note) {
 const call = await invoke();
 await call('set_plan_note', { id, note: note ?? '' });
@@ -1443,7 +1443,7 @@ if (!keepPlan) leavePlan();
 
 /** Fire arbitrary content to the screens. `kind` ('song'|'announce') selects the
  *  content-type default template (per-content-type templates). `stageNote` is an
- *  optional confidence-monitor note for this cue. `templateId`, when set, is the
+ *  optional Stage Note for this cue, monitors only. `templateId`, when set, is the
  *  cue's OWN template override (Planner) — it wins over the content-type default. */
 export async function fireContent(
 label,
@@ -1967,7 +1967,7 @@ return guardedRead('listOutputChannels', async (call) => {
 export const stageAlert = writable(null);
 
 /**
- * A WORD TO THE PREACHER — one line, the whole stage monitor, and no other
+ * The Stage Message — one line, the whole stage monitor, and no other
  * screen (docs/REBRAND.md §5). Empty or whitespace clears it.
  *
  * GROUP 1 (throws). The operator is sending a message to a person and is looking
@@ -2509,7 +2509,7 @@ export function dismissAudioError() {
 capture.update((s) => ({ ...s, audioError: null }));
 }
 
-/** Push the "up next" preview to the stage/confidence monitor (null clears).
+/** Push the "Up Next" preview to the stage/confidence monitor (null clears).
  *
  *  GROUP 1 (THROWS), moved out of GROUP 2 on 2026-08-14 (R5-8) — and the reason is
  *  a correction to the group rule itself, not just to this wrapper.
@@ -2517,7 +2517,7 @@ capture.update((s) => ({ ...s, audioError: null }));
  *  GROUP 2's test is *"can the congregation see the difference?"*. For this call the
  *  honest answer is **no, but the preacher can, and he is the one acting on it.**
  *  The stage monitor is a real screen on a stand in front of a person, and
- *  `setStageNext(null, null)` is how the "up next" panel comes DOWN. A swallowed
+ *  `setStageNext(null, null)` is how the "Up Next" panel comes DOWN. A swallowed
  *  failure there leaves a preacher reading a stale next-verse for the rest of the
  *  service with nothing, anywhere, reporting it.
  *

@@ -101,7 +101,7 @@ const verse = {
 //
 // §5 said "clean by default … the rest is switched on", and `next`, `note` and
 // `elapsed` shipped OFF. All three carry something an operator DELIBERATELY SENT
-// TO THE PREACHER and to nobody else — a line typed against a cue, an up-next
+// TO THE PREACHER and to nobody else — a line typed against a cue, an Up Next
 // published to the stage, the service clock. So the operator typed a word to the
 // preacher, the console showed it had gone, and the preacher's screen showed
 // nothing, because of a switch on a device the operator cannot see. No surface
@@ -112,7 +112,7 @@ const verse = {
 // it is the reason this is safe rather than a busier screen: four of the six
 // zones render NOTHING unless the operator has made something for them to render.
 describe('zones — everything the operator sent, and nothing they did not', () => {
-  it('a fresh stage screen carries the note, the up-next and the service clock the operator sent it', async () => {
+  it('a fresh stage screen carries the note, the Up Next and the service clock the operator sent it', async () => {
     const note = 'Wrap at 11:40';
     const { container } = await mount({ ...verse, stage_note: note, service_started_at: Date.now() - 60_000 });
     socket.onmessage({ data: JSON.stringify({ kind: 'stage_next', label: 'Offering', text: 'Ushers come forward' }) });
@@ -133,7 +133,7 @@ describe('zones — everything the operator sent, and nothing they did not', () 
   it('and a screen nobody has sent anything to is still just the reading, the countdown and the clock', async () => {
     // The other half of the same change, and the one that keeps §5's sentence
     // true. Four zones are on and four render nothing, because a zone with no
-    // content behind it is not a row — there is no note, no up-next, and no
+    // content behind it is not a row — there is no note, no Up Next, and no
     // service recording in this frame.
     const { container } = await mount(verse);
 
@@ -155,7 +155,7 @@ describe('zones — everything the operator sent, and nothing they did not', () 
     expect(container.querySelector('.noterow')).toBeTruthy();
 
     await click('Zones');
-    await click('Note');
+    await click('Stage Note');
     await tick();
     expect(container.querySelector('.noterow')).toBeNull();
     expect(JSON.parse(localStorage.getItem(ZONE_KEY)).note).toBe(false);
@@ -250,7 +250,7 @@ describe('nothing may leave the screen', () => {
   // if that property is not honoured. It got away with it for as long as the zone
   // was off by default and nobody's screen had the row on it. Switching a zone on
   // is what makes its bound necessary, so the two land together.
-  it('the up-next and the note are bounded and clipped, like every other row', () => {
+  it('the Up Next and the note are bounded and clipped, like every other row', () => {
     for (const sel of ['.next', '.noterow']) {
       const r = rule(sel);
       expect(r, `${sel} needs a ceiling, not a line-clamp`).toMatch(/max-height:\s*\d/);
@@ -380,7 +380,7 @@ describe('the reading is sized to the room and to the passage', () => {
   });
 });
 
-describe('a word to the preacher', () => {
+describe('the Stage Message', () => {
   // S3 · A MESSAGE THAT DOES NOT FIT IS A MESSAGE NOBODY READ.
   //
   // §5 fixes the type at 8.5cqw and the panel at `overflow: hidden`, which is the
@@ -543,7 +543,7 @@ describe('S4 · the stage reads as one instrument', () => {
 
   // The labels were console pixels on a platform monitor: `.figk` 9px, `.note-lbl`
   // 9px, `.next-lbl` a hardcoded 10px — three treatments, none of which scaled, on
-  // a page where the reference, the verse, the note, the up-next and every figure
+  // a page where the reference, the verse, the note, the Up Next and every figure
   // are all sized to the room. Photographed at 1920×1080 they were hairlines.
   it('every region label is ONE label, and it is sized to the room', () => {
     const r = rule('.figk, .note-lbl, .next-lbl');

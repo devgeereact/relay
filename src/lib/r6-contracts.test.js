@@ -83,7 +83,7 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       channel_template: true,
       template: true,
       stage_next: false, // monitor-only field; no congregation template renders it
-      // A WORD TO THE PREACHER is for the platform, not the room. This `false` is
+      // The Stage Message is for the platform, not the room. This `false` is
       // the guarantee in docs/REBRAND.md §5 — "it exists inside the stage renderer,
       // so no congregation screen can show it" — held as a test rather than as a
       // sentence about where the code happens to live.

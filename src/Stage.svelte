@@ -9,14 +9,14 @@
 
   let content = null;
   let visible = false;
-  let note = ''; // operator's confidence-monitor note for the live cue
-  // A WORD TO THE PREACHER. Takes the whole screen until the operator clears it.
+  let note = ''; // the live cue's Stage Note, for this monitor only
+  // The Stage Message. Takes the whole screen until the operator clears it.
   // It lives here, in the stage renderer, which is what makes "no congregation
   // screen can show it" a property of the system rather than a promise: the
   // output page has an explicit `false` verdict for this message kind
   // (r6-contracts.test.js).
   let alert = '';
-  let next = null; // { label, text } — the "up next" preview
+  let next = null; // { label, text } — the "Up Next" preview
   let connected = false;
   let ws = null;
   let closed = false;
@@ -118,14 +118,14 @@
   // one of those three is something an OPERATOR deliberately produced FOR THE
   // PREACHER and has no other audience:
   //
-  //   · `note`    — a line typed against a cue in the Planner (`stage_note`),
+  //   · `note`    — the Stage Note, typed against a cue in the Planner,
   //                 which no congregation template renders.
-  //   · `next`    — the up-next the operator published (`channels::stage_next`),
+  //   · `next`    — the Up Next the operator published (`channels::stage_next`),
   //                 stage-only by contract.
   //   · `elapsed` — the service clock, which only exists while a service is
   //                 actually recording.
   //
-  // So the operator typed a word to the preacher, the console showed it had gone,
+  // So the operator typed a Stage Message, the console showed it had gone,
   // and the preacher's screen showed nothing — because of a switch on a device the
   // operator cannot see, which nobody had been told to find. Nothing anywhere
   // reports that. That is rule 35's shape on the one screen whose reader cannot
@@ -134,7 +134,7 @@
   //
   // CLEAN BY DEFAULT SURVIVES, and that is the reason this is safe rather than a
   // busier screen: four of the six render NOTHING unless something exists to
-  // render. No note typed, no `.noterow`. No up-next published, no `.next`. No
+  // render. No note typed, no `.noterow`. No Up Next published, no `.next`. No
   // service recording, no elapsed figure. A stage screen with nothing sent to it
   // still shows the reading, the countdown and the clock and nothing else — which
   // is exactly the state §5's sentence was describing.
@@ -150,7 +150,7 @@
   const ZONES = [
     { key: 'reading', label: 'Reading' },
     { key: 'next', label: 'Next' },
-    { key: 'note', label: 'Note' },
+    { key: 'note', label: 'Stage Note' },
     { key: 'countdown', label: 'Countdown' },
     { key: 'clock', label: 'Clock' },
     { key: 'elapsed', label: 'Service elapsed' },
@@ -371,7 +371,7 @@
     Math.max(16, Math.round((6.5 + Math.sqrt(6.5 * 6.5 + 4 * 6.5 * verseChars)) / 2)),
   );
 
-  // A WORD TO THE PREACHER, SIZED TO ITS LENGTH.
+  // The Stage Message, SIZED TO ITS LENGTH.
   //
   // §5 fixes the type at 8.5cqw and the panel at `overflow: hidden`, which is the
   // right pair for the message §5 describes ("Wrap up — 5 minutes"). It is the
@@ -602,7 +602,7 @@
   {/if}
 
   {#if zones.note && note}
-    <div class="noterow"><span class="note-lbl">Note</span><span class="notetxt">{note}</span></div>
+    <div class="noterow"><span class="note-lbl">Stage Note</span><span class="notetxt">{note}</span></div>
   {/if}
 
   {#if showZones}
@@ -664,7 +664,7 @@
   {/if}
   {#if zones.next && next}
     <footer class="next">
-      <span class="next-lbl">Up next</span>
+      <span class="next-lbl">Up Next</span>
       <div class="next-body">
         {#if next.label}<span class="next-ref">{next.label}</span>{/if}
         {#if next.text}<span class="next-text">{next.text}</span>{/if}
@@ -705,7 +705,7 @@
      monitor the two are the same because the reading is sized to fit, and on the
      preacher's phone, which is the other thing this page is, clipping would take
      the end of a passage away from the person reading it aloud. Everything else
-     — the rail, the figure row, the note, the up-next — is clipped as the spec
+     — the rail, the figure row, the note, the Up Next — is clipped as the spec
      asks, because those are fixed-size rows and a fixed row that overflows is
      just a row nobody sized. */
   main.stage { flex: 1 1 0; display: flex; flex-direction: row; min-height: 0; min-width: 0; }
@@ -812,7 +812,7 @@
      Relay had three treatments and all three were CONSOLE pixels on a PLATFORM
      monitor — `.figk` at `--v-fs-fig` (9px), `.note-lbl` at 9px, `.next-lbl` at a
      hardcoded 10px — on a page where the reference, the verse, the note, the
-     up-next and every figure are all sized to the room. Photographed at
+     Up Next and every figure are all sized to the room. Photographed at
      1920×1080, TIME and ELAPSED were hairlines: legible on the phone this page is
      also for, invisible from the platform it is mostly for.
      A LABEL IS DELIBERATELY NOT A SHARE OF ITS REGION. Every other size on this
@@ -915,8 +915,8 @@
     .fig.warn .figv, .railrow.warn { text-shadow: 0 0 .25em rgba(244, 81, 91, .85); }
   }
   @keyframes cdwarn { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
-  /* Operator's cue note — confidence-monitor only, never on the main output. */
-  /* A WORD TO THE PREACHER — docs/REBRAND.md §5. The pulse is the point: a
+  /* The Stage Note — confidence-monitor only, never on the main output. */
+  /* The Stage Message — docs/REBRAND.md §5. The pulse is the point: a
      platform is a bright place and a flat red panel reads as part of the set. */
   .alert {
     /* FIXED, and above everything. This is read by somebody mid-sentence in front
@@ -953,11 +953,11 @@
     50% { background: #7a0a11; }
   }
   /* The ink stays as it is. Amber is this page's own accent — the lockup, the
-     reference, the up-next citation and every active control wear it too — so
+     reference, the Up Next citation and every active control wear it too — so
      repainting one label would make the page less coherent, not more. What
      changed is the FORM: it is now the same label as every other. */
   .note-lbl { color: var(--v-amber); flex: 0 0 auto; }
-  /* Up-next panel — confidence info the preacher wants, kept off the main output. */
+  /* Up Next panel — confidence info the preacher wants, kept off the main output. */
   /* BOUNDED AND CLIPPED, like every other row beneath the reading. It was neither,
      and it got away with it for as long as the zone was off by default: nothing on
      this row had a ceiling except a `-webkit-line-clamp`, which is a vendor

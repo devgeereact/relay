@@ -905,7 +905,7 @@
              buttons. The tabs now choose what appears BELOW the answer rather than
              standing in front of it, and nothing they carried was removed: the
              slide list is where rule 39's stale-arrangement warning is read, and
-             the stage note is operator-only text that must keep a home. -->
+             the Stage Note is operator-only text that must keep a home. -->
         {#if pv.plate}
           <!-- The rendered slide, through the ONE renderer, over a chequered
                plate. The plate is what makes a KEYED template visible here: the
@@ -1045,7 +1045,7 @@
           <!-- Named the native way (`for`/`id`) rather than with an aria-label:
                the visible text and the accessible name are then the same string,
                and cannot drift apart. -->
-          <label class="r-lbl sp-flbl" for="sp-stage-note">Stage note</label>
+          <label class="r-lbl sp-flbl" for="sp-stage-note">Stage Note</label>
           <textarea id="sp-stage-note" class="r-input sp-note" rows="5" bind:value={noteDraft}
             placeholder="Shows on the confidence monitor only, never on the congregation screen."
             on:blur={saveNote}></textarea>

@@ -1,7 +1,9 @@
 // QUICK TOOLS — the three things that change during a service.
 //
 // `docs/REBRAND.md` §2 names the card's contents: the countdown, the **name
-// band**, and the **word to the preacher**, with `Load whole plan` in its header.
+// band**, and the **Stage Message**, with `Load whole plan` in its header.
+// (§2 still carries the older wording for that third block; the name that ships
+// is the one in `names.test.js`.)
 // Relay had the countdown and a single `To preacher` row. The lower thirds and
 // the `stage_alert` frame kind already existed (phases 5 and 6, DECISIONS §75 and
 // §68) with no operator surface at all, which is the same defect as a command
@@ -172,11 +174,11 @@ describe('the name band', () => {
   });
 });
 
-describe('the word to the preacher', () => {
+describe('the Stage Message', () => {
   it('reaches the stage alert and no fire path at all', async () => {
     mount();
     await settle();
-    const box = host.querySelector('[aria-label="Word to the preacher — stage monitor only"]');
+    const box = host.querySelector('[aria-label="Stage Message — stage monitor only"]');
     box.value = 'Wrap up';
     box.dispatchEvent(new Event('input'));
     await settle();
@@ -319,12 +321,12 @@ describe('the card is the three things §2 names, in one place', () => {
   // the card carried a fourth — the one control in it that paints over live
   // scripture on every screen at once. It was removed on 2026-09-14 (L3) and the
   // card is now what the spec says it is.
-  it('holds the countdown, the name band and the word to the preacher', () => {
+  it('holds the countdown, the name band and the Stage Message', () => {
     const card = src.slice(src.indexOf('<span class="dk">Quick tools</span>'));
     const body = card.slice(0, card.indexOf('<span class="dk">Controls</span>'));
     expect(body).toContain('Countdown');
     expect(body).toContain('Name band');
-    expect(body).toContain('Word to the preacher');
+    expect(body).toContain('Stage Message');
     expect(body).toContain('Load whole plan');
   });
 });
@@ -393,7 +395,7 @@ describe('L2 · the countdown is one block', () => {
 // L3 · ONE INSTRUMENT, THREE TIMES
 //
 // The operator's words: "fix COUNTDOWN section to look professional and clean
-// and same to NAME BAND, WORD TO THE PREACHER". All three blocks existed after
+// and same to NAME BAND, [the Stage Message]". All three blocks existed after
 // L2 — the defect was that they were three different cards. The countdown sat on
 // `--v-surf2` behind `--v-line2` at `--v-r-md` with a `.dcap` caption, a bare
 // field row and a wrapping flex of buttons; the name band sat on `--v-surf`
@@ -461,7 +463,7 @@ describe('L3 · the three tools are one card, three times', () => {
       expect(h.firstElementChild.classList.contains('r-lbl')).toBe(true);
     }
     expect(heads.map((h) => h.querySelector('.r-lbl').textContent.trim()))
-      .toEqual(['Countdown', 'Name band', 'Word to the preacher']);
+      .toEqual(['Countdown', 'Name band', 'Stage Message']);
   });
 
   // ── C2 · THE COUNTDOWN BLOCK, CLEANED (operator instruction 2026-09-14) ──

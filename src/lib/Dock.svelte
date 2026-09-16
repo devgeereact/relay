@@ -1094,13 +1094,13 @@
       {/if}
       </div>
 
-      <!-- ── WORD TO THE PREACHER (§5) ────────────────────────────────────────
+      <!-- ── The Stage Message (§5) ──────────────────────────────────────────
            The stage monitor and nothing else. `sendStageAlert` publishes a frame
            kind that exists inside the stage renderer, so no congregation channel
            can show it — the guarantee is in `channels.rs`, not in this label. -->
       <div class="qblock" class:onstage={$stageAlert}>
         <div class="qhead">
-          <span class="r-lbl">Word to the preacher</span>
+          <span class="r-lbl">Stage Message</span>
           <span class="qspring"></span>
           <!-- The badge says WHERE it is, and only while it is there. Amethyst and
                amber are both spoken for; this is the stage's own red, which is what
@@ -1112,7 +1112,7 @@
           type="text"
           bind:value={stageMsg}
           placeholder="Wrap up · Five minutes left · Stand by"
-          aria-label="Word to the preacher — stage monitor only"
+          aria-label="Stage Message — stage monitor only"
           on:keydown={(e) => e.key === 'Enter' && toPreacher()} />
         <!-- `primary`, not `pri`. `pri` is not a class this stylesheet defines,
              so the one button in Quick tools that is meant to read as the
