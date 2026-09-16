@@ -83,6 +83,21 @@
   // so only a real output surface passes audio={true}.
   export let audio = false;
   /**
+   * A WORD TO THE PREACHER — supplied by the page, never by the content.
+   *
+   * It arrives on its own hub frame (`stage_alert`) and the page has already
+   * decided whether this screen may be shown one: only a channel whose role is
+   * `stage` accepts it. Passing it as a prop rather than putting it on
+   * `OutputContent` is what keeps it off every other screen — a field on the
+   * content would be broadcast to all of them, and the only thing between it and
+   * a lobby TV would be which layers that TV's template happens to have.
+   *
+   * Empty on the console previews and in the Templates editor, deliberately:
+   * neither is a stage screen, and a preview that painted a private message
+   * would put it on the one surface an operator shows people.
+   */
+  export let stageMessage = '';
+  /**
    * How deep this render is inside a composite. 0 is the screen itself.
    *
    * A REGION LAYER ONLY RENDERS AT DEPTH 0 — "a composite may not be another
@@ -194,6 +209,9 @@
     else if (L.bind === 'clock') v = clockText;
     else if (L.bind === 'elapsed') v = elapsedText;
     else if (L.bind === 'remaining') v = remainingText;
+    // From the PAGE, not from the content — see the prop above and
+    // `layers.js::boundValue`, which returns nothing for this bind on purpose.
+    else if (L.bind === 'stage_message') v = stageMessage || '';
     else v = boundValue(L, content);
     return lineTransform(v, L.lineTransform);
   }
@@ -1214,6 +1232,12 @@
     void clockText;
     void elapsedText;
     void remainingText;
+    // …and the word to the preacher, which arrives on its own frame and moves on
+    // no clock at all. Without this line the message paints when something else
+    // happens to change — and, worse, does not go when it is CLEARED: the exact
+    // freeze this block's comment describes, on the one screen a person is
+    // reading mid-sermon. Caught by `stagemessage.test.js`, not by reasoning.
+    void stageMessage;
     // A BAND DECIDES WHERE ITS WORDS GO; it does not draw them (docs/REBRAND.md
     // §4, `bandLayout`). Members are emitted into this same list with a derived
     // box, so every text layer on a wall — inside a band or not — goes through

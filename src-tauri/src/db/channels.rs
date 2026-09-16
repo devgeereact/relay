@@ -72,6 +72,29 @@ pub fn list_output_channels(conn: &Connection) -> rusqlite::Result<Vec<OutputCha
     rows.collect()
 }
 
+/// THE ROLE MAP, AS IT GOES ON THE WIRE — `{"1":"main","2":"stage"}`.
+///
+/// Channel ids against roles and nothing else: no names, no addresses, nothing a
+/// client chose and nothing about who is connected. It is published to every
+/// kiosk client because the hub cannot address one (DECISIONS §35), and each
+/// client picks out its own id. A screen learning that ANOTHER screen is the
+/// stage tells it nothing it could not already read off the Outputs desk.
+///
+/// Channels with no role are omitted rather than written as null. An absent key
+/// and an explicit null would have to mean the same thing at the receiver, and
+/// two spellings of one fact is how a filter comes to have two answers.
+pub fn channel_roles_json(conn: &Connection) -> rusqlite::Result<String> {
+    let mut stmt =
+        conn.prepare("SELECT id, role FROM output_channels WHERE role IS NOT NULL ORDER BY id")?;
+    let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?;
+    let mut map = serde_json::Map::new();
+    for row in rows {
+        let (id, role) = row?;
+        map.insert(id.to_string(), serde_json::Value::String(role));
+    }
+    Ok(serde_json::Value::Object(map).to_string())
+}
+
 /// Assign a template to a channel (the "make outputs assignable" control).
 pub fn set_channel_template(
     conn: &Connection,

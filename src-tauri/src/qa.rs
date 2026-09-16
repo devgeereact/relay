@@ -1166,8 +1166,14 @@ mod cold_start {
                 .collect()
         };
         for id in ids {
-            delete_channel(h.state::<Db>(), h.state::<servicelock::ServiceLock>(), id)
-                .expect("deleting a screen is allowed");
+            delete_channel(
+                h.clone(),
+                h.state::<Db>(),
+                h.state::<channels::KioskHub>(),
+                h.state::<servicelock::ServiceLock>(),
+                id,
+            )
+            .expect("deleting a screen is allowed");
         }
         {
             let conn = db.0.lock().unwrap();

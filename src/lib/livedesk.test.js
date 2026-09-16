@@ -32,7 +32,18 @@ const settle = (ms = 80) => new Promise((r) => setTimeout(r, ms));
 // be one a wall actually uses.
 const { BUILTINS } = await import('./templates.js');
 const TPL = BUILTINS[0];
-const CHANNEL = { id: 1, name: 'Main screen', render_target: 'native_window', template_id: 1 };
+// `role: 'main'` is what a fresh install seeds. It used to be absent here and the
+// pane still named this channel, because the old expression picked it off
+// `render_target` — which is the guess DECISIONS §89 replaced. A fixture that
+// leaves it out is now an install where nobody has set a main screen, and the
+// head says so.
+const CHANNEL = {
+  id: 1,
+  name: 'Main screen',
+  render_target: 'native_window',
+  template_id: 1,
+  role: 'main',
+};
 
 const VERSES = [
   { verse: 1, reference: 'Psalms 23:1', text: 'The LORD is my shepherd; I shall not want.' },
@@ -561,9 +572,38 @@ describe('L2 · the studio head reads as one statement', () => {
     // quotes the prototype's rendered head, which is why this reads the ELEMENT
     // rather than the file.)
     const src = liveSrc();
-    const el = src.slice(src.indexOf('<span class="mon-as'), src.indexOf('<span class="mon-as') + 220);
-    expect(el).toContain('>as {mainChannel.name}<');
+    const el = src.slice(src.indexOf('<span class="mon-as'), src.indexOf('<span class="mon-as') + 420);
+    expect(el).toContain('{programme.label}');
     expect(el).not.toMatch(/AS MAIN SCREEN/);
+    // The sentence itself is composed in `channelroles.js`, which is now the one
+    // place that decides WHICH screen this pane is a preview of (DECISIONS §89).
+    // It is read here too, because the words moving out of this file is exactly
+    // how a capitalised string could reappear without this test noticing.
+    const roles = readFileSync(resolve(__dirname, 'channelroles.js'), 'utf8');
+    expect(roles).toContain('`as ${byRole.name}`');
+    expect(roles).not.toMatch(/AS MAIN SCREEN|`AS \$/);
+  });
+
+  // AND THE HEAD SAYS WHEN IT IS GUESSING. The old expression answered the same
+  // way whether a main screen had been chosen, renamed or deleted — one sentence
+  // over three different situations, which is rule 35. The fallback is kept
+  // because a blank programme pane is a worse answer; it is drawn as a fallback.
+  it('says so when no screen has been set as the main screen', async () => {
+    invoke.mockImplementation((cmd) => {
+      if (cmd === 'list_output_channels')
+        return Promise.resolve([{ ...CHANNEL, role: null }]);
+      if (cmd === 'list_templates') return Promise.resolve([TPL]);
+      if (cmd === 'list_plans') return Promise.resolve([]);
+      if (cmd === 'list_books') return Promise.resolve([{ book: 'Psalms', chapters: 150 }]);
+      if (cmd === 'rehearsal') return Promise.resolve(false);
+      if (cmd === 'get_sensitivity') return Promise.resolve(50);
+      return Promise.resolve(null);
+    });
+    new Live({ target: host, props: {} });
+    await settle();
+    const el = host.querySelector('.mon.prog .mon-as');
+    expect(el.textContent).toContain('no main screen set');
+    expect(el.className).toContain('guessed');
   });
 
   // The reference is the one figure on this head read from across a booth.
