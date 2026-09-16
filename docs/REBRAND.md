@@ -558,7 +558,8 @@ owns it once. *(b)* Reset and ±1 re-broadcast the countdown, and the console us
 broadcast out of its own mirror — label, done message and template read back off the event. That
 works while every caller remembers every field, and forgetting THIS one restarts a timer the
 operator deliberately stopped, from a button that says "+1". So the engine keeps the countdown
-(`channels::CountdownState`, noted at the same three doors as `WallState`) and `adjust_countdown`
+(`channels::LiveContent`, noted at the same three doors as `WallState` — it was `CountdownState`
+until the timer registry gave a timer a lifetime of its own) and `adjust_countdown`
 changes one thing about it; it can never create one, which keeps Start the only control that puts a
 countdown in front of people. *(c)* The hold rides in the kiosk wire form, so a screen that rejoins
 mid-service is sent a held countdown rather than a running one (rule 43). Clear already existed (the

@@ -3214,19 +3214,105 @@ fn r7_the_transport_can_never_start_a_countdown() {
     settle();
     assert_eq!(wall.count(), 0, "a refusal reached a screen");
 
-    // And once a verse has replaced the countdown, the transport is about a countdown
-    // that is no longer there — so it refuses rather than re-aiming the verse.
+    // AND ONCE A VERSE HAS REPLACED THE COUNTDOWN, THE TRANSPORT TOUCHES NO SCREEN.
+    //
+    // This half used to assert that the transport REFUSED here, and that refusal was
+    // a consequence of where the state lived rather than a decision anybody took:
+    // the countdown WAS the live content, so a verse forgot it. The timer registry
+    // gives it a lifetime of its own, so the press now succeeds — and the two
+    // assertions that follow are the ones that were always the point, kept verbatim:
+    // **a transport press may never take a congregation screen.** Putting a timer
+    // back in front of people is `show_timer`, an explicit action that says what it
+    // does; it is never a side effect of `+1`.
     start_five(&h);
     manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).expect("fire");
     settle();
     let before = wall.count();
-    adjust_countdown(h.clone(), Some(60_000), None).expect_err("the countdown is gone");
+    adjust_countdown(h.clone(), Some(60_000), None).expect("the countdown is still there");
     settle();
-    assert_eq!(wall.count(), before, "a refusal reached a screen");
+    assert_eq!(
+        wall.count(),
+        before,
+        "a re-aim repainted a countdown over a sermon"
+    );
     assert_eq!(
         wall.last().expect("the wall")["reference"],
         "John 3:16",
         "the verse must still be up"
+    );
+}
+
+/// **THE ONE THE WAVE EXISTS TO PASS: A COUNTDOWN SURVIVES A VERSE, AND THE WAY BACK
+/// IS AN EXPLICIT ACTION.**
+///
+/// The reported defect. The countdown was four fields riding on the one live
+/// `OutputContent`, held in a single slot, so firing anything else forgot it and
+/// `adjust_countdown` answered "Nothing is counting down." with no way back at all —
+/// the operator had to start a second countdown and guess how long was left on the
+/// first.
+///
+/// Two halves, and both matter:
+///
+/// * the re-aim **succeeds**, because a timer has a lifetime of its own now;
+/// * the re-aim **paints nothing**, because a transport press may never take a
+///   congregation screen back from a sermon.
+#[test]
+fn r7_a_countdown_survives_a_verse_and_can_still_be_re_aimed_without_taking_the_wall() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    start_five(&h);
+    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).expect("fire");
+    settle();
+    let before = wall.count();
+
+    adjust_countdown(h.clone(), Some(90_000), None).expect("a verse did not end the countdown");
+    settle();
+    assert_eq!(
+        wall.count(),
+        before,
+        "a re-aim repainted a countdown over a sermon"
+    );
+    assert_eq!(
+        wall.last().expect("the wall")["reference"],
+        "John 3:16",
+        "the verse must still be up"
+    );
+
+    // The timer is still there, and it is holding the ADJUSTED figure — not the five
+    // minutes it was started with. A re-aim that silently did nothing would leave the
+    // registry at 5:00 and look exactly like this from the wall's side.
+    let listed = list_timers(h.clone()).expect("list the timers");
+    assert_eq!(
+        listed.len(),
+        1,
+        "one countdown was started, so there is one timer"
+    );
+    assert!(
+        (60_000..=90_000).contains(&listed[0].remaining_ms),
+        "the re-aim did not reach the registry: {}ms left",
+        listed[0].remaining_ms
+    );
+
+    // THE WAY BACK. It is one action, it says what it does, and it carries the
+    // adjusted figure rather than the original one.
+    show_timer(h.clone(), h.state::<Db>(), listed[0].timer.id, None).expect("put it back up");
+    settle();
+    let back = wall.last().expect("the wall");
+    assert_eq!(
+        back["kind"], "countdown",
+        "show_timer put up something else"
+    );
+    assert_eq!(
+        back["reference"], "Service begins in",
+        "the label did not survive the round trip"
+    );
+    let to = back["countdown_to"].as_i64().expect("an instant");
+    let left = to - cd_now_ms();
+    assert!(
+        (60_000..=90_000).contains(&left),
+        "the wall got the ORIGINAL five minutes back, not the 90s it was re-aimed to: {left}ms"
     );
 }
 
@@ -3461,5 +3547,222 @@ fn r0_a_picture_reaches_the_wall_and_disarms_the_passage() {
         matches!(r, NavResult::NoPassage),
         "a picture replaced the reading, so `next` must not walk it: {}",
         r.kind()
+    );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  THE THREE DOORS STOP FORGETTING — Wave 3, Track A, Task 3
+//
+//  `note_countdown` kept the countdown only while the LIVE CONTENT was a countdown,
+//  which is why a verse forgot it. The two tests below are that lifetime stated at
+//  the doors rather than at the registry: one says a verse must not take a timer,
+//  the other says a panic control must.
+//
+//  They live here rather than in `channels.rs`'s own `mod tests` on purpose. The
+//  claim is about what the real commands do to the real doors, and driving it from
+//  here means no `OutputContent` is built by hand to make the point — which is the
+//  thing five hand-rolled copies drifted apart doing.
+// ════════════════════════════════════════════════════════════════════════════
+
+/// FIRING A VERSE DOES NOT FORGET THE CONGREGATION TIMER.
+///
+/// The door-level half of the reported defect. `broadcast_content` used to forget
+/// the countdown for any content that was not one, so the lifetime of a timer was
+/// decided by whatever happened to be on the screens.
+#[test]
+fn firing_a_verse_does_not_forget_the_congregation_timer() {
+    let app = app();
+    let h = app.handle().clone();
+
+    start_five(&h);
+    assert_eq!(list_timers(h.clone()).expect("list").len(), 1);
+
+    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).expect("fire");
+    settle();
+    assert_eq!(
+        list_timers(h.clone()).expect("list").len(),
+        1,
+        "a verse took the congregation timer with it"
+    );
+
+    // …and so does everything else a service puts on a screen.
+    fire_content(
+        h.clone(),
+        h.state::<Db>(),
+        "Notices".into(),
+        "Tea afterwards".into(),
+        "announcement".into(),
+        None,
+        None,
+    )
+    .expect("a notice");
+    settle();
+    assert_eq!(
+        list_timers(h.clone()).expect("list").len(),
+        1,
+        "a notice took the congregation timer with it"
+    );
+}
+
+/// STARTING A COUNTDOWN REPLACES THE ONE BEFORE IT RATHER THAN STACKING.
+///
+/// The old single slot kept this by construction — there was one countdown because
+/// there was one slot. A registry is a map, so the rule has to be said out loud, and
+/// this is what says it. Without it every press of Start leaves a dead clock behind:
+/// `list_timers` is the surface an operator would use to find the timer counting
+/// down to the wrong thing, and a list that fills with abandoned ones is how they
+/// stop reading it.
+#[test]
+fn starting_a_second_countdown_replaces_the_first_rather_than_stacking() {
+    let app = app();
+    let h = app.handle().clone();
+
+    start_five(&h);
+    let first = list_timers(h.clone()).expect("list")[0].timer.id;
+    start_five(&h);
+    settle();
+
+    let after = list_timers(h.clone()).expect("list");
+    assert_eq!(
+        after.len(),
+        1,
+        "a second countdown stacked on the first instead of replacing it"
+    );
+    assert_ne!(
+        after[0].timer.id, first,
+        "the new countdown must be a new timer, not the old one re-aimed in place"
+    );
+
+    // A programme timer is a different question and Start must not take one.
+    let programme = start_timer(
+        h.clone(),
+        20.0,
+        "Sermon".into(),
+        "Wrap up".into(),
+        "stage".into(),
+        None,
+        None,
+    )
+    .expect("a programme timer");
+    start_five(&h);
+    settle();
+    assert!(
+        list_timers(h.clone())
+            .expect("list")
+            .iter()
+            .any(|t| t.timer.id == programme),
+        "starting a congregation countdown took the preacher's clock with it"
+    );
+}
+
+/// THE PREACHER'S OWN CLOCK NEVER REACHES THE CONGREGATION'S WALL.
+///
+/// A `Stage` timer is the programme, and the programme is not something a
+/// congregation is shown: "Sermon · 4:12 left" on the wall behind a preacher is the
+/// operator's bookkeeping in front of the whole building. `show_timer` refuses one
+/// in words rather than projecting it into the four `countdown_*` fields, which it
+/// would otherwise fit perfectly — and fitting perfectly is exactly why this needs a
+/// test rather than a comment.
+#[test]
+fn a_programme_timer_cannot_be_put_on_a_congregation_screen() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    let programme = start_timer(
+        h.clone(),
+        20.0,
+        "Sermon".into(),
+        "Wrap up".into(),
+        "stage".into(),
+        None,
+        None,
+    )
+    .expect("a programme timer");
+    settle();
+    assert_eq!(
+        wall.count(),
+        0,
+        "starting a timer painted a screen by itself"
+    );
+
+    let err = show_timer(h.clone(), h.state::<Db>(), programme, None)
+        .expect_err("a stage timer has no congregation wire form");
+    assert!(
+        err.to_string().contains("stage monitor"),
+        "the refusal has to be readable in a booth: {err}"
+    );
+    settle();
+    assert_eq!(wall.count(), 0, "a refused put-back reached a screen");
+
+    // And an unknown scope is refused rather than guessed at — guessing `both` puts
+    // a programme timer in front of a congregation, which is the one mistake here
+    // that cannot be taken back quietly.
+    start_timer(
+        h.clone(),
+        5.0,
+        "".into(),
+        "".into(),
+        "monitor".into(),
+        None,
+        None,
+    )
+    .expect_err("there are two scopes and that is not one of them");
+}
+
+/// A CLEAR TAKES THE CONGREGATION TIMER AND LEAVES THE PROGRAMME TIMER.
+///
+/// The congregation guarantee does not move: what `clear` and `black` take off a
+/// congregation screen stays off it, and
+/// `r7_a_cleared_countdown_cannot_be_brought_back_by_the_transport` still pins that
+/// from the transport's side.
+///
+/// A `Stage`-scoped timer is a different question, and the answer is a property of
+/// the TIMER rather than a branch inside the panic control — a control that has to
+/// ask which screen it is talking to can fail to answer. Track C is where the stage
+/// tablet learns to show one; this is where its lifetime is decided.
+#[test]
+fn a_clear_takes_the_congregation_timer_and_leaves_the_programme_timer() {
+    let app = app();
+    let h = app.handle().clone();
+
+    start_five(&h);
+    let programme = start_timer(
+        h.clone(),
+        20.0,
+        "Sermon".into(),
+        "Wrap up".into(),
+        "stage".into(),
+        None,
+        None,
+    )
+    .expect("a programme timer");
+    settle();
+    assert_eq!(list_timers(h.clone()).expect("list").len(), 2);
+
+    clear_screens(h.clone()).expect("clear");
+    settle();
+    assert_eq!(
+        list_timers(h.clone())
+            .expect("list")
+            .iter()
+            .map(|t| t.timer.id)
+            .collect::<Vec<_>>(),
+        vec![programme],
+        "a clear must take the congregation timer and leave the programme one"
+    );
+
+    // Blackout is the harsher of the two and must do exactly as much, and no more.
+    start_five(&h);
+    blackout(h.clone()).expect("black");
+    settle();
+    assert_eq!(
+        list_timers(h.clone())
+            .expect("list")
+            .iter()
+            .map(|t| t.timer.id)
+            .collect::<Vec<_>>(),
+        vec![programme],
+        "a blackout must take the congregation timer and leave the programme one"
     );
 }
