@@ -44,8 +44,9 @@ use channels::{ensure_channel_role, seed_channels};
 use serde_json::Value;
 use templates::{
     ensure_lower_third_band_is_not_a_law_colour, ensure_lyrics_template, ensure_preset_templates,
-    ensure_retired_presets_are_gone, ensure_templates_name_real_families,
-    ensure_themes_are_inlined, reset_builtin_templates, seed_templates,
+    ensure_retired_presets_are_gone, ensure_template_seed_identity,
+    ensure_templates_name_real_families, ensure_themes_are_inlined, reset_builtin_templates,
+    seed_templates,
 };
 #[cfg(test)]
 use verses::clean_verse;
@@ -353,21 +354,31 @@ fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
     ensure_app_settings(conn)?; // key/value settings
     ensure_voice_profiles(conn)?; // per-preacher accent + gate calibration
     ensure_template_active(conn)?; // console-active templates (max 4)
-    ensure_lyrics_template(conn)?; // the song template — see templates.rs
-                                   // RETIRE BEFORE SEEDING, not after. The seed became five families this wave and
-                                   // the rows they replaced are removed from installs that already have them. But
-                                   // seeds insert BY NAME and only when absent, and one retired shelf row shares
-                                   // the name `Lower Third · Scripture` with a new family member. Seeding first
-                                   // would see that name present, skip the family member, and this would then
-                                   // delete the old row: a family one member short until the next boot. Their bytes
-                                   // differ, so a name-plus-bytes match tells them apart either way; this is about
-                                   // ordering, not about matching. See templates.rs for the three conditions.
+                                   // THE IDENTITY COLUMNS, BEFORE ANYTHING READS THEM. `seed_key` and
+                                   // `edited_at` are what retirement decides on, and the back-fill matches
+                                   // by NAME against the frozen pre-wave-5 record — which is only sound
+                                   // before anything has renamed a row. Nothing between here and
+                                   // `ensure_retired_presets_are_gone` may rename a seeded template.
+    ensure_template_seed_identity(conn)?;
+    // RETIRE BEFORE SEEDING, not after. The seed became five families this wave and
+    // the rows they replaced are removed from installs that already have them. But
+    // seeds insert BY NAME and only when absent, and one retired shelf row shares
+    // the name `Lower Third · Scripture` with a new family member. Seeding first
+    // would see that name present, skip the family member, and this would then
+    // delete the old row: a family one member short until the next boot. Their bytes
+    // differ, so a name-plus-bytes match tells them apart either way; this is about
+    // ordering, not about matching. See templates.rs for the three conditions.
     ensure_retired_presets_are_gone(conn)?;
     ensure_preset_templates(conn)?; // ready-to-use preset designs (additive, by name)
                                     // …and correct the one seeded value that additive-by-name cannot reach: see
                                     // the function's own note. The band only became visible this wave, and on an
                                     // existing install it would have become visible in the REHEARSAL colour.
     ensure_lower_third_band_is_not_a_law_colour(conn)?;
+    // AFTER the seed, not before it. This chooses the row songs render through and
+    // no longer creates one, so the row has to be on the shelf before it can be
+    // chosen — which on an install being upgraded is only true once
+    // `ensure_preset_templates` has run. See templates.rs.
+    ensure_lyrics_template(conn)?;
     // Themes were folded into templates: every template that pinned one keeps the
     // look it had, written into its own style. See templates.rs for why it is one
     // transaction and what a dangling ref does.
@@ -1017,27 +1028,58 @@ mod tests {
 
     #[test]
     fn seeds_the_builtin_templates() {
-        // Five now, not four: "Worship Lyrics" was added because every previous
-        // built-in was scripture-shaped (a reference region and small type), and
-        // lyrics rendered through one put the song title where the words should
-        // be. See templates.rs.
+        // FORTY, AND NOT ONE OF THEM REGION-MODEL. The five region-model built-ins
+        // stopped being seeded in wave 5 — `builtin_templates()` survives only as
+        // the frozen mirror of the frontend's `BUILTINS`, which is what a `region`
+        // layer's `templateRef` resolves against on a kiosk page with no database
+        // (DECISIONS §74). What a church finds is the shelf.
         let conn = fresh_db();
         let ts = list_templates(&conn).unwrap();
-        // Five built-ins plus the ready-to-use presets, all seeded on a fresh DB.
-        assert_eq!(ts.len(), 5 + templates::preset_template_count());
+        assert_eq!(ts.len(), templates::preset_template_count());
+        assert_eq!(ts.len(), 40);
+        assert_eq!(ts[0].name, "Scripture · Dayspring");
         assert!(
-            ts.iter().any(|t| t.name == "Worship Lyrics"),
-            "the lyrics template is missing from the seed"
+            ts[0].layout["layers"].is_array(),
+            "the first seeded row is region-model again"
         );
-        assert_eq!(ts[0].name, "Classic Serif");
-        // A REAL FAMILY, not `var(--f-serif)`. A seeded style storing an
-        // app-chrome token is a template whose typeface the console's stylesheet
-        // decides — and `--f-display` was re-aliased from Space Grotesk to Inter
-        // exactly that way, changing every template naming it without touching
-        // one. Wave 5, Track E; `ensure_templates_name_real_families` carries the
-        // same guarantee to a church that already has Relay installed.
-        assert_eq!(ts[0].style["font"], "Fraunces");
-        assert_eq!(ts[0].layout["align"], "center");
+        // A REAL FAMILY, not `var(--f-serif)`. A seeded row naming an app-chrome
+        // token is a template whose typeface the console's stylesheet decides —
+        // and `--f-display` was re-aliased from Space Grotesk to Inter exactly
+        // that way, changing every template naming it without one being edited.
+        // Wave 5, Track E; `ensure_templates_name_real_families` carries the same
+        // guarantee to a church that already has Relay installed.
+        //
+        // The forty are layer-model, so a face is a LAYER's property and `style`
+        // is `{}` on most of them. Track E's assertion used to read
+        // `ts[0].style["font"]`, which said nothing once the shelf changed shape:
+        // the scan below is the claim it was making, over every row and both
+        // halves of each.
+        let token_rows: Vec<&str> = ts
+            .iter()
+            .filter(|t| {
+                t.layout.to_string().contains("var(--") || t.style.to_string().contains("var(--")
+            })
+            .map(|t| t.name.as_str())
+            .collect();
+        assert!(
+            token_rows.is_empty(),
+            "a seeded row names an app-chrome token: {token_rows:?}"
+        );
+        assert!(
+            ts.iter().any(|t| t.layout.to_string().contains("Fraunces")),
+            "no seeded row names a real family, so the scan above proved nothing"
+        );
+        assert!(
+            ts.iter().any(|t| t.name == "Song · Anthem"),
+            "the lyric look is missing from the seed"
+        );
+        for t in &ts {
+            assert!(
+                t.layout["layers"].is_array(),
+                "{}: a region-model row is being seeded again (RG-140, RG-141)",
+                t.name
+            );
+        }
     }
 
     #[test]
@@ -1142,13 +1184,29 @@ mod tests {
     fn upsert_updates_existing_template() {
         let conn = fresh_db();
         let mut t = get_template(&conn, 1).unwrap().unwrap();
-        t.name = "Classic Serif (edited)".into();
+        t.name = "Scripture · Dayspring (edited)".into();
         t.style["accent"] = serde_json::json!("#ffffff");
         let id = upsert_template(&conn, &t).unwrap();
         assert_eq!(id, 1);
         let reloaded = get_template(&conn, 1).unwrap().unwrap();
-        assert_eq!(reloaded.name, "Classic Serif (edited)");
+        assert_eq!(reloaded.name, "Scripture · Dayspring (edited)");
         assert_eq!(reloaded.style["accent"], "#ffffff");
+        // THE IDENTITY SURVIVES THE EDIT AND THE EDIT IS RECORDED. Both halves in
+        // one place: an operator renaming a seeded row keeps its `seed_key` — or a
+        // row could rename itself into or out of the retired set — and gains an
+        // `edited_at`, which is what stops retirement taking it.
+        let (key, edited): (Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT seed_key, edited_at FROM templates WHERE id = 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(key.as_deref(), Some("scripture.dayspring"));
+        assert!(
+            edited.is_some(),
+            "a save that is not the seeder's left no record"
+        );
     }
 
     #[test]
@@ -1161,7 +1219,7 @@ mod tests {
             style: serde_json::json!({ "font": "var(--f-body)" }),
             active: false,
         };
-        let seeded = 5 + templates::preset_template_count() as i64;
+        let seeded = templates::preset_template_count() as i64;
         let id = upsert_template(&conn, &t).unwrap();
         // The new row's id follows every seeded template (built-ins + presets).
         assert_eq!(id, seeded + 1);

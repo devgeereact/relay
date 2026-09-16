@@ -69,6 +69,25 @@ function stripComments(src) {
 }
 
 /**
+ * A RUST FILE'S `#[cfg(test)]` MODULE, DROPPED — and only that.
+ *
+ * Wave 5 Track A's retirement fixture (`insert_converted`) has to reproduce a row
+ * exactly as a real pre-wave database holds it, tokens and all, because the whole
+ * question RG-142 asks is whether a CONVERTED legacy row is still recognised.
+ * That is the same category as the two frozen records below: bytes a migration
+ * must still match, not bytes Relay writes to a screen.
+ *
+ * So the scan covers what the file SHIPS and stops at the test module. The cut is
+ * the first `#[cfg(test)]` at column zero, and the guard below asserts that what
+ * survives the cut still contains the seed lists — an exemption that swallowed
+ * the thing being scanned would report a clean file.
+ */
+function shippedOnly(src) {
+  const at = src.search(/^#\[cfg\(test\)\]/m);
+  return at === -1 ? src : src.slice(0, at);
+}
+
+/**
  * THE FILES THAT AUTHOR TEMPLATE DATA — the bytes that end up in a
  * `templates` row, or in the starter a new layer is built from.
  *
@@ -124,7 +143,8 @@ describe('the seal — app chrome does not cross onto a congregation screen', ()
   // ── Leak 1 · template data ────────────────────────────────────────────────
   for (const path of TEMPLATE_DATA) {
     it(`${path} names real font families, not app-chrome tokens`, () => {
-      expect(chromeTokensIn(read(path))).toEqual([]);
+      const src = path.endsWith('.rs') ? shippedOnly(read(path)) : read(path);
+      expect(chromeTokensIn(src)).toEqual([]);
     });
   }
 
@@ -135,6 +155,24 @@ describe('the seal — app chrome does not cross onto a congregation screen', ()
     for (const path of FROZEN_RECORDS) {
       expect(read(path), path).toContain('var(--');
     }
+  });
+
+  it('dropping a Rust test module does not drop the seed lists with it', () => {
+    // The exemption above is the kind that passes everything if it cuts too
+    // early. What it leaves behind must still be the part that authors template
+    // data, and must still be most of the file.
+    const whole = read('src-tauri/src/db/templates.rs');
+    const shipped = shippedOnly(whole);
+    // By content, not by size: this file's test module is larger than the code
+    // it tests, so a length ratio would only measure how much is tested.
+    expect(shipped).toContain('fn shelf_templates');
+    expect(shipped).toContain('fn builtin_templates');
+    expect(shipped).toContain('fn all_presets');
+    expect(chromeTokensIn(`{"font":"var(--f-serif)"}${shipped}`)).toHaveLength(1);
+    // And it really does cut: the fixture that reproduces a legacy converted row
+    // is on the other side of the line.
+    expect(whole).toContain('fn insert_converted');
+    expect(shipped).not.toContain('fn insert_converted');
   });
 
   it('the scanner can still see a token it is meant to catch', () => {

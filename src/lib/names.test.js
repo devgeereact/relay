@@ -198,6 +198,9 @@ const REGISTER = [
       'src/lib/views/Live.svelte',
       'src/lib/views/library/Inspector.svelte',
       'src/lib/views/library/LiveOutputRail.svelte',
+      // Wave 5 Track A — the shelf test drives a Stage look whose zone is labelled
+      // with this name.
+      'src/lib/shelf.test.js',
     ],
     forbidden: ['Up-next', 'Next up', 'Coming next', 'Next verse text', 'Next reference'],
   },

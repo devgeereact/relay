@@ -94,19 +94,164 @@ pub fn ensure_template_active(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// THE IDENTITY A CONVERSION CANNOT DESTROY, and the record that a person saved.
+///
+/// Two columns, added together because neither answers the question on its own:
+///
+///   · `seed_key` — the SEEDER's stable slug (`scripture.dayspring`, `timer.monolith`).
+///     Written once, at insert, and never by an operator. NULL means hand-made.
+///   · `edited_at` — stamped by any save that is not the seeder's (`upsert_template`).
+///     NULL means nobody has saved this row since it was seeded.
+///
+/// ## Why a column and not a byte comparison
+///
+/// RG-142 measured the previous, byte-matching retirement at **0 of 21** against a
+/// copy of a real database. Two independent rewrites defeat a byte comparison,
+/// either fatal alone: `TemplateGallery.upgradeLegacyToLayers` converts a region
+/// template to the layer model and SAVES it on mount, with layer ids that fold in
+/// `performance.now()`; and `style_json` returns through serde_json's BTreeMap in
+/// alphabetical key order rather than the seed's hand-written one. A slug in a
+/// column survives both, which is what RG-142's closing sentence asked for.
+///
+/// ## The back-fill, and the one moment name-matching is correct
+///
+/// An existing database has no `seed_key` on any row, so the column arrives empty
+/// and every legacy row would look hand-made. The back-fill matches by NAME against
+/// `data/legacy_seed_keys.json`, the frozen record of the names as they stood
+/// before wave 5 — and it runs BEFORE anything in this wave has renamed a row, which
+/// is the one instant that match is sound. A name carried by more than one row is
+/// **declined**: one of the two is somebody's own template that happens to share a
+/// name, there is no way to tell which, and stamping neither leaves both exactly
+/// where they are.
+///
+/// WHAT THIS DOES NOT RECOVER, said plainly: a legacy row an operator hand-edited
+/// before this column existed gets `seed_key` and a NULL `edited_at`, because the
+/// edit left no record anywhere. Retirement will remove it unless something points
+/// at it through one of the four doors. That is the deliberate half of the trade —
+/// the old rule kept every edited row and removed none of the rest, which is the
+/// failure being fixed — and the four doors (a channel, a plan cue, a content look,
+/// the configured default) still protect anything actually in use.
+///
+/// Rule 25: the ALTERs tolerate a lost migration race the way `ensure_template_active`
+/// does, and the back-fill is one `unchecked_transaction` that rolls back on every
+/// error path, `?` included. Idempotent — a second run finds no row whose `seed_key`
+/// is still NULL under one of these names, and a fresh install never had these names.
+pub(super) fn ensure_template_seed_identity(conn: &Connection) -> rusqlite::Result<()> {
+    // WRITTEN OUT, NOT LOOPED. `db::tests::every_column_added_since_the_baseline_has_a_migration`
+    // reads these source lines and matches `ALTER TABLE <t> ADD COLUMN <c>`
+    // literally, so a `format!` with the column name in a variable is a migration
+    // that column scanner cannot see — and its whole job is to notice a column that
+    // reaches a fresh install through the schema and never reaches an existing one.
+    for (column, ddl) in [
+        (
+            "seed_key",
+            "ALTER TABLE templates ADD COLUMN seed_key TEXT;",
+        ),
+        (
+            "edited_at",
+            "ALTER TABLE templates ADD COLUMN edited_at TEXT;",
+        ),
+    ] {
+        let has: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('templates') WHERE name = ?1",
+            [column],
+            |r| r.get(0),
+        )?;
+        if has == 0 {
+            // Losing a migration race is not a failure — two processes can hold
+            // this file. Same tolerance as `ensure_template_active` above.
+            match conn.execute_batch(ddl) {
+                Err(e)
+                    if e.to_string()
+                        .to_lowercase()
+                        .contains("duplicate column name") => {}
+                other => other?,
+            }
+        }
+    }
+
+    let legacy = legacy_seed_keys();
+    if legacy.is_empty() {
+        return Ok(()); // an unreadable record: stamp nothing rather than guess
+    }
+    let tx = conn.unchecked_transaction()?;
+    for (name, key) in legacy {
+        let n: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM templates WHERE name = ?1",
+            [name.as_str()],
+            |r| r.get(0),
+        )?;
+        // 0 = this install never had it; >1 = a collision, and declining is the
+        // case RG-142 asked the migration to handle.
+        if n != 1 {
+            continue;
+        }
+        tx.execute(
+            "UPDATE templates SET seed_key = ?1 WHERE name = ?2 AND seed_key IS NULL",
+            (key.as_str(), name.as_str()),
+        )?;
+    }
+    tx.commit()
+}
+
+/// THE SEEDED NAMES AS THEY STOOD BEFORE WAVE 5. A frozen record; see the file.
+const LEGACY_SEED_KEYS_JSON: &str = include_str!("../../data/legacy_seed_keys.json");
+
+/// The frozen `(name, seed_key)` pairs, or an EMPTY list if the record cannot be
+/// read. An unreadable record stamps nothing, which leaves every row hand-made in
+/// the eyes of retirement and therefore retires nothing: a church keeps a few
+/// templates it did not want, rather than losing ones it did.
+fn legacy_seed_keys() -> &'static [(String, String)] {
+    #[derive(Deserialize)]
+    struct Legacy {
+        templates: Vec<LegacyEntry>,
+    }
+    #[derive(Deserialize)]
+    struct LegacyEntry {
+        name: String,
+        seed_key: String,
+    }
+    static KEYS: OnceLock<Vec<(String, String)>> = OnceLock::new();
+    KEYS.get_or_init(
+        || match serde_json::from_str::<Legacy>(LEGACY_SEED_KEYS_JSON) {
+            Ok(l) => l
+                .templates
+                .into_iter()
+                .map(|e| (e.name, e.seed_key))
+                .collect(),
+            Err(e) => {
+                eprintln!("legacy_seed_keys.json could not be read ({e}); stamping no identities");
+                Vec::new()
+            }
+        },
+    )
+}
+
 /// Insert (id <= 0) or update (id > 0) a template. Returns its id.
+///
+/// `seed_key` IS NEVER WRITTEN HERE. Every column this function names is one the
+/// operator can change; the identity is the seeder's and an edit must not be able
+/// to move it, or a row could rename itself out of (or into) the retired set. An
+/// operator editing a seeded row keeps its key and gains an `edited_at`.
+///
+/// `edited_at` is stamped on BOTH branches, because both are a save that is not the
+/// seeder's: the seed paths (`seed_templates`, `ensure_preset_templates`) write
+/// their rows with plain INSERTs of their own and never come through here.
 pub fn upsert_template(conn: &Connection, t: &Template) -> rusqlite::Result<i64> {
     let layout = t.layout.to_string();
     let style = t.style.to_string();
     if t.id > 0 {
         conn.execute(
-            "UPDATE templates SET name = ?1, region_config_json = ?2, style_json = ?3 WHERE id = ?4",
+            "UPDATE templates SET name = ?1, region_config_json = ?2, style_json = ?3,
+                    edited_at = datetime('now')
+              WHERE id = ?4",
             (&t.name, &layout, &style, t.id),
         )?;
         Ok(t.id)
     } else {
         conn.execute(
-            "INSERT INTO templates (name, region_config_json, style_json) VALUES (?1, ?2, ?3)",
+            "INSERT INTO templates (name, region_config_json, style_json, edited_at)
+             VALUES (?1, ?2, ?3, datetime('now'))",
             (&t.name, &layout, &style),
         )?;
         Ok(conn.last_insert_rowid())
@@ -194,38 +339,27 @@ fn builtin_templates() -> &'static [(&'static str, &'static str, &'static str)] 
     ]
 }
 
-/// Give an EXISTING database the lyrics template, and point songs at it.
+/// POINT SONGS AT A LYRIC LOOK — the one content look a fresh install ships.
 ///
-/// Idempotent and additive: it APPENDS a row rather than rewriting ids, because
-/// `output_channels` and `app_settings` hold template ids as foreign keys and
-/// renumbering them would silently repoint a church's projector at a different
-/// design (CLAUDE.md §25 — a migration must be safe to re-run).
+/// It is deliberate and it is old: every region-model built-in was
+/// SCRIPTURE-shaped (a reference region and type sized around 5cqw), so a lyric
+/// rendered through one put a large gold "Song Title · Slide 7" where the words
+/// should be and shrank the words to a caption. A congregation does not sing the
+/// title.
 ///
-/// It also sets the per-content-type mapping for `song` **only if the operator
-/// has not chosen one**. Overwriting a deliberate choice would be worse than the
-/// bug this fixes.
+/// WHAT CHANGED IN WAVE 5: this used to INSERT a region-model `Worship Lyrics`
+/// row when the name was absent, which on a fresh install is every time. The
+/// shelf is layer-model now and `Song · Anthem` is the row this points at, so the
+/// function no longer creates anything — it chooses. That is also why its call
+/// moved BELOW `ensure_preset_templates` in `ensure_tables`: the row it chooses
+/// has to exist before it can be chosen, which on an install being upgraded is
+/// only true after the seed has run.
+///
+/// It sets the mapping ONLY if the operator has not chosen one. Overwriting a
+/// deliberate choice would be worse than the bug this fixes — including the case
+/// where the choice is still the legacy `Worship Lyrics` row, which a church that
+/// is in the middle of a service should not have swapped under it on a boot.
 pub(super) fn ensure_lyrics_template(conn: &Connection) -> rusqlite::Result<()> {
-    const NAME: &str = "Worship Lyrics";
-    let existing: Option<i64> = conn
-        .query_row("SELECT id FROM templates WHERE name = ?1", [NAME], |r| {
-            r.get(0)
-        })
-        .ok();
-    let id = match existing {
-        Some(id) => id,
-        None => {
-            let (_, layout, style) = builtin_templates()
-                .iter()
-                .find(|(n, _, _)| *n == NAME)
-                .copied()
-                .unwrap_or((NAME, "{}", "{}"));
-            conn.execute(
-                "INSERT INTO templates (name, region_config_json, style_json) VALUES (?1, ?2, ?3)",
-                (NAME, layout, style),
-            )?;
-            conn.last_insert_rowid()
-        }
-    };
     // The song content-type default is read via the canonical `tpl_{kind}` key
     // (`tpl_song`, see settings.rs::content_template_id). An earlier version of
     // this seed wrote it under `content_template_song` instead, so the read side
@@ -247,11 +381,16 @@ pub(super) fn ensure_lyrics_template(conn: &Connection) -> rusqlite::Result<()> 
                 |r| r.get(0),
             )
             .ok();
-        let value = legacy.unwrap_or_else(|| id.to_string());
-        conn.execute(
-            "INSERT OR REPLACE INTO app_settings (key, value) VALUES ('tpl_song', ?1)",
-            [value],
-        )?;
+        let value = match legacy {
+            Some(v) => Some(v),
+            None => song_look_id(conn)?.map(|id| id.to_string()),
+        };
+        if let Some(value) = value {
+            conn.execute(
+                "INSERT OR REPLACE INTO app_settings (key, value) VALUES ('tpl_song', ?1)",
+                [value],
+            )?;
+        }
     }
     // Drop the dead legacy key so it can't shadow or confuse later reads.
     conn.execute(
@@ -259,6 +398,34 @@ pub(super) fn ensure_lyrics_template(conn: &Connection) -> rusqlite::Result<()> 
         [],
     )?;
     Ok(())
+}
+
+/// The row a song should be rendered through, by IDENTITY first and by name only
+/// as the fallback a pre-wave-5 install needs.
+///
+/// `seed_key` is asked first because a name can be edited and an identity cannot.
+/// `Worship Lyrics` is asked second because an install that has not yet received
+/// the forty still has that row, and leaving songs pointing at nothing for one
+/// boot would put the title back where the words go. Neither present — a v0
+/// database part-way through its forward-fill — answers None, and the next boot
+/// answers properly rather than writing a guess into `app_settings`.
+fn song_look_id(conn: &Connection) -> rusqlite::Result<Option<i64>> {
+    if let Some(id) = conn
+        .query_row(
+            "SELECT id FROM templates WHERE seed_key = 'song.anthem'",
+            [],
+            |r| r.get::<_, i64>(0),
+        )
+        .optional()?
+    {
+        return Ok(Some(id));
+    }
+    conn.query_row(
+        "SELECT id FROM templates WHERE name = 'Worship Lyrics'",
+        [],
+        |r| r.get::<_, i64>(0),
+    )
+    .optional()
 }
 
 /// THE STANDALONE PRESETS — RETIRED. This list is deliberately empty.
@@ -300,356 +467,53 @@ fn preset_templates() -> &'static [(&'static str, &'static str, &'static str)] {
     &[]
 }
 
-/// THE FIVE FAMILIES — a coordinated set for every kind of content a service
-/// fires, so an operator picks a LOOK once instead of matching five templates by
-/// hand. Named `Family · Kind` so the gallery groups them visually.
+/// THE FIVE FAMILIES — RETIRED. This list is deliberately empty.
 ///
-/// This is what replaced the theme layer. A theme had no field a template does
-/// not already have (DECISIONS §87), so the thing carrying "a look somebody
-/// picked" had to become the coordinated family, and a family is only a look you
-/// can pick if it answers every kind. `CONTENT_KINDS` (src/lib/layers.js) has
-/// five; the seed had four, and the two it never covered — Media and Timer —
-/// were exactly the two an operator could not dress.
+/// Twenty-five coordinated region-model rows shipped here: five families ×
+/// five content kinds. Wave 5 replaced the whole shelf with forty LAYER-model
+/// designs (`data/shelf_templates.json`), because the region model is the fact
+/// underneath RG-140 and RG-141 — a fresh install's countdown took the region
+/// branch and painted 30.3px digits where 192px were designed, and
+/// `Classic · Announcement` painted a footer ticker before the Templates
+/// workspace was opened and a mid-screen crawl after, switched by a silent
+/// one-way conversion. Neither is closed by repairing the region fitter; both
+/// are closed by no longer seeding anything that reaches it.
 ///
-/// Five families, five kinds, twenty-five rows:
+/// The twenty-five, named so the retirement can be read against this list rather
+/// than against a commit message: `Classic · …`, `Aurora · …`, `Ember · …`,
+/// `Lower Third · …` and `High Visibility · …`, each across Scripture, Lyrics,
+/// Media, Announcement and Timer.
 ///
-///   · **Classic** — the serif look Relay opens with, carried forward from
-///     `builtin_templates()`'s `Classic Serif`.
-///   · **Aurora** — teal / emerald. Its Scripture, Lyrics and Announcement are
-///     the previously-seeded rows VERBATIM, so a church already using one sees
-///     no change on update.
-///   · **Ember** — amber / crimson, on the same terms.
-///   · **Lower Third** — the keyed family, from `builtin_templates()`'s
-///     `Lower Third`. It is now the only source of keyed templates in the seed,
-///     which the transparency law in `resolveOutputTemplate` depends on.
-///   · **High Visibility** — the answer to a lit room and a cheap lens, taken
-///     from `data/legacy_themes.json`'s frozen `High Visibility` theme, which is
-///     the same look `src/lib/legibility.test.js` already measures at 21:1.
+/// Their NAMES are frozen in `data/legacy_seed_keys.json`, not their bytes, and
+/// that is the whole of RG-142: `upgradeLegacyToLayers` converts and SAVES on
+/// mount, so the bytes in a real database stopped matching the seed's long ago.
+/// The name is what the conversion preserves, and it becomes a `seed_key` the
+/// moment `ensure_template_seed_identity` runs.
 ///
-/// COLOURS ARE FIXED PER FAMILY; SIZES ARE FREE PER KIND. That is what makes a
-/// family a set rather than five templates that happen to share a prefix — a
-/// lyric is scanned in a second and a verse is read, so they are not the same
-/// size, but they are the same look. A member takes its family's accent, verse
-/// colour and ground; where it varies, it varies inside the family's own hexes.
-/// The two Lyrics rows carried forward from the old Aurora and Ember families are
-/// the honest exception: both go white-on-a-darker-mix-of-their-own-hexes, which
-/// is the lyrics convention the built-in `Worship Lyrics` also follows, and they
-/// are reproduced byte for byte so a church already using one sees nothing move.
-///
-/// NO SEEDED TEMPLATE WEARS A LAW COLOUR ON ITS BAND (rule 18): the keyed family
-/// fills with `#101319`, the neutral `ensure_lower_third_band_is_not_a_law_colour`
-/// already enforces, because a seeded band shipped in amethyst once and amethyst
-/// means rehearsal.
-///
-/// EVERY LAYOUT DECLARES ALL FIVE KINDS, AND THAT IS NOT A SHRUG. `layout.shows`
-/// is a per-SCREEN filter, not a record of what a template was designed for:
-/// `Output.svelte` gates incoming content on `templateShows(own_template, kind)`
-/// BEFORE `resolveOutputTemplate` is consulted, so a narrow list on the template
-/// an operator assigned to the Main screen makes that screen silently ignore
-/// every other kind — including when a content look correctly routes songs to
-/// that family's Lyrics member, because the message is dropped before the
-/// override ever resolves. The thing that says "this is the scripture look" is
-/// the `Used for` binding, which is a different register entirely.
-///
-/// Writing all five down still does the job the list exists for. `templateShows`
-/// returns true for every kind when `shows` is ABSENT, so a silent template
-/// claims all five implicitly and the editor's filter register has to
-/// materialise a list on the operator's first click — which is what made that
-/// click look as though it had wiped four. An explicit list is the same
-/// behaviour with the register told the truth from the start.
-///
-/// The keyed family is on the same rule, deliberately. A keyed template with no
-/// `shows` list already shows every kind today — the shelf's `Lower Third · Lyric`
-/// carries none — so listing five is not a new exposure, and the transparency law
-/// in `resolveOutputTemplate` still protects the override path.
+/// The function stays rather than being deleted, for the same reason
+/// `preset_templates()` did: `region_presets()` chains it, a test asserts it is
+/// empty, and a region-model design that genuinely has to ship again has
+/// somewhere to go that is not the middle of the layer shelf.
 fn theme_templates() -> &'static [(&'static str, &'static str, &'static str)] {
-    // FULL-SCREEN SCRIPTURE — verse and reference, centred. The common case.
-    const SCRIPTURE: &str = r##"{"regions":["verse_text","reference"],"align":"center","lowerThird":false,"refFirst":false,"shows":["scripture","song","media","announce","countdown"]}"##;
-    // LYRIC — the words alone. A room does not sing the title.
-    const LYRIC: &str = r##"{"regions":["verse_text"],"align":"center","lowerThird":false,"refFirst":false,"shows":["scripture","song","media","announce","countdown"]}"##;
-    // MEDIA — a fired picture or video fills the frame. There is no caption:
-    // `TemplateRender`'s region branch takes the media path before any region is
-    // rendered, and `fire_media` carries a url and nothing else (no reference, no
-    // text), so a caption line would be blank at every fire. The `reference`
-    // region is what this template falls back to showing when it is handed
-    // something that is not a picture.
-    const MEDIA: &str = r##"{"regions":["reference"],"align":"center","lowerThird":false,"refFirst":true,"shows":["scripture","song","media","announce","countdown"]}"##;
-    // ANNOUNCEMENT — a title over a scrolling body line (the ticker).
-    const ANNOUNCE: &str = r##"{"regions":["reference","verse_text"],"align":"center","lowerThird":false,"refFirst":true,"shows":["scripture","song","media","announce","countdown"]}"##;
-    // TIMER — the countdown, with its label above it. The renderer draws the
-    // digits at `verseSize * 2`, so a Timer's `verseSize` is HALF the size the
-    // clock ends up.
-    //
-    // THE FOUR FULL-SCREEN TIMER ROWS ARE THE ONLY FAMILY MEMBERS SEEDED IN THE
-    // LAYER MODEL, and the reason is what a church sees on the first Sunday.
-    // (The fifth, the keyed one, is a separate case — see `BAND_TIMER` below.)
-    //
-    // The REGION branch draws a countdown at a fixed `cqw` with no fit loop around
-    // either of its two lines. Measured on a fresh install at 1920x1080, the
-    // region-model `Classic · Timer` put its label out at 7.88px — still clipped at
-    // both ends — and its digits at 30.3px against the 192px the template asks for:
-    // a 312x43px blob in the middle of an otherwise black lobby screen. That defect is in the region countdown
-    // path and predates this wave; what is new is that a fresh install now ships
-    // templates that take it, where before it shipped none.
-    //
-    // The layer model does not have it. `TemplateRender`'s `.cd-default` block
-    // declares its designed size, clips, sits inside the fit loop and reports
-    // through `onFit` (rule 37). So these four are seeded as exactly what
-    // `TemplateGallery.upgradeLegacyToLayers` would have converted them into on the
-    // operator's first visit to the Templates tab: the bytes `regionsToLayers`
-    // produces from the region shape below, with stable layer ids in place of its
-    // generated ones. The conversion is moved to seed time so that first Sunday
-    // does not depend on somebody having opened a tab.
-    //
-    // NOTHING ELSE MOVES. Every region-model key is kept, so everything that reads
-    // that shape reads the same answer it did before — `templateKind` still derives
-    // `scripture` for the four full-screen members and `lower-third` for the keyed
-    // one, `isKeyedTemplate` still answers the same, and the `shows` list is
-    // untouched. `upgradeLegacyToLayers` skips a template that is already layered,
-    // so an install that has run it and one that has not now agree.
-    const TIMER_CLASSIC: &str = r##"{"regions":["reference","verse_text"],"align":"center","lowerThird":false,"refFirst":true,"shows":["scripture","song","media","announce","countdown"],"layers":[{"id":"clt-background","type":"background","name":"Background","visible":true,"x":0,"y":0,"w":100,"h":100,"fill":"radial-gradient(120% 140% at 50% 30%, #2a2013, #0b0906)","image":null,"opacity":1,"dim":0},{"id":"clt-reference","type":"text","name":"Reference","visible":true,"x":8,"y":24,"w":84,"h":10,"bind":"reference","font":"Inter","color":"#e8a33d","size":2.6,"align":"center","valign":"middle","transform":"uppercase","lineHeight":1.2,"letterSpacing":0.06,"shadow":0,"italic":false,"scroll":false,"text":""},{"id":"clt-verse","type":"text","name":"Verse","visible":true,"x":8,"y":36,"w":84,"h":52,"bind":"verse","font":"Inter","color":"#f4e4c8","size":5,"align":"center","valign":"middle","transform":"none","lineHeight":1.32,"letterSpacing":0,"shadow":0,"italic":false,"scroll":false,"text":"","quote":true}]}"##;
-    const TIMER_AURORA: &str = r##"{"regions":["reference","verse_text"],"align":"center","lowerThird":false,"refFirst":true,"shows":["scripture","song","media","announce","countdown"],"layers":[{"id":"aut-background","type":"background","name":"Background","visible":true,"x":0,"y":0,"w":100,"h":100,"fill":"radial-gradient(130% 130% at 50% 15%, #0b3330, #04110f)","image":null,"opacity":1,"dim":0},{"id":"aut-reference","type":"text","name":"Reference","visible":true,"x":8,"y":24,"w":84,"h":10,"bind":"reference","font":"Inter","color":"#6ee7c4","size":2.6,"align":"center","valign":"middle","transform":"uppercase","lineHeight":1.2,"letterSpacing":0.06,"shadow":0.4,"italic":false,"scroll":false,"text":""},{"id":"aut-verse","type":"text","name":"Verse","visible":true,"x":8,"y":36,"w":84,"h":52,"bind":"verse","font":"Inter","color":"#eafff8","size":5,"align":"center","valign":"middle","transform":"none","lineHeight":1.32,"letterSpacing":0,"shadow":0.4,"italic":false,"scroll":false,"text":"","quote":true}]}"##;
-    const TIMER_EMBER: &str = r##"{"regions":["reference","verse_text"],"align":"center","lowerThird":false,"refFirst":true,"shows":["scripture","song","media","announce","countdown"],"layers":[{"id":"emt-background","type":"background","name":"Background","visible":true,"x":0,"y":0,"w":100,"h":100,"fill":"radial-gradient(130% 130% at 50% 18%, #3a1508, #140603)","image":null,"opacity":1,"dim":0},{"id":"emt-reference","type":"text","name":"Reference","visible":true,"x":8,"y":24,"w":84,"h":10,"bind":"reference","font":"Inter","color":"#ffb066","size":2.6,"align":"center","valign":"middle","transform":"uppercase","lineHeight":1.2,"letterSpacing":0.06,"shadow":0.45,"italic":false,"scroll":false,"text":""},{"id":"emt-verse","type":"text","name":"Verse","visible":true,"x":8,"y":36,"w":84,"h":52,"bind":"verse","font":"Inter","color":"#fdeede","size":5,"align":"center","valign":"middle","transform":"none","lineHeight":1.32,"letterSpacing":0,"shadow":0.45,"italic":false,"scroll":false,"text":"","quote":true}]}"##;
-    const TIMER_HIVIS: &str = r##"{"regions":["reference","verse_text"],"align":"center","lowerThird":false,"refFirst":true,"shows":["scripture","song","media","announce","countdown"],"layers":[{"id":"hvt-background","type":"background","name":"Background","visible":true,"x":0,"y":0,"w":100,"h":100,"fill":"#000000","image":null,"opacity":1,"dim":0},{"id":"hvt-reference","type":"text","name":"Reference","visible":true,"x":8,"y":24,"w":84,"h":10,"bind":"reference","font":"Inter","color":"#ffffff","size":3.2,"align":"center","valign":"middle","transform":"uppercase","lineHeight":1.2,"letterSpacing":0.06,"shadow":0,"italic":false,"scroll":false,"text":""},{"id":"hvt-verse","type":"text","name":"Verse","visible":true,"x":8,"y":36,"w":84,"h":52,"bind":"verse","font":"Inter","color":"#ffffff","size":6,"align":"center","valign":"middle","transform":"none","lineHeight":1.4,"letterSpacing":0,"shadow":0,"italic":false,"scroll":false,"text":"","quote":true}]}"##;
-    // The keyed family replaces each of the five with its banded twin. On a band
-    // `accent` IS the fill and `verseColor` the text, and `background` stays
-    // `transparent` — the camera underneath is the point.
-    const BAND_SCRIPTURE: &str = r##"{"regions":["verse_text","reference"],"align":"center","lowerThird":true,"refFirst":false,"shows":["scripture","song","media","announce","countdown"]}"##;
-    const BAND_LYRIC: &str = r##"{"regions":["verse_text"],"align":"center","lowerThird":true,"refFirst":false,"shows":["scripture","song","media","announce","countdown"]}"##;
-    // THREE BANDED MEMBERS DO SOMETHING WORTH KNOWING BEFORE YOU PICK THEM, and
-    // all three are the renderer's existing, deliberate behaviour rather than a
-    // defect introduced here:
-    //
-    //   · `Lower Third · Media` paints the picture FULL FRAME. The region branch
-    //     answers `content.media_url` before it ever reaches the band, so this is
-    //     a keyed screen that stops being keyed for the duration of a picture.
-    //     It exists because a family must answer every kind, and because a screen
-    //     showing media was asked to show the picture.
-    //   · `Lower Third · Timer` paints NOTHING. `countdownAllowed` is
-    //     `!!countdownTo && !bandMode`: a countdown never reaches a lower third,
-    //     because the band is keyed over a live camera and a clock ticking across
-    //     the preacher belongs on the lobby screen. The member exists so the
-    //     family is complete and so an operator who assigns it gets the same
-    //     clean camera the transparency law would have given them anyway.
-    //   · `Lower Third · Announcement` never renders the band geometry its
-    //     `lowerThird` flag asserts. `scroll` is true, and the footer-ticker
-    //     branch is tested BEFORE the band content block, so what paints is the
-    //     ticker pinned to the bottom of the frame rather than the band. It does
-    //     still KEY — nothing paints the rest of the frame — so a crawl over a
-    //     live camera is exactly what an operator gets, which is what a keyed
-    //     announcement should be. The flag is what keeps it on the keyed side of
-    //     the transparency law; it is not what draws it.
-    const BAND_MEDIA: &str = r##"{"regions":["reference"],"align":"center","lowerThird":true,"refFirst":true,"shows":["scripture","song","media","announce","countdown"]}"##;
-    const BAND_ANNOUNCE: &str = r##"{"regions":["reference","verse_text"],"align":"center","lowerThird":true,"refFirst":true,"shows":["scripture","song","media","announce","countdown"]}"##;
-    // THE KEYED TIMER STAYS REGION-MODEL, and it is the one member of the five
-    // that does. It has no blob to fix: `countdownAllowed = !!countdownTo &&
-    // !bandMode` means the region path paints NOTHING under a countdown, and
-    // `.bandless` makes the band itself transparent when there are no words, so
-    // what an operator gets is the clean camera the transparency law would have
-    // given them anyway. Converting it would take that away rather than fix
-    // anything — the layer model has no equivalent refusal: `.cd-default` does not
-    // ask about the band, and a band drawn as a `shape` layer paints whether or
-    // not it holds words, so a converted keyed Timer shows either the digits or an
-    // empty bar over a live camera. One of the five is not broken; it is not
-    // touched.
-    const BAND_TIMER: &str = r##"{"regions":["reference","verse_text"],"align":"center","lowerThird":true,"refFirst":true,"shows":["scripture","song","media","announce","countdown"]}"##;
-
-    &[
-        // ── Classic — the serif look Relay opens with ─────────────────────────
-        // Palette from `builtin_templates()`'s `Classic Serif`, unchanged. The
-        // serif is the reading face and carries the verse; the other four kinds
-        // are scanned rather than read, which is the argument `Worship Lyrics`
-        // already makes in this file, so they take the body face.
-        (
-            "Classic · Scripture",
-            SCRIPTURE,
-            r##"{"font":"Fraunces","background":"radial-gradient(120% 140% at 50% 30%, #2a2013, #0b0906)","accent":"#e8a33d","verseColor":"#f4e4c8","verseSize":"5.5","refSize":"2.6","italicRef":true}"##,
-        ),
-        (
-            "Classic · Lyrics",
-            LYRIC,
-            r##"{"font":"Inter","background":"radial-gradient(120% 140% at 50% 30%, #2a2013, #0b0906)","accent":"#e8a33d","verseColor":"#f4e4c8","verseSize":"8.5","refSize":"2","italicRef":false,"verseLineHeight":1.2}"##,
-        ),
-        (
-            "Classic · Media",
-            MEDIA,
-            r##"{"font":"Inter","background":"radial-gradient(120% 140% at 50% 30%, #2a2013, #0b0906)","accent":"#e8a33d","verseColor":"#f4e4c8","verseSize":"5.5","refSize":"2.6","italicRef":false}"##,
-        ),
-        (
-            "Classic · Announcement",
-            ANNOUNCE,
-            r##"{"font":"Inter","background":"radial-gradient(120% 140% at 50% 30%, #2a2013, #0b0906)","accent":"#e8a33d","verseColor":"#f4e4c8","verseSize":"3.4","refSize":"2.6","italicRef":false,"refTransform":"uppercase","refLetterSpacing":0.06,"scroll":true}"##,
-        ),
-        (
-            "Classic · Timer",
-            TIMER_CLASSIC,
-            r##"{"font":"Inter","background":"radial-gradient(120% 140% at 50% 30%, #2a2013, #0b0906)","accent":"#e8a33d","verseColor":"#f4e4c8","verseSize":"5","refSize":"2.6","italicRef":false,"refTransform":"uppercase","refLetterSpacing":0.06}"##,
-        ),
-        // ── Aurora — teal / emerald ───────────────────────────────────────────
-        // The first three are the previously-seeded rows byte for byte, so a
-        // church already pointing a screen at one sees nothing change. Media and
-        // Timer are new and borrow their grounds from the two above rather than
-        // introducing a colour the family does not have.
-        (
-            "Aurora · Scripture",
-            SCRIPTURE,
-            r##"{"font":"Fraunces","background":"radial-gradient(130% 130% at 50% 15%, #0b3330, #04110f)","accent":"#6ee7c4","verseColor":"#eafff8","verseSize":"5.2","refSize":"2.5","italicRef":true,"textShadow":0.5,"verseLineHeight":1.34}"##,
-        ),
-        (
-            "Aurora · Lyrics",
-            LYRIC,
-            r##"{"font":"Inter","background":"linear-gradient(165deg, #08302b, #03110f)","accent":"#ffffff","verseColor":"#ffffff","verseSize":"8.5","refSize":"2","textShadow":0.4,"verseLineHeight":1.2}"##,
-        ),
-        (
-            "Aurora · Media",
-            MEDIA,
-            r##"{"font":"Inter","background":"linear-gradient(180deg, #0b3330, #04110f)","accent":"#6ee7c4","verseColor":"#eafff8","verseSize":"5.2","refSize":"2.5","textShadow":0.4}"##,
-        ),
-        (
-            "Aurora · Announcement",
-            ANNOUNCE,
-            r##"{"font":"Inter","background":"linear-gradient(180deg, #0b3330, #04110f)","accent":"#6ee7c4","verseColor":"#eafff8","verseSize":"3.4","refSize":"2.6","refTransform":"uppercase","refLetterSpacing":0.06,"scroll":true,"textShadow":0.4}"##,
-        ),
-        (
-            "Aurora · Timer",
-            TIMER_AURORA,
-            r##"{"font":"Inter","background":"radial-gradient(130% 130% at 50% 15%, #0b3330, #04110f)","accent":"#6ee7c4","verseColor":"#eafff8","verseSize":"5","refSize":"2.6","refTransform":"uppercase","refLetterSpacing":0.06,"textShadow":0.4}"##,
-        ),
-        // ── Ember — amber / crimson ───────────────────────────────────────────
-        // Same terms as Aurora: three carried forward verbatim, two new.
-        (
-            "Ember · Scripture",
-            SCRIPTURE,
-            r##"{"font":"Fraunces","background":"radial-gradient(130% 130% at 50% 18%, #3a1508, #140603)","accent":"#ffb066","verseColor":"#fdeede","verseSize":"5.2","refSize":"2.5","italicRef":true,"textShadow":0.55,"verseLineHeight":1.34}"##,
-        ),
-        (
-            "Ember · Lyrics",
-            LYRIC,
-            r##"{"font":"Inter","background":"linear-gradient(165deg, #2c0f06, #130603)","accent":"#ffffff","verseColor":"#ffffff","verseSize":"8.5","refSize":"2","textShadow":0.45,"verseLineHeight":1.2}"##,
-        ),
-        (
-            "Ember · Media",
-            MEDIA,
-            r##"{"font":"Inter","background":"linear-gradient(180deg, #3a1508, #140603)","accent":"#ffb066","verseColor":"#fdeede","verseSize":"5.2","refSize":"2.5","textShadow":0.45}"##,
-        ),
-        (
-            "Ember · Announcement",
-            ANNOUNCE,
-            r##"{"font":"Inter","background":"linear-gradient(180deg, #3a1508, #140603)","accent":"#ffb066","verseColor":"#fdeede","verseSize":"3.4","refSize":"2.6","refTransform":"uppercase","refLetterSpacing":0.06,"scroll":true,"textShadow":0.45}"##,
-        ),
-        (
-            "Ember · Timer",
-            TIMER_EMBER,
-            r##"{"font":"Inter","background":"radial-gradient(130% 130% at 50% 18%, #3a1508, #140603)","accent":"#ffb066","verseColor":"#fdeede","verseSize":"5","refSize":"2.6","refTransform":"uppercase","refLetterSpacing":0.06,"textShadow":0.45}"##,
-        ),
-        // ── Lower Third — the keyed family ────────────────────────────────────
-        // Palette from `builtin_templates()`'s `Lower Third`. `background` is
-        // `transparent` in all five, which is not decoration: a keyed channel that
-        // paints a background covers the camera it exists to caption. The band
-        // fill is `#101319` — neutral, and deliberately not a law colour.
-        (
-            "Lower Third · Scripture",
-            BAND_SCRIPTURE,
-            r##"{"font":"Inter","background":"transparent","accent":"#101319","verseColor":"#f2f4f8","verseSize":"2.6","refSize":"1.7","italicRef":false}"##,
-        ),
-        (
-            "Lower Third · Lyrics",
-            BAND_LYRIC,
-            r##"{"font":"Inter","background":"transparent","accent":"#101319","verseColor":"#f2f4f8","verseSize":"3","refSize":"1.7","italicRef":false}"##,
-        ),
-        (
-            "Lower Third · Media",
-            BAND_MEDIA,
-            r##"{"font":"Inter","background":"transparent","accent":"#101319","verseColor":"#f2f4f8","verseSize":"2.6","refSize":"1.7","italicRef":false}"##,
-        ),
-        (
-            "Lower Third · Announcement",
-            BAND_ANNOUNCE,
-            r##"{"font":"Inter","background":"transparent","accent":"#101319","verseColor":"#f2f4f8","verseSize":"2.2","refSize":"1.5","italicRef":false,"refTransform":"uppercase","refLetterSpacing":0.08,"scroll":true}"##,
-        ),
-        (
-            "Lower Third · Timer",
-            BAND_TIMER,
-            r##"{"font":"Inter","background":"transparent","accent":"#101319","verseColor":"#f2f4f8","verseSize":"2.6","refSize":"1.7","italicRef":false}"##,
-        ),
-        // ── High Visibility — the answer to a lit room and a cheap lens ───────
-        // Every key is taken from `data/legacy_themes.json`'s frozen
-        // `High Visibility` theme, which is the look a church that chose that
-        // theme now carries inlined inside its own template, and which
-        // `src/lib/legibility.test.js` measures at 21:1. White on pure black in
-        // all five kinds, no shadow (a soft edge IS a contrast reduction) and no
-        // transition (long enough to notice is long enough to disorient). The
-        // reference is the SAME white as the verse rather than a tint, because a
-        // coloured reference on black is the first thing to disappear for
-        // somebody with low vision and it is the least important text on screen.
-        //
-        // ITS ANNOUNCEMENT IS THE ONE MEMBER THAT DOES NOT SCROLL, and that is
-        // the deviation this family exists to make. `scroll` is absent, so the
-        // notice renders through the centred `.content` block: it WRAPS, and it
-        // sits inside the fit loop that reports when it has had to shrink
-        // (rule 37). The ticker branch is tested before that block and carries no
-        // fit reporting at all.
-        //
-        // The deciding fact is what the crawl does under `prefers-reduced-motion`,
-        // which is the setting a low-vision or vestibular user's machine is most
-        // likely to be carrying: `.ticker-run` gets `animation: none` and
-        // `.ticker-track` gets `text-overflow: ellipsis` over `white-space: nowrap;
-        // overflow: hidden`. The crawl stops, the notice becomes one line, and
-        // anything longer than the track is CUT OFF — silently, on the one render
-        // path this family is most likely to take. A static notice that wraps
-        // cannot do that.
-        //
-        // THE COST, STATED: with no `scroll` this member is shaped exactly like a
-        // full-screen verse — a large line over a small one — so `templateKind`
-        // derives it as `scripture` and it shares the gallery's Scripture row
-        // rather than sitting with the other four Announcements. That is the right
-        // way round. The derivation is a heuristic about shape; what a
-        // congregation can read is not, and a heuristic is the thing that bends.
-        // `Notice Board` already records the same shape as honest rather than a
-        // miss.
-        (
-            "High Visibility · Scripture",
-            SCRIPTURE,
-            r##"{"font":"Inter","background":"#000000","accent":"#ffffff","verseColor":"#ffffff","refColor":"#ffffff","verseSize":"8","refSize":"3.2","verseLineHeight":"1.4","refGap":"1.6","verseShadow":"0","refShadow":"0","transitionMs":"0","italicRef":false}"##,
-        ),
-        (
-            "High Visibility · Lyrics",
-            LYRIC,
-            r##"{"font":"Inter","background":"#000000","accent":"#ffffff","verseColor":"#ffffff","refColor":"#ffffff","verseSize":"9","refSize":"3.2","verseLineHeight":"1.4","refGap":"1.6","verseShadow":"0","refShadow":"0","transitionMs":"0","italicRef":false}"##,
-        ),
-        (
-            "High Visibility · Media",
-            MEDIA,
-            r##"{"font":"Inter","background":"#000000","accent":"#ffffff","verseColor":"#ffffff","refColor":"#ffffff","verseSize":"8","refSize":"3.2","verseLineHeight":"1.4","refGap":"1.6","verseShadow":"0","refShadow":"0","transitionMs":"0","italicRef":false}"##,
-        ),
-        (
-            "High Visibility · Announcement",
-            ANNOUNCE,
-            r##"{"font":"Inter","background":"#000000","accent":"#ffffff","verseColor":"#ffffff","refColor":"#ffffff","verseSize":"4","refSize":"3.2","verseLineHeight":"1.4","refGap":"1.6","verseShadow":"0","refShadow":"0","transitionMs":"0","italicRef":false,"refTransform":"uppercase","refLetterSpacing":0.06}"##,
-        ),
-        (
-            "High Visibility · Timer",
-            TIMER_HIVIS,
-            r##"{"font":"Inter","background":"#000000","accent":"#ffffff","verseColor":"#ffffff","refColor":"#ffffff","verseSize":"6","refSize":"3.2","verseLineHeight":"1.4","refGap":"1.6","verseShadow":"0","refShadow":"0","transitionMs":"0","italicRef":false,"refTransform":"uppercase","refLetterSpacing":0.06}"##,
-        ),
-    ]
+    &[]
 }
 
-/// THE SHELF — the prototype's own looks, in the LAYER model.
+/// THE SHELF — the FORTY looks a church finds on a fresh install, in the LAYER
+/// model.
 ///
-/// Everything above is region-model JSON written as a Rust string literal. These
-/// are not, for one reason: the shapes the prototype's remaining looks are made
-/// of — a `band` that names the words inside it (DECISIONS §75), a `region` that
-/// is its own container (DECISIONS §74), a screen carrying monitor-only bindings
-/// — exist only in the layer model, and hand-writing them twice (once for the
-/// seed, once for whatever renders them in a test) is exactly how `BUILTINS` and
-/// `builtin_templates()` drifted by a row and a kiosk rendered a song through a
-/// scripture look.
+/// Eight roles × five: Scripture · Song · Media · Announcement · Timer ·
+/// Scrolling Lower Third · SuperSource · Stage. Every one declares `layout.shows`
+/// explicitly, every one clears 7:1 body-text contrast against its own ground,
+/// and not one of them is region-model — which is what closes RG-140 and RG-141
+/// at the source rather than by repairing the region fitter.
 ///
-/// So the shapes live in ONE file that both sides read: Rust `include_str!`s it
-/// here, and `src/lib/shelf.test.js` reads the same bytes and renders every entry
-/// through the real `TemplateRender`. Added by NAME like every other preset, so
-/// no id an operator's channel points at is ever disturbed.
+/// They live in ONE file that both sides read: Rust `include_str!`s it here, and
+/// `src/lib/shelf.test.js` reads the same bytes and renders every entry through
+/// the real `TemplateRender`. The last time a shipped design lived in two places
+/// — `BUILTINS` in `templates.js` and `builtin_templates()` here — they drifted
+/// by a row and a kiosk resolving `template_id=4` rendered a song through a
+/// scripture look. Added by NAME like every other preset, so no id an operator's
+/// channel points at is ever disturbed.
 const SHELF_JSON: &str = include_str!("../../data/shelf_templates.json");
 
 #[derive(Deserialize)]
@@ -660,22 +524,36 @@ struct ShelfFile {
 #[derive(Deserialize)]
 struct ShelfEntry {
     name: String,
+    /// The seeder's stable identity. Written once, at insert; never by an
+    /// operator; and never rewritten by `upsert_template`. It is what retirement
+    /// decides on, so a conversion that rewrites every byte of a row cannot
+    /// disguise it (RG-142).
+    seed_key: String,
     layout: Value,
     style: Value,
 }
 
 /// The shelf, parsed once. A malformed file yields an EMPTY shelf rather than a
 /// panic — this runs on every database open, and a church whose app will not
-/// start is a worse outcome than a church missing eight designs. It cannot ship
+/// start is a worse outcome than a church missing its designs. It cannot ship
 /// broken: `the_shelf_file_parses_and_every_entry_is_a_layer_stack` fails the
 /// build, and the frontend reads the same bytes.
-fn shelf_templates() -> &'static [(String, String, String)] {
-    static SHELF: OnceLock<Vec<(String, String, String)>> = OnceLock::new();
+type Preset = (String, String, String, String);
+
+fn shelf_templates() -> &'static [Preset] {
+    static SHELF: OnceLock<Vec<Preset>> = OnceLock::new();
     SHELF.get_or_init(|| match serde_json::from_str::<ShelfFile>(SHELF_JSON) {
         Ok(f) => f
             .templates
             .into_iter()
-            .map(|e| (e.name, e.layout.to_string(), e.style.to_string()))
+            .map(|e| {
+                (
+                    e.name,
+                    e.layout.to_string(),
+                    e.style.to_string(),
+                    e.seed_key,
+                )
+            })
             .collect(),
         Err(e) => {
             eprintln!("shelf_templates.json could not be read ({e}) — shipping without the shelf");
@@ -689,13 +567,22 @@ fn shelf_templates() -> &'static [(String, String, String)] {
 /// Additive, like `ensure_lyrics_template` — an operator who deleted or renamed a
 /// preset does not get it silently resurrected under a different name, only the
 /// ones genuinely absent are inserted.
-/// Every ready-to-use design that ships on top of the five built-ins: the
-/// standalone presets, the coordinated theme families, and the shelf.
-fn all_presets() -> impl Iterator<Item = (&'static str, &'static str, &'static str)> {
-    region_presets().chain(
+/// EVERYTHING A FRESH INSTALL SHIPS — the forty, and nothing else.
+///
+/// It used to read "on top of the five built-ins", and that half is gone:
+/// `builtin_templates()` is no longer seeded anywhere. It survives as the frozen
+/// mirror of the frontend's `BUILTINS`, which is what a `region` layer's
+/// `templateRef` resolves against on a kiosk page that has no database
+/// (DECISIONS §74) — a different job from being on a church's shelf.
+///
+/// The fourth element of each tuple is the `seed_key`. It travels with the row
+/// from here to the INSERT so that a seeded template cannot be inserted without
+/// its identity: the whole of RG-142 is a row that could not be recognised later.
+fn all_presets() -> impl Iterator<Item = (&'static str, &'static str, &'static str, &'static str)> {
+    region_presets().map(|(n, l, s)| (n, l, s, "")).chain(
         shelf_templates()
             .iter()
-            .map(|(n, l, s)| (n.as_str(), l.as_str(), s.as_str())),
+            .map(|(n, l, s, k)| (n.as_str(), l.as_str(), s.as_str(), k.as_str())),
     )
 }
 
@@ -1085,12 +972,13 @@ fn name_is_taken(conn: &Connection, name: &str) -> rusqlite::Result<bool> {
 pub(super) fn ensure_preset_templates(conn: &Connection) -> rusqlite::Result<()> {
     let mut check = conn.prepare("SELECT COUNT(*) FROM templates WHERE name = ?1")?;
     let mut insert = conn.prepare(
-        "INSERT INTO templates (name, region_config_json, style_json) VALUES (?1, ?2, ?3)",
+        "INSERT INTO templates (name, region_config_json, style_json, seed_key)
+         VALUES (?1, ?2, ?3, ?4)",
     )?;
-    for (name, layout, style) in all_presets() {
+    for (name, layout, style, key) in all_presets() {
         let present: i64 = check.query_row([name], |r| r.get(0))?;
         if present == 0 {
-            insert.execute((name, layout, style))?;
+            insert.execute((name, layout, style, key))?;
         }
     }
     Ok(())
@@ -1276,6 +1164,67 @@ pub(super) fn ensure_retired_presets_are_gone(conn: &Connection) -> rusqlite::Re
     let delete_sql = format!("DELETE FROM templates WHERE id = ?1{guards}");
 
     let tx = conn.unchecked_transaction()?;
+
+    // ── THE IDENTITY PASS, which is the one that works after a conversion ──
+    //
+    // RG-142: the byte pass below retired 0 of 21 against a copy of a real
+    // database, because `upgradeLegacyToLayers` had already rewritten every row on
+    // mount. This pass asks the question that survives that: does the row carry a
+    // `legacy.` seed key (stamped by `ensure_template_seed_identity`, which ran a
+    // few lines earlier in `ensure_tables`), and has nobody saved it since?
+    //
+    // Three conditions, and all three are the old rule's, restated in terms the
+    // conversion cannot move:
+    //   1. `seed_key` is one of the frozen `legacy.` keys — a row wave 5 stopped
+    //      shipping, rather than a row somebody made;
+    //   2. `edited_at IS NULL` — nobody has saved it since it was seeded. This is
+    //      "a single edited colour makes it the operator's", kept honestly:
+    //      `upsert_template` stamps it and the seed paths never do;
+    //   3. nothing points at it through the FOUR doors — the two settings rows
+    //      read above, and the two foreign keys folded into `delete_sql`.
+    //
+    // IT ASKS WHETHER THE COLUMNS ARE THERE FIRST. In a real boot they always are —
+    // `ensure_template_seed_identity` runs a few lines earlier in `ensure_tables`,
+    // on every branch of `migrate` that reaches here. But this function is also
+    // reachable against a baseline-era `templates` table that has neither column,
+    // and naming one there is `no such column`, propagated out of `migrate`, at
+    // every boot, before the window is shown: rule 25's failure by the same road
+    // the `plan_items` guard below already guards against. No columns means no
+    // identities were ever stamped, so skipping this pass loses nothing the byte
+    // pass does not still cover.
+    let has_identity: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('templates')
+          WHERE name IN ('seed_key', 'edited_at')",
+        [],
+        |r| r.get(0),
+    )?;
+    let retired_keys: Vec<&str> = legacy_seed_keys().iter().map(|(_, k)| k.as_str()).collect();
+    if has_identity == 2 && !retired_keys.is_empty() {
+        let placeholders = vec!["?"; retired_keys.len()].join(",");
+        let ids: Vec<i64> = {
+            let mut stmt = tx.prepare(&format!(
+                "SELECT id FROM templates
+                  WHERE edited_at IS NULL AND seed_key IN ({placeholders})"
+            ))?;
+            let it = stmt.query_map(rusqlite::params_from_iter(retired_keys.iter()), |r| {
+                r.get(0)
+            })?;
+            it.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        for id in ids {
+            if looks.contains(&id) || default_id == Some(id) {
+                continue;
+            }
+            tx.execute(&delete_sql, [id])?;
+        }
+    }
+
+    // ── THE BYTE PASS, kept additively ────────────────────────────────────
+    //
+    // Superseded, not deleted. On an install that never opened the Templates
+    // workspace nothing has converted anything, the bytes still match, and this is
+    // the pass that reaches the twenty-one whose exact bytes are frozen. It is
+    // also the only pass that can run when `legacy_seed_keys.json` cannot be read.
     for (name, layout, style) in &retired {
         // Every row with this name AND these exact bytes. Plural because a name
         // is not unique in this table: one that matched with different bytes is
@@ -1306,7 +1255,7 @@ pub(super) fn ensure_retired_presets_are_gone(conn: &Connection) -> rusqlite::Re
     // contested name: the whole-triple disjointness of the two lists is asserted
     // by `the_frozen_record_parses_and_names_nothing_the_seed_still_ships`.
     for (name, layout, style) in &retired {
-        if !all_presets().any(|(n, _, _)| n == name.as_str()) {
+        if !all_presets().any(|(n, _, _, _)| n == name.as_str()) {
             continue;
         }
         if retired_row_is_still_present(&tx, name, layout, style)? {
@@ -1320,13 +1269,29 @@ pub(super) fn ensure_retired_presets_are_gone(conn: &Connection) -> rusqlite::Re
     tx.commit()
 }
 
-/// Seed the built-in templates into a fresh DB (ids 1..4).
+/// SEED THE FORTY INTO A FRESH DATABASE, in shelf order, at ids 1..40.
+///
+/// It used to seed the five region-model built-ins here and leave everything else
+/// to `ensure_preset_templates`. It seeds the whole shelf now, for an ordering
+/// reason rather than a tidiness one: `verses::seed` calls this and then
+/// `seed_channels`, which inserts four `output_channels` rows pointing at template
+/// ids 1..4 — with `PRAGMA foreign_keys = ON`, a shelf that arrived later in
+/// `ensure_tables` would leave those four foreign keys dangling at the moment they
+/// are written.
+///
+/// It runs the identity migration first because `baseline_forward_fill` can reach
+/// this on a pre-versioning database whose `templates` table has neither column
+/// yet, and an INSERT naming `seed_key` there would be `no such column` propagated
+/// out of `migrate` — rule 25's failure by a different road. It is idempotent, so
+/// calling it twice in one boot costs a pragma read.
 pub(super) fn seed_templates(conn: &Connection) -> rusqlite::Result<()> {
+    ensure_template_seed_identity(conn)?;
     let mut stmt = conn.prepare(
-        "INSERT INTO templates (name, region_config_json, style_json) VALUES (?1, ?2, ?3)",
+        "INSERT INTO templates (name, region_config_json, style_json, seed_key)
+         VALUES (?1, ?2, ?3, ?4)",
     )?;
-    for (name, layout, style) in builtin_templates() {
-        stmt.execute((name, layout, style))?;
+    for (name, layout, style, key) in all_presets() {
+        stmt.execute((name, layout, style, key))?;
     }
     Ok(())
 }
@@ -1377,15 +1342,32 @@ mod lyrics_template_tests {
             stmt.execute((name, layout, style)).unwrap();
         }
         drop(stmt);
+        // …and then the shelf, because that is the order `ensure_tables` runs in:
+        // `ensure_preset_templates` lands the forty and `ensure_lyrics_template`
+        // chooses from them a line later. A fixture without them asks this function
+        // to choose from an empty shelf, which is a state no install is in past its
+        // first boot.
+        ensure_template_seed_identity(&conn).unwrap();
+        ensure_preset_templates(&conn).unwrap();
         conn
     }
 
     #[test]
     fn a_fresh_install_already_has_it() {
+        // A LYRIC LOOK, not the legacy row. `Worship Lyrics` was region-model and
+        // stopped shipping in wave 5; `Song · Anthem` is what a fresh seed lands.
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(SCHEMA).unwrap();
         conn.execute_batch("COMMIT;").ok();
         seed_templates(&conn).unwrap();
+        let name: String = conn
+            .query_row(
+                "SELECT name FROM templates WHERE seed_key = 'song.anthem'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("a fresh install ships a lyric look");
+        assert_eq!(name, "Song · Anthem");
         let n: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM templates WHERE name = 'Worship Lyrics'",
@@ -1393,42 +1375,56 @@ mod lyrics_template_tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(n, 1);
+        assert_eq!(n, 0, "the region-model lyrics row is still being seeded");
     }
 
     #[test]
     fn a_lyric_template_has_no_reference_region() {
         // THE BUG THIS FIXES: lyrics rendered through a scripture template put a
         // large "Song Title · Slide 7" where the words should be. The
-        // congregation is not singing the title.
-        let (_, layout, _) = builtin_templates()
-            .iter()
-            .find(|(n, _, _)| *n == "Worship Lyrics")
-            .copied()
-            .expect("no lyrics template");
-        assert!(layout.contains("verse_text"));
-        assert!(
-            !layout.contains("reference"),
-            "the lyrics template still draws a reference"
-        );
+        // congregation is not singing the title. Asked of all five Song looks now
+        // rather than of the one retired built-in — the claim is about the role,
+        // and a role with five members can lose it in four places.
+        let songs: Vec<(&str, &str)> = all_presets()
+            .filter(|(n, _, _, _)| n.starts_with("Song · "))
+            .map(|(n, l, _, _)| (n, l))
+            .collect();
+        assert_eq!(songs.len(), 5, "the Song role lost a look");
+        for (name, layout) in songs {
+            assert!(
+                layout.contains("\"bind\":\"verse\""),
+                "{name}: no layer carries the words"
+            );
+            assert!(
+                !layout.contains("\"bind\":\"reference\""),
+                "{name}: a lyric look still draws a reference"
+            );
+        }
     }
 
     #[test]
     fn lyrics_are_set_much_larger_than_scripture() {
         // A lyric is a few short lines read from the back of a lit room, not a
-        // paragraph with a citation.
-        let size = |name: &str| -> f32 {
-            let (_, _, style) = builtin_templates()
-                .iter()
-                .find(|(n, _, _)| *n == name)
-                .copied()
-                .unwrap();
-            let v: serde_json::Value = serde_json::from_str(style).unwrap();
-            v["verseSize"].as_str().unwrap().parse().unwrap()
+        // paragraph with a citation. Read off the layer that carries the words, in
+        // each role, because that is where a size lives in the layer model.
+        let words = |prefix: &str| -> f32 {
+            let mut best = 0.0f32;
+            for (_, layout, _, _) in all_presets().filter(|(n, _, _, _)| n.starts_with(prefix)) {
+                let v: serde_json::Value = serde_json::from_str(layout).unwrap();
+                for l in v["layers"].as_array().unwrap() {
+                    if l["bind"] == "verse" {
+                        best = best.max(l["size"].as_f64().unwrap_or(0.0) as f32);
+                    }
+                }
+            }
+            best
         };
+        let song = words("Song · ");
+        let scripture = words("Scripture · ");
+        assert!(song > 0.0 && scripture > 0.0, "a role carries no words");
         assert!(
-            size("Worship Lyrics") >= size("Classic Serif") * 1.5,
-            "lyrics are not meaningfully larger than scripture"
+            song >= scripture * 1.5,
+            "lyrics ({song}cqw) are not meaningfully larger than scripture ({scripture}cqw)"
         );
     }
 
@@ -1437,20 +1433,26 @@ mod lyrics_template_tests {
         // CLAUDE.md §25: a migration must be safe to re-run. This one runs on
         // every boot.
         let conn = db();
-        let before: i64 = conn
-            .query_row("SELECT COUNT(*) FROM templates", [], |r| r.get(0))
-            .unwrap();
+        let rows = |c: &Connection| -> i64 {
+            c.query_row("SELECT COUNT(*) FROM templates", [], |r| r.get(0))
+                .unwrap()
+        };
+        let before = rows(&conn);
         ensure_lyrics_template(&conn).unwrap();
-        let once: i64 = conn
-            .query_row("SELECT COUNT(*) FROM templates", [], |r| r.get(0))
-            .unwrap();
+        let once = rows(&conn);
+        let chosen = crate::db::settings::get_setting(&conn, "tpl_song").unwrap();
         ensure_lyrics_template(&conn).unwrap();
         ensure_lyrics_template(&conn).unwrap();
-        let thrice: i64 = conn
-            .query_row("SELECT COUNT(*) FROM templates", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(once, before + 1, "the lyrics template was not added");
-        assert_eq!(once, thrice, "re-running the migration duplicated it");
+        assert_eq!(
+            once, before,
+            "it CREATES a template again — it is supposed to choose one"
+        );
+        assert_eq!(once, rows(&conn), "re-running the migration added rows");
+        assert_eq!(
+            chosen,
+            crate::db::settings::get_setting(&conn, "tpl_song").unwrap(),
+            "re-running the migration moved the song look"
+        );
     }
 
     #[test]
@@ -1486,7 +1488,7 @@ mod lyrics_template_tests {
                 r.get(0)
             })
             .unwrap();
-        assert_eq!(name, "Worship Lyrics");
+        assert_eq!(name, "Song · Anthem");
     }
 
     #[test]
@@ -1543,7 +1545,10 @@ mod preset_template_tests {
         for (name, layout, style) in builtin_templates()
             .iter()
             .map(|(n, l, s)| (*n, *l, *s))
-            .chain(all_presets())
+            // `all_presets()` carries a fourth element since Track A — the seed
+            // key. It is machine-facing and names no typeface, so it is dropped
+            // here rather than scanned.
+            .chain(all_presets().map(|(n, l, s, _key)| (n, l, s)))
         {
             for (what, text) in [("layout", layout), ("style", style)] {
                 if text.contains("var(--") {
@@ -1589,138 +1594,43 @@ mod preset_template_tests {
     }
 
     #[test]
-    fn there_are_presets_across_every_screen_type() {
-        // The families are now the whole region-model seed. The standalone
-        // presets were retired into them, so this asserts the ABSENCE rather than
-        // a range: a count of twelve-to-fifteen loose looks would mean somebody
-        // re-seeded a list whose rows a migration is busy deleting from every
-        // existing install, which is a row deleted and re-inserted under a new id
-        // on every boot, repointing whatever channel or plan cue pointed at it.
-        assert!(
-            preset_templates().is_empty(),
-            "the standalone presets were retired into the five families; {} came back",
-            preset_templates().len()
-        );
-
-        // Kind coverage still has to hold, and it is the reason this test did not
-        // simply go away with the list it used to count: the families must between
-        // them still cover the shapes a screen can be, so a future edit cannot
-        // quietly drop a category.
-
-        let kind = |layout: &str| -> &'static str {
-            let v: serde_json::Value = serde_json::from_str(layout).unwrap();
-            let band = v["lowerThird"].as_bool().unwrap_or(false);
-            let regions: Vec<String> = v["regions"]
-                .as_array()
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|x| x.as_str().map(str::to_string))
-                        .collect()
-                })
-                .unwrap_or_default();
-            let has = |r: &str| regions.iter().any(|x| x == r);
-            if band {
-                "lower-third"
-            } else if has("reference") && has("verse_text") {
-                "scripture"
-            } else if has("verse_text") {
-                "song"
-            } else {
-                "custom"
-            }
-        };
-        let mut kinds: Vec<&str> = region_presets().map(|(_, l, _)| kind(l)).collect();
-        kinds.sort();
-        kinds.dedup();
-        for want in ["scripture", "song", "lower-third"] {
-            assert!(kinds.contains(&want), "no preset of kind {want}");
-        }
-    }
-
-    #[test]
-    fn every_family_is_complete_across_every_content_kind() {
-        // A FAMILY IS A SET. An operator picks a look and fires five kinds of
-        // content at it over a morning; a family missing its Timer means the
-        // pre-service countdown falls back to a mismatched default in front of
-        // a filling room, which is worse than the family not existing.
+    fn nothing_region_model_is_seeded_any_more() {
+        // THE FACT UNDERNEATH RG-140 AND RG-141, REMOVED AT THE SOURCE.
         //
-        // Five kinds, because CONTENT_KINDS has five (src/lib/layers.js:228) and
-        // the seed had four — Media and Timer were the two nobody could pick a
-        // coordinated look for.
-        use std::collections::HashSet;
-        let mut families: HashSet<&str> = HashSet::new();
-        for (name, _, _) in theme_templates() {
-            match name.split_once(" · ") {
-                Some((f, _)) => {
-                    families.insert(f);
-                }
-                None => panic!("seed template {name:?} is not named 'Family · Kind'"),
-            }
-        }
-        let mut want: Vec<&str> = vec![
-            "Classic",
-            "Aurora",
-            "Ember",
-            "Lower Third",
-            "High Visibility",
-        ];
-        want.sort();
-        let mut got: Vec<&str> = families.into_iter().collect();
-        got.sort();
+        // A region-model countdown is painted by a branch with no fit loop around
+        // either of its lines: 30.3px digits against 192px designed, measured at
+        // 1920x1080. A region-model announcement painted a footer ticker before the
+        // Templates workspace was opened and a mid-screen crawl after, switched by a
+        // silent one-way conversion that SAVES. Neither is closed by repairing the
+        // region fitter; both are closed by seeding nothing that reaches it.
+        //
+        // Both halves are asserted, because either alone can be satisfied while the
+        // other rots: the two region lists are empty, AND every row that ships
+        // carries a real layer stack. A re-seeded region list would fail the first;
+        // a layer template hand-edited back into regions would fail the second.
         assert_eq!(
-            got, want,
-            "the five families are fixed by DECISIONS, not by taste"
+            preset_templates().len(),
+            0,
+            "the standalone presets were retired; they came back region-model"
         );
-        for family in &want {
-            for kind in ["Scripture", "Lyrics", "Media", "Announcement", "Timer"] {
-                let name = format!("{family} · {kind}");
-                assert!(
-                    theme_templates().iter().any(|(n, _, _)| *n == name),
-                    "family {family:?} is missing its {kind} template"
-                );
-            }
-        }
-        assert_eq!(theme_templates().len(), 25);
-        // CARRIED OVER from `every_theme_is_a_complete_coordinated_family`, which
-        // this test replaces. Nothing else in either suite holds it, and the
-        // ticker is a real render path (`TemplateRender.svelte`'s `scroll` branch)
-        // whose only seeded example lives here. Dropping it with the old test
-        // would have been coverage lost silently in a rename.
-        assert!(
-            theme_templates()
-                .iter()
-                .any(|(_, _, style)| style.contains("\"scroll\":true")),
-            "no family ships a scrolling announcement"
+        assert_eq!(
+            theme_templates().len(),
+            0,
+            "the five families were retired; they came back region-model"
         );
-    }
+        assert_eq!(region_presets().count(), 0, "a region-model row is seeded");
 
-    #[test]
-    fn the_full_screen_timers_are_seeded_in_the_layer_model() {
-        // WHAT A LOBBY SCREEN DOES ON THE FIRST SUNDAY. A region-model countdown is
-        // painted by a branch with no fit loop around either of its lines, so the
-        // label clips and the digits come out at a fraction of the size the
-        // template asks for — 7.88px and 30.3px against 192px, measured at
-        // 1920x1080. The layer model's `.cd-default` block declares its designed
-        // size, clips, and reports through `onFit`. These four take that path
-        // because they are seeded already converted; nothing else in either suite
-        // says so, and a hand edit that dropped a `layers` array would put the blob
-        // back silently.
-        let want = [
-            "Classic · Timer",
-            "Aurora · Timer",
-            "Ember · Timer",
-            "High Visibility · Timer",
-        ];
-        for name in want {
-            let (_, layout, _) = theme_templates()
-                .iter()
-                .find(|(n, _, _)| *n == name)
-                .unwrap_or_else(|| panic!("no seeded {name:?}"));
-            let v: serde_json::Value = serde_json::from_str(layout).unwrap();
+        for (name, layout, _, _) in all_presets() {
+            let v: serde_json::Value = serde_json::from_str(layout)
+                .unwrap_or_else(|e| panic!("{name}: layout is not JSON ({e})"));
             let layers = v["layers"]
                 .as_array()
-                .unwrap_or_else(|| panic!("{name}: no layer stack — it is region-model again"));
+                .unwrap_or_else(|| panic!("{name}: no layer stack — it is region-model"));
             assert!(!layers.is_empty(), "{name}: an empty layer stack");
+            assert!(
+                v.get("regions").is_none(),
+                "{name}: it still carries region keys, so the region branch can claim it"
+            );
             let mut ids: Vec<&str> = Vec::new();
             for l in layers {
                 let id = l["id"]
@@ -1730,48 +1640,88 @@ mod preset_template_tests {
                 assert!(!ids.contains(&id), "{name}: two layers share the id {id:?}");
                 ids.push(id);
             }
-            assert!(
-                layers.iter().any(|l| l["type"] == "background"),
-                "{name}: no background layer, so the countdown would key over a camera"
-            );
-            // THE REGION KEYS STAY. `regionsToLayers` returns `{ ...layout, layers }`
-            // and everything that reads the old shape still reads it — `templateKind`
-            // derives `scripture` from these two regions, `templateShows` reads
-            // `shows`, and `upgradeLegacyToLayers` looks for `regions` to decide
-            // whether there is anything left to convert.
-            assert!(
-                v["regions"].is_array(),
-                "{name}: the region keys were dropped, not added to"
-            );
-            assert_eq!(
-                v["lowerThird"], false,
-                "{name}: a full-screen timer is not keyed"
-            );
         }
     }
 
     #[test]
-    fn the_keyed_timer_is_deliberately_not_converted() {
-        // THE ONE MEMBER OF THE FIVE THAT HAS NOTHING TO FIX. `countdownAllowed` is
-        // `!!countdownTo && !bandMode`, so the region path paints NOTHING under a
-        // countdown, and `.bandless` makes the band itself transparent when there
-        // are no words: a clean camera, which is what a keyed screen should give an
-        // operator who fires a countdown at it. The layer model has no equivalent
-        // refusal — `.cd-default` does not ask about the band and a `shape` layer
-        // paints whether or not it holds words — so converting this row for
-        // symmetry would replace "nothing" with the digits or an empty bar, over a
-        // live camera. Pinned so a later tidy-up does not convert the whole family
-        // on the grounds that four of it are converted.
-        let (_, layout, _) = theme_templates()
-            .iter()
-            .find(|(n, _, _)| *n == "Lower Third · Timer")
-            .expect("no seeded Lower Third · Timer");
-        let v: serde_json::Value = serde_json::from_str(layout).unwrap();
-        assert!(
-            v.get("layers").is_none(),
-            "Lower Third · Timer was converted to layers — read the comment on BAND_TIMER first"
-        );
-        assert_eq!(v["lowerThird"], true);
+    fn the_shelf_is_forty_looks_across_eight_roles() {
+        // EIGHT ROLES, FIVE EACH, and the count is not the point — the coverage is.
+        // A church that fires five kinds of content over a morning needs a look for
+        // each of them, and the previous shelf answered three of the eight shapes a
+        // screen can be. The prefix is for FINDING, never for deciding: DECISIONS
+        // §78 keeps a template's role derived from what it renders, and
+        // `templateKind.test.js` names the role each of the forty lands on.
+        use std::collections::BTreeMap;
+        let mut by_role: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+        for (name, _, _, _) in all_presets() {
+            let (role, _) = name
+                .split_once(" · ")
+                .unwrap_or_else(|| panic!("seed template {name:?} is not named 'Role · Name'"));
+            by_role.entry(role).or_default().push(name);
+        }
+        let mut roles: Vec<&str> = by_role.keys().copied().collect();
+        roles.sort();
+        let mut want = vec![
+            "Announce",
+            "Media",
+            "Scripture",
+            "Scroll",
+            "Song",
+            "Source",
+            "Stage",
+            "Timer",
+        ];
+        want.sort();
+        assert_eq!(roles, want, "the eight roles are fixed by the design");
+        for (role, members) in &by_role {
+            assert_eq!(members.len(), 5, "role {role:?} does not have five looks");
+        }
+        assert_eq!(all_presets().count(), 40);
+        assert_eq!(preset_template_count(), 40);
+
+        // THE CRAWL IS A REAL RENDER PATH and its only seeded examples live in the
+        // Scroll role. Carried over from the family test this replaces: nothing else
+        // in either suite holds it, and losing it in a rename is coverage gone
+        // silently.
+        let crawls = all_presets()
+            .filter(|(_, layout, _, _)| layout.contains("\"scroll\":true"))
+            .count();
+        assert!(crawls >= 5, "the shelf lost its scrolling lower thirds");
+    }
+
+    #[test]
+    fn every_seeded_row_carries_an_identity_the_conversion_cannot_destroy() {
+        // RG-142: the byte-matching retirement removed 0 of 21 against a copy of a
+        // real database, because `upgradeLegacyToLayers` had rewritten every row on
+        // mount. A row that ships now carries a slug no conversion touches.
+        //
+        // NONE of them may be a `legacy.` key. That prefix IS the retired set
+        // (`legacy_seed_keys.json`), so a shipped row wearing one would be seeded on
+        // one boot and deleted on the next, for ever, with nothing on screen saying
+        // why.
+        use std::collections::HashSet;
+        let mut seen: HashSet<&str> = HashSet::new();
+        for (name, _, _, key) in all_presets() {
+            assert!(!key.is_empty(), "{name}: seeded with no identity");
+            assert!(
+                !key.starts_with("legacy."),
+                "{name}: carries the retired prefix, so it would be deleted on the next boot"
+            );
+            assert!(
+                seen.insert(key),
+                "two seeded rows share the seed_key {key:?}"
+            );
+        }
+        for (name, key) in legacy_seed_keys() {
+            assert!(
+                key.starts_with("legacy."),
+                "the frozen record gives {name:?} a key that is not in the retired set"
+            );
+            assert!(
+                !all_presets().any(|(n, _, _, _)| n == name.as_str()),
+                "{name:?} is both frozen as retired and still shipped"
+            );
+        }
     }
 
     #[test]
@@ -1884,7 +1834,7 @@ mod preset_template_tests {
         let mut stmt = conn
             .prepare("SELECT region_config_json FROM templates WHERE name = ?1")
             .unwrap();
-        for (name, _, _) in shelf_templates() {
+        for (name, _, _, _) in shelf_templates() {
             let layout: String = stmt
                 .query_row([name], |r| r.get(0))
                 .unwrap_or_else(|_| panic!("a fresh install is missing {name:?}"));
@@ -2026,7 +1976,7 @@ mod preset_template_tests {
         // an operator sees two identical names).
         use std::collections::HashSet;
         let mut seen: HashSet<&str> = builtin_templates().iter().map(|(n, _, _)| *n).collect();
-        for (name, _, _) in all_presets() {
+        for (name, _, _, _) in all_presets() {
             assert!(
                 seen.insert(name),
                 "duplicate/colliding template name: {name}"
@@ -2607,8 +2557,9 @@ mod retired_preset_tests {
         // over by a family member whose bytes differ, so this compares the whole
         // triple, not the name.
         for (name, layout, style) in &frozen {
-            let clash = all_presets()
-                .any(|(n, l, s)| n == name.as_str() && l == layout.as_str() && s == style.as_str());
+            let clash = all_presets().any(|(n, l, s, _)| {
+                n == name.as_str() && l == layout.as_str() && s == style.as_str()
+            });
             assert!(
                 !clash,
                 "{name} is frozen as retired AND still seeded, byte for byte: it would be deleted and re-created under a new id on every boot"
@@ -2735,83 +2686,211 @@ mod retired_preset_tests {
         assert_eq!(before, after);
     }
 
-    /// The single name that is on BOTH the retired list and the seed list. There is
-    /// exactly one; `the_frozen_record_parses_and_names_nothing_the_seed_still_ships`
-    /// asserts the whole-triple disjointness that makes it so.
-    fn the_contested_name() -> (String, String, String) {
-        let mut both: Vec<(String, String, String)> = retired_presets()
+    /// A ROW AS A REAL DATABASE HOLDS IT — converted, not as the seed wrote it.
+    ///
+    /// This is the fixture RG-142 named as missing. Every other test in this module
+    /// inserts the frozen bytes verbatim, so every one of them has been asking a
+    /// question no operator's database can answer yes to since the day
+    /// `TemplateGallery.upgradeLegacyToLayers` shipped: it converts a region
+    /// template to the layer model and SAVES it on mount, with layer ids from
+    /// `newId()` (which folds in `performance.now()`), and `style_json` comes back
+    /// through serde_json's BTreeMap in alphabetical key order rather than the
+    /// seed's hand-written one. Measured result against a copy of a real
+    /// pre-wave database: 31 rows in, 57 out, 0 of 21 retired.
+    ///
+    /// The conversion is reproduced rather than imported — this is Rust and that
+    /// code is Svelte — but only its two defeating properties are reproduced, and
+    /// they are the two that matter: the layout is a layer stack with ids that
+    /// cannot be predicted, and the style keys are in a different order.
+    fn insert_converted(conn: &Connection, name: &str) -> i64 {
+        let layout = format!(
+            r##"{{"align":"center","layers":[{{"id":"l{n}_9137","type":"background","name":"Background","visible":true,"x":0,"y":0,"w":100,"h":100,"fill":"#101319","opacity":1,"dim":0}},{{"id":"t{n}_9138","type":"text","name":"Verse","visible":true,"bind":"verse","x":8,"y":30,"w":84,"h":40,"font":"var(--f-serif)","color":"#f4e4c8","size":5,"align":"center","valign":"middle","lineHeight":1.3,"letterSpacing":0,"shadow":0,"italic":false,"scroll":false,"text":""}}],"lowerThird":false,"refFirst":false,"regions":["verse_text","reference"],"shows":["scripture","song","media","announce","countdown"]}}"##,
+            n = name.len()
+        );
+        // Alphabetical, which is what a BTreeMap round trip produces and what no
+        // hand-written seed literal is.
+        let style = r##"{"accent":"#e8a33d","background":"#101319","font":"var(--f-serif)","italicRef":true,"refSize":"2.6","verseColor":"#f4e4c8","verseSize":"5.5"}"##;
+        conn.execute(
+            "INSERT INTO templates (name, region_config_json, style_json) VALUES (?1, ?2, ?3)",
+            (name, &layout, style),
+        )
+        .unwrap();
+        conn.last_insert_rowid()
+    }
+
+    #[test]
+    fn a_row_the_gallery_already_converted_is_still_retired() {
+        // THE WHOLE OF RG-142, IN ONE TEST.
+        //
+        // Watched to fail by deleting the identity pass from
+        // `ensure_retired_presets_are_gone`: all three rows survive, which is the
+        // 0-of-21 result measured against the real database.
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate(&conn, true).unwrap();
+        // Strip the columns back off, so this is genuinely a database that predates
+        // them and the migration has to install and back-fill them itself.
+        conn.execute("UPDATE templates SET seed_key = NULL, edited_at = NULL", [])
+            .unwrap();
+
+        let converted = ["Classic Serif", "Classic · Scripture", "High Visibility"];
+        for name in converted {
+            insert_converted(&conn, name);
+        }
+
+        // THE BYTE PASS CANNOT SEE THEM, asserted rather than assumed — otherwise
+        // this test could pass with the identity pass removed and nobody would know
+        // which half did the work.
+        for (name, layout, style) in retired_presets() {
+            if converted.contains(&name.as_str()) {
+                assert!(
+                    !retired_row_is_still_present(&conn, &name, &layout, &style).unwrap(),
+                    "{name}: the fixture matched the frozen bytes, so it is not converted"
+                );
+            }
+        }
+
+        ensure_template_seed_identity(&conn).unwrap();
+        // The identity IS what survived the conversion.
+        for name in converted {
+            let key: Option<String> = conn
+                .query_row(
+                    "SELECT seed_key FROM templates WHERE name = ?1",
+                    [name],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert!(key.is_some(), "{name}: the conversion cost it its identity");
+        }
+
+        ensure_retired_presets_are_gone(&conn).unwrap();
+        for name in converted {
+            assert_eq!(
+                count_named(&conn, name),
+                0,
+                "{name}: converted, so the byte match missed it, and it is still here"
+            );
+        }
+    }
+
+    #[test]
+    fn a_converted_row_the_operator_then_saved_is_never_retired() {
+        // The other half, and the half the old rule got right: a row somebody
+        // worked on stays. `edited_at` is what records that, and `upsert_template`
+        // is the only thing that writes it — the seed paths never do.
+        //
+        // Watched to fail by dropping `edited_at` from `upsert_template`'s UPDATE.
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate(&conn, true).unwrap();
+        let id = insert_converted(&conn, "Classic · Scripture");
+        ensure_template_seed_identity(&conn).unwrap();
+
+        let mut t = get_template(&conn, id).unwrap().unwrap();
+        t.style["verseColor"] = serde_json::json!("#00ff99");
+        upsert_template(&conn, &t).unwrap();
+
+        ensure_retired_presets_are_gone(&conn).unwrap();
+        assert_eq!(
+            count_named(&conn, "Classic · Scripture"),
+            1,
+            "a row the operator saved is theirs, not a leftover"
+        );
+    }
+
+    #[test]
+    fn a_name_two_rows_share_is_declined_rather_than_guessed_at() {
+        // RG-142 asked for this by name. One of the two is somebody's own template
+        // that happens to share a name and there is no way to tell which, so
+        // neither is stamped and both stay exactly where they are. Stamping either
+        // would delete a design nobody could get back.
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate(&conn, true).unwrap();
+        insert_converted(&conn, "Classic · Scripture");
+        insert_converted(&conn, "Classic · Scripture");
+
+        ensure_template_seed_identity(&conn).unwrap();
+        let stamped: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM templates
+                  WHERE name = 'Classic · Scripture' AND seed_key IS NOT NULL",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(stamped, 0, "a contested name was stamped anyway");
+
+        ensure_retired_presets_are_gone(&conn).unwrap();
+        assert_eq!(
+            count_named(&conn, "Classic · Scripture"),
+            2,
+            "a contested name was retired on a guess"
+        );
+    }
+
+    #[test]
+    fn stamping_the_identities_is_retryable_and_idempotent() {
+        // Rule 25. A second run is a no-op and a third is identical to the second —
+        // and the columns themselves survive being added twice, which is the
+        // migration race two processes holding this file can produce.
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate(&conn, true).unwrap();
+        conn.execute("UPDATE templates SET seed_key = NULL", [])
+            .unwrap();
+        insert_converted(&conn, "Classic Serif");
+
+        let snapshot = |c: &Connection| -> Vec<(String, Option<String>, Option<String>)> {
+            let mut stmt = c
+                .prepare("SELECT name, seed_key, edited_at FROM templates ORDER BY id")
+                .unwrap();
+            let rows = stmt
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .unwrap();
+            rows.map(|r| r.unwrap()).collect()
+        };
+
+        ensure_template_seed_identity(&conn).unwrap();
+        let once = snapshot(&conn);
+        ensure_template_seed_identity(&conn).unwrap();
+        let twice = snapshot(&conn);
+        ensure_template_seed_identity(&conn).unwrap();
+        let thrice = snapshot(&conn);
+        assert_eq!(once, twice, "a second run changed something");
+        assert_eq!(twice, thrice, "a third run changed something");
+        assert_eq!(
+            once.iter()
+                .find(|(n, _, _)| n == "Classic Serif")
+                .and_then(|(_, k, _)| k.clone())
+                .as_deref(),
+            Some("legacy.classic_serif")
+        );
+    }
+
+    #[test]
+    fn no_name_is_on_both_lists_any_more_and_the_diagnostic_is_therefore_silent() {
+        // THE PREMISE OF TWO TESTS THAT USED TO LIVE HERE, INVERTED ON PURPOSE.
+        //
+        // One name was on both lists: the shelf's `Lower Third · Scripture` was
+        // retired and the keyed family seeded a member of that exact name. Because
+        // a seed inserts by name only when ABSENT, an install that had to KEEP the
+        // old row could never receive the new one — a family permanently one member
+        // short, with nothing on screen saying why. `ensure_retired_presets_are_gone`
+        // prints one line per boot for exactly that case, and the two tests that
+        // stood here held that line honest.
+        //
+        // Wave 5 removed the collision rather than managing it: all forty names are
+        // new, so no retired name is shipped, the loop that prints the line matches
+        // nothing, and there is no permanent consequence left to announce. This test
+        // is what keeps that true — re-seed a retired name and it goes red, which is
+        // the moment to bring the two deleted tests back rather than the moment to
+        // discover the consequence in a church.
+        let both: Vec<String> = retired_presets()
             .into_iter()
-            .filter(|(n, _, _)| all_presets().any(|(sn, _, _)| sn == n.as_str()))
+            .map(|(n, _, _)| n)
+            .filter(|n| all_presets().any(|(sn, _, _, _)| sn == n.as_str()))
             .collect();
-        assert_eq!(
-            both.len(),
-            1,
-            "exactly one name is on both lists; if that changed, so has the premise of these tests"
-        );
-        both.remove(0)
-    }
-
-    #[test]
-    fn the_contested_name_reports_nothing_once_the_retired_row_is_actually_gone() {
-        // RULE 35, IN A LOG. `ensure_retired_presets_are_gone` prints one line for the
-        // single name on both lists — `Lower Third · Scripture` — when the retired row
-        // is KEPT and the seeded family member of that name therefore cannot be
-        // installed. That line is the only diagnostic for the one permanent
-        // consequence of this wave, so it has to be able to be silent.
-        //
-        // It could not. The count asked "is a row of this name present", and on a
-        // healthy install the answer is yes from the second boot onwards: boot 1
-        // deletes the retired row and `ensure_preset_templates` inserts the family's
-        // own member of that name a line later, so the name is present for ever after
-        // and the message printed over an install where the template demonstrably IS
-        // installed. The question it means to ask is "is the RETIRED row still there",
-        // which is a name AND BYTES question — the one the DELETE above it already
-        // asks.
-        //
-        // Asserted as the predicate rather than as captured stderr: the old count
-        // returns 1 here and the new one returns 0.
-        let (name, layout, style) = the_contested_name();
-
-        let conn = Connection::open_in_memory().unwrap();
-        crate::db::migrate(&conn, true).unwrap();
-        // An install that still carries the old row, as an older version seeded it.
-        insert_retired_fixture(&conn, &name);
-        assert_eq!(count_named(&conn, &name), 2, "the fixture did not land");
-
-        ensure_retired_presets_are_gone(&conn).unwrap();
-        ensure_preset_templates(&conn).unwrap();
-
-        // The family member of that name is installed — which is exactly what made the
-        // old count non-zero, and the sentence it guards false.
-        assert_eq!(
-            count_named(&conn, &name),
-            1,
-            "the seeded family member of the contested name is missing"
-        );
         assert!(
-            !retired_row_is_still_present(&conn, &name, &layout, &style).unwrap(),
-            "the retired row is gone, so nothing may be reported as kept"
-        );
-    }
-
-    #[test]
-    fn the_contested_name_still_reports_when_the_retired_row_really_is_kept() {
-        // The other half: silence has to mean something. A retired row the migration
-        // may not touch — here, the operator's configured default — is the case the
-        // line exists to announce, and the narrower count must still find it.
-        let (name, layout, style) = the_contested_name();
-
-        let conn = Connection::open_in_memory().unwrap();
-        crate::db::migrate(&conn, true).unwrap();
-        let id = insert_retired_fixture(&conn, &name);
-        set_setting(&conn, "default_template_id", &id.to_string()).unwrap();
-
-        ensure_retired_presets_are_gone(&conn).unwrap();
-        ensure_preset_templates(&conn).unwrap();
-
-        assert!(
-            retired_row_is_still_present(&conn, &name, &layout, &style).unwrap(),
-            "the retired row is the operator's default: it must be kept, and reported"
+            both.is_empty(),
+            "a retired name is being seeded again: {both:?} — an install that keeps the old \
+             row can never receive the new one, and nothing on screen says so"
         );
     }
 

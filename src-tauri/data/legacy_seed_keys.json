@@ -1,0 +1,318 @@
+{
+  "_readme": [
+    "THE SEEDED NAMES AS THEY STOOD BEFORE WAVE 5, and the identity each one is given.",
+    "",
+    "A FROZEN RECORD, like `retired_presets.json` and `legacy_themes.json` beside it. It exists for one",
+    "moment: `ensure_template_seed_identity` back-fills `templates.seed_key` by NAME against this list,",
+    "which is the ONE instant name-matching is correct — it runs before anything in wave 5 has renamed a",
+    "row. Nothing may add a name here later; a name added after that instant would match a row somebody",
+    "created themselves.",
+    "",
+    "WHY A NAME AND NOT THE BYTES. RG-142 measured the previous, byte-matching retirement at 0 of 21",
+    "against a copy of a real database. Two independent rewrites defeat a byte comparison, either fatal",
+    "alone: `TemplateGallery.upgradeLegacyToLayers` converts a region template to the layer model and",
+    "SAVES it on mount, with layer ids that fold in `performance.now()`; and `style_json` returns through",
+    "serde_json's BTreeMap in alphabetical key order, not the seed's hand-written order. A name survives",
+    "both. Its closing sentence is this file's whole design: anything surviving the conversion needs an",
+    "identity the conversion preserves, not a byte comparison.",
+    "",
+    "A COLLISION DECLINES. If two rows carry one of these names at back-fill time, neither is stamped:",
+    "one of them is somebody's own template that happens to share a name, and there is no way to tell",
+    "which. Declining leaves both rows exactly where they are, which is the safe direction to fail in.",
+    "",
+    "EVERY KEY HERE BEGINS `legacy.`, and that prefix IS the retired set. A row wave 5 still ships",
+    "carries its own key (`scripture.dayspring`, `timer.monolith`); a row it stopped shipping carries a",
+    "`legacy.` one. `was` records which of the four lists the name came from and is a note to a reader.",
+    "",
+    "The fifty-seven: five built-ins, twenty-five family members, seven shelf looks and the twenty-one",
+    "already frozen in `retired_presets.json` — `Lower Third · Scripture` being on two of those lists is",
+    "why it is fifty-seven and not fifty-eight."
+  ],
+  "templates": [
+    {
+      "name": "Classic Serif",
+      "seed_key": "legacy.classic_serif",
+      "was": "built-in"
+    },
+    {
+      "name": "Stage Mono",
+      "seed_key": "legacy.stage_mono",
+      "was": "built-in"
+    },
+    {
+      "name": "Lower Third",
+      "seed_key": "legacy.lower_third",
+      "was": "built-in"
+    },
+    {
+      "name": "Worship Lyrics",
+      "seed_key": "legacy.worship_lyrics",
+      "was": "built-in"
+    },
+    {
+      "name": "Lobby Warm",
+      "seed_key": "legacy.lobby_warm",
+      "was": "built-in"
+    },
+    {
+      "name": "Classic · Scripture",
+      "seed_key": "legacy.classic.scripture",
+      "was": "family"
+    },
+    {
+      "name": "Classic · Lyrics",
+      "seed_key": "legacy.classic.lyrics",
+      "was": "family"
+    },
+    {
+      "name": "Classic · Media",
+      "seed_key": "legacy.classic.media",
+      "was": "family"
+    },
+    {
+      "name": "Classic · Announcement",
+      "seed_key": "legacy.classic.announcement",
+      "was": "family"
+    },
+    {
+      "name": "Classic · Timer",
+      "seed_key": "legacy.classic.timer",
+      "was": "family"
+    },
+    {
+      "name": "Aurora · Scripture",
+      "seed_key": "legacy.aurora.scripture",
+      "was": "family"
+    },
+    {
+      "name": "Aurora · Lyrics",
+      "seed_key": "legacy.aurora.lyrics",
+      "was": "family"
+    },
+    {
+      "name": "Aurora · Media",
+      "seed_key": "legacy.aurora.media",
+      "was": "family"
+    },
+    {
+      "name": "Aurora · Announcement",
+      "seed_key": "legacy.aurora.announcement",
+      "was": "family"
+    },
+    {
+      "name": "Aurora · Timer",
+      "seed_key": "legacy.aurora.timer",
+      "was": "family"
+    },
+    {
+      "name": "Ember · Scripture",
+      "seed_key": "legacy.ember.scripture",
+      "was": "family"
+    },
+    {
+      "name": "Ember · Lyrics",
+      "seed_key": "legacy.ember.lyrics",
+      "was": "family"
+    },
+    {
+      "name": "Ember · Media",
+      "seed_key": "legacy.ember.media",
+      "was": "family"
+    },
+    {
+      "name": "Ember · Announcement",
+      "seed_key": "legacy.ember.announcement",
+      "was": "family"
+    },
+    {
+      "name": "Ember · Timer",
+      "seed_key": "legacy.ember.timer",
+      "was": "family"
+    },
+    {
+      "name": "Lower Third · Scripture",
+      "seed_key": "legacy.lower_third.scripture",
+      "was": "family"
+    },
+    {
+      "name": "Lower Third · Lyrics",
+      "seed_key": "legacy.lower_third.lyrics",
+      "was": "family"
+    },
+    {
+      "name": "Lower Third · Media",
+      "seed_key": "legacy.lower_third.media",
+      "was": "family"
+    },
+    {
+      "name": "Lower Third · Announcement",
+      "seed_key": "legacy.lower_third.announcement",
+      "was": "family"
+    },
+    {
+      "name": "Lower Third · Timer",
+      "seed_key": "legacy.lower_third.timer",
+      "was": "family"
+    },
+    {
+      "name": "High Visibility · Scripture",
+      "seed_key": "legacy.high_visibility.scripture",
+      "was": "family"
+    },
+    {
+      "name": "High Visibility · Lyrics",
+      "seed_key": "legacy.high_visibility.lyrics",
+      "was": "family"
+    },
+    {
+      "name": "High Visibility · Media",
+      "seed_key": "legacy.high_visibility.media",
+      "was": "family"
+    },
+    {
+      "name": "High Visibility · Announcement",
+      "seed_key": "legacy.high_visibility.announcement",
+      "was": "family"
+    },
+    {
+      "name": "High Visibility · Timer",
+      "seed_key": "legacy.high_visibility.timer",
+      "was": "family"
+    },
+    {
+      "name": "High Visibility",
+      "seed_key": "legacy.high_visibility",
+      "was": "shelf"
+    },
+    {
+      "name": "Notice Board",
+      "seed_key": "legacy.notice_board",
+      "was": "shelf"
+    },
+    {
+      "name": "Media Frame",
+      "seed_key": "legacy.media_frame",
+      "was": "shelf"
+    },
+    {
+      "name": "Lower Third · Lyric",
+      "seed_key": "legacy.lower_third.lyric",
+      "was": "shelf"
+    },
+    {
+      "name": "SuperSource · Word right",
+      "seed_key": "legacy.supersource.word_right",
+      "was": "shelf"
+    },
+    {
+      "name": "SuperSource · Word left",
+      "seed_key": "legacy.supersource.word_left",
+      "was": "shelf"
+    },
+    {
+      "name": "Stage · Large type",
+      "seed_key": "legacy.stage.large_type",
+      "was": "shelf"
+    },
+    {
+      "name": "Midnight Blue",
+      "seed_key": "legacy.midnight_blue",
+      "was": "retired"
+    },
+    {
+      "name": "Royal Amethyst",
+      "seed_key": "legacy.royal_amethyst",
+      "was": "retired"
+    },
+    {
+      "name": "Deep Teal",
+      "seed_key": "legacy.deep_teal",
+      "was": "retired"
+    },
+    {
+      "name": "Crimson Grace",
+      "seed_key": "legacy.crimson_grace",
+      "was": "retired"
+    },
+    {
+      "name": "Emerald Word",
+      "seed_key": "legacy.emerald_word",
+      "was": "retired"
+    },
+    {
+      "name": "Indigo Night",
+      "seed_key": "legacy.indigo_night",
+      "was": "retired"
+    },
+    {
+      "name": "Slate Minimal",
+      "seed_key": "legacy.slate_minimal",
+      "was": "retired"
+    },
+    {
+      "name": "Pure Contrast",
+      "seed_key": "legacy.pure_contrast",
+      "was": "retired"
+    },
+    {
+      "name": "Lyric Bold",
+      "seed_key": "legacy.lyric_bold",
+      "was": "retired"
+    },
+    {
+      "name": "Lyric Glow",
+      "seed_key": "legacy.lyric_glow",
+      "was": "retired"
+    },
+    {
+      "name": "Lower Third Light",
+      "seed_key": "legacy.lower_third_light",
+      "was": "retired"
+    },
+    {
+      "name": "Lower Third Night",
+      "seed_key": "legacy.lower_third_night",
+      "was": "retired"
+    },
+    {
+      "name": "Stage Confidence",
+      "seed_key": "legacy.stage_confidence",
+      "was": "retired"
+    },
+    {
+      "name": "Lobby Sunrise",
+      "seed_key": "legacy.lobby_sunrise",
+      "was": "retired"
+    },
+    {
+      "name": "Aurora · Lower Third",
+      "seed_key": "legacy.aurora.lower_third",
+      "was": "retired"
+    },
+    {
+      "name": "Ember · Lower Third",
+      "seed_key": "legacy.ember.lower_third",
+      "was": "retired"
+    },
+    {
+      "name": "Nocturne · Scripture",
+      "seed_key": "legacy.nocturne.scripture",
+      "was": "retired"
+    },
+    {
+      "name": "Nocturne · Lyrics",
+      "seed_key": "legacy.nocturne.lyrics",
+      "was": "retired"
+    },
+    {
+      "name": "Nocturne · Lower Third",
+      "seed_key": "legacy.nocturne.lower_third",
+      "was": "retired"
+    },
+    {
+      "name": "Nocturne · Announcement",
+      "seed_key": "legacy.nocturne.announcement",
+      "was": "retired"
+    }
+  ]
+}

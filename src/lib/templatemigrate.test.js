@@ -85,7 +85,15 @@ const seededLayouts = () => seedBlobs().filter((o) => Array.isArray(o.regions));
 describe('the fixtures this file argues from are real', () => {
   it('finds the seeded styles in the Rust seed, and they carry the legacy keys', () => {
     const styles = seededStyles();
-    expect(styles.length).toBeGreaterThan(20);
+    // FIVE SINCE WAVE 5, not the twenty-five it was. The seed is forty layer-model
+    // looks in `data/shelf_templates.json` now, and the only region-model styles
+    // left in this file are `builtin_templates()` — which is no longer seeded
+    // anywhere, and survives as the frozen mirror of the frontend's `BUILTINS`
+    // that a `region` layer's `templateRef` resolves against on a kiosk page with
+    // no database (DECISIONS §74). That is exactly the corpus this file needs: it
+    // argues about what happens to an OLD region-model template on migration, and
+    // those five are the shape every old template has.
+    expect(styles.length).toBeGreaterThanOrEqual(5);
     // The test-module cut found a real boundary. Without this, a rename of the
     // first `mod …_tests` would silently widen the scan back over the fixtures,
     // or a stray match would narrow it, and either way this file would be
@@ -94,11 +102,11 @@ describe('the fixtures this file argues from are real', () => {
     expect(raw.search(/\n#\[cfg\(test\)\]\nmod /)).toBeGreaterThan(0);
     // Layouts are in there too, and finding none of them would mean the scanner
     // had narrowed to something that happens to agree with it.
-    expect(seededLayouts().length).toBeGreaterThan(5);
+    expect(seededLayouts().length).toBeGreaterThanOrEqual(5);
     const withLegacy = styles.filter((s) => LEGACY_STYLE_KEYS.some((k) => k in s));
     expect(withLegacy.length).toBe(styles.length);
     // The defect only bites a template whose font is not the default, so the
-    // shelf must actually contain some. It contains three faces.
+    // corpus must actually contain more than one face. It contains two.
     const faces = new Set(styles.map((s) => s.font));
     expect(faces.size).toBeGreaterThan(1);
     // A REAL FAMILY. The seed used to store `var(--f-serif)` — an operator-console
