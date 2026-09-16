@@ -1447,6 +1447,46 @@
   $: fullscreen = !!$session.liveFullscreen;
   const setFullscreen = (v) => setSession({ liveFullscreen: v });
 
+  // ── HOW BIG A SLIDE CELL IS ──────────────────────────────────────────────
+  //
+  // The grid was fixed at `minmax(158px, 1fr)`, and 158px is the width
+  // `runsurface.test.js` names in its own describe title as the size at which a
+  // live cell and a cued cell must be unmistakable. It is not the size at which
+  // the WORDS on a slide are readable, and the words are what an operator is
+  // choosing between — so a cell could be told apart and not read.
+  //
+  // THE STEP MOVES THE GRID TRACK, NEVER THE THUMB. `.sg-thumb` carries
+  // `container-type: inline-size` and is the container query every `cqw` inside a
+  // cell resolves against; changing IT would resize the box the type is measured
+  // in and each cell would render at the wrong scale rather than bigger. The
+  // custom property is set on the pane body instead and the grid's own
+  // `minmax` reads it, so `<div class="sgrid">` keeps its exact spelling for the
+  // tests that locate it by literal string match.
+  //
+  // FOUR STEPS, and the first is the width the grid has always had, so a console
+  // nobody has touched is unchanged. The names are one or two characters because
+  // this rail is narrow and has clipped a label before: the density segment that
+  // used to sit here wanted 135px inside 114px and rendered `Compact` as `Compa`.
+  const SLIDE_SIZES = [
+    { px: 158, name: 'S' },
+    { px: 210, name: 'M' },
+    { px: 280, name: 'L' },
+    { px: 370, name: 'XL' },
+  ];
+  /** A stored index, made safe. Rubbish, a float and an out-of-range step all
+   *  land on a real one — the session is a file on a disk and this is the only
+   *  place that knows how many steps there are. */
+  const clampSlideSize = (v) =>
+    Math.min(SLIDE_SIZES.length - 1, Math.max(0, Math.trunc(Number(v)) || 0));
+  $: slideSizeIdx = clampSlideSize($session.liveSlideSize);
+  $: slideSize = SLIDE_SIZES[slideSizeIdx];
+  /** Step by a DELTA, read off the store rather than off the reactive
+   *  derivation. Two presses in one frame both see the same stale `slideSizeIdx`
+   *  and the second one does nothing — a stepper that loses a press is a control
+   *  that goes quiet, which is the thing the disabled ends exist to avoid. */
+  const stepSlideSize = (d) =>
+    setSession({ liveSlideSize: clampSlideSize(clampSlideSize(get(session).liveSlideSize) + d) });
+
   // §5 INSPECTOR. The claim panel has room for the verdict; the reasoning needs
   // a surface of its own. Opened per-detection, never a tab: an operator does not
   // browse detections, they interrogate the one in front of them.
@@ -1834,13 +1874,29 @@
              left for `qa-inventory` to find and nothing for a future reader to
              mistake for a preference somebody forgot to wire up. -->
         <div class="view-ctl">
+          <!-- THE SLIDE SIZER. Two steppers and a readout, the idiom the template
+               editor's zoom already uses — each end disabled at its end, so the
+               control says where it has run out rather than going quiet. It
+               changes how the console LOOKS and never what reaches a screen,
+               which is why it belongs in this slot beside Full screen. -->
+          <span class="view-size" title="How big the slide cells are">
+            <button class="r-iconbtn view-szbtn" on:click={() => stepSlideSize(-1)}
+              disabled={slideSizeIdx === 0} aria-label="Smaller slide cells">−</button>
+            <span class="view-szval r-mono">{slideSize.name}</span>
+            <button class="r-iconbtn view-szbtn" on:click={() => stepSlideSize(1)}
+              disabled={slideSizeIdx === SLIDE_SIZES.length - 1} aria-label="Bigger slide cells">+</button>
+          </span>
           <button class="view-fs" on:click={() => setFullscreen(!fullscreen)}>
             {fullscreen ? 'Show tabs' : 'Full screen'}
           </button>
         </div>
       </header>
 
-      <div class="pane-body sg-body">
+      <!-- THE GRID TRACK'S FLOOR, carried as a custom property on the BODY rather
+           than on the grid: `<div class="sgrid">` is located by literal string
+           match by `slidegridwiring.test.js`, and an attribute on it would break
+           that test by spelling rather than by meaning. -->
+      <div class="pane-body sg-body" style="--sg-min:{slideSize.px}px">
         {#if grid.cells.length}
           <div class="sgrid">
             {#each grid.cells as c (c.key)}
@@ -2248,6 +2304,14 @@
      collection switch is `.lr-seg`, its own class with its own rules, because
      Svelte scopes a component's styles and this `.seg` never reached it. */
   .view-ctl{ flex:0 0 auto; display:flex; align-items:center; gap:5px; }
+  /* 22px, not the shared 26px: this row is 22px tall and has clipped a label
+     before. The readout is one or two mono characters on a fixed width, so the
+     control cannot widen as the step changes and push `Full screen` out. */
+  .view-size{ display:flex; align-items:center; gap:3px; }
+  .view-szbtn{ width:22px; height:22px; line-height:1; }
+  .view-szbtn:disabled{ opacity:.4; cursor:not-allowed; }
+  .view-szval{ min-width:18px; text-align:center; font-size:var(--v-fs-b3);
+    letter-spacing:.06em; color:var(--v-dim); }
   .view-fs{ height:22px; padding:0 8px; border-radius:var(--v-r-sm); cursor:pointer;
     background:var(--v-surf); border:1px solid var(--v-line2); color:var(--v-faint);
     font-family:var(--f-body); font-size:var(--v-fs-b3); font-weight:600; }
@@ -2567,7 +2631,9 @@
 
   /* ── 2 · slides ───────────────────────────────────────────────── */
   .sg-body{padding:var(--v-sp-sm)}
-  .sgrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(158px,1fr));
+  /* `--sg-min` is set on `.sg-body` by the slide sizer; the fallback is the 158px
+     this grid has always had, so a console with no stored choice is unchanged. */
+  .sgrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(var(--sg-min,158px),1fr));
     gap:var(--v-sp-sm)}
   .sg-cell{display:flex; flex-direction:column; gap:5px; padding:0; text-align:left;
     background:none; border:0; cursor:pointer; min-width:0; font-family:var(--f-body)}
