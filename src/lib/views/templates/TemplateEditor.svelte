@@ -82,7 +82,47 @@
   let savedTick = false;
   let err = '';
   let selId = null;
+  // THE ADD-LAYER MENU IS POSITIONED FIXED, anchored to the button's screen rect.
+  //
+  // It used to be `position:absolute; top:28px; right:0` inside `.te-addwrap`,
+  // which sits inside `.te-pane{overflow:hidden}` — so the pane clipped it.
+  // Measured in Chrome at 1280×640: the menu is 591px tall (seventeen items —
+  // four layer types and thirteen bindings), the layers pane ends at y=626, and
+  // 57px of the menu was cut off. `elementFromPoint` over the centre of the last
+  // item ("Service timer (remaining)") returned **null**: the item was not
+  // merely hidden, nothing could click it. `TemplateGallery` abandoned this
+  // exact construction for the same reason after measuring it (its comment at
+  // `openMenu` says so); this is the pane it was still living in.
+  //
+  // Fixed positioning escapes every overflow context, and the menu is taller
+  // than some windows are, so it also clamps to the viewport and keeps its own
+  // scroll. A fixed menu detaches from a scrolled or resized page, so both close
+  // it — the same pair the gallery's row menu uses.
   let addOpen = false;
+  let addPos = { x: 0, y: 0 };
+  const ADD_MENU_W = 186;
+  function toggleAdd(e) {
+    if (addOpen) { addOpen = false; return; }
+    const r = e.currentTarget.getBoundingClientRect();
+    const margin = 8;
+    // The real height, measured once it is up, would be circular; this is the
+    // menu's own content height and the clamp below handles the rest.
+    const H = Math.min(591, window.innerHeight - margin * 2);
+    let y = r.bottom + 4;
+    if (y + H > window.innerHeight - margin) y = Math.max(margin, window.innerHeight - margin - H);
+    addPos = { x: Math.max(margin, r.right - ADD_MENU_W), y };
+    addOpen = true;
+  }
+  const closeAdd = () => { addOpen = false; };
+  onMount(() => {
+    window.addEventListener('resize', closeAdd);
+    // Capture, because the page scrolls in `.mainscroll` rather than on window.
+    window.addEventListener('scroll', closeAdd, true);
+    return () => {
+      window.removeEventListener('resize', closeAdd);
+      window.removeEventListener('scroll', closeAdd, true);
+    };
+  });
 
   onMount(async () => {
     loadContentTemplates();
@@ -1200,7 +1240,7 @@
         <div class="te-panehead">
           <span class="r-lbl">Layers</span>
           <div class="te-addwrap">
-            <button class="r-iconbtn te-addbtn" on:click|stopPropagation={() => (addOpen = !addOpen)} aria-label="Add layer">＋</button>
+            <button class="r-iconbtn te-addbtn" on:click|stopPropagation={toggleAdd} aria-expanded={addOpen} aria-haspopup="menu" aria-label="Add layer">＋</button>
             {#if addOpen}
               <!-- The click handler is not an interaction: it stops the document-level
                    outside-click closer from seeing a click on the menu itself. Every real
@@ -1211,7 +1251,7 @@
                    returns for every key that is not Escape, so Space still means advance
                    (rule 11) for as long as a menu is open. -->
               <!-- svelte-ignore a11y-click-events-have-key-events -->
-              <div class="te-addmenu" on:click|stopPropagation role="menu" tabindex="-1">
+              <div class="te-addmenu" style="left:{addPos.x}px; top:{addPos.y}px" on:click|stopPropagation role="menu" tabindex="-1">
                 <div class="te-addsec r-lbl">Add layer</div>
                 {#each LAYER_TYPES as t}
                   <button class="te-addmi" on:click={() => addLayer(t.type)}><span class="te-addico">{t.icon}</span>{t.label}</button>
@@ -1232,7 +1272,12 @@
                  target; `dragover` has to preventDefault or the browser refuses
                  the drop, and it only does so where the drop is legal, so a row
                  in another order shows no line and takes nothing. -->
+            <!-- `armed` on the ROW, not only on the button: the action cluster
+                 is revealed on hover, so an armed `Sure?` on a row the pointer
+                 has left was measured at opacity 0 — a question asked of
+                 somebody who can no longer see it, still live for four seconds. -->
             <div class="te-layer" class:sel={selId === L.id} class:off={L.visible === false} class:inband={row.member}
+              class:armed={armedDelete === L.id}
               class:dragging={dragId === L.id} class:dropto={overId === L.id}
               draggable={!L.locked}
               on:dragstart={(e) => onRowDragStart(e, L)}
@@ -1968,9 +2013,28 @@
 
   .te-pane{ display:flex; flex-direction:column; min-height:0; overflow:hidden; background:var(--v-surf); border:1px solid var(--v-line); border-radius:var(--v-r-lg); }
   .te-panehead{ display:flex; align-items:center; justify-content:space-between; gap:8px; padding:11px 13px; border-bottom:1px solid var(--v-line); flex:0 0 auto; }
-  /* The object strip WRAPS. A tab that has scrolled out of sight behind a
-     hidden scrollbar is a tab nobody knows is there. */
-  .te-objtabs{ display:flex; flex-wrap:wrap; gap:3px; padding:7px 9px 0; }
+  /* The object strip WRAPS, and is BOUNDED.
+     ────────────────────────────────────────────────────────────────────────
+     It wraps because a tab that has scrolled out of sight behind a hidden
+     HORIZONTAL scrollbar is a tab nobody knows is there. That reason is intact
+     and is why this is not a one-line scrolling strip.
+
+     What it did not have was a ceiling. It sat inside `.te-pane{overflow:hidden}`
+     as an auto-height flex item, and only `.te-designbody` carried `min-height:0`
+     — so the strip took whatever it wanted and the properties body paid for all
+     of it. Measured in Chrome at 1280×640 on a twenty-four-object template: the
+     strip was **292px of a 654px pane** and the properties body was left **254px
+     to hold 1379px**. The object an operator had just clicked was named at the
+     top and its properties were in a 254px slot underneath.
+
+     So: a ceiling of about three rows, and past that the strip scrolls
+     VERTICALLY with a visible scrollbar in a box whose top and bottom an
+     operator can see. That is a different thing from the horizontal hiding the
+     comment above warns about, and it is strictly better than the alternative
+     it replaces, which was hiding the whole panel rather than one tab. */
+  .te-objtabs{ display:flex; flex-wrap:wrap; gap:3px; padding:7px 9px 0;
+    flex:0 1 auto; min-height:0; max-height:88px; overflow-y:auto; }
+  .te-objtab{ flex:0 0 auto; }
   /* A TAB, not a button. `role="tab"` inside a `role="tablist"`, and the strip
      WRAPS rather than scrolls (see the markup). A tab is sized by its label and
      carries a selected state that a button variant does not have. */
@@ -2004,7 +2068,15 @@
      is the surface. Named so the next shape census can tell this from drift. */
   .te-addmi{ display:flex; align-items:center; gap:9px; text-align:left; padding:7px 9px; border:0; background:none; color:var(--v-txt); font-size:var(--v-fs-b2); border-radius:var(--v-r-sm); cursor:pointer; }
   .te-addmi:hover{ background:var(--v-surf3); }
-  .te-addmenu{ position:absolute; top:28px; right:0; z-index:30; width:186px; background:var(--v-surf2); border:1px solid var(--v-line2); border-radius:var(--v-r-md); box-shadow:var(--v-shadow-lg); padding:5px; display:flex; flex-direction:column; }
+  /* FIXED, not absolute — see `toggleAdd`. The menu is seventeen items tall and
+     lived inside `.te-pane{overflow:hidden}`, which cut 57px off it at 1280×640
+     and made the last item unclickable (measured, Chrome, `elementFromPoint`
+     returned null over its centre). `max-height` + its own scroll is for the
+     windows it is simply taller than; nothing is reachable only by being
+     off-screen. */
+  .te-addmenu{ position:fixed; z-index:30; width:186px; max-height:calc(100vh - 16px); overflow-y:auto;
+    background:var(--v-surf2); border:1px solid var(--v-line2); border-radius:var(--v-r-md); box-shadow:var(--v-shadow-lg); padding:5px; display:flex; flex-direction:column; }
+  .te-addmi{ flex:0 0 auto; }
   .te-addico{ width:16px; text-align:center; color:var(--v-faint); font-family:var(--f-mono); }
   .te-addsec{ padding:6px 8px 3px; }
 
@@ -2090,11 +2162,35 @@
   .te-lbtns{ grid-column:3; grid-row:2; justify-self:end; display:flex; gap:1px;
     opacity:0; transition:opacity .12s; }
   .te-layer:hover .te-lbtns, .te-layer.sel .te-lbtns{ opacity:1; }
+  /* AN ARMED ROW SHOWS ITS BUTTONS, whether or not the pointer is still on it.
+     `.te-lbtns` is revealed on hover, which is right for five affordances that
+     are undoable — and wrong for the four seconds after one of them has been
+     armed: measured `opacity: 0` over a live `Sure?`, so the question was asked
+     of somebody who could no longer see it, and the next click in that spot
+     deleted the object. */
+  .te-layer.armed .te-lbtns{ opacity:1; }
   /* A ROW AFFORDANCE, not a button — shown · locked · forward · back · delete,
      20px, inside a two-line list row. The shared button would not fit, and
      giving each one a fill and an edge would turn every layer row into a
      toolbar. The armed `Sure?` state is the two-step delete (rule 41). */
   .te-lmini{ width:20px; height:20px; display:grid; place-items:center; border:0; background:none; color:var(--v-faint); cursor:pointer; border-radius:var(--v-r-sm); font-size:var(--v-fs-lbl); }
+  /* THE ARMED STATE, WHICH THIS ROW NEVER HAD.
+     ────────────────────────────────────────────────────────────────────────
+     The only `.armed` rule in this file was `.te-objacts .armed`, scoped to the
+     INSPECTOR's action row, so the layer row's button carried the class and got
+     nothing from it. Measured in Chrome: the box stayed **20px wide** while
+     `Sure?` wanted **30px** (scrollWidth 36 against clientWidth 20), `overflow`
+     computed `visible`, and the word spilled sideways over the ↓ button beside
+     it — in the ordinary grey `--v-faint`, with a transparent background, so
+     the one state in this list that destroys something looked exactly like the
+     four that do not.
+
+     Width first (the word decides the box, not the other way round), then the
+     colour the confirm is owed. Red, not amber: amber means ON AIR and nothing
+     else (rule 18, DECISIONS §21). */
+  .te-lmini.armed{ width:auto; min-width:44px; padding:0 7px; background:var(--v-red);
+    color:#fff; font-weight:600; white-space:nowrap; }
+  .te-lmini.armed:hover{ background:var(--v-red); color:#fff; }
   .te-lmini:hover{ color:var(--v-txt); background:var(--v-surf3); }
   .te-lmini.danger:hover{ color:var(--v-rose); }
   /* A hidden layer's eye is dimmer than the rest of the row is, so "hidden"
