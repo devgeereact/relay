@@ -233,6 +233,35 @@
           .split(':')
           .map((p, i) => (i === 0 ? p.padStart(2, '0') : p));
 
+  // ── THE PROGRAMME ───────────────────────────────────────────────────────────
+  //
+  // `Stage`-scoped timers, as the hub last sent them. A whole SET every time, never
+  // a delta: a tablet that missed one frame would otherwise be wrong about the
+  // programme for the rest of the service with no way to find out, and an empty
+  // list is how the last clock comes OFF this screen.
+  //
+  // They live outside `content` on purpose, which is the whole of wave 3: a timer
+  // has a lifetime of its own, so a verse, a song or a notice replacing the live
+  // content cannot forget it — and neither can a panic control, which takes the
+  // congregation's timers and leaves the preacher's.
+  let stageTimers = [];
+  // ONE READER AND ONE FORMATTER, the same two the wall and the console use
+  // (docs/REBRAND.md §7). Not a third subtraction: a held timer whose exception one
+  // surface has never heard of counts down on that surface while the others hold,
+  // and this is the surface somebody is reading from mid-sermon.
+  //
+  // A row whose figure cannot be read AT ALL is dropped rather than shown empty —
+  // `countdownRemainingMs` answers null when there is no countdown in the entry, and
+  // a rail row with no digits in it says nothing a preacher can act on.
+  //
+  // `warn_ms` rides in the frame and is deliberately not read here yet: the warning
+  // threshold is wave 3 Track D's, on all three surfaces at once, and a fourth
+  // reading of the rule invented here is exactly what §7 forbids.
+  $: programme = stageTimers
+    .map((t) => ({ id: t?.id, label: (t?.label || '').trim(), ms: countdownRemainingMs(t, nowMs) }))
+    .filter((r) => r.ms != null)
+    .map((r) => ({ ...r, v: formatCountdown(r.ms) }));
+
   // SERVICE ELAPSED — counts up from the epoch the fired content carries. There is
   // no epoch when no service is recording, and an absence is shown as an absence:
   // a zero here would say "this service just started", which is a different claim.
@@ -443,6 +472,21 @@
       alert = (m.text || '').trim();
     } else if (m.kind === 'stage_next') {
       next = m.label || m.text ? { label: m.label || '', text: m.text || '' } : null;
+    } else if (m.kind === 'timer') {
+      // THE WHOLE SET, OR NOTHING. A frame whose `timers` is missing or is not a
+      // list is read as an empty programme rather than thrown on: this page has no
+      // backend and cannot verify who is on the other end of its socket
+      // (docs/SECURITY.md T4), and one throw inside `apply` would kill every frame
+      // after it — the reading included — for the rest of the service.
+      //
+      // Deliberately NOT cleared by `clear` or `black` above. That is the
+      // operator's decision this wave carries: the congregation's timers go with
+      // the congregation's screens and the preacher's programme stays, because the
+      // programme is not something a congregation was ever looking at. The backend
+      // half is the registry's (`stop_scope(Both)`); this half holds because the
+      // rows are rendered outside the `visible` gate rather than because anything
+      // remembered to re-send them.
+      stageTimers = Array.isArray(m.timers) ? m.timers : [];
     }
   }
 
@@ -596,6 +640,27 @@
         <div class="fig" class:warn={f === 'countdown' && cdWarn}>
           <span class="figk">{f === 'countdown' ? 'Countdown' : f === 'clock' ? 'Time' : 'Elapsed'}</span>
           <span class="figv">{v}</span>
+        </div>
+      {/each}
+    </div>
+  {/if}
+
+  <!-- ══ THE PROGRAMME ══ One row per stage timer, and no row at all when there are
+       none — the same rule as the note row and the up-next above it: nothing sent,
+       nothing rendered, no room taken (docs/REBRAND.md §5).
+       Deliberately OUTSIDE `{#if zones.reading}` and outside the `visible` gate: a
+       programme timer outlives the content that replaced it, and it outlives a
+       panic control aimed at the congregation's screens.
+       NOT amber, which means ON AIR and is never allowed to lie; not cyan, which
+       means the AI is guessing; not amethyst, which means rehearsal. Slate, the
+       page's own neutral — the programme is the operator's bookkeeping shown to one
+       person, and it makes no claim about any screen. -->
+  {#if programme.length}
+    <div class="progrow" style="--tmrs:{programme.length}" aria-label="Programme">
+      {#each programme as t (t.id)}
+        <div class="tmr" data-timer-id={t.id}>
+          {#if t.label}<span class="tlabel">{t.label}</span>{/if}
+          <span class="tval">{t.v}</span>
         </div>
       {/each}
     </div>
@@ -855,6 +920,34 @@
        standing ten feet away reads it. */
     font-family: var(--f-body); font-size: clamp(14px, 2.2cqw, 34px); line-height: 1.3; }
   .notetxt { min-width: 0; overflow: hidden; }
+  /* THE PROGRAMME ROW. `flex: 0 0 auto` with `flex-basis: auto`, like `.noterow`:
+     it takes what its content needs and never competes with the reading, which is
+     the zone that must keep the room (§5 — nothing may leave the screen).
+     Its own container, so the digits are a share of THIS row and not of the frame —
+     the same rule the rail and the figure row each keep, and the bug that rule
+     replaces is a figure that looked right at one width and overflowed at every
+     other. `--tmrs` divides the row by the number of timers actually in it. */
+  .progrow { flex: 0 0 auto; flex-basis: auto; max-height: 20%; overflow: hidden;
+    container-type: inline-size;
+    display: flex; gap: 10px; padding: 8px 18px;
+    border-top: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.035); }
+  /* `min-width: 0` on the item, or a long label refuses to shrink and pushes the
+     last timer off the end of a screen nobody is standing next to. */
+  .tmr { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 2px; overflow: hidden; }
+  /* A LABEL-LESS TIMER IS DIGITS ALONE. The label element is not rendered at all
+     rather than rendered empty, so the row closes up instead of leaving a gap the
+     height of a word — wave 5 Track G makes label-less the dock's default and this
+     page has to survive it already. */
+  .tlabel { font-family: var(--f-mono); font-weight: 700; letter-spacing: .16em;
+    text-transform: uppercase; line-height: 1.1; color: var(--v-faint);
+    font-size: clamp(var(--v-fs-fig), 1.9vmin, 24px);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tval { font-family: var(--f-mono); font-variant-numeric: tabular-nums; font-weight: 700;
+    color: var(--v-txt); line-height: 1;
+    /* The width a figure may take is its share of the row divided by the characters
+       it actually has — `0.62` is the mono advance. Capped so one timer on a wide
+       screen does not become the whole page. */
+    font-size: min(clamp(16px, calc(92cqw / var(--tmrs) / 6 / 0.62), 64px), 9cqh); }
   /* The zone panel — one instrument, no native dialog (rule 41). */
   .zonepanel { flex: 0 0 auto; max-height: 46dvh; overflow-y: auto; padding: 14px 18px;
     display: flex; flex-direction: column; gap: 10px;

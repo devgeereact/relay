@@ -1189,6 +1189,94 @@ pub fn stage_alert<R: tauri::Runtime>(app: &tauri::AppHandle<R>, text: Option<St
     publish_kiosk(app, json);
 }
 
+/// THE WIRE FORM OF THE PROGRAMME TIMERS — the whole stage-visible set, every time.
+///
+/// **A set, not a delta.** A tablet that missed one frame would otherwise be wrong
+/// about the programme for the rest of the service, and there is no way for it to
+/// find that out. Sending the set whole also makes the empty case expressible:
+/// stopping the last timer publishes `timers: []`, which is how a clock comes OFF a
+/// preacher's screen. An absent frame cannot say "there are none now".
+///
+/// **Why these key names.** `countdown.js::countdownRemainingMs` is the ONE reader
+/// of how long is left on the frontend, and it reads `countdown_paused_ms` ahead of
+/// `countdown_to`. Naming the fields anything else would mean the stage page doing
+/// its own subtraction — a second copy of a rule that now has an exception
+/// (docs/REBRAND.md §7), on the surface a preacher reads from mid-sermon.
+///
+/// Deliberately NOT `timers::project_both`: that is the congregation wire form and
+/// carries a `reference` rather than a `label`, and no `id`. A stage entry is a row
+/// in a rail and has to be identifiable; a congregation entry is a slide.
+///
+/// Pure, so the frame can be asserted against without a Tauri app handle — the same
+/// reason `kiosk_content_json` and `transition_json` are pure.
+fn timer_frame_json(timers: &[crate::timers::Timer]) -> String {
+    let rows: Vec<serde_json::Value> = timers
+        .iter()
+        .map(|t| {
+            serde_json::json!({
+                "id": t.id,
+                "label": t.label,
+                "countdown_to": t.target_ms,
+                "countdown_from": t.from_ms,
+                "countdown_paused_ms": t.paused_ms,
+                "countdown_done": t.done_msg,
+                "warn_ms": t.warn_ms,
+            })
+        })
+        .collect();
+    serde_json::json!({ "kind": "timer", "timers": rows }).to_string()
+}
+
+/// Is this the frame that decides what PROGRAMME TIMERS a stage tablet is showing?
+///
+/// A `contains`, and for exactly the reason `is_screen_frame` is one: `serde_json`'s
+/// default map is a BTreeMap, so the keys come out in alphabetical order and not the
+/// order anybody wrote. A `starts_with` would happen to work here (`kind` sorts
+/// before `timers`) and would break the moment a field sorting before `kind` is
+/// added — which is how the first version of `is_screen_frame` matched nothing while
+/// looking exactly like the bug it fixed.
+///
+/// `"kind":"timer"` cannot occur inside a JSON string value — an operator's label
+/// would have its quotes escaped — so a label cannot forge one.
+fn is_timer_frame(msg: &str) -> bool {
+    msg.contains(r#""kind":"timer""#)
+}
+
+/// THE PROGRAMME TIMERS, TO THE STAGE TABLET AND NOWHERE ELSE.
+///
+/// A `Stage` timer publishes no content frame at all — that is precisely why it
+/// survives a verse, a song and a notice: nothing about it rides on the live
+/// content, so replacing the live content cannot forget it. It needs a door of its
+/// own, and this is it.
+///
+/// REHEARSAL-GATED, like every publisher here that carries something a person
+/// READS. `stage_next` is the standing reminder of what that costs when it is
+/// missed: it shipped gated in name only, leaked to a live stage tablet mid-
+/// rehearsal, and had no Tauri emit, so the e2e rehearsal test — which counts wall
+/// events — saw nothing wrong. A programme clock is the same shape of leak on the
+/// same screen, so its test watches the HUB (`qa::Kiosk`), not the wall.
+///
+/// The registry is read and DROPPED before anything is published (rule 2):
+/// `snapshot_scope` returns owned values and there is no way to still be holding
+/// its lock on the far side of this call.
+// GENERIC OVER THE RUNTIME (rule 24) — `e2e.rs` has to be able to drive it.
+pub fn publish_timers<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    if rehearsing(app) {
+        // A suppression, not a redirect: there is no console stage panel to preview
+        // it on, so the stage monitor keeps showing whatever it was showing —
+        // exactly as the projector does. Same wording as `stage_next` on purpose.
+        println!("rehearsal: publish_timers SUPPRESSED — nothing left the machine");
+        return;
+    }
+    let Some(reg) = app.try_state::<crate::timers::TimerRegistry>() else {
+        // No registry managed (headless tests, early boot). There is nothing to say
+        // about timers, and saying "none" would be a claim from an absence.
+        return;
+    };
+    let stage = reg.snapshot_scope(crate::timers::Scope::Stage);
+    publish_kiosk(app, timer_frame_json(&stage));
+}
+
 /// WHAT AN OVERRIDE IS, once: a mode and an optional duration, or nothing at all.
 ///
 /// Named rather than spelled out at six signatures — clippy asks for this, and it
@@ -1317,6 +1405,23 @@ pub struct KioskHub {
     /// which is cached and replayed here for the same reason. It is
     /// configuration, never content: it paints nothing on its own.
     last_transition: TransitionSlot,
+    /// THE PROGRAMME TIMERS A STAGE TABLET IS SHOWING — the last `timer` frame.
+    ///
+    /// ITS OWN SLOT, NOT `last_screen`, and this is the fourth time that sentence
+    /// has had to be written in this struct. One slot means the newest frame wins,
+    /// so retaining a timer beside `content` would ERASE the retained verse: the
+    /// next screen to join mid-reading would be handed a clock over a blank wall —
+    /// rule 43's own failure, delivered by rule 43's own mechanism. It is also why
+    /// `stage_next` is excluded from retention entirely.
+    ///
+    /// Retained, unlike `stage_alert`, because a programme timer is a STATE and not
+    /// a moment: it is still running when the tablet comes back. Without this, a
+    /// phone that locked its screen mid-sermon comes back with no clock until the
+    /// operator next touches a timer, which during a sermon is never.
+    ///
+    /// A rehearsal publishes nothing to this hub at all — the gate is at
+    /// `publish_timers` — so there is nothing of a rehearsal to replay here either.
+    last_timers: Arc<Mutex<Option<String>>>,
 }
 
 impl Default for KioskHub {
@@ -1329,6 +1434,7 @@ impl Default for KioskHub {
             default_tpl: Arc::new(Mutex::new("null".to_string())),
             last_screen: Arc::new(Mutex::new(None)),
             last_transition: Arc::new(Mutex::new(None)),
+            last_timers: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -1394,11 +1500,25 @@ impl KioskHub {
                 *last = Some(msg.clone());
             }
         }
+        // A SECOND SLOT, TESTED SEPARATELY. The two matchers are disjoint by
+        // construction — a frame is `content`/`clear`/`black`, or it is `timer`, and
+        // no frame this module builds is both — so a programme clock can never
+        // become what a late-joining screen is shown, and a verse can never become
+        // the programme.
+        if is_timer_frame(&msg) {
+            if let Ok(mut last) = self.last_timers.lock() {
+                *last = Some(msg.clone());
+            }
+        }
         let _ = self.tx.send(msg); // Err only means no subscribers — fine.
     }
     /// Shared handle to the retained screen frame, for the WS task to send on hello.
     pub fn last_screen_handle(&self) -> Arc<Mutex<Option<String>>> {
         self.last_screen.clone()
+    }
+    /// Shared handle to the retained programme timers, for the WS task's hello.
+    pub fn last_timers_handle(&self) -> Arc<Mutex<Option<String>>> {
+        self.last_timers.clone()
     }
     /// Shared handle to the retained transition override, for the WS task's hello.
     pub fn last_transition_handle(&self) -> TransitionSlot {
@@ -1590,6 +1710,7 @@ pub async fn run_kiosk_server(
     default_tpl: Arc<Mutex<String>>,
     last_screen: Arc<Mutex<Option<String>>>,
     last_transition: TransitionSlot,
+    last_timers: Arc<Mutex<Option<String>>>,
     health: OutputHealth,
     port: u16,
 ) {
@@ -1625,6 +1746,7 @@ pub async fn run_kiosk_server(
         let default_tpl = default_tpl.clone();
         let last_screen = last_screen.clone();
         let last_transition = last_transition.clone();
+        let last_timers = last_timers.clone();
         let health = health.clone();
         tokio::spawn(async move {
             let _permit = permit;
@@ -1809,6 +1931,24 @@ pub async fn run_kiosk_server(
                                             .send(tokio_tungstenite::tungstenite::Message::Text(
                                                 transition_json(x.as_ref()),
                                             ))
+                                            .await;
+                                    }
+                                    // THE PROGRAMME TIMERS, if any are running.
+                                    // BEFORE the retained frame and after the
+                                    // configuration, which is the whole of the
+                                    // ordering rule: a tablet sent the timers after
+                                    // the reading paints the reading and then a
+                                    // clock over it — a flash at exactly the moment
+                                    // a preacher looks down. A timer is state, not
+                                    // a moment (that is `stage_alert`, which is
+                                    // deliberately not retained at all), so it is
+                                    // replayed; and it is kept in its own slot, so
+                                    // it cannot have replaced the verse below.
+                                    let timers =
+                                        last_timers.lock().ok().and_then(|t| t.clone());
+                                    if let Some(frame) = timers {
+                                        let _ = write
+                                            .send(tokio_tungstenite::tungstenite::Message::Text(frame))
                                             .await;
                                     }
                                     // AND WHAT IS ON THE SCREENS RIGHT NOW.
@@ -3102,6 +3242,7 @@ mod tests {
             hub.default_template_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
+            hub.last_timers_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -3162,6 +3303,7 @@ mod tests {
             hub.default_template_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
+            hub.last_timers_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -3245,6 +3387,7 @@ mod tests {
             hub.default_template_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
+            hub.last_timers_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -3295,6 +3438,7 @@ mod tests {
             hub.default_template_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
+            hub.last_timers_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -3446,6 +3590,13 @@ mod tests {
         // keeps it in its own slot (`default_tpl`) and replays it on hello from
         // there.
         ("default_template", false),
+        // The programme timers a stage tablet is showing. Not retained HERE, for
+        // the same reason as the three above: `last_screen` holds one frame and the
+        // newest wins, so retaining a clock would replace the verse and the next
+        // screen to join would be sent the programme over a blank wall. It IS
+        // retained — in its own slot (`last_timers`), replayed on hello from there,
+        // and sent BEFORE the screen frame so the reading is painted last.
+        ("timer", false),
     ];
 
     /// THE ENUMERATION MUST GROW WITH THE MODULE, OR IT IS NOT AN ENUMERATION.
@@ -3554,6 +3705,14 @@ mod tests {
             true,
             "a word to the preacher is for a person, and a rehearsal has no person \
              waiting for it",
+        ),
+        (
+            "publish_timers",
+            true,
+            "a rehearsal has no stage tablet waiting for a programme clock. Same \
+             shape of leak as `stage_next` and on the same screen — it publishes to \
+             the hub and emits nothing, so the e2e wall test could not see it, and \
+             its rehearsal case watches `qa::Kiosk` instead",
         ),
         (
             "set_transition",
@@ -3877,6 +4036,7 @@ mod tests {
             hub.default_template_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
+            hub.last_timers_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -3940,6 +4100,7 @@ mod tests {
             hub.default_template_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
+            hub.last_timers_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -4089,6 +4250,290 @@ mod tests {
         );
     }
 
+    /// One `Stage` timer, five minutes out, for the tests below.
+    fn stage_timer(id: i64, label: &str) -> crate::timers::Timer {
+        crate::timers::Timer {
+            id,
+            label: label.into(),
+            done_msg: String::new(),
+            target_ms: 1_700_000_000_000 + 5 * 60_000,
+            from_ms: 1_700_000_000_000,
+            paused_ms: None,
+            warn_ms: None,
+            scope: crate::timers::Scope::Stage,
+            plan_item_id: None,
+        }
+    }
+
+    /// A PROGRAMME TIMER IS NOT WHAT A SCREEN IS SHOWING.
+    ///
+    /// Rule 43's trap 1, one slot further along, and the fourth time this module has
+    /// walked up to it: `last_screen` holds ONE frame and the newest wins, so a
+    /// timer retained there would ERASE the retained verse — and the next screen to
+    /// join mid-reading would be handed a clock over a blank wall. That is the
+    /// failure DECISIONS §68 exists to prevent, delivered by its own mechanism, for
+    /// the same reason `transition`, `channel_template` and `default_template` each
+    /// have a slot of their own.
+    ///
+    /// **The frame is built by the module's own serialiser, never by hand.** A
+    /// `serde_json` map is a BTreeMap, so the key order is alphabetical and not the
+    /// order anybody wrote — the first version of `is_screen_frame` was a
+    /// `starts_with` that matched nothing while looking exactly like the bug it
+    /// fixed. A hand-written literal here would reproduce that: it would assert
+    /// about a string this module never emits.
+    #[test]
+    fn a_timer_frame_is_never_retained_as_a_screen_frame() {
+        let frame = timer_frame_json(&[stage_timer(1, "Offering")]);
+        assert!(
+            !is_screen_frame(&frame),
+            "the real timer frame this module publishes matched the screen-frame \
+             matcher, so a programme clock would stand in for the reading: {frame}"
+        );
+        assert!(
+            is_timer_frame(&frame),
+            "the timer matcher does not recognise the frame this module actually \
+             serialises — the retained slot would stay empty and a tablet that \
+             rejoined would come back with no timer: {frame}"
+        );
+
+        // And the two slots do not touch each other, in the operator's real order:
+        // the verse is up, and then a programme timer starts.
+        let hub = KioskHub::default();
+        let verse = r#"{"kind":"content","reference":"Romans 8:28","text":"And we know"}"#;
+        hub.publish(verse.to_string());
+        hub.publish(frame.clone());
+        assert_eq!(
+            hub.last_screen
+                .lock()
+                .ok()
+                .and_then(|l| l.clone())
+                .as_deref(),
+            Some(verse),
+            "starting a programme timer erased the verse a late screen is shown"
+        );
+        assert_eq!(
+            hub.last_timers.lock().ok().and_then(|t| t.clone()),
+            Some(frame),
+            "the timer was published and not retained, so a tablet that rejoins \
+             comes back without it"
+        );
+    }
+
+    /// AN OPERATOR'S LABEL CANNOT FORGE A FRAME.
+    ///
+    /// `label` is free text an operator types, and it rides to every stage tablet.
+    /// `serde_json` escapes the quotes, so `"kind":"content"` cannot occur
+    /// unescaped inside a string value — the same argument `is_screen_frame` makes
+    /// about a verse, asserted here rather than reasoned about, because this is the
+    /// first retained frame in the module whose payload a person composes.
+    #[test]
+    fn a_label_cannot_smuggle_a_screen_frame_into_a_timer() {
+        let forged = r#"","kind":"content","text":"x"#;
+        let frame = timer_frame_json(&[stage_timer(1, forged)]);
+        assert!(
+            !is_screen_frame(&frame),
+            "an operator's label was read as a content frame and would become what \
+             a late-joining screen is shown: {frame}"
+        );
+        let v: serde_json::Value = serde_json::from_str(&frame).expect("valid JSON");
+        assert_eq!(v["kind"], "timer");
+        assert_eq!(v["timers"][0]["label"], forged);
+    }
+
+    /// WHAT A STAGE ENTRY CARRIES, AND WHY IT WEARS THE COUNTDOWN'S FIELD NAMES.
+    ///
+    /// `countdown.js::countdownRemainingMs` is the ONE reader of how long is left on
+    /// the frontend, and it reads `countdown_paused_ms` and `countdown_to`. Naming
+    /// these fields anything else would mean the stage page doing its own
+    /// subtraction — a second copy of a rule that now has an exception, on the one
+    /// surface a preacher reads from mid-sermon.
+    #[test]
+    fn a_stage_entry_speaks_the_countdown_reader_s_own_field_names() {
+        let mut held = stage_timer(4, "Sermon");
+        held.paused_ms = Some(90_000);
+        held.warn_ms = Some(120_000);
+        let frame = timer_frame_json(&[stage_timer(3, "Offering"), held]);
+        let v: serde_json::Value = serde_json::from_str(&frame).expect("valid JSON");
+
+        assert_eq!(v["kind"], "timer");
+        assert_eq!(v["timers"][0]["id"], 3);
+        assert_eq!(v["timers"][0]["label"], "Offering");
+        assert_eq!(
+            v["timers"][0]["countdown_to"],
+            1_700_000_000_000i64 + 5 * 60_000
+        );
+        assert_eq!(v["timers"][0]["countdown_from"], 1_700_000_000_000i64);
+        assert_eq!(
+            v["timers"][0]["countdown_paused_ms"],
+            serde_json::Value::Null
+        );
+        assert_eq!(
+            v["timers"][1]["countdown_paused_ms"], 90_000,
+            "a held timer must carry the figure it is held at, or the tablet counts \
+             down through a hold the operator applied"
+        );
+        assert_eq!(v["timers"][1]["warn_ms"], 120_000);
+        // The order is the registry's own, oldest first — a rail whose rows swap
+        // places between frames is a rail nobody can read.
+        assert_eq!(v["timers"][1]["id"], 4);
+    }
+
+    /// AN EMPTY SET IS A FRAME, NOT A SILENCE.
+    ///
+    /// Stopping the last programme timer has to reach the tablet, or the clock stays
+    /// on the preacher's screen for the rest of the service. An absent frame cannot
+    /// say "there are none now".
+    #[test]
+    fn stopping_the_last_timer_publishes_an_empty_set_rather_than_nothing() {
+        let frame = timer_frame_json(&[]);
+        let v: serde_json::Value = serde_json::from_str(&frame).expect("valid JSON");
+        assert_eq!(v["kind"], "timer");
+        assert_eq!(
+            v["timers"].as_array().map(|a| a.len()),
+            Some(0),
+            "an empty set must still be a timer frame: {frame}"
+        );
+        assert!(is_timer_frame(&frame));
+    }
+
+    /// A STAGE TABLET THAT JOINS MID-SERVICE IS SENT THE PROGRAMME TIMERS.
+    ///
+    /// The same failure as rule 43's, on the screen most likely to produce it: a
+    /// phone locking, a tablet reloading, or a walk out of wifi range. Without this
+    /// the programme clock comes back only when the operator next touches a timer,
+    /// which during a sermon is never.
+    #[tokio::test]
+    async fn a_stage_tablet_that_joins_mid_service_is_sent_the_programme_timers() {
+        let port = free_port();
+        let hub = KioskHub::default();
+        tokio::spawn(run_kiosk_server(
+            log_only(),
+            hub.sender(),
+            hub.templates_handle(),
+            hub.clients_handle(),
+            hub.default_template_handle(),
+            hub.last_screen_handle(),
+            hub.last_transition_handle(),
+            hub.last_timers_handle(),
+            OutputHealth::default(),
+            port,
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        // The programme timer started BEFORE this tablet existed.
+        hub.publish(timer_frame_json(&[stage_timer(1, "Offering")]));
+
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
+            .await
+            .expect("connect");
+        let (mut write, mut read) = ws.split();
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"kind":"hello","template_id":7}"#.to_string(),
+            ))
+            .await
+            .expect("send hello");
+
+        let mut got = None;
+        for _ in 0..6 {
+            let Ok(Some(Ok(msg))) =
+                tokio::time::timeout(std::time::Duration::from_secs(2), read.next()).await
+            else {
+                break;
+            };
+            let text = msg.into_text().unwrap_or_default();
+            if is_timer_frame(&text) {
+                got = Some(text);
+                break;
+            }
+        }
+        assert!(
+            got.as_deref().unwrap_or("").contains("Offering"),
+            "a stage tablet that rejoined mid-service came back with no programme \
+             timer: {got:?}"
+        );
+    }
+
+    /// AND THE READING IS PAINTED LAST.
+    ///
+    /// Order, not merely presence. A tablet sent the timers AFTER the retained
+    /// content frame paints the reading and then a clock over it — the flash a
+    /// preacher sees at exactly the moment they look down. So: template,
+    /// default_template, transition, timers, and WHAT IS ON THE SCREENS last, which
+    /// is why the retained frame has always been last.
+    #[tokio::test]
+    async fn the_hello_order_puts_the_screen_frame_last() {
+        let port = free_port();
+        let hub = KioskHub::default();
+        tokio::spawn(run_kiosk_server(
+            log_only(),
+            hub.sender(),
+            hub.templates_handle(),
+            hub.clients_handle(),
+            hub.default_template_handle(),
+            hub.last_screen_handle(),
+            hub.last_transition_handle(),
+            hub.last_timers_handle(),
+            OutputHealth::default(),
+            port,
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        // Everything a tablet could be owed, all in force at once.
+        hub.cache_template(7, r#"{"name":"Stage"}"#);
+        hub.cache_default_template(r#"{"name":"House"}"#);
+        hub.set_transition(Some("crossfade".into()), Some(320));
+        hub.publish(timer_frame_json(&[stage_timer(1, "Offering")]));
+        hub.publish(
+            r#"{"kind":"content","reference":"Romans 8:28","text":"And we know"}"#.to_string(),
+        );
+
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
+            .await
+            .expect("connect");
+        let (mut write, mut read) = ws.split();
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"kind":"hello","template_id":7}"#.to_string(),
+            ))
+            .await
+            .expect("send hello");
+
+        // READ UNTIL THE REPLY STOPS, NEVER UNTIL THE CONTENT ARRIVES. Stopping at
+        // the content frame would make a timer sent AFTER it — which is the exact
+        // defect this test exists to catch — look like a timer that never arrived,
+        // and the failure message would then send the next reader after the wrong
+        // bug. The loop ends on the read timeout, so a wrong order is reported as a
+        // wrong order.
+        let mut order: Vec<String> = Vec::new();
+        for _ in 0..8 {
+            let Ok(Some(Ok(msg))) =
+                tokio::time::timeout(std::time::Duration::from_millis(600), read.next()).await
+            else {
+                break;
+            };
+            let text = msg.into_text().unwrap_or_default();
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+                continue;
+            };
+            if let Some(k) = v.get("kind").and_then(|k| k.as_str()) {
+                order.push(k.to_string());
+            }
+        }
+        assert_eq!(
+            order,
+            vec![
+                "template",
+                "default_template",
+                "transition",
+                "timer",
+                "content"
+            ],
+            "the hello reply reached this tablet in the wrong order — the reading \
+             must be painted last, after the clock that accompanies it"
+        );
+    }
+
     /// …AND A CHANNEL-KEYED SCREEN IS ONE OF THEM.
     ///
     /// The test above says hello with a `template_id`, and for a long time that was
@@ -4114,6 +4559,7 @@ mod tests {
             hub.default_template_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
+            hub.last_timers_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -4174,6 +4620,7 @@ mod tests {
             hub.default_template_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
+            hub.last_timers_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -4245,6 +4692,7 @@ mod tests {
             hub.default_template_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
+            hub.last_timers_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -4302,6 +4750,7 @@ mod tests {
             hub.default_template_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
+            hub.last_timers_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -4505,6 +4954,7 @@ mod tests {
             hub.default_template_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
+            hub.last_timers_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -4559,6 +5009,7 @@ mod tests {
             hub.default_template_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
+            hub.last_timers_handle(),
             health.clone(),
             port,
         ));

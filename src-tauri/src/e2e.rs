@@ -3766,3 +3766,156 @@ fn a_clear_takes_the_congregation_timer_and_leaves_the_programme_timer() {
         "a blackout must take the congregation timer and leave the programme one"
     );
 }
+
+/// A REHEARSAL REACHES NO STAGE TABLET, AND THIS TEST WATCHES THE DOOR IT LEAVES BY.
+///
+/// **The assertion surface is the claim.** `Wall` listens for Tauri events, and
+/// `publish_timers` emits none — it publishes to the kiosk hub and nothing else,
+/// which is exactly the shape that let `stage_next` ship gated in name only and leak
+/// "up next" to a live stage tablet mid-rehearsal while the e2e rehearsal test
+/// stayed green. So this watches `qa::Kiosk`, the hub itself.
+///
+/// The live case is asserted FIRST, so this cannot pass by the publish path being
+/// broken outright — the failure mode of every "assert nothing happened" test.
+#[test]
+fn a_programme_timer_published_during_a_rehearsal_reaches_no_stage_tablet() {
+    let app = app();
+    let h = app.handle().clone();
+    let mut kiosk = qa::Kiosk::attach(&h);
+
+    // A real service: the programme timer must reach the tablet.
+    start_timer(
+        h.clone(),
+        20.0,
+        "Sermon".into(),
+        "Wrap up".into(),
+        "stage".into(),
+        None,
+        None,
+    )
+    .expect("a programme timer");
+    settle();
+    let live = kiosk
+        .next()
+        .expect("a real service must reach the stage tablet");
+    assert!(
+        live.contains(r#""kind":"timer""#) && live.contains("Sermon"),
+        "the stage tablet got something other than the programme timer: {live}"
+    );
+
+    set_rehearsal(
+        h.clone(),
+        h.state::<Session>(),
+        h.state::<channels::Rehearsal>(),
+        true,
+    )
+    .expect("enter rehearsal");
+
+    // Every door into the registry that publishes, not only the one that creates.
+    let rehearsed = start_timer(
+        h.clone(),
+        10.0,
+        "Offering".into(),
+        String::new(),
+        "stage".into(),
+        None,
+        None,
+    )
+    .expect("a second programme timer");
+    adjust_timer(h.clone(), rehearsed, Some(5 * 60_000), None).expect("re-aim it");
+    stop_timer(h.clone(), rehearsed).expect("stop it");
+    settle();
+    assert!(
+        kiosk.silent(),
+        "a rehearsal's programme clock escaped to a live stage tablet — the same \
+         leak as `stage_next`, on the same screen"
+    );
+}
+
+/// STOPPING THE LAST PROGRAMME TIMER TAKES IT OFF THE PREACHER'S SCREEN.
+///
+/// An absent frame cannot say "there are none now". Publishing nothing on a stop
+/// would leave the clock on the tablet, counting, for the rest of the service — and
+/// nothing on that screen could tell the preacher it was stale. So the whole
+/// stage-visible SET is published every time, and the empty set is a real frame.
+#[test]
+fn stopping_the_last_programme_timer_publishes_an_empty_set_to_the_stage() {
+    let app = app();
+    let h = app.handle().clone();
+    let mut kiosk = qa::Kiosk::attach(&h);
+
+    let programme = start_timer(
+        h.clone(),
+        20.0,
+        "Sermon".into(),
+        "Wrap up".into(),
+        "stage".into(),
+        None,
+        None,
+    )
+    .expect("a programme timer");
+    settle();
+    kiosk.next().expect("the start reached the tablet");
+
+    stop_timer(h.clone(), programme).expect("stop");
+    settle();
+    let frame = kiosk
+        .next()
+        .expect("stopping the last programme timer told the tablet nothing");
+    let v: serde_json::Value = serde_json::from_str(&frame).expect("valid JSON");
+    assert_eq!(v["kind"], "timer");
+    assert_eq!(
+        v["timers"].as_array().map(|a| a.len()),
+        Some(0),
+        "the stage tablet was not told the programme clock is gone: {frame}"
+    );
+}
+
+/// A CONGREGATION TIMER IS NOT THE PROGRAMME, AND THE STAGE FRAME SAYS SO.
+///
+/// The two scopes share a registry and a wire vocabulary, which is precisely why
+/// this needs asserting: projecting a `Both` timer into the stage frame would put
+/// the pre-service countdown in the preacher's programme rail, and it would look
+/// entirely plausible there.
+#[test]
+fn a_congregation_countdown_never_appears_in_the_programme_rail() {
+    let app = app();
+    let h = app.handle().clone();
+    let mut kiosk = qa::Kiosk::attach(&h);
+
+    start_timer(
+        h.clone(),
+        5.0,
+        "Service begins in".into(),
+        "Welcome".into(),
+        "both".into(),
+        None,
+        None,
+    )
+    .expect("a congregation timer");
+    settle();
+
+    // The frame is still published — the set simply has nothing in it — because the
+    // publisher asks no question about what changed. See `start_timer`.
+    let mut seen = Vec::new();
+    while let Some(m) = kiosk.next() {
+        seen.push(m);
+    }
+    let timer_frames: Vec<&String> = seen
+        .iter()
+        .filter(|m| m.contains(r#""kind":"timer""#))
+        .collect();
+    assert!(
+        !timer_frames.is_empty(),
+        "no timer frame reached the hub at all: {seen:?}"
+    );
+    for frame in timer_frames {
+        let v: serde_json::Value = serde_json::from_str(frame).expect("valid JSON");
+        assert_eq!(
+            v["timers"].as_array().map(|a| a.len()),
+            Some(0),
+            "a congregation countdown was published into the preacher's programme \
+             rail: {frame}"
+        );
+    }
+}

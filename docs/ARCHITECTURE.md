@@ -228,9 +228,17 @@ service lock · update safety · diagnostics · models.
 | `rehearsal://changed` | Rehearsal was turned on or off. Pushed rather than polled, because every surface must agree about it at the same instant |
 
 Networked clients get the content events as JSON frames over the WS hub
-(`{kind:"content"|"clear"|"black"|"stage_next"|"stage_alert"|"channel_template", …}`), and send
-exactly three kinds back — `hello`, `beat`, `rendered` — none of which can carry content
-([SECURITY.md](SECURITY.md) T4).
+(`{kind:"content"|"clear"|"black"|"stage_next"|"stage_alert"|"timer"|"template"|"channel_template"|"default_template"|"transition", …}`),
+and send exactly three kinds back — `hello`, `beat`, `rendered` — none of which can carry
+content ([SECURITY.md](SECURITY.md) T4).
+
+**Reproduce that list rather than trusting it.** It named six of the ten for a while —
+`template`, `transition` and `default_template` were each published, answered for in
+`FRAME_VERDICTS` and in `r6-contracts.test.js`, and missing from this sentence, so the
+prose was short by three before `timer` made it four. The two tests are the register;
+this line is a summary of it, and a summary that drifts is how the enumeration stopped
+being one. `channels::tests::every_kind_this_module_publishes_has_an_explicit_verdict`
+reads the module's own source and fails on any published kind with no verdict.
 
 **A client that says `hello` is answered with two things that decide what it shows: its
 template, and WHAT IS ON THE SCREENS RIGHT NOW.** It was three — the operator's custom
@@ -249,6 +257,20 @@ a monitor-only extra and must not stand in for the content it accompanies. Neith
 moment, and a tablet rejoining ten minutes later must not be handed it. Because
 `clear` and `black` are published through the same door, joining late can never undo
 a panic control.
+
+**The programme timers are replayed too, and in their own slot.** A `Stage`-scoped
+timer publishes no content frame at all — which is exactly why it survives a verse,
+a song or a notice — so it reaches a stage tablet as a `timer` frame carrying the
+whole stage-visible set, and `KioskHub` keeps the last one in `last_timers`. It is a
+STATE and not a moment, which is the difference from `stage_alert`: it is still
+running when the tablet comes back, and a phone that locked its screen mid-sermon
+would otherwise get no clock until the operator next touched a timer. **It is never
+retained as the screen frame**, for the same reason as `transition` and the two
+template frames: `last_screen` holds one frame and the newest wins, so a clock there
+would replace the verse and the next screen to join would be sent the programme over
+a blank wall. **The full hello order is template, `default_template`, `transition`,
+`timer`, then the retained screen frame last** — the reading is painted last, so a
+late-joining tablet never flashes a clock over it.
 
 **Every kind needs a verdict per client, and two of them are `false` on purpose.** `stage_next`
 and `stage_alert` are for the platform, not the room: the first is the verse coming up, the
