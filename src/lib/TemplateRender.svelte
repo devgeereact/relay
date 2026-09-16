@@ -337,6 +337,62 @@
     }
     return scale;
   }
+  /**
+   * THE CRAWL HAS A BUDGET, AND THE LABEL SPENDS IT FIRST.
+   *
+   * A ticker is a band: a fixed label on the left, then the body scrolling
+   * through whatever room is left. Neither element is `.content`, so the region
+   * fitter never saw either — the loop found zero boxes and reported a scale of
+   * 1, which is the "fit loop with no notion of failure" of rule 37 with the
+   * loop removed entirely.
+   *
+   * THE BUDGET IS A CSS FACT. `.ticker-label`'s own `max-width: 45%` and
+   * `overflow: hidden` are the one source for the label's share of the band
+   * (see the stylesheet) — `label.clientWidth` is therefore already the real,
+   * constrained box a browser paints, so it is what gets measured, not a
+   * second JS computation (`band.clientWidth * 0.45`) that could drift from
+   * the rule that actually clips.
+   *
+   * THE BASE IS THE TEMPLATE'S DECLARED SIZE, READ FRESH EVERY PASS — never
+   * the DOM's last write. `refSize` is cqw, 1% of `stageEl`'s inline size
+   * (`container-type: size` — the same fact `fitOne`'s own comment relies on
+   * for the box share above), so converting it to the px this loop measures
+   * in is `refSize / 100 * stageEl.clientWidth`. An earlier version of this
+   * function read `getComputedStyle(label).fontSize` instead, which reads
+   * back fitTicker's OWN previous px write on any later pass: `fitSig()`
+   * folds the stage's rounded w×h into every region-mode signature, so an
+   * ordinary window RESIZE with no content change — the label is not
+   * rebuilt; `{#key slideKey}` keys on content, not geometry — still calls
+   * `fitText` → `fitTicker` again for the very same `<span>`. A label shrunk
+   * once during a narrow moment stayed shrunk for the rest of that
+   * announcement even after the window widened back out, because what it
+   * thought was "the declared size" was actually its own last answer.
+   * Recomputing from `refSize` every pass is what lets a widened band grow
+   * the label back — the same ceiling `fitOne` holds via its prop-derived
+   * `vBase`, reached a different way: this loop always starts its search AT
+   * that ceiling rather than seeding a guess and growing up to it.
+   *
+   * The label is what is worth measuring: it is `nowrap`, so it never wraps,
+   * it simply takes the width its cap allows. The body is deliberately NOT
+   * shrunk: it scrolls, so its length is time, not overflow.
+   */
+  function fitTicker() {
+    if (!stageEl) return 1;
+    const band = stageEl.querySelector('.ticker');
+    const label = stageEl.querySelector('.ticker-label');
+    if (!band || !label) return 1;
+    const budget = label.clientWidth || 0;
+    if (budget <= 0) return 1;
+    const base = (refSize / 100) * stageEl.clientWidth;
+    if (!base) return 1;
+    let scale = 1;
+    label.style.fontSize = `${base}px`;
+    while (keepShrinking({ overflowing: label.scrollWidth > budget, scale })) {
+      scale *= FIT_STEP;
+      label.style.fontSize = `${base * scale}px`;
+    }
+    return scale;
+  }
   function fitText() {
     if (!stageEl) return;
     // During a crossfade the outgoing and incoming slides coexist — fit both so
@@ -347,6 +403,9 @@
     stageEl.querySelectorAll('.slide .content').forEach((box) => {
       worst = Math.min(worst, fitOne(box, stageEl));
     });
+    // Ticker mode renders instead of `.content`, so the query above finds
+    // nothing at all. Its own pass is the only measurement this mode gets.
+    worst = Math.min(worst, fitTicker());
     // The WORST of the slides on screen. It is HANDED ON rather than reported
     // here: how far this had to shrink is only half the verdict, and the other
     // half — whether it actually fits — cannot be read until a later frame. One
@@ -567,7 +626,7 @@
     return [
       ...(layered
         ? stageEl.querySelectorAll('.ltext')
-        : stageEl.querySelectorAll('.slide .content')),
+        : stageEl.querySelectorAll('.slide .content, .slide .ticker-label')),
     ];
   }
   function overflowing() {
@@ -1469,10 +1528,30 @@
            the template to place it instead. -->
       <div class="cd-default">
         {#if content.reference && !countdownDone}
-          <div class="reference" style="font-size:{refSize}cqw; {refStyle}">{content.reference}</div>
+          <div class="ltext cd-line cd-ref" style="align-items:center;">
+            <!-- `.reference` is kept alongside `.lfit` (not dropped): it is what
+                 carries font-weight:600 on this label, and `.lfit`'s own CSS does
+                 not restate it. -->
+            <div class="lfit reference" data-base={refSize} data-fit="shrink" style="font-size:{refSize}cqw; {refStyle} text-align:center;">{content.reference}</div>
+          </div>
         {/if}
-        <div class="verse countdown" class:warn={countdownWarn} style="font-size:{verseSize * 2}cqw; margin-top:{refGap}cqw; color:{countdownWarn ? CD_WARN : verseColor}; text-align:center; text-shadow:{verseShadowCss};">
-          {countdownDone ? (content.countdown_done || '0:00') : countdownText}
+        <div class="ltext cd-line cd-digits" style="align-items:center;">
+          <!-- THE SIZE IS DECLARED AND THE BOX IS MEASURABLE. `data-base` is the
+               designed size in cqw, so a countdown that has not been fitted yet
+               paints at the size the template asked for rather than at the app's
+               UI type (the same reasoning as the layer text path above). `shrink`
+               caps growth at that size: a countdown must never grow to fill a
+               box, because the digits change width every second and a growing
+               clock jitters. -->
+          <!-- `.countdown` is kept alongside `.lfit` (not dropped): it is what
+               carries tabular-nums, weight, tight leading and single-line
+               `white-space: nowrap` for the ticking digits, and what
+               `.countdown.warn` needs below to paint the last-minute red pulse.
+               None of that is restated inline. -->
+          <div class="lfit countdown" data-base={verseSize * 2} data-fit="shrink" class:warn={countdownWarn}
+            style="font-size:{verseSize * 2}cqw; margin-top:{refGap}cqw; color:{countdownWarn ? CD_WARN : verseColor}; text-align:center; text-shadow:{verseShadowCss};">
+            {countdownDone ? (content.countdown_done || '0:00') : countdownText}
+          </div>
         </div>
       </div>
     {/if}
@@ -1641,6 +1720,31 @@
     text-align: center;
     padding: 6% 7%;
     box-sizing: border-box;
+    /* IT CLIPS. This set no `overflow` at all, so a countdown too big for its
+       box did not slice — it painted straight over the template's own layers and
+       off the edge of the screen. Clipping is what makes the fitter's verdict
+       honest: `overflowing()` reads `scrollHeight > clientHeight`, which an
+       unclipped box never reports. */
+    overflow: hidden;
+  }
+  /* The two fit boxes inside it are flex children, not absolutely-positioned
+     layers, so they override `.ltext`'s `position: absolute`. `min-height: 0`
+     is what lets a flex child actually be shorter than its content — without it
+     the box reports that everything fits, at any size. */
+  .cd-default .cd-line {
+    position: relative;
+    display: flex;
+    width: 100%;
+    min-height: 0;
+    overflow: hidden;
+    justify-content: center;
+  }
+  .cd-default .cd-digits {
+    flex: 1 1 auto;
+  }
+  .cd-default .cd-ref {
+    flex: 0 0 auto;
+    max-height: 25%;
   }
   /* A scrolling text layer runs on one line inside its (clipped) box. */
   .lfit.lscroll {
@@ -1713,7 +1817,17 @@
   .content.panel {
     padding: 3.5cqw 4.5cqw;
     max-width: 82%;
-    overflow: visible;
+    /* IT CLIPS, LIKE `.content` DOES. This was `overflow: visible`, which took
+       away the clip the unpanelled box has — and with it the only signal
+       `overflowing()` reads. The panel is the mode an operator picks for a
+       bright background, which is where legibility is already hardest, so it
+       was the worst box in the component to have left unmeasured. The padding
+       still gives the plate room; what it no longer does is let the words leave
+       the plate. Kept explicit rather than relying on `.content`'s own
+       `overflow: hidden` falling through: belt-and-braces against this exact
+       rule regressing to `visible` again, right next to the history explaining
+       why that would be wrong. */
+    overflow: hidden;
   }
   .slide.lower-third .content {
     max-width: 100%;
@@ -1765,7 +1879,18 @@
     overflow: hidden;
   }
   .ticker-label {
+    /* THE SHARE LIVES HERE, ONLY HERE. A `flex: 0 0 auto; white-space: nowrap`
+       item sizes its own box to its content and clips nothing on its own —
+       only the parent `.ticker`'s `overflow: hidden` did, which clips the
+       whole band, not the label. Without a cap of its own, `clientWidth`
+       always equals `scrollWidth` and `fitTicker`'s shrink loop is measuring
+       a box that can never report itself as overflowing. `max-width: 45%`
+       (against the flex container, i.e. the band) makes the budget a fact a
+       real browser enforces; `fitTicker` reads `clientWidth` off THIS rule
+       rather than recomputing the share in JS, so the two cannot drift apart. */
     flex: 0 0 auto;
+    max-width: 45%;
+    overflow: hidden;
     font-weight: 700;
     white-space: nowrap;
   }
