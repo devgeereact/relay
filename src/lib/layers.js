@@ -224,7 +224,22 @@ export function isKeyedTemplate(template) {
   return !hasBg;
 }
 
-/** The content kinds a screen can be set to show/hide. */
+/**
+ * The content kinds a screen can be set to show/hide.
+ *
+ * THE CANONICAL VOCABULARY. `main.rs`'s `ContentTemplates` mirrors it by hand and
+ * no test links the two, so a sixth kind has to be written in both places.
+ *
+ * ── SITE 6 OF THE CONTENT-KIND SWEEP. NOTHING CHANGED HERE, AND WHY ───────────
+ *
+ * The timer registry adds no kind to this list. A congregation timer is still
+ * broadcast as `countdown`, which is already the fifth row and is why the row is
+ * labelled "Timer / Countdown" rather than "Countdown". A programme timer never
+ * becomes content: it is published to the stage tablet on its own frame, so there
+ * is no per-screen visibility question to answer about it — a congregation screen
+ * cannot show one whether or not it is ticked here, which is a stronger guarantee
+ * than a checkbox and is the reason not to offer the checkbox.
+ */
 export const CONTENT_KINDS = [
   { key: 'scripture', label: 'Scripture' },
   { key: 'song', label: 'Songs / Lyrics' },
@@ -242,6 +257,34 @@ export const CONTENT_KINDS = [
  * `layout.shows` is the explicit allow-list (an array of kinds). When it's absent
  * the screen shows everything — except the legacy per-screen media opt-out
  * (`layout.noMedia`), folded in here so old templates keep working.
+ *
+ * ── SITE 7 OF THE CONTENT-KIND SWEEP. NOTHING CHANGED HERE, AND WHY ───────────
+ *
+ * This is the site that hides a kind SILENTLY: an explicit `shows` list is an
+ * allow-list, so a kind nobody thought to add to it is dropped before
+ * `resolveOutputTemplate` is ever consulted, and the screen simply holds what it
+ * had. Nothing anywhere reports that. The timer registry adds no kind — a
+ * congregation timer is `countdown`, which every list already names, and a
+ * programme timer never arrives here at all — so no list needs touching.
+ *
+ * **WHAT THE SEED ACTUALLY LOOKS LIKE, checked rather than assumed**, because the
+ * reassuring version of this ("every seeded template writes `shows` explicitly,
+ * which is what makes a new kind safe") is not what is in the tree and points the
+ * next reader at the wrong half:
+ *
+ *   - `db/templates.rs::builtin_templates()` — the five a fresh install actually
+ *     seeds — carry **no `shows` key at all**, so they fall to the `return true`
+ *     below and show every kind, including one added tomorrow. Safe by absence.
+ *   - `db/templates.rs::theme_templates()` — the thirteen on the preset shelf —
+ *     each carry an EXPLICIT list of exactly the five current kinds, pinned by a
+ *     Rust test whose `all` array is a third hand-mirrored copy of `CONTENT_KINDS`.
+ *     These are the ones a sixth kind would be hidden by, and the test would not
+ *     say so: it asserts the thirteen agree with its own hard-coded five.
+ *
+ * So the exposure runs the opposite way round from the comfortable reading. A new
+ * kind is safe on a fresh install and invisible on any screen wearing a preset,
+ * until `CONTENT_KINDS`, `ContentTemplates`, the thirteen presets and that test's
+ * `all` array are all four updated together.
  */
 export function templateShows(template, kind) {
   if (!kind) return true;

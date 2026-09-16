@@ -1158,6 +1158,23 @@
   // new `template` frame to every screen, and keying on it would make every such
   // edit re-animate a verse that is already up on the wall.
   $: overrideKey = isOverride(activeOverride) ? `${activeOverride.mode}|${activeOverride.ms ?? ''}` : '';
+  //
+  // ── SITE 10 OF THE CONTENT-KIND SWEEP. NOTHING CHANGED HERE, AND WHY ────────
+  //
+  // A kind that varies in none of the five keyed fields does not re-key, so it
+  // gets no transition and no refit — it paints into the box the last slide was
+  // measured for. The timer registry adds no such kind. A congregation timer keys
+  // on `countdownTo`, which is `countdown_to`, and the registry moves that field
+  // on every action that changes what the clock says: a start, a re-aim, a hold
+  // and a release all re-stamp `target_ms`. So putting a timer back after a
+  // reading re-keys on both `reference` and `countdownTo`, and a ±1 re-keys on
+  // `countdownTo` alone. A programme timer never reaches this component at all.
+  //
+  // `countdown_paused_ms` is deliberately NOT keyed, and that is a decision rather
+  // than an omission: holding a countdown changes whether the digits move, not
+  // which slide is up, and re-keying there would re-animate the one slide an
+  // operator deliberately froze. Same reasoning as `now` being excluded below — a
+  // ticking layer must not re-animate.
   $: slideKey = `${content?.reference ?? ''}|${content?.text ?? ''}|${content?.media_url ?? ''}|${countdownTo ?? ''}|${overrideKey}`;
 
   // A wall clock for clock-bound layers — ticks once a second only when needed.
