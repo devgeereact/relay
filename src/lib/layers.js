@@ -15,6 +15,16 @@
 // reference, its translation, a countdown, the clock — or a fixed string the
 // operator types. Binding is what makes a layer template render live scripture
 // rather than lorem ipsum.
+//
+// A STARTER NAMES A REAL FAMILY, NEVER AN APP-CHROME TOKEN (wave 5, Track E).
+// The starters below are template DATA the moment a layer is added, and they used
+// to seed `var(--f-serif)` / `var(--f-display)` / `var(--f-body)` — names declared
+// in the operator console's own stylesheet. `--f-display` was Space Grotesk and
+// was re-aliased to Inter, an edit to the app's chrome that silently changed the
+// typeface of every template naming it. `Fraunces` and `Inter` are the families
+// those tokens already resolved to, so nothing on a wall moved; what moved is who
+// decides. `theme:font` is a different thing and stays: it resolves against the
+// TEMPLATE's own style (DECISIONS §87), not against the app's.
 
 import { migrateStyle, STYLE_DEFAULTS, bandLayout, faceOf } from './templatemodel.js';
 
@@ -148,7 +158,7 @@ export function makeLayer(type, over = {}) {
         type: 'text',
         bind: 'countdown',
         x: 20, y: 34, w: 60, h: 32,
-        font: 'var(--f-display)',
+        font: 'Inter',
         color: '#ffffff',
         size: 12,
         align: 'center',
@@ -168,7 +178,7 @@ export function makeLayer(type, over = {}) {
         name: 'Text',
         bind: 'verse',
         x: 10, y: 34, w: 80, h: 34,
-        font: 'var(--f-serif)',
+        font: 'Fraunces',
         color: '#f4e4c8',
         size: 5.2,
         align: 'center',
@@ -501,7 +511,7 @@ function songLyrics() {
         makeLayer('background', { fill: '#07070a' }),
         makeLayer('text', {
           name: 'Words', bind: 'verse', x: 6, y: 24, w: 88, h: 52,
-          font: 'var(--f-body)', size: 7.6, color: '#ffffff',
+          font: 'Inter', size: 7.6, color: '#ffffff',
           align: 'center', valign: 'middle', lineHeight: 1.24, shadow: 0.3,
         }),
       ],

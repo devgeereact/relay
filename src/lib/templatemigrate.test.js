@@ -101,7 +101,12 @@ describe('the fixtures this file argues from are real', () => {
     // shelf must actually contain some. It contains three faces.
     const faces = new Set(styles.map((s) => s.font));
     expect(faces.size).toBeGreaterThan(1);
-    expect(faces.has('var(--f-serif)')).toBe(true);
+    // A REAL FAMILY. The seed used to store `var(--f-serif)` — an operator-console
+    // token, resolved on the wall against whatever `app.css` aliased it to that
+    // week, which is how a re-alias from Space Grotesk to Inter changed the
+    // typeface of every template naming it. Wave 5, Track E.
+    expect(faces.has('Fraunces')).toBe(true);
+    expect([...faces].filter((f) => String(f).startsWith('var('))).toEqual([]);
   });
 
   it('the built-ins the kiosk falls back to carry them too', () => {
@@ -168,7 +173,9 @@ describe('§3.1 · an old template renders identically after migration', () => {
   });
 
   it('and the converted stack renders the same words in the same face', () => {
-    const mono = BUILTINS.find((t) => t.style.font === 'var(--f-display)');
+    // `var(--f-display)` since wave 5, Track E: the console token it used to name
+    // resolved to Inter, so Inter is what this built-in already rendered as.
+    const mono = BUILTINS.find((t) => t.style.font === 'Inter');
     expect(mono, 'a non-serif built-in to argue from').toBeTruthy();
 
     const regionLook = look(render(mono, CONTENT));
@@ -179,8 +186,8 @@ describe('§3.1 · an old template renders identically after migration', () => {
     const layerEl = render(converted, CONTENT);
     const fitted = [...layerEl.querySelectorAll('.ltext .lfit')];
     expect(fitted.length).toBeGreaterThan(0);
-    for (const n of fitted) expect(getComputedStyle(n).fontFamily).toBe('var(--f-display)');
-    expect(regionLook.verse).toContain('var(--f-display)');
+    for (const n of fitted) expect(getComputedStyle(n).fontFamily).toContain('Inter');
+    expect(regionLook.verse).toContain('Inter');
   });
 });
 
@@ -205,7 +212,10 @@ describe('§3.1 · a style token answers for the style it is given, old shape or
   });
 
   it('still falls back to the renderer default when no typeface was ever chosen', () => {
-    expect(resolveTokens(stage({})).layout.layers[0].font).toBe('var(--f-serif)');
+    // The model's default, and it is a family rather than an app-chrome token: a
+    // template that never chose a face still must not inherit one the console can
+    // re-alias underneath it (wave 5, Track E).
+    expect(resolveTokens(stage({})).layout.layers[0].font).toBe('Fraunces');
   });
 
   it('reads the NEW shape as readily as the old one', () => {

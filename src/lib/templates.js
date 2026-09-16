@@ -2,6 +2,16 @@
 // DB access, so they resolve a template_id against this list; the desktop app
 // fetches the (editable) DB row instead. Sizes are in cqw (container-query
 // width %) so the same template scales identically at any output size.
+//
+// A TEMPLATE NAMES A REAL FAMILY, NEVER AN APP-CHROME TOKEN (wave 5, Track E).
+// These styles used to store `var(--f-serif)` / `var(--f-display)` /
+// `var(--f-body)`, which are declared in the operator console's own stylesheet.
+// `--f-display` was Space Grotesk and was re-aliased to Inter — an edit to the
+// app's chrome that silently changed the typeface of every template naming it,
+// on every wall. `Fraunces` and `Inter` are the families those tokens already
+// resolved to, so nothing rendered differently; what changed is who decides.
+// This list is the one that reaches a screen with NO database behind it, which is
+// the case where a console token would have had nothing to resolve against.
 
 import { migrateStyle } from './templatemodel.js';
 
@@ -11,7 +21,7 @@ export const BUILTINS = [
     name: 'Classic Serif',
     layout: { regions: ['verse_text', 'reference'], align: 'center', lowerThird: false, refFirst: false },
     style: {
-      font: 'var(--f-serif)',
+      font: 'Fraunces',
       background: 'radial-gradient(120% 140% at 50% 30%, #2a2013, #0b0906)',
       accent: '#ffb000',
       verseColor: '#f4e4c8',
@@ -25,7 +35,7 @@ export const BUILTINS = [
     name: 'Stage Mono',
     layout: { regions: ['reference', 'verse_text'], align: 'left', lowerThird: false, refFirst: true },
     style: {
-      font: 'var(--f-display)',
+      font: 'Inter',
       background: '#000000',
       accent: '#22d3ee',
       verseColor: '#ffffff',
@@ -57,7 +67,7 @@ export const BUILTINS = [
     // claim, because it looks like evidence.)
     layout: { regions: ['verse_text', 'reference'], align: 'center', lowerThird: true, refFirst: false },
     style: {
-      font: 'var(--f-body)',
+      font: 'Inter',
       background: 'transparent',
       accent: '#101319',
       verseColor: '#f2f4f8',
@@ -77,7 +87,7 @@ export const BUILTINS = [
     name: 'Worship Lyrics',
     layout: { regions: ['verse_text'], align: 'center', lowerThird: false, refFirst: false },
     style: {
-      font: 'var(--f-body)',
+      font: 'Inter',
       background: '#07070a',
       accent: '#ffffff',
       verseColor: '#ffffff',
@@ -91,7 +101,7 @@ export const BUILTINS = [
     name: 'Lobby Warm',
     layout: { regions: ['reference', 'verse_text'], align: 'center', lowerThird: false, refFirst: false },
     style: {
-      font: 'var(--f-serif)',
+      font: 'Fraunces',
       background: 'linear-gradient(160deg, #241419, #120a0e)',
       accent: '#e27d93',
       verseColor: '#f0dfe3',
