@@ -1493,6 +1493,77 @@ fn r2_a_passage_must_not_stay_armed_under_unrelated_content() {
     );
 }
 
+/// A PAYLOAD THAT FORGOT TO NAME ITS KIND STILL DISARMS THE PASSAGE.
+///
+/// Rule 38's guard read `kind.as_deref().is_some_and(|k| k != "scripture")`, and
+/// `is_some_and` is **false for `None`** — so content built the way
+/// `..Default::default()` invites, with every field the caller cared about and
+/// `kind` left unset, walked straight past the one place a passage is disarmed.
+/// Every caller in the tree happens to set it; nothing said so, and the test above
+/// cannot see the gap because it fires a song, which names itself.
+///
+/// The failure is reached by FORGETTING A FIELD rather than by adding a content
+/// kind, which is why it survived the sweep that produced rule 38: the choke point
+/// exists precisely so a kind added next year is disarmed by construction (rule
+/// 36), and an ABSENT kind was the one shape that choke point did not cover.
+///
+/// Unspecified is treated as NOT scripture, which is the fail-safe direction and
+/// deliberately not a refusal. A passage wrongly disarmed makes `nav` answer
+/// `NoPassage` — a correct boundary the operator is told about (rule 38b). A
+/// passage wrongly left armed walks a reading the congregation stopped looking at
+/// twenty minutes ago and answers `Fired`, which is true of the wall and false of
+/// the sermon. Only one of those two reaches a congregation. Refusing the
+/// broadcast instead would blank a screen over content that renders perfectly
+/// well, which is not what `preflight` is for (rule 36).
+#[test]
+fn r2_a_payload_that_forgot_its_kind_still_disarms_the_passage() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    // Sermon scripture, and the passage armed behind it.
+    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).unwrap();
+    settle();
+    assert!(
+        matches!(
+            nav(h.clone(), "next".into()).unwrap(),
+            NavResult::Fired { .. }
+        ),
+        "precondition: the passage is armed, so this test can tell the two answers apart"
+    );
+    settle();
+
+    // …then a notice takes the wall, built by a caller that filled in what it
+    // cared about and left `kind` at its default.
+    broadcast_with_clock(
+        &h,
+        channels::OutputContent {
+            reference: "Notice".into(),
+            text: Some("The hall is open after the service".into()),
+            ..Default::default()
+        },
+    )
+    .expect("a payload with a reference and text is not an empty screen");
+    settle();
+    assert!(
+        wall.last().unwrap()["text"]
+            .as_str()
+            .unwrap_or("")
+            .contains("The hall is open"),
+        "precondition: the notice is what is on the wall"
+    );
+
+    let r = nav(h.clone(), "next".into()).unwrap();
+    settle();
+    assert!(
+        matches!(r, NavResult::NoPassage),
+        "`next` walked a passage under content that named no kind: {} — the wall now \
+         shows {:?}",
+        r.kind(),
+        wall.last().unwrap()["reference"]
+    );
+}
+
 // ── THE AUTO-FIRE PATH ──────────────────────────────────────────────────────
 //
 // Everything above drives a HUMAN path: `manual_fire`, `nav`, `clear_screens`.

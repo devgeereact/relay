@@ -643,7 +643,23 @@ fn broadcast_with_clock<R: tauri::Runtime>(
     // (rule 36) and a new content kind added tomorrow is disarmed by construction.
     // The lock is taken and RELEASED before the broadcast below — never held across
     // an emit (rule 2).
-    if content.kind.as_deref().is_some_and(|k| k != "scripture") {
+    //
+    // AND AN ABSENT KIND IS NOT SCRIPTURE. This read `is_some_and(|k| k !=
+    // "scripture")`, which is **false for `None`**, so a payload built the way
+    // `..Default::default()` invites — every field the caller cared about, `kind`
+    // left unset — walked past the one place a passage is disarmed. Every caller in
+    // this file sets it and nothing said so, and the failure is reached by
+    // forgetting a field rather than by adding a content kind, which is the one
+    // shape the choke point did not cover.
+    //
+    // It disarms rather than refusing, deliberately. A passage wrongly disarmed
+    // makes `nav` answer `NoPassage`, a correct boundary the operator is told about
+    // (rule 38b); a passage wrongly left armed walks a reading the congregation
+    // stopped looking at and answers `Fired`. Refusing instead would blank a screen
+    // over content that renders perfectly well, and `preflight` above refuses only
+    // what is broken AND silent (rule 36). Pinned by
+    // `e2e::r2_a_payload_that_forgot_its_kind_still_disarms_the_passage`.
+    if content.kind.as_deref() != Some("scripture") {
         if let Some(ctx) = handle.try_state::<Context>() {
             if let Ok(mut c) = ctx.0.lock() {
                 c.forget();
