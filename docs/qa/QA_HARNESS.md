@@ -20,38 +20,40 @@ every edit: `.claude/hooks/relay-fast-gate.mjs`, path-filtered and report-only (
 
 ## 0. Current inventory
 
-Re-measured **2026-09-16**, on `feat/wave2-track-d` after Track E (themes folded into templates,
-the parallel system deleted — DECISIONS §87) and Track D's two seed tasks: Task 12 reshaped the
-seed into five families × five content kinds (Classic, Aurora, Ember, Lower Third, High
-Visibility; Nocturne dropped) and Task 13 added `ensure_retired_presets_are_gone`, the migration
-that retires the twenty-one frozen rows the reshape stops shipping (DECISIONS §88). `npm run
-build` ran first, per RG-127.
+Re-measured **2026-09-16**, on `feat/wave2-integration` — the whole of Wave 2 (six tracks,
+fifteen tasks) merged into one tree, plus the final whole-branch fix pass. The block this
+replaces was measured on `feat/wave2-track-d` alone, BEFORE tracks A, B and C merged, and every
+figure in it was wrong at the integration head: it said 774 Rust / 2224 frontend / 141 files /
+138 commands against 784 / 2254 / 145 / 139. The command count disagreed with the block twelve
+lines below it, in the one register this repository keeps counts in. `npm run build` ran first,
+per RG-127.
 
 | Count | Value | Command |
 |---|---|---|
-| Rust tests | **774 passed / 0 failed / 16 ignored** | `cd src-tauri && cargo test` |
-| Frontend tests | **2224 passed, 141 files** | `npx vitest run` |
+| Rust tests | **784 passed / 0 failed / 16 ignored** | `cd src-tauri && cargo test` |
+| Frontend tests | **2254 passed, 145 files** | `npx vitest run` |
 | `e2e.rs` tests | **66 passed / 0 ignored** | `cd src-tauri && cargo test e2e::` |
-| Registered commands | **138** | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
-| qa-inventory | 138/138 addressed, 0 handlerless, 0 unnamed | `node scripts/qa-inventory.mjs` |
+| Registered commands | **139** | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
+| qa-inventory | 139/139 addressed, 0 handlerless, 0 unnamed | `node scripts/qa-inventory.mjs` |
 
 `cargo fmt --all`, `clippy --all-targets -- -D warnings` and `npm run build` all clean on the
 same tree.
 
 **The delta is taken from the row immediately below** (754 passed / 0 failed / 16 ignored Rust;
-2265 passing, 144 files frontend; 139 commands) — the last measurement in this file, and still
-reproducible at `be3f01c`. Since then: **+20 Rust** (the family seed and the retirement migration,
-each with their own suite in `db/templates.rs`), **-41 frontend across -3 files** (net: four
-theme-surface files deleted whole — `themerender.test.js`, `themes.test.js`,
-`views/templatesdesk.test.js`, `views/themes/themedesk.test.js` — against one new file,
-`thememerge.test.js`, plus the family/retirement cases added inside existing files), and **-1
-registered command** (`sync_kiosk_themes`, deleted with the theme gallery it served — confirmed
-against the diff, not the commit message, which also names four now-dead frontend-only commands
-that never carried the `#[tauri::command]` attribute). `e2e.rs` and qa-inventory's
-handlerless/unnamed counts are unchanged. qa-inventory's one orphan component,
-`src/lib/__r6probe.svelte`, is the pre-existing, deliberate test probe `docs/RELAY_V1_AUDIT.md`
-already names — not something this wave introduced, and already excluded by name from
-`r6-contracts.test.js`'s own walk of `src/`.
+2265 passing, 144 files frontend; 139 commands) — the last measurement in this file that was
+taken on a merged tree, and still reproducible at `be3f01c`. Since then: **+30 Rust** (the family
+seed, the retirement migration and the theme inlining each carry their own suite in
+`db/templates.rs`, alongside the countdown, transition and stage work in the other tracks), **-11
+frontend across +1 file** — four theme-surface files deleted whole (`themerender.test.js`,
+`themes.test.js`, `views/templatesdesk.test.js`, `views/themes/themedesk.test.js`) against five
+new ones (`defaulttemplate.test.js`, `fitcoverage.test.js`, `showsregister.test.js`,
+`thememerge.test.js`, `outputdefault.test.js`) — and **no net change in registered commands**:
+`sync_kiosk_themes` was deleted with the theme gallery it served and `set_default_template` was
+added. That pair is what the replaced block recorded as **-1**; it had only seen one of the two
+tracks, which is the same reason every other figure in it was short. `e2e.rs` and qa-inventory's handlerless/unnamed counts are unchanged.
+qa-inventory's one orphan component, `src/lib/__r6probe.svelte`, is the pre-existing, deliberate
+test probe `docs/RELAY_V1_AUDIT.md` already names — not something this wave introduced, and
+already excluded by name from `r6-contracts.test.js`'s own walk of `src/`.
 
 Neither suite failed. The counts above are what each runner's own summary line reported.
 

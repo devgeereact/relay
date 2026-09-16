@@ -2200,7 +2200,7 @@ The 2026-09-10 pass found two congregation-facing defects — a first verse pain
 ### Task 15: Drive it and record what it does (P1)
 
 **Files:**
-- Create: `docs/qa/audits/DESIGN-2026-09-15-WAVE2.md` — frozen evidence, findings only. This task creates it; it does not exist yet.
+- Create: `docs/qa/audits/DESIGN-2026-09-16-WAVE2.md` — frozen evidence, findings only. (The plan named it `DESIGN-2026-09-15-WAVE2.md`; the pass ran on the 16th and the file carries that date. `crossrefs.test.js` let the wrong name through only because "this task creates it" is the forward-reference escape hatch, which is exactly how a permanently dead path survives in a file agentic workers read.)
 - Modify: `docs/qa/RELAY_GAP.md` — any new `RG-` ids, filed there and nowhere else
 
 - [ ] **Step 1: Bring the real backend up**

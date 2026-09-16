@@ -25,7 +25,7 @@ Those are different design problems and Relay keeps them in different systems:
 
 | | Console chrome | Output surfaces |
 |---|---|---|
-| Styled by | `src/app.css` — one global stylesheet | **Themes → Templates**, resolved by `TemplateRender.svelte` |
+| Styled by | `src/app.css` — one global stylesheet | **Templates**, resolved by `TemplateRender.svelte`. There is no separate theme layer any more: a theme had no field a template does not already have, so the two were folded into one (DECISIONS §87) |
 | Who changes it | Only a developer | The operator, in the app, per screen |
 | Units | `px` | **`cqw`** — so a template looks identical at any output size |
 | Background | Always dark | Whatever the template says, **including transparent** (so it keys out in OBS) |
@@ -292,14 +292,14 @@ read *"the screens may still be live"* is motion for its own sake.
 - **Motion is opt-in.** Decorative animation sits inside
   `@media (prefers-reduced-motion: no-preference)`, and the spinner explicitly stops under
   `reduce`. A new animation goes in the same guard.
-- **On the WALL, the default is a cut.** A template (or its theme) may choose one of seven
+- **On the WALL, the default is a cut.** A template may choose one of seven
   transitions — Cut · Crossfade · Dissolve · Fade through black · Push left · Slide up ·
   Materialise — from the one register in [`src/lib/transitions.js`](../src/lib/transitions.js).
   Three rules hold it: only `opacity`, `transform` and `filter` animate (none of them moves
   `scrollHeight`, so the measured auto-fit reads the same box mid-transition as it does at rest);
   every mode ends exactly settled, or the verse stays slightly wrong for as long as it is up;
   and **reduced motion is a cut**, not a faster animation. An unknown mode is a cut too — an
-  imported theme must not be able to stop a verse rendering (DECISIONS §71).
+  imported template must not be able to stop a verse rendering (DECISIONS §71).
 - **The AI announces itself.** The suggestion feed, the transport, and errors all reach an
   `aria-live` region in `App.svelte` — the product's whole reason to exist used to arrive in
   total silence.

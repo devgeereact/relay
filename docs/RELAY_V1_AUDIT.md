@@ -327,7 +327,7 @@ tabs**, three **served pages**, and one **LAN control plane**.
 |---|---|---|---|---|
 | Live | The run surface: console + plan, merged | Tab | none (local operator) | fully |
 | Outputs (`channels`) | Screens, templates per screen, health | Tab | none | fully |
-| Templates · Themes | The look, and the style layer beneath it | Tab | none | fully |
+| Templates | The look. The style layer beneath it was folded in — a theme had no field a template does not already have (DECISIONS §87) | Tab | none | fully |
 | Library | Bible · Saved · Lyrics · Media · Announcements · Graphics · History | Tab | none | fully |
 | Planner | Build a plan. **Cannot fire to an output** | Tab | none | fully |
 | Settings | Model, audio, rooms, privacy, updates, diagnostics, dashboard | Tab | none | fully |
