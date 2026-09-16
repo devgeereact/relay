@@ -214,6 +214,28 @@ describe('the seal — app chrome does not cross onto a congregation screen', ()
     }
   });
 
+  it('each congregation page declares its own type base', () => {
+    // WHAT THE BROWSER PASS FOUND, pinned so it cannot be undone by tidying.
+    // `app.css`'s `body{}` rule was setting the family, the size, the line height
+    // and the text colour on both pages, because both imported it. Three of those
+    // four are inherited by template elements that declare none of their own —
+    // `.reference` takes its line height that way, and the fit loop measures the
+    // result, so dropping it would change both what a reference looks like and the
+    // size the binary search settles on, on a wall, silently.
+    //
+    // Measured before and after in a real browser: with these four declared, adding
+    // the whole console stylesheet back on top of `output.html` changes NOTHING —
+    // zero of three elements differ — and on `stage.html` it changes one property
+    // on one element (`.brand`'s `display`) with an identical bounding box.
+    for (const page of ['src/Output.svelte', 'src/Stage.svelte']) {
+      const base = stripComments(read(page)).match(/:global\(html, body\)\s*\{[^}]*\}/);
+      expect(base, `${page} declares a base rule`).toBeTruthy();
+      for (const prop of ['font-family', 'font-size', 'line-height', 'color']) {
+        expect(base[0], `${page} sets ${prop} itself`).toContain(prop);
+      }
+    }
+  });
+
   it('the palette is still shared — the seal is not a fork', () => {
     const shared = stripComments(read('src/tokens.css'));
     for (const token of ['--v-void', '--v-amber', '--f-serif', '--f-body', '--f-mono']) {

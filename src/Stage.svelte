@@ -674,7 +674,19 @@
 </div>
 
 <style>
-  :global(html, body) { margin: 0; height: 100%; background: var(--v-void); overflow: hidden; -webkit-font-smoothing: antialiased; }
+  /* THIS PAGE OWNS ITS OWN BASE (wave 5, Track E). The four type properties
+     below used to arrive from `app.css`'s `body{}` rule, because `stage.js`
+     imported the operator console's whole stylesheet — which also put every
+     unscoped console rule on the preacher's phone. The page now imports
+     `tokens.css` and takes no rules, so it declares the base it always rendered
+     with: measured in a browser before and after, and these are the four
+     properties that moved. */
+  :global(html, body) {
+    margin: 0; height: 100%; background: var(--v-void); overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+    font-family: var(--f-body); font-size: var(--v-fs-b1); line-height: 1.45;
+    color: var(--v-txt);
+  }
   .sr {
     height: 100dvh; display: flex; flex-direction: column; color: var(--v-txt);
     font-family: var(--f-body);

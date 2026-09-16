@@ -382,12 +382,28 @@
 
 <style>
   /* Transparent by default — a template with a transparent background keys out
-     for OBS/ATEM. Solid templates paint their own background in TemplateRender. */
+     for OBS/ATEM. Solid templates paint their own background in TemplateRender.
+
+     THE TYPE BASE IS DECLARED HERE, AND IT IS NOT DECORATION (wave 5, Track E).
+     These four properties used to arrive from `app.css`'s `body{}` rule, because
+     `output.js` imported the operator console's whole stylesheet — which also put
+     every unscoped console rule on the congregation's screen. The page now imports
+     `tokens.css` and takes no rules, so it declares the base it always rendered
+     with. `line-height` in particular is inherited by any template element that
+     does not set its own (`.reference` is one), and it is an input to the fit
+     loop: dropping it would have changed both what a reference looks like and the
+     size the binary search settles on, on a wall, silently. Measured in a browser
+     before and after — with the console sheet and without, these four are the
+     whole difference. */
   :global(html, body) {
     margin: 0;
     height: 100%;
     background: transparent;
     overflow: hidden;
+    font-family: var(--f-body);
+    font-size: var(--v-fs-b1);
+    line-height: 1.45;
+    color: var(--v-txt);
   }
   /* Blackout: opaque black over everything (kills the screen, unlike clear). */
   .blackout {
