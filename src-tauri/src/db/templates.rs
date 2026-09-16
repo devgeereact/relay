@@ -274,6 +274,14 @@ pub(super) fn ensure_lyrics_template(conn: &Connection) -> rusqlite::Result<()> 
 /// them is a migration, and that migration matches on bytes so it can tell a
 /// leftover from a row somebody edited.
 ///
+/// That file holds twenty-one rows, not fourteen: this wave also stopped
+/// shipping six rows out of `theme_templates()` — the `Lower Third` member the
+/// old four-kind Aurora and Ember families carried, and all four `Nocturne · …`
+/// rows, Nocturne not being one of the five families — plus the shelf's
+/// `Lower Third · Scripture`, whose name the keyed family takes. A row this
+/// wave stops shipping and does not freeze is a row stranded in every existing
+/// install with nothing left that names it.
+///
 /// The function stays rather than being deleted. `region_presets()` chains it,
 /// `there_are_presets_across_every_screen_type` asserts it is empty, and a
 /// standalone preset that is genuinely not a family member — a one-off a church

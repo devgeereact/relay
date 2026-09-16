@@ -2,12 +2,12 @@
   "_readme": [
     "THE ROWS THIS WAVE STOPPED SHIPPING — frozen, so the retirement migration can match on BYTES.",
     "",
-    "Task 12 replaced fourteen standalone presets and one shelf row with five coordinated families of",
-    "five content kinds. Seeds insert BY NAME and only when absent, so an existing install keeps every",
-    "old row and gains the new ones on top. `ensure_retired_presets_are_gone` removes a row only when",
-    "its name is here AND its `region_config_json` and `style_json` still equal the bytes below AND",
-    "nothing points at it. A single edited colour makes the row somebody's work, and somebody's work is",
-    "not a leftover.",
+    "Task 12 replaced fourteen standalone presets, six theme-family rows and one shelf row with five",
+    "coordinated families of five content kinds. Seeds insert BY NAME and only when absent, so an",
+    "existing install keeps every old row and gains the new ones on top.",
+    "`ensure_retired_presets_are_gone` removes a row only when its name is here AND its",
+    "`region_config_json` and `style_json` still equal the bytes below AND nothing points at it. A",
+    "single edited colour makes the row somebody's work, and somebody's work is not a leftover.",
     "",
     "`layout` and `style` are STRINGS, not nested objects, and that is load-bearing. The comparison is",
     "byte-for-byte against what the seed wrote; parsing and re-serialising sorts the keys (serde_json's",
@@ -15,11 +15,21 @@
     "bytes are already key-sorted because the seed itself writes them through `Value::to_string()` —",
     "these are the bytes as inserted, not as authored.",
     "",
-    "Produced once by a throwaway `dump_retiring_presets` test run against the tree that still had the",
-    "old seed, then deleted. This file is the record; there is no code left that can reproduce it.",
+    "TWENTY-ONE ROWS, IN THREE GROUPS, and the groups are why the list is exactly this long:",
     "",
-    "Only `Lower Third · Scripture` is retired from the shelf, because the new family member takes that",
-    "exact name. The other seven shelf looks still ship."
+    "  · FOURTEEN standalone presets (`Midnight Blue` … `Lobby Sunrise`). `preset_templates()` is now",
+    "    empty. Note `Lower Third Light`: the plan's list said thirteen and omitted it, which would",
+    "    have stranded it in every existing install with nothing left that names it.",
+    "  · SIX theme-family rows. The old four-kind families had a `Lower Third` member that the new",
+    "    five-kind families do not (`Lower Third` is now a family of its own, not a kind), and the",
+    "    Nocturne family is not one of the five, so all four of its rows go. Recovered from the",
+    "    pre-change `theme_templates()` and verified byte-for-byte against it.",
+    "  · ONE shelf row, `Lower Third · Scripture`, forced out because the new keyed family takes that",
+    "    exact name and a seed that inserts by name cannot hold both.",
+    "",
+    "Nothing else is retired. Every other name the old seed shipped is still shipped, with unchanged",
+    "bytes, so retiring it would delete a row the very next boot re-inserts under a NEW id — repointing",
+    "whatever channel or plan cue pointed at it. That is the failure this list's length is guarding."
   ],
   "templates": [
     {
@@ -91,6 +101,36 @@
       "name": "Lobby Sunrise",
       "layout": "{\"regions\":[\"verse_text\",\"reference\"],\"align\":\"center\",\"lowerThird\":false,\"refFirst\":false}",
       "style": "{\"font\":\"var(--f-serif)\",\"background\":\"linear-gradient(160deg, #2b1a12, #0f0a08)\",\"accent\":\"#f0a85c\",\"verseColor\":\"#f6e7d6\",\"verseSize\":\"4.6\",\"refSize\":\"2.2\",\"italicRef\":true}"
+    },
+    {
+      "name": "Aurora · Lower Third",
+      "layout": "{\"regions\":[\"verse_text\",\"reference\"],\"align\":\"center\",\"lowerThird\":true,\"refFirst\":false}",
+      "style": "{\"font\":\"var(--f-body)\",\"background\":\"transparent\",\"accent\":\"#eafaf5\",\"verseColor\":\"#0c211d\",\"verseSize\":\"2.6\",\"refSize\":\"1.5\",\"refTransform\":\"uppercase\",\"refLetterSpacing\":0.08}"
+    },
+    {
+      "name": "Ember · Lower Third",
+      "layout": "{\"regions\":[\"verse_text\",\"reference\"],\"align\":\"center\",\"lowerThird\":true,\"refFirst\":false}",
+      "style": "{\"font\":\"var(--f-body)\",\"background\":\"transparent\",\"accent\":\"#1a0d06\",\"verseColor\":\"#ffe9d2\",\"verseSize\":\"2.6\",\"refSize\":\"1.5\",\"refTransform\":\"uppercase\",\"refLetterSpacing\":0.08}"
+    },
+    {
+      "name": "Nocturne · Scripture",
+      "layout": "{\"regions\":[\"verse_text\",\"reference\"],\"align\":\"center\",\"lowerThird\":false,\"refFirst\":false}",
+      "style": "{\"font\":\"var(--f-serif)\",\"background\":\"radial-gradient(130% 130% at 50% 15%, #141a3a, #05070f)\",\"accent\":\"#9db4ff\",\"verseColor\":\"#eef1ff\",\"verseSize\":\"5.2\",\"refSize\":\"2.5\",\"italicRef\":true,\"textShadow\":0.5,\"verseLineHeight\":1.34}"
+    },
+    {
+      "name": "Nocturne · Lyrics",
+      "layout": "{\"regions\":[\"verse_text\"],\"align\":\"center\",\"lowerThird\":false,\"refFirst\":false}",
+      "style": "{\"font\":\"var(--f-display)\",\"background\":\"linear-gradient(165deg, #10163a, #04060f)\",\"accent\":\"#ffffff\",\"verseColor\":\"#ffffff\",\"verseSize\":\"8.5\",\"refSize\":\"2\",\"textShadow\":0.4,\"verseLineHeight\":1.2}"
+    },
+    {
+      "name": "Nocturne · Lower Third",
+      "layout": "{\"regions\":[\"verse_text\",\"reference\"],\"align\":\"center\",\"lowerThird\":true,\"refFirst\":false}",
+      "style": "{\"font\":\"var(--f-body)\",\"background\":\"transparent\",\"accent\":\"#0d1226\",\"verseColor\":\"#e6ecff\",\"verseSize\":\"2.6\",\"refSize\":\"1.5\",\"refTransform\":\"uppercase\",\"refLetterSpacing\":0.08}"
+    },
+    {
+      "name": "Nocturne · Announcement",
+      "layout": "{\"regions\":[\"reference\",\"verse_text\"],\"align\":\"center\",\"lowerThird\":false,\"refFirst\":true}",
+      "style": "{\"font\":\"var(--f-display)\",\"background\":\"linear-gradient(180deg, #141a3a, #05070f)\",\"accent\":\"#9db4ff\",\"verseColor\":\"#eef1ff\",\"verseSize\":\"3.4\",\"refSize\":\"2.6\",\"refTransform\":\"uppercase\",\"refLetterSpacing\":0.06,\"scroll\":true,\"textShadow\":0.4}"
     },
     {
       "name": "Lower Third · Scripture",
