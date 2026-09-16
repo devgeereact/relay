@@ -41,6 +41,7 @@
   // live in the register beside `countWords` — pure, so they can be asserted
   // without mounting a pane that needs a backend to list anything.
   import { mediaSub } from './collections.js';
+  import { mediaUrl } from '../../bundledbackgrounds.js';
 
   export let query = '';
   /**
@@ -142,7 +143,15 @@
 
   // The SAME URL an OBS browser source would use — the app's HTTP server on
   // 8032, never the Vite port (which does not exist in a packaged build).
-  const url = (m) => `http://${host}:8032/media/${m.id}`;
+  //
+  // AND THE SAME RULE THE BACKEND USES, out of one module, because there are two
+  // doors and this is the second. `main.rs::media_url` builds this for every
+  // output screen; this pane builds it again because the thumbnail IS the file.
+  // A picture Relay ships has no file under `/media/<id>` at all (DECISIONS
+  // §90), so a rule kept on one door and not the other would have left every
+  // seeded background a broken-image box here — and `lost()` below would then
+  // have marked it missing and refused to fire a file that was never missing.
+  const url = (m) => mediaUrl(host, m);
   const ext = (m) => (m.filename.split('.').pop() || '').toUpperCase();
 
   async function fire(m) {

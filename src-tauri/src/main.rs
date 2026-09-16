@@ -2601,7 +2601,12 @@ fn delete_media(
         db::delete_media(&conn, id)?
     };
     if let Some(p) = path {
-        let _ = std::fs::remove_file(p); // best-effort
+        // A bundled picture's path is a marker, not a location — there is no file
+        // to unlink, and asking the filesystem for one would be a no-op dressed
+        // as an attempt.
+        if media_file_is_on_disk(&p) {
+            let _ = std::fs::remove_file(p); // best-effort
+        }
     }
     Ok(())
 }
@@ -2998,17 +3003,31 @@ fn fire_media<R: tauri::Runtime>(
     id: i64,
     template_id: Option<i64>,
 ) -> error::Result<()> {
-    let (kind, filename, tid, tjson, tpinned): (String, String, Option<i64>, Option<String>, bool) = {
+    #[allow(clippy::type_complexity)]
+    let (kind, filename, path, tid, tjson, tpinned): (
+        String,
+        String,
+        String,
+        Option<i64>,
+        Option<String>,
+        bool,
+    ) = {
         let conn = db.0.lock()?;
-        let (k, f) = conn
+        let (k, f, p) = conn
             .query_row(
-                "SELECT kind, filename FROM media_assets WHERE id = ?1",
+                "SELECT kind, filename, path FROM media_assets WHERE id = ?1",
                 [id],
-                |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                    ))
+                },
             )
             .map_err(|_| "media not found".to_string())?;
         let (tid, tjson, tpinned) = cue_or_content_tpl(&conn, template_id, "media");
-        (k, f, tid, tjson, tpinned)
+        (k, f, p, tid, tjson, tpinned)
     };
     let media_kind = match kind.as_str() {
         "image" => "image",
@@ -3024,7 +3043,7 @@ fn fire_media<R: tauri::Runtime>(
         &app,
         OutputContent {
             kind: Some("media".into()),
-            media_url: Some(format!("http://{ip}:8032/media/{id}")),
+            media_url: Some(media_url(&ip, id, &path)),
             media_kind: Some(media_kind.to_string()),
             template_id: tid,
             template_json: tjson,
@@ -3034,6 +3053,28 @@ fn fire_media<R: tauri::Runtime>(
     )?;
     persist_cue(&app, "media", Some(&filename));
     Ok(())
+}
+
+/// Where an output page loads a media asset from.
+///
+/// Two kinds of row live in `media_assets` and they are served from two
+/// different places. A file the operator imported sits in the media directory
+/// under `{id}_{name}` and is streamed by id. A picture Relay ships has no file
+/// of its own at all: its bytes are in the embedded bundle, at the stable path
+/// its `bundled:` marker names, which the same server already serves
+/// (DECISIONS §90). Building `…/media/<id>` for one of those hands every screen
+/// a URL that 404s, which paints a black wall and logs nothing.
+fn media_url(ip: &str, id: i64, path: &str) -> String {
+    match path.strip_prefix(db::BUNDLED_PREFIX) {
+        Some(rest) => format!("http://{ip}:8032/{rest}"),
+        None => format!("http://{ip}:8032/media/{id}"),
+    }
+}
+
+/// Is this stored path a real file somewhere, or a marker for bundled bytes?
+/// Deleting a bundled row removes the Library entry; there is nothing to unlink.
+fn media_file_is_on_disk(path: &str) -> bool {
+    !path.starts_with(db::BUNDLED_PREFIX)
 }
 
 /// The template a fire should render with: the CUE's own choice when it set one,
@@ -3085,6 +3126,45 @@ fn cue_or_content_tpl(
                 .and_then(|s| s.parse::<i64>().ok())
         });
     (id, None, false)
+}
+
+#[cfg(test)]
+mod media_url_tests {
+    use super::*;
+
+    /// A FILE THE OPERATOR IMPORTED IS SERVED BY ID; A PICTURE RELAY SHIPS IS
+    /// SERVED OUT OF THE BUNDLE.
+    ///
+    /// The bundled rows have no file in the media directory at all — the bytes
+    /// are inside the binary, in `dist/`, where the embedded server already
+    /// serves them. Building `…/media/<id>` for one of those gives every screen
+    /// a URL that 404s, and an image element that fails is a black wall with
+    /// nothing in any log.
+    #[test]
+    fn a_bundled_picture_is_served_from_the_bundle_and_an_imported_one_by_id() {
+        assert_eq!(
+            media_url("10.0.0.5", 7, "/Users/x/media/7_photo.jpg"),
+            "http://10.0.0.5:8032/media/7"
+        );
+        assert_eq!(
+            media_url("10.0.0.5", 7, ""),
+            "http://10.0.0.5:8032/media/7",
+            "a row whose file has not been written yet is still served by id"
+        );
+        assert_eq!(
+            media_url("10.0.0.5", 42, "bundled:backgrounds/01-2.jpg"),
+            "http://10.0.0.5:8032/backgrounds/01-2.jpg"
+        );
+    }
+
+    /// Nothing tries to unlink a picture that was never a file. `delete_media`'s
+    /// caller passes the stored path straight to `remove_file`, and a bundled
+    /// row's path is a marker, not a location.
+    #[test]
+    fn a_bundled_picture_has_no_file_to_delete() {
+        assert!(!media_file_is_on_disk("bundled:backgrounds/01-2.jpg"));
+        assert!(media_file_is_on_disk("/Users/x/media/7_photo.jpg"));
+    }
 }
 
 #[cfg(test)]

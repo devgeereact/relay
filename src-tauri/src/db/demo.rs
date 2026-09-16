@@ -823,9 +823,18 @@ mod tests {
 
     /// THE RULE THIS WHOLE MODULE IS BUILT AROUND.
     ///
-    /// A fresh install has the ledger and nothing in it, and none of the tables the
-    /// demo writes into carry a demo row. If this fails, something taught Relay to
-    /// seed itself.
+    /// A fresh install has the ledger and nothing in it, and nothing anywhere in
+    /// it carries the mark this module puts on every row it writes. If this
+    /// fails, something taught Relay to load the demo dataset for itself.
+    ///
+    /// **It used to assert that five tables were EMPTY, and that stopped being
+    /// the right question on 2026-09-16.** DECISIONS §90 gives a fresh install a
+    /// starter set — announcements, the pictures Relay ships, one example plan —
+    /// so emptiness would now fail here while saying nothing at all about this
+    /// module. The claim being made was never "the database is empty"; it was
+    /// "`db::demo::load` did not run", and the ledger plus the mark say exactly
+    /// that over a database with content in it. `db::starter`'s own tests hold
+    /// the other half: what a first launch DOES contain.
     #[test]
     fn a_fresh_install_carries_no_demo_content() {
         let conn = fresh();
@@ -833,39 +842,98 @@ mod tests {
         let st = status(&conn).unwrap();
         assert_eq!(st.total, 0);
         assert!(st.groups.is_empty());
-        // …and the tables themselves are empty of the things it would have written.
-        for (table, sql) in [
-            ("service_plans", "SELECT COUNT(*) FROM service_plans"),
-            ("songs", "SELECT COUNT(*) FROM songs"),
-            ("announcements", "SELECT COUNT(*) FROM announcements"),
-            ("saved_scripture", "SELECT COUNT(*) FROM saved_scripture"),
-            ("media_assets", "SELECT COUNT(*) FROM media_assets"),
+        // …and nothing in the tables it writes into is one of its rows.
+        for (what, sql) in [
+            ("plan", "SELECT title FROM service_plans"),
+            ("song", "SELECT title FROM songs"),
+            ("announcement", "SELECT title FROM announcements"),
+            ("media asset", "SELECT filename FROM media_assets"),
+            ("cue", "SELECT label FROM plan_items"),
         ] {
-            let n: i64 = conn.query_row(sql, [], |r| r.get(0)).unwrap();
-            assert_eq!(n, 0, "a fresh install has no {table}");
+            let mut s = conn.prepare(sql).unwrap();
+            let rows: Vec<String> = s
+                .query_map([], |r| r.get::<_, String>(0))
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap();
+            for row in rows {
+                assert!(
+                    !row.starts_with(MARK),
+                    "a fresh install has a demo {what}: {row}"
+                );
+            }
         }
+    }
+
+    /// The tables the demo dataset touches, counted, so a load and a removal can
+    /// be measured as a DELTA rather than against zero.
+    ///
+    /// Against zero was right while a fresh install was empty. Since DECISIONS
+    /// §90 it is not: a starter set sits under everything this module writes, and
+    /// a removal that returned those tables to zero would be deleting the
+    /// church's content. The delta is also the stronger claim — "the demo dataset
+    /// put exactly this much in and took exactly that much out" is what the
+    /// removal path actually promises.
+    fn tally(conn: &Connection) -> Vec<(&'static str, i64)> {
+        [
+            "service_plans",
+            "plan_items",
+            "songs",
+            "song_sections",
+            "song_arrangements",
+            "announcements",
+            "saved_scripture",
+            "media_assets",
+        ]
+        .into_iter()
+        .map(|t| {
+            let n: i64 = conn
+                .query_row(&format!("SELECT COUNT(*) FROM {t}"), [], |r| r.get(0))
+                .unwrap();
+            (t, n)
+        })
+        .collect()
+    }
+
+    /// The demo plan's own cues, by the plan it wrote.
+    fn demo_plan_id(conn: &Connection) -> i64 {
+        conn.query_row(
+            "SELECT id FROM service_plans WHERE title = ?1",
+            [PLAN_TITLE],
+            |r| r.get(0),
+        )
+        .unwrap()
     }
 
     #[test]
     fn loading_fills_every_workspace_and_removing_empties_them_again() {
         let dir = scratch_dir("roundtrip");
         let conn = fresh();
+        let before = tally(&conn);
         let st = load(&conn, "2026-09-14", &dir).unwrap();
         assert!(st.loaded);
         assert_eq!(st.edited, 0, "nothing is edited the moment it is loaded");
         // one plan + three songs + three notices + five verses + one backdrop
         assert_eq!(st.total, 13, "{:?}", st.groups);
 
+        let plan = demo_plan_id(&conn);
         let cues: i64 = conn
-            .query_row("SELECT COUNT(*) FROM plan_items", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM plan_items WHERE plan_id = ?1",
+                [plan],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(cues, 9);
         let kinds: Vec<String> = {
             let mut s = conn
-                .prepare("SELECT DISTINCT cue_type FROM plan_items ORDER BY cue_type")
+                .prepare(
+                    "SELECT DISTINCT cue_type FROM plan_items WHERE plan_id = ?1
+                      ORDER BY cue_type",
+                )
                 .unwrap();
             let r = s
-                .query_map([], |r| r.get::<_, String>(0))
+                .query_map([plan], |r| r.get::<_, String>(0))
                 .unwrap()
                 .collect::<rusqlite::Result<Vec<_>>>()
                 .unwrap();
@@ -878,8 +946,9 @@ mod tests {
         );
         let sections: i64 = conn
             .query_row(
-                "SELECT COUNT(DISTINCT section_title) FROM plan_items WHERE section_title <> ''",
-                [],
+                "SELECT COUNT(DISTINCT section_title) FROM plan_items
+                  WHERE plan_id = ?1 AND section_title <> ''",
+                [plan],
                 |r| r.get(0),
             )
             .unwrap();
@@ -893,19 +962,11 @@ mod tests {
         assert_eq!(gone.removed, 13);
         assert_eq!(gone.kept, 0);
         assert!(!is_loaded(&conn).unwrap());
-        for sql in [
-            "SELECT COUNT(*) FROM service_plans",
-            "SELECT COUNT(*) FROM plan_items",
-            "SELECT COUNT(*) FROM songs",
-            "SELECT COUNT(*) FROM song_sections",
-            "SELECT COUNT(*) FROM song_arrangements",
-            "SELECT COUNT(*) FROM announcements",
-            "SELECT COUNT(*) FROM saved_scripture",
-            "SELECT COUNT(*) FROM media_assets",
-        ] {
-            let n: i64 = conn.query_row(sql, [], |r| r.get(0)).unwrap();
-            assert_eq!(n, 0, "{sql} still has rows after a removal");
-        }
+        assert_eq!(
+            tally(&conn),
+            before,
+            "a removal must put every table back exactly where it found it"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1058,10 +1119,10 @@ mod tests {
             let mut s = conn
                 .prepare(
                     "SELECT json_extract(payload_json, '$.reference') FROM plan_items
-                      WHERE cue_type = 'scripture' ORDER BY position",
+                      WHERE cue_type = 'scripture' AND plan_id = ?1 ORDER BY position",
                 )
                 .unwrap();
-            s.query_map([], |r| r.get::<_, String>(0))
+            s.query_map([demo_plan_id(&conn)], |r| r.get::<_, String>(0))
                 .unwrap()
                 .collect::<rusqlite::Result<Vec<_>>>()
                 .unwrap()
@@ -1117,16 +1178,46 @@ mod tests {
         let dir = scratch_dir("marked");
         let conn = fresh();
         load(&conn, "2026-09-14", &dir).unwrap();
+        // SCOPED TO THE LEDGER, which is what the module's own note says the
+        // marker is. Before DECISIONS §90 the tables held nothing but demo rows,
+        // so "every row" and "every demo row" were the same set; they are not any
+        // more, and a starter announcement reading `Demo · ` would be a lie in the
+        // opposite direction. Cues are not ledgered individually, so they are
+        // scoped to the demo plan, which is.
+        let plan = demo_plan_id(&conn);
         for (sql, what) in [
-            ("SELECT title FROM service_plans", "plan"),
-            ("SELECT title FROM songs", "song"),
-            ("SELECT title FROM announcements", "announcement"),
-            ("SELECT filename FROM media_assets", "media asset"),
-            ("SELECT label FROM plan_items", "cue"),
+            (
+                "SELECT title FROM service_plans WHERE id IN
+                   (SELECT row_id FROM demo_content WHERE table_name = 'service_plans')",
+                "plan",
+            ),
+            (
+                "SELECT title FROM songs WHERE id IN
+                   (SELECT row_id FROM demo_content WHERE table_name = 'songs')",
+                "song",
+            ),
+            (
+                "SELECT title FROM announcements WHERE id IN
+                   (SELECT row_id FROM demo_content WHERE table_name = 'announcements')",
+                "announcement",
+            ),
+            (
+                "SELECT filename FROM media_assets WHERE id IN
+                   (SELECT row_id FROM demo_content WHERE table_name = 'media_assets')",
+                "media asset",
+            ),
+            ("SELECT label FROM plan_items WHERE plan_id = ?1", "cue"),
         ] {
             let mut s = conn.prepare(sql).unwrap();
             let rows: Vec<String> = s
-                .query_map([], |r| r.get::<_, String>(0))
+                .query_map(
+                    rusqlite::params_from_iter(if sql.contains("?1") {
+                        vec![plan]
+                    } else {
+                        vec![]
+                    }),
+                    |r| r.get::<_, String>(0),
+                )
                 .unwrap()
                 .collect::<rusqlite::Result<Vec<_>>>()
                 .unwrap();
@@ -1145,7 +1236,12 @@ mod tests {
         }
         // And the notices say so in the words the ROOM reads, not only in the
         // operator's title.
-        let mut s = conn.prepare("SELECT body FROM announcements").unwrap();
+        let mut s = conn
+            .prepare(
+                "SELECT body FROM announcements WHERE id IN
+                   (SELECT row_id FROM demo_content WHERE table_name = 'announcements')",
+            )
+            .unwrap();
         for body in s
             .query_map([], |r| r.get::<_, String>(0))
             .unwrap()
@@ -1212,10 +1308,17 @@ mod tests {
         let dir = scratch_dir("backdrop");
         let conn = fresh();
         load(&conn, "2026-09-14", &dir).unwrap();
+        // THE DEMO'S OWN ASSET, by the ledger. `LIMIT 1` over the whole table was
+        // unambiguous while the demo backdrop was the only media row there could
+        // be; since DECISIONS §90 a fresh install ships a picture library and the
+        // bare `LIMIT 1` picked one of those instead.
         let (id, path): (i64, String) = conn
-            .query_row("SELECT id, path FROM media_assets LIMIT 1", [], |r| {
-                Ok((r.get(0)?, r.get(1)?))
-            })
+            .query_row(
+                "SELECT id, path FROM media_assets WHERE id IN
+                   (SELECT row_id FROM demo_content WHERE table_name = 'media_assets')",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
             .unwrap();
         let name = std::path::Path::new(&path)
             .file_name()

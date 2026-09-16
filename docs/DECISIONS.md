@@ -4464,3 +4464,102 @@ the roles arrive, on a raw preview, and when a screen stops being a stage — th
 roles a fresh install names, that the wire form carries ids and roles and no names, and that
 `OutputContent` has no stage-message field. `src/lib/stagealertpanic.test.js` holds the third decision,
 by driving `Stage.svelte` through `clear` and through `black`.
+
+---
+
+## 90. A fresh install ships starter content, and the tripwire stops asserting zero (2026-09-16)
+
+**Context.** `db/mod.rs`'s `init_fresh` carried a flat prohibition: *"NOTHING SEEDS DEMO CONTENT
+HERE, and nothing ever may."* It was written when `db::demo` was built, and it was right about the
+thing it was written for — wiring the demo dataset into the seed was tried, and
+`qa::the_bare_fixture_is_a_first_launch_and_nothing_more` was watched to stay green over a fresh
+install that arrived with a plan, three songs, three notices and five saved verses in it. The rule
+and the tripwire were added together and they held.
+
+They also produced a first launch with an empty Library, an empty Planner, and thirty-three
+pictures that existed only inside the template editor's background picker.
+
+**The decision, and it is the operator's.** A fresh install now ships a starter set:
+**five announcements**, **one `media_assets` row per picture Relay ships**, and **one example
+service plan** whose countdown cue carries its own words, its own length and a pinned Timer look.
+`db::starter` writes it, from `init_fresh` and nowhere else. Three reasons were given and all three
+are worth keeping:
+
+1. **An empty install is not neutral.** A church opening Relay for the first time has no
+   announcement to fire, no background to choose and no plan to run, so the surfaces that exist to
+   be operated cannot be operated at all. That is how a volunteer decides a workspace is broken.
+2. **The instruments this repository trusts are about drift, not about emptiness.** The tripwire's
+   value was never the zero; it was that a seed which changes without anybody saying so fails
+   loudly. That value is kept by asserting the starter set **exactly** — these five titles, every
+   bundled picture and no other media row, one plan with this cue order and this countdown payload.
+   It is not weakened to a range and it keeps its name.
+3. **Starter content is not demo content.** `demo.rs` is untouched: still behind its Settings
+   button, still writing no `services`, `transcripts`, `detections`, `cues`, `service_events` or
+   `perf_samples`, still ledgered so it can be taken back out. Starter content has no `Demo · `
+   mark, no ledger and no removal path, because after the first Sunday it is the church's own. The
+   two modules do not call each other, and `db::demo::is_loaded` still answers `false` on a fresh
+   install — which is what keeps the older half of the tripwire meaningful.
+
+**What "the operator's title, separated from the words that reach the room" does and does not
+mean** (REBRAND §10). The five announcements are written so the title names the notice for whoever
+is looking for it at 9am and the body carries the message, with neither repeating the other. What
+it does not mean is that the title is invisible: `fire_content` sends an announce cue's label out
+as `reference`, so an announce template with a `reference`-bound layer draws it as the slide's
+heading. That is the fire path as it already stands and this decision does not move it. The
+separation being claimed is of jobs and of fields, not of audiences.
+
+**The pictures are rows, and they carry no file.** The gap being closed is real and narrow: the
+template editor's background picker reads `BACKGROUNDS`, a build-time glob, and cannot reach
+`media_assets` at all — so a picture shipping with Relay was usable in exactly one place while a
+picture in the Library was usable everywhere else. A row each makes a background an ordinary
+library item: fireable, cueable in a plan, bindable to a template's media layer.
+
+They are **not copied anywhere**. A row's `path` is `bundled:backgrounds/<file>`, a marker rather
+than a location, and the bytes are the ones already inside the binary in `dist/`, which
+`channels::serve_embedded` has always served. Copying them into the media directory would put
+fourteen megabytes on disk that are already in the binary; embedding them separately in the Rust
+binary would put fourteen megabytes into every download of a picture the frontend bundle already
+carries. `media_url` is the one place that reads the marker, and `delete_media`'s caller is the one
+place that has to know there is no file to unlink.
+
+**The build change this required, stated rather than buried.** A Rust seed cannot know a Vite
+content hash, so `vite.config.js` now emits assets from `src/backgrounds/` at a stable, unhashed
+`backgrounds/<file>` while every other asset keeps the hashed name it had. The name is sanitised in
+the same step, because `serve_embedded` takes the request path off the request line and does not
+URL-decode it, and several of these files have spaces in their names. The rule lives in
+`src/lib/bundledbackgrounds.js` where it is tested directly, and the seed reads the resulting names
+out of the bundle rather than re-deriving them, so there is one rule and not two copies of it.
+
+**The cost, named.** A template saved on an existing install that referenced a background by its
+old hashed `/assets/…` URL now points at a path the bundle no longer holds, and that picture will
+not paint. No seeded template does this (a seeded row could never have carried a build hash), so it
+can only affect a template somebody edited by hand, and re-picking the background in the editor is
+the whole repair. It is filed as RG-144 rather than left as a surprise.
+
+**What this does not change.** It does not move the release decision. It does not touch detection,
+the router or any threshold. It writes nothing to the service record — a starter plan is something
+to press, not something that happened — and nothing a preacher said can reach `service_events`
+through any of it.
+
+### Instrument
+
+`src-tauri/src/db/starter.rs` — the announcements by title and by the title/body separation, every
+bundled picture resolving to a file the bundle actually holds, the example plan's cue order and its
+countdown payload, the seeding step run twice, and **the real second launch through a real file on
+disk**: `migrate(fresh = true)`, close, `migrate(fresh = false)`, counts unchanged — plus a third
+launch after the operator deletes a starter notice, which does not bring it back.
+`qa::the_bare_fixture_is_a_first_launch_and_nothing_more` holds the starter set by identity and
+still asserts zero for songs, saved verses and the demo ledger.
+`main::media_url_tests` holds the two ways a media row becomes a URL, and that a bundled row has no
+file to delete. `src/lib/bundledbackgrounds.test.js` holds the build rule, including that a served
+name never needs URL-encoding, and holds the Rust and JavaScript halves of the URL rule to the same
+prefix and the same two forms — they are two languages and cannot share an implementation.
+`src/lib/bundledmedia.test.js` holds the SECOND door: it mounts the real Library media pane and
+reads the `src` a browser would fetch, because that pane renders the file itself as the thumbnail
+and a rule kept only in Rust would have made every seeded picture a broken image on the shelf it
+ships into.
+
+`demo.rs`'s own product code is untouched by all of this; five of its TESTS moved, because they
+asked whether tables were empty or read the only media row, which was exact while a fresh install
+had nothing in it. They measure the demo dataset as a delta and scope every row to the ledger now,
+which is the claim they were always making.

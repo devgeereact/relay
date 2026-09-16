@@ -250,37 +250,118 @@ mod tests {
             );
         }
 
-        // AND IT HAS NO CONTENT IN IT.
+        // AND THE CONTENT IN IT IS THE STARTER SET, EXACTLY.
         //
-        // Added when the demo dataset was built, because this test DID NOT CATCH
-        // IT. Wiring `db::demo::load` into `init_fresh` — the exact failure this
-        // tripwire exists to prevent, a fresh install arriving with a service plan,
-        // three songs, three notices and five saved verses already in it — was
-        // watched to leave this test green. Everything above asserts what a first
-        // launch CONTAINS; nothing asserted what it must not, so a seed that only
-        // added rows was invisible. That is now closed from both ends: this, and
-        // `db::demo::a_fresh_install_carries_no_demo_content`.
+        // This block used to assert ZERO for all five tables. That was the right
+        // assertion while `init_fresh` was forbidden to seed content, and it
+        // caught the failure it was written for: wiring `db::demo::load` into
+        // `init_fresh` was watched to leave the earlier version of this test
+        // green, because everything above asserts what a first launch CONTAINS
+        // and nothing asserted what it must not.
         //
-        // The ledger is the right probe rather than a row count per table: it is
-        // the one fact that means "something seeded content it intends to own", and
-        // it stays true if the dataset grows a table this list has never heard of.
+        // DECISIONS §90 reverses that rule, and this test keeps its name and its
+        // job by changing what it asserts rather than by being softened. The
+        // value here was never the zero; it was that a seed which drifts fails
+        // loudly. So the starter set is written out BY IDENTITY — these titles,
+        // this many pictures, this plan with this shape — and the literals below
+        // are the frozen copy. A seed that adds a sixth notice, renames one,
+        // drops the countdown's words or grows a song list turns this red, which
+        // is the whole point of it. It is NOT weakened to a range, and it must
+        // never be.
+        //
+        // The demo ledger is asserted separately and still says "nothing". It is
+        // the one fact that means "something seeded content it intends to own and
+        // be able to take back", and starter content deliberately is not that.
         assert!(
             !db::demo::is_loaded(&conn).unwrap(),
             "a fresh install has no demo content — something taught Relay to seed itself"
         );
+
+        // The tables the starter set does not touch. Songs and saved verses are
+        // still zero: a church's songs are its own, and a saved verse is a thing
+        // an operator chose to keep.
         for (what, sql) in [
-            ("a service plan", "SELECT COUNT(*) FROM service_plans"),
             ("a song", "SELECT COUNT(*) FROM songs"),
-            ("an announcement", "SELECT COUNT(*) FROM announcements"),
             ("a saved verse", "SELECT COUNT(*) FROM saved_scripture"),
-            ("a media asset", "SELECT COUNT(*) FROM media_assets"),
         ] {
             let n: i64 = conn.query_row(sql, [], |r| r.get(0)).unwrap();
             assert_eq!(
                 n, 0,
-                "a fresh install ships with no content of its own, and this one has {what}"
+                "the starter set does not write these, and this install has {what}"
             );
         }
+
+        // Five announcements, by title. The operator's title and the room's
+        // words are separate fields (REBRAND §10) and both are asserted, because
+        // a starter notice with an empty body is a slide with a heading and
+        // nothing under it.
+        let notices = db::list_announcements(&conn).unwrap();
+        let mut titles: Vec<&str> = notices.iter().map(|a| a.title.as_str()).collect();
+        titles.sort_unstable();
+        assert_eq!(
+            titles,
+            vec![
+                "After the service",
+                "Children's groups",
+                "Giving",
+                "Prayer meeting",
+                "Welcome",
+            ],
+            "the starter announcements drifted"
+        );
+        for a in &notices {
+            assert!(
+                !a.body.trim().is_empty(),
+                "{}: a starter notice with no words for the room",
+                a.title
+            );
+        }
+
+        // One row per picture Relay ships, each pointing into the bundle rather
+        // than at a file on disk. The count is read from the bundle rather than
+        // written down here on purpose: the identity being asserted is "every
+        // bundled picture, and nothing else", and a literal would go stale the
+        // first time somebody curated the folder while this test stayed green
+        // over a library missing one.
+        let pictures = db::list_media(&conn).unwrap();
+        let bundled = channels::bundled_backgrounds();
+        assert!(
+            !bundled.is_empty(),
+            "the bundle holds no pictures — was `npm run build` run before this \
+             crate was compiled? (RG-127)"
+        );
+        assert_eq!(
+            pictures.len(),
+            bundled.len(),
+            "a picture in the bundle with no library row, or a row with no picture"
+        );
+        for m in &pictures {
+            assert!(
+                m.path.starts_with(db::BUNDLED_PREFIX),
+                "{}: a fresh install has a media row that is not a bundled picture",
+                m.filename
+            );
+        }
+
+        // ONE example plan, with the countdown that carries its own words. That
+        // cue is the reason the plan is here at all: it is the first thing that
+        // exercises the Planner fields wave 5 gave a countdown, and a plan whose
+        // countdown lost them would still have passed a count.
+        let plans = db::list_plans(&conn).unwrap();
+        assert_eq!(plans.len(), 1, "one starter plan and no more");
+        assert_eq!(plans[0].title, "Sunday Morning (example)");
+        let items = db::plan_items(&conn, plans[0].id).unwrap();
+        let kinds: Vec<&str> = items.iter().map(|i| i.cue_type.as_str()).collect();
+        assert_eq!(kinds, vec!["countdown", "announce", "scripture"]);
+        let countdown: serde_json::Value = serde_json::from_str(&items[0].payload_json).unwrap();
+        assert_eq!(countdown["minutes"], 10);
+        assert_eq!(countdown["label"], "Service begins in");
+        assert_eq!(countdown["done"], "Welcome");
+        assert_eq!(items[0].duration_sec, 600);
+        assert!(
+            items[0].template_id.is_some(),
+            "the countdown cue lost the Timer look that can draw its words"
+        );
     }
 
     /// The stage-monitor door exists and is watchable. Guards the harness itself:
@@ -865,10 +946,16 @@ mod cold_start {
 
         // FIRST LAUNCH — exactly what `db::open()` does for a file that is absent.
         let plan;
+        // What the first launch ships on its own (DECISIONS §90), so what the
+        // operator then builds is counted on top of it rather than instead of it.
+        let starter_plans;
+        let starter_notices;
         {
             let conn = Connection::open(&path).unwrap();
             conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
             db::migrate(&conn, true).expect("first launch");
+            starter_plans = db::list_plans(&conn).unwrap().len();
+            starter_notices = db::list_announcements(&conn).unwrap().len();
             plan = db::create_plan(&conn, "Sunday Morning", "2026-08-16").unwrap();
             db::add_plan_item(&conn, plan, "scripture", "John 3:16", "{}", None).unwrap();
             db::save_announcement(&conn, None, "Midweek", "Wed 7pm", "2026-08-16").unwrap();
@@ -883,9 +970,12 @@ mod cold_start {
             conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
             db::migrate(&conn, false).expect("reopen must not fail");
 
-            assert_eq!(db::list_plans(&conn).unwrap().len(), 1);
+            assert_eq!(db::list_plans(&conn).unwrap().len(), starter_plans + 1);
             assert_eq!(db::plan_items(&conn, plan).unwrap()[0].label, "John 3:16");
-            assert_eq!(db::list_announcements(&conn).unwrap().len(), 1);
+            assert_eq!(
+                db::list_announcements(&conn).unwrap().len(),
+                starter_notices + 1
+            );
             assert!(db::active_voice_profile(&conn).unwrap().is_some());
             assert_eq!(
                 db::get_setting(&conn, "active_translation")
@@ -915,7 +1005,7 @@ mod cold_start {
             db::migrate(&conn, false).expect("third launch");
             assert_eq!(count(&conn, "output_channels"), 4);
             assert_eq!(count(&conn, "translations"), 1);
-            assert_eq!(db::list_plans(&conn).unwrap().len(), 1);
+            assert_eq!(db::list_plans(&conn).unwrap().len(), starter_plans + 1);
         }
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -953,11 +1043,19 @@ mod cold_start {
         ];
 
         let mut ids = Vec::new();
+        // The plan this test writes, and what a first launch already holds. Both
+        // used to be implicit — the plan was read back as id 1 and the cues were
+        // counted over the whole table — which was exact while a fresh install
+        // had no plan of its own. DECISIONS §90 gives it one, and id 1 is now
+        // that one.
+        let plan;
+        let starter_cues;
         {
             let conn = Connection::open(&path).unwrap();
             conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
             db::migrate(&conn, true).unwrap();
-            let plan = db::create_plan(&conn, "Ìsìn Ọjọ́ Àìkú", "2026-08-16").unwrap();
+            starter_cues = count(&conn, "plan_items") as usize;
+            plan = db::create_plan(&conn, "Ìsìn Ọjọ́ Àìkú", "2026-08-16").unwrap();
             for (name, text) in &cases {
                 let id = db::add_plan_item(&conn, plan, "announce", text, "{}", None)
                     .unwrap_or_else(|e| panic!("{name} could not be written: {e}"));
@@ -978,7 +1076,7 @@ mod cold_start {
             let conn = Connection::open(&path).unwrap();
             conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
             db::migrate(&conn, false).unwrap();
-            let items = db::plan_items(&conn, 1).unwrap();
+            let items = db::plan_items(&conn, plan).unwrap();
             for (name, text, id) in &ids {
                 let got = items
                     .iter()
@@ -989,7 +1087,10 @@ mod cold_start {
                     "{name}: came back different after closing and reopening the file"
                 );
             }
-            assert_eq!(count(&conn, "plan_items") as usize, cases.len());
+            assert_eq!(
+                count(&conn, "plan_items") as usize,
+                cases.len() + starter_cues
+            );
             let a = &db::list_announcements(&conn).unwrap()[0];
             assert_eq!(a.title, "Ẹ̀bùn 🙏🏾");
             assert!(a.body.contains('"'));
@@ -1299,9 +1400,15 @@ mod cold_start {
         let h = app.handle().clone();
         let db = h.state::<Db>();
 
-        let media_id = {
+        let (media_id, shipped) = {
             let conn = db.0.lock().unwrap();
-            db::insert_media(&conn, "image", "backdrop.png", "2026-08-16").unwrap()
+            // The pictures a fresh install ships are already in this table
+            // (DECISIONS §90); this test is about the one it imports.
+            let shipped = count(&conn, "media_assets");
+            (
+                db::insert_media(&conn, "image", "backdrop.png", "2026-08-16").unwrap(),
+                shipped,
+            )
         };
         let plan = create_plan(h.state::<Db>(), "Sunday".into(), "2026-08-16".into()).unwrap();
         add_plan_item(
@@ -1326,7 +1433,7 @@ mod cold_start {
         {
             let conn = db.0.lock().unwrap();
             db::delete_media(&conn, media_id).unwrap();
-            assert_eq!(count(&conn, "media_assets"), 0);
+            assert_eq!(count(&conn, "media_assets"), shipped);
             let items = db::plan_items(&conn, plan).unwrap();
             assert_eq!(
                 items.len(),
@@ -1373,8 +1480,11 @@ mod cold_start {
         let conn = db.0.lock().unwrap();
 
         // The state the old code left: a row whose file never landed.
+        // Counted against the pictures a fresh install already ships
+        // (DECISIONS §90); what this test is about is the one row it adds.
+        let shipped = db::list_media(&conn).unwrap().len();
         let id = db::insert_media(&conn, "image", "backdrop.png", "2026-08-16").unwrap();
-        assert_eq!(db::list_media(&conn).unwrap().len(), 1);
+        assert_eq!(db::list_media(&conn).unwrap().len(), shipped + 1);
 
         // The write fails the way a full disk fails. The row must not survive it.
         let nowhere = std::path::Path::new("/relay-no-such-directory-7c1b/media");
@@ -1384,8 +1494,9 @@ mod cold_start {
             !matches!(err, crate::error::Error::Refused { .. }),
             "a disk that said no is a fault, not a refusal the operator can fix"
         );
-        assert!(
-            db::list_media(&conn).unwrap().is_empty(),
+        assert_eq!(
+            db::list_media(&conn).unwrap().len(),
+            shipped,
             "the Media library must not list an asset whose file never landed —              there is still no `path == \"\"` filter anywhere, and the media server              still ignores `path` entirely, so a row that survives here is a blank              output on Sunday with no message"
         );
 
@@ -1703,16 +1814,21 @@ mod cold_start {
              Anything else here is a preference nobody chose."
         );
 
-        // Everything else is empty. This is the list a cold-start audit walks.
+        // WHAT A FRESH INSTALL CONTAINS, AND WHAT IT STILL DOES NOT.
+        //
+        // This was one list of twelve tables asserted at zero. DECISIONS §90
+        // gives a first launch a starter set, so three of the twelve now carry
+        // rows and the list is split rather than shortened: the starter set is
+        // asserted by identity in
+        // `the_bare_fixture_is_a_first_launch_and_nothing_more`, and everything
+        // else is still held at zero here. The service-record tables in
+        // particular are not negotiable — a fresh install has no history of a
+        // service that never happened.
         for table in [
-            "service_plans",
-            "plan_items",
             "songs",
             "song_sections",
             "song_arrangements",
             "saved_scripture",
-            "announcements",
-            "media_assets",
             "services",
             "transcripts",
             "detections",
@@ -1724,6 +1840,15 @@ mod cold_start {
                 "{table} is not empty on a fresh install"
             );
         }
+        // The starter set, counted here only so this audit's own walk is
+        // complete; its identity is the tripwire's job, not this test's.
+        assert_eq!(count(&conn, "service_plans"), 1);
+        assert_eq!(count(&conn, "plan_items"), 3);
+        assert_eq!(count(&conn, "announcements"), 5);
+        assert_eq!(
+            count(&conn, "media_assets") as usize,
+            channels::bundled_backgrounds().len()
+        );
     }
 
     /// The seeded voice profile's thresholds must BE the one baseline, not a
