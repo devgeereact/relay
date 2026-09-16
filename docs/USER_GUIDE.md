@@ -180,8 +180,7 @@ You will not need these during a service.
 - **Library** — your songs, saved verses, media, announcements, and the history of past services.
 - **Planner** — build a service plan. Cannot reach a screen.
 - **Outputs** — three panes: **Screens** (one row per output screen — the projector, a stage monitor, OBS, the preacher's phone), **Content looks** (which template scripture, lyrics, media and announcements wear by default), and **Sharing** (the LAN address and the preacher's stage remote). Set up once.
-- **Templates** — what scripture *looks like* on the wall. What you see in the editor is exactly what the projector shows. **Import** a design someone shared, or **Export** one of yours to a file (⋮ menu / the preview panel) to hand to another church.
-- **Themes** — the *look beneath* your templates: fonts, colours, spacing, motion. Pick a theme (eight are built in), tweak a copy in the theme editor, then apply it to a template — the template inherits the theme and you override only what you want. Themes export and import as files too. A theme never reaches a screen on its own; it dresses a template, and the template is what fires.
+- **Templates** — what scripture *looks like* on the wall: fonts, colours, spacing, motion, and where everything sits. **A template carries the whole look** — there is no second layer beneath it to set up first, and nothing else has to be applied for a template to be finished. What you see in the editor is exactly what the projector shows. **Import** a design someone shared, or **Export** one of yours to a file (⋮ menu / the preview panel) to hand to another church.
 - **Settings** — audio, speech model, sensitivity, console language, and eight more sections. The
   four worth knowing about: **Dashboard** (is this machine ready, and the path check above),
   **Languages** (how much of Yorùbá, Kiswahili and Hausa Relay actually knows — including the
@@ -250,7 +249,7 @@ These monitors show what the wall cannot:
 - the **wall clock** and a **service timer** counting up from when you started recording;
 - your **private operator note** for the cue (never shown to the congregation).
 
-They inherit their theme like any template, so a monitor matches your house style.
+They are ordinary templates, so a monitor matches your house style.
 One thing to know: pressing **Clear all screens** clears the monitors too — the panic
 key is deliberately total, so it clears *everything*, monitor timers included.
 

@@ -137,12 +137,12 @@
     live:      () => import('./lib/views/Live.svelte'),
     library:   () => import('./lib/views/Library.svelte'),
     planner:   () => import('./lib/views/ServicePlanner.svelte'),
-    // THE TEMPLATES WORKSPACE HOLDS TWO DESKS (docs/REBRAND.md §2). Themes is the
-    // style layer beneath templates and was never a seventh thing an operator
-    // runs a service from — it is where you go while you are already editing a
-    // look. `Templates.svelte` is the router that picks the desk; `themes` is in
-    // `MOVED_TABS` so an operator whose session still remembers the old tab lands
-    // on the desk it went to rather than being dumped on Live.
+    // THE TEMPLATES WORKSPACE IS ONE DESK: browse, then make. Themes was a tab,
+    // then a second desk here, and is now neither — it was folded into the
+    // template model (DECISIONS §87), because a theme's every field was already
+    // a template `style` key. `themes` stays in `MOVED_TABS` so an operator whose
+    // session still remembers the old tab lands on the workspace that now holds
+    // what they were editing rather than being dumped on Live.
     templates: () => import('./lib/views/Templates.svelte'),
     channels:  () => import('./lib/views/Channels.svelte'),
     settings:  () => import('./lib/views/Settings.svelte'),
@@ -166,11 +166,11 @@
   // two are places you go from somewhere else rather than places you run a
   // service from:
   //
-  //   THEMES is the style layer BENEATH templates. A theme never reaches a wall
-  //   on its own: it is applied to a template, and the template is what fires.
-  //   It is now a DESK inside the Templates workspace (`views/Templates.svelte`
-  //   is the router, and the two-way switch is in its header) — one pipeline,
-  //   one workspace, instead of two tabs an operator has to know are related.
+  //   THEMES was the style layer BENEATH templates, and a theme never reached a
+  //   wall on its own. It became a DESK inside the Templates workspace, and then
+  //   stopped existing: a theme had no field a template does not have, so it was
+  //   inlined into every template that pinned it and deleted (DECISIONS §87).
+  //   One pipeline, one workspace, one model.
   //
   //   HELP is not a workspace at all. It is still a real route (see
   //   `viewLoaders`), reached from Settings → Support & guide and from the
@@ -185,7 +185,10 @@
     { key: 'live',      label: 'tab.live',      title: 'Live Service' },
     { key: 'library',   label: 'tab.library',   title: 'Content Library' },
     { key: 'planner',   label: 'tab.planner',   title: 'Service Planner' },
-    { key: 'templates', label: 'tab.templates', title: 'Templates & Themes' },
+    // `title` is the tooltip an operator reads, so it says what the workspace is
+    // rather than what it used to hold: it was 'Templates & Themes' until themes
+    // were folded into templates (DECISIONS §87).
+    { key: 'templates', label: 'tab.templates', title: 'Templates' },
     // Outputs — the ONE surface for every render target: the congregation wall,
     // stage/confidence/preacher monitors, streaming and lobby screens. Each is a
     // real backend channel (native window or LAN/OBS URL over :8032) with its own

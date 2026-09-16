@@ -36,7 +36,7 @@ Map the changed paths to agents:
 |---|---|
 | `src-tauri/src/db/**`, any `ensure_*`, a create/save/import command, `models.rs`, `src/lib/boot/**`, `FirstRun.svelte` | **R1** cold-start |
 | `main.rs` fire path, `pipeline.rs`, `router.rs`, `channels.rs`, `shortcuts.js`, `cues.js`, `plan.js`, `LiveOutputRail.svelte`, `Live.svelte` | **R2** live-path |
-| any `.svelte`, `errors.js`, `src/lib/ui/**`, `themes.js`, `templates.js` | **R3** surface |
+| any `.svelte`, `errors.js`, `src/lib/ui/**`, `styletokens.js`, `templates.js` | **R3** surface |
 | `detection.rs`, `eval.rs`, `router.rs`, `detect.js`, `data/book_aliases.json` | **R4** detection |
 | `audio.rs`, `stt.rs`, `dsp.rs`, `telemetry.rs`, `proimport.rs`, `crash.js`, `session.js`, `remote_api` | **R5** failure |
 

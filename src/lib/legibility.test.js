@@ -13,15 +13,26 @@ const ROOT = path.resolve(__dirname, '../..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 
 /**
- * THE HIGH VISIBILITY LOOK, AS IT REACHED A SCREEN.
+ * THE HIGH VISIBILITY LOOK AS THE MIGRATION INLINES IT — FROZEN BYTES, AND THE
+ * BLOCK BELOW SAYS SO RATHER THAN IMPLYING MORE.
  *
- * It shipped as a built-in THEME, and themes were folded into templates
- * (DECISIONS §87). `ensure_themes_are_inlined` wrote this exact style into every
- * template that pinned it, so for a church that chose it the numbers below are
- * about what they actually have — the snapshot is where those bytes live, and it
- * is the file Rust reads. Track D re-seeds High Visibility as a template FAMILY;
- * until it does, this is the only copy and the accessibility claim is held here
- * rather than dropped with the desk.
+ * `legacy_themes.json` is a SNAPSHOT: `db/templates.rs` reads the same bytes
+ * through `include_str!` and `ensure_themes_are_inlined` writes this style into
+ * every template that pinned theme -9. The file can never change — that is what
+ * a snapshot is for — so these assertions cannot spontaneously go red, and they
+ * are deliberately NOT a claim that anything a church can pick today is legible.
+ *
+ * What they DO guard is real and is the migration: the numbers a church that
+ * already chose High Visibility now carries inside their own template. If
+ * somebody edits this file, or the migration's whitelist stops carrying a key
+ * these assertions read, this is what notices — and the failure would be a look
+ * changing on an update, which is the one promise `ensure_themes_are_inlined`
+ * makes.
+ *
+ * It does NOT cover the selection. High Visibility was picked by choosing a
+ * theme; themes are gone (DECISIONS §87) and no shelf template replaces it yet.
+ * That is RG-37, which is PARTIAL for exactly this reason, and it is not a hole
+ * this file can fill — a test cannot assert a template nobody has seeded.
  */
 const HIGH_VIS = JSON.parse(
   fs.readFileSync(path.join(ROOT, 'src-tauri/data/legacy_themes.json'), 'utf8'),
@@ -150,7 +161,7 @@ describe('the thresholds are reference points, and it says so', () => {
   });
 });
 
-describe('High Visibility is a LOOK, not a mode', () => {
+describe('High Visibility, as the migration preserves it (frozen snapshot bytes)', () => {
   const hv = HIGH_VIS;
 
   it('is a style a template can carry, not a rendering branch', () => {

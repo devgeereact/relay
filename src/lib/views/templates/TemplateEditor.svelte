@@ -550,7 +550,17 @@
   }
   function num(k, v) { set(k, +v); }
   // Layer colour/fill/font can bind to a STYLE TOKEN (`theme:accent`) that follows
-  // this template's own style, or be a literal. Colours offer every token except the
+  // this template's own style, or be a literal.
+  //
+  // THE WORD AN OPERATOR READS IS `linked`, AND THE PICKER IS `Style link`.
+  // Both used to say "theme", which named a surface that no longer exists
+  // (DECISIONS §87). The stored VALUE is untouched and still spells
+  // `theme:accent` — it is written into every saved layer in every install, and
+  // renaming it would need a migration to buy a nicer word — so this is a label
+  // change only and nothing an operator has saved moves. Five pickers and five
+  // swatch readouts, renamed together: a label saying one thing beside a readout
+  // saying another is how a half-rename gets left behind.
+  // Colours offer every token except the
   // typeface; unbinding ('custom') restores an editable literal.
   const COLOUR_TOKENS = THEME_TOKENS.filter((t) => t.token !== 'theme:font');
   function bindToken(field, value, fallback) {
@@ -1436,7 +1446,7 @@
             <h3 class="te-sec">Background</h3>
             <div class="te-frow">
               <label class="te-fk" for="te-fill">Fill</label>
-              <span class="te-fv te-swatch"><input id="te-fill" type="color" value={isColor(sel.fill) ? sel.fill : '#0b0906'} on:input={(e) => { set('fill', e.target.value); set('image', null); }} disabled={isThemeToken(sel.fill)} /><span class="te-hex r-mono">{isThemeToken(sel.fill) ? 'theme' : isColor(sel.fill) ? sel.fill.toUpperCase() : 'gradient'}</span></span>
+              <span class="te-fv te-swatch"><input id="te-fill" type="color" value={isColor(sel.fill) ? sel.fill : '#0b0906'} on:input={(e) => { set('fill', e.target.value); set('image', null); }} disabled={isThemeToken(sel.fill)} /><span class="te-hex r-mono">{isThemeToken(sel.fill) ? 'linked' : isColor(sel.fill) ? sel.fill.toUpperCase() : 'gradient'}</span></span>
             </div>
             <div class="te-frow"><label class="te-fk" for="te-bgbind">Style link</label><select id="te-bgbind" class="r-select te-fv" value={isThemeToken(sel.fill) ? sel.fill : 'custom'} on:change={(e) => { bindToken('fill', e.target.value, '#0b0906'); if (e.target.value !== 'custom') set('image', null); }}><option value="custom">Custom fill</option>{#each COLOUR_TOKENS as t}<option value={t.token}>{t.label}</option>{/each}</select></div>
             <div class="te-frow">
@@ -1485,7 +1495,7 @@
             <p class="te-fnote">Built-in looks only: a kiosk or OBS page has no database, so a custom template here would render on this wall and not in the stream.</p>
             <div class="te-frow"><label class="te-fk" for="te-rrad">Corner</label><span class="te-fv te-rangerow"><input id="te-rrad" class="r-range" type="range" min="0" max="8" step="0.2" value={sel.radius || 0} on:input={(e) => num('radius', e.target.value)} use:rangeFill={sel.radius || 0} /><span class="te-rnum r-mono">{(sel.radius || 0).toFixed(1)}</span></span></div>
             <div class="te-frow"><label class="te-fk" for="te-rout">Outline</label><span class="te-fv te-rangerow"><input id="te-rout" class="r-range" type="range" min="0" max="1" step="0.05" value={sel.outline || 0} on:input={(e) => num('outline', e.target.value)} use:rangeFill={sel.outline || 0} /><span class="te-rnum r-mono">{(sel.outline || 0).toFixed(2)}</span></span></div>
-            <div class="te-frow"><label class="te-fk" for="te-routc">Outline colour</label><span class="te-fv te-swatch"><input id="te-routc" type="color" value={isColor(sel.outlineColor) ? sel.outlineColor : '#5b9cf8'} on:input={(e) => set('outlineColor', e.target.value)} disabled={isThemeToken(sel.outlineColor)} /><span class="te-hex r-mono">{isThemeToken(sel.outlineColor) ? 'theme' : isColor(sel.outlineColor) ? sel.outlineColor.toUpperCase() : '#5B9CF8'}</span></span></div>
+            <div class="te-frow"><label class="te-fk" for="te-routc">Outline colour</label><span class="te-fv te-swatch"><input id="te-routc" type="color" value={isColor(sel.outlineColor) ? sel.outlineColor : '#5b9cf8'} on:input={(e) => set('outlineColor', e.target.value)} disabled={isThemeToken(sel.outlineColor)} /><span class="te-hex r-mono">{isThemeToken(sel.outlineColor) ? 'linked' : isColor(sel.outlineColor) ? sel.outlineColor.toUpperCase() : '#5B9CF8'}</span></span></div>
             <div class="te-frow"><label class="te-fk" for="te-routb">Style link</label><select id="te-routb" class="r-select te-fv" value={isThemeToken(sel.outlineColor) ? sel.outlineColor : 'custom'} on:change={(e) => bindToken('outlineColor', e.target.value, '#5b9cf8')}><option value="custom">Custom colour</option>{#each COLOUR_TOKENS as t}<option value={t.token}>{t.label}</option>{/each}</select></div>
             <div class="te-frow">
               <label class="te-fk" for="te-rop">Opacity</label>
@@ -1503,7 +1513,7 @@
             <p class="te-fnote">The band runs from <b>Top</b> to the bottom edge. <b>Lift</b> holds its words off the baseline; the words are centred in what is left.</p>
 
             <h3 class="te-sec">Effects</h3>
-            <div class="te-frow"><label class="te-fk" for="te-bfill">Fill</label><span class="te-fv te-swatch"><input id="te-bfill" type="color" value={isColor(sel.fill) ? sel.fill : '#101319'} on:input={(e) => set('fill', e.target.value)} disabled={isThemeToken(sel.fill)} /><span class="te-hex r-mono">{isThemeToken(sel.fill) ? 'theme' : isColor(sel.fill) ? sel.fill.toUpperCase() : 'gradient'}</span></span></div>
+            <div class="te-frow"><label class="te-fk" for="te-bfill">Fill</label><span class="te-fv te-swatch"><input id="te-bfill" type="color" value={isColor(sel.fill) ? sel.fill : '#101319'} on:input={(e) => set('fill', e.target.value)} disabled={isThemeToken(sel.fill)} /><span class="te-hex r-mono">{isThemeToken(sel.fill) ? 'linked' : isColor(sel.fill) ? sel.fill.toUpperCase() : 'gradient'}</span></span></div>
             <div class="te-frow"><label class="te-fk" for="te-bfillbind">Style link</label><select id="te-bfillbind" class="r-select te-fv" value={isThemeToken(sel.fill) ? sel.fill : 'custom'} on:change={(e) => bindToken('fill', e.target.value, '#101319')}><option value="custom">Custom fill</option>{#each COLOUR_TOKENS as t}<option value={t.token}>{t.label}</option>{/each}</select></div>
             <!-- OPACITY MEANS WHAT IT SAYS (§4). The band's body sits at exactly the
                  alpha set here — nothing multiplies it down on the way to the wall. -->
@@ -1524,7 +1534,7 @@
             {/if}
           {:else if sel.type === 'shape'}
             <h3 class="te-sec">Shape</h3>
-            <div class="te-frow"><label class="te-fk" for="te-sfill">Fill</label><span class="te-fv te-swatch"><input id="te-sfill" type="color" value={isColor(sel.fill) ? sel.fill : '#101319'} on:input={(e) => set('fill', e.target.value)} disabled={isThemeToken(sel.fill)} /><span class="te-hex r-mono">{isThemeToken(sel.fill) ? 'theme' : isColor(sel.fill) ? sel.fill.toUpperCase() : '#101319'}</span></span></div>
+            <div class="te-frow"><label class="te-fk" for="te-sfill">Fill</label><span class="te-fv te-swatch"><input id="te-sfill" type="color" value={isColor(sel.fill) ? sel.fill : '#101319'} on:input={(e) => set('fill', e.target.value)} disabled={isThemeToken(sel.fill)} /><span class="te-hex r-mono">{isThemeToken(sel.fill) ? 'linked' : isColor(sel.fill) ? sel.fill.toUpperCase() : '#101319'}</span></span></div>
             <div class="te-frow"><label class="te-fk" for="te-sfillbind">Style link</label><select id="te-sfillbind" class="r-select te-fv" value={isThemeToken(sel.fill) ? sel.fill : 'custom'} on:change={(e) => bindToken('fill', e.target.value, '#101319')}><option value="custom">Custom fill</option>{#each COLOUR_TOKENS as t}<option value={t.token}>{t.label}</option>{/each}</select></div>
             <div class="te-frow"><label class="te-fk" for="te-sop">Opacity</label><span class="te-fv te-rangerow"><input id="te-sop" class="r-range" type="range" min="0" max="1" step="0.05" value={sel.opacity ?? 1} on:input={(e) => num('opacity', e.target.value)} use:rangeFill={sel.opacity ?? 1} /><span class="te-rnum r-mono">{Math.round((sel.opacity ?? 1) * 100)}%</span></span></div>
             <div class="te-frow"><label class="te-fk" for="te-srad">Radius</label><span class="te-fv te-rangerow"><input id="te-srad" class="r-range" type="range" min="0" max="8" step="0.2" value={sel.radius || 0} on:input={(e) => num('radius', e.target.value)} use:rangeFill={sel.radius || 0} /><span class="te-rnum r-mono">{(sel.radius || 0).toFixed(1)}</span></span></div>
@@ -1569,7 +1579,7 @@
             <button class="r-btn quiet sm te-minilink" on:click={() => detectFonts(false)}>Use all computer fonts {fontMsg}</button>
             {#if missingFont}<p class="te-fwarn">“{fontLabel(missingFont)}” isn't installed here — outputs use a default. Install it to use it.</p>{/if}
             <div class="te-frow"><label class="te-fk" for="te-size">Size</label><span class="te-fv te-stepper"><input id="te-size" class="te-num r-mono" type="number" min="1" max="16" step="0.1" value={sel.size} on:input={(e) => num('size', e.target.value)} /><span class="te-unit r-mono">cqw</span></span></div>
-            <div class="te-frow"><label class="te-fk" for="te-col">Colour</label><span class="te-fv te-swatch"><input id="te-col" type="color" value={isColor(sel.color) ? sel.color : '#ffffff'} on:input={(e) => set('color', e.target.value)} disabled={isThemeToken(sel.color)} /><span class="te-hex r-mono">{isThemeToken(sel.color) ? 'theme' : isColor(sel.color) ? sel.color.toUpperCase() : '#FFFFFF'}</span></span></div>
+            <div class="te-frow"><label class="te-fk" for="te-col">Colour</label><span class="te-fv te-swatch"><input id="te-col" type="color" value={isColor(sel.color) ? sel.color : '#ffffff'} on:input={(e) => set('color', e.target.value)} disabled={isThemeToken(sel.color)} /><span class="te-hex r-mono">{isThemeToken(sel.color) ? 'linked' : isColor(sel.color) ? sel.color.toUpperCase() : '#FFFFFF'}</span></span></div>
             <div class="te-frow"><label class="te-fk" for="te-colbind">Style link</label><select id="te-colbind" class="r-select te-fv" value={isThemeToken(sel.color) ? sel.color : 'custom'} on:change={(e) => bindToken('color', e.target.value, '#ffffff')}><option value="custom">Custom colour</option>{#each COLOUR_TOKENS as t}<option value={t.token}>{t.label}</option>{/each}</select></div>
             <div class="te-frow">
               <span class="te-fk">Align</span>

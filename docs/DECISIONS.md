@@ -4247,9 +4247,10 @@ a second gallery, a second editor, a second store, a second export format (`.rel
 hub frame of its own (`{"kind":"themes"}`, pushed on every kiosk `hello`). None of them was wrong;
 all of them were a second answer to a question the template already answers.
 
-**The decision.** Delete the theme model. `ensure_themes_are_inlined` (§85's wave, landed before
-this) writes each pinned theme's whitelisted style into the template that pinned it, under the same
-precedence the renderer applied, so **no look changed by construction**; a custom theme nothing
+**The decision.** Delete the theme model. `db/templates.rs::ensure_themes_are_inlined`, which landed
+earlier in this same track and runs on the migration ladder before any window is shown, writes each
+pinned theme's whitelisted style into the template that pinned it, under the same precedence the
+renderer applied, so **no look changed by construction**; a custom theme nothing
 referenced is preserved as a real template rather than discarded; a malformed snapshot leaves
 everything alone. Only then are the surfaces removed: both galleries, the desk strip, the store, the
 `sync_kiosk_themes` command, `KioskHub::{cache_themes, set_themes}`, the `themes` frame and its

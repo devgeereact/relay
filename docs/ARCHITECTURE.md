@@ -205,7 +205,7 @@ Frontend↔core contract. Commands are `invoke()` (camelCase JS args → snake_c
 > `qa-inventory.mjs` traces one hop further — to a control something actually renders.
 
 **Areas, which do not rot:** audio & STT · detection & routing · scripture search · outputs and
-channels · templates and themes · planner · lyrics and arrangements · library (saved scripture,
+channels · templates · planner · lyrics and arrangements · library (saved scripture,
 announcements, media) · service history and the service record · voice profiles · rooms ·
 service lock · update safety · diagnostics · models.
 
@@ -232,8 +232,15 @@ Networked clients get the content events as JSON frames over the WS hub
 exactly three kinds back — `hello`, `beat`, `rendered` — none of which can carry content
 ([SECURITY.md](SECURITY.md) T4).
 
-**A client that says `hello` is answered with three things: its template, the custom
-themes, and WHAT IS ON THE SCREENS RIGHT NOW.** The last of those is the retained
+**A client that says `hello` is answered with two things that decide what it shows: its
+template, and WHAT IS ON THE SCREENS RIGHT NOW.** It was three — the operator's custom
+themes were sent as well — until themes were folded into templates
+([DECISIONS.md](DECISIONS.md) §87); a template now carries its whole look, so there is
+nothing left for a browser source with no database to resolve it against. A third frame
+is sent when, and only when, the operator has a live transition override in force
+(§84): configuration rather than content, so it paints nothing on its own, and it is
+sent BEFORE the retained frame so a screen joining late is not the only one in the
+building still cutting. The second of the two is the retained
 frame — the most recent `content`, `clear` or `black` — kept by `KioskHub` so a
 screen that joins in the middle of a service is not blank until the next fire
 (DECISIONS §68, CLAUDE.md rule 43). `stage_next` is deliberately not retained: it is
@@ -255,7 +262,10 @@ live — it fails on any new hub message that no client has an explicit answer f
 
 - **One store** — `src/lib/stores/capture.js` — holds all writable stores (`capture`, `transcript`, `detections` = pending suggestions, `live` = what's on screen, `templates`, `screenBlack`, `panicError`, `serviceLock`) plus every command wrapper and event listener. The file's header states which wrappers **throw** and which **swallow**, and a test holds each one in its group — a contract stated only in a comment was false for `stopCapture` for as long as the comment existed.
 - **`TemplateRender.svelte`** is the single renderer (see §4).
-- **Tabs** — **Live · Outputs · Templates · Themes · Library · Planner · Settings · Help.** There is **no Console tab**: `Live` *is* the console, and the plan runs there, because an operator running a plan on a separate tab could not see the AI's suggestions — and the preacher going off-script is the entire product. (The Outputs tab's internal key is still `channels` and its file is `Channels.svelte`; the label is what an operator reads.)
+- **Workspaces** — **Live · Library · Planner · Templates · Outputs · Settings**, in that order
+  (docs/REBRAND.md §2). Themes was a tab here, then a desk inside Templates, and is now neither:
+  it was folded into the template model (DECISIONS §87). **Help** left the strip and is still a
+  real route, reached from Settings and from the cheatsheet. There is **no Console tab**: `Live` *is* the console, and the plan runs there, because an operator running a plan on a separate tab could not see the AI's suggestions — and the preacher going off-script is the entire product. (The Outputs tab's internal key is still `channels` and its file is `Channels.svelte`; the label is what an operator reads.)
 - **Sub-surfaces** — `Library` (Scripture / Lyrics / Media / Announcements / History, plus `SongEditor`, `ImportReview`, the arrangement editor and the Sunday report), `Settings` (11 sections, including **Diagnostics** — which holds the readiness screen, inside Settings and not on the tab bar — **Scripture & Languages** and **Privacy & Advanced**); plus standalone `Output` and `Stage` pages.
 - **Cross-cutting shell state** — the panic bar, the rehearsal band, the update banner, and the one-line **degraded** state are mounted once in `App.svelte`, on every tab, never per view. So is `shortcuts.js`, the single global keydown listener.
 - **Design system** — global `--v-*` tokens in `src/app.css`; every view shares them, and the four promise-carrying colours are defined once (amber = on air, amethyst = rehearsal, cyan = a guess, grey = cued).
