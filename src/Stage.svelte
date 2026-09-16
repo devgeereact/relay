@@ -434,12 +434,37 @@
       cdFrom = null;
       cdPaused = null;
       next = null;
-      // `svcStart` deliberately SURVIVES. A cleared or blacked wall is not the end
-      // of a service, and the elapsed zone is the preacher's own clock — taking it
-      // away when the operator hits Esc would answer a question nobody asked.
+      // A WORD TO THE PREACHER COMES DOWN WITH THE SCREENS — DECISIONS §89.
+      //
+      // This line is the answer to a question that used to be left unasked. The
+      // five fields above were reset and `alert` was not, and nothing anywhere
+      // recorded why — a third answer, given by nobody, to exactly the question
+      // §89 exists to settle.
+      //
+      // `.alert` is `position: fixed; inset: 0` — it IS the screen, not a figure
+      // on it. So without this line an operator pressed `B`, whose entire meaning
+      // is *every output goes opaque black*, and the preacher's tablet stayed a
+      // full-bleed pulsing red panel: the brightest thing in the room, under a
+      // control the console had just reported succeeding. That is the failure the
+      // comment above is about, one field further along again.
+      //
+      // And the two halves of the room disagreed. `stage_alert` is deliberately
+      // NOT a retained frame (rule 43 — a private word must not arrive again
+      // later), so a tablet that reloaded or dropped off the wifi came back with
+      // no alert while the one beside it that stayed connected kept the panel.
+      // Clearing here is what makes the live path agree with the reconnect path.
+      //
+      // `svcStart` deliberately SURVIVES, and so does a programme timer (§89). A
+      // cleared or blacked wall is not the end of a service, and the elapsed zone
+      // is the preacher's own clock — taking it away when the operator hits Esc
+      // would answer a question nobody asked. The line §89 draws is between a
+      // thing that COUNTS and a thing that SAYS something: a panic control takes
+      // back every sentence anybody put on a screen, and stops none of the clocks.
+      alert = '';
     } else if (m.kind === 'stage_alert') {
       // `text: null` (or empty) clears it. An alert is an instruction, not a
-      // state of the wall, so nothing here is retained or restored on reconnect.
+      // state of the wall, so nothing here is retained or restored on reconnect —
+      // and a panic control takes it down with everything else it says (§89).
       alert = (m.text || '').trim();
     } else if (m.kind === 'stage_next') {
       next = m.label || m.text ? { label: m.label || '', text: m.text || '' } : null;
