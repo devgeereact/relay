@@ -231,7 +231,7 @@ describe('review answers for a layered template', () => {
   const byName = (n) => list.find((t) => t.name === n);
 
   it('a background + text template is fully answered', () => {
-    const r = reviewTemplate(byName('High Visibility'), null, ROOM);
+    const r = reviewTemplate(byName('Scripture · Meridian'), null, ROOM);
     expect(r.unknowns, 'every value is derivable from its layers').toBe(0);
     expect(r.verse.state).toBe('ok');
     expect(r.reference.state).toBe('ok');
@@ -241,20 +241,20 @@ describe('review answers for a layered template', () => {
     // A lower third has no background layer on purpose — the rest of the frame is
     // a camera Relay does not control. Before this, that meant `unknown`.
     //
-    // Was `Lower Third · Scripture`, whose name the coordinated Lower Third
-    // family now takes, so the shelf row was retired rather than shipped twice.
-    // `Lower Third · Lyric` is the shelf's remaining band and exercises the same
-    // adapter path — the ground comes off the band's own fill either way. The
-    // lookup is asserted first because `reviewTemplate(undefined)` answers
-    // `unknown`, which is exactly what this test forbids: a missing subject would
-    // have read as the very failure being guarded against.
-    const tpl = byName('Lower Third · Lyric');
+    // Was `Lower Third · Scripture`, then `Lower Third · Lyric`; wave 5 rebuilt
+    // the shelf and the bands are the five `Scroll · …` lower thirds.
+    // `Scroll · Banner` exercises the same adapter path — the ground comes off
+    // the band's own fill either way. The lookup is asserted first because
+    // `reviewTemplate(undefined)` answers `unknown`, which is exactly what this
+    // test forbids: a missing subject would have read as the very failure being
+    // guarded against.
+    const tpl = byName('Scroll · Banner');
     expect(tpl, 'the shelf has no band left to review').toBeTruthy();
     const r = reviewTemplate(tpl, null, ROOM);
     expect(r.verse.state).not.toBe('unknown');
 
     // THE REFERENCE HALF, RESTORED. It used to ride on the same shelf entry, and
-    // `Lower Third · Lyric` cannot carry it: a lyric band has no reference-bound
+    // a `Scroll · …` band cannot carry it: a crawling notice has no reference-bound
     // layer at all, on purpose (`rhide` in the prototype — a song's reference is
     // its title, and a title under every line reads like a slide rather than a
     // caption). Dropping the assertion with the template would have left NOTHING
@@ -282,20 +282,20 @@ describe('review answers for a layered template', () => {
   });
 
   it('…and the shelf is no longer mostly unanswerable', () => {
-    // Three of seven, down from four of eight: the band that left took an
-    // answerable entry with it. The floor moves with the shelf rather than the
-    // claim being quietly dropped — what it holds is that the adapter still
-    // answers for the majority of what a fresh install can actually check
-    // (both composites are REFUSED on purpose, below, and `Notice Board`'s
-    // gradient is honestly unknown).
+    // Thirty of forty since wave 5 rebuilt the shelf, up from three of seven.
+    // The floor moves with the shelf rather than the claim being quietly dropped —
+    // what it holds is that the adapter answers for the great majority of what a
+    // fresh install can actually check. The ten it cannot are honest refusals:
+    // the five composites (their words are a real inner template at a different
+    // width), and the five looks with no reference-bound layer to answer for.
     const answered = list.filter((t) => reviewTemplate(t, null, ROOM).unknowns === 0);
-    expect(answered.length, 'most of the shelf must now be checkable').toBeGreaterThanOrEqual(3);
+    expect(answered.length, 'most of the shelf must now be checkable').toBeGreaterThanOrEqual(25);
   });
 
   it('a composite is REFUSED rather than guessed at', () => {
     // Its words are a real inner template at a different width, so answering from
     // the outer one would be a guess with a number on it.
-    expect(reviewTemplate(byName('SuperSource · Word right'), null, ROOM).verse.state).toBe('unknown');
+    expect(reviewTemplate(byName('Source · Word right'), null, ROOM).verse.state).toBe('unknown');
   });
 
   it('and a gradient is still honestly unknown, not quietly passed', () => {

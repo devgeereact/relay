@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { templateKind, kindsPresent, KIND_META, KIND_ORDER } from './templateKind.js';
 import { STARTERS, regionsToLayers } from './layers.js';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 // Shapes taken verbatim from the seeded built-ins in db/templates.rs, so these
 // pin the derivation against the templates every install actually ships with.
@@ -237,5 +239,39 @@ describe('kindsPresent', () => {
   it('is empty for an empty library', () => {
     expect(kindsPresent([])).toEqual([]);
     expect(kindsPresent(undefined)).toEqual([]);
+  });
+});
+
+describe('the seeded shelf', () => {
+  // WHAT A CHURCH ACTUALLY FINDS, asked of `templateKind` rather than of a
+  // fixture. The per-name table — which of the forty lands on which role, and why
+  // three of the eight prefixes land somewhere other than their own name — lives
+  // in `shelf.test.js`, beside the file it reads. What is held HERE is the claim
+  // this module exists for: a seeded row may never come back `custom`.
+  //
+  // The failure phase 4 closed was exactly that. `templateKind` read
+  // `layout.regions` only, so every layer template answered `custom`, the gallery
+  // rail could offer no row but Custom for any of them, and the inspector's
+  // "Content type" said Custom over a lower third. Wave 5 made the shelf entirely
+  // layer-model, which puts all forty on that branch — so if it ever regresses,
+  // it regresses for everything a fresh install has.
+  const SHELF = JSON.parse(
+    readFileSync(resolve(__dirname, '../../src-tauri/data/shelf_templates.json'), 'utf8'),
+  ).templates;
+
+  it('has forty looks and not one of them derives Custom', () => {
+    expect(SHELF).toHaveLength(40);
+    const custom = SHELF.filter((t) => templateKind(t) === 'custom').map((t) => t.name);
+    expect(custom, 'a seeded look has no rule and falls to Custom').toEqual([]);
+  });
+
+  it('derives a role KIND_META can name and KIND_ORDER can place', () => {
+    // A role with no display metadata renders as `undefined` in the rail; a role
+    // missing from the order is dropped from it silently, which is worse.
+    for (const t of SHELF) {
+      const k = templateKind(t);
+      expect(KIND_META[k], `${t.name}: no display metadata for ${k}`).toBeTruthy();
+      expect(KIND_ORDER, `${t.name}: ${k} has no place in the rail`).toContain(k);
+    }
   });
 });

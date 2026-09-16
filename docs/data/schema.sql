@@ -58,7 +58,9 @@ CREATE TABLE templates (
     name               TEXT NOT NULL,
     region_config_json TEXT NOT NULL,     -- layout regions, see docs/SPEC.md §5
     style_json         TEXT NOT NULL,     -- fonts, colors, transitions
-    console_active     INTEGER NOT NULL DEFAULT 0  -- one of the (max 4) styles on the console output grid
+    console_active     INTEGER NOT NULL DEFAULT 0, -- one of the (max 4) styles on the console output grid
+    seed_key           TEXT,               -- the seeder's stable slug; NULL = hand-made. Never written by an operator.
+    edited_at          TEXT                -- stamped by any save that is not the seeder's
 );
 
 CREATE TABLE output_channels (

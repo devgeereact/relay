@@ -1637,26 +1637,36 @@ mod cold_start {
             31_102,
             "the FTS mirror is built"
         );
-        // Five built-ins + the ready-to-use presets. The exact total is asserted
-        // in `db::mod::seeds_the_builtin_templates` against the code's own count;
-        // here it is the NAMES that matter, because the seed audit's claim is
-        // "these five looks are shipped", not "some number of rows exist".
+        // THE SHELF. The exact total is asserted in
+        // `db::mod::seeds_the_builtin_templates` against the code's own count; here
+        // it is the ROLES that matter, because the seed audit's claim is "a church
+        // finds a look for every kind of content it fires", not "some number of
+        // rows exist".
         let names: Vec<String> = db::list_templates(&conn)
             .unwrap()
             .into_iter()
             .map(|t| t.name)
             .collect();
-        assert!(names.len() >= 5, "the built-in templates are missing");
-        // 31 at the time of the cold-start audit: 4 original built-ins +
-        // "Worship Lyrics" + 26 presets (9 solid looks, 5 lyric/lower-third/stage
-        // variants, and 3 themed families of 4). 39 since REBRAND wave 4 added
-        // the eight-look SHELF — the prototype's lower thirds, its two SuperSource
-        // composites, its stage look, its media frame, High Visibility and Notice
-        // Board (`data/shelf_templates.json`). The figure is prose, not an
-        // assertion, for the reason stated above; the real count is asserted in
-        // `db::mod::seeds_the_builtin_templates` against the code's own total.
-        for want in ["Classic Serif", "Worship Lyrics"] {
-            assert!(names.iter().any(|n| n == want), "the seed lost {want:?}");
+        // 31 at the time of the cold-start audit, 39 after REBRAND wave 4 added the
+        // shelf, 40 since wave 5 rebuilt the shelf whole: eight roles of five, every
+        // one layer-model, replacing the five region-model built-ins and the
+        // twenty-five family rows. The figure is prose, not an assertion, for the
+        // reason stated above.
+        for role in [
+            "Scripture · ",
+            "Song · ",
+            "Media · ",
+            "Announce · ",
+            "Timer · ",
+            "Scroll · ",
+            "Source · ",
+            "Stage · ",
+        ] {
+            assert_eq!(
+                names.iter().filter(|n| n.starts_with(role)).count(),
+                5,
+                "the seed does not ship five {role:?} looks"
+            );
         }
         assert_eq!(count(&conn, "output_channels"), 4);
         assert_eq!(count(&conn, "voice_profiles"), 1);
