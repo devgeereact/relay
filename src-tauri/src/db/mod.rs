@@ -39,7 +39,7 @@ use rusqlite::{Connection, OptionalExtension};
 use std::path::PathBuf;
 
 // Migration + seed helpers, pulled from the aggregates they belong to.
-use channels::seed_channels;
+use channels::{ensure_channel_role, seed_channels};
 #[cfg(test)]
 use serde_json::Value;
 use templates::{
@@ -372,6 +372,7 @@ fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
     // look it had, written into its own style. See templates.rs for why it is one
     // transaction and what a dangling ref does.
     ensure_themes_are_inlined(conn)?;
+    ensure_channel_role(conn)?; // output_channels.role — what a screen is FOR
     ensure_service_plans(conn)?; // Planner
     ensure_songs(conn)?; // Lyrics
     ensure_saved_scripture(conn)?; // Library
@@ -1877,6 +1878,7 @@ mod tests {
             include_str!("plans.rs"),
             include_str!("environments.rs"),
             include_str!("settings.rs"),
+            include_str!("channels.rs"),
         ];
         let mut adds: Vec<(String, String)> = Vec::new();
         for src in SOURCES {
@@ -2029,6 +2031,7 @@ mod tests {
             include_str!("plans.rs"),
             include_str!("environments.rs"),
             include_str!("settings.rs"),
+            include_str!("channels.rs"),
         ];
         let migrated: Vec<String> = SOURCES
             .iter()
