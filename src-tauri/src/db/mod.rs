@@ -21,6 +21,7 @@ mod profiles;
 mod services;
 mod settings;
 mod songs;
+mod starter;
 mod templates;
 mod verses;
 
@@ -32,6 +33,7 @@ pub use profiles::*;
 pub use services::*;
 pub use settings::*;
 pub use songs::*;
+pub use starter::*;
 pub use templates::*;
 pub use verses::*;
 
@@ -677,8 +679,21 @@ pub fn init_fresh(conn: &Connection) -> rusqlite::Result<()> {
     seed(conn)?;
     // Guarantee an active voice profile exists even on a bare in-memory DB.
     ensure_tables(conn)?;
-    // NOTHING SEEDS DEMO CONTENT HERE, and nothing ever may. `db::demo::load` has
-    // exactly one caller, the `load_demo_content` command an operator presses.
+    // A FRESH INSTALL SHIPS STARTER CONTENT, AND THIS LINE USED TO FORBID IT.
+    //
+    // It said *"NOTHING SEEDS DEMO CONTENT HERE, and nothing ever may."* That
+    // rule is reversed on the operator's decision and written up as **DECISIONS
+    // §90**: an empty install is not neutral, the instruments this repository
+    // trusts are about drift rather than emptiness, and starter content is not
+    // demo content. `db::starter` writes a few announcements, one row per
+    // picture Relay ships, and one example plan.
+    //
+    // The half of the old rule that did NOT move: `db::demo::load` still has
+    // exactly one caller, the `load_demo_content` command an operator presses,
+    // and neither module calls the other. Starter content carries no `Demo · `
+    // mark and no ledger, because it is the church's from the moment they see
+    // it; demo content is a labelled sample that can be taken back out.
+    starter::seed_starter(conn)?;
     // Stamp it, so a brand-new DB is never mistaken for a v0 one and put through
     // the legacy sniff-based forward-fills it has no need of.
     set_user_version(conn, SCHEMA_VERSION)?;
@@ -1270,8 +1285,13 @@ mod tests {
         let conn = fresh_db();
         ensure_service_plans(&conn).unwrap();
 
+        // COUNTED AGAINST WHAT A FRESH INSTALL ALREADY HAS. This read `== 1` and
+        // `is_empty()` while a first launch had no plans; DECISIONS §90 gives it
+        // the example plan, and what this test is about is one plan's cues, not
+        // how many plans exist.
+        let before = list_plans(&conn).unwrap().len();
         let pid = create_plan(&conn, "Sunday Morning", "2026-07-05").unwrap();
-        assert_eq!(list_plans(&conn).unwrap().len(), 1);
+        assert_eq!(list_plans(&conn).unwrap().len(), before + 1);
 
         // Append three cues; positions are assigned 0,1,2.
         let a = add_plan_item(&conn, pid, "scripture", "Psalm 23:1", "{}", None).unwrap();
@@ -1296,7 +1316,7 @@ mod tests {
         remove_plan_item(&conn, a).unwrap();
         assert_eq!(plan_items(&conn, pid).unwrap().len(), 2);
         delete_plan(&conn, pid).unwrap();
-        assert!(list_plans(&conn).unwrap().is_empty());
+        assert_eq!(list_plans(&conn).unwrap().len(), before);
         assert!(plan_items(&conn, pid).unwrap().is_empty());
     }
 
@@ -1476,11 +1496,14 @@ mod tests {
     fn announcements_crud() {
         let conn = fresh_db();
         ensure_announcements(&conn).unwrap();
-        assert!(list_announcements(&conn).unwrap().is_empty());
+        // The starter notices are already here (DECISIONS §90), so this counts
+        // the one it makes rather than the whole table. `list_announcements` is
+        // newest first, so the new row is still at the front.
+        let before = list_announcements(&conn).unwrap().len();
 
         let id = save_announcement(&conn, None, "Midweek", "Wed 7pm", "2026-07-07").unwrap();
         let list = list_announcements(&conn).unwrap();
-        assert_eq!(list.len(), 1);
+        assert_eq!(list.len(), before + 1);
         assert_eq!(list[0].title, "Midweek");
         assert_eq!(list[0].body, "Wed 7pm");
 
@@ -1494,12 +1517,12 @@ mod tests {
         )
         .unwrap();
         let list = list_announcements(&conn).unwrap();
-        assert_eq!(list.len(), 1);
+        assert_eq!(list.len(), before + 1);
         assert_eq!(list[0].title, "Midweek Service");
         assert_eq!(list[0].body, "Wed 7:30pm");
 
         delete_announcement(&conn, id).unwrap();
-        assert!(list_announcements(&conn).unwrap().is_empty());
+        assert_eq!(list_announcements(&conn).unwrap().len(), before);
     }
 
     #[test]
