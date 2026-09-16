@@ -1,0 +1,101 @@
+{
+  "_readme": [
+    "THE ROWS THIS WAVE STOPPED SHIPPING — frozen, so the retirement migration can match on BYTES.",
+    "",
+    "Task 12 replaced fourteen standalone presets and one shelf row with five coordinated families of",
+    "five content kinds. Seeds insert BY NAME and only when absent, so an existing install keeps every",
+    "old row and gains the new ones on top. `ensure_retired_presets_are_gone` removes a row only when",
+    "its name is here AND its `region_config_json` and `style_json` still equal the bytes below AND",
+    "nothing points at it. A single edited colour makes the row somebody's work, and somebody's work is",
+    "not a leftover.",
+    "",
+    "`layout` and `style` are STRINGS, not nested objects, and that is load-bearing. The comparison is",
+    "byte-for-byte against what the seed wrote; parsing and re-serialising sorts the keys (serde_json's",
+    "map is a BTreeMap) and would produce a string that equals nothing in any database. The shelf row's",
+    "bytes are already key-sorted because the seed itself writes them through `Value::to_string()` —",
+    "these are the bytes as inserted, not as authored.",
+    "",
+    "Produced once by a throwaway `dump_retiring_presets` test run against the tree that still had the",
+    "old seed, then deleted. This file is the record; there is no code left that can reproduce it.",
+    "",
+    "Only `Lower Third · Scripture` is retired from the shelf, because the new family member takes that",
+    "exact name. The other seven shelf looks still ship."
+  ],
+  "templates": [
+    {
+      "name": "Midnight Blue",
+      "layout": "{\"regions\":[\"verse_text\",\"reference\"],\"align\":\"center\",\"lowerThird\":false,\"refFirst\":false}",
+      "style": "{\"font\":\"var(--f-serif)\",\"background\":\"radial-gradient(130% 130% at 50% 18%, #12253f, #05080f)\",\"accent\":\"#f0b74a\",\"verseColor\":\"#eef2f8\",\"verseSize\":\"5.2\",\"refSize\":\"2.5\",\"italicRef\":true}"
+    },
+    {
+      "name": "Royal Amethyst",
+      "layout": "{\"regions\":[\"verse_text\",\"reference\"],\"align\":\"center\",\"lowerThird\":false,\"refFirst\":false}",
+      "style": "{\"font\":\"var(--f-serif)\",\"background\":\"linear-gradient(155deg, #2a1a45, #0e0818)\",\"accent\":\"#b79bff\",\"verseColor\":\"#f2ecff\",\"verseSize\":\"5.2\",\"refSize\":\"2.5\",\"italicRef\":true}"
+    },
+    {
+      "name": "Deep Teal",
+      "layout": "{\"regions\":[\"verse_text\",\"reference\"],\"align\":\"center\",\"lowerThird\":false,\"refFirst\":false}",
+      "style": "{\"font\":\"var(--f-display)\",\"background\":\"linear-gradient(160deg, #06231f, #03100d)\",\"accent\":\"#46d6b3\",\"verseColor\":\"#e8fbf5\",\"verseSize\":\"5.2\",\"refSize\":\"2.4\",\"italicRef\":false}"
+    },
+    {
+      "name": "Crimson Grace",
+      "layout": "{\"regions\":[\"verse_text\",\"reference\"],\"align\":\"center\",\"lowerThird\":false,\"refFirst\":false}",
+      "style": "{\"font\":\"var(--f-serif)\",\"background\":\"radial-gradient(120% 130% at 50% 22%, #3a0f16, #120507)\",\"accent\":\"#f08a7a\",\"verseColor\":\"#fbe9e6\",\"verseSize\":\"5.2\",\"refSize\":\"2.5\",\"italicRef\":true}"
+    },
+    {
+      "name": "Emerald Word",
+      "layout": "{\"regions\":[\"verse_text\",\"reference\"],\"align\":\"center\",\"lowerThird\":false,\"refFirst\":false}",
+      "style": "{\"font\":\"var(--f-display)\",\"background\":\"radial-gradient(120% 130% at 50% 22%, #0c2a1c, #05100b)\",\"accent\":\"#56d98f\",\"verseColor\":\"#eafff4\",\"verseSize\":\"5.2\",\"refSize\":\"2.4\",\"italicRef\":false}"
+    },
+    {
+      "name": "Indigo Night",
+      "layout": "{\"regions\":[\"verse_text\",\"reference\"],\"align\":\"center\",\"lowerThird\":false,\"refFirst\":false}",
+      "style": "{\"font\":\"var(--f-serif)\",\"background\":\"linear-gradient(155deg, #141a3a, #070912)\",\"accent\":\"#8fa2ff\",\"verseColor\":\"#eef0ff\",\"verseSize\":\"5.2\",\"refSize\":\"2.5\",\"italicRef\":true}"
+    },
+    {
+      "name": "Slate Minimal",
+      "layout": "{\"regions\":[\"verse_text\",\"reference\"],\"align\":\"center\",\"lowerThird\":false,\"refFirst\":false}",
+      "style": "{\"font\":\"var(--f-body)\",\"background\":\"linear-gradient(180deg, #1a1f26, #0b0e12)\",\"accent\":\"#9fb4c9\",\"verseColor\":\"#eef1f5\",\"verseSize\":\"5\",\"refSize\":\"2.4\",\"italicRef\":false}"
+    },
+    {
+      "name": "Pure Contrast",
+      "layout": "{\"regions\":[\"verse_text\",\"reference\"],\"align\":\"center\",\"lowerThird\":false,\"refFirst\":false}",
+      "style": "{\"font\":\"var(--f-display)\",\"background\":\"#000000\",\"accent\":\"#7fd4ff\",\"verseColor\":\"#ffffff\",\"verseSize\":\"5.4\",\"refSize\":\"2.5\",\"italicRef\":false}"
+    },
+    {
+      "name": "Lyric Bold",
+      "layout": "{\"regions\":[\"verse_text\"],\"align\":\"center\",\"lowerThird\":false,\"refFirst\":false}",
+      "style": "{\"font\":\"var(--f-body)\",\"background\":\"#060608\",\"accent\":\"#ffffff\",\"verseColor\":\"#ffffff\",\"verseSize\":\"9\",\"refSize\":\"2\",\"italicRef\":false}"
+    },
+    {
+      "name": "Lyric Glow",
+      "layout": "{\"regions\":[\"verse_text\"],\"align\":\"center\",\"lowerThird\":false,\"refFirst\":false}",
+      "style": "{\"font\":\"var(--f-body)\",\"background\":\"radial-gradient(120% 120% at 50% 35%, #241548, #08040f)\",\"accent\":\"#c9a6ff\",\"verseColor\":\"#ffffff\",\"verseSize\":\"8.5\",\"refSize\":\"2\",\"italicRef\":false}"
+    },
+    {
+      "name": "Lower Third Light",
+      "layout": "{\"regions\":[\"verse_text\",\"reference\"],\"align\":\"center\",\"lowerThird\":true,\"refFirst\":false}",
+      "style": "{\"font\":\"var(--f-body)\",\"background\":\"transparent\",\"accent\":\"#f4f4f6\",\"verseColor\":\"#12151b\",\"verseSize\":\"2.6\",\"refSize\":\"1.6\",\"italicRef\":false}"
+    },
+    {
+      "name": "Lower Third Night",
+      "layout": "{\"regions\":[\"verse_text\",\"reference\"],\"align\":\"center\",\"lowerThird\":true,\"refFirst\":false}",
+      "style": "{\"font\":\"var(--f-body)\",\"background\":\"transparent\",\"accent\":\"#101319\",\"verseColor\":\"#f2f4f8\",\"verseSize\":\"2.6\",\"refSize\":\"1.6\",\"italicRef\":false}"
+    },
+    {
+      "name": "Stage Confidence",
+      "layout": "{\"regions\":[\"reference\",\"verse_text\"],\"align\":\"left\",\"lowerThird\":false,\"refFirst\":true}",
+      "style": "{\"font\":\"var(--f-display)\",\"background\":\"#000000\",\"accent\":\"#62c9ff\",\"verseColor\":\"#ffffff\",\"verseSize\":\"6\",\"refSize\":\"2.6\",\"italicRef\":false}"
+    },
+    {
+      "name": "Lobby Sunrise",
+      "layout": "{\"regions\":[\"verse_text\",\"reference\"],\"align\":\"center\",\"lowerThird\":false,\"refFirst\":false}",
+      "style": "{\"font\":\"var(--f-serif)\",\"background\":\"linear-gradient(160deg, #2b1a12, #0f0a08)\",\"accent\":\"#f0a85c\",\"verseColor\":\"#f6e7d6\",\"verseSize\":\"4.6\",\"refSize\":\"2.2\",\"italicRef\":true}"
+    },
+    {
+      "name": "Lower Third · Scripture",
+      "layout": "{\"align\":\"left\",\"layers\":[{\"fill\":\"#0a0906\",\"grow\":16,\"h\":38,\"id\":\"lbb-band\",\"lift\":4.4,\"members\":[\"lbb-verse\",\"lbb-ref\"],\"name\":\"Band\",\"opacity\":0.9,\"pad\":3,\"radius\":0,\"side\":5,\"top\":62,\"type\":\"band\",\"w\":90,\"x\":5,\"y\":62},{\"align\":\"left\",\"bind\":\"verse\",\"color\":\"#fff7e8\",\"font\":\"var(--f-serif)\",\"h\":14,\"id\":\"lbb-verse\",\"italic\":false,\"letterSpacing\":0,\"lineHeight\":1.2,\"name\":\"Verse\",\"shadow\":0,\"size\":3.0,\"type\":\"text\",\"valign\":\"middle\",\"w\":84,\"x\":8,\"y\":70},{\"align\":\"right\",\"bind\":\"reference\",\"color\":\"#ffa31a\",\"font\":\"var(--f-serif)\",\"h\":6,\"id\":\"lbb-ref\",\"italic\":false,\"letterSpacing\":0.08,\"lineHeight\":1.1,\"name\":\"Reference\",\"shadow\":0,\"size\":1.7,\"type\":\"text\",\"valign\":\"middle\",\"w\":84,\"x\":8,\"y\":85}]}",
+      "style": "{}"
+    }
+  ]
+}
