@@ -41,16 +41,23 @@ Every structural claim in §3 was checked by reading the cited code. None was su
 2. **§3.6 site 8 is FALSE as written.** `src/Output.svelte:180` and `:279` are `applyTemplateUpdate` and a kiosk-reconnect `catch`. The two real kind filters are `Output.svelte:195` (`m.content_kind`, the kiosk door) and `:296` (`e.payload?.kind`, the Tauri door). Both still need the sweep; the line numbers in the spec do not point at them.
 3. **Wave 0 landed, so `REHEARSAL_VERDICTS` already exists** (`channels.rs:3504`, a three-column table with a reason, completeness-checked by `every_publisher_in_this_module_has_an_explicit_rehearsal_verdict` at `:3580`). Wave 3's job there is one additive row, not a new table.
 4. **`plan_items.duration_sec` is already taken** (`db/plans.rs:45`, migrated at `:71`) and means the Planner's running-time estimate, not a timer span. Do not reuse the name for anything a timer counts.
-5. **Numbering:** the last DECISIONS section is §88, so the §27 reversal is **§89**. The highest register id is RG-142, so anything filed by this wave starts at **RG-143**.
+5. **Numbering:** the last DECISIONS section is 88, so the §27 reversal takes the next number after it. The highest register id filed is RG-142, so anything this wave files starts at the next free id. Neither number is written as a citation in this plan on purpose: `crossrefs.test.js` resolves every `DECISIONS §N` and every `RG-` id against the real documents, and a plan that cites a section it is about to create turns the suite red before a line of code is written. Write the citation in the same commit that writes the section.
 6. **`servicelock.rs` needs nothing by default.** `guard()` returns `Ok(())` for any command absent from `PROTECTED`, and `start_countdown`/`adjust_countdown` are already named in `LIVE_PATH`. Track A adds the new commands to `LIVE_PATH` so the "the lock can never reach the live path" assertion keeps covering them — it does not add them to `PROTECTED`.
-7. **Existing coverage to keep green, counted from the files themselves:** `e2e::r7_*` seven tests (`e2e.rs:3105, :3163, :3197, :3240, :3278, :3339, :3385`), `pipeline::a_countdown_is_not_an_empty_screen` (`:600`), `channels::the_kiosk_wire_form_carries_every_monitor_bindable_field` (`:4401`), and on the frontend `countdown.test.js` (9 describes), `countdownwiring.test.js` (6), plus countdown blocks in `layers.test.js:292, :315`, `templatestyle.test.js:228`, `fitcoverage.test.js:45`, `rendercontent.test.js:249`, `lowerthird.test.js:109`, `quicktools.test.js:350, :485, :588`. **None of these may change shape.** If one has to, that is a signal the wire form moved and the plan is being broken, not followed.
+7. **Existing coverage to keep green, counted from the files themselves:** `e2e::r7_*` seven tests (`e2e.rs:3105, :3163, :3197, :3240, :3278, :3339, :3385`), `pipeline::a_countdown_is_not_an_empty_screen` (`:600`), `channels::the_kiosk_wire_form_carries_every_monitor_bindable_field` (`:4401`), and on the frontend `countdown.test.js` (9 describes), `countdownwiring.test.js` (6), plus countdown blocks in `layers.test.js:292, :315`, `templatestyle.test.js:228`, `fitcoverage.test.js:45`, `rendercontent.test.js:249`, `lowerthird.test.js:109`, `quicktools.test.js:350, :485, :588`. **None of these may change shape, with exactly one stated exception — item 8.** If any other one has to, that is a signal the wire form moved and the plan is being broken, not followed.
+
+8. **One existing test asserts the defect this wave reverses, and it is the only test that changes.** `e2e::r7_the_transport_can_never_start_a_countdown` (`e2e.rs:3197`) has a second half at `:3216–3230` that starts a countdown, fires `John 3:16`, and asserts `adjust_countdown` returns `Err`. That is this wave's own scenario with the opposite verdict, and no implementation satisfies both. Its first half stands unedited: **the transport can never create a countdown from nothing**, which is what the test's name claims and what the wave leaves exactly as strong as it is today. The second half fused two claims, and only one of them is being reversed:
+
+   - *"the transport refuses once a verse has replaced the countdown"* — **reversed.** The refusal was a consequence of where the state lived, not a decision anybody took.
+   - *"nothing reached a screen and the verse must still be up"* — **kept, and made load-bearing.** Those two assertions survive verbatim into the replacement test.
+
+   **The ruling, which is a product decision and not a test edit:** re-aiming, holding or releasing a `Both` timer that is **not currently on the screens** succeeds, changes the registry, and **paints nothing**. Putting a timer back in front of a congregation is an explicit action with its own control — never a side effect of `+1`. A transport press that repaints a countdown over a sermon is the same class of failure `adjust_countdown`'s own doc comment already forbids for templates, where it says a rebuilt fire "would silently re-skin every screen in the building". The operator override stays first-class: the way back is one action, and it says what it does.
 
 ## Operator decisions carried into this wave
 
-- **A `Stage`-scoped timer survives a panic control; a `Both`-scoped timer does not.** Recorded as DECISIONS §89, superseding §27's refusal.
+- **A `Stage`-scoped timer survives a panic control; a `Both`-scoped timer does not.** Recorded as a new DECISIONS section, superseding §27's refusal.
 - **The split is a property of the timer, never a question inside `clear` or `black`.** A panic control that has to ask which screen it is talking to can fail to answer.
 - **`label` stays a field on the timer.** Wave 5 Track G removes the dock's hard-coded supply of one; this wave does not pre-empt it, and the two orders are compatible either way.
-- **The `Both` timer's wire form does not change.** It stays the four `countdown_*` fields, which is what keeps `pipeline::is_countdown` (`pipeline.rs:247`) from refusing a timer as `Unsafe::Nothing`.
+- **The `Both` timer's wire form does not change.** It stays the four `countdown_*` fields, which is what keeps the `is_countdown` guard in `pipeline.rs:247` from refusing a timer as `Unsafe::Nothing`.
 - **Delivery: one PR per track**, six PRs off `feat/wave3-timers`, each green on both suites.
 
 ---
@@ -103,9 +110,10 @@ Today `CountdownState(Mutex<Option<OutputContent>>)` (`channels.rs:1019`) holds 
 - Modify: `src-tauri/src/timers.rs` — `pub fn project_both(t: &Timer) -> (i64, i64, Option<i64>, String, String)` or an explicit struct; one function, so the four fields are filled in exactly one place
 - Test: `src-tauri/src/e2e.rs`
 
-- [ ] **Step 1: Write the failing e2e test** `r7_a_countdown_survives_a_verse_and_can_still_be_re_aimed` — start a countdown, fire a scripture, then `adjust_countdown`. Today this returns `Err("Nothing is counting down.")`; after this task it re-aims, and the `Wall` sees a countdown frame again. **This is the reported defect and it is the test the wave exists to pass.**
+- [ ] **Step 1: Write the failing e2e test** `r7_a_countdown_survives_a_verse_and_can_still_be_re_aimed_without_taking_the_wall` — start a countdown, fire `John 3:16`, then `adjust_countdown`. Today that returns `Err("Nothing is counting down.")`. After this task it returns `Ok`, **the wall count does not move, and `John 3:16` is still the last thing on it**; the re-aimed figure is then proved by an explicit put-back, which paints the countdown with the adjusted time left rather than the original one. **This is the reported defect and it is the test the wave exists to pass.** Take the two surviving assertions verbatim from `e2e.rs:3226–3230`, which is where they are today.
+- [ ] **Step 1b: Edit the one test that contradicts it**, and only its second half. `r7_the_transport_can_never_start_a_countdown` (`:3197`) keeps its first half unedited; its second half's `expect_err` becomes the new expectation — succeeds, paints nothing, verse still up — and gains a comment naming the correction in item 8 above. **Do not delete the second half**: its wall assertions are the guarantee that a transport press cannot take a congregation screen, and that guarantee is now carried by fewer places, not more.
 - [ ] **Step 2:** `start_countdown` creates the timer in the registry (scope `Both`, `from_ms` = now, `label`, `done_msg`, `warn_ms: None`, `plan_item_id: None`) and broadcasts a content frame projected from it. Every existing field keeps its current value and meaning, including `template_id`/`template_json`/`template_pinned` resolution through `cue_or_content_tpl` — **do not re-resolve the template on a re-aim**, which is the silent re-skin `adjust_countdown`'s doc comment forbids.
-- [ ] **Step 3:** `adjust_countdown` reads the registry rather than `live_countdown`, applies through `TimerRegistry::adjust`, and re-broadcasts the projection carrying the ORIGINAL content verbatim apart from the four fields. Its refusal string stays exactly `"Nothing is counting down."` when the registry holds no `Both` timer — an operator reads that sentence, and it is still true in the only case that can now produce it.
+- [ ] **Step 3:** `adjust_countdown` reads the registry rather than `live_countdown` and applies through `TimerRegistry::adjust`. **It re-broadcasts only when that timer is what is on the screens right now**, carrying the ORIGINAL content verbatim apart from the four fields; when it is not, it changes the registry and publishes nothing (item 8). "What is on the screens right now" is a fact the hub already keeps — read it, do not invent a second answer to it. Its refusal string stays exactly `"Nothing is counting down."` when the registry holds no `Both` timer at all, which an operator reads and which is still true in the only case that can now produce it.
 - [ ] **Step 4:** Keep all seven `r7_*` tests green **unchanged**. `r7_a_cleared_countdown_cannot_be_brought_back_by_the_transport` must still pass: a cleared `Both` timer is stopped, and the transport still cannot create one.
 - [ ] **Step 5:** Verify the new test fails with Task 2 reverted, and that it fails for the right reason (the refusal string, not a panic).
 
@@ -139,6 +147,7 @@ Today `CountdownState(Mutex<Option<OutputContent>>)` (`channels.rs:1019`) holds 
 - `adjust_timer(app, timer_id: i64, remaining_ms: Option<i64>, paused: Option<bool>) -> error::Result<()>`
 - `stop_timer(app, timer_id: i64) -> error::Result<()>`
 - `list_timers(app) -> error::Result<Vec<TimerView>>` — a serialisable view, so the console can render a list without a second arithmetic.
+- `show_timer(app, db, timer_id: i64, template_id: Option<i64>) -> error::Result<()>` — **the explicit way back onto a congregation screen** for a `Both` timer the registry still holds (item 8). It broadcasts the projection through `broadcast_with_clock` like `start_countdown` does, and it is the ONLY thing besides `start_countdown` that may put a timer in front of people. A `Stage`-scoped timer is refused here, in words: it has no congregation wire form.
 
 - [ ] **Step 1:** Write `ipc.test.js`'s side first: the four commands must exist in Rust and be called from `capture.js`. `ipc.test.js` fails in both directions, which is the point.
 - [ ] **Step 2:** Implement, `#[tauri::command]` each, register each, and add each to `servicelock.rs`'s `LIVE_PATH` with the reason: a timer control is a live control and the lock may never reach it.
@@ -210,21 +219,21 @@ A `Stage` timer publishes no content frame — that is exactly why it survives a
 - [ ] **Step 3:** Prove the congregation guarantee is unchanged: every existing panic test stays green, unedited, and `panic.test.js`'s fourteen stay green.
 - [ ] **Step 4:** Verify the new tests fail if `stop_scope` is replaced by a full stop.
 
-### Task 9: DECISIONS §89, and the `alert` question settled (P1)
+### Task 9: the new DECISIONS section, and the `alert` question settled (P1)
 
 **Files:**
-- Modify: `docs/DECISIONS.md` — a new §89 that explicitly supersedes §27's refusal
+- Modify: `docs/DECISIONS.md` — a new section, the next number after 88, that explicitly supersedes §27's refusal
 - Modify: `src/Stage.svelte` — the `alert` branch, with its answer written down
 - Test: `src/lib/crossrefs.test.js` resolves the new citation
 
-- [ ] **Step 1:** Write §89 with the three reasons §3.4 gives: §27 left the question open and named it a real product decision; §27's "no exceptions" was already not literally true in shipped code (`Stage.svelte`'s `svcStart` survives, on a stated ground); and the congregation guarantee is untouched. Cite §27 by number so `crossrefs.test.js` can resolve it.
-- [ ] **Step 2: Settle `alert`.** The clear/black branch resets `visible, note, cdTo, cdFrom, cdPaused, next` and does **not** reset `alert`, and nothing in the tree records why. Decide it in §89 and make the code say so either way — the current state is a silent third answer to the question §89 exists to answer. Whichever way it goes, pin it with a test named after the decision.
+- [ ] **Step 1:** Write the new section with the three reasons §3.4 gives: §27 left the question open and named it a real product decision; §27's "no exceptions" was already not literally true in shipped code (`Stage.svelte`'s `svcStart` survives, on a stated ground); and the congregation guarantee is untouched. Cite §27 by number so `crossrefs.test.js` can resolve it.
+- [ ] **Step 2: Settle `alert`.** The clear/black branch resets `visible, note, cdTo, cdFrom, cdPaused, next` and does **not** reset `alert`, and nothing in the tree records why. Decide it in the new section and make the code say so either way, because the current state is a silent third answer to the question that section exists to answer. Whichever way it goes, pin it with a test named after the decision.
 - [ ] **Step 3:** `crossrefs.test.js` green: a citation that resolves to nothing is worse than an uncited claim.
 
 ### Task 10: the registers stop disagreeing (P2)
 
 - [ ] **Step 1:** `docs/REBRAND.md` phase 7 says *"The button landed in wave 3"* about the rebrand's own wave 3, which is a different numbering from this spec's. Add the distinction where it is ambiguous, or leave it and say why. **Do not restate the wave 3 scope in a fifth place** — `RELAY_V1_AUDIT.md`, `RELAY_GAP.md`, `QA_HARNESS.md` §0 and the audit files are the four that already exist.
-- [ ] **Step 2:** File anything this track found but did not fix as RG-143 onward, in `docs/qa/RELAY_GAP.md`, and keep `relaygap.test.js` green.
+- [ ] **Step 2:** File anything this track found but did not fix in `docs/qa/RELAY_GAP.md`, taking the next free id, and keep `relaygap.test.js` green.
 
 **PR 3 ends here.** Title: *a stage timer survives a panic control, and the congregation guarantee does not move*.
 
@@ -338,7 +347,7 @@ Static instruments in this repository reported zero problems throughout the two 
 ### Task 18: the evidence file (P1)
 
 - [ ] **Step 1:** Write `docs/qa/audits/<DATE>-WAVE3-TIMERS.md` — frozen evidence. Closures go in a fix log, never in the findings.
-- [ ] **Step 2:** File every finding as `RG-143` onward in `docs/qa/RELAY_GAP.md`; keep `relaygap.test.js` and `crossrefs.test.js` green.
+- [ ] **Step 2:** File every finding in `docs/qa/RELAY_GAP.md`, taking the next free ids; keep `relaygap.test.js` and `crossrefs.test.js` green.
 - [ ] **Step 3:** Re-measure `docs/qa/QA_HARNESS.md` §0 from the runners' own summary lines.
 - [ ] **Step 4:** Update `CLAUDE.md` only where this wave made an existing sentence false. **Do not add a wave 3 narrative to it.**
 
