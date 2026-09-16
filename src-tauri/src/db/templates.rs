@@ -369,7 +369,38 @@ fn theme_templates() -> &'static [(&'static str, &'static str, &'static str)] {
     // TIMER — the countdown, with its label above it. The renderer draws the
     // digits at `verseSize * 2`, so a Timer's `verseSize` is HALF the size the
     // clock ends up.
-    const TIMER: &str = r##"{"regions":["reference","verse_text"],"align":"center","lowerThird":false,"refFirst":true,"shows":["scripture","song","media","announce","countdown"]}"##;
+    //
+    // THE FOUR FULL-SCREEN TIMER ROWS ARE THE ONLY FAMILY MEMBERS SEEDED IN THE
+    // LAYER MODEL, and the reason is what a church sees on the first Sunday.
+    // (The fifth, the keyed one, is a separate case — see `BAND_TIMER` below.)
+    //
+    // The REGION branch draws a countdown at a fixed `cqw` with no fit loop around
+    // either of its two lines. Measured on a fresh install at 1920x1080, the
+    // region-model `Classic · Timer` put its label out at 7.88px — still clipped at
+    // both ends — and its digits at 30.3px against the 192px the template asks for:
+    // a 312x43px blob in the middle of an otherwise black lobby screen. That defect is in the region countdown
+    // path and predates this wave; what is new is that a fresh install now ships
+    // templates that take it, where before it shipped none.
+    //
+    // The layer model does not have it. `TemplateRender`'s `.cd-default` block
+    // declares its designed size, clips, sits inside the fit loop and reports
+    // through `onFit` (rule 37). So these four are seeded as exactly what
+    // `TemplateGallery.upgradeLegacyToLayers` would have converted them into on the
+    // operator's first visit to the Templates tab: the bytes `regionsToLayers`
+    // produces from the region shape below, with stable layer ids in place of its
+    // generated ones. The conversion is moved to seed time so that first Sunday
+    // does not depend on somebody having opened a tab.
+    //
+    // NOTHING ELSE MOVES. Every region-model key is kept, so everything that reads
+    // that shape reads the same answer it did before — `templateKind` still derives
+    // `scripture` for the four full-screen members and `lower-third` for the keyed
+    // one, `isKeyedTemplate` still answers the same, and the `shows` list is
+    // untouched. `upgradeLegacyToLayers` skips a template that is already layered,
+    // so an install that has run it and one that has not now agree.
+    const TIMER_CLASSIC: &str = r##"{"regions":["reference","verse_text"],"align":"center","lowerThird":false,"refFirst":true,"shows":["scripture","song","media","announce","countdown"],"layers":[{"id":"clt-background","type":"background","name":"Background","visible":true,"x":0,"y":0,"w":100,"h":100,"fill":"radial-gradient(120% 140% at 50% 30%, #2a2013, #0b0906)","image":null,"opacity":1,"dim":0},{"id":"clt-reference","type":"text","name":"Reference","visible":true,"x":8,"y":24,"w":84,"h":10,"bind":"reference","font":"var(--f-body)","color":"#e8a33d","size":2.6,"align":"center","valign":"middle","transform":"uppercase","lineHeight":1.2,"letterSpacing":0.06,"shadow":0,"italic":false,"scroll":false,"text":""},{"id":"clt-verse","type":"text","name":"Verse","visible":true,"x":8,"y":36,"w":84,"h":52,"bind":"verse","font":"var(--f-body)","color":"#f4e4c8","size":5,"align":"center","valign":"middle","transform":"none","lineHeight":1.32,"letterSpacing":0,"shadow":0,"italic":false,"scroll":false,"text":"","quote":true}]}"##;
+    const TIMER_AURORA: &str = r##"{"regions":["reference","verse_text"],"align":"center","lowerThird":false,"refFirst":true,"shows":["scripture","song","media","announce","countdown"],"layers":[{"id":"aut-background","type":"background","name":"Background","visible":true,"x":0,"y":0,"w":100,"h":100,"fill":"radial-gradient(130% 130% at 50% 15%, #0b3330, #04110f)","image":null,"opacity":1,"dim":0},{"id":"aut-reference","type":"text","name":"Reference","visible":true,"x":8,"y":24,"w":84,"h":10,"bind":"reference","font":"var(--f-display)","color":"#6ee7c4","size":2.6,"align":"center","valign":"middle","transform":"uppercase","lineHeight":1.2,"letterSpacing":0.06,"shadow":0.4,"italic":false,"scroll":false,"text":""},{"id":"aut-verse","type":"text","name":"Verse","visible":true,"x":8,"y":36,"w":84,"h":52,"bind":"verse","font":"var(--f-display)","color":"#eafff8","size":5,"align":"center","valign":"middle","transform":"none","lineHeight":1.32,"letterSpacing":0,"shadow":0.4,"italic":false,"scroll":false,"text":"","quote":true}]}"##;
+    const TIMER_EMBER: &str = r##"{"regions":["reference","verse_text"],"align":"center","lowerThird":false,"refFirst":true,"shows":["scripture","song","media","announce","countdown"],"layers":[{"id":"emt-background","type":"background","name":"Background","visible":true,"x":0,"y":0,"w":100,"h":100,"fill":"radial-gradient(130% 130% at 50% 18%, #3a1508, #140603)","image":null,"opacity":1,"dim":0},{"id":"emt-reference","type":"text","name":"Reference","visible":true,"x":8,"y":24,"w":84,"h":10,"bind":"reference","font":"var(--f-display)","color":"#ffb066","size":2.6,"align":"center","valign":"middle","transform":"uppercase","lineHeight":1.2,"letterSpacing":0.06,"shadow":0.45,"italic":false,"scroll":false,"text":""},{"id":"emt-verse","type":"text","name":"Verse","visible":true,"x":8,"y":36,"w":84,"h":52,"bind":"verse","font":"var(--f-display)","color":"#fdeede","size":5,"align":"center","valign":"middle","transform":"none","lineHeight":1.32,"letterSpacing":0,"shadow":0.45,"italic":false,"scroll":false,"text":"","quote":true}]}"##;
+    const TIMER_HIVIS: &str = r##"{"regions":["reference","verse_text"],"align":"center","lowerThird":false,"refFirst":true,"shows":["scripture","song","media","announce","countdown"],"layers":[{"id":"hvt-background","type":"background","name":"Background","visible":true,"x":0,"y":0,"w":100,"h":100,"fill":"#000000","image":null,"opacity":1,"dim":0},{"id":"hvt-reference","type":"text","name":"Reference","visible":true,"x":8,"y":24,"w":84,"h":10,"bind":"reference","font":"var(--f-display)","color":"#ffffff","size":3.2,"align":"center","valign":"middle","transform":"uppercase","lineHeight":1.2,"letterSpacing":0.06,"shadow":0,"italic":false,"scroll":false,"text":""},{"id":"hvt-verse","type":"text","name":"Verse","visible":true,"x":8,"y":36,"w":84,"h":52,"bind":"verse","font":"var(--f-display)","color":"#ffffff","size":6,"align":"center","valign":"middle","transform":"none","lineHeight":1.4,"letterSpacing":0,"shadow":0,"italic":false,"scroll":false,"text":"","quote":true}]}"##;
     // The keyed family replaces each of the five with its banded twin. On a band
     // `accent` IS the fill and `verseColor` the text, and `background` stays
     // `transparent` — the camera underneath is the point.
@@ -400,6 +431,17 @@ fn theme_templates() -> &'static [(&'static str, &'static str, &'static str)] {
     //     the transparency law; it is not what draws it.
     const BAND_MEDIA: &str = r##"{"regions":["reference"],"align":"center","lowerThird":true,"refFirst":true,"shows":["scripture","song","media","announce","countdown"]}"##;
     const BAND_ANNOUNCE: &str = r##"{"regions":["reference","verse_text"],"align":"center","lowerThird":true,"refFirst":true,"shows":["scripture","song","media","announce","countdown"]}"##;
+    // THE KEYED TIMER STAYS REGION-MODEL, and it is the one member of the five
+    // that does. It has no blob to fix: `countdownAllowed = !!countdownTo &&
+    // !bandMode` means the region path paints NOTHING under a countdown, and
+    // `.bandless` makes the band itself transparent when there are no words, so
+    // what an operator gets is the clean camera the transparency law would have
+    // given them anyway. Converting it would take that away rather than fix
+    // anything — the layer model has no equivalent refusal: `.cd-default` does not
+    // ask about the band, and a band drawn as a `shape` layer paints whether or
+    // not it holds words, so a converted keyed Timer shows either the digits or an
+    // empty bar over a live camera. One of the five is not broken; it is not
+    // touched.
     const BAND_TIMER: &str = r##"{"regions":["reference","verse_text"],"align":"center","lowerThird":true,"refFirst":true,"shows":["scripture","song","media","announce","countdown"]}"##;
 
     &[
@@ -430,7 +472,7 @@ fn theme_templates() -> &'static [(&'static str, &'static str, &'static str)] {
         ),
         (
             "Classic · Timer",
-            TIMER,
+            TIMER_CLASSIC,
             r##"{"font":"var(--f-body)","background":"radial-gradient(120% 140% at 50% 30%, #2a2013, #0b0906)","accent":"#e8a33d","verseColor":"#f4e4c8","verseSize":"5","refSize":"2.6","italicRef":false,"refTransform":"uppercase","refLetterSpacing":0.06}"##,
         ),
         // ── Aurora — teal / emerald ───────────────────────────────────────────
@@ -460,7 +502,7 @@ fn theme_templates() -> &'static [(&'static str, &'static str, &'static str)] {
         ),
         (
             "Aurora · Timer",
-            TIMER,
+            TIMER_AURORA,
             r##"{"font":"var(--f-display)","background":"radial-gradient(130% 130% at 50% 15%, #0b3330, #04110f)","accent":"#6ee7c4","verseColor":"#eafff8","verseSize":"5","refSize":"2.6","refTransform":"uppercase","refLetterSpacing":0.06,"textShadow":0.4}"##,
         ),
         // ── Ember — amber / crimson ───────────────────────────────────────────
@@ -487,7 +529,7 @@ fn theme_templates() -> &'static [(&'static str, &'static str, &'static str)] {
         ),
         (
             "Ember · Timer",
-            TIMER,
+            TIMER_EMBER,
             r##"{"font":"var(--f-display)","background":"radial-gradient(130% 130% at 50% 18%, #3a1508, #140603)","accent":"#ffb066","verseColor":"#fdeede","verseSize":"5","refSize":"2.6","refTransform":"uppercase","refLetterSpacing":0.06,"textShadow":0.45}"##,
         ),
         // ── Lower Third — the keyed family ────────────────────────────────────
@@ -577,7 +619,7 @@ fn theme_templates() -> &'static [(&'static str, &'static str, &'static str)] {
         ),
         (
             "High Visibility · Timer",
-            TIMER,
+            TIMER_HIVIS,
             r##"{"font":"var(--f-display)","background":"#000000","accent":"#ffffff","verseColor":"#ffffff","refColor":"#ffffff","verseSize":"6","refSize":"3.2","verseLineHeight":"1.4","refGap":"1.6","verseShadow":"0","refShadow":"0","transitionMs":"0","italicRef":false,"refTransform":"uppercase","refLetterSpacing":0.06}"##,
         ),
     ]
@@ -1511,6 +1553,86 @@ mod preset_template_tests {
                 .any(|(_, _, style)| style.contains("\"scroll\":true")),
             "no family ships a scrolling announcement"
         );
+    }
+
+    #[test]
+    fn the_full_screen_timers_are_seeded_in_the_layer_model() {
+        // WHAT A LOBBY SCREEN DOES ON THE FIRST SUNDAY. A region-model countdown is
+        // painted by a branch with no fit loop around either of its lines, so the
+        // label clips and the digits come out at a fraction of the size the
+        // template asks for — 7.88px and 30.3px against 192px, measured at
+        // 1920x1080. The layer model's `.cd-default` block declares its designed
+        // size, clips, and reports through `onFit`. These four take that path
+        // because they are seeded already converted; nothing else in either suite
+        // says so, and a hand edit that dropped a `layers` array would put the blob
+        // back silently.
+        let want = [
+            "Classic · Timer",
+            "Aurora · Timer",
+            "Ember · Timer",
+            "High Visibility · Timer",
+        ];
+        for name in want {
+            let (_, layout, _) = theme_templates()
+                .iter()
+                .find(|(n, _, _)| *n == name)
+                .unwrap_or_else(|| panic!("no seeded {name:?}"));
+            let v: serde_json::Value = serde_json::from_str(layout).unwrap();
+            let layers = v["layers"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{name}: no layer stack — it is region-model again"));
+            assert!(!layers.is_empty(), "{name}: an empty layer stack");
+            let mut ids: Vec<&str> = Vec::new();
+            for l in layers {
+                let id = l["id"]
+                    .as_str()
+                    .unwrap_or_else(|| panic!("{name}: a layer with no id"));
+                assert!(l["type"].is_string(), "{name}: a layer with no type");
+                assert!(!ids.contains(&id), "{name}: two layers share the id {id:?}");
+                ids.push(id);
+            }
+            assert!(
+                layers.iter().any(|l| l["type"] == "background"),
+                "{name}: no background layer, so the countdown would key over a camera"
+            );
+            // THE REGION KEYS STAY. `regionsToLayers` returns `{ ...layout, layers }`
+            // and everything that reads the old shape still reads it — `templateKind`
+            // derives `scripture` from these two regions, `templateShows` reads
+            // `shows`, and `upgradeLegacyToLayers` looks for `regions` to decide
+            // whether there is anything left to convert.
+            assert!(
+                v["regions"].is_array(),
+                "{name}: the region keys were dropped, not added to"
+            );
+            assert_eq!(
+                v["lowerThird"], false,
+                "{name}: a full-screen timer is not keyed"
+            );
+        }
+    }
+
+    #[test]
+    fn the_keyed_timer_is_deliberately_not_converted() {
+        // THE ONE MEMBER OF THE FIVE THAT HAS NOTHING TO FIX. `countdownAllowed` is
+        // `!!countdownTo && !bandMode`, so the region path paints NOTHING under a
+        // countdown, and `.bandless` makes the band itself transparent when there
+        // are no words: a clean camera, which is what a keyed screen should give an
+        // operator who fires a countdown at it. The layer model has no equivalent
+        // refusal — `.cd-default` does not ask about the band and a `shape` layer
+        // paints whether or not it holds words — so converting this row for
+        // symmetry would replace "nothing" with the digits or an empty bar, over a
+        // live camera. Pinned so a later tidy-up does not convert the whole family
+        // on the grounds that four of it are converted.
+        let (_, layout, _) = theme_templates()
+            .iter()
+            .find(|(n, _, _)| *n == "Lower Third · Timer")
+            .expect("no seeded Lower Third · Timer");
+        let v: serde_json::Value = serde_json::from_str(layout).unwrap();
+        assert!(
+            v.get("layers").is_none(),
+            "Lower Third · Timer was converted to layers — read the comment on BAND_TIMER first"
+        );
+        assert_eq!(v["lowerThird"], true);
     }
 
     #[test]
