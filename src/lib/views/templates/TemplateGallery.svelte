@@ -13,6 +13,7 @@
   import ErrorState from '../../ui/ErrorState.svelte';
   import { templateKind, kindsPresent, KIND_META, KIND_ORDER } from '../../templateKind.js';
   import { STARTERS, isLayered, regionsToLayers, CONTENT_KINDS, layerLabel, isKeyedTemplate } from '../../layers.js';
+  import { DEFAULT_TEMPLATE } from '../../templates.js';
   // THE ONE CAMERA PLATE, shared with Outputs (`ui/CameraPlate.svelte`). A KEYED
   // template — a lower third — paints a band and leaves the rest transparent,
   // because the rest is a camera the switcher supplies. Previewed against
@@ -255,6 +256,18 @@
     $defaultTemplateId,
   );
   $: sel = $templates.find((t) => t.id === selId) || null;
+
+  // A kind with no content look bound still wears something the moment it
+  // fires: the CONFIGURED DEFAULT (`cue_or_content_tpl`'s Rust-side fallback —
+  // Task 4), or the bundled floor when no default is configured either. "Not
+  // set" said nothing would be worn, which stopped being true the day that
+  // fallback landed; this names what will actually paint. Pure, so it can be
+  // tested without mounting the component.
+  function defaultLookLabel(templatesList, defaultId) {
+    const d = templatesList.find((t) => t.id === defaultId) || null;
+    return `Default · ${d?.name ?? DEFAULT_TEMPLATE.name}`;
+  }
+  $: unboundLookLabel = defaultLookLabel($templates, $defaultTemplateId);
 
   function sortList(list, mode, defaultId) {
     const a = [...list];
@@ -551,10 +564,15 @@
         {:else}
           <!-- Not a disabled button. There is nothing for this row to select, and
                a control an operator can press and learn nothing from is worse
-               than a line of text that states the fact. -->
+               than a line of text that states the fact. It used to say "Not
+               set", which was true before the Rust half of this fix and false
+               after it: a kind with no binding wears the CONFIGURED DEFAULT
+               the moment it fires (`cue_or_content_tpl`), not nothing — so
+               this names that template instead of implying the screen goes
+               blank. -->
           <div class="rw-item tg-look tg-static">
             <span class="rw-itemname">{ck.label}</span>
-            <span class="tg-lookv unset">Not set</span>
+            <span class="tg-lookv unset">{unboundLookLabel}</span>
           </div>
         {/if}
       {/each}

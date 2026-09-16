@@ -214,8 +214,28 @@ fn main() {
             let kiosk_tx = kiosk.sender();
             let kiosk_templates = kiosk.templates_handle();
             let kiosk_clients = kiosk.clients_handle();
+            let kiosk_default_tpl = kiosk.default_template_handle();
             let kiosk_last = kiosk.last_screen_handle();
             let kiosk_last_x = kiosk.last_transition_handle();
+            // The configured default, warmed before any client can connect — a
+            // screen that joins during launch must not be told the default is
+            // `null` and then corrected.
+            {
+                let db = app.state::<Db>();
+                let dj =
+                    db.0.lock()
+                        .ok()
+                        .and_then(|conn| {
+                            db::get_setting(&conn, "default_template_id")
+                                .ok()
+                                .flatten()
+                                .and_then(|s| s.parse::<i64>().ok())
+                                .and_then(|id| db::get_template(&conn, id).ok().flatten())
+                        })
+                        .and_then(|t| serde_json::to_string(&t).ok())
+                        .unwrap_or_else(|| "null".into());
+                kiosk.cache_default_template(&dj);
+            }
             // Warm the template cache so a browser client (OBS/kiosk) gets the
             // REAL saved template immediately on connect (matches the editor).
             {
@@ -237,6 +257,7 @@ fn main() {
                 kiosk_tx,
                 kiosk_templates,
                 kiosk_clients,
+                kiosk_default_tpl,
                 kiosk_last,
                 kiosk_last_x,
                 app.state::<channels::OutputHealth>().inner().clone(),
@@ -398,6 +419,7 @@ fn main() {
             service_lock,
             set_service_lock,
             set_channel_template,
+            set_default_template,
             send_stage_alert,
             list_monitors,
             open_channel_output,
@@ -3034,8 +3056,51 @@ fn cue_or_content_tpl(
     // MEGABYTES — one was 13 MB — so every verse took seconds to serialize, send
     // and re-parse on each screen. Reading only the id (a settings lookup) makes a
     // fire instant regardless of how heavy the default template is.
-    let id = db::content_template_id(conn, kind).ok().flatten();
+    let id = db::content_template_id(conn, kind)
+        .ok()
+        .flatten()
+        .or_else(|| {
+            // NOTHING BOUND THIS KIND, so the screens following the content look
+            // wear the configured default. The id travels so the console readout
+            // names what the wall will actually paint; the JSON still does not.
+            db::get_setting(conn, "default_template_id")
+                .ok()
+                .flatten()
+                .and_then(|s| s.parse::<i64>().ok())
+        });
     (id, None, false)
+}
+
+#[cfg(test)]
+mod cue_or_content_tpl_tests {
+    use super::*;
+
+    #[test]
+    fn a_kind_with_no_content_look_answers_with_the_configured_default() {
+        // The console readout names the template a fire will wear. With no content
+        // look set for this kind it said "none" — while the wall, since the default
+        // now reaches it, wears the operator's default. Two surfaces, one fire, two
+        // answers. The ID travels; the JSON deliberately does not (a default
+        // carrying an embedded image has been 13 MB, and it used to be serialized
+        // and broadcast on every single fire).
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        db::migrate(&conn, true).unwrap();
+        db::set_setting(&conn, "default_template_id", "3").unwrap();
+        let (id, json, pinned) = cue_or_content_tpl(&conn, None, "scripture");
+        assert_eq!(id, Some(3));
+        assert!(json.is_none(), "the default must never ship its JSON");
+        assert!(!pinned, "a default is not a deliberate per-cue choice");
+    }
+
+    #[test]
+    fn a_content_look_still_beats_the_configured_default() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        db::migrate(&conn, true).unwrap();
+        db::set_setting(&conn, "default_template_id", "3").unwrap();
+        db::set_content_template(&conn, "scripture", Some(5)).unwrap();
+        let (id, _, _) = cue_or_content_tpl(&conn, None, "scripture");
+        assert_eq!(id, Some(5));
+    }
 }
 
 /// The default template ids mapped to each content type.
@@ -5745,6 +5810,48 @@ fn set_channel_template<R: tauri::Runtime>(
         // A template id that resolves to nothing: the row is written, and no screen
         // is told to paint something that could not be read.
         (Some(_), None) => {}
+    }
+    Ok(())
+}
+
+/// Set (or clear, with `None`) the DEFAULT template — the last link in every
+/// screen's resolution chain — and push the change live.
+///
+/// Changing the default used to be a bare `set_setting` from the frontend: it
+/// was read at channel creation and by two console panes, and nothing else in
+/// the building was told. A screen already following the content look kept the
+/// old look until it was reopened, which is why the default "did not activate on
+/// all screens". Native windows get `output://default_template`; kiosk/OBS
+/// clients get the hub frame.
+#[tauri::command]
+fn set_default_template<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    db: tauri::State<'_, Db>,
+    kiosk: tauri::State<'_, channels::KioskHub>,
+    template_id: Option<i64>,
+) -> error::Result<()> {
+    // DB write + resolve the JSON under one lock, release BEFORE emitting
+    // (rule 2: never hold a Mutex across emit).
+    let tjson = {
+        let conn = db.0.lock()?;
+        match template_id {
+            Some(id) => {
+                db::set_setting(&conn, "default_template_id", &id.to_string())?;
+                db::get_template(&conn, id)?.and_then(|t| serde_json::to_string(&t).ok())
+            }
+            None => {
+                db::set_setting(&conn, "default_template_id", "")?;
+                None
+            }
+        }
+    };
+    let blob = tjson.unwrap_or_else(|| "null".into());
+    kiosk.set_default_template(&blob);
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&blob) {
+        let _ = app.emit(
+            "output://default_template",
+            serde_json::json!({ "template": v }),
+        );
     }
     Ok(())
 }

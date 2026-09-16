@@ -93,6 +93,10 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       // every OBS source cutting would be rule 35 on the one surface a congregation
       // is looking at. Held here, not inferred from the absence of a call.
       transition: true,
+      // THE CONFIGURED DEFAULT — the resolver's final fallback link (wave 2, task 2).
+      // A congregation screen with no template of its own and no content look either
+      // must still end its chain somewhere other than the bundled Classic Serif.
+      default_template: true,
     },
     'src/Stage.svelte': {
       content: true,
@@ -102,6 +106,10 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       stage_alert: true, // the whole point of the message
       channel_template: false, // the stage page has one fixed look
       template: false,
+      // Same reason as template/channel_template above: the stage page does not
+      // render through TemplateRender, so a template-shaped fallback has nothing
+      // to resolve for it.
+      default_template: false,
       // DELIBERATELY NOT, and for the same reason the three above are not: the
       // stage page has one fixed look and does not render through
       // `TemplateRender`, so there is no slide for a transition to be of. It is

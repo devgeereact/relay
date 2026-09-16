@@ -1110,10 +1110,12 @@ pub(super) fn ensure_retired_presets_are_gone(conn: &Connection) -> rusqlite::Re
             looks.push(id);
         }
     }
-    // `setDefaultTemplate` (src/lib/stores/capture.js) writes an EMPTY STRING
-    // through the generic `set_setting` command to CLEAR the default, so a value
-    // that does not parse is "no default", not an error. There is no
-    // `set_default_template` command; this key has no typed writer at all.
+    // The default is CLEARED by writing an EMPTY STRING, so a value that does not
+    // parse is "no default", not an error. This key DOES have a typed writer now:
+    // `set_default_template` (main.rs) writes `""` for `None`. It used to be a
+    // bare `set_setting` from `setDefaultTemplate` (src/lib/stores/capture.js),
+    // and the empty-string convention survived that change — which is why the
+    // tolerant parse below is still the right read.
     let default_id = get_setting(conn, "default_template_id")?.and_then(|s| s.parse::<i64>().ok());
 
     // THE TWO THAT ARE FOREIGN KEYS, folded into the DELETE so the check and the

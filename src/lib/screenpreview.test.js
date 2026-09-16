@@ -76,7 +76,9 @@ describe('the inspector and the output page resolve the same way', () => {
     expect(outputs, 'the inspector must NAME $templates, not reach it through a helper').toMatch(
       /\$: selOwn =[\s\S]{0,120}\$templates\.find/,
     );
-    expect(page).toMatch(/resolveOutputTemplate\(t, override, !!content\?\.template_pinned\)/);
+    expect(page).toMatch(
+      /resolveOutputTemplate\(t, override, !!content\?\.template_pinned, defaultTpl\)/,
+    );
     // And the component is actually handed that answer, not a second one built
     // inline — a preview resolved twice is a preview that can disagree with itself.
     expect(outputs).toMatch(/<TemplateRender template=\{previewTemplate\}/);

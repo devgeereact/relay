@@ -482,6 +482,7 @@
       sel ? selOwn : null,
       previewOverride,
       $live ? $liveTemplatePinned : false,
+      $templates.find((t) => t.id === $defaultTemplateId) || null,
     ) || DEFAULT_TEMPLATE;
   // What the preview is a preview OF. "Sample" said the same thing for a screen
   // with its own look and for one following a look it never showed — rule 35 in
@@ -543,8 +544,12 @@
     const st = status[c.id] ?? null;
     const own = c.template_id == null ? null : ($templates.find((t) => t.id === c.template_id) ?? null);
     const tpl =
-      resolveOutputTemplate(own, previewOverride, $live ? $liveTemplatePinned : false) ||
-      DEFAULT_TEMPLATE;
+      resolveOutputTemplate(
+        own,
+        previewOverride,
+        $live ? $liveTemplatePinned : false,
+        $templates.find((t) => t.id === $defaultTemplateId) || null,
+      ) || DEFAULT_TEMPLATE;
     const i = parseInt(c.display_target ?? '', 10);
     const mon = Number.isFinite(i) ? (monitors.find((m) => m.index === i) ?? null) : null;
     return {

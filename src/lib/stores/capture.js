@@ -270,7 +270,11 @@ export async function loadDefaultTemplate() {
 /** Set (or clear, with null) the default template. */
 export async function setDefaultTemplate(id) {
   const call = await invoke();
-  await call('set_setting', { key: 'default_template_id', value: id == null ? '' : String(id) });
+  // The COMMAND, not the raw setting. Rust owns the fact now: it writes the
+  // row, pushes `default_template` to every kiosk client and emits
+  // `output://default_template` to native windows, so a screen following the
+  // content look re-resolves at once instead of at its next reload.
+  await call('set_default_template', { templateId: id ?? null });
   defaultTemplateId.set(id ?? null);
 }
 
