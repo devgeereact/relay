@@ -56,6 +56,12 @@ const GROUP_1 = {
   // swallowed failure leaves every protected action refusing with nothing said.
   // Its own surface-level guarantees are in `endservice.test.js`.
   endService: () => store.endService(),
+  // Added to the header 2026-09-16. It reaches no screen DIRECTLY, which is how it
+  // was missed when it stopped being a bare `set_setting` and became the
+  // `set_default_template` command — but that command pushes the new look to every
+  // kiosk client and every native output window, so a swallowed failure leaves the
+  // gallery showing one default and the wall wearing another.
+  setDefaultTemplate: () => store.setDefaultTemplate(9),
   // `pushAnnouncement` WAS the most literal member of this group — it painted over
   // live scripture on every screen at once. The control was removed from Quick
   // tools on 2026-09-14 on the operator's instruction, and the command and its

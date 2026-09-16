@@ -20,8 +20,15 @@
 //   GROUP 1 — THROWS. Anything that changes what is on the screens, what the AI is
 //   allowed to do, or whether the microphone is live. `manualFire`, `confirmDetection`,
 //   `setDetection`, `setRehearsal`, `navVerse`, `startCapture`, `stopCapture`,
-//   `fireContent`, `startCountdown`, `adjustCountdown`, `endService`, `setSttLanguage`.
+//   `fireContent`, `startCountdown`, `adjustCountdown`, `endService`, `setSttLanguage`,
+//   `setDefaultTemplate`.
 //   The caller MUST handle it and tell the operator.
+//   `setDefaultTemplate` was missed when it stopped being a bare `set_setting` and
+//   became the `set_default_template` COMMAND — which writes the row, pushes the
+//   frame to every kiosk client and emits `output://default_template` to every
+//   native window. It changes the LOOK every screen following the content look is
+//   wearing, live, so a failure an operator is not told about is a gallery that
+//   says one thing and a wall that says another.
 //   `setSttLanguage` joined this group with RG-138, when it stopped being a setting on
 //   a live engine and became a WRITE to the active voice profile. It changes what the
 //   AI hears, and it is the control RG-116 names as the mitigation for a service lost
