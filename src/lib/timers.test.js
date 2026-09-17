@@ -378,10 +378,56 @@ describe('the programme row warns, on the one rule', () => {
     expect(warned()).toEqual(expected);
   });
 
-  it('does not warn about a timer that has already run out', async () => {
-    // Zero is not "nearly gone", it is gone, and `countdownWarning` says so. A red
-    // pulse on a row that has finished is a claim about time that has no meaning,
-    // and what an expired row SHOULD say is RG-153, which this does not answer.
+  it('does not ask the threshold rule about a timer that has already run out', async () => {
+    // Zero is not "nearly gone", it is gone, and `countdownWarning` says so — it
+    // answers false at and below zero, and that did NOT move when RG-153 landed.
+    // The row is still marked, because being OVER is not a threshold question and
+    // does not need one: what marks it is the sign of the one reader's answer.
+    // This test exists to catch the wrong fix. Widening `countdownWarning` to
+    // accept a negative would turn the row red the same way, and would be a fourth
+    // reading of when to worry on the rule three surfaces share.
+    const at = 1_700_000_000_000;
+    vi.useFakeTimers();
+    vi.setSystemTime(at);
+    await mount();
+
+    const spent = entry(1, 'Offering', 1, at - 120_000, { warn_ms: 30_000 });
+    await deliver({ kind: 'timer', timers: [spent] });
+
+    expect(
+      countdownWarning(
+        countdownRemainingMs(spent, at, { past: true }),
+        countdownTotalMs(spent),
+        spent.warn_ms,
+      ),
+      'the shared threshold rule now answers true past zero — that is a fourth reading of it',
+    ).toBe(false);
+    expect(rows()).toEqual([['Offering', '+1:00']]);
+    expect(warned()).toEqual(['1']);
+  });
+});
+
+// ── RG-153 — A PROGRAMME TIMER PAST ZERO ──────────────────────────────
+//
+// The browser pass watched a 45-second `Offering` timer read `0:00` for the next
+// twelve minutes, and two of the six rows in the §8 screenshot were in that state
+// (`audits/DESIGN-2026-09-16-WAVE3.md` §11). A row that reads `0:00` cannot be told
+// from one that has just been started at zero, and neither of them answers the
+// question a stage monitor is actually asked.
+//
+// The operator's decision, taken 2026-09-17: a programme timer that reaches zero
+// KEEPS COUNTING, UPWARD, wearing the warning colour. `+4:37` means the preacher is
+// four and a half minutes over.
+describe('RG-153 — a programme timer past zero counts up', () => {
+  const warned = () =>
+    [...host.querySelectorAll('[data-timer-id]')]
+      .filter((el) => el.classList.contains('warn'))
+      .map((el) => el.getAttribute('data-timer-id'));
+
+  it('counts up past zero instead of sitting at 0:00', async () => {
+    // The row the audit watched: a 45-second timer, four minutes and thirty-seven
+    // seconds past its deadline. It used to read `0:00` and now reads how far over
+    // the preacher is, which is the whole of the decision.
     const at = 1_700_000_000_000;
     vi.useFakeTimers();
     vi.setSystemTime(at);
@@ -389,9 +435,200 @@ describe('the programme row warns, on the one rule', () => {
 
     await deliver({
       kind: 'timer',
-      timers: [entry(1, 'Offering', 1, at - 120_000, { warn_ms: 30_000 })],
+      timers: [entry(1, 'Offering', 0.75, at - (45_000 + 277_000))],
     });
-    expect(rows()).toEqual([['Offering', '0:00']]);
+    expect(rows()).toEqual([['Offering', '+4:37']]);
+  });
+
+  it('reads the over figure through the one reader, never its own subtraction', async () => {
+    // Asserted against `countdownRemainingMs` itself rather than against a literal,
+    // the same discipline as the running case above: the upward figure is the one
+    // reader's answer negated and handed to the one formatter, and a second
+    // subtraction that happened to agree today would still pass a literal.
+    const at = 1_700_000_000_000;
+    vi.useFakeTimers();
+    vi.setSystemTime(at);
+    await mount();
+
+    const spent = entry(1, 'Sermon', 20, at - 26 * 60_000);
+    await deliver({ kind: 'timer', timers: [spent] });
+
+    const left = countdownRemainingMs(spent, at, { past: true });
+    expect(left).toBeLessThan(0);
+    expect(rows()[0][1]).toBe(`+${formatCountdown(-left)}`);
+  });
+
+  it('keeps counting on the page’s existing tick', async () => {
+    // A figure computed once that then stands still is the defect in a different
+    // costume: `0:00` for twelve minutes and `+4:37` for twelve minutes are the
+    // same failure. It rides the page's own 1000 ms tick, like every other figure
+    // on it — a second interval would be a second clock.
+    const at = 1_700_000_000_000;
+    vi.useFakeTimers();
+    vi.setSystemTime(at);
+    await mount();
+
+    await deliver({ kind: 'timer', timers: [entry(1, 'Offering', 1, at - 90_000)] });
+    expect(rows()[0][1]).toBe('+0:30');
+
+    vi.advanceTimersByTime(1000);
+    await tick();
+    await tick();
+    expect(rows()[0][1]).toBe('+0:31');
+  });
+
+  it('wears the warning colour the row already has, and no new one', async () => {
+    // Not a fourth colour: the class is the one RG-148 gave this row, resolved in
+    // the stylesheet to the countdown's own red. Amber means ON AIR, cyan means the
+    // AI is guessing, amethyst means rehearsal, and a timer that is over time is
+    // none of those — it is a claim about TIME. The colour itself is pinned by
+    // `stageprogrow.test.js`, which reads the shipped declaration; jsdom computes
+    // no layout and nothing here may claim a painted pixel.
+    const at = 1_700_000_000_000;
+    vi.useFakeTimers();
+    vi.setSystemTime(at);
+    await mount();
+
+    await deliver({
+      kind: 'timer',
+      timers: [entry(1, 'Offering', 1, at - 120_000), entry(2, 'Sermon', 20, at)],
+    });
+    expect(rows()).toEqual([
+      ['Offering', '+1:00'],
+      ['Sermon', '20:00'],
+    ]);
+    expect(warned()).toEqual(['1']);
+  });
+
+  it('marks the row the moment it reaches zero, with no unmarked tick in between', async () => {
+    // The boundary is the whole reason the mark is the SIGN and not the threshold
+    // rule. `countdownWarning` answers false at and below zero, so a row marked
+    // only by it would lose its colour at the instant the time ran out — one tick
+    // of nothing, on the one surface being read mid-sermon.
+    const at = 1_700_000_000_000;
+    vi.useFakeTimers();
+    vi.setSystemTime(at);
+    await mount();
+
+    await deliver({ kind: 'timer', timers: [entry(1, 'Offering', 1, at - 59_000)] });
+    expect(rows()[0][1]).toBe('0:01');
+    expect(warned()).toEqual(['1']);
+
+    vi.advanceTimersByTime(1000);
+    await tick();
+    await tick();
+    expect(rows()[0][1]).toBe('+0:00');
+    expect(warned(), 'the row lost its colour at the instant the time ran out').toEqual(['1']);
+  });
+
+  it('does not count up a HELD timer whose instant has passed', async () => {
+    // The hold exception, at the new boundary. A timer paused at 4:00 whose
+    // `countdown_to` is six minutes in the past is not ten minutes over — it is
+    // stopped at four minutes, which is what the wall and the console both show.
+    // The one reader already knows this, and the sign test must not get in front
+    // of it.
+    const at = 1_700_000_000_000;
+    vi.useFakeTimers();
+    vi.setSystemTime(at);
+    await mount();
+
+    await deliver({
+      kind: 'timer',
+      timers: [entry(1, 'Sermon', 20, at - 26 * 60_000, { countdown_paused_ms: 4 * 60_000 })],
+    });
+    expect(rows()).toEqual([['Sermon', '4:00']]);
     expect(warned()).toEqual([]);
+  });
+
+  it('paints the over figure, not the operator’s done message', async () => {
+    // A DECISION, written as a test so it is not read later as an oversight. The
+    // words an operator typed are what a CONGREGATION countdown says when it lands
+    // — `countdown_done` replaces the digits on the wall, and the stage mirror was
+    // seen showing `Welcome` in the same screenshot — and a programme timer is a
+    // different instrument: it is the preacher's own bookkeeping, and what it is
+    // asked past zero is HOW FAR OVER. `done_msg` therefore keeps having no reader
+    // on this rail. If that is ever revisited it is a new row, not RG-153.
+    const at = 1_700_000_000_000;
+    vi.useFakeTimers();
+    vi.setSystemTime(at);
+    await mount();
+
+    await deliver({
+      kind: 'timer',
+      timers: [entry(1, 'Offering', 1, at - 120_000, { countdown_done: 'Welcome' })],
+    });
+    expect(rows()).toEqual([['Offering', '+1:00']]);
+    expect(host.textContent).not.toContain('Welcome');
+  });
+
+  it('counts the `+` in the width budget it hands the stylesheet', async () => {
+    // RG-147 IN A NEW COSTUME, and the reason this assertion is here. A `+` figure
+    // is one character wider than the figure it replaces, and this row was slicing
+    // a seven-character time three days ago. The budget survives it for one reason
+    // only: `--tch` is the length of the longest RENDERED value, so the sign is
+    // measured because it is part of the string. A budget derived from the
+    // remaining milliseconds instead would be a character short.
+    const at = 1_700_000_000_000;
+    vi.useFakeTimers();
+    vi.setSystemTime(at);
+    await mount();
+
+    const progrow = () => host.querySelector('.progrow');
+
+    // `+4:37` — five characters where `0:00` was four.
+    await deliver({ kind: 'timer', timers: [entry(1, 'Offering', 1, at - 337_000)] });
+    expect(rows()[0][1]).toBe('+4:37');
+    expect(progrow().style.getPropertyValue('--tch')).toBe('5');
+
+    // An hour over: `+1:00:01`, eight characters, one more than the seven that
+    // clipped at 1280 x 720 before RG-147 was closed.
+    await deliver({ kind: 'timer', timers: [entry(1, 'Livestream', 1, at - 3_661_000)] });
+    expect(rows()[0][1]).toBe('+1:00:01');
+    expect(progrow().style.getPropertyValue('--tch')).toBe('8');
+
+    // …and the budget still comes back when the over-time row goes.
+    await deliver({ kind: 'timer', timers: [entry(1, 'Offering', 5, at)] });
+    expect(rows()[0][1]).toBe('5:00');
+    expect(progrow().style.getPropertyValue('--tch')).toBe('4');
+  });
+});
+
+// ── THE ONE READER, ASKED FOR THE OTHER SIDE OF ZERO ──────────────────────
+//
+// These sit here rather than in `countdown.test.js` because the programme rail is
+// the only surface that asks the question, and this file is that rail's contract.
+// The opt-in exists so the upward figure is the one reader's own answer negated.
+// The alternative was a subtraction on the stage page, which is precisely the
+// defect `docs/REBRAND.md` phase 7 records as fixed once already.
+describe('countdownRemainingMs answers past zero only when asked', () => {
+  const now = 1_700_000_000_000;
+
+  it('still floors at zero for every caller that does not ask', () => {
+    // The wall reads zero as "it finished" and shows the done message. Nothing
+    // about that moved, and this is the assertion that says so.
+    expect(countdownRemainingMs({ countdown_to: now - 60_000 }, now)).toBe(0);
+    expect(countdownRemainingMs({ countdown_to: now - 60_000 }, now, {})).toBe(0);
+  });
+
+  it('answers the negative when asked, and is still one subtraction', () => {
+    expect(countdownRemainingMs({ countdown_to: now - 60_000 }, now, { past: true })).toBe(-60_000);
+    expect(countdownRemainingMs({ countdown_to: now + 60_000 }, now, { past: true })).toBe(60_000);
+  });
+
+  it('keeps null meaning “there is no countdown here” on both sides', () => {
+    // Null is not a large negative number. A timer that names no deadline must not
+    // become a row counting up from the epoch.
+    expect(countdownRemainingMs({ reference: 'John 3:16' }, now, { past: true })).toBe(null);
+    expect(countdownRemainingMs(null, now, { past: true })).toBe(null);
+  });
+
+  it('keeps the hold exception in front of the sign', () => {
+    expect(
+      countdownRemainingMs(
+        { countdown_to: now - 360_000, countdown_paused_ms: 4 * 60_000 },
+        now,
+        { past: true },
+      ),
+    ).toBe(4 * 60_000);
   });
 });
