@@ -332,6 +332,29 @@
   //
   // The viewport, not a measurement: `.progrow` spans the frame, and measuring the
   // box would mean a forced layout on the one page whose job is to be still.
+  // ── AN OPEN PANEL YIELDS THE RAIL, NOT THE READING ─────────────────────────
+  //
+  // `Zones` and `Control` are two taps in the header, and both of them put a panel
+  // into the same flex column the reading is in. Measured at 1024×768 with the rail
+  // on and both panels open: `.reading` collapsed to 74.2px, the verse was already
+  // on its 26px floor with nothing left for the fit to shrink, and 38.9px of ink
+  // was cut off the bottom of the passage — on a page that is `overflow: hidden` by
+  // design, so there was nothing to scroll and nothing saying the verse was
+  // incomplete. With the Programme zone switched off the same two panels left the
+  // verse whole (RG-148, `docs/qa/audits/2026-09-17-WAVE4-STAGE-PLANNER.md` §2.3).
+  //
+  // So the rail stands down while a panel is open. The order of precedence is the
+  // only one that can be right here: the rail is bookkeeping and the verse is the
+  // thing this screen exists for, and a preacher reading aloud must not lose the
+  // end of a passage because somebody opened a settings panel. Both panels are
+  // transient and operator-initiated, and closing either brings the rail straight
+  // back — which is why this says nothing in the rail's place: a line of its own
+  // would spend the very room this is reclaiming.
+  //
+  // This is NOT the `programme` zone. A zone is a choice a device keeps; this is a
+  // moment, and `relay.stage.zones` is untouched by it.
+  $: panelOpen = showZones || showCtl;
+
   const MIN_TIMER_PX = 132;
   let frameW = 1024;
   $: capacity = Math.max(1, Math.floor((Number(frameW) || 1024) / MIN_TIMER_PX));
@@ -499,12 +522,30 @@
   // — this page draws its own chrome), so a formula would be a guess with a
   // decimal point on it. Steps are a guess that cannot produce a pathological
   // size, and the first one is §5's own figure, unchanged, for §5's own case.
+  //
+  // THE LAST STEP IS THE BACKEND'S CAP, AND IT HAS TO BE. There were four steps and
+  // the fourth fell through only above 150 characters, while `main::send_stage_alert`
+  // takes the first 140 — so `.alert.sm` could not be reached by the one thing that
+  // sets `alert`, and a 166-character message arrived as 140 and rendered `.md`
+  // (RG-149). A branch nothing can reach looks exactly like a branch that works, and
+  // the next person to touch this sizing would have reasoned about four steps when
+  // there were three. 140 is a figure somebody chose on purpose, so the steps are
+  // what moved: the last one now describes the range that exists, and `.alert.sm` is
+  // gone from the stylesheet with it. `stagealert.test.js` reads this constant and
+  // `send_stage_alert`'s `MAX` out of both files at once, so neither can move
+  // without the other.
+  const ALERT_MAX = 140;
   const ALERT_STEPS = [
     { max: 24, size: 'xl' }, // a phrase — §5's 8.5cqw
     { max: 64, size: 'lg' },
-    { max: 150, size: 'md' },
+    { max: ALERT_MAX, size: 'md' },
   ];
-  $: alertSize = ALERT_STEPS.find((s) => alert.length <= s.max)?.size ?? 'sm';
+  // The fallback is the smallest step that EXISTS. Nothing longer than `ALERT_MAX`
+  // can arrive through `send_stage_alert`, so this is unreachable today and is a
+  // floor rather than a fourth step: were the cap ever raised without these steps
+  // following it, a long alert would render at `md` and be readable, not at a size
+  // with no rule behind it.
+  $: alertSize = ALERT_STEPS.find((s) => alert.length <= s.max)?.size ?? 'md';
 
   function apply(m) {
     if (m.kind === 'content') {
@@ -746,7 +787,7 @@
        means the AI is guessing; not amethyst, which means rehearsal. Slate, the
        page's own neutral — the programme is the operator's bookkeeping shown to one
        person, and it makes no claim about any screen. -->
-  {#if zones.programme && progCells.length}
+  {#if zones.programme && progCells.length && !panelOpen}
     <div class="progrow" style="--tmrs:{progCells.length}" aria-label="Programme">
       {#each progCells as t, i (i)}
         {#if t.more}
@@ -1165,15 +1206,20 @@
     background: #c8121c;
     overflow: hidden;
   }
-  /* FOUR STEPS, AND THE FIRST IS §5's FIGURE UNCHANGED. `.alert` is `position:
+  /* THREE STEPS, AND THE FIRST IS §5's FIGURE UNCHANGED. `.alert` is `position:
      fixed` with no query container above it, so `cqw` here resolves against the
      small viewport — which is what is wanted: this panel IS the screen. A message
      the operator typed in a hurry is longer than a phrase, and at 8.5cqw a
-     three-sentence one ran off the bottom of a box that clips. */
+     three-sentence one ran off the bottom of a box that clips.
+
+     THERE WAS A FOURTH, `.alert.sm` at 3cqw, and nothing could render it: its step
+     began above 150 characters and `send_stage_alert` caps the line at 140 (RG-149).
+     A rule no state can reach is a rule that looks like it works. Deleted rather
+     than kept for a cap that might move — `ALERT_STEPS` above holds the two figures
+     together, so if the cap does move the steps move with it. */
   .alert.xl { font-size: 8.5cqw; }
   .alert.lg { font-size: 6cqw; }
   .alert.md { font-size: 4.2cqw; }
-  .alert.sm { font-size: 3cqw; }
   @media (prefers-reduced-motion: no-preference) {
     .alert { animation: stagealert 1.4s ease-in-out infinite; }
   }

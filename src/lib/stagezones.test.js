@@ -475,7 +475,14 @@ describe('a word to the preacher', () => {
       'Wrap up in five minutes please. The band is already on the platform and we still have the offering and the announcements to get through.',
       'md',
     ],
-    ['x'.repeat(240), 'sm'],
+    // THE LONGEST MESSAGE THAT CAN ARRIVE, and the step that has to take it.
+    // This row read `['x'.repeat(240), 'sm']` and was green over a defect: a
+    // 240-character message cannot reach this page at all, because
+    // `main::send_stage_alert` takes the first 140 characters — so the `sm` step,
+    // which only began above 150, was unreachable and `.alert.sm` could not
+    // render (RG-149). A test that asserts on a state nothing can produce is the
+    // same mistake as the branch it was asserting on.
+    ['x'.repeat(140), 'md'],
   ];
 
   for (const [text, step] of longer) {
@@ -492,6 +499,39 @@ describe('a word to the preacher', () => {
       expect(el.textContent).toContain(text);
     });
   }
+
+  // ── WAVE 4 TRACK E · THE STEPS AND THE CAP ARE ONE FIGURE (RG-149) ────────
+  //
+  // Read out of BOTH files in one assertion, which is the only shape that holds a
+  // claim living in two places: the last step's boundary and `send_stage_alert`'s
+  // cap must be the same number, so neither can move without the other and a dead
+  // step cannot come back. `crossrefs.test.js` uses the same shape for citations.
+  it('the last sizing step is exactly the length the backend will deliver', () => {
+    const step = SRC.match(/const ALERT_MAX = (\d+);/);
+    expect(step, '`ALERT_MAX` is how the page states its longest step').toBeTruthy();
+
+    const rust = readFileSync(
+      path.resolve(__dirname, '../../src-tauri/src/main.rs'),
+      'utf8',
+    );
+    const body = rust.slice(rust.indexOf('fn send_stage_alert'));
+    const cap = body.match(/const MAX: usize = (\d+);/);
+    expect(cap, 'the cap moved or was renamed').toBeTruthy();
+    expect(
+      Number(step[1]),
+      'a step above the cap is a rule no message can reach',
+    ).toBe(Number(cap[1]));
+  });
+
+  it('there is no sizing step the stylesheet cannot draw', () => {
+    // The other half. Deleting `.alert.sm` while leaving a step that yields `sm`
+    // would be the same defect wearing the opposite coat: a class with no rule.
+    const steps = [...SRC.matchAll(/size: '(\w+)'/g)].map((m) => m[1]);
+    expect(steps.length, 'the steps table moved').toBeGreaterThan(0);
+    const style = SRC.slice(SRC.indexOf('<style>'));
+    for (const s of steps) expect(style, `no rule for .alert.${s}`).toContain(`.alert.${s} {`);
+    expect(style, 'the unreachable step is still in the stylesheet').not.toContain('.alert.sm {');
+  });
 
   it('and the short message is still §5’s own figure, unchanged', () => {
     const style = SRC.slice(SRC.indexOf('<style>'));
@@ -744,5 +784,94 @@ describe('S4 · the stage reads as one instrument', () => {
       ...[...row.querySelectorAll('.figv')].map((n) => n.textContent.trim().length),
     );
     expect(Number(row.style.getPropertyValue('--ch'))).toBe(longest);
+  });
+});
+
+// ── WAVE 4 TRACK E · AN OPEN PANEL YIELDS THE RAIL, NOT THE READING ──────────
+//
+// RG-148. `Zones` and `Control` are two taps in the header, and both of them put a
+// panel into the same flex column the reading is in. Measured in a browser at
+// 1024×768 with the rail on and both panels open, the reading collapsed to 74.2px,
+// the verse was already on its 26px floor with nothing left for the fit to shrink,
+// and 38.9px of ink was cut off the bottom of the passage the preacher was reading
+// aloud — on a page that is `overflow: hidden` by design, so there was nothing to
+// scroll and nothing saying the verse was incomplete. With the Programme zone
+// switched off the same two panels left the verse whole
+// (`docs/qa/audits/2026-09-17-WAVE4-STAGE-PLANNER.md` §2.3).
+//
+// jsdom has no layout engine, so the 38.9px is not reproducible here and this file
+// already records why (the split at the top). What IS reproducible is the cause:
+// whether the rail is in the column at all while a panel is open. That is the fact
+// the measurement was a consequence of, and asserting it would have caught the
+// finding as the browser pass found it.
+describe('an open panel yields the programme rail', () => {
+  const clock = (at) => ({
+    kind: 'timer',
+    timers: [
+      {
+        id: 7,
+        label: 'Sermon',
+        countdown_to: at + 1_500_000,
+        countdown_from: at,
+        countdown_paused_ms: null,
+        countdown_done: '',
+        warn_ms: null,
+      },
+    ],
+  });
+
+  /** A verse on the screen and a clock on the rail — the state §2.3 measured. */
+  async function reading() {
+    const r = await mount(verse);
+    socket.onmessage({ data: JSON.stringify(clock(Date.now())) });
+    await tick();
+    await tick();
+    expect(r.container.querySelector('.progrow'), 'no rail to yield').toBeTruthy();
+    expect(r.container.querySelector('.verse'), 'no verse to protect').toBeTruthy();
+    return r.container;
+  }
+
+  it('the Zones panel takes the rail’s room and leaves the verse alone', async () => {
+    const container = await reading();
+    await click('Zones');
+    expect(container.querySelector('.zonepanel'), 'the panel did not open').toBeTruthy();
+    // GONE, not hidden. `.progrow` is a flex row with `flex-basis: auto`, so a rail
+    // that still rendered would still be taking the room the reading needs.
+    expect(
+      container.querySelector('.progrow'),
+      'the rail and both panels shared the column with the verse',
+    ).toBeNull();
+    expect(container.querySelector('.verse'), 'the reading is what this screen is for').toBeTruthy();
+
+    // …and it comes straight back. The panel is a moment, not a choice.
+    await click('Zones');
+    expect(container.querySelector('.progrow')).toBeTruthy();
+  });
+
+  it('the Control panel does the same, because it is the same column', async () => {
+    // The second door. The measurement in §2.3 opened BOTH, and a fix that knew
+    // about one of them would be this repository's recurring bug once more.
+    const container = await reading();
+    await click('Control');
+    expect(container.querySelector('.ctl'), 'the panel did not open').toBeTruthy();
+    expect(container.querySelector('.progrow')).toBeNull();
+    expect(container.querySelector('.verse')).toBeTruthy();
+
+    await click('Done');
+    expect(container.querySelector('.progrow')).toBeTruthy();
+  });
+
+  it('yielding is not switching the zone off — the device keeps its layout', async () => {
+    // A zone is a choice a device keeps across reloads; this is a moment. Writing
+    // the zone would mean a preacher who opened the panel once lost the rail for
+    // good, and would have to find the switch to get it back.
+    const container = await reading();
+    await click('Zones');
+    const pressed = [...container.querySelectorAll('.zonebtn')]
+      .find((b) => b.textContent.trim() === 'Programme')
+      ?.getAttribute('aria-pressed');
+    expect(pressed, 'the panel turned the zone off behind the operator').toBe('true');
+    const stored = localStorage.getItem(ZONE_KEY);
+    expect(stored === null || JSON.parse(stored).programme === true).toBe(true);
   });
 });
