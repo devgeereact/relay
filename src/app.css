@@ -225,6 +225,7 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
      chrome bar    34   .topbar-v          status bar 26   .footer-v
      dock head     26   Dock.svelte .dhead (min-height, the head may grow)
      button        26   .r-btn             small button 22  .r-btn.sm
+     icon button   26   .r-iconbtn         small icon   22  .r-iconbtn.sm
      input·select  26   .r-input,.r-select tab          26  .ws-tab
      pill          26   .r-pill            segment btn  22  .r-seg button
      switch     38x21   .r-switch          colour well  38x21  input[type=color]
@@ -306,6 +307,67 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
   background:var(--v-surf2); border:1px solid var(--v-line); color:var(--v-dim);
   transition:color var(--v-dur) var(--v-ease), border-color var(--v-dur) var(--v-ease); }
 .r-iconbtn:hover{ color:var(--v-accent2); border-color:var(--v-accent-line); }
+/* THE SMALL ICON BUTTON, and the reason it did not exist until now.
+   The ladder publishes two heights for the text button, 26 and 22, and app.css has
+   carried both since wave 5. It carried ONE for the icon button, and an icon button
+   is the control most likely to be sitting in a row of small ones: a kebab beside a
+   `.r-btn.sm`, an undo beside a segment button, a favourite star over a card.
+   Earlier waves then did the correct thing and stripped the LOCAL size override off
+   every icon button that had one, each with its reason recorded in the file it came
+   out of (`Browse.svelte` .br-fav, `Library.svelte` .lib-more). That sweep was right
+   and it made the gap permanent, because the 4px step could no longer be closed at a
+   call site without putting back the override the sweep had just removed. Publishing
+   it here is the only place it can go: one step, named, in the ladder, asked for by
+   `ui/IconButton.svelte` and by nothing hand-rolled.
+   It is a box and not only a height, because this control is SQUARE — width and
+   height move together or the glyph stops being centred. */
+.r-iconbtn.sm{ width:22px; height:22px; }
+
+/* ── THE POPOVER MENU ──────────────────────────────────────────────────────
+   Six of these exist and no two were the same shape. Measured on this tree
+   before the class was written: five row paddings (9/11, 8/10, 6/9, 8/10, 7/9),
+   four row font sizes, three row radii (8px, --v-r-md, --v-r-sm), two shell
+   radii (11px against --v-r-md) and two shadows (a hand-rolled
+   `0 18px 44px -18px #000` against --v-shadow-lg). Four of the six already
+   agreed with each other, which is what makes this a consolidation rather than
+   a redesign: the values below are that majority, written down.
+
+   THE VISIBLE CHANGE, named so it is not discovered: `Library.svelte`'s New and
+   More menus were the outlier at both ends. An 11px shell corner and an 8px row
+   corner are off the radius scale entirely (DESIGN_SYSTEM §3 — the largest step
+   this product publishes is 6px, and a pill in a control room reads as a toy),
+   and its rows were 13px type where every other menu in the app is 11.5px. Those
+   corners get smaller and that type gets smaller. Nothing else about those menus
+   moves, and no menu ANYWHERE changes what it does.
+
+   It lives here rather than in `ui/Menu.svelte` for the reason the `.b-*` ladder
+   gives a few hundred lines down: Svelte scopes a component's styles to that
+   component, and a menu's ROWS are written by the caller and arrive through a
+   slot. A rule in the shell component could only reach them through `:global`,
+   which is the same global rule with the scoping machinery in front of it.
+
+   WHAT IS NOT HERE: position. A menu is anchored by whatever opened it, and
+   `position`, `top`, `right`, `z-index` and `width` are that anchor's business.
+   The caller keeps those in its own file, which is exactly the "width and
+   padding, never the height" split docs/REBRAND.md §1 asks for elsewhere. */
+.r-menu{ display:flex; flex-direction:column; gap:1px; padding:5px;
+  background:var(--v-surf2); border:1px solid var(--v-line2); border-radius:var(--v-r-md);
+  box-shadow:var(--v-shadow-lg); }
+/* A MENU ROW, not a button. It is full-bleed and left-aligned because the
+   floating menu is the surface it sits on, and it has no edge and no fill of its
+   own for the same reason. Forcing it into `.r-btn` would centre the label and
+   put a hairline round every row, which is a different control. */
+.r-menuitem{ display:flex; align-items:center; gap:9px; width:100%; box-sizing:border-box;
+  text-align:left; padding:7px 9px; border:0; border-radius:var(--v-r-sm);
+  background:transparent; color:var(--v-txt); cursor:pointer;
+  font-family:var(--f-body); font-size:var(--v-fs-b2); }
+.r-menuitem:hover:not(:disabled){ background:var(--v-surf3); }
+.r-menuitem:disabled{ opacity:.45; cursor:not-allowed; }
+/* The one destructive row. Same red as `.r-btn.danger`, from the same token:
+   a Delete that is rose in a menu and a different rose in a dialog foot is the
+   defect `.r-btn.danger` was already fixed for. */
+.r-menuitem.danger{ color:var(--v-red); }
+.r-menuitem.danger:hover:not(:disabled){ background:var(--v-red-soft); }
 
 .r-badge{ display:inline-flex; align-items:center; gap:6px; padding:3px 8px; border-radius:var(--v-r-sm);
   font-family:var(--f-mono); font-size:var(--v-fs-cap); font-weight:600;
@@ -328,6 +390,46 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
   border:1px solid var(--v-500); color:var(--v-txt); font-family:var(--f-body); font-size:var(--v-fs-b2);
   outline:none; transition:border-color var(--v-dur) var(--v-ease), box-shadow var(--v-dur) var(--v-ease); }
 .r-input.mono{ font-family:var(--f-mono); }
+/* ── THE FIELD WELL, which was named in the focus group and nowhere else ────
+   `.r-well` has appeared in this stylesheet for several waves in exactly one
+   place: the `:focus-within` line a dozen rules below, alongside `.r-btn` and
+   `.r-iconbtn`. It had no rule body and, measured on this tree, zero call sites.
+   So the product published a focus treatment for a control that did not exist,
+   while four search boxes each invented their own.
+
+   What those four did, measured: `.ch-search` sets an accent border plus a 3px
+   soft ring, `.sp-railsearch` and `.sp-addsearch` set an inset hairline, and
+   `.tg-search` sets a border colour and nothing else. All four first set
+   `outline:none` on the input inside them, which is the move DESIGN_SYSTEM §5
+   forbids without an equally visible replacement.
+
+   THE ONE THAT IS NOT MERELY INCONSISTENT: `.tg-search:focus-within` draws
+   `--v-sel-line`, `rgba(91,156,248,.45)`. Composited over the field's own
+   `--v-bg` ground that is rgb(55,86,130), which measures 2.28:1 against it.
+   WCAG 2.2 SC 1.4.11 asks 3:1 of a non-text focus indicator, so a keyboard
+   operator has no reliable way to tell whether the template search has focus.
+   The outline the focus group already promises this class is a solid `--v-sel`,
+   which is 6.1:1 on the same ground. Giving `.r-well` a body is therefore not a
+   new treatment; it is connecting the one that was already written down.
+
+   The height is the ladder's 26px, the same as `.r-input` and `.r-select`,
+   because a well IS a field and the thing the ladder protects is a column
+   (docs/REBRAND.md §1). A caller may still set width, flex and margin. */
+.r-well{ display:flex; align-items:center; gap:8px; height:26px; padding:0 9px;
+  box-sizing:border-box; border-radius:var(--v-r-sm);
+  background:var(--v-bg); border:1px solid var(--v-line2); }
+/* The input inside a well has no box of its own: the well IS the box, and two
+   nested borders read as a field inside a field. It surrenders its outline to
+   the well's `:focus-within`, which is the only circumstance in which
+   `outline:none` is allowed anywhere in this product. */
+.r-well > input, .r-well > select{ flex:1; min-width:0; height:100%;
+  background:transparent; border:0; outline:none; color:var(--v-txt);
+  font-family:var(--f-body); font-size:var(--v-fs-b2); }
+.r-well > input::placeholder{ color:var(--v-faint); }
+/* The leading glyph, and whatever sits after the field (a count, a clear button).
+   Both are `flex:0 0 auto` so a long value never squeezes them out of the row. */
+.r-well > svg, .r-well > .r-well-tail{ flex:0 0 auto; color:var(--v-faint); }
+
 .r-input::placeholder{ color:var(--v-faint); }
 .r-input:focus, .r-select:focus{ border-color:var(--v-accent-line); box-shadow:0 0 0 3px var(--v-accent-soft); }
 .r-input:disabled, .r-select:disabled{ opacity:.5; }
@@ -502,7 +604,7 @@ input[type="checkbox"]{ accent-color:var(--v-accent); }
 .r-empty{ color:var(--v-faint); font-size:var(--v-fs-b2); }
 .r-focus:focus-visible, .r-btn:focus-visible, .r-iconbtn:focus-visible, .ws-tab:focus-visible,
 .r-input:focus-visible, .r-select:focus-visible, .r-switch:focus-visible,
-.r-cbtn:focus-visible, .r-pill:focus-visible, .r-well:focus-within{
+.r-cbtn:focus-visible, .r-pill:focus-visible, .r-menuitem:focus-visible, .r-well:focus-within{
   outline:2px solid var(--v-sel); outline-offset:2px; }
 
 /* ── Responsive ─────────────────────────────────────────────────────────── */
