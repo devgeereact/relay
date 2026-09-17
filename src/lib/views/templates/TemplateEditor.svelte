@@ -13,6 +13,8 @@
   //
   // The preview is the SAME TemplateRender as the wall — WYSIWYG by construction.
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
+  import Toolbar from '../../ui/Toolbar.svelte';
+  import IconButton from '../../ui/IconButton.svelte';
   import { rangeFill } from '../../rangefill.js';
   import {
     duplicateLayer, resetLayer, removeLayer as dropLayer, moveLayer as moveInOrder,
@@ -1156,21 +1158,35 @@
          template that has not happened yet. -->
     {#if isDraft}<span class="te-unsaved">Not saved yet</span>{/if}
     {#if edit && layered}
-      <div class="te-undo">
-        <button class="r-iconbtn te-zbtn" on:click={undo} disabled={!canUndo} title="Undo (Ctrl/⌘+Z)" aria-label="Undo">
+      <!-- A ROW THAT CANNOT STEP. These two, and the zoom pair below, are the
+           case `ui/Toolbar.svelte` exists for: a bar that also carries six 22px
+           `.r-btn ghost sm`, where the icon buttons were the one member at a
+           different height. `Toolbar` fixes `align-items:center` (the default is
+           `stretch`, which is what let a taller member pull its neighbours out of
+           shape) and states the row's step, rather than each member being
+           separately correct and the row collectively ragged. It does NOT reach
+           into its children and override a height: that would beat the shared
+           control from a wrapper file, which is the override
+           `workspacegrammar.test.js` forbids. -->
+      <Toolbar size="sm" gap={2} class="te-undo">
+        <IconButton size="sm" class="te-zbtn" on:click={undo} disabled={!canUndo} title="Undo (Ctrl/⌘+Z)" label="Undo"
+          disabledReason="Nothing to undo — this is the oldest step in this editing session.">
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-1"/></svg>
-        </button>
-        <button class="r-iconbtn te-zbtn" on:click={redo} disabled={!canRedo} title="Redo (Ctrl/⌘+Shift+Z)" aria-label="Redo">
+        </IconButton>
+        <IconButton size="sm" class="te-zbtn" on:click={redo} disabled={!canRedo} title="Redo (Ctrl/⌘+Shift+Z)" label="Redo"
+          disabledReason="Nothing to redo — you are at the newest step.">
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 14 5-5-5-5"/><path d="M20 9H9a5 5 0 0 0 0 10h1"/></svg>
-        </button>
-      </div>
+        </IconButton>
+      </Toolbar>
     {/if}
     <span class="te-spring"></span>
-    <div class="te-zoom">
-      <button class="r-iconbtn te-zbtn" on:click={() => (zoomIdx = Math.max(0, zoomIdx - 1))} disabled={zoomIdx === 0} aria-label="Zoom out">−</button>
+    <Toolbar size="sm" gap={4} class="te-zoom">
+      <IconButton size="sm" class="te-zbtn" on:click={() => (zoomIdx = Math.max(0, zoomIdx - 1))} disabled={zoomIdx === 0} label="Zoom out"
+        disabledReason="Already at the smallest zoom.">−</IconButton>
       <span class="te-pct r-mono">{zoom}%</span>
-      <button class="r-iconbtn te-zbtn" on:click={() => (zoomIdx = Math.min(ZOOMS.length - 1, zoomIdx + 1))} disabled={zoomIdx === ZOOMS.length - 1} aria-label="Zoom in">+</button>
-    </div>
+      <IconButton size="sm" class="te-zbtn" on:click={() => (zoomIdx = Math.min(ZOOMS.length - 1, zoomIdx + 1))} disabled={zoomIdx === ZOOMS.length - 1} label="Zoom in"
+        disabledReason="Already at the largest zoom.">+</IconButton>
+    </Toolbar>
     <button class="r-btn ghost sm" class:on={previewMode} on:click={() => (previewMode = !previewMode)}>{previewMode ? 'Editing' : 'Preview'}</button>
     <button class="r-btn ghost sm" on:click={() => (fsPreview = true)} disabled={!edit} title="Preview this template fullscreen in the console — reaches no output">Fullscreen</button>
     <!-- A DRAFT CANNOT BE TESTED ON THE REAL SCREENS, for the same reason
@@ -1963,8 +1979,9 @@
      than as the destructive act — nothing is being deleted, because nothing was
      ever written. */
   .te-top .r-btn.armed{ border-color:var(--v-accent-line); background:var(--v-accent-soft); color:var(--v-txt); }
-  .te-undo{ display:inline-flex; align-items:center; gap:2px; margin-left:10px; }
-  .te-zoom{ display:flex; align-items:center; gap:4px; }
+  /* POSITION ONLY — the row itself is `ui/Toolbar.svelte`, which owns the
+     direction, the gap and the cross-axis alignment. */
+  :global(.te-undo){ margin-left:10px; }
   /* CONVERTED — B2. Undo · Redo · zoom out · zoom in were a hand-rolled 26px
      square drawing a `--v-line2` DIVIDER hairline where every other icon button
      in the product draws `.r-iconbtn`'s. Same shape, different edge, in a bar
@@ -1973,8 +1990,14 @@
      control that is one size when its icon is a character and another when it
      is a path is the same drift one level down. What is left is the line box,
      which is not a size. */
-  .te-zbtn{ line-height:1; }
-  .te-zbtn:disabled{ opacity:.4; cursor:not-allowed; }
+  /* THE 4px STEP, closed. These four sit in a bar that also carries six
+     `.r-btn ghost sm` at 22px, and they were 26px, because `.r-iconbtn` had only
+     one size and a local override would have put back exactly what wave 3 took
+     out of this file. `.r-iconbtn.sm` is published in app.css now and
+     `ui/IconButton.svelte` is how it is asked for; the rule here carries the two
+     things that are genuinely about THIS bar and nothing about the box. */
+  :global(.te-zbtn){ line-height:1; }
+  :global(.te-zbtn:disabled){ opacity:.4; cursor:not-allowed; }
   .te-pct{ min-width:42px; text-align:center; font-size:var(--v-fs-cap); color:var(--v-dim); }
   .r-btn.confirm{ background:var(--v-emerald); color:var(--v-void); border-color:transparent; }
   .r-btn.confirm:hover:not(:disabled){ filter:brightness(1.08); }

@@ -1,21 +1,17 @@
 <script>
   import { onMount } from 'svelte';
+  import IconButton from '../ui/IconButton.svelte';
+  import Menu from '../ui/Menu.svelte';
+  import MenuItem from '../ui/MenuItem.svelte';
   import { setSession } from '../session.js';
   import { humanError } from '../errors.js';
+  // Still imported for the Paste-a-song SHEET below, which is a `role="dialog"`
+  // and traps focus in its own right. What left this file is the MENU half: the
+  // Escape contract and the menu's focus trap both live in `ui/Menu.svelte` now,
+  // which is the one place rule 44 is written. This file used to carry its own
+  // copy of `menuEsc`, one of four in the tree; all four were correct, and four
+  // copies of a guarantee is how three of them come to disagree.
   import { trapFocus } from '../focus.js';
-
-  // Escape closes an open menu — and MUST stop there. The global panic handler
-  // (shortcuts.js) listens on `window` in the bubble phase and clears the wall on
-  // an unguarded Escape; stopPropagation here means a menu dismissal never reaches
-  // it. trapFocus puts focus inside the menu on open (so this fires) and restores
-  // it to the trigger on close.
-  function menuEsc(e, close) {
-    if (e.key === 'Escape') {
-      e.stopPropagation();
-      e.preventDefault();
-      close();
-    }
-  }
   // Library — the unified content catalog. Every content type lives behind a
   // sub-tab: Scripture (verses the operator saved), Lyrics (songs), Media
   // (images/video/documents), Announcements, and service History. One Import
@@ -684,25 +680,31 @@
         </button>
         {#if showNew}
           <button class="lib-newscrim" tabindex="-1" aria-label="Close menu" on:click={() => (showNew = false)}></button>
-          <div class="lib-newmenu" role="menu" tabindex="-1" use:trapFocus on:keydown={(e) => menuEsc(e, () => (showNew = false))}>
-            <button class="lib-newitem" role="menuitem" on:click={newPasteSong}>Paste / draft song</button>
-            <button class="lib-newitem" role="menuitem" on:click={newSaveScripture}>Save scripture</button>
-            <button class="lib-newitem" role="menuitem" on:click={newDraftAnnouncement}>Draft announcement</button>
-          </div>
+          <Menu class="lib-newmenu" label="New item" close={() => (showNew = false)}>
+            <MenuItem on:click={newPasteSong}>Paste / draft song</MenuItem>
+            <MenuItem on:click={newSaveScripture}>Save scripture</MenuItem>
+            <MenuItem on:click={newDraftAnnouncement}>Draft announcement</MenuItem>
+          </Menu>
         {/if}
       </div>
       <div class="lib-newwrap">
-        <button class="r-iconbtn lib-more" aria-label="More actions" aria-haspopup="menu" aria-expanded={showMore} on:click={() => (showMore = !showMore)}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="19" cy="12" r="1.7" /></svg>
-        </button>
+        <!-- 22px, not 26. It sits between `Import` and `New Item`, both of which
+             are `.r-btn ghost sm`/`.r-btn primary sm` at 22px, and it was the one
+             control in the row at the larger step. That was not a local mistake:
+             `.r-iconbtn` had no small size and wave 3 had correctly stripped this
+             file's local override, so the step could not be closed here without
+             putting the override straight back. It is in the ladder now. -->
+        <IconButton size="sm" class="lib-more" label="More actions" aria-haspopup="menu" aria-expanded={showMore} on:click={() => (showMore = !showMore)}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="19" cy="12" r="1.7" /></svg>
+        </IconButton>
         {#if showMore}
           <button class="lib-newscrim" tabindex="-1" aria-label="Close menu" on:click={() => (showMore = false)}></button>
-          <div class="lib-newmenu" role="menu" tabindex="-1" use:trapFocus on:keydown={(e) => menuEsc(e, () => (showMore = false))}>
-            <button class="lib-newitem" role="menuitem" on:click={() => { showMore = false; goTab(active); }}>Reload this list</button>
-            <button class="lib-newitem" role="menuitem" on:click={() => { showMore = false; setSession({ activeTab: 'settings' }); }}>
+          <Menu class="lib-newmenu" label="More actions" close={() => (showMore = false)}>
+            <MenuItem on:click={() => { showMore = false; goTab(active); }}>Reload this list</MenuItem>
+            <MenuItem on:click={() => { showMore = false; setSession({ activeTab: 'settings' }); }}>
               Open Settings
-            </button>
-          </div>
+            </MenuItem>
+          </Menu>
         {/if}
       </div>
       <input type="file" multiple accept={ACCEPT} bind:this={fileInput} on:change={onFiles} style="display:none" />
@@ -855,13 +857,14 @@
      button element behind an open menu so a press anywhere closes it, keyboard
      included. Two of them, one per menu. It has no shape by design. */
   .lib-newscrim{ position:fixed; inset:0; z-index:40; background:transparent; border:0; cursor:default; }
-  .lib-newmenu{ position:absolute; right:0; top:calc(100% + 6px); z-index:50; min-width:180px; padding:6px;
-    background:var(--v-surf2); border:1px solid var(--v-line2); border-radius:11px; box-shadow:0 18px 44px -18px #000;
-    display:flex; flex-direction:column; gap:2px; }
-  /* A MENU ROW, not a button — B2. Five of them across the New and ⋮ menus:
-     full-bleed, left-aligned, no edge, because the floating menu is the
-     surface they sit on. */
-  .lib-newitem{ text-align:left; padding:9px 11px; border-radius:8px; border:0; background:transparent; color:var(--v-txt);
-    font-family:var(--f-body); font-size:var(--v-fs-pr); cursor:pointer; }
-  .lib-newitem:hover{ background:var(--v-surf3); color:var(--v-accent); }
+  /* POSITION ONLY. The shell — fill, edge, corner, shadow, padding — is `.r-menu`
+     in app.css, reached through `ui/Menu.svelte`, and the rows are `.r-menuitem`.
+     THIS MENU IS THE ONE THAT VISIBLY CHANGES, and it is worth naming rather than
+     leaving to be discovered: it drew an 11px shell corner and an 8px row corner,
+     both off the radius scale entirely (the largest step this product publishes is
+     6px), its own `0 18px 44px -18px #000` shadow where every other menu draws
+     `--v-shadow-lg`, and 13px rows where every other menu is 11.5px. It was the
+     outlier at both ends of all four measurements. The corners and the type get
+     smaller; nothing about what these menus DO moves. */
+  :global(.lib-newmenu){ position:absolute; right:0; top:calc(100% + 6px); z-index:50; min-width:180px; }
 </style>
