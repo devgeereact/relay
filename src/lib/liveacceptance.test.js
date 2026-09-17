@@ -125,11 +125,23 @@ describe('the programme is content, not an index into a grid', () => {
   it('and the one writer is the output event, not a control', () => {
     const src = readFileSync(resolve(__dirname, 'stores/capture.js'), 'utf8');
     const sets = [...src.matchAll(/[^\w$.]live\.set\s*\(/g)];
-    // Three: content arriving, the wall being cleared, and a template refresh
-    // that re-renders the SAME content. None of them is a view.
-    expect(sets.length).toBe(3);
+    // FOUR since RG-151: content arriving, the wall being cleared, the wall being
+    // BLACKED, and a template refresh that re-renders the same content. None of
+    // them is a view, which is the claim this test actually makes — the count is
+    // how it notices a fifth.
+    //
+    // The blackout one was the defect. `Live.svelte` takes the preacher's stage
+    // hint down on the truthy→falsy edge of `live`, and `output://black` set
+    // `screenBlack` and nothing else, so `Esc` took the hint down and `B` left it
+    // standing. Nothing is on the screens after a blackout, so null is the truth
+    // here and not a convenience.
+    expect(sets.length).toBe(4);
     expect(src).toMatch(/listen\('output:\/\/content'[\s\S]{0,80}live\.set\(e\.payload\)/);
     expect(src).toMatch(/listen\('output:\/\/clear'[\s\S]{0,40}live\.set\(null\)/);
+    expect(
+      src,
+      'a blackout must take `live` down, like a clear does (RG-151)',
+    ).toMatch(/listen\('output:\/\/black'[\s\S]{0,40}live\.set\(null\)/);
   });
 });
 

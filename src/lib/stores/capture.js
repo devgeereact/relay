@@ -515,7 +515,17 @@ export async function initAudio() {
       // screens were clear. Two indicators in one window, disagreeing, and amber
       // is never allowed to be the wrong one (CLAUDE.md §18).
       await listen('output://clear', () => { live.set(null); screenBlack.set(false); leavePlan(); noteOperatorAction('clear'); });
-      await listen('output://black', () => { screenBlack.set(true); leavePlan(); noteOperatorAction('black'); });
+      // RG-151. `live` IS TAKEN DOWN HERE TOO, and for the reason stated one line
+      // up rather than a new one. `Live.svelte` takes the preacher's `stage_next`
+      // panel off the monitor by watching the truthy→falsy edge of `live`, and
+      // this listener set `screenBlack` and nothing else — so `Esc` took the hint
+      // down and `B` left it standing, and the two panic controls disagreed about
+      // a screen the congregation cannot see and the preacher is reading from.
+      //
+      // Nothing is on the screens after a blackout, so `live` being null is the
+      // truth and not a convenience. `screenBlack` is what keeps a blackout
+      // distinguishable from a clear, and it still does.
+      await listen('output://black', () => { live.set(null); screenBlack.set(true); leavePlan(); noteOperatorAction('black'); });
       // A SPOKEN "next"/"back" that did nothing. The STT thread has no caller to
       // return a NavResult to, so it pushes it here — the preacher says "next", the
       // wall does not move, and the console explains why instead of staying silent.
