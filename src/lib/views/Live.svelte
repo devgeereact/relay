@@ -2620,7 +2620,12 @@
     onClose={() => (inspecting = null)}
     onAccept={inspectAccept}
     onDismiss={inspectDismiss}
-    onTuning={() => { inspecting = null; setSession({ activeTab: 'settings' }); }}
+    onTuning={() => {
+      inspecting = null;
+      // The inspector's link names a control, so it lands on the section that has
+      // it rather than on General with the operator left to find it.
+      setSession({ activeTab: 'settings', settingsSection: 'ai' });
+    }}
   />
 </div>
 

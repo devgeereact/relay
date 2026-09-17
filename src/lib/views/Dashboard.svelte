@@ -467,7 +467,13 @@
     <header>
       <h3>Recent services</h3>
       {#if services.length}
-        <button class="d-link" on:click={() => go('library')}>All history</button>
+        <!-- HISTORY IS IN SETTINGS, and has been since it left the Library. This
+             sent an operator looking for past services to a workspace that no
+             longer has any. It names the section now rather than only the tab. -->
+        <button
+          class="d-link"
+          on:click={() => setSession({ activeTab: 'settings', settingsSection: 'history' })}
+          >All history</button>
       {/if}
     </header>
     {#if services.length}

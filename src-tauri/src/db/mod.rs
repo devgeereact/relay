@@ -413,6 +413,43 @@ fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
 /// Called once at startup (not on a live-service path), so surfacing a hard
 /// error here is correct — a broken DB must fail loudly before a service, not
 /// silently mid-sermon.
+/// Every pragma a Relay connection needs, in one place so a second opener cannot
+/// get a different set.
+///
+/// ── WHAT HAPPENS WHEN TWO THINGS WANT THIS FILE AT ONCE (RG-113(2)) ──────
+///
+/// `foreign_keys` was the only pragma set here, which left the two that decide
+/// how contention behaves at SQLite's defaults: no busy timeout, and the
+/// rollback journal.
+///
+/// NO BUSY TIMEOUT MEANS A WRITER THAT COLLIDES FAILS INSTANTLY, with
+/// `SQLITE_BUSY`, rather than waiting the moment it usually takes for the other
+/// writer to finish. That is not hypothetical here: `plans.rs` explicitly
+/// anticipates two Relay processes on one file, the kiosk HTTP server and the
+/// detection thread both write while a service runs, and the failure surfaces
+/// as an error banner mid-sermon for a condition that would have cleared itself
+/// in milliseconds. Five seconds is long enough to cover any write this
+/// application makes and short enough that a genuine deadlock still reports
+/// rather than hanging a service.
+///
+/// WAL, because the default journal makes a reader and a writer exclude each
+/// other. Relay reads verses on the detection path while the timeline and the
+/// latency samples are being written, so the two collide by design rather than
+/// by accident. WAL lets them proceed together, and it is the mode a
+/// single-file desktop database is expected to run in.
+///
+/// NEITHER IS FATAL IF IT FAILS. `journal_mode` returns a row rather than
+/// nothing, so it is queried rather than executed, and a filesystem that cannot
+/// support WAL (a network share) answers something else and keeps working in
+/// the mode it can. A pragma that could not be set is not a reason to refuse to
+/// open a church's database.
+pub fn connection_pragmas(conn: &Connection) -> rusqlite::Result<()> {
+    conn.busy_timeout(std::time::Duration::from_secs(5))?;
+    let _ = conn.query_row("PRAGMA journal_mode = WAL;", [], |r| r.get::<_, String>(0));
+    conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+    Ok(())
+}
+
 pub fn open() -> rusqlite::Result<Connection> {
     let path = default_db_path();
     if let Some(dir) = path.parent() {
@@ -433,7 +470,7 @@ pub fn open() -> rusqlite::Result<Connection> {
     }
     let fresh = !path.exists();
     let conn = Connection::open(&path)?;
-    conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+    connection_pragmas(&conn)?;
     migrate(&conn, fresh)?;
     Ok(conn)
 }
@@ -987,6 +1024,59 @@ mod tests {
             .expect("a crashed previous attempt must be retryable");
 
         assert!(manual_is_allowed(&conn));
+    }
+
+    /// RG-113(2) — the two pragmas that decide what happens when two things want
+    /// this file at once, and which were left at SQLite's defaults.
+    #[test]
+    fn a_connection_waits_for_a_busy_database_instead_of_failing_instantly() {
+        // A PATH PER RUN, not per process. `db::tests` is compiled into more than
+        // one test binary, so a name keyed on the pid alone is shared by two
+        // concurrent copies of this test — and they raced on one file: the first
+        // set WAL, the second opened the same path and read back `delete`. It
+        // failed as a pragma bug and was a test-isolation bug, which is the more
+        // expensive of the two to believe.
+        let uniq = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!("relay-pragma-{}-{uniq}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("pragmas.db");
+        let conn = Connection::open(&path).expect("open");
+        connection_pragmas(&conn).expect("pragmas");
+
+        // WITHOUT THIS, a writer that collides fails at once with SQLITE_BUSY, for a
+        // condition that clears itself in milliseconds -- and it surfaces as an error
+        // banner mid-sermon. `plans.rs` explicitly anticipates two Relay processes on
+        // one file, so this is a real arrangement rather than a hypothetical one.
+        let busy: i64 = conn
+            .query_row("PRAGMA busy_timeout", [], |r| r.get(0))
+            .expect("busy_timeout is readable");
+        assert_eq!(busy, 5000, "a busy database fails instantly again");
+
+        // WAL, so a reader and a writer stop excluding each other: Relay reads verses
+        // on the detection path while the timeline and the latency samples are being
+        // written. Asserted as "not the default journal" rather than as the exact
+        // word, because a filesystem that cannot support WAL must still open -- and
+        // that tolerance is the point, so it is not asserted away here.
+        let mode: String = conn
+            .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+            .expect("journal_mode is readable");
+        assert_eq!(
+            mode.to_lowercase(),
+            "wal",
+            "on an ordinary filesystem the journal mode should be WAL, got {mode}"
+        );
+
+        // And the pragma that was already here is still here.
+        let fk: i64 = conn
+            .query_row("PRAGMA foreign_keys", [], |r| r.get(0))
+            .expect("foreign_keys is readable");
+        assert_eq!(fk, 1);
+
+        drop(conn);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Foreign keys must be back ON when the migration returns, and no transaction

@@ -9,7 +9,7 @@
   import History from './library/History.svelte';
   import Dashboard from './Dashboard.svelte';
   import { locale, setLocale, LOCALES, t } from '../i18n.js';
-  import { restartSetup, setSession } from '../session.js';
+  import { restartSetup, setSession, session } from '../session.js';
   // THE shortcut table — one array, shared with the keydown handler, the
   // cheatsheet, Help and `sectionkeys.js::RESERVED`. See the note further down.
   import { SHORTCUTS } from '../shortcuts.js';
@@ -94,6 +94,23 @@
     { key: 'privacy',     label: 'Privacy & Advanced',     desc: 'What is on this machine, what can leave it, and the one thing that does.', icon: 'shield' },
   ];
   let section = 'general';
+  // ── A CONTROL THAT POINTED HERE MAY SAY WHERE ─────────────────────────────
+  //
+  // Eleven sections behind one tab, and every control that meant one of them
+  // could only say "Settings". `Change sensitivity in Settings` named a control
+  // and landed on General; `All history` pointed at the Library, where History
+  // has not lived since it moved in here.
+  //
+  // One-shot, and cleared as soon as it is used: `session.settingsSection` is an
+  // instruction from the control that was just pressed, not a resume point. An
+  // operator who opens Settings themselves should land where they left it.
+  // Checked against `SECTIONS` rather than trusted, because a stale key persisted
+  // from an older layout would otherwise render an empty pane.
+  onMount(() => {
+    const want = get(session)?.settingsSection;
+    if (want && SECTIONS.some((s) => s.key === want)) section = want;
+    if (want) setSession({ settingsSection: null });
+  });
   $: activeSection = SECTIONS.find((s) => s.key === section) ?? SECTIONS[0];
 
   const ICONS = {

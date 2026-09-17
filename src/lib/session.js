@@ -37,6 +37,20 @@ const EMPTY = {
   // it went stale, which is the more dangerous half: it reads as intent, and the
   // next person to "restore" it would be reintroducing a tab that no longer exists.
   activeTab: 'live',
+  // WHICH SETTINGS SECTION, when something sent the operator there on purpose.
+  //
+  // Settings is eleven sections behind one tab, and every control that pointed at
+  // one could only say "go to Settings" — so `Change sensitivity in Settings` and
+  // `All history` both landed on General and left the operator to find the rest
+  // themselves. `All history` was worse than that: it pointed at the LIBRARY,
+  // where History used to live before it moved into Settings, so it sent somebody
+  // looking for past services to a workspace that no longer has any.
+  //
+  // Deliberately NOT persisted as a resume point the way `activeTab` is. It is a
+  // one-shot instruction from whichever control was pressed, cleared the moment
+  // Settings has acted on it: an operator who opens Settings themselves tomorrow
+  // should land where they left it, not on a section some button chose last week.
+  settingsSection: null,
   planId: null,
   liveCueId: null,
   liveSlide: 0,
