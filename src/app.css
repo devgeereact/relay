@@ -514,7 +514,24 @@ input[type=color]::-moz-color-swatch{ border:0; border-radius:2px; }
      Clear screens red   — it takes the wall away.
      Blackout     black  — it is the black itself, with a light hairline so the
                            button is still findable on a dark desk.
-     Rehearse     amethyst — the rehearsal colour, and nothing else uses it.
+     Rehearse     amethyst — see below; it is the whole of this colour's promise
+                  and not the whole of its use.
+
+   AMETHYST MEANS "NOTHING HERE REACHES A CONGREGATION" (DECISIONS section 92).
+   This line used to read "the rehearsal colour, and nothing else uses it", and
+   that was false about the file it is written in: the boot ladder below spends
+   amethyst about eleven times, the practice strip twice, and components spend it
+   on the splash, on safe mode and on the Media collection ink. Reading those uses
+   rather than counting them is what settled it — almost none is a borrowing.
+   Rehearsal is the case the colour was named for; safe mode ("outputs disabled")
+   and the launch sequence (no console, no output window, nothing on any wall) are
+   the same fact said where the word "rehearsal" does not fit, and a boot ladder
+   and a rehearsal badge can never be on screen together because `.b-shell`
+   renders instead of `App.svelte`.
+   What is deliberately NOT settled is CAUTION. Four surfaces spend amethyst on a
+   warning because this palette publishes no caution ink and every other colour is
+   already a promise. That gap is filed, not improvised. `colourlaw.test.js`
+   enumerates all of it.
 
    A panic control is never placed behind a validator and never scrolled out of
    reach (CLAUDE.md rule 36, DECISIONS section 20), so these are sized to stay
@@ -794,8 +811,16 @@ input[type="checkbox"]{ accent-color:var(--v-accent); }
   background:var(--v-void); color:var(--v-txt); font-family:var(--f-body); overflow:hidden; }
 .b-shell::before{ content:""; position:absolute; inset:0; pointer-events:none;
   background:
-    radial-gradient(60% 40% at 50% 0%, rgba(139,92,246,.10), transparent 70%),
-    radial-gradient(45% 55% at 100% 100%, rgba(139,92,246,.05), transparent 70%); }
+    /* THE RETIRED AMETHYST, replaced. `rgba(139,92,246,…)` is #8b5cf6, the hex
+       this palette moved off; the current amethyst is #a96bf5. So the launch
+       screen's own glow was a different purple from the `--v-amethyst` every
+       other rule on it draws, which is the two-colours-in-one-surface defect
+       `--v-amber-line` was already introduced to stop. `color-mix` because the
+       alphas here (.10 and .05) are decorative washes the palette does not
+       publish, and inventing two more `-soft` tokens for one gradient would be a
+       worse trade than reading the one token twice. */
+    radial-gradient(60% 40% at 50% 0%, color-mix(in srgb, var(--v-amethyst) 10%, transparent), transparent 70%),
+    radial-gradient(45% 55% at 100% 100%, color-mix(in srgb, var(--v-amethyst) 5%, transparent), transparent 70%); }
 
 /* Brand row — the identity half of the splash's title bar, so the sequence
    reads as one screen changing rather than four different apps. */
@@ -816,7 +841,10 @@ input[type="checkbox"]{ accent-color:var(--v-accent); }
   letter-spacing:.12em; text-transform:uppercase; color:var(--v-faint); }
 .b-rail .s .n{ width:18px; height:18px; border-radius:50%; display:grid; place-items:center;
   border:1px solid var(--v-line2); font-size:var(--v-fs-fig); color:var(--v-faint); }
-.b-rail .s.on .n{ border-color:var(--v-amethyst); color:var(--v-amethyst); box-shadow:0 0 0 3px rgba(139,92,246,.14); }
+/* One amethyst: the halo drew the RETIRED #8b5cf6 against a border and a text
+   colour that both draw the current one, in a single declaration. */
+.b-rail .s.on .n{ border-color:var(--v-amethyst); color:var(--v-amethyst);
+  box-shadow:0 0 0 3px color-mix(in srgb, var(--v-amethyst) 14%, transparent); }
 .b-rail .s.on{ color:var(--v-txt); }
 .b-rail .s.done .n{ border-color:rgba(34,197,94,.5); color:var(--v-emerald); }
 .b-rail .sep{ width:16px; height:1px; background:var(--v-line2); }
@@ -889,7 +917,10 @@ input[type="checkbox"]{ accent-color:var(--v-accent); }
   border-radius:var(--v-r-sm); border:1px solid var(--v-line2); background:var(--v-surf2);
   font-family:var(--f-mono); font-size:var(--v-fs-fig); letter-spacing:.08em; text-transform:uppercase; color:var(--v-faint); }
 
-.b-spinner{ width:14px; height:14px; border-radius:50%; border:2px solid rgba(139,92,246,.25);
+/* One amethyst — the track was the retired #8b5cf6 under a head drawing the
+   current one, so the spinner changed hue as it turned. */
+.b-spinner{ width:14px; height:14px; border-radius:50%;
+  border:2px solid color-mix(in srgb, var(--v-amethyst) 25%, transparent);
   border-top-color:var(--v-amethyst); animation:bspin .7s linear infinite; }
 @keyframes bspin{ to{ transform:rotate(360deg); } }
 @media (prefers-reduced-motion: reduce){ .b-spinner{ animation:none; } }
