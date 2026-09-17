@@ -54,8 +54,15 @@ These do not move without a human explicitly reopening them. Full reasoning in
 
 **The directory says which is which.** `docs/` is the specification. `docs/qa/` is how Relay is
 checked and what checking found. `docs/qa/audits/` is frozen evidence — dated, and never edited
-after the fact. `CHANGELOG.md` stays at the repository root, where the convention and GitHub
-both expect it.
+after the fact. **`docs/superpowers/` is the wave work: `specs/` the design a wave was built to
+and `plans/` the work orders it was built from.** It is neither specification nor evidence — it
+is what was intended at the time, which is why a ruling that lives only there has not been made
+yet and belongs in `DECISIONS.md` (§92 is one that had to be moved). `CHANGELOG.md` stays at the
+repository root, where the convention and GitHub both expect it.
+
+**Two rows below sit under the `docs/qa/` heading and are not in `docs/qa/`** — `REBRAND.md` and
+`RELAY_V1_AUDIT.md` are top-level. The links are right; the filing is not, and the paragraph
+above says the directory is the classifier.
 
 | Volume | Owns the question | Document(s) | Status |
 |---|---|---|---|
@@ -69,8 +76,8 @@ both expect it.
 | **Decisions (ADR log)** | *Why is anything the way it is?* | [DECISIONS.md](DECISIONS.md) | Complete |
 | **Known issues & tech debt** | *What is deferred, parked, or owed — and on whose authority?* | [KNOWN_ISSUES.md](KNOWN_ISSUES.md) | **NEW** |
 | **Agent routing** | *How an agent working in this repository is meant to operate* | [GEE-OS.md](GEE-OS.md) | Not part of the product hierarchy |
-| **Data schema** | *The canonical on-device SQLite shape* | [data/schema.sql](data/schema.sql) | Refreshed |
-| **Schema baseline** | *The oldest schema Relay can upgrade from — checked in so a test can prove every column added since has a migration. **Never edit it***| [data/schema-baseline.sql](data/schema-baseline.sql) | **NEW** |
+| **Data schema** | *The canonical on-device SQLite shape.* ⚠️ **`include_str!`d by `db/mod.rs`, so it IS the shipped baseline schema — not documentation.** Delete it and `cargo build` fails while the whole frontend suite stays green | [data/schema.sql](data/schema.sql) | Refreshed |
+| **Schema baseline** | *The oldest schema Relay can upgrade from — checked in so a test can prove every column added since has a migration. **Never edit it***. ⚠️ **Also `include_str!`d**, for the same reason and with the same consequence: "`docs/` is the specification" above is true of every file here except these two, and a reader who prunes them on that sentence gets a red Rust build and a green `npx vitest run`. Pinned by `hardrules.test.js` | [data/schema-baseline.sql](data/schema-baseline.sql) | **NEW** |
 | **Gap register** | *What an outside product brief asked for vs what exists — and the two proposals that would reverse a recorded decision* | [RELAY_GAP.md](qa/RELAY_GAP.md) | **NEW** |
 | **Security & privacy** | *What Relay is asked to defend against, and what it promises a church* | [SECURITY.md](SECURITY.md) (T1–T10) · [PRIVACY.md](PRIVACY.md) | Complete |
 | **Community** | *How contributions arrive and how people are treated* | [CONTRIBUTING.md](CONTRIBUTING.md) · [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Complete |
@@ -86,11 +93,14 @@ both expect it.
 | [qa/LAUNCH_CHECKLIST.md](qa/LAUNCH_CHECKLIST.md) | One release gate list. Every box names its command or says it has never been checked |
 | [REBRAND.md](REBRAND.md) | The active build specification for Relay Studio — the brand, the workspace grammar, the template engine, and the twelve phases with their status. `AGENTS.md` step 2 sends readers here to find it |
 | [RELAY_V1_AUDIT.md](RELAY_V1_AUDIT.md) | The V1 production audit: the decision, three scorecards, the fix process, and every phase of both briefs dispositioned |
-| [qa/audits/](qa/audits/) | **Frozen.** Seven dated audits, including the retired product audit. Closures go in a fix log at the top, never into the findings |
+| [qa/audits/](qa/audits/) | **Frozen.** **Eleven** dated audits (`ls qa/audits | wc -l`): three field services, two performance runs, one six-agent QA sweep, **four browser-driven passes** (waves 2, 3 and 5 on 2026-09-16, wave 4 on 2026-09-17) and the retired product audit. Closures go in a fix log at the top, never into the findings |
 
 **On ADRs:** [DECISIONS.md](DECISIONS.md) *is* the architecture-decision record — a single
-narrative log with reasoning and explicit non-goals, 46 numbered decisions (§18–§63) deep,
-plus 28 earlier ones carried as table rows. It is deliberately not
+narrative log with reasoning and explicit non-goals, **75** numbered decisions (§18–§92) deep — `grep -cE '^## [0-9]+\. ' DECISIONS.md` —
+plus 28 earlier ones carried as table rows (`sed -n '1,59p' DECISIONS.md | grep -cE '^\|'`,
+less the three header-and-separator pairs). **This line said 46 and §18–§63**, which had been
+wrong for twenty-nine decisions, in a paragraph four screens below this page's own rule that
+counts live beside the command that produces them. It is deliberately not
 split into per-file `adr/NNNN-*.md` documents: the log is cross-referenced from code comments
 and the handbook, and one file keeps the *why* readable end to end. If the code ever
 contradicts it, the code is wrong — flag it, don't silently "fix" the decision.
@@ -176,7 +186,9 @@ Three documents, at three altitudes, and they are meant to disagree on scope rat
   whether Relay ships a second Bible translation, an import path for one, or neither.
 - **[qa/audits/](qa/audits/)** — dated machine audits, **each frozen**. They never rewrite their
   own findings; closures go in the fix log at the top, because an audit that edits its own
-  history stops being evidence. Five:
+  history stops being evidence. **Eleven of them** (`ls qa/audits | wc -l`); this sentence said
+  *Five* and then listed six, which is the shortest possible demonstration of why a count does
+  not belong in prose beside the list it counts. The ones a reader reaches for:
   [QA-2026-08-14.md](qa/audits/QA-2026-08-14.md) (six-agent full scope; §16 is the human test
   script), [PERF-2026-08-24.md](qa/audits/PERF-2026-08-24.md) (real-time latency, and §6 is what
   its numbers do **not** establish),
@@ -187,8 +199,18 @@ Three documents, at three altitudes, and they are meant to disagree on scope rat
   (**3 of 3 on `turbo`, 5 of 9 on `ggml-base`**), and the day the sensitivity dial was shown by
   measurement not to be the lever — [PERF-MODELS-2026-08-30.md](qa/audits/PERF-MODELS-2026-08-30.md), what each
   speech model costs in transcript updates per second, and
+  **[FIELD-2026-09-13.md](qa/audits/FIELD-2026-09-13.md)** — *the first service with no wrong
+  verse*: eight of eight over 110.5 minutes, on `ggml-large-v3-turbo` pinned by hand before the
+  microphone was opened, which is one sample and does not close RG-116 —
   [PRODUCT-2026-07-13.md](qa/audits/PRODUCT-2026-07-13.md), the product audit retired into
-  evidence on 2026-09-02 with a header recording where each of its parts went.
+  evidence on 2026-09-02 with a header recording where each of its parts went, and the **four
+  browser-driven passes** — [DESIGN-2026-09-16-WAVE2](qa/audits/DESIGN-2026-09-16-WAVE2.md),
+  [WAVE3](qa/audits/DESIGN-2026-09-16-WAVE3.md), [WAVE5](qa/audits/DESIGN-2026-09-16-WAVE5.md)
+  and [2026-09-17-WAVE4-STAGE-PLANNER](qa/audits/2026-09-17-WAVE4-STAGE-PLANNER.md) — which are
+  the audits done by DRIVING the app rather than reading it, and are therefore the only ones
+  that have ever caught a congregation-facing rendering fault. **Read each one's header note
+  before trusting an id in it**: the wave 4 and wave 5 passes were renumbered differently
+  (`qa/RELAY_GAP.md` §23a), and one rewrote its body while the other did not.
 - **[qa/LAUNCH_CHECKLIST.md](qa/LAUNCH_CHECKLIST.md)** — the gate list. Every box names the
   command that ticks it or says it has never been checked.
 
