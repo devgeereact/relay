@@ -275,16 +275,20 @@ export const CONTENT_KINDS = [
  *   - `db/templates.rs::builtin_templates()` — the five a fresh install actually
  *     seeds — carry **no `shows` key at all**, so they fall to the `return true`
  *     below and show every kind, including one added tomorrow. Safe by absence.
- *   - `db/templates.rs::theme_templates()` — the thirteen on the preset shelf —
- *     each carry an EXPLICIT list of exactly the five current kinds, pinned by a
- *     Rust test whose `all` array is a third hand-mirrored copy of `CONTENT_KINDS`.
- *     These are the ones a sixth kind would be hidden by, and the test would not
- *     say so: it asserts the thirteen agree with its own hard-coded five.
+ *   - `db/templates.rs::theme_templates()` — the TWENTY-FIVE on the preset shelf,
+ *     five families across five kinds — each carry an EXPLICIT list of exactly
+ *     the five current kinds, pinned by a Rust test whose `all` array is a third
+ *     hand-mirrored copy of `CONTENT_KINDS`. These are the ones a sixth kind
+ *     would be hidden by, and the test would not say so: it asserts the
+ *     twenty-five agree with its own hard-coded five. (This comment said
+ *     THIRTEEN, which was the shelf before wave 2 reshaped it into families —
+ *     RG-155. Count it: `awk '/fn theme_templates/,/^\}/' src-tauri/src/db/
+ *     templates.rs | grep -cE '^ +\('.)
  *
  * So the exposure runs the opposite way round from the comfortable reading. A new
  * kind is safe on a fresh install and invisible on any screen wearing a preset,
- * until `CONTENT_KINDS`, `ContentTemplates`, the thirteen presets and that test's
- * `all` array are all four updated together.
+ * until `CONTENT_KINDS`, `ContentTemplates`, the twenty-five presets and that
+ * test's `all` array are all four updated together.
  */
 export function templateShows(template, kind) {
   if (!kind) return true;

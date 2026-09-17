@@ -224,6 +224,7 @@ service lock · update safety · diagnostics · models.
 | `nav://blocked` | A nav that could not move, and which of the four reasons it was |
 | `template://updated` | A template changed; every surface re-renders from one engine |
 | `model://progress` · `done` · `error` · `cancelled` | The in-app STT model download. **`done` has no listener on purpose** — `download_model` resolves when the file is installed and verified, so the command's own return *is* the completion signal; a listener as well would handle it twice |
+| `output://default_template` | The operator's configured fallback template changed. Native windows get this event; kiosk and OBS clients get the hub frame of the same name, which is cached and replayed on hello, because a browser source has no database to read the setting from. Landed in wave 2 and reached neither this table nor CLAUDE.md's count until RG-155 |
 | `channel://retemplate` | A screen's template was reassigned. The native output filters it by its own `channel` id, which is why a template swap is live and needs no new URL (DECISIONS §29) |
 | `rehearsal://changed` | Rehearsal was turned on or off. Pushed rather than polled, because every surface must agree about it at the same instant |
 
