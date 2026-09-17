@@ -209,7 +209,15 @@ describe('R3-01 · Escape belongs to the popup menu, not to the panic key', () =
     expect(menu).toBeTruthy();
     expect(menu.getAttribute('role')).toBe('menu');
 
-    press('Escape', menu.querySelector('.lib-newitem'));
+    // The row's class moved from `.lib-newitem` to the shared `.r-menuitem` when
+    // the Escape contract was consolidated into `ui/Menu.svelte` (one copy, not
+    // four). The CLAIM is unchanged and is still driven against a real mount; only
+    // the selector for the row moved, so it is asserted rather than assumed — a
+    // `querySelector` that silently returned null would send the keypress to the
+    // document and pass this test for the wrong reason.
+    const row = menu.querySelector('.r-menuitem');
+    expect(row, 'a row inside the open menu').toBeTruthy();
+    press('Escape', row);
     await tick();
 
     // Both halves, as in the original 2026-08-14 fix (P1-3): the wall is

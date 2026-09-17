@@ -138,9 +138,18 @@
     position: absolute;
     inset: 0;
     background:
-      radial-gradient(64% 42% at 50% 38%, rgba(169, 107, 245, 0.085), transparent 70%),
-      radial-gradient(38% 58% at 2% 62%, rgba(169, 107, 245, 0.05), transparent 70%),
-      radial-gradient(38% 58% at 98% 44%, rgba(169, 107, 245, 0.05), transparent 70%);
+      /* THE TOKEN, not a hand-typed copy of it. These were
+         `rgba(169,107,245,…)`, which happens to be the CURRENT amethyst spelled
+         out — so unlike the boot ladder's glow they were not the wrong purple,
+         they were the right one written somewhere a hex sweep could not see it.
+         That is the failure mode DESIGN_SYSTEM §1.3 describes: when the hex moves,
+         every hand-written copy becomes a surface quietly painted in the old
+         colour, and `workspacegrammar.test.js`'s own header says `rgba()` is not
+         scanned at all. `color-mix` because these alphas are decorative washes the
+         palette does not publish as tokens. */
+      radial-gradient(64% 42% at 50% 38%, color-mix(in srgb, var(--v-amethyst) 8.5%, transparent), transparent 70%),
+      radial-gradient(38% 58% at 2% 62%, color-mix(in srgb, var(--v-amethyst) 5%, transparent), transparent 70%),
+      radial-gradient(38% 58% at 98% 44%, color-mix(in srgb, var(--v-amethyst) 5%, transparent), transparent 70%);
     pointer-events: none;
   }
   .waves {

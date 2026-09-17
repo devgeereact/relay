@@ -4751,3 +4751,96 @@ be read as a claim about anything. `src/lib/progtimerjoin.test.js` covers the jo
 both waves' surfaces were individually green and the defects were in the seam between them,
 so it drives Live's real fire path and mounts the REAL stage page on the frame that comes out
 rather than adding cases to either side.
+
+## 93. Amethyst promises "nothing here reaches a congregation", and the caution gap is named rather than closed (2026-09-17)
+
+**A human may overrule this. It restates a law rather than moving one, and it deliberately leaves
+one question open instead of answering it with a colour nobody argued for.**
+
+### The contradiction
+
+`src/app.css` says, in the comment above the four control buttons:
+
+> Rehearse     amethyst — the rehearsal colour, and nothing else uses it.
+
+That sentence is false about the file it is written in. The same stylesheet spends amethyst on the
+boot ladder about eleven times (`.b-mark`, `.b-rail .s.on .n`, `.b-sechead`, `.b-bar` progress,
+`.b-check.warn`, `.b-check.running`, `.b-check.pending`, `.b-spinner`, `.b-foot .dot`,
+`.b-check-box:hover`, `.b-check-box:focus-visible`), on the practice strip (`.prac`, `.prac-n`),
+and in components on the splash, on Help's callout, on Settings' network caution and on the
+Library's Media collection ink. Roughly fourteen surfaces, against a sentence that says one.
+
+[DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) §1 is the law it is citing: a colour that carries a promise
+cannot be borrowed for decoration. So one of the two has to give.
+
+### What the uses actually obey
+
+Reading all fourteen rather than counting them changes the answer. Almost none of them is a
+borrowing; they are the same promise, stated somewhere the word "rehearsal" does not fit.
+
+- **Rehearsal**, in the console: `.r-badge.amethyst`, `.r-cbtn.rehearse[data-on="1"]`, `Live`'s
+  rehearsal strip, `VerseDeck`'s `.vd-card.reh`. The case the colour was named for.
+- **Practice drills** (`.prac`): literally a rehearsal, and the comment there already says so —
+  "the same colour the top bar is already showing, so the two agree rather than competing".
+- **Safe mode**: `BootShell` renders *"Safe mode — outputs disabled"* in amethyst, and app.css's
+  own lamp comment records safe mode as outranking rehearsal. Outputs disabled is the promise
+  word for word.
+- **The launch sequence** (`.b-*`, `Splash`, `BrandMark`): the console is not mounted, no output
+  window exists, and nothing can be on any wall. app.css already argues this at the top of the
+  ladder: *"the brand colour of the whole launch sequence is amethyst, which in this app means
+  'not reaching the screens': at boot, true."*
+- **The Media collection ink** (`--v-col-media`): named explicitly in docs/REBRAND.md §1 as a
+  collection colour. A settled decision, not reopened here.
+
+**The decision: amethyst's promise is `nothing here reaches a congregation`.** Rehearsal is the
+case it was named for and is not the whole of it. The sentence in app.css is the bug, and it is
+corrected in place. The launch ladder is not repainted, for a reason stronger than cost: it is
+unambiguous. `.b-shell` is `position:fixed; inset:0; z-index:1100` and renders *instead of*
+`App.svelte`, so a boot ladder and a rehearsal badge can never be on screen together. There is no
+moment at which an operator has to tell one amethyst from another.
+
+### What is NOT decided, and why leaving it open is the honest answer
+
+Four surfaces spend amethyst on a **caution**: `.b-check.warn` (a boot check that came back with a
+warning), `Settings`' `.s-netwarn`, `LyricsPane`'s `.ly-warn`, and `Help`'s callout. A caution is
+not "nothing here reaches a congregation", so under the law above these are off it.
+
+They are also not drift. Each one carries an argued comment at its call site, and the four
+arguments are the same argument, reached independently: amber is out because it is the tally light,
+cyan is out because it means the AI is guessing, red is out because it means failure, and a caution
+is none of those. `.b-check.warn`'s comment states all three in order.
+
+**So the gap is in the palette, not in the call sites.** This product publishes no caution ink, and
+four separate people each discovered that and each reached for the nearest colour that was not
+already a lie. Inventing a sixth semantic colour is a redesign: it touches every one of those
+surfaces, it needs a hue that survives the contrast matrix on four grounds, and it cannot be
+verified without eyes on a running window, which the build machine does not have
+(DESIGN_SYSTEM §6 records the same constraint about the legacy sheet). Repainting the four to red
+would be worse — it would tell a church that a boot check it can ignore has failed.
+
+So the four keep amethyst, they are enumerated by name in the instrument below with that reason
+attached, and **the missing caution ink is filed rather than improvised**. A human who wants the
+sixth colour should say so; a human who would rather rule that caution is simply inside amethyst's
+promise can say that instead, and the instrument changes by one line either way.
+
+### Instrument
+
+`src/lib/colourlaw.test.js` is widened from the two `plan.js` taxonomy tables to a repo-wide
+amethyst sweep. It asserts three things:
+
+1. **No congregation-facing surface paints amethyst.** `Output.svelte`, `Stage.svelte` and
+   `TemplateRender.svelte` are the three that can reach a wall, and a promise that says "nothing
+   here reaches a congregation" is self-refuting on one of them. This is the half that can never
+   be argued away.
+2. **Every other amethyst surface is one of the five kinds above**, enumerated by file with its
+   reason. The list can only shrink: a new amethyst in a console workspace fails, and so does a
+   new one on the four cautions' surfaces, so paying the gap off is visible and adding to it is
+   not silent.
+3. **The scanner can still see what it scans for** — the guard every source scanner in this
+   repository now carries, because two of them have narrowed quietly and passed everything
+   (`ipc.test.js`, twice, recorded in its own header).
+
+The `rgba()` blind spot that hid half of this is closed in the same pass:
+`workspacegrammar.test.js` says in its own header that "`rgba()` is not scanned at all", and that
+is exactly where the retired amethyst `rgba(139,92,246,…)` and the retired amber `rgba(255,176,0,…)`
+survived five waves of hex sweeps.

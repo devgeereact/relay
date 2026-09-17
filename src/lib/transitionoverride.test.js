@@ -226,7 +226,15 @@ describe('L4 · the picker is in the take rack, and the take is never below it',
     // override in force is none of those four, so it says so with the accent line
     // and never borrows a state colour it is not entitled to.
     const style = LIVE.slice(LIVE.indexOf('<style>'));
-    const band = style.slice(style.indexOf('  .rk-x .xcap{'), style.indexOf('  .ibtn{'));
+    // The end boundary is `.ibtn`, which is the next rule down the file. It was
+    // `  .ibtn{` and is `  :global(.ibtn){` since that control became the shared
+    // icon button; the rule is still in the same place, so the SPAN this reads is
+    // unchanged. Asserted rather than trusted, because `indexOf` returning -1
+    // would silently widen the slice to almost the whole stylesheet and this
+    // assertion would then fail on colours that have nothing to do with the band.
+    const END = '  :global(.ibtn){';
+    expect(style.indexOf(END), 'the end boundary of the band has moved').toBeGreaterThan(0);
+    const band = style.slice(style.indexOf('  .rk-x .xcap{'), style.indexOf(END));
     const rules = band.replace(/\/\*[\s\S]*?\*\//g, '');
     expect(rules).not.toMatch(/--v-amber|--v-amethyst|--v-cyan/);
     expect(rules).toMatch(/\.rk-x\.on \.xpick\{border-color:var\(--v-accent-line\)/);

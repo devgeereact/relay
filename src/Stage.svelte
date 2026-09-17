@@ -1207,7 +1207,11 @@
   .noterow { flex: 0 0 auto; flex-basis: auto; max-height: 22%; overflow: hidden;
     container-type: inline-size;
     display: flex; align-items: baseline; gap: 10px; padding: 10px 18px;
-    border-top: 1px solid rgba(255,176,0,.24); background: rgba(255,176,0,.08); color: var(--v-amber2);
+    /* One amber. The edge and the wash were `rgba(255,176,0,…)` — the RETIRED
+       #ffb000 — beside a `--v-amber2` text colour derived from the current
+       #ffa31a, so this single declaration painted the row in two oranges. The
+       meaning is untouched: this row IS on a screen the preacher is reading. */
+    border-top: 1px solid var(--v-amber-line); background: var(--v-amber-soft); color: var(--v-amber2);
     /* The operator's own words to the preacher. `2.6vw` capped at 20px is a phone
        size on a platform monitor, on the row whose whole purpose is that somebody
        standing ten feet away reads it. */
@@ -1320,7 +1324,17 @@
     font-family: var(--f-mono); font-size:var(--v-fs-b1); font-weight: 700; letter-spacing: .08em;
     color: var(--v-dim); background: rgba(255,255,255,.04);
     border: 1px solid rgba(255,255,255,.14); border-radius: 8px; }
-  .zonebtn.on { color: var(--v-amber); border-color: rgba(255,176,0,.45); background: rgba(255,176,0,.1); }
+  /* STEEL, NOT AMBER, and this is a colour-law fix rather than a taste one.
+     DESIGN_SYSTEM §1 is explicit: "amber is never used for selected, active,
+     primary or success. It is the tally light. A colour that is always lit cannot
+     also be a warning." Four controls on this page broke that — a selected zone,
+     a pressed toggle, a focus ring and a pressed result — and this is the ONE page
+     where it matters most, because it is the preacher's own screen and the only
+     amber they should ever see on it is the reference the congregation is
+     looking at. Steel is the colour §1 gives to "the thing you are working on",
+     which is what a selected zone button is. The literals were the RETIRED amber
+     (#ffb000) as well, so each of these declarations was already two oranges. */
+  .zonebtn.on { color: var(--v-sel); border-color: var(--v-sel-line); background: var(--v-sel-soft); }
   .zonefoot { margin: 0; font-family: var(--f-mono); font-size:var(--v-fs-mono); color: var(--v-faint); }
   /* A SHARE OF THE READING, not of the viewport. `3.5vw` capped at 20px put the
      reference of the passage a preacher is reading aloud at twenty pixels on a
@@ -1458,7 +1472,8 @@
     letter-spacing: .12em; text-transform: uppercase; color: var(--v-dim); cursor: pointer;
     background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.14);
     border-radius: 8px; padding: 7px 12px; }
-  .ctl-toggle.active { color: var(--v-amber); border-color: rgba(255,176,0,.4); background: rgba(255,176,0,.08); }
+  /* Steel — see `.zonebtn.on`. A toggle that is switched on is not on air. */
+  .ctl-toggle.active { color: var(--v-sel); border-color: var(--v-sel-line); background: var(--v-sel-soft); }
   .ctl { flex: 0 0 auto; display: flex; flex-direction: column; gap: 12px; padding: 16px 18px;
     border-top: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.02);
     max-height: 60dvh; overflow-y: auto; }
@@ -1473,7 +1488,11 @@
     color: var(--v-txt); background: var(--v-void); border: 1px solid rgba(255,255,255,.18);
     border-radius: 12px; -webkit-appearance: none; }
   .search input::placeholder { color: var(--v-faint); }
-  .search input:focus { outline: none; border-color: rgba(255,176,0,.5); }
+  /* A FOCUS RING IS NEVER AMBER, and it may not be `outline:none` with a border
+     standing in for it either (DESIGN_SYSTEM §5: never remove an outline without
+     replacing it with an equally visible one). Steel, and a real outline, on the
+     one surface in this product a preacher operates alone. */
+  .search input:focus { outline: 2px solid var(--v-sel); outline-offset: 2px; border-color: var(--v-sel-line); }
   .go { flex: 0 0 auto; min-width: 56px; min-height: 48px; font-family: var(--f-mono); font-weight: 700;
     font-size:var(--v-fs-h2); color: var(--v-void); background: var(--v-amber); border: none; border-radius: 12px; cursor: pointer; }
   .go:disabled { opacity: .5; }
@@ -1482,7 +1501,10 @@
   .result { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; width: 100%; text-align: left;
     padding: 12px 14px; background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.1);
     border-radius: 12px; cursor: pointer; }
-  .result:active { background: rgba(255,176,0,.1); border-color: rgba(255,176,0,.35); }
+  /* Steel — see `.zonebtn.on`. A finger on a result has not put it on a wall;
+     that is what `.go` and the fire path do, and `.go` keeps its amber fill
+     because it IS the control that puts scripture in front of a congregation. */
+  .result:active { background: var(--v-sel-soft); border-color: var(--v-sel-line); }
   .result:disabled { opacity: .5; }
   .r-ref { font-family: var(--f-mono); font-size:var(--v-fs-b1); letter-spacing: .08em; text-transform: uppercase; color: var(--v-amber); }
   .r-text { font-family: var(--f-serif); font-size: var(--v-fs-ttl); color: var(--v-dim); line-height: 1.35;

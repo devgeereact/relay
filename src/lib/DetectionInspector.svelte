@@ -312,6 +312,11 @@
   .spring {
     flex: 1;
   }
+  /* A PANEL DISMISS, not a button. It is a bare glyph in the panel's own head at
+     the type scale's title size, with no fill and no edge, because the head is
+     the surface it sits on and an outlined control up there would read as an
+     action the operator should take. Named so a shape census can tell it from a
+     button that lost its class. */
   .ins-x {
     background: none;
     border: 0;
@@ -425,6 +430,10 @@
     color: var(--v-txt);
     text-align: right;
   }
+  /* A LINK, not a button. It navigates to Settings; it changes nothing by itself
+     and it sits inside a sentence, so it wears the sentence's type and an
+     underline rather than a control's box. Forcing it into `.r-btn` would put a
+     26px lozenge in the middle of a paragraph. */
   .ins-link {
     background: none;
     border: 0;

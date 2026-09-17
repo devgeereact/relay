@@ -6,6 +6,7 @@
   // Thumbnails are the SAME TemplateRender the output window uses, so a card is
   // what the wall shows, not a drawing of it.
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
+  import Field from '../../ui/Field.svelte';
   import TemplateRender from '../../TemplateRender.svelte';
   import WorkspaceFrame from '../WorkspaceFrame.svelte';
   import EmptyState from '../../ui/EmptyState.svelte';
@@ -596,10 +597,10 @@
     <div class="rw-panehead">
       <h2 class="rw-panettl">Templates</h2>
       <span class="rw-spring"></span>
-      <div class="tg-search">
-        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3" stroke-linecap="round"/></svg>
+      <Field class="tg-search">
+        <svelte:fragment slot="icon"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3" stroke-linecap="round"/></svg></svelte:fragment>
         <input placeholder="Search templates…" bind:value={q} aria-label="Search templates" />
-      </div>
+      </Field>
       <label class="tg-sort">
         <span class="r-lbl">Sort</span>
         <select class="r-select" bind:value={sort}>
@@ -972,12 +973,14 @@
      a contrast failure that only exists on hover is still a contrast failure. */
   .tg-newmi:hover .tg-newhint{ color:var(--v-dim); }
 
-  .tg-search{ display:flex; align-items:center; gap:7px; background:var(--v-bg); border:1px solid var(--v-line2);
-    border-radius:var(--v-r-sm); padding:0 9px; height:24px; flex:1 1 160px; max-width:260px; }
-  .tg-search:focus-within{ border-color:var(--v-sel-line); }
-  .tg-search svg{ color:var(--v-faint); flex:0 0 auto; }
-  .tg-search input{ flex:1; min-width:0; background:transparent; border:0; outline:none; color:var(--v-txt); font-size:var(--v-fs-b2); }
-  .tg-search input::placeholder{ color:var(--v-faint); }
+  /* POSITION ONLY — see `.ch-search` in Channels for the same note. This one is
+     the reason `.r-well` was given a body at all: its focus state drew
+     `--v-sel-line` and nothing else, which composited over the field's own ground
+     is rgb(55,86,130) and measures 2.28:1 against it, under WCAG 2.2 SC 1.4.11's
+     3:1 floor for a non-text focus indicator. The well's outline is a solid
+     `--v-sel`, 6.1:1 on the same ground. Its height was also 24px, which is not a
+     step this product publishes; it is the ladder's 26 now. */
+  :global(.tg-search){ flex:1 1 160px; max-width:260px; }
   .tg-sort{ display:flex; align-items:center; gap:7px; flex:0 0 auto; }
   .tg-sort .r-select{ width:auto; }  /* height is the shared control's; was 24px */
   .tg-viewtog{ display:flex; gap:2px; background:var(--v-bg); border:1px solid var(--v-line2);

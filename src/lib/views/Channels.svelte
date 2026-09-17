@@ -26,6 +26,7 @@
   // PAINTING within the last few seconds. The first two are true of a frozen
   // projector; only the third can go false on its own.
   import { onMount } from 'svelte';
+  import Field from '../ui/Field.svelte';
   import QRCode from 'qrcode';
   // The workspace grammar (docs/REBRAND.md §2 · §11): rail · main · inspector,
   // one type scale, a row that is a name and a value. Shared with the Planner and
@@ -700,10 +701,10 @@
            removed to keep this surface calm. -->
       <div class="rw-panehead ch-panehead">
         <h2 class="rw-panettl">Screens</h2>
-        <div class="ch-search">
-          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3" stroke-linecap="round"/></svg>
+        <Field class="ch-search">
+          <svelte:fragment slot="icon"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3" stroke-linecap="round"/></svg></svelte:fragment>
           <input placeholder="Search screens…" bind:value={q} aria-label="Search screens" />
-        </div>
+        </Field>
         <span class="rw-spring"></span>
         <span class="ch-headnote r-mono">each card renders what that screen shows right now</span>
         <button class="r-btn primary sm" on:click={() => (showAdd = !showAdd)} disabled={!$capture.available}>
@@ -1262,10 +1263,11 @@
      from `.rw-panehead` stands; wrapping still grows the box, because a
      min-height is a minimum. */
   .ch-panehead{ padding:0 12px; gap:10px; flex-wrap:wrap; }
-  .ch-search{ display:flex; align-items:center; gap:8px; background:var(--v-bg);
-    border:1px solid var(--v-line2); border-radius:var(--v-r-sm); padding:0 10px; height:26px;
-    flex:0 1 240px; min-width:140px; }
-  .ch-search:focus-within{ border-color:var(--v-accent-line); box-shadow:0 0 0 3px var(--v-accent-soft); }
+  /* POSITION ONLY. The box — fill, edge, corner, height, the input's own
+     borderlessness and the focus outline — is `.r-well` in app.css, reached
+     through `ui/Field.svelte`. This rule used to draw all of it, and its focus
+     treatment was one of four different ones across four search boxes. */
+  :global(.ch-search){ flex:0 1 240px; min-width:140px; }
   /* What the grid IS, said once at the top. It drops out below the width where
      the head would otherwise wrap onto a second row and push the list down. */
   .ch-headnote{ font-size:var(--v-fs-cap); letter-spacing:.08em; text-transform:uppercase;
