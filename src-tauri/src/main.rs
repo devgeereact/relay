@@ -464,6 +464,7 @@ fn main() {
             service_lock,
             set_service_lock,
             set_channel_template,
+            rename_channel,
             clear_screen,
             blackout_screen,
             restore_screen,
@@ -6432,6 +6433,54 @@ fn add_channel(
     }
     let conn = db.0.lock()?;
     db::add_channel(&conn, name.trim(), &target, template_id.unwrap_or(1)).map_err(Into::into)
+}
+
+/// RENAME A SCREEN. There was no way to do this at all.
+///
+/// The name is the only handle anybody in the building has on a screen. It is what
+/// the Outputs cards are keyed by, what the degraded banner says when a screen
+/// stops answering ("3 is not responding" was the defect that put the name on
+/// `ChannelLiveness` in the first place), and what an operator says out loud to
+/// somebody standing at the back. A church that inherits a Relay seeded with
+/// `Lobby screen` and hangs it in the crèche instead had no way to say so.
+///
+/// **Not held by the service lock, and that is a decision rather than an
+/// oversight.** `servicelock.rs` protects two things: the irreversible, and
+/// anything that takes the engine away mid-sermon. A rename is neither — it is
+/// reversible by doing it again, it moves no pixels, and the moment an operator
+/// most wants it is the moment a screen's name turns out to be wrong, which is
+/// during a service. Over-blocking is the more dangerous failure there.
+///
+/// The validation is here and only here, the same discipline `save_environment`
+/// states: two layers that both validate are two layers that can disagree about
+/// what is legal.
+#[tauri::command]
+fn rename_channel(db: tauri::State<'_, Db>, id: i64, name: String) -> error::Result<()> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(error::Error::refused("A screen needs a name."));
+    }
+    // A cap, because this string is rendered on a card, in a badge, in the shell's
+    // degraded banner and in a service's own timeline — four places sized for a
+    // name. It is generous enough that no real screen name reaches it, and the
+    // refusal says the figure rather than silently truncating: a name quietly cut
+    // in half is a name that stops matching what the operator typed.
+    const MAX: usize = 60;
+    if name.chars().count() > MAX {
+        return Err(error::Error::refused(format!(
+            "That name is too long for a screen — keep it under {MAX} characters."
+        )));
+    }
+    let conn = db.0.lock()?;
+    if !db::rename_channel(&conn, id, name)? {
+        // Deleted on another surface between the card rendering and the rename
+        // landing. Saying so beats showing the operator a name on a screen that is
+        // not there any more.
+        return Err(error::Error::refused(
+            "That screen is no longer there — it may have been deleted.",
+        ));
+    }
+    Ok(())
 }
 
 /// Delete an output channel.

@@ -122,6 +122,26 @@ pub fn set_channel_display(
     Ok(())
 }
 
+/// RENAME A SCREEN. Returns whether a row was actually renamed.
+///
+/// The bool is not decoration. A rename against an id that has been deleted on
+/// another surface writes nothing, and `UPDATE` reports that by affecting zero
+/// rows rather than by failing — so without this the operator would be shown the
+/// new name on a screen that no longer exists, which is the "reports a success it
+/// did not achieve" shape in a place nobody would look for it.
+///
+/// The name is stored EXACTLY as the caller hands it over. Trimming and refusing
+/// an empty name are the command's job, in one place, for the same reason
+/// `save_environment` gives: two layers that both validate are two layers that can
+/// disagree about what is legal.
+pub fn rename_channel(conn: &Connection, id: i64, name: &str) -> rusqlite::Result<bool> {
+    let n = conn.execute(
+        "UPDATE output_channels SET name = ?1 WHERE id = ?2",
+        (name, id),
+    )?;
+    Ok(n > 0)
+}
+
 /// Add a new output channel; returns its id. `render_target` must be one of
 /// native_window / ndi_encode / network_client (enforced by the schema CHECK).
 pub fn add_channel(

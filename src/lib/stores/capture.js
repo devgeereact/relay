@@ -2369,6 +2369,21 @@ await call('set_channel_role', { id, role: role || null });
 }
 
 /**
+ * RENAME A SCREEN.
+ *
+ * GROUP 1 (throws). It is an operator action with a visible result and the
+ * backend refuses a blank name, an over-long one and a screen that has been
+ * deleted on another surface — each in a sentence. A swallowed refusal would
+ * leave the field showing a name the screen does not have, which is worse than
+ * the rename failing, because the desk is where everybody else in the building
+ * looks that name up. The caller renders it through `src/lib/errors.js`.
+ */
+export async function renameChannel(id, name) {
+  const call = await invoke();
+  await call('rename_channel', { id, name });
+}
+
+/**
  * TAKE ONE SCREEN OUT OF THE WALL, OR PUT IT BACK.
  *
  * Three wrappers, and they are NOT panic controls. `clearScreens` and `blackout`

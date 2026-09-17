@@ -85,6 +85,7 @@
     screenBlack,
     startChannelHealth,
     setChannelDisplay,
+    renameChannel,
     clearScreen,
     blackoutScreen,
     restoreScreen,
@@ -367,6 +368,35 @@
   // control sitting next to it, and the arming pattern is for things that are not
   // (`TemplateGallery`'s delete). A confirmation step in front of a reversible
   // control is a step an operator learns to click through.
+  /**
+   * RENAME A SCREEN. Committed on blur and on Enter.
+   *
+   * An unchanged name is not a write. Without this check, clicking into the field
+   * and out of it again would put a row through the backend, the refresh and the
+   * error pane for no reason — and on a refused one (a screen deleted on another
+   * surface) would show a failure the operator did nothing to cause.
+   *
+   * On a refusal the field is put back to the name the screen actually has. The
+   * sentence is rendered by `act` through `src/lib/errors.js` like every other
+   * mutation here, and a field still showing the rejected text under a message
+   * saying it was rejected is a surface disagreeing with itself.
+   */
+  function rename(c, e) {
+    const next = e.target.value.trim();
+    if (!next || next === c.name) {
+      e.target.value = c.name;
+      return;
+    }
+    return act(async () => {
+      try {
+        await renameChannel(c.id, next);
+      } catch (err) {
+        e.target.value = c.name;
+        throw err;
+      }
+    });
+  }
+
   const takeDown = (c) => act(() => clearScreen(c.id));
   const blackDown = (c) => act(() => blackoutScreen(c.id));
   const putBack = (c) => act(() => restoreScreen(c.id));
@@ -1027,14 +1057,39 @@
             <p class="ch-prevnote r-mono">{selDescribe.note}</p>
           {/if}
 
-          <!-- NAME is READ-ONLY, and the prototype's editable field is not built.
-               There is no `rename_channel` anywhere in Relay — `db/channels.rs`
-               offers insert, delete, set_template and set_display and nothing
-               else. An input here would take an operator's typing and drop it,
-               which is precisely the defect DECISIONS §69 closed seven of on the
-               Settings tab. It is a value until there is a command behind it. -->
+          <!-- NAME IS EDITABLE NOW, and the comment that used to sit here said why
+               it was not: "there is no `rename_channel` anywhere in Relay … an
+               input here would take an operator's typing and drop it, which is
+               precisely the defect DECISIONS §69 closed seven of." That reasoning
+               was right and the answer was to build the command, not to keep the
+               field read-only: the name is the only handle anybody in the building
+               has on a screen, and a church that hangs the seeded `Lobby screen`
+               in the crèche had no way to say so.
+
+               COMMITTED ON BLUR AND ON ENTER, never on every keystroke. A rename
+               per character would be a write per character on the row four
+               surfaces read, and would make every intermediate half-typed name a
+               name the degraded banner could say out loud.
+
+               `Escape` puts the old name back, and it is bound HERE with
+               `stopPropagation`: rule 44, in the smallest possible form. Nothing
+               on this desk mounts a dialog, so `shortcuts.js` still has `Esc` —
+               and an operator abandoning a rename must not also clear the wall. A
+               handler that returns early for every other key swallows nothing. -->
           <div class="r-lbl ch-flbl">Name</div>
-          <p class="ch-fixed">{sel.name}</p>
+          <input
+            class="r-input ch-fin"
+            aria-label="Name for {sel.name}"
+            value={sel.name}
+            disabled={!$capture.available}
+            on:keydown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); return; }
+              if (e.key !== 'Escape') return;
+              e.stopPropagation();
+              e.currentTarget.value = sel.name;
+              e.currentTarget.blur();
+            }}
+            on:blur={(e) => rename(sel, e)} />
 
           <div class="r-lbl ch-flbl">Template</div>
           <select class="r-select ch-fin" value={sel.template_id ?? ''} on:change={(e) => assignTemplate(sel, e)} disabled={!$capture.available}>

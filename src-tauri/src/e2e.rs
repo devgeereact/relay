@@ -4637,3 +4637,80 @@ fn a_rehearsal_refuses_to_take_a_real_screen_down() {
         "a refused control still changed Relay's own belief about the screen"
     );
 }
+
+// ══ RENAMING A SCREEN ═══════════════════════════════════════════════════════
+//
+// There was no command at all, and the name is the only handle anybody in the
+// building has on a screen: the card, the badge, the shell's degraded banner
+// ("3 is not responding" was the defect that put the name on `ChannelLiveness`)
+// and the service's own timeline all say it.
+
+/// A SCREEN CAN BE RENAMED, AND THE NAME IS TRIMMED ON THE WAY IN.
+///
+/// **What this deliberately does NOT reach:** `channel_status`, the read every
+/// console surface actually makes, is not generic over `tauri::Runtime` and so
+/// cannot be driven from a mock app at all (rule 24's argument, on a command that
+/// is not on the fire path). It reads the name straight off the row this asserts
+/// on, through `db::list_output_channels`, so nothing sits between the two — but
+/// that is a reading of the code and not a run of it, and it is said here rather
+/// than implied.
+#[test]
+fn a_screen_can_be_renamed_and_the_name_is_trimmed() {
+    let app = app();
+    let h = app.handle().clone();
+
+    rename_channel(h.state::<Db>(), 4, "  Crèche  ".into()).expect("rename");
+
+    let db = h.state::<Db>();
+    let conn = db.0.lock().expect("db");
+    let names: Vec<String> = db::list_output_channels(&conn)
+        .expect("list")
+        .into_iter()
+        .map(|c| c.name)
+        .collect();
+    assert!(
+        names.contains(&"Crèche".to_string()),
+        "the rename did not reach the row, or did not trim: {names:?}"
+    );
+}
+
+/// THE THREE REFUSALS, EACH IN WORDS AN OPERATOR CAN ACT ON.
+///
+/// A blank name, a name longer than the four places that render it are sized for,
+/// and an id that is not there any more. The third is the one that is easy to
+/// leave out: `UPDATE` against a deleted row writes nothing and reports success,
+/// so without the affected-rows check the operator would be shown a new name on a
+/// screen that does not exist.
+#[test]
+fn a_screen_rename_refuses_in_words_rather_than_writing_nothing_quietly() {
+    let app = app();
+    let h = app.handle().clone();
+
+    assert!(
+        rename_channel(h.state::<Db>(), 4, "   ".into()).is_err(),
+        "a screen was renamed to nothing at all"
+    );
+    assert!(
+        rename_channel(h.state::<Db>(), 4, "x".repeat(61)).is_err(),
+        "a name too long for every surface that renders it was accepted"
+    );
+    let gone = rename_channel(h.state::<Db>(), 9_999, "Ghost".into());
+    assert!(
+        gone.is_err(),
+        "renaming a screen that does not exist reported success"
+    );
+
+    // And the refusals left the row alone. A validator that refuses AFTER writing
+    // is a validator that has already done the damage.
+    let db = h.state::<Db>();
+    let conn = db.0.lock().expect("db");
+    let names: Vec<String> = db::list_output_channels(&conn)
+        .expect("list")
+        .into_iter()
+        .map(|c| c.name)
+        .collect();
+    assert!(
+        names.contains(&"Lobby screen".to_string()),
+        "a refused rename still changed the screen: {names:?}"
+    );
+}
