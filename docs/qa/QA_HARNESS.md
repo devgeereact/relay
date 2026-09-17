@@ -20,6 +20,47 @@ every edit: `.claude/hooks/relay-fast-gate.mjs`, path-filtered and report-only (
 
 ## 0. Current inventory
 
+Re-measured **2026-09-17**, on `feat/cons-docs` at `cd8322a` — the documentation pass over
+`feat/consolidation`. **Read the branch before the numbers.** Three other branches were in
+flight on this machine at the time, changing code this pass deliberately did not touch, so
+every figure below is of the consolidation branch at that commit and of nothing else. It is
+not a claim about `main`, about any wave branch, or about what the next merge will report.
+`npm run build` ran first, per RG-127 — two `channels` tests read `dist/` and do not say so.
+Every figure is the runner's own summary line, not a grep.
+
+| Count | Value | Command |
+|---|---|---|
+| Rust tests | **853 passed / 0 failed / 16 ignored** | `cd src-tauri && cargo test` |
+| Frontend tests | **2601 passed, 170 files** | `npx vitest run` |
+| `e2e.rs` tests | **80 passed / 0 ignored** | `cd src-tauri && cargo test e2e::` |
+| Registered commands | **146** | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
+| qa-inventory | 146/146 addressed, 0 handlerless, 0 unnamed, 1 orphan | `node scripts/qa-inventory.mjs` |
+| Svelte components | **51**, 50 reachable from an entry point | `node scripts/qa-inventory.mjs` |
+| Controls | **473**, 0 in components nothing renders | `node scripts/qa-inventory.mjs` |
+| Tauri events | **23** | `grep -rhoE '"[a-z_]+://[a-z_]+"' src-tauri/src/*.rs \| sort -u` — yields 24; `tauri://localhost` is the webview's origin string, not an event |
+| Numbered decisions | **§18 – §92** | `grep -cE '^## [0-9]+\. ' docs/DECISIONS.md` → 75 |
+| Register entries | **165** | `docs/qa/RELAY_GAP.md` §23, pinned by `relaygap.test.js` |
+| `#[ignore]`d benches | **16** | the `cargo test` summary line above |
+| `hardrules.test.js` rules | **8** | `grep -o "it('rule [0-9]*" src/lib/hardrules.test.js \| sort -u \| wc -l` |
+
+**This pass changed documents and comments only** — no behaviour — so these figures are the
+ones the consolidation branch already had. It states them because **the block below it names a
+branch and a method and carries no figures at all**, which is the one thing §0 exists not to
+do: a section headed *the register of counts* whose current entry has none sends every reader
+back to the stale block underneath it.
+
+**The orphan is unchanged and deliberate.** `src/lib/__r6probe.svelte` is the test probe
+`docs/RELAY_V1_AUDIT.md` already names, excluded by name from `r6-contracts.test.js`'s own walk.
+
+**Read the qa-inventory line sceptically, as the wave 3 block below already says.** It reports
+every command addressed because it traces to a WRAPPER, which is the weaker of the two tests;
+the stricter one is whether a rendered control can reach it, and RG-152 is what that
+distinction caught.
+
+---
+
+### 2026-09-17 · `feat/waves-3-5-merge` — the block that carries no table
+
 Re-measured **2026-09-17**, on `feat/waves-3-5-merge` — wave 3 (timers) merged into wave 5
 (the shelf, the names and the seal), which is the first time the two have met. Both waves fork
 from `140a2cb`, both re-measured this section against their own integration branch, and neither

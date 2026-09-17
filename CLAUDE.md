@@ -67,7 +67,9 @@ Rust (**`whisper-rs` compiles whisper.cpp from source, so `cmake` must be on PAT
 cmake --version          # any 3.x. `brew install cmake` if it is missing;
                          # a machine without Homebrew needs its own prefix on PATH
 cd src-tauri
-cargo test                                   # ~17 are #[ignore]d benches; run them explicitly
+cargo test                                   # 16 are #[ignore]d benches; run them explicitly.
+                                             # The runner's own summary line is the count —
+                                             # this one said ~17 while it was 16
 cargo test e2e                               # the fire → nav → clear path; no ignored tests
 cargo test detection::                       # one module
 cargo test the_macos_build -- --nocapture    # one test
