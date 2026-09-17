@@ -56,7 +56,7 @@ operator during a live service is the same class of failure as a control that li
 | Colour | Token | Means, and *only* means |
 |---|---|---|
 | 🟠 **Amber** `#ffa31a` | `--v-amber` | **ON AIR.** The congregation is looking at this right now. |
-| 🟣 **Amethyst** `#a96bf5` | `--v-amethyst` | **Rehearsal.** Nothing else — see §1.1. |
+| 🟣 **Amethyst** `#a96bf5` | `--v-amethyst` | **Nothing here reaches a congregation** — rehearsal, safe mode, the launch sequence. See §1.1 and DECISIONS §92. |
 | 🔵 **Cyan** `#4cc9f0` | `--v-cyan` | **A guess.** A paraphrase / semantic match. Never a heard reference. |
 | ⚫ **Grey** `#8a929e` | `--v-grey` | **CUED** — this is where `→` resumes, and it is **not** on screen. |
 | 🔷 **Steel** `#5b9cf8` | `--v-sel` | **The thing you are working on.** Selection, focus, tabs, keys. Carries no promise about a screen. |
@@ -71,6 +71,15 @@ The rules that follow from that:
 - **A cued position is grey, never amber.** `liveCue` is `{ cueId, slide, onAir }`, and position
   and on-air-ness are separate facts — panic keys clear only `onAir`. A cue that is where `→`
   resumes but is not on screen reads **CUED**, in grey (CLAUDE.md, frontend shape).
+- **Amethyst's promise is broader than the word "rehearsal" and narrower than "anything purple".**
+  `app.css` used to say "the rehearsal colour, and nothing else uses it", in a file spending
+  amethyst on fourteen other surfaces. DECISIONS §92 settles it by reading those fourteen: safe
+  mode ("outputs disabled") and the launch sequence (no console, no output window, nothing on any
+  wall) are the same fact said where "rehearsal" does not fit, and a boot ladder and a rehearsal
+  badge can never be on screen together. **What is deliberately NOT settled is caution.** Four
+  surfaces spend amethyst on a warning because this palette publishes no caution ink and every
+  other colour is already a promise. That gap is filed, not improvised; `colourlaw.test.js`
+  enumerates all of it and a human may overrule the ruling.
 - **A paraphrase is cyan and shows no percentage at all.** A TF-IDF cosine is not a probability,
   and a number that lies is worse than no number (DECISIONS §21). It is never amethyst, because
   amethyst already promises "rehearsal — this cannot reach the congregation", and a colour
@@ -462,12 +471,34 @@ Prefixed `r-` in `app.css`. Reach for one of these before writing a new class.
 | Class | What it is |
 |---|---|
 | `.r-btn` (+ `.amber`) | Button. The `.amber` variant is the on-air case and is named at the call site. |
-| `.r-iconbtn` | Square icon-only button |
+| `.r-iconbtn` (+ `.sm`) | Square icon-only button, 26px with a 22px step. |
+| `.r-menu`, `.r-menuitem` | The popover shell and one row of it |
+| `.r-well` | A field well: a bordered box holding an input |
 | `.r-badge` (+ colour) | Pill status chip; `.bd` is its 6px dot, `.pulse` adds a glow |
 | `.r-input`, `.r-select`, `.r-switch` | Form controls |
 | `.r-stat` (+ `.amber`) | A number-plus-label readout |
 | `.r-scroll`, `.mainscroll` | Internally-scrolling panel (slim dark scrollbars) |
 | `.r-focus` | Opt into the standard focus ring on a custom element |
+
+**The `src/lib/ui/` kit is how those classes are asked for**, and reaching for a component rather
+than remembering a class name is the point: 41% of the `<button>` elements in this tree touch no
+shared class at all, and a class is opt-in in a way a component is not.
+
+| Component | What it is for |
+|---|---|
+| `Button`, `IconButton` | The two shapes on the ladder, with `disabledReason` |
+| `Menu`, `MenuItem` | The popover, and **the one place rule 44's `Esc` contract lives** |
+| `Field` | A `.r-well` around a caller's own `<input>` |
+| `Toolbar` | A row that fixes one control height so a mixed row cannot step |
+| `ListState` | *empty ≠ loading ≠ error*, with the precedence fixed once |
+
+**A disabled control owes the operator a reason.** `disabledReason` renders `title` **and**
+`aria-describedby`, because neither channel reaches everybody: `title` is invisible to a keyboard
+or screen-reader operator, and `aria-describedby` is invisible to a mouse. The sentences live in
+[`src/lib/ui/whydisabled.js`](../src/lib/ui/whydisabled.js) — one home, for the same reason
+`errors.js` and `settingvalue.js` have one — and they may not overstate the damage: a dropped
+Tauri bridge does not take down a screen that is already lit, so the sentence says the control
+cannot act **from here** and that whatever is up is still up.
 
 **Three shared state components, and they are not interchangeable:** `EmptyState`, `Loading`,
 `ErrorState`. *Empty* ≠ *loading* ≠ *error* — Live once said "No plans yet" before the database
