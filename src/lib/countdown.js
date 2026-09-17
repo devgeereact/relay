@@ -68,19 +68,40 @@ export const MIN_BROADCAST_MS = 1000;
  *                                  means "it finished" and shows the done message;
  *                                  null means there is nothing here to show.
  *
+ * ══ AND THE OTHER SIDE OF ZERO, WHICH IS THE SAME SUBTRACTION ═════════════
+ *
+ * `past: true` lifts the floor and answers the NEGATIVE once the instant has gone
+ * by. It exists for one caller: the stage page's programme rail, where a timer that
+ * has run out counts upward so a preacher can see how far over they are (RG-153,
+ * the operator's decision of 2026-09-17). `+4:37` on that rail is this figure
+ * negated and formatted, and nothing else.
+ *
+ * It is an OPT-IN rather than the default because zero is a real answer everywhere
+ * else: the wall reads zero as "it finished" and paints the done message over the
+ * digits, and a wall handed a negative would never reach that branch. And it is an
+ * option on this function rather than a second exported helper because a second
+ * helper is a second subtraction, which is the defect `docs/REBRAND.md` phase 7
+ * records as fixed once already.
+ *
+ * The HOLD exception still comes first, and must: a countdown paused at 4:00 whose
+ * instant went by six minutes ago is stopped at four minutes, not ten minutes over.
+ *
  * @param {object|null} content the live output content
  * @param {number} nowMs        the caller's tick, so a renderer's clock and this
  *                              cannot disagree about "now"
- * @returns {number|null} ms left, 0 when finished, null when there is no countdown
+ * @param {{past?: boolean}} opts `past` answers the negative past the instant
+ *                              instead of flooring at zero
+ * @returns {number|null} ms left, 0 when finished (negative with `past`), null when
+ *                        there is no countdown
  */
-export function countdownRemainingMs(content, nowMs = Date.now()) {
+export function countdownRemainingMs(content, nowMs = Date.now(), { past = false } = {}) {
   const c = content || {};
   const held = Number(c.countdown_paused_ms);
   if (Number.isFinite(held) && held > 0) return held;
   const to = Number(c.countdown_to);
   if (!Number.isFinite(to) || to <= 0) return null;
   const left = to - (Number(nowMs) || 0);
-  return left > 0 ? left : 0;
+  return left > 0 || past ? left : 0;
 }
 
 /** Is the countdown on this content being HELD? One reader, same reason as above. */

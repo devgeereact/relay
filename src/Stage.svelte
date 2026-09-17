@@ -286,13 +286,43 @@
   // `setCountdownWarnDefault` (see `applyWarnDefault` below). It used to be
   // unreachable here, because its only writer is `stores/capture.js` and this
   // bundle has no Tauri bridge to import it with (RG-149(c)).
+  //
+  // AND PAST ZERO IT COUNTS UP. An expired row used to sit at `0:00` for the rest
+  // of the service, which cannot be told from a row that has just been started at
+  // zero and answers neither of the two questions a stage monitor is asked
+  // (RG-153). `+4:37` says the preacher is four and a half minutes over, which is
+  // the one it is actually asked. The operator's decision, 2026-09-17.
+  //
+  // STILL ONE SUBTRACTION. `past: true` lifts the reader's floor; it does not add a
+  // reader. The upward figure is that answer NEGATED and handed to the same
+  // formatter, so a row counting up cannot drift from a row counting down.
+  //
+  // The mark on an over-time row is the SIGN, not the threshold rule.
+  // `countdownWarning` answers false at and below zero — correctly: zero is not
+  // "nearly gone", it is gone — so a row marked only by it would lose its colour at
+  // the instant the time ran out. Being over needs no threshold to know it, and
+  // widening the shared rule to swallow a negative would be a fourth reading of
+  // when to worry on a rule three surfaces share.
+  //
+  // `done_msg` KEEPS HAVING NO READER HERE, and that is a decision rather than an
+  // oversight. The words an operator typed are what a CONGREGATION countdown says
+  // when it lands: `countdown_done` replaces the digits on the wall and on the
+  // countdown mirror above this row. A programme timer is a different instrument —
+  // the preacher's own bookkeeping, shown to one person — and what it is asked past
+  // zero is how far over, not what to announce. If that is ever revisited it is a
+  // new row, not RG-153.
   $: programme = stageTimers
-    .map((t) => ({ t, id: t?.id, label: (t?.label || '').trim(), ms: countdownRemainingMs(t, nowMs) }))
+    .map((t) => ({
+      t,
+      id: t?.id,
+      label: (t?.label || '').trim(),
+      ms: countdownRemainingMs(t, nowMs, { past: true }),
+    }))
     .filter((r) => r.ms != null)
     .map(({ t, ...r }) => ({
       ...r,
-      v: formatCountdown(r.ms),
-      warn: countdownWarning(r.ms, countdownTotalMs(t), t?.warn_ms),
+      v: r.ms <= 0 ? `+${formatCountdown(-r.ms)}` : formatCountdown(r.ms),
+      warn: r.ms <= 0 || countdownWarning(r.ms, countdownTotalMs(t), t?.warn_ms),
     }));
   // THE ROW IS SIZED FROM THE TEXT IT IS ACTUALLY PAINTING.
   //
@@ -306,6 +336,13 @@
   // The widest value decides for every row, so the figures stay one size and the
   // longest of them still cannot be clipped. Same instrument as `figCh` across the
   // bottom, not a new one. Floored at four, the width of `0:00`.
+  //
+  // IT MEASURES THE RENDERED STRING, WHICH IS WHY THE `+` IS FREE. An over-time
+  // figure is one character wider than the one it replaces (`+4:37` for `0:00`,
+  // `+1:00:01` for `1:00:01`), and this row was slicing a seven-character time
+  // three days ago. A budget derived from the remaining milliseconds would be a
+  // character short of every one of them; this one is handed the sign because the
+  // sign is part of the value.
   $: progCh = programme.reduce((n, r) => Math.max(n, r.v.length), 4);
 
   // SERVICE ELAPSED — counts up from the epoch the fired content carries. There is
@@ -764,7 +801,9 @@
        person, and it makes no claim about any screen.
        A timer inside its warning window is the countdown's own red, which is the
        fourth colour this page already uses for exactly this rule and is none of the
-       three above. It is a claim about TIME, not about a screen. -->
+       three above. It is a claim about TIME, not about a screen. A timer that has
+       run OUT wears the same red and counts upward from zero (RG-153) — being over
+       is the far end of the same claim, and it is not a second colour. -->
   {#if programme.length}
     <div class="progrow" style="--tmrs:{programme.length}; --tch:{progCh}" aria-label="Programme">
       {#each programme as t (t.id)}
@@ -1102,7 +1141,9 @@
      carries. The same red as the countdown figure above it and as the wall: a
      countdown that reads as two different states depending on which screen you are
      looking at is worse than one that reads as none. Stated here, unconditionally,
-     so a viewer who asked for no motion still learns the time is nearly gone. */
+     so a viewer who asked for no motion still learns the time is nearly gone.
+     One class, two ends of one claim about time: nearly gone, and gone — a row past
+     zero counts up in this same red rather than in a colour of its own (RG-153). */
   .tmr.warn .tval { color: var(--v-red); }
   /* The zone panel — one instrument, no native dialog (rule 41). */
   .zonepanel { flex: 0 0 auto; max-height: 46dvh; overflow-y: auto; padding: 14px 18px;
