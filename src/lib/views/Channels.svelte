@@ -63,7 +63,7 @@
   import { DEFAULT_TEMPLATE } from '../templates.js';
   import { CONTENT_KINDS, resolveOutputTemplate, isKeyedTemplate } from '../layers.js';
   import { outputUrl } from '../outputurl.js';
-  import { CHANNEL_ROLES, NO_ROLE_LABEL } from '../channelroles.js';
+  import { CHANNEL_ROLES, NO_ROLE_LABEL, stageRemoteUrl } from '../channelroles.js';
   import {
     capture,
     templates,
@@ -86,6 +86,10 @@
     screenBlack,
     startChannelHealth,
     setChannelDisplay,
+    renameChannel,
+    clearScreen,
+    blackoutScreen,
+    restoreScreen,
     addChannel,
     deleteChannel,
     localIp,
@@ -176,6 +180,37 @@
   const monitorOf = (c) => {
     const i = parseInt(c.display_target ?? '', 10);
     return Number.isFinite(i) ? monitors.find((m) => m.index === i) || null : null;
+  };
+  /**
+   * THE DISPLAY THIS SCREEN IS CONFIGURED FOR, WHEN IT IS NOT CONNECTED — as the
+   * 1-based number every OS display panel and this picker use, or null.
+   *
+   * `display_target` is an INDEX into the OS monitor list, so unplugging a dock
+   * renumbers it. A `<select>` whose value matches no `<option>` shows its FIRST
+   * option, which here reads **Primary display** — so a screen configured for the
+   * projector rendered identically to a screen configured for nothing, on the one
+   * control that decides which physical screen a congregation sees. That is rule
+   * 35: one reassuring sentence over two situations.
+   *
+   * A STABLE IDENTITY WOULD BE THE REAL FIX AND IS NOT AVAILABLE. Tauri 2.11
+   * exposes `Monitor { name, size, position, work_area, scale_factor }` and no
+   * native display id; `tao` names a Windows monitor by the `\\.\DISPLAY1`
+   * device path the OS renumbers, and a macOS one by its EDID MODEL number, which
+   * two identical projectors share. `main.rs::resolve_display` carries the full
+   * reasoning, and `open_channel_output` now REFUSES rather than opening a
+   * fullscreen output on a guessed monitor. This is the half that says so before
+   * the operator presses Open.
+   *
+   * An empty list is deliberately NOT a missing display: `list_monitors` returns
+   * `[]` rather than erroring, so a probe that failed looks exactly like a machine
+   * with no screens, and claiming "not connected" from an ambiguity would be the
+   * same defect pointing the other way. Same judgement as `resolve_display`.
+   */
+  const missingDisplay = (c) => {
+    if (!isNative(c) || !monitors.length) return null;
+    const i = parseInt(c.display_target ?? '', 10);
+    if (!Number.isFinite(i)) return null;
+    return monitors.some((m) => m.index === i) ? null : i + 1;
   };
   /** The kind label shown in the TYPE column. One definition, shared with Live's
       Output Status pane — see `outputHealth.js::screenKind`. */
@@ -279,7 +314,14 @@
   // `http://localhost:8032/stage.html` and told to open it on a phone, where
   // localhost is the phone. The QR was built on click and so was correct; only
   // the address anyone would actually type was wrong.
-  $: stageUrl = `http://${lanIp}:8032/stage.html`;
+  //
+  // AND IT NAMES A SCREEN, not just the page (`stageRemoteUrl`). `stage.html`
+  // refuses a Stage Message unless its own channel holds the `stage` role, so a
+  // bare address is one that renders the reading perfectly and never receives the
+  // message it was set up for. `url` is null when no screen holds the role, and
+  // the panel says that rather than printing an address that half works.
+  $: stageRemote = stageRemoteUrl(lanIp, channels);
+  $: stageUrl = stageRemote.url;
   let stageQr = '';
   let stageQrOpen = false;
   let copiedStage = false;
@@ -340,6 +382,61 @@
   const assignTemplate = (c, e) =>
     act(() => setChannelTemplate(c.id, e.target.value === '' ? null : parseInt(e.target.value, 10)));
   const assignDisplay = (c, e) => act(() => setChannelDisplay(c.id, e.target.value === '' ? null : e.target.value));
+
+  // ── TAKE ONE SCREEN OUT OF THE WALL, OR PUT IT BACK ────────────────────────
+  //
+  // BESIDE the panic controls, never instead of them. `Clear screens` and
+  // `Blackout` live in the dock, are reachable in one action from anywhere,
+  // address every screen and ask nothing about which (rule 15, DECISIONS §20).
+  // These three live here, on the desk, on the screen they are about — because
+  // "take the lobby TV down but leave the wall live" is a decision about one
+  // screen and is made while looking at that screen's card.
+  //
+  // `act` hands a refusal to `src/lib/errors.js` like every other mutation on this
+  // desk: the backend refuses during a rehearsal, by name, and an operator must
+  // read that sentence rather than a raw Rust string.
+  //
+  // No two-step arm/confirm, deliberately. This is reversible in one click by the
+  // control sitting next to it, and the arming pattern is for things that are not
+  // (`TemplateGallery`'s delete). A confirmation step in front of a reversible
+  // control is a step an operator learns to click through.
+  /**
+   * RENAME A SCREEN. Committed on blur and on Enter.
+   *
+   * An unchanged name is not a write. Without this check, clicking into the field
+   * and out of it again would put a row through the backend, the refresh and the
+   * error pane for no reason — and on a refused one (a screen deleted on another
+   * surface) would show a failure the operator did nothing to cause.
+   *
+   * On a refusal the field is put back to the name the screen actually has. The
+   * sentence is rendered by `act` through `src/lib/errors.js` like every other
+   * mutation here, and a field still showing the rejected text under a message
+   * saying it was rejected is a surface disagreeing with itself.
+   */
+  function rename(c, e) {
+    const next = e.target.value.trim();
+    if (!next || next === c.name) {
+      e.target.value = c.name;
+      return;
+    }
+    return act(async () => {
+      try {
+        await renameChannel(c.id, next);
+      } catch (err) {
+        e.target.value = c.name;
+        throw err;
+      }
+    });
+  }
+
+  const takeDown = (c) => act(() => clearScreen(c.id));
+  const blackDown = (c) => act(() => blackoutScreen(c.id));
+  const putBack = (c) => act(() => restoreScreen(c.id));
+  // WHAT THIS SCREEN HAS BEEN TOLD, off the same liveness row every badge on this
+  // desk is derived from — never a second copy of the state kept here. A local
+  // copy would disagree with the badge the moment a second console, a reconnect
+  // or a refused call moved one of them.
+  const downOf = (c) => $channelHealth?.[c.id]?.down ?? null;
   // WHAT THIS SCREEN IS FOR. '' is "no special role", which is the right answer
   // for a streaming feed and a lobby TV and is a value rather than an empty
   // field — the same distinction as Follow the content look above it.
@@ -589,7 +686,20 @@
   // native screen names its display; a networked one names the ports it is served
   // on. Neither is a picker for a networked screen on purpose — see the markup.
   const outputOf = (c, mon) => {
-    if (c.render_target === 'native_window') return mon ? `${mon.name} · ${mon.width}×${mon.height}` : 'Primary display';
+    if (c.render_target === 'native_window') {
+      if (mon) return `${mon.name} · ${mon.width}×${mon.height}`;
+      // A MISSING DISPLAY AND NO DISPLAY ARE DIFFERENT THINGS, and this line said
+      // "Primary display" for both. `display_target` is an INDEX into the OS
+      // monitor list, so unplugging a dock renumbers it and a screen configured
+      // for the projector reads exactly like a screen configured for nothing —
+      // one reassuring sentence over two situations, which is rule 35, on the
+      // control that decides which physical screen a congregation sees. Pressing
+      // Open in that state is now refused by the backend, by name; this is the
+      // half that says so before the operator presses it.
+      const want = parseInt(c.display_target ?? '', 10);
+      if (Number.isFinite(want)) return `Display ${want + 1} — not connected`;
+      return 'Primary display';
+    }
     // NDI IS PARKED, AND THE CARD SHOULD SAY SO WHERE IT IS READ, not only in a
     // `title` nobody hovers. This was an em dash, which reads as "not set yet" —
     // a thing an operator would go looking for a way to configure. There is none
@@ -806,6 +916,15 @@
                       {#each monitors as m (m.index)}
                         <option value={String(m.index)}>{m.name} · {m.width}×{m.height}{m.primary ? ' (primary)' : ''}</option>
                       {/each}
+                      <!-- THE DISPLAY THIS SCREEN NAMES, WHEN IT IS NOT THERE.
+                           Without this option the select falls back to showing
+                           its first — "Primary display" — and a screen set to the
+                           projector reads exactly like a screen set to nothing.
+                           It is a real option so the operator can leave it alone
+                           (plug the projector back in) as easily as change it. -->
+                      {#if missingDisplay(k.c)}
+                        <option value={k.c.display_target}>Display {missingDisplay(k.c)} — not connected</option>
+                      {/if}
                     </select>
                     <!-- `screenSwitch`, not a ternary on `online`. Before the
                          first poll `k.st` is null and `!online` was true, so this
@@ -992,14 +1111,39 @@
             <p class="ch-prevnote r-mono">{selDescribe.note}</p>
           {/if}
 
-          <!-- NAME is READ-ONLY, and the prototype's editable field is not built.
-               There is no `rename_channel` anywhere in Relay — `db/channels.rs`
-               offers insert, delete, set_template and set_display and nothing
-               else. An input here would take an operator's typing and drop it,
-               which is precisely the defect DECISIONS §69 closed seven of on the
-               Settings tab. It is a value until there is a command behind it. -->
+          <!-- NAME IS EDITABLE NOW, and the comment that used to sit here said why
+               it was not: "there is no `rename_channel` anywhere in Relay … an
+               input here would take an operator's typing and drop it, which is
+               precisely the defect DECISIONS §69 closed seven of." That reasoning
+               was right and the answer was to build the command, not to keep the
+               field read-only: the name is the only handle anybody in the building
+               has on a screen, and a church that hangs the seeded `Lobby screen`
+               in the crèche had no way to say so.
+
+               COMMITTED ON BLUR AND ON ENTER, never on every keystroke. A rename
+               per character would be a write per character on the row four
+               surfaces read, and would make every intermediate half-typed name a
+               name the degraded banner could say out loud.
+
+               `Escape` puts the old name back, and it is bound HERE with
+               `stopPropagation`: rule 44, in the smallest possible form. Nothing
+               on this desk mounts a dialog, so `shortcuts.js` still has `Esc` —
+               and an operator abandoning a rename must not also clear the wall. A
+               handler that returns early for every other key swallows nothing. -->
           <div class="r-lbl ch-flbl">Name</div>
-          <p class="ch-fixed">{sel.name}</p>
+          <input
+            class="r-input ch-fin"
+            aria-label="Name for {sel.name}"
+            value={sel.name}
+            disabled={!$capture.available}
+            on:keydown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); return; }
+              if (e.key !== 'Escape') return;
+              e.stopPropagation();
+              e.currentTarget.value = sel.name;
+              e.currentTarget.blur();
+            }}
+            on:blur={(e) => rename(sel, e)} />
 
           <div class="r-lbl ch-flbl">Template</div>
           <select class="r-select ch-fin" value={sel.template_id ?? ''} on:change={(e) => assignTemplate(sel, e)} disabled={!$capture.available}>
@@ -1050,6 +1194,44 @@
             </p>
           {/if}
 
+          <!-- ══ THIS SCREEN, RIGHT NOW ══ BESIDE THE PANIC CONTROLS, NEVER
+               INSTEAD OF THEM. `Clear screens` and `Blackout` are in the dock,
+               address every screen and ask nothing about which (rule 15,
+               DECISIONS §20). These address THIS screen and leave the wall
+               alone, which is the request that was impossible until now: take
+               the lobby TV down for the sermon and leave the congregation's
+               screen live.
+
+               A screen stays down until it is put back, across every fire in
+               between. That is what makes it worth having and it is also how an
+               operator forgets, so the state is said out loud here and on every
+               card's badge, and the way back is the button beside it. -->
+          <div class="r-lbl ch-flbl">This screen</div>
+          {#if downOf(sel)}
+            <p class="ch-downnow">
+              You took this screen down{downOf(sel) === 'black' ? ' (black)' : ''}. It shows
+              nothing until you put it back, and firing a verse will not bring it up.
+            </p>
+            <div class="ch-downrow">
+              <button class="r-btn primary sm" on:click={() => putBack(sel)} disabled={!$capture.available}>
+                Put back in the wall
+              </button>
+            </div>
+          {:else}
+            <div class="ch-downrow">
+              <button class="r-btn ghost sm" on:click={() => takeDown(sel)} disabled={!$capture.available}>
+                Take this screen down
+              </button>
+              <button class="r-btn ghost sm" on:click={() => blackDown(sel)} disabled={!$capture.available}>
+                Black this screen out
+              </button>
+            </div>
+            <p class="ch-finhint">
+              Only this screen. Every other screen keeps showing whatever is on the
+              programme, and the panic controls are unchanged.
+            </p>
+          {/if}
+
           {#if isNative(sel)}
             <div class="r-lbl ch-flbl">Display</div>
             <select class="r-select ch-fin" value={sel.display_target ?? ''} on:change={(e) => assignDisplay(sel, e)} disabled={!$capture.available}>
@@ -1057,7 +1239,17 @@
               {#each monitors as m (m.index)}
                 <option value={String(m.index)}>{m.name} · {m.width}×{m.height}{m.primary ? ' (primary)' : ''}</option>
               {/each}
+              {#if missingDisplay(sel)}
+                <option value={sel.display_target}>Display {missingDisplay(sel)} — not connected</option>
+              {/if}
             </select>
+            {#if missingDisplay(sel)}
+              <p class="ch-downnow">
+                This screen is set to open on a display that is not plugged in. Relay
+                will not open it on a different one — plug that display back in, or
+                choose another here.
+              </p>
+            {/if}
           {/if}
 
           <!-- Type · Transport · Output · URL · Reporting (docs/REBRAND.md §5),
@@ -1208,16 +1400,42 @@
     <aside class="rw-pane rw-insp">
       <div class="rw-panehead"><h2 class="rw-panettl">Preacher's stage remote</h2></div>
       <div class="rw-panebody pad">
-        <p class="ch-stage-sub r-dim">
-          The live verse on a phone or iPad, updating in real time. Scan the QR (same
-          Wi-Fi) or open <code class="r-mono">{stageUrl}</code>.
-        </p>
-        <div class="ch-stage-actions">
-          <button class="r-btn primary sm" on:click={showStageQr}>{stageQrOpen ? 'Hide QR' : 'Show QR'}</button>
-          <button class="r-btn ghost sm" on:click={copyStage}>{copyLabel(copiedStage, 'Copy link')}</button>
-        </div>
-        {#if stageQrOpen}
-          <img class="ch-stage-qr" src={stageQr} alt="QR code to open the stage remote" width="150" height="150" />
+        {#if stageUrl}
+          <p class="ch-stage-sub r-dim">
+            The live verse on a phone or iPad, updating in real time. Scan the QR (same
+            Wi-Fi) or open <code class="r-mono">{stageUrl}</code>.
+          </p>
+          <!-- WHICH SCREEN THE LINK IS. The address carries a channel now, so it
+               is an address FOR something and the operator is entitled to know
+               which — and to know that the second stage screen is a different
+               number rather than concluding the link is broken. -->
+          <p class="ch-stage-sub r-dim">
+            This is the link for <b>{stageRemote.channel.name}</b>.
+            {#if stageRemote.others.length}
+              {stageRemote.others.join(', ')} {stageRemote.others.length === 1 ? 'is' : 'are'}
+              also set as a stage display; open {stageRemote.others.length === 1 ? 'it' : 'them'}
+              in <b>Screens</b> for {stageRemote.others.length === 1 ? 'its' : 'their'} own address.
+            {/if}
+          </p>
+          <div class="ch-stage-actions">
+            <button class="r-btn primary sm" on:click={showStageQr}>{stageQrOpen ? 'Hide QR' : 'Show QR'}</button>
+            <button class="r-btn ghost sm" on:click={copyStage}>{copyLabel(copiedStage, 'Copy link')}</button>
+          </div>
+          {#if stageQrOpen}
+            <img class="ch-stage-qr" src={stageQr} alt="QR code to open the stage remote" width="150" height="150" />
+          {/if}
+        {:else}
+          <!-- NO ADDRESS, AND A REASON — rule 35.
+               A bare `stage.html` renders the reading, the countdown and the
+               clock perfectly well, so printing it would hand the operator a link
+               that looks entirely correct and silently never receives a Stage
+               Message. The page itself says the same thing at the other end, so
+               whichever half of the room notices first can act on it. -->
+          <p class="ch-stage-warn">
+            No screen is set as a stage display, so there is no stage link to hand out.
+            A Stage Message is only ever painted on a screen whose <b>Role</b> is
+            <b>Stage display</b> — set one in <b>Screens</b> and the address appears here.
+          </p>
         {/if}
         <p class="rw-foot">
           Anyone on the same Wi-Fi who has the address can open it — Relay does not ask
@@ -1361,6 +1579,24 @@
   .ch-addr-row .ch-addr{ flex:1; min-width:0; }
   .ch-stage-sub{ margin:0 0 10px; font-size:var(--v-fs-b2); line-height:1.45; }
   .ch-stage-actions{ display:flex; gap:6px; flex-wrap:wrap; }
+  .ch-downrow{ display:flex; gap:6px; flex-wrap:wrap; margin-bottom:6px; }
+  /* A SCREEN THE OPERATOR TOOK DOWN. Amber, not rose: nothing has failed and
+     nothing needs repairing — this is a decision somebody made, and rose here
+     would send a volunteer hunting for a broken projector. Same reading as the
+     badge `describeScreen` gives it. */
+  .ch-downnow{
+    margin:0 0 8px; padding:8px 10px; border-radius:var(--r-sm, 6px);
+    background:var(--v-amber-soft); border:1px solid var(--v-amber-line);
+    color:var(--v-amber); font-size:var(--v-fs-b2); line-height:1.45;
+  }
+  /* NO STAGE SCREEN. Amber, not red: nothing has failed, a screen simply has no
+     role — a configuration answer, and red would send an operator looking for a
+     fault. Same reading as the line `stage.html` shows at the other end. */
+  .ch-stage-warn{
+    margin:0; padding:10px 12px; border-radius:var(--r-sm, 6px);
+    background:var(--v-amber-soft); border:1px solid var(--v-amber-line);
+    color:var(--v-amber); font-size:var(--v-fs-b2); line-height:1.45;
+  }
   .ch-stage-qr{ display:block; margin-top:12px; border-radius:var(--v-r-sm); }
 
   /* ── inspector ── */

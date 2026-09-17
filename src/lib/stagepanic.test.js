@@ -60,13 +60,24 @@ afterEach(() => {
   host = null;
 });
 
-/** Mount the stage page with a socket open and nothing delivered yet. */
+/**
+ * Mount the stage page with a socket open and nothing delivered yet.
+ *
+ * ON CHANNEL 2, with the role map delivered first. `stage.html` now refuses a
+ * Stage Message unless its own channel holds the `stage` role
+ * (`stagepageidentity.test.js`), and channel 2 is the screen a fresh install
+ * seeds as `Stage display` — so this is the preacher's real monitor rather than
+ * an anonymous page. Without the identity the alert never renders and every
+ * assertion below about taking it DOWN would pass by it never having been up.
+ */
 async function mount() {
+  window.history.replaceState({}, '', '/stage.html?channel=2');
   host = document.createElement('div');
   document.body.appendChild(host);
   app = new Stage({ target: host });
   await tick();
   socket.onopen?.();
+  socket.onmessage({ data: JSON.stringify({ kind: 'channel_roles', roles: { 1: 'main', 2: 'stage' } }) });
   await tick();
   return host;
 }

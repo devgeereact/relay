@@ -64,14 +64,26 @@ function cleanup() {
   host = null;
 }
 
-/** Mount the stage page and deliver one hub frame through the real socket path. */
+/**
+ * Mount the stage page and deliver one hub frame through the real socket path.
+ *
+ * THE PAGE IS MOUNTED ON A CHANNEL, and the role map is delivered before
+ * anything else. `stage.html` used to accept a Stage Message from anybody; it
+ * now refuses one unless its own channel holds the `stage` role, exactly as
+ * `output.html` does (`stagepageidentity.test.js`). Channel 2 is the screen a
+ * fresh install seeds as `Stage display`, so this fixture is the stage monitor a
+ * church actually has rather than an anonymous page that happens to work.
+ */
+const STAGE_ROLES = { 1: 'main', 2: 'stage' };
 async function mount(frame) {
+  window.history.replaceState({}, '', '/stage.html?channel=2');
   host = document.createElement('div');
   document.body.appendChild(host);
   app = new Stage({ target: host });
   await tick();
+  socket.onopen?.();
+  socket.onmessage({ data: JSON.stringify({ kind: 'channel_roles', roles: STAGE_ROLES }) });
   if (frame) {
-    socket.onopen?.();
     socket.onmessage({ data: JSON.stringify(frame) });
   }
   await tick();

@@ -131,6 +131,11 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       // asserts on what it PAINTS, which is the claim; this row only says a
       // branch exists.
       background: true,
+      // WHICH SCREENS THE OPERATOR TOOK OUT OF THE WALL. This page IS a screen, so
+      // it is the party that has to act on it — the hub broadcasts to everybody and
+      // records nothing about who connected (DECISIONS §35), which is the same
+      // argument as `channel_template` two rows up and `stage_alert` above it.
+      screen_state: true,
     },
     'src/Stage.svelte': {
       content: true,
@@ -151,14 +156,26 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       // distraction nobody asked for. A transition is about how a CONGREGATION
       // screen changes (DECISIONS §84).
       transition: false,
-      // DELIBERATELY NOT. `stage.html` is not an output CHANNEL: it is served on
-      // its own page, it has no `?channel=` in its URL, and it is a stage screen
-      // by construction rather than by configuration. There is no id for it to
-      // look up in this map, and giving it one would mean inventing a channel for
-      // a page that does not have one. What each screen is FOR is a question
-      // `output.html` has to ask because several different kinds of screen render
-      // through it; this page is only ever the one kind.
-      channel_roles: false,
+      // THIS VERDICT WAS `false`, AND THE REVERSAL IS THE POINT OF THE ROW.
+      //
+      // The reasoning recorded here was that `stage.html` is not an output
+      // channel — "it has no `?channel=` in its URL, and it is a stage screen by
+      // construction rather than by configuration". That was true of the page's
+      // INTENT and false of its behaviour. Every copy of this page open anywhere
+      // on the network was a stage screen by construction, including a lobby TV
+      // somebody had pointed at the URL and a spare tablet in a back room, and
+      // each of them was painted the Stage Message full-bleed. One of two doors
+      // carried DECISIONS §89's guarantee and this was the other one.
+      //
+      // So the page now reads `?channel=`, refuses a Stage Message unless its own
+      // channel holds the `stage` role, and says plainly when it has no channel
+      // at all rather than refusing in silence (rule 35). It is not a security
+      // boundary and is not claimed as one: the LAN is trusted by decision (§35,
+      // docs/SECURITY.md T4) and anyone may type `?channel=2`. It closes the
+      // accident, by the same mechanic and in the same frame as `output.html`.
+      // `stagepageidentity.test.js` drives the real page and asserts what it
+      // paints, which this file — which reads source text — cannot reach.
+      channel_roles: true,
       // THE PROGRAMME TIMERS, and this page is the only client that may have them.
       // A `Stage`-scoped timer publishes no content frame at all — which is exactly
       // why it survives a verse — so this frame is its only way onto any screen,
@@ -179,6 +196,13 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       // are standing. Nothing is lost — the congregation's screens carry the
       // picture, this one carries the words.
       background: false,
+      // AND THE PER-SCREEN CONTROL REACHES BOTH DOORS. A confidence monitor in a
+      // foyer is a screen an operator may reasonably want down while the
+      // platform's own stays up, and this page is the door this repository has
+      // now missed four times — most recently for `black`, which left the verse
+      // on the one screen the preacher reads from while the console correctly
+      // reported success (DECISIONS §91).
+      screen_state: true,
     },
   };
 

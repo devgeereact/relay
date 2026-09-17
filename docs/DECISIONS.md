@@ -4470,6 +4470,44 @@ roles a fresh install names, that the wire form carries ids and roles and no nam
 `OutputContent` has no stage-message field. `src/lib/stagealertpanic.test.js` holds the third decision,
 by driving `Stage.svelte` through `clear` and through `black`.
 
+### Addendum, 2026-09-17 — the second door, which this ruling did not close
+
+The ruling above closed `output.html`. It did not close `stage.html`, and the reasoning that let it
+pass is recorded in `r6-contracts.test.js` as a `false` verdict with a paragraph under it:
+*"stage.html is not an output CHANNEL … it is a stage screen by construction rather than by
+configuration."*
+
+**That was true of the page's intent and false of its behaviour.** Every copy of that page open
+anywhere on the network was a stage screen by construction — the lobby TV a volunteer had pointed
+at the URL, the spare tablet in the back room, a visitor's phone — and each of them was painted the
+Stage Message full-bleed, at `position: fixed; inset: 0`. One of two doors carried the guarantee,
+which is the shape CLAUDE.md names under *"a guarantee is only kept on the doors you checked"*, on
+the surface carrying private words about a service.
+
+**So the reversal.** `Stage.svelte` reads `?channel=` exactly as `Output.svelte` does, handles the
+`channel_roles` frame through the same one-writer function with the same
+stops-being-a-stage guarantee, and refuses a `stage_alert` unless `acceptsStageMessage` says yes.
+`hello` carries the channel, because rule 43's replay is answered inside the hub's `hello` handler
+and a per-screen state can only be replayed to a client that has said which screen it is.
+
+**A page opened with no channel refuses, and says so.** That is a behaviour change to a URL churches
+already have: the bare `http://<host>:8032/stage.html` that Outputs used to print no longer
+receives a Stage Message. Refusing is the only answer consistent with the rest — an unidentified
+page is precisely the page that might be anything — but a silent refusal would read exactly like a
+message nobody sent, on the one screen whose reader cannot glance at the console to find out what
+happened. So the page carries one standing line naming the fix (rule 35), and `Outputs → Sharing`
+hands out a channel-keyed address for the screen that actually holds the role, or says plainly that
+no screen holds it rather than printing a link that half works (`channelroles.js::stageRemoteUrl`).
+
+**It is not a security boundary and is not claimed as one.** The LAN is trusted by decision (§35,
+`docs/SECURITY.md` T4): anybody who can reach `:8032` can type `?channel=2` and be handed the
+message, and can already read the reading, the Stage Note and the programme off the same page. What
+this closes is the accident, by the same mechanic, in the same frame, as the page beside it.
+
+`src/lib/stagepageidentity.test.js` drives the real page through the real socket and asserts what it
+paints — the surface `r6-contracts.test.js`, which reads source text, cannot reach.
+`src/lib/stageremote.test.js` holds the sending desk.
+
 ---
 
 ## 90. A fresh install ships starter content, and the tripwire stops asserting zero (2026-09-16)
@@ -4945,3 +4983,76 @@ verdict for both clients, so the next kind cannot be forgotten quietly.
 Per-screen backgrounds (that reverses "one AI decision fanned out"), background transitions, a
 Planner cue type, a background that survives a restart, and masks or blend modes over it — a mask
 is precisely the object that can make a verse invisible in a way no test here would catch.
+
+## 95. A screen's display is an OS index, and there is nothing stabler to store (2026-09-17)
+
+### Context
+
+`output_channels.display_target` holds a monitor INDEX — the position of a display in the list the
+OS hands out. Unplug a dock and the list renumbers, so the projector a church configured months ago
+becomes whatever is now in that slot, or nothing at all. The obvious repair is to store a stable
+identity for the display instead of its position.
+
+**It is not available, and this section exists so nobody spends a day rediscovering that.** Measured
+against the pinned versions, `tauri 2.11.5` / `tauri-runtime 2.11.3` / `tao 0.35.3`:
+
+- `tauri_runtime::Monitor` is `{ name: Option<String>, size, position, work_area, scale_factor }`.
+  There is no native display id on it. `tao`'s own `MonitorHandle::native_identifier()` exists and
+  Tauri does not surface it — `available_monitors()` returns the flattened struct.
+- On **Windows**, `tao` names a monitor from `MONITORINFOEX.szDevice`: `\\.\DISPLAY1`. That is an
+  OS-assigned device path, and the OS renumbers it when displays are attached or detached. It is
+  exactly as unstable as the index it would be replacing.
+- On **macOS**, `tao` names a monitor `Monitor #<CGDisplay::model_number()>` — an EDID **model**
+  number, shared by every unit of the same model, so two identical projectors are indistinguishable.
+  Relay already reaches past that for a readable name (`channels::collect_macos_display_names` maps
+  `NSScreen.localizedName` by position), and `localizedName` is per-model too.
+
+A per-unit identity is reachable on macOS through new FFI (`CGDisplaySerialNumber`) and on Windows
+only through `EnumDisplayDevices` plus EDID out of the registry. **A scheme that worked on one
+platform and fell back to the index on the other would make the control that decides which physical
+screen a congregation sees behave differently on Windows and macOS**, which is worse than one honest
+index: CLAUDE.md's stack line says both platforms from day one, and the failure this would introduce
+is silent and congregation-facing.
+
+### Decision
+
+**The index stays, and the FALLBACK is what changes — because the fallback was the dangerous half.**
+
+`auto_open_outputs` was always careful: it skips a channel whose index is not connected, and skips
+the primary display too, because auto-opening a borderless fullscreen output over the console covers
+the UI the operator is running the service from. `open_channel_output` — the **Open** button, the
+path an operator presses deliberately — did neither. A stale index fell straight through
+`open_native_window`'s placement block, the window was built at its default position and then
+fullscreened, and the OS put it on the primary. Unplug the projector, press Open, and the
+congregation's output covers the console. Nothing reported anything.
+
+`main::resolve_display` is now the one place either path decides, and it answers three ways:
+`On(index)` when the named display is connected, `Missing(n)` when the operator named one and it is
+not here, and `Anywhere` for everything else. `open_channel_output` refuses a `Missing` by name
+("… is set to open on Display 3, which is not connected"), which reaches the operator through
+`src/lib/errors.js` like every other refusal on that desk; `auto_open_outputs` skips it, unchanged.
+
+**Two things are deliberately NOT `Missing`.** An unreadable `display_target` is not a claim about a
+screen, so it means the same as none. And an empty monitor list is ambiguous — `list_monitors`
+returns `[]` rather than erroring, so a probe that failed looks exactly like a machine with no
+displays — and refusing on an ambiguity would turn a transient failure into an output that cannot be
+opened at all, mid-service, under a sentence the operator cannot act on.
+
+**And the desk stops saying the wrong thing before the button is pressed.** The Display picker is a
+`<select>`, and a value matching no option shows the FIRST option, which reads **Primary display** —
+so a screen configured for the projector rendered identically to a screen configured for nothing.
+One reassuring sentence over two situations is rule 35, on this control of all controls. A screen
+whose display is missing now carries a real option saying so, selected, plus a line in the inspector
+naming what will happen if Open is pressed.
+
+### Instrument
+
+`main.rs::display_target_tests` — the three answers, both the 0-based and the 1-based spellings of a
+missing display reported by the number an operator reads off their own OS, and the two ambiguities
+that must not become refusals. `src/lib/screenrename.test.js` holds the desk, with a control case in
+the same assertion so it cannot pass by the label being wrong in both directions.
+
+**What this does not do, stated plainly:** it does not make a display target survive a replug. A
+church that unplugs a dock and plugs it back into a different port still has to re-pick the display.
+The change is that Relay now says so instead of opening the congregation's screen on the operator's
+monitor.

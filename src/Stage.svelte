@@ -11,16 +11,92 @@
   // runtime: it connects to the kiosk WebSocket hub (:8031) for content, exactly
   // like an OBS/kiosk output, but rendered as a readable mobile confidence view.
   import { onMount, onDestroy } from 'svelte';
+  import { acceptsStageMessage, roleOf } from './lib/channelroles.js';
+
+  // ── WHICH SCREEN THIS IS ────────────────────────────────────────────────────
+  //
+  // `?channel=` names the `output_channels` row this page is standing in for, and
+  // an absent one parses to 0, which is no channel at all. Exactly the parse
+  // `Output.svelte` makes, from exactly the same URL grammar, because the two
+  // pages now answer the same question the same way.
+  //
+  // THIS REVERSES A RECORDED DECISION, so the reversal is written down rather
+  // than quietly applied. `r6-contracts.test.js` used to hold
+  // `channel_roles: false` for this file, on the ground that "stage.html is not
+  // an output CHANNEL: it is a stage screen by construction rather than by
+  // configuration". That was true of the page's INTENT and false of its
+  // behaviour: any copy of this page open anywhere on the network was a stage
+  // screen by construction, including the lobby TV somebody had pointed at the
+  // URL and the spare tablet in the back room. A word addressed to one person
+  // was painted, full-bleed, on all of them.
+  //
+  // A channel id is not a credential and this is not a security boundary. The LAN
+  // is trusted by decision (DECISIONS §35, docs/SECURITY.md T4): anybody who can
+  // reach `:8032` can equally type `?channel=2`, and can already read the
+  // reading, the Stage Note and the programme off this page. What the identity
+  // buys is the ACCIDENT — a screen that is not the preacher's being handed a
+  // word meant for the preacher — and it buys it with the same mechanic, at the
+  // same place in the same frame, as the page beside it.
+  const stageParams = new URLSearchParams(location.search);
+  const channelId = parseInt(stageParams.get('channel') || '0', 10) || 0;
 
   let content = null;
   let visible = false;
   let note = ''; // the live cue's Stage Note, for this monitor only
   // The Stage Message. Takes the whole screen until the operator clears it.
-  // It lives here, in the stage renderer, which is what makes "no congregation
-  // screen can show it" a property of the system rather than a promise: the
-  // output page has an explicit `false` verdict for this message kind
-  // (r6-contracts.test.js).
   let alert = '';
+  // WHAT EVERY SCREEN IS FOR, as the backend publishes it: `{"2":"stage"}`. Sent
+  // on every hello and again whenever it changes, so `{}` is an answer rather
+  // than a silence — it is how this page learns it is NOT a stage.
+  let roles = {};
+  $: myRole = roleOf(roles, channelId);
+  // A page with no channel in its URL can never be a stage, and must SAY SO.
+  //
+  // Rule 35, on the one screen whose reader cannot glance at the console to find
+  // out what happened. A silent refusal reads exactly like a message nobody sent,
+  // and the preacher has no way to tell those apart while facing a congregation.
+  // So an unidentified page carries one standing line naming the fix, and an
+  // identified one carries nothing.
+  $: unidentified = channelId === 0;
+  /**
+   * The role map has changed. ONE writer, for the reason `Output.svelte`'s twin
+   * of this function gives: a screen that STOPS being a stage must lose the
+   * message at once, because an operator who moves the stage role off a tablet
+   * has said that tablet is an ordinary screen now — and a refusal that applied
+   * only to the NEXT message would leave the last one painted on it for the rest
+   * of the service.
+   *
+   * Deliberately not a blanket `$:` that re-clears whenever the role is not
+   * `stage`: that would make the check in the `stage_alert` branch redundant, so
+   * deleting the check would break no test, and the message would still be
+   * ASSIGNED for an instant before the reactive pass took it away.
+   */
+  // THE OPERATOR TOOK THIS SCREEN OUT OF THE WALL — 'clear', 'black' or null.
+  //
+  // A separate fact from `visible`, deliberately, and not a second writer of it.
+  // Writing `visible` here would be indistinguishable from a whole-wall clear one
+  // line later, so putting the screen back would have nothing to put back: the
+  // page keeps tracking what the wall is showing while it is down, and shows it
+  // again the moment it is restored. That is the RG-129 failure — a screen that
+  // rejoined mid-service and stayed blank until the next fire — reached through a
+  // control instead of through a reconnect.
+  let down = null;
+  $: shown = visible && !down;
+  // WHAT A TAKEN-DOWN SCREEN WITHHOLDS, and where the line is drawn.
+  //
+  // The reading, the Stage Note, the Up Next and the Stage Message — everything
+  // an operator PUT on this screen. The clock, the countdown mirror and the
+  // programme rail stay, which is DECISIONS §91's line applied unchanged: a
+  // control takes back every sentence somebody put on a screen and stops none of
+  // the clocks. Drawing it anywhere else here would give a stage monitor a third
+  // answer to a question §91 has already settled.
+
+  function applyRoles(map) {
+    // Named `map`, not `next`: `next` is the Up Next panel on this page, and a
+    // parameter that shadows it reads as though the role map were the preview.
+    roles = map && typeof map === 'object' ? map : {};
+    if (!acceptsStageMessage(roleOf(roles, channelId))) alert = '';
+  }
   let next = null; // { label, text } — the "Up Next" preview
   let connected = false;
   let ws = null;
@@ -707,10 +783,36 @@
       // thing that COUNTS and a thing that SAYS something: a panic control takes
       // back every sentence anybody put on a screen, and stops none of the clocks.
       alert = '';
+    } else if (m.kind === 'channel_roles') {
+      // WHAT EVERY SCREEN IS FOR. The frame this page used to ignore, and the
+      // omission is what made the branch below a filter with no filter in it.
+      applyRoles(m.roles);
+    } else if (m.kind === 'screen_state') {
+      // THE OPERATOR TOOK THIS SCREEN OUT OF THE WALL — the per-screen twin of
+      // `clear` and `black` above, and it is handled HERE for the reason that
+      // branch's own comment gives: this page is a door, and a guarantee kept on
+      // one of two doors is the mistake this repository has made four times. A
+      // confidence monitor in the foyer is a screen an operator may reasonably
+      // want down while the platform's own stays up.
+      //
+      // The WHOLE SET arrives every time, keyed by channel id as a string. A page
+      // with no channel is never named: ids start at 1.
+      const mine =
+        channelId && m.screens && typeof m.screens === 'object'
+          ? m.screens[String(channelId)]
+          : null;
+      down = mine === 'clear' || mine === 'black' ? mine : null;
     } else if (m.kind === 'stage_alert') {
+      // ONLY A STAGE. The hub publishes this to every client because it cannot
+      // address one (DECISIONS §35), so the refusal belongs at the receiver —
+      // the only party that knows which screen it is. No role is not a stage, and
+      // no CHANNEL is not a stage either: an unidentified page might be anything,
+      // which is precisely the page that must not be handed a private word.
+      //
       // `text: null` (or empty) clears it. An alert is an instruction, not a
       // state of the wall, so nothing here is retained or restored on reconnect —
       // and a panic control takes it down with everything else it says (§91).
+      if (!acceptsStageMessage(myRole)) return;
       alert = (m.text || '').trim();
     } else if (m.kind === 'stage_next') {
       next = m.label || m.text ? { label: m.label || '', text: m.text || '' } : null;
@@ -776,12 +878,19 @@
         // and the retained frame are sent regardless, because they are about
         // what is ON THE SCREENS rather than which look this screen wears.
         //
+        // A `channel`, THOUGH — and that is the half this hello was missing.
+        // The role map alone would not have needed it (it is broadcast whole and
+        // filtered here), but rule 43's replay is answered INSIDE this handler,
+        // and a state the hub retains for one screen can only be replayed to a
+        // client that has said which screen it is. `channel: 0` is an honest
+        // answer and the hub treats it as no channel, exactly as this page does.
+        //
         // Nothing private replays: `stage_alert` and `stage_next` are NOT
         // retained frames (`channels::tests::FRAME_VERDICTS` holds both at
         // `false`), so a word meant for the preacher cannot arrive again later,
         // and a rehearsal publishes nothing to this hub at all.
         try {
-          ws.send(JSON.stringify({ kind: 'hello' }));
+          ws.send(JSON.stringify({ kind: 'hello', channel: channelId }));
         } catch {
           /* onclose retries; a failed hello must never take the page down */
         }
@@ -836,7 +945,21 @@
     </button>
   </header>
 
-  {#if alert}
+  {#if unidentified}
+    <!-- A PAGE THAT CANNOT BE HANDED A STAGE MESSAGE SAYS SO.
+         Rule 35: the refusal and the silence must not read the same. One line,
+         under the header rather than over the reading, because this page's job
+         is still to carry the reading — the identity only decides whether a
+         private message may land on it. It names the fix in the operator's own
+         words ("Outputs"), so the person holding the phone can ask for the right
+         thing rather than describe a symptom. -->
+    <p class="noident" role="status">
+      This page is on no screen, so it cannot be sent a Stage Message. Open
+      the stage link from Outputs → Screens to give it one.
+    </p>
+  {/if}
+
+  {#if alert && !down}
     <!-- THE WHOLE SCREEN. A preacher reads this from a platform, mid-sentence,
          without looking for it. Outside the zone layout on purpose: an
          instruction that a switched-off zone could hide is not an instruction. -->
@@ -858,7 +981,7 @@
   {#if zones.reading}
   <main class="stage" class:beside>
     <section class="reading" aria-label="Reading">
-      {#if visible && content}
+      {#if shown && content}
         {#if content.reference}<div class="ref">{content.reference}{content.translation ? ' · ' + content.translation : ''}</div>{/if}
         {#if content.text}<div class="verse" style="--vn:{verseChars}; --vcpl:{verseCpl}">{#if content.reference}“{content.text}”{:else}{content.text}{/if}</div>{/if}
       {:else}
@@ -946,7 +1069,7 @@
     </div>
   {/if}
 
-  {#if zones.note && note}
+  {#if zones.note && note && !down}
     <div class="noterow"><span class="note-lbl">Stage Note</span><span class="notetxt">{note}</span></div>
   {/if}
 
@@ -1007,7 +1130,7 @@
       {/if}
     </section>
   {/if}
-  {#if zones.next && next}
+  {#if zones.next && next && !down}
     <footer class="next">
       <span class="next-lbl">Up Next</span>
       <div class="next-body">
@@ -1054,6 +1177,21 @@
   .status i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
   .status.on i { box-shadow: 0 0 8px currentColor; animation: p 1.7s ease-in-out infinite; }
   @keyframes p { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
+  /* THE NO-IDENTITY LINE. Amber, not red: nothing is broken and nothing has
+     failed — this page simply is not a screen Relay knows about, which is a
+     configuration answer and not a fault. Red here would send an operator
+     looking for a crash. `flex: 0 0 auto` like every other fixed row, so it
+     takes its own height off the reading rather than out of the rail. */
+  .noident {
+    flex: 0 0 auto;
+    margin: 0;
+    padding: 8px 14px;
+    background: color-mix(in srgb, var(--v-amber) 14%, transparent);
+    border-bottom: 1px solid color-mix(in srgb, var(--v-amber) 34%, transparent);
+    color: var(--v-amber);
+    font-size: var(--v-fs-mono);
+    line-height: 1.4;
+  }
   /* NOTHING LEAVES THE SCREEN (docs/REBRAND.md §5). The reading takes what is
      left and scrolls INSIDE itself, so the header — the connection state — and
      every row beneath cannot be pushed off by a long passage.

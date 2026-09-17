@@ -261,6 +261,10 @@ export function screenFault(st) {
  * sent content" and "the projector is showing it" are different claims and only
  * the first was ever checked.
  *
+ * A screen the operator has TAKEN DOWN on its own (`st.down`) is answered before
+ * either claim is compared, because the two disagree on purpose there and the
+ * disagreement is not news.
+ *
  * @param st       the channel's `ChannelLiveness` row, or null before the first poll
  * @param wall     `{ rehearsing, live, black }` — what Relay believes it is sending
  * @param waitedMs how long this screen has been attached without answering
@@ -328,6 +332,34 @@ export function describeScreen(st, wall, waitedMs = 0) {
   const says = PAINT_STATES.includes(st.paint_state) ? st.paint_state : null;
   const seen = says ? `screen: ${says}` : '';
   if (wall?.rehearsing) return { kind: 'rehearsal', label: 'Rehearsal', note: seen };
+
+  // ── THE OPERATOR TOOK THIS SCREEN OUT OF THE WALL ──────────────────────────
+  //
+  // `st.down` is `clear` or `black` when the operator used the per-screen control
+  // on this screen, and absent for every screen that is following the wall.
+  //
+  // It has to be read HERE, above the agreement check, and reading it is not
+  // optional. Below it, Relay's belief (`content` is on the wall) would be
+  // compared against this screen's own beat (`clear`, because it was told to
+  // clear) and the badge would read **Not confirmed** for the rest of the
+  // service: a standing alarm about a screen doing exactly what it was told. An
+  // alarm that fires on a correct state is an alarm an operator learns to ignore,
+  // and the genuinely broken screen beside it is then the one nobody looks at.
+  //
+  // It is NOT amber. Amber means live and is never allowed to lie (rule 18), and
+  // this screen is showing nothing on purpose. It is not rose either: nothing has
+  // failed. Grey, with the reason in words, which is what `ready` already means
+  // here for **Blackout** and **Ready**.
+  //
+  // The note names the way back, because a durable state an operator can forget
+  // is a state that has to say how to undo it.
+  if (st.down === 'clear' || st.down === 'black') {
+    return {
+      kind: 'ready',
+      label: st.down === 'black' ? 'Taken down · black' : 'Taken down',
+      note: seen ? `you took this screen down · ${seen}` : 'you took this screen down',
+    };
+  }
 
   // What Relay believes it is sending this screen, in the screen's own vocabulary.
   const sending = wall?.live && !wall?.black ? 'content' : wall?.black ? 'black' : 'clear';

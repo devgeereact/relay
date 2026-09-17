@@ -86,6 +86,71 @@
   // and a lobby TV would be which layers that TV's template happens to have.
   let roles = {};
   let stageMessage = '';
+
+  // ── THE OPERATOR TOOK THIS SCREEN OUT OF THE WALL ───────────────────────────
+  //
+  // `clear_screens` and `blackout` address every screen and ask nothing about
+  // which — that is what makes them panic controls (rule 15, DECISIONS §20) and
+  // they are untouched. `screen_state` is the separate, deliberate control beside
+  // them: "take the lobby TV down but leave the wall live".
+  //
+  // Refused, or rather APPLIED, at the receiver, for the third time in this file
+  // and for the same reason as `channel_template` and `stage_alert`: the hub
+  // broadcasts to everybody and records nothing about who connected (DECISIONS
+  // §35), so the only party that knows which screen this is, is this screen.
+  //
+  // THE WHOLE SET ARRIVES EVERY TIME, never a delta — the same rule the programme
+  // timers follow. A page that missed one frame would otherwise be wrong about
+  // itself for the rest of the service with no way to find out, and the thing it
+  // would be wrong about is whether a congregation can see anything.
+  //
+  // `content` KEEPS BEING TRACKED WHILE THIS SCREEN IS DOWN, and only the
+  // rendering is withheld. Throwing the content away would make coming back up
+  // mean "blank until the next fire", which is RG-129 — a screen that rejoined
+  // mid-service and stayed black — reached through a control instead of a
+  // reconnect.
+  let downMode = null; // 'clear' | 'black' | null
+  /**
+   * The set has changed. `screens` is `{"4":"clear"}`, keyed by channel id, and
+   * `{}` is the answer that every screen is up.
+   *
+   * Keys arrive as strings because JSON objects have string keys and this page's
+   * channel is a number — the same comparison `roleOf` documents, and the same
+   * way a filter that looks right comes to refuse everything.
+   *
+   * A page on NO channel (a raw template preview, `?channel=` absent, parsed to
+   * 0) can never be named: channel ids start at 1, and a preview that belongs to
+   * no screen must not be taken down by a decision about a screen.
+   */
+  function applyScreenState(screens) {
+    if (!channelId || !screens || typeof screens !== 'object') {
+      downMode = null;
+      return;
+    }
+    const mine = screens[String(channelId)];
+    downMode = mine === 'clear' || mine === 'black' ? mine : null;
+  }
+  // WHAT IS ACTUALLY PAINTED. Two derived facts rather than two more writers of
+  // `visible` and `black`: a control that WROTE those would be indistinguishable
+  // from a whole-wall clear one line later, and coming back up would then have
+  // nothing to come back to.
+  $: shownContent = visible && !downMode ? content : null;
+  // AND THE BACKDROP GOES DOWN WITH IT — a point neither branch could see alone.
+  //
+  // The per-screen control and the standing background landed on two branches on
+  // the same day. Separately each is right; together they ask a question neither
+  // was in a position to answer: what does a screen the operator has taken OUT of
+  // the wall paint? A backdrop is congregation furniture, so a lobby TV that has
+  // been taken down while still showing the church's picture has not been taken
+  // down — it has been half taken down, which is the state `downMode` exists to
+  // make impossible.
+  //
+  // Derived, not written, for the reason immediately above: a writer here would be
+  // indistinguishable from a whole-wall clear, and coming back up would have
+  // nothing to come back to. The retained hub slot still holds the picture, so
+  // restoring the screen restores it.
+  $: shownBackdrop = downMode ? null : backdrop;
+  $: shownBlack = black || downMode === 'black';
   $: myRole = roleOf(roles, channelId);
   /**
    * The role map has changed. ONE writer, called from both doors, because a
@@ -388,6 +453,12 @@
       // so leaving it here would put the church's picture over the live camera at
       // the one moment the operator asked for the camera alone.
       backdrop = null;
+    } else if (m.kind === 'screen_state') {
+      // WHICH SCREENS THE OPERATOR HAS TAKEN OUT OF THE WALL. Retained by the hub
+      // in its own slot and replayed on hello AFTER the screen frame, so a browser
+      // source that restarted mid-sermon comes back down rather than bringing
+      // itself back up (rule 43, `channels::tests`).
+      applyScreenState(m.screens);
     } else if (m.kind === 'channel_roles') {
       // WHAT EVERY SCREEN IS FOR. Sent on every hello and whenever it changes, so
       // this page can answer the only question it asks of it: am I the stage?
@@ -423,7 +494,13 @@
       ws.onopen = () => {
         // Ask the hub for this channel's real template.
         try {
-          ws.send(JSON.stringify({ kind: 'hello', template_id: templateId }));
+          // THE CHANNEL RIDES WITH IT NOW. The template id is what the hub
+          // counts clients against; the channel is what it needs to replay a
+          // state retained for ONE screen (`screen_state`). A client that never
+          // says which screen it is cannot be told it is one the operator took
+          // down. `channel: 0` is an honest answer for a raw preview and the hub
+          // treats it as no channel, exactly as this page does.
+          ws.send(JSON.stringify({ kind: 'hello', channel: channelId, template_id: templateId }));
         } catch {
           /* ignore */
         }
@@ -504,6 +581,23 @@
       // …AND THE PANIC CONTROLS TAKE IT, on this door too. The line that matters:
       // a clear means everything.
       unlisten.push(await listen('output://clear', () => { visible = false; black = false; backdrop = null; }));
+      // BOTH DOORS, for the fifth time in this file. A native output window on
+      // HDMI has the bridge and no socket; the browser source in the same room has
+      // the socket and no bridge. A per-screen control wired to one of them would
+      // take the lobby TV down over the network and leave the projector beside it
+      // untouched — the "guarantee kept on one door" mistake, on the control whose
+      // entire purpose is that exactly one screen changes.
+      unlisten.push(
+        await listen('output://screen_state', (e) => {
+          // The Tauri door carries ONE screen and its state, because the emit is
+          // per call; the kiosk door carries the whole set, because it is a
+          // retained frame and a set is the only shape that survives a missed
+          // frame. Both end in the same place.
+          if (!channelId || e.payload?.channel !== channelId) return;
+          const st = e.payload?.state;
+          downMode = st === 'clear' || st === 'black' ? st : null;
+        }),
+      );
       unlisten.push(
         await listen('output://black', () => {
           black = true;
@@ -560,7 +654,11 @@
     // reconnect, so a captured reference would keep beating into a dead one.
     stopBeat = startBeat({
       channelId,
-      getState: () => paintState({ black, visible, content }),
+      // WHAT THIS SCREEN IS ACTUALLY SHOWING, not what it was last told. A screen
+      // the operator took down is painting `clear`, and a beat that still claimed
+      // `content` would put `describeScreen` into a standing `Not confirmed` —
+      // an alarm about a screen doing exactly what it was told (rule 35).
+      getState: () => paintState({ black: shownBlack, visible: !!shownContent, content }),
       getWs: () => ws,
     });
   });
@@ -576,8 +674,8 @@
 
 <TemplateRender
   template={renderedTemplate}
-  content={visible ? content : null}
-  {backdrop}
+  content={shownContent}
+  backdrop={shownBackdrop}
   audio={isDesktop}
   stageMessage={stageMessage}
   transitionOverride={appliedTransition} />
@@ -586,7 +684,7 @@
      operator pressed it for. On that channel the panic control removes the
      BAND, which is all this channel was ever contributing, and the camera keeps
      going out. Every other channel goes properly black. -->
-{#if black && !isBand}<div class="blackout"></div>{/if}
+{#if shownBlack && !isBand}<div class="blackout"></div>{/if}
 
 <style>
   /* Transparent by default — a template with a transparent background keys out

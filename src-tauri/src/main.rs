@@ -153,6 +153,7 @@ fn main() {
         .manage(channels::LiveContent::default())
         .manage(timers::TimerRegistry::default())
         .manage(channels::OutputHealth::default())
+        .manage(channels::ScreensDown::default())
         .manage(servicelock::ServiceLock::default())
         .manage(Session::default())
         .manage(models::DownloadState::default())
@@ -223,6 +224,7 @@ fn main() {
             let kiosk_last_x = kiosk.last_transition_handle();
             let kiosk_last_t = kiosk.last_timers_handle();
             let kiosk_last_bg = kiosk.last_background_handle();
+            let kiosk_down = kiosk.screens_down_handle();
             // The configured default, warmed before any client can connect — a
             // screen that joins during launch must not be told the default is
             // `null` and then corrected.
@@ -298,6 +300,7 @@ fn main() {
                 kiosk_last_x,
                 kiosk_last_t,
                 kiosk_last_bg,
+                kiosk_down,
                 app.state::<channels::OutputHealth>().inner().clone(),
                 8031,
             ));
@@ -465,6 +468,10 @@ fn main() {
             service_lock,
             set_service_lock,
             set_channel_template,
+            rename_channel,
+            clear_screen,
+            blackout_screen,
+            restore_screen,
             set_default_template,
             send_stage_alert,
             list_monitors,
@@ -6062,7 +6069,29 @@ fn open_channel_output(
     };
     // The screen's own answer, Option and all — see `channels::output_url`.
     let template_id = channel.template_id;
-    let monitor_index = channel.display_target.as_deref().and_then(parse_display);
+    // A REMEMBERED DISPLAY THAT IS GONE IS A REFUSAL, NOT A GUESS.
+    //
+    // This used to be `.and_then(parse_display)`, and a stale index simply fell
+    // through the placement block inside `open_native_window`: the window was
+    // built at its default position and then fullscreened, so the OS put it on
+    // the primary display. Unplug the dock, press Open, and a borderless
+    // undecorated fullscreen output covers the console the operator is running
+    // the service from, with nothing reported. `auto_open_outputs` has always
+    // skipped that case; this is the manual path agreeing with it, out loud.
+    let monitor_index = match resolve_display(
+        channel.display_target.as_deref(),
+        &channels::list_monitors(&app),
+    ) {
+        DisplayChoice::On(idx) => Some(idx),
+        DisplayChoice::Anywhere => None,
+        DisplayChoice::Missing(n) => {
+            return Err(error::Error::refused(format!(
+                "{} is set to open on Display {n}, which is not connected. \
+                 Plug it in, or choose a different display for this screen.",
+                channel.name
+            )))
+        }
+    };
     // Deterministic, so the window can be traced back to this channel — that is
     // what makes the channel's "online" light real. It also makes
     // `open_native_window`'s already-open check a duplicate guard: the counter
@@ -6101,11 +6130,21 @@ fn auto_open_outputs(
         if c.render_target != "native_window" {
             continue; // OBS/kiosk auto-reconnect over the WS; nothing to open here
         }
-        let Some(idx) = c.display_target.as_deref().and_then(parse_display) else {
-            continue; // no display assigned → not a fixed physical screen
+        // ONE RESOLVER, shared with `open_channel_output` (rule 36 in miniature:
+        // the two paths that decide which physical screen an output lands on must
+        // not be able to disagree). This half was already safe and is unchanged in
+        // behaviour — `Anywhere` and `Missing` both skip here, because an
+        // automatic open has no operator to refuse to.
+        let idx = match resolve_display(c.display_target.as_deref(), &monitors) {
+            DisplayChoice::On(idx) => idx,
+            // No display assigned → not a fixed physical screen, and an unreadable
+            // one is the same. Nothing auto-opens for either.
+            DisplayChoice::Anywhere => continue,
+            // That display isn't connected right now.
+            DisplayChoice::Missing(_) => continue,
         };
         let Some(m) = monitors.iter().find(|m| m.index == idx) else {
-            continue; // that display isn't connected right now
+            continue;
         };
         if m.primary {
             continue; // never cover the operator's console
@@ -6189,6 +6228,85 @@ struct ChannelLiveness {
     /// What that beat said the screen was showing — `content` / `clear` / `black`.
     /// Parsed against a closed enum at the door; never free text off the LAN.
     paint_state: Option<&'static str>,
+    /// THE OPERATOR TOOK THIS SCREEN OUT OF THE WALL — `clear` or `black`, and
+    /// `None` when it is following the wall like every other screen.
+    ///
+    /// It is here rather than in a command of its own because every surface that
+    /// describes a screen has to know it, and there is exactly one helper allowed
+    /// to turn a row into words (`outputHealth.js::describeScreen`, rule 35).
+    /// Without it that helper would compare Relay's belief — content is on the
+    /// wall — against the screen's own beat, which says `clear`, and report
+    /// `Not confirmed` for the rest of the service: a standing alarm about a
+    /// screen doing exactly what it was told.
+    down: Option<&'static str>,
+}
+
+/// WHICH PHYSICAL DISPLAY A SCREEN SHOULD OPEN ON — and whether it can at all.
+///
+/// Three answers, and the middle one did not exist.
+///
+/// `display_target` is an INDEX into the OS monitor list (see `parse_display`),
+/// which is the honest shape of what Tauri exposes and is the reason this function
+/// has to be careful. **Tauri 2.11 hands out `Monitor { name, size, position,
+/// work_area, scale_factor }` and nothing else** — no native display id. Under it,
+/// `tao` names a Windows monitor `\\.\DISPLAY1` (the `MONITORINFOEX.szDevice`
+/// path, which the OS renumbers when displays are attached or detached) and a
+/// macOS monitor `Monitor #<EDID model number>` (per MODEL, so two identical
+/// projectors are indistinguishable). So there is no stable per-display identity
+/// to store instead of the index — not on both platforms, and a scheme that worked
+/// on one of them would make the control that decides which physical screen a
+/// congregation sees behave differently on Windows and macOS. That is recorded in
+/// full in `docs/DECISIONS.md`.
+///
+/// What CAN be fixed is the fallback, and it was the dangerous half.
+/// `auto_open_outputs` has always skipped a channel whose index is not connected
+/// — and skipped the primary display too, because auto-opening a borderless
+/// fullscreen output over the console covers the UI the operator is running the
+/// service from. `open_channel_output`, the **Open** button, did neither: a stale
+/// index fell through the placement block, the window was built at its default
+/// position and fullscreened, and the OS put it on the primary. The projector is
+/// unplugged, the operator presses Open, and the congregation's output covers the
+/// console.
+///
+/// `Missing` is that case and only that case: the operator named a screen, and
+/// that screen is not here. An unreadable target and an empty monitor list are
+/// BOTH `Anywhere` — the first is not a claim about a screen at all, and the
+/// second is ambiguous (`list_monitors` returns an empty vector rather than
+/// erroring, so a failed probe looks exactly like a machine with no displays).
+/// Refusing on an ambiguity would turn a transient probe failure into an output
+/// that cannot be opened, mid-service, with a sentence the operator cannot act on.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum DisplayChoice {
+    /// Place it on this monitor index.
+    On(usize),
+    /// No preference recorded, or nothing that could be checked. Let the OS place
+    /// it, which is exactly what has always happened when no display is assigned.
+    Anywhere,
+    /// The operator named a display (1-based, as a human reads it) and it is not
+    /// connected. Refuse, and say which.
+    Missing(usize),
+}
+
+fn resolve_display(target: Option<&str>, monitors: &[channels::MonitorInfo]) -> DisplayChoice {
+    let Some(idx) = target.and_then(parse_display) else {
+        return DisplayChoice::Anywhere;
+    };
+    if monitors.is_empty() {
+        return DisplayChoice::Anywhere;
+    }
+    if monitors.iter().any(|m| m.index == idx) {
+        return DisplayChoice::On(idx);
+    }
+    // 1-based, because that is how the picker and every OS display panel name it.
+    DisplayChoice::Missing(idx + 1)
+}
+
+/// Whether the operator has taken this screen out of the wall, flattened for
+/// `ChannelLiveness`. `None` is a screen following the wall — the ordinary case,
+/// and the one that must be an absence rather than the word "live", so nothing
+/// downstream can read "down" off a row that says it is up.
+fn down_of(down: &channels::ScreensDown, id: i64) -> Option<&'static str> {
+    down.get(id).map(|s| s.as_str())
 }
 
 /// The beat for one channel, flattened for `ChannelLiveness`.
@@ -6286,6 +6404,7 @@ fn channel_status(
     db: tauri::State<'_, Db>,
     kiosk: tauri::State<'_, channels::KioskHub>,
     health: tauri::State<'_, channels::OutputHealth>,
+    down: tauri::State<'_, channels::ScreensDown>,
 ) -> error::Result<Vec<ChannelLiveness>> {
     let list = {
         let conn = db.0.lock()?;
@@ -6344,6 +6463,7 @@ fn channel_status(
                     painting,
                     last_beat_ms: age,
                     paint_state: state,
+                    down: down_of(&down, c.id),
                 }
             }
             "network_client" => {
@@ -6390,6 +6510,7 @@ fn channel_status(
                     painting,
                     last_beat_ms: age,
                     paint_state: state,
+                    down: down_of(&down, c.id),
                 }
             }
             // NDI is parked, not broken — `open_ndi_output` says so too.
@@ -6403,6 +6524,7 @@ fn channel_status(
                 painting: false,
                 last_beat_ms: None,
                 paint_state: None,
+                down: down_of(&down, c.id),
             },
             other => ChannelLiveness {
                 id: c.id,
@@ -6414,6 +6536,7 @@ fn channel_status(
                 painting: false,
                 last_beat_ms: None,
                 paint_state: None,
+                down: down_of(&down, c.id),
             },
         })
         .collect())
@@ -6569,6 +6692,54 @@ fn add_channel(
     }
     let conn = db.0.lock()?;
     db::add_channel(&conn, name.trim(), &target, template_id.unwrap_or(1)).map_err(Into::into)
+}
+
+/// RENAME A SCREEN. There was no way to do this at all.
+///
+/// The name is the only handle anybody in the building has on a screen. It is what
+/// the Outputs cards are keyed by, what the degraded banner says when a screen
+/// stops answering ("3 is not responding" was the defect that put the name on
+/// `ChannelLiveness` in the first place), and what an operator says out loud to
+/// somebody standing at the back. A church that inherits a Relay seeded with
+/// `Lobby screen` and hangs it in the crèche instead had no way to say so.
+///
+/// **Not held by the service lock, and that is a decision rather than an
+/// oversight.** `servicelock.rs` protects two things: the irreversible, and
+/// anything that takes the engine away mid-sermon. A rename is neither — it is
+/// reversible by doing it again, it moves no pixels, and the moment an operator
+/// most wants it is the moment a screen's name turns out to be wrong, which is
+/// during a service. Over-blocking is the more dangerous failure there.
+///
+/// The validation is here and only here, the same discipline `save_environment`
+/// states: two layers that both validate are two layers that can disagree about
+/// what is legal.
+#[tauri::command]
+fn rename_channel(db: tauri::State<'_, Db>, id: i64, name: String) -> error::Result<()> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(error::Error::refused("A screen needs a name."));
+    }
+    // A cap, because this string is rendered on a card, in a badge, in the shell's
+    // degraded banner and in a service's own timeline — four places sized for a
+    // name. It is generous enough that no real screen name reaches it, and the
+    // refusal says the figure rather than silently truncating: a name quietly cut
+    // in half is a name that stops matching what the operator typed.
+    const MAX: usize = 60;
+    if name.chars().count() > MAX {
+        return Err(error::Error::refused(format!(
+            "That name is too long for a screen — keep it under {MAX} characters."
+        )));
+    }
+    let conn = db.0.lock()?;
+    if !db::rename_channel(&conn, id, name)? {
+        // Deleted on another surface between the card rendering and the rename
+        // landing. Saying so beats showing the operator a name on a screen that is
+        // not there any more.
+        return Err(error::Error::refused(
+            "That screen is no longer there — it may have been deleted.",
+        ));
+    }
+    Ok(())
 }
 
 /// Delete an output channel.
@@ -6808,6 +6979,59 @@ fn blackout<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> error::Result<()> {
     forget_debounce(&app);
     persist_cue(&app, "blackout", None);
     Ok(())
+}
+
+/// ── ONE SCREEN, NOT THE WALL ───────────────────────────────────────────────
+///
+/// "Take the lobby TV down but leave the wall live" is an ordinary request. The
+/// three commands below are the whole of it, and every one of them is a thin call
+/// into `channels::set_screen_state` — the choke point (rule 36), so a fourth way
+/// of taking a screen down cannot arrive with its own idea of what that means.
+///
+/// **`clear_screens` and `blackout` above are untouched.** They are the panic
+/// controls: first, largest, reachable in one action, addressing every screen and
+/// asking nothing (rule 15, DECISIONS §20). The split is in the CALL and never
+/// inside them, because a panic control that has to work out which screen it is
+/// addressing is a panic control that can fail to answer. Nothing here is bound
+/// to `Esc` or to `B`, and `pipeline::preflight` gains no new power: these publish
+/// no content, so there is nothing for a validator to refuse.
+///
+/// **They do not touch the wall's own state.** Not `LiveContent`, not the
+/// debounce, not the congregation timers, not `WallState`. The verse is still in
+/// front of the congregation on every other screen, and a control that forgot it
+/// would make the next spoken "next verse" answer `NoPassage` — which is the
+/// class of bug rule 40 and `NavResult` exist to prevent, arriving through a
+/// side door.
+#[tauri::command]
+fn clear_screen<R: tauri::Runtime>(app: tauri::AppHandle<R>, channel_id: i64) -> error::Result<()> {
+    channels::set_screen_state(&app, channel_id, channels::ScreenState::Clear)
+        .map_err(error::Error::refused)
+}
+
+/// Blackout ONE screen (opaque black), leaving every other screen as it is.
+#[tauri::command]
+fn blackout_screen<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    channel_id: i64,
+) -> error::Result<()> {
+    channels::set_screen_state(&app, channel_id, channels::ScreenState::Black)
+        .map_err(error::Error::refused)
+}
+
+/// Put one screen back into the wall: it shows whatever the wall is showing.
+///
+/// THE WAY BACK IS A CONTROL, not a side effect of the next fire. A screen taken
+/// down stays down across every fire in between — a one-shot would be undone
+/// within a minute of being used, which is to say useless for the thing it is for
+/// — so there has to be something that undoes it, and it has to be as easy to
+/// find as the control that did it.
+#[tauri::command]
+fn restore_screen<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    channel_id: i64,
+) -> error::Result<()> {
+    channels::set_screen_state(&app, channel_id, channels::ScreenState::Live)
+        .map_err(error::Error::refused)
 }
 
 /// Clear the wall from a path that has nobody to return an error to — the STT
@@ -7332,6 +7556,99 @@ mod display_target_tests {
         // "Display 0" is not a form anything writes, but saturating_sub must not
         // turn it into usize::MAX and index past the monitor list.
         assert_eq!(parse_display("Display 0"), Some(0));
+    }
+
+    // ── A REMEMBERED DISPLAY THAT IS GONE ──────────────────────────────────
+    //
+    // `display_target` is an INDEX into the OS monitor list, so unplugging a dock
+    // renumbers it. `auto_open_outputs` has always been safe about that — it skips
+    // a channel whose index is not connected, and skips the primary display too,
+    // because auto-opening a fullscreen borderless window over the console covers
+    // the very UI the operator needs.
+    //
+    // `open_channel_output` — the **Open** button, the path an operator presses
+    // deliberately — was not. A stale index simply fell through the placement
+    // block, and the window was built at its default position and then
+    // fullscreened, which lands it on whatever monitor the OS chooses: normally
+    // the primary. The projector is unplugged, the operator presses Open, and a
+    // borderless undecorated fullscreen window covers the console they are running
+    // the service from. Nothing reported anything.
+    //
+    // These hold the decision, as a pure function, so the refusal can be tested
+    // without a window server.
+    use super::{channels, resolve_display, DisplayChoice};
+
+    fn mon(index: usize, primary: bool) -> channels::MonitorInfo {
+        channels::MonitorInfo {
+            index,
+            name: format!("Display {}", index + 1),
+            width: 1920,
+            height: 1080,
+            x: 0,
+            y: 0,
+            scale: 1.0,
+            primary,
+        }
+    }
+
+    #[test]
+    fn no_assigned_display_means_wherever_the_os_puts_it() {
+        // An explicit "no preference". The operator never chose a screen, so
+        // there is nothing to be stale and nothing to refuse.
+        assert_eq!(
+            resolve_display(None, &[mon(0, true)]),
+            DisplayChoice::Anywhere
+        );
+    }
+
+    #[test]
+    fn an_assigned_display_that_is_connected_is_used() {
+        assert_eq!(
+            resolve_display(Some("1"), &[mon(0, true), mon(1, false)]),
+            DisplayChoice::On(1)
+        );
+    }
+
+    #[test]
+    fn an_assigned_display_that_is_gone_is_refused_rather_than_guessed() {
+        // THE WHOLE POINT. Falling through to "wherever" here is what puts a
+        // fullscreen output over the operator's console when a dock is unplugged.
+        // Refusing is the answer the automatic path already gives; this makes the
+        // manual one agree with it, and say so.
+        // BOTH FORMS, and the base conversion is the subtlety. A bare `2` is the
+        // 0-BASED index `set_channel_display` writes, so the screen the operator
+        // is looking for is `Display 3`; `Display 3` is the 1-BASED human label
+        // the seed writes. Both name the same missing screen and both must report
+        // it by the number an operator would read off their own OS.
+        assert_eq!(
+            resolve_display(Some("2"), &[mon(0, true), mon(1, false)]),
+            DisplayChoice::Missing(3)
+        );
+        assert_eq!(
+            resolve_display(Some("Display 3"), &[mon(0, true), mon(1, false)]),
+            DisplayChoice::Missing(3)
+        );
+    }
+
+    #[test]
+    fn an_unreadable_target_is_no_preference_rather_than_a_missing_screen() {
+        // A value nothing in Relay writes — a hand-edited row, or a form from an
+        // older build. It is not a claim about a screen, so it must not produce a
+        // refusal that names one; it means the same as nothing.
+        assert_eq!(
+            resolve_display(Some("HDMI-A-1"), &[mon(0, true)]),
+            DisplayChoice::Anywhere
+        );
+    }
+
+    #[test]
+    fn a_display_list_that_could_not_be_read_at_all_does_not_refuse() {
+        // `list_monitors` returns an empty vector rather than erroring, so "no
+        // monitors" is ambiguous: a machine with none, or an enumeration that
+        // failed. Refusing on an empty list would turn a transient probe failure
+        // into an output that cannot be opened at all, mid-service, and the
+        // operator has no way to act on that sentence.
+        assert_eq!(resolve_display(Some("1"), &[]), DisplayChoice::Anywhere);
     }
 }
 

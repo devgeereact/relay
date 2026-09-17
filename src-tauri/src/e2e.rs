@@ -4665,3 +4665,254 @@ fn ending_a_service_takes_the_programme_clocks_off_the_preachers_rail() {
         "the preacher's rail was not told the programme is over: {last}"
     );
 }
+
+// ══ PER-SCREEN CLEAR AND BLACKOUT ═══════════════════════════════════════════
+//
+// "Take the lobby TV down but leave the wall live" is an ordinary request and was
+// impossible: `clear_screens` and `blackout` take no channel argument. These
+// drive the three new commands against the real app, through the real hub, and
+// the first thing every one of them asserts is what did NOT happen to the wall.
+
+/// ONE SCREEN GOES DOWN AND THE WALL DOES NOT.
+///
+/// The claim in one sentence: after `clear_screen(4)` the lobby TV is told to
+/// blank and nothing else in the building is told anything at all.
+///
+/// Watched to fail by having `clear_screen` call `channels::clear` (which is what
+/// "add a channel argument to the panic control" would collapse into): the global
+/// `clear` frame appears, `live_content` goes to `None`, and both assertions below
+/// go red — which is the whole reason the split is in the CALL.
+#[test]
+fn one_screen_goes_down_and_the_wall_stays_live() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+    let mut kiosk = qa::Kiosk::attach(&h);
+
+    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).expect("fire");
+    settle();
+    while kiosk.next().is_some() {} // drain the fire
+
+    clear_screen(h.clone(), 4).expect("one screen must be able to go down");
+    settle();
+
+    let frames: Vec<String> = std::iter::from_fn(|| kiosk.next()).collect();
+    let joined = frames.join("|");
+    assert!(
+        joined.contains(r#""kind":"screen_state""#) && joined.contains(r#""4":"clear""#),
+        "the lobby TV was never told to blank: {frames:?}"
+    );
+    // THE PART THAT MATTERS MORE. A per-screen control that published a global
+    // clear would look identical on the lobby TV and would have taken the
+    // congregation's wall with it.
+    assert!(
+        !joined.contains(r#""kind":"clear""#),
+        "taking one screen down published a WALL clear: {frames:?}"
+    );
+    assert!(
+        !wall.cleared(),
+        "taking one screen down cleared every native output window too"
+    );
+    // And Relay still knows what is on the screens, because it still is. Forgetting
+    // it here would make the next spoken "next verse" answer `NoPassage` over a
+    // verse the congregation can see.
+    assert!(
+        channels::live_content(&h).is_some(),
+        "taking one screen down made Relay forget the verse that is still on the wall"
+    );
+}
+
+/// THE TOTAL CONTROLS ARE EXACTLY WHAT THEY WERE.
+///
+/// Rule 15 and DECISIONS §20: first, largest, one action, every screen, no
+/// question asked about which. This asserts the panic path did not learn about
+/// channels — the frame it publishes names none, and it reaches the wall whether
+/// or not a screen has been taken down on its own.
+#[test]
+fn the_total_controls_never_learned_about_channels() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+    let mut kiosk = qa::Kiosk::attach(&h);
+
+    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).expect("fire");
+    settle();
+    clear_screen(h.clone(), 4).expect("take the lobby TV down first");
+    settle();
+    while kiosk.next().is_some() {}
+
+    clear_screens(h.clone()).expect("the panic control must work with a screen already down");
+    settle();
+
+    let frames: Vec<String> = std::iter::from_fn(|| kiosk.next()).collect();
+    let joined = frames.join("|");
+    assert!(
+        joined.contains(r#"{"kind":"clear"}"#),
+        "the panic control published something other than the whole-wall clear: {frames:?}"
+    );
+    assert!(
+        wall.cleared(),
+        "the panic control did not reach the native output windows"
+    );
+    assert!(
+        channels::live_content(&h).is_none(),
+        "the panic control left Relay believing a verse is still on the screens"
+    );
+
+    // AND BLACKOUT, SEPARATELY. The two are handled in one branch on every client
+    // and have been forgotten one at a time before now (DECISIONS §91).
+    blackout(h.clone()).expect("blackout must work with a screen already down");
+    settle();
+    assert!(wall.blacked(), "the blackout did not reach the wall");
+}
+
+/// A SCREEN TAKEN DOWN STAYS DOWN ACROSS A FIRE.
+///
+/// The durability that makes the control worth having. A one-shot frame would be
+/// undone by the next verse — which during a service is within a minute — so
+/// "take the lobby TV down for the sermon" would be a control nobody could use.
+///
+/// The way back is a control and not a side effect: `restore_screen` publishes the
+/// set with that screen gone from it, which is how a page learns it is up again.
+#[test]
+fn a_screen_taken_down_stays_down_until_it_is_put_back() {
+    let app = app();
+    let h = app.handle().clone();
+    let mut kiosk = qa::Kiosk::attach(&h);
+
+    blackout_screen(h.clone(), 4).expect("take the lobby TV down");
+    settle();
+    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).expect("fire");
+    settle();
+
+    assert_eq!(
+        h.state::<channels::ScreensDown>().get(4),
+        Some(channels::ScreenState::Black),
+        "firing a verse brought a screen the operator had taken down back up"
+    );
+    while kiosk.next().is_some() {}
+
+    restore_screen(h.clone(), 4).expect("put it back");
+    settle();
+    let frames: Vec<String> = std::iter::from_fn(|| kiosk.next()).collect();
+    let joined = frames.join("|");
+    assert!(
+        joined.contains(r#""kind":"screen_state""#) && joined.contains(r#""screens":{}"#),
+        "restoring published no set at all, so no screen could learn it was up: {frames:?}"
+    );
+    assert_eq!(
+        h.state::<channels::ScreensDown>().get(4),
+        None,
+        "a restored screen is still recorded as down"
+    );
+}
+
+/// A REHEARSAL REFUSES IT, AND SAYS SO.
+///
+/// Every other publisher in `channels.rs` suppresses during a rehearsal and
+/// reports success, because what it is suppressing is content. This one refuses.
+/// Suppressing it would leave the Outputs desk showing the lobby TV down while the
+/// lobby TV showed the last thing it was sent, with nothing anywhere saying so —
+/// rule 35's shape, on a control an operator pressed on purpose. It is not a panic
+/// control, so it is allowed to refuse; `clear_screens` and `blackout` are, and
+/// the test above holds that they still cannot.
+#[test]
+fn a_rehearsal_refuses_to_take_a_real_screen_down() {
+    let app = app();
+    let h = app.handle().clone();
+    let mut kiosk = qa::Kiosk::attach(&h);
+    h.state::<channels::Rehearsal>().set(true);
+
+    let refused = clear_screen(h.clone(), 4);
+    settle();
+    assert!(
+        refused.is_err(),
+        "a rehearsal took a real screen out of a real wall"
+    );
+    assert!(
+        kiosk.silent(),
+        "a rehearsal published a screen state to a live LAN"
+    );
+    assert_eq!(
+        h.state::<channels::ScreensDown>().get(4),
+        None,
+        "a refused control still changed Relay's own belief about the screen"
+    );
+}
+
+// ══ RENAMING A SCREEN ═══════════════════════════════════════════════════════
+//
+// There was no command at all, and the name is the only handle anybody in the
+// building has on a screen: the card, the badge, the shell's degraded banner
+// ("3 is not responding" was the defect that put the name on `ChannelLiveness`)
+// and the service's own timeline all say it.
+
+/// A SCREEN CAN BE RENAMED, AND THE NAME IS TRIMMED ON THE WAY IN.
+///
+/// **What this deliberately does NOT reach:** `channel_status`, the read every
+/// console surface actually makes, is not generic over `tauri::Runtime` and so
+/// cannot be driven from a mock app at all (rule 24's argument, on a command that
+/// is not on the fire path). It reads the name straight off the row this asserts
+/// on, through `db::list_output_channels`, so nothing sits between the two — but
+/// that is a reading of the code and not a run of it, and it is said here rather
+/// than implied.
+#[test]
+fn a_screen_can_be_renamed_and_the_name_is_trimmed() {
+    let app = app();
+    let h = app.handle().clone();
+
+    rename_channel(h.state::<Db>(), 4, "  Crèche  ".into()).expect("rename");
+
+    let db = h.state::<Db>();
+    let conn = db.0.lock().expect("db");
+    let names: Vec<String> = db::list_output_channels(&conn)
+        .expect("list")
+        .into_iter()
+        .map(|c| c.name)
+        .collect();
+    assert!(
+        names.contains(&"Crèche".to_string()),
+        "the rename did not reach the row, or did not trim: {names:?}"
+    );
+}
+
+/// THE THREE REFUSALS, EACH IN WORDS AN OPERATOR CAN ACT ON.
+///
+/// A blank name, a name longer than the four places that render it are sized for,
+/// and an id that is not there any more. The third is the one that is easy to
+/// leave out: `UPDATE` against a deleted row writes nothing and reports success,
+/// so without the affected-rows check the operator would be shown a new name on a
+/// screen that does not exist.
+#[test]
+fn a_screen_rename_refuses_in_words_rather_than_writing_nothing_quietly() {
+    let app = app();
+    let h = app.handle().clone();
+
+    assert!(
+        rename_channel(h.state::<Db>(), 4, "   ".into()).is_err(),
+        "a screen was renamed to nothing at all"
+    );
+    assert!(
+        rename_channel(h.state::<Db>(), 4, "x".repeat(61)).is_err(),
+        "a name too long for every surface that renders it was accepted"
+    );
+    let gone = rename_channel(h.state::<Db>(), 9_999, "Ghost".into());
+    assert!(
+        gone.is_err(),
+        "renaming a screen that does not exist reported success"
+    );
+
+    // And the refusals left the row alone. A validator that refuses AFTER writing
+    // is a validator that has already done the damage.
+    let db = h.state::<Db>();
+    let conn = db.0.lock().expect("db");
+    let names: Vec<String> = db::list_output_channels(&conn)
+        .expect("list")
+        .into_iter()
+        .map(|c| c.name)
+        .collect();
+    assert!(
+        names.contains(&"Lobby screen".to_string()),
+        "a refused rename still changed the screen: {names:?}"
+    );
+}
