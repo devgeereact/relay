@@ -202,6 +202,11 @@ const REGISTER = [
       'src/lib/stores/capture.js',
       'src/lib/views/Library.svelte',
       'src/lib/views/Live.svelte',
+      // RG-158: `Inspector.svelte` and `LiveOutputRail.svelte` USED to be here,
+      // and that was this register permitting the very collision it exists to
+      // stop. Both now say "Staging" for a different concept; see the entry below.
+      // `Library.svelte` stays because its own prose still discusses the
+      // preacher's panel, which is the concept this entry names.
       'src/lib/views/library/Inspector.svelte',
       'src/lib/views/library/LiveOutputRail.svelte',
       // Wave 5 Track A — the shelf test drives a Stage look whose zone is labelled
@@ -210,7 +215,89 @@ const REGISTER = [
     ],
     forbidden: ['Up-next', 'Next up', 'Coming next', 'Next verse text', 'Next reference'],
   },
+  {
+    // RG-158. The Library's staging area held N items, reached no output, and was
+    // called "Up Next" — the same words as the single hint on the preacher's
+    // monitor, on the two surfaces an operator moves between fastest. An operator
+    // who queued three items here had told nobody anything.
+    //
+    // "Staging" rather than "Queue": said aloud in a room where a plan already has
+    // cues, queue and cue are the same word.
+    concept: 'the Library staging area — N items, reaches no output',
+    name: 'Staging',
+    allowed: [
+      'src/lib/views/library/LiveOutputRail.svelte',
+      'src/lib/views/library/Inspector.svelte',
+      'src/lib/libraryinspector.test.js',
+    ],
+    forbidden: ['Staging area', 'Stage queue', 'Shortlist'],
+  },
 ];
+
+// ── AND ONE NAME, ONE CONCEPT — the inverse, which did not exist ────────────
+//
+// RG-158. Everything below this line checks that a CONCEPT is said one way. That
+// is half the guarantee, and the half that was written. The other half is that a
+// NAME means one thing, and until 2026-09-17 nothing checked it — which is how
+// "Up Next" came to sit on two entries' worth of surfaces at once: the preacher's
+// single hint on his own monitor, and the Library's staging list of N items that
+// reaches no output at all. The register did not merely miss it; its `allowed`
+// list for `stage_next` NAMED the two Library files, so the collision was
+// permitted in writing.
+//
+// A register that can be satisfied by giving two concepts the same name is a
+// register that will be, because the easy edit when a test fails is to add a file
+// to an allow-list.
+describe('one name, one concept', () => {
+  it('no two entries claim the same name', () => {
+    const byName = new Map();
+    for (const e of REGISTER) {
+      const key = e.name.toLowerCase();
+      if (!byName.has(key)) byName.set(key, []);
+      byName.get(key).push(e.concept);
+    }
+    const shared = [...byName.entries()]
+      .filter(([, concepts]) => concepts.length > 1)
+      .map(([name, concepts]) => `"${name}" is used for: ${concepts.join(' AND ')}`);
+    expect(
+      shared,
+      'two concepts are wearing one name, which is the defect this file exists to stop',
+    ).toEqual([]);
+  });
+
+  it("no entry's name is another entry's forbidden variant", () => {
+    // The subtler shape. If one entry forbids a phrase and another entry adopts
+    // it as its own name, the register contradicts itself and whichever test runs
+    // first decides what is true.
+    const clashes = [];
+    for (const a of REGISTER) {
+      for (const b of REGISTER) {
+        if (a === b) continue;
+        for (const variant of b.forbidden) {
+          if (variant.toLowerCase() === a.name.toLowerCase()) {
+            clashes.push(`"${a.name}" is ${a.concept}'s name and ${b.concept}'s forbidden variant`);
+          }
+        }
+      }
+    }
+    expect(clashes, 'the register contradicts itself').toEqual([]);
+  });
+
+  it('and the scanner can still see a collision when there is one', () => {
+    // A guard, for the reason every scanner in this repository carries one: a
+    // check that has quietly stopped matching passes everything.
+    const fake = [
+      { concept: 'a', name: 'Same', forbidden: [] },
+      { concept: 'b', name: 'Same', forbidden: [] },
+    ];
+    const byName = new Map();
+    for (const e of fake) {
+      const key = e.name.toLowerCase();
+      byName.set(key, [...(byName.get(key) ?? []), e.concept]);
+    }
+    expect([...byName.values()].some((c) => c.length > 1)).toBe(true);
+  });
+});
 
 describe('one concept, one name', () => {
   const files = srcFiles();

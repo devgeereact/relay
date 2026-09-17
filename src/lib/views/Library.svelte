@@ -127,7 +127,7 @@
   //     second staging model on the most time-critical surface is a second mental
   //     model, and two implementations of one safety distinction is the exact shape
   //     that produced most of this audit's findings;
-  //   * the queue IS the switcher. "Up Next" is a staging area that holds N items
+  //   * the queue IS the switcher. "Up Next" is a Staging that holds N items
   //     instead of one, it is reachable, and `goLive()` already fires from it;
   //   * the product's one sentence is "the least possible effort from the operator",
   //     and an extra press on the AI path costs it exactly when the preacher has

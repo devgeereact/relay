@@ -67,7 +67,7 @@
     if (taking) return;
     error = '';
     msg = '';
-    // The QUEUE is the staging area — "Up Next" is a switcher that holds N items
+    // The QUEUE is the Staging — "Up Next" is a switcher that holds N items
     // rather than one. The `preview` prop this used to check first had no producer
     // in the shipping app and is gone (audit P1-2); see Library.svelte for why the
     // AI path stayed at one press.
@@ -87,9 +87,18 @@
   }
 </script>
 
-<aside class="lo rw-pane" aria-label="Up Next">
+<aside class="lo rw-pane" aria-label="Staging">
   <header class="rw-panehead">
-    <h2 class="rw-panettl">Up Next</h2>
+    <!-- STAGING, NOT "UP NEXT" (RG-158). This panel and the preacher's own
+         `stage_next` panel were both called Up Next, on the two surfaces an
+         operator moves between fastest, and they do entirely different things:
+         this one holds N items and reaches no output at all, while that one is a
+         single hint painted on the preacher's monitor. An operator who queued
+         three items here had told nobody anything, and nothing on either screen
+         said the two were different.
+         NOT "Queue": spoken aloud in a room where a plan already has cues, queue
+         and cue are the same word. -->
+    <h2 class="rw-panettl">Staging</h2>
     <span class="rw-spring"></span>
     {#if queue.length}
       <span class="r-mono lo-count">{queue.length}</span>
