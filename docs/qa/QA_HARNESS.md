@@ -31,11 +31,16 @@ wave 3 block below). `npm run build` ran first, per RG-127.
 
 ### 2026-09-17 · `feat/wave4-track-e` — kept as history
 
-*The ids in this block are the ones wave 4 filed under. They are RG-161 … RG-165 in
-the register now; see `RELAY_GAP.md` §23a.*
+*This note said the opposite of what the block does, and a reader who trusted it landed
+on the wrong row.* The ids below are the REGISTER's — RG-161 … RG-165. Wave 4 filed them
+as RG-145 … RG-149 and they were renumbered when the branches met; `RELAY_GAP.md` §23a is
+the map. The note formerly here claimed the block still carried wave 4's own ids, which
+would have sent a reader from RG-162 back to RG-146 — a real row, wave 3's, about a
+different finding. A redirect pointing the wrong way is worse than none, because the id
+it lands on exists.
 
 Re-measured **2026-09-17**, on `feat/wave4-track-e` — wave 4 Track E, which closes the four
-findings the browser-driven pass filed as RG-162 to RG-165. Every figure is the runner's own
+findings the browser-driven pass filed as RG-146 … RG-149 and the register carries as RG-162 … RG-165. Every figure is the runner's own
 summary line. `npm run build` ran first, per RG-127. Several agents were building on this
 machine at the time; both suites were run to completion with nothing else compiling.
 
@@ -95,13 +100,15 @@ part of it — Track A added eight stage tests and a fourth surface to
 `slidesizer.test.js` (18 between them) plus five `db/plans.rs` tests and one in `timers.rs`. The
 browser-driven pass that produced `audits/2026-09-17-WAVE4-STAGE-PLANNER.md` added **no tests**,
 deliberately: it is a verification pass and its four findings are filed as RG-162 to RG-165
-rather than fixed here. `e2e.rs` is +8 and qa-inventory's handlerless/unnamed counts are
+(RG-146 … RG-149 on the day) rather than fixed here. `e2e.rs` is +8 and qa-inventory's handlerless/unnamed counts are
 unchanged; its one orphan component is still `src/lib/__r6probe.svelte`, the deliberate test
 probe.
 
 Neither suite failed. **What the suites cannot see is the point of the audit above them**: both
-of wave 4's surfaces are moving renders, and the two findings that matter most — RG-146 and
-RG-147 — are joins between two tracks that are each individually green.
+of wave 4's surfaces are moving renders, and the two findings that matter most — RG-162 and
+RG-163 — are joins between two tracks that are each individually green. (Those two read
+RG-146 and RG-147 until 2026-09-17: wave 4's own ids, which now name wave 3's hit-test and
+clipping findings. The sentence resolved, to the wrong rows.)
 
 ---
 

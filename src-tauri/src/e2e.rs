@@ -4359,7 +4359,7 @@ fn a_blackout_answers_the_same_way_as_a_clear() {
 /// `Stage` timer: a service's cue clocks stayed on the preacher's rail, counting
 /// past zero, for as long as Relay was open — and the rail's floor keeps the
 /// OLDEST cells, so by the middle of a morning the clock a preacher was looking
-/// for was the one inside `+N more` (RG-147).
+/// for was the one inside `+N more` (RG-163, filed by wave 4 as RG-147).
 ///
 /// `Live::retireCueTimer` ends each cue's clock as the plan walks past it, which
 /// is the half that matters during a service. This is the sweep behind it, at the
