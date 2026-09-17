@@ -1,70 +1,31 @@
 <script>
-  // THE TEMPLATES WORKSPACE — two desks, each with a browse and a make surface.
+  // THE TEMPLATES WORKSPACE — browse, then make.
   //
-  // ── The desks (docs/REBRAND.md §2) ────────────────────────────────────────
-  // **Templates** is how a verse, a song or a notice looks on a screen.
-  // **Themes** is the style layer BENEATH templates: a theme sets default
-  // `style` keys and a template overrides them key by key (DECISIONS §27), so a
-  // theme is never the last word and never reaches a wall on its own.
+  // A template is how a verse, a song or a notice looks on a screen, and it is
+  // the whole answer: themes were folded into templates in wave 2 (DECISIONS
+  // §87). A theme was a bag of defaults for the SAME flat `style` keys a
+  // template already carries, so the desk beneath this one could only ever say
+  // less than the template above it, on nine of its fourteen controls could say
+  // nothing at all, and could disagree with it about what a screen wears. Every
+  // themed template had its theme inlined into its own style before this desk
+  // was removed, so no look changed.
   //
-  // Themes used to be a workspace of its own on the shell's strip. It is not one
-  // of the six the rebrand's workspace grammar names, and the thing it edits is
-  // only ever seen THROUGH a template — so it is a desk inside this workspace
-  // rather than a tab beside it. **Nothing became unreachable**: every control
-  // the Themes tab carried is still rendered, one press of the desk strip away,
-  // which is what `node scripts/qa-inventory.mjs` is checked against.
+  // WHAT IS LEFT OF IT AND WHY. A layer's colour, fill or font may still be a
+  // TOKEN (`theme:accent`) rather than a literal, so a stage or confidence
+  // starter follows whatever template it is dropped into — see
+  // `lib/styletokens.js`. The token resolves against the template's own style
+  // now, which is what the merge already produced once a theme was out of it.
   //
-  // ── Where the desk strip lives ────────────────────────────────────────────
-  // In the galleries, through the ONE shared `DeskStrip`, which both render and
-  // neither owns. This file is the router: it hears `on:desk` and writes the
-  // choice, and it renders no strip of its own — two strips would be two answers
-  // to "which desk am I on".
-  //
-  // ── The desk IS the session ───────────────────────────────────────────────
-  // The same way the active tab is: one direction, one source of truth, and a
-  // reload puts the operator back where they were. A local `let` mirrored back
-  // would be a second copy that the next `setSession` from anywhere overwrites.
-  // `migrateSession` sends an operator whose last session was the old Themes TAB
-  // to this workspace, on the Themes desk.
-  //
-  // Switching desk always lands on that desk's GALLERY. Coming back to a
-  // half-finished editor an operator has navigated away from would restore a
-  // surface they did not ask for, and the editor's own Back is the way out of
-  // it. Nothing here can reach an output, so a desk change costs a service
+  // This file is the router, and it has ONE decision left: browse or make.
+  // Nothing here can reach an output, so opening the editor costs a service
   // nothing (the rebrand's own rule: loading, switching workspace or editing a
   // template may never change what is on the programme).
-  // ── WHICH DESK, AND WHERE THAT IS REMEMBERED ──────────────────────────────
-  // The shell mounts a workspace with NO props (`<svelte:component this={…} />`),
-  // so a desk held only in a local `let` is a desk forgotten on every reload —
-  // and the `themes → templates` tab redirect would have nowhere to land an
-  // operator whose saved session still names the old tab. Landing them on the
-  // Templates desk reads exactly like the surface having been deleted, which is
-  // the failure that redirect exists to prevent, one level deeper.
   //
-  // So the choice lives in the session, beside `activeTab` and `liveDensity`,
-  // for the same reason those do: a booth's habits do not change between
-  // Sundays. `initialDesk` stays as an OVERRIDE for a caller that passes one.
+  // The editor's own Back is the way out of it. Coming back to a half-finished
+  // editor an operator has navigated away from would restore a surface they did
+  // not ask for, which is why leaving is always to the gallery.
   import TemplateGallery from './templates/TemplateGallery.svelte';
   import TemplateEditor from './templates/TemplateEditor.svelte';
-  import ThemeGallery from './themes/ThemeGallery.svelte';
-  import ThemeEditor from './themes/ThemeEditor.svelte';
-  import { DESKS } from './templates/DeskStrip.svelte';
-  import { session, setSession } from '../session.js';
-
-  /** Open on this desk regardless of what the session remembers. Optional: the
-   *  shell passes nothing, so the session answers. */
-  export let initialDesk = null;
-
-  /** Is this a desk this workspace actually has? A saved value outlives the
-   *  layout it was written under — the same reason `resolveActiveTab` exists —
-   *  so an unknown one falls through to Templates rather than rendering nothing. */
-  const known = (d) => DESKS.some((x) => x.key === d);
-
-  $: desk = known(initialDesk)
-    ? initialDesk
-    : known($session.templatesDesk)
-      ? $session.templatesDesk
-      : 'templates';
 
   let mode = 'gallery'; // gallery | editor
   let editingId = null;
@@ -72,37 +33,32 @@
   // one (docs/REBRAND.md §3.2). Carried through so a press on the object strip
   // opens the editor on that object rather than on nothing.
   let editingLayerId = null;
+  // A NEW TEMPLATE THAT DOES NOT EXIST YET. The gallery builds a starter in
+  // memory and dispatches it with `id: null` rather than inserting it first, so
+  // opening the editor to LOOK at a starter no longer leaves a row behind. The
+  // router carries it across the boundary; the editor renders it exactly as it
+  // renders a saved row and decides what Save and Discard mean.
+  let draft = null;
 
   function openEditor(e) {
-    editingId = e.detail.id;
-    editingLayerId = e.detail.layerId ?? null;
+    editingId = e.detail?.id ?? null;
+    editingLayerId = e.detail?.layerId ?? null;
+    // An `edit` with no id and a layout IS the draft. An `edit` with no id and
+    // nothing else would be a bug in a caller, and is left to the editor's own
+    // "could not be loaded" rather than silently becoming an empty template.
+    draft = editingId == null && e.detail?.layout ? e.detail : null;
     mode = 'editor';
   }
   function backToGallery() {
     mode = 'gallery';
     editingId = null;
     editingLayerId = null;
-  }
-  function changeDesk(e) {
-    const next = e.detail.desk;
-    if (!known(next) || next === desk) return;
-    // THE SESSION IS THE ONE HOME. `desk` is derived from it above, so writing
-    // the store is what moves the desk — assigning `desk` here as well would
-    // give the choice two homes, and the local copy would win until the next
-    // reload told the operator otherwise.
-    setSession({ templatesDesk: next });
-    backToGallery();
+    draft = null;
   }
 </script>
 
-{#if desk === 'themes'}
-  {#if mode === 'editor'}
-    <ThemeEditor themeId={editingId} on:back={backToGallery} />
-  {:else}
-    <ThemeGallery on:edit={openEditor} on:desk={changeDesk} />
-  {/if}
-{:else if mode === 'editor'}
-  <TemplateEditor templateId={editingId} layerId={editingLayerId} on:back={backToGallery} />
+{#if mode === 'editor'}
+  <TemplateEditor templateId={editingId} {draft} layerId={editingLayerId} on:back={backToGallery} />
 {:else}
-  <TemplateGallery on:edit={openEditor} on:desk={changeDesk} />
+  <TemplateGallery on:edit={openEditor} />
 {/if}

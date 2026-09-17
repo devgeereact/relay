@@ -56,8 +56,6 @@ const DESKS = [
   'src/lib/views/Channels.svelte',
   'src/lib/views/Settings.svelte',
   'src/lib/views/templates/TemplateGallery.svelte',
-  'src/lib/views/themes/ThemeGallery.svelte',
-  'src/lib/views/themes/ThemeEditor.svelte',
 ];
 
 /**
@@ -350,7 +348,7 @@ describe('§1 · the decisions that kept being re-litigated per file', () => {
 //     2px and --v-r-sm is 3px; that contradiction is REBRAND's to settle.
 //   · `rgba()` is not scanned at all. Seven Splash glows were the RETIRED
 //     amethyst and no scanner here would have found them.
-//   · template CONTENT is out of scope by design (themes.js, layers.js,
+//   · template CONTENT is out of scope by design (styletokens.js, layers.js,
 //     templates.js, TemplateRender.svelte): a colour an operator saved into a
 //     slide is data, not chrome.
 //   · `crash.js` is exempt from tier 2. Its whole premise is that the
@@ -379,9 +377,8 @@ const COMPONENTS = [
   'src/lib/views/library/Inspector.svelte', 'src/lib/views/library/LiveOutputRail.svelte',
   'src/lib/views/library/LyricsPane.svelte', 'src/lib/views/library/MediaLibrary.svelte',
   'src/lib/views/library/Scripture.svelte', 'src/lib/views/library/VerseDeck.svelte',
-  'src/lib/views/templates/DeskStrip.svelte', 'src/lib/views/templates/TemplateEditor.svelte',
-  'src/lib/views/templates/TemplateGallery.svelte', 'src/lib/views/themes/ThemeEditor.svelte',
-  'src/lib/views/themes/ThemeGallery.svelte',
+  'src/lib/views/templates/TemplateEditor.svelte',
+  'src/lib/views/templates/TemplateGallery.svelte',
 ];
 
 // Swept clean of BOTH a raw hex and a literal radius, and held that way.
@@ -403,7 +400,6 @@ const SWEPT = [
   'src/lib/views/library/Collections.svelte', 'src/lib/views/library/Inspector.svelte',
   'src/lib/views/library/LiveOutputRail.svelte', 'src/lib/views/library/LyricsPane.svelte',
   'src/lib/views/library/MediaLibrary.svelte', 'src/lib/views/library/Scripture.svelte',
-  'src/lib/views/templates/DeskStrip.svelte', 'src/lib/views/themes/ThemeEditor.svelte',
 ];
 
 // Swept clean of a raw hex, but still carrying a radius the scale does not
@@ -414,7 +410,7 @@ const SWEPT_HEX_ONLY = [
   'src/lib/ui/ErrorState.svelte', 'src/lib/views/ServicePlanner.svelte',
   'src/lib/views/library/Arrangements.svelte', 'src/lib/views/library/History.svelte',
   'src/lib/views/library/ImportReview.svelte',
-  'src/lib/views/templates/TemplateGallery.svelte', 'src/lib/views/themes/ThemeGallery.svelte',
+  'src/lib/views/templates/TemplateGallery.svelte',
 ];
 
 // A comment is not a paint. Two files document a retired hex in prose
@@ -474,7 +470,7 @@ describe('§1 · the token sweep — wave 4', () => {
     // hand that no tier here could see, and it was doing it 43 times — a
     // scanner that holds every component to a rule the shared sheet is exempt
     // from is a scanner reporting on the smaller half of the problem.
-    const css = read('src/app.css');
+    const css = read('src/tokens.css') + read('src/app.css');
     const steps = new Map();
     for (const m of css.matchAll(/--v-fs-([a-z0-9]+)\s*:\s*([0-9.]+)px/g)) {
       if (!steps.has(m[2])) steps.set(m[2], m[1]);
@@ -488,7 +484,7 @@ describe('§1 · the token sweep — wave 4', () => {
     }
 
     const offenders = [];
-    for (const f of [...COMPONENTS, 'src/app.css']) {
+    for (const f of [...COMPONENTS, 'src/app.css', 'src/tokens.css']) {
       // The WHOLE file: four of these were inline `style="font-size:12px"` on
       // a boot gate, which is exactly where a hand-typed size hides from a
       // stylesheet-only scan.
@@ -532,7 +528,10 @@ describe('§1 · the token sweep — wave 4', () => {
     // console's figure face found the wrong answer first, and reordering the two
     // blocks would have silently changed every clock, confidence and latency in
     // the app.
-    const css = read('src/app.css');
+    // Both halves of the stylesheet, because the declaration itself moved: wave 5,
+    // Track E put the palette in `src/tokens.css`. Reading one file would make
+    // "declared once" true by absence, which is the failure this test is for.
+    const css = read('src/tokens.css') + read('src/app.css');
     const decls = [...css.matchAll(/--f-mono\s*:\s*([^;]+);/g)].map((m) => m[1].trim());
     expect(decls, 'two declarations is one too many').toHaveLength(1);
     expect(decls[0]).toMatch(/IBM Plex Mono/);
@@ -706,6 +705,96 @@ describe('the retired red never comes back', () => {
       return /rgba\(\s*239\s*,\s*68\s*,\s*68/.test(body);
     });
     expect(offenders, 'use var(--v-red) / --v-red-soft / --v-red-line').toEqual([]);
+  });
+
+  // ── THE OTHER RETIRED HEXES, and the blind spot they lived in ──────────────
+  //
+  // The header of the token sweep above says, in its own words, "`rgba()` is not
+  // scanned at all", and names seven Splash glows as the thing it could not see.
+  // That admission was accurate and it was not the whole bill. `rgba()` is where
+  // EVERY retired law colour in this repository survived five waves of hex sweeps,
+  // for a mechanical reason: a sweep that looks for `#rrggbb` cannot see the same
+  // colour written as three decimal numbers, and an alpha is the one situation in
+  // which a developer is most likely to write it that way.
+  //
+  // Measured when this was widened, all four found by this assertion:
+  //
+  //   · `rgba(255,176,0,…)` — #ffb000, the RETIRED amber. `VerseDeck`'s on-air row
+  //     drew it for its edge and its wash while the tally bar three rules down drew
+  //     `var(--v-amber)` (#ffa31a): one row, two oranges, meeting along a 3px seam.
+  //     `Stage.svelte` drew it six times, four of them on controls where amber is
+  //     forbidden outright (DESIGN_SYSTEM §1 — never "selected", never "active").
+  //   · `rgba(139,92,246,…)` — #8b5cf6, the RETIRED amethyst, three times in the
+  //     boot ladder, including a spinner whose track was the old purple and whose
+  //     head was the new one, so it changed hue as it turned.
+  //   · `rgba(34,197,94,…)` and `rgba(169,107,245,…)` — a Tailwind green the
+  //     palette never adopted, and the CURRENT amethyst hand-typed, which is the
+  //     more insidious of the two: it is not the wrong colour today and becomes the
+  //     wrong colour the moment the token moves.
+  //
+  // KNOWN carries what is deliberately left, each with the reason. It is a list
+  // and a COUNT, so it can only shrink.
+  it('and neither does any other retired law colour, written as rgba()', () => {
+    const RETIRED = [
+      [/rgba\(\s*255\s*,\s*176\s*,\s*0[^)]*\)/g, '#ffb000 — the retired amber; use --v-amber*'],
+      [/rgba\(\s*139\s*,\s*92\s*,\s*246[^)]*\)/g, '#8b5cf6 — the retired amethyst; use --v-amethyst*'],
+      [/rgba\(\s*34\s*,\s*197\s*,\s*94[^)]*\)/g, 'a Tailwind green this palette never had; use --v-emerald*'],
+      [/rgba\(\s*169\s*,\s*107\s*,\s*245[^)]*\)/g, 'the CURRENT amethyst, hand-typed; use --v-amethyst*'],
+      [/rgba\(\s*255\s*,\s*163\s*,\s*26[^)]*\)/g, 'the CURRENT amber, hand-typed; use --v-amber*'],
+    ];
+    // `src/tokens.css` is where these hexes are ALLOWED to be decimal: it is the
+    // one file that defines the palette, and `--v-amber-soft` has to say
+    // rgba(255,163,26,.15) somewhere or the token does not exist.
+    const scan = [...files, 'src/Stage.svelte', 'src/Output.svelte', 'src/App.svelte'];
+    const offenders = [];
+    for (const f of scan) {
+      const body = read(f).replace(/\/\*[\s\S]*?\*\//g, '').replace(/<!--[\s\S]*?-->/g, '');
+      for (const [re, why] of RETIRED) {
+        for (const m of body.matchAll(re)) offenders.push(`${f}: ${m[0]} — ${why}`);
+      }
+    }
+    // THE FROZEN BACKLOG, in the same shape as the hex sweep's. Each of these is a
+    // judgement somebody has to make with eyes on a running window, not a rounding
+    // a scanner may do on its own.
+    const KNOWN = [
+      // The legacy `:root` block's stream lower-third. DESIGN_SYSTEM §6 is explicit
+      // that these ~150 lines stay until somebody can look at a running app, because
+      // their class names are generic and live components still carry them. Deleting
+      // or restyling one silently restyles the console.
+      'src/app.css: rgba(139,92,246,0.94) — #8b5cf6 — the retired amethyst; use --v-amethyst*',
+      'src/app.css: rgba(139,92,246,0.75) — #8b5cf6 — the retired amethyst; use --v-amethyst*',
+      // The status pill and the boot rail's "done" step. Both are the Tailwind green
+      // rather than `--v-emerald`, and both are pre-existing restyle decisions about
+      // one control each.
+      'src/app.css: rgba(34,197,94,0.3) — a Tailwind green this palette never had; use --v-emerald*',
+      'src/app.css: rgba(34,197,94,.5) — a Tailwind green this palette never had; use --v-emerald*',
+      // `.r-cbtn.golive[data-on="1"]`'s inset hairline, and the two amber washes on
+      // the Live rail. Current-amber literals, so nothing is the wrong colour today.
+      'src/app.css: rgba(255,163,26,.14) — the CURRENT amber, hand-typed; use --v-amber*',
+      'src/lib/LiveRail.svelte: rgba(255,163,26,.14) — the CURRENT amber, hand-typed; use --v-amber*',
+      // The first-run wizard's "done" marks and Dashboard's ready panel: same green.
+      'src/lib/FirstRun.svelte: rgba(34, 197, 94, 0.5) — a Tailwind green this palette never had; use --v-emerald*',
+      'src/lib/FirstRun.svelte: rgba(34, 197, 94, 0.3) — a Tailwind green this palette never had; use --v-emerald*',
+      'src/lib/views/Dashboard.svelte: rgba(34, 197, 94, 0.45) — a Tailwind green this palette never had; use --v-emerald*',
+    ];
+    expect(offenders.filter((o) => !KNOWN.includes(o))).toEqual([]);
+    expect(
+      offenders.length,
+      'the frozen rgba backlog may only shrink — lower this number when you pay one off',
+    ).toBeLessThanOrEqual(KNOWN.length);
+  });
+
+  it('and the rgba scanner can still see an rgba, and still ignores a comment', () => {
+    // The guard every source scanner here now carries. Two in this repository have
+    // narrowed quietly and passed everything (`ipc.test.js`, twice), and this one
+    // was written specifically to close a blind spot, so a version of it that found
+    // nothing would be indistinguishable from success.
+    const seen = read('src/lib/views/library/VerseDeck.svelte');
+    expect(seen, 'VerseDeck no longer mentions the retired amber even in prose')
+      .toMatch(/rgba\(255, ?176, ?0/);
+    const stripped = seen.replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(stripped, 'the retired amber is back in VerseDeck\'s code')
+      .not.toMatch(/rgba\(255, ?176, ?0/);
   });
 });
 

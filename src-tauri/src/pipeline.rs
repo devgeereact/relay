@@ -75,6 +75,10 @@ pub struct Fire {
     pub verse_id: Option<i64>,
     pub text: Option<String>,
     pub translation: Option<String>,
+    /// RG-135 — see `DetectionEvent::named_translation_missing`. On `Fire` because
+    /// `Fire` is the one place an event may be built (CLAUDE.md), so a path that
+    /// forgets it is a path that does not compile.
+    pub named_translation_missing: Option<String>,
     pub confidence: f32,
     pub method: DetectionMethod,
     pub status: FireStatus,
@@ -167,6 +171,7 @@ impl Fire {
             translation: self.translation.clone(),
             matched_text: self.matched_text.clone(),
             trace_id: self.trace_id,
+            named_translation_missing: self.named_translation_missing.clone(),
         }
     }
 }
@@ -187,6 +192,10 @@ pub enum Unsafe {
     /// A template was chosen for this cue and it is not valid JSON, so the output
     /// page would silently fall back to a different look.
     BrokenTemplate,
+    /// A background was published that names no picture, so every screen would
+    /// paint nothing behind the words while the operator believes the church's
+    /// own backdrop is up.
+    NoPicture,
 }
 
 impl Unsafe {
@@ -203,8 +212,46 @@ impl Unsafe {
                  were. Re-pick its template in the Planner, or clear the cue's own template \
                  to use the screen's."
             }
+            Unsafe::NoPicture => {
+                "Nothing was put behind the words — that background has no picture to \
+                 show, so the screens were left as they were. Pick the picture again \
+                 in the Library, or clear the background."
+            }
         }
     }
+}
+
+/// THE SAME LAST CHECK, FOR THE SECOND PAYLOAD KIND.
+///
+/// A background is not an `OutputContent` and must not become one: it carries no
+/// words, no reference and no template, it does not replace the reading, and
+/// routing it through `preflight` would mean answering four questions that are
+/// not about it. So it gets its own check, and the check asks the ONE question
+/// `preflight` exists for — would this put something in front of a congregation
+/// that fails silently?
+///
+/// For a backdrop there is exactly one such failure: a frame that names no
+/// picture at all. Every screen would fetch nothing, paint nothing, and report
+/// nothing, while the operator's console says the church's background is up. The
+/// URL is built from a real `media_assets` row by one function today, so this
+/// cannot happen yet — which is the moment to write the guard, not the reason not
+/// to.
+///
+/// **It deliberately does NOT check that the file exists.** That is a question
+/// about a disk and a LAN, answerable only by the screen that fetches it, and
+/// refusing here would take the operator's control away over a file that a
+/// moment's reconnect would have served. It is REPORTED — the Library marks a
+/// row whose bytes did not load — never enforced, the same division `preflight`
+/// already makes about whether a screen is attached.
+///
+/// And like `preflight` it can never refuse a CLEAR. Taking the background down
+/// is `None`, which never reaches here: a validator that could refuse a removal
+/// is a removal that can fail, which is DECISIONS §20 in a second costume.
+pub fn preflight_background(bg: &crate::channels::Background) -> Result<(), Unsafe> {
+    if bg.media_url.trim().is_empty() {
+        return Err(Unsafe::NoPicture);
+    }
+    Ok(())
 }
 
 /// THE LAST CHECK BEFORE A CONGREGATION SEES ANYTHING.
@@ -244,6 +291,30 @@ pub fn preflight(content: &OutputContent) -> Result<(), Unsafe> {
     // instant rather than instead of it: a paused countdown carries both today, and
     // a validator that could refuse a paused timer would blank a wall at the one
     // moment the operator deliberately froze it.
+    //
+    // ── SITE 2 OF THE CONTENT-KIND SWEEP. NOTHING CHANGED HERE, AND WHY ────────
+    //
+    // The timer registry adds no wire form. A congregation-scoped (`Both`) timer is
+    // still broadcast as `kind: "countdown"` with the same four `countdown_*`
+    // fields, projected in exactly one place (`timers::project_both`), so all three
+    // arms below match it and this guard needs no new clause. A programme-scoped
+    // (`Stage`) timer never becomes an `OutputContent` at all — it has no
+    // congregation wire form by construction, `show_timer` refuses to give it one,
+    // and nothing it publishes passes through here.
+    //
+    // **This is the site that would have bitten.** A timer given field names of its
+    // own and no words would fall through to `Unsafe::Nothing` below: a screen that
+    // stays blank while every log says the fire succeeded, at the top of a service,
+    // which is when timers are used. If the `Both` wire form ever moves, this guard
+    // moves in the same commit.
+    //
+    // Two tests hold the coupling to the REAL projector rather than to a copy of it
+    // (`a_label_less_timer_from_the_registry_is_not_an_empty_screen` and its held
+    // twin), and here is the honest limit of what they catch: the three arms are
+    // individually REDUNDANT for a projected timer, so removing any one of them
+    // leaves all three tests green. Verified by removing each, and then by disabling
+    // the whole guard, which is what turns them red. They catch the wire form moving
+    // and the guard disappearing; they do not catch one arm being pruned as dead.
     let is_countdown = content.countdown_to.is_some()
         || content.countdown_paused_ms.is_some()
         || content.kind.as_deref() == Some("countdown");
@@ -302,6 +373,19 @@ pub struct DetectionEvent {
     /// The decode pass behind this detection. See `OutputContent::trace_id`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trace_id: Option<u64>,
+    /// RG-135. A translation the SPEAKER named in this window that Relay does not
+    /// have installed, so the words on the wall are not the words being read out.
+    ///
+    /// `None` is the ordinary case and means two different things that are the same
+    /// fact here: nobody named a translation, or the one they named is the one in
+    /// use. It is set ONLY when Relay can say something the operator does not
+    /// already know, because a caveat on a correct fire is how somebody learns to
+    /// stop reading this line.
+    ///
+    /// The reference is still right. This is not a wrong verse and must not be
+    /// rendered as one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub named_translation_missing: Option<String>,
 }
 
 /// A gate candidate: the anchor verse plus how it should route, and whether it is
@@ -368,6 +452,7 @@ mod tests {
             verse_id: Some(42),
             text: Some("For God so loved the world...".into()),
             translation: Some("KJV".into()),
+            named_translation_missing: None,
             confidence: 0.93,
             method: DetectionMethod::Direct,
             status,
@@ -592,6 +677,32 @@ mod tests {
         );
     }
 
+    /// THE SECOND PAYLOAD KIND IS CHECKED TOO, AND IT IS CHECKED FOR THE ONE
+    /// THING THAT FAILS SILENTLY.
+    ///
+    /// A background naming no picture reaches every screen, fetches nothing, paints
+    /// nothing and logs nothing, while the console says the church's backdrop is
+    /// up — the exact shape `preflight` exists for, on the payload `preflight`
+    /// cannot see. A real one passes, so the guard cannot be satisfied by refusing
+    /// everything.
+    #[test]
+    fn a_background_with_no_picture_is_not_a_background() {
+        assert_eq!(
+            preflight_background(&crate::channels::Background {
+                media_url: "   ".into(),
+                media_kind: "image".into(),
+            }),
+            Err(Unsafe::NoPicture)
+        );
+        assert!(preflight_background(&crate::channels::Background {
+            media_url: "http://192.168.1.9:8032/media/12".into(),
+            media_kind: "image".into(),
+        })
+        .is_ok());
+        // Every refusal is a sentence an operator can act on, never a Rust error.
+        assert!(Unsafe::NoPicture.message().contains("background"));
+    }
+
     /// A COUNTDOWN HAS NO TEXT, AND THAT IS THE NORMAL CASE.
     ///
     /// Refusing it would break the one cue whose whole content is a clock — and it
@@ -604,6 +715,128 @@ mod tests {
         c.text = None;
         c.countdown_to = Some(1_700_000_000_000);
         assert!(preflight(&c).is_ok());
+    }
+
+    /// WHAT THE REGISTRY ACTUALLY PROJECTS SURVIVES THE VALIDATOR — SITE 2 OF THE
+    /// CONTENT-KIND SWEEP, HELD TO THE REAL PROJECTION RATHER THAN TO A COPY OF IT.
+    ///
+    /// The test above states the rule using a hand-built payload, which is the right
+    /// shape for the rule and the wrong shape for the hazard. The hazard is that
+    /// `timers::project_both` and `is_countdown` are two halves of one agreement —
+    /// the registry owns the facts, the four `countdown_*` fields are its
+    /// projection, and `is_countdown` is what stops a projection with no words in it
+    /// being refused as `Unsafe::Nothing`. A timer given field names of its own
+    /// would be refused here: a screen that stays blank while every log says the
+    /// fire succeeded, at the top of a service, which is when timers are used.
+    ///
+    /// So this calls the real projector. Change the wire form and this fails in the
+    /// same commit, which is the whole of what the sweep asks for.
+    ///
+    /// **A timer with NO LABEL is the case that matters**, and it is deliberately
+    /// what is tested. A labelled timer projects its label into `reference` and
+    /// would pass on `has_reference` alone, with `is_countdown` never consulted — a
+    /// test that used one would be green against a broken guard. A label-less timer
+    /// has no words anywhere, so `is_countdown` is the only thing standing between
+    /// it and a blank wall. It is also the shape a later track makes the default.
+    #[test]
+    fn a_label_less_timer_from_the_registry_is_not_an_empty_screen() {
+        let shown = crate::timers::project_both(&crate::timers::Timer {
+            id: 1,
+            label: String::new(),
+            done_msg: String::new(),
+            target_ms: 1_700_000_300_000,
+            from_ms: 1_700_000_000_000,
+            paused_ms: None,
+            warn_ms: Some(120_000),
+            scope: crate::timers::Scope::Both,
+            plan_item_id: None,
+            started_in_rehearsal: false,
+        });
+        let c = OutputContent {
+            kind: Some("countdown".into()),
+            reference: shown.reference,
+            countdown_to: Some(shown.countdown_to),
+            countdown_from: Some(shown.countdown_from),
+            countdown_paused_ms: shown.countdown_paused_ms,
+            countdown_done: Some(shown.countdown_done).filter(|s| !s.is_empty()),
+            // The wire form MOVED for RG-149 and this is the test that is supposed
+            // to notice. It carries the whole projection, so a field added to it
+            // and not carried here fails in the same commit — which is the whole of
+            // what the content-kind sweep asks of this site.
+            countdown_warn_ms: shown.countdown_warn_ms,
+            ..Default::default()
+        };
+        assert!(
+            c.reference.trim().is_empty() && c.text.is_none(),
+            "precondition: this projection carries no words at all, so `is_countdown` \
+             is the only thing that can save it"
+        );
+        assert_eq!(
+            preflight(&c),
+            Ok(()),
+            "the pre-air validator refused what the timer registry actually projects \
+             — a blank screen at the top of a service, with every log saying the fire \
+             succeeded"
+        );
+    }
+
+    /// A HELD TIMER IS NOT AN EMPTY SCREEN EITHER.
+    ///
+    /// The one an operator deliberately froze is the one a validator must never
+    /// blank. `countdown_paused_ms` is checked alongside the instant rather than
+    /// instead of it, and a held projection still carries both.
+    #[test]
+    fn a_held_label_less_timer_is_not_an_empty_screen() {
+        let shown = crate::timers::project_both(&crate::timers::Timer {
+            id: 1,
+            label: String::new(),
+            done_msg: String::new(),
+            target_ms: 1_700_000_090_000,
+            from_ms: 1_700_000_000_000,
+            paused_ms: Some(90_000),
+            warn_ms: None,
+            scope: crate::timers::Scope::Both,
+            plan_item_id: None,
+            started_in_rehearsal: false,
+        });
+        let c = OutputContent {
+            kind: Some("countdown".into()),
+            reference: shown.reference,
+            countdown_to: Some(shown.countdown_to),
+            countdown_from: Some(shown.countdown_from),
+            countdown_paused_ms: shown.countdown_paused_ms,
+            countdown_warn_ms: shown.countdown_warn_ms,
+            ..Default::default()
+        };
+        assert_eq!(shown.countdown_paused_ms, Some(90_000));
+        assert_eq!(preflight(&c), Ok(()));
+    }
+
+    /// A WARNING THRESHOLD IS NOT A COUNTDOWN — THE OTHER HALF OF SITE 2.
+    ///
+    /// RG-149 put two new `countdown_*` fields on the wire form, and the danger in
+    /// that is the mirror of the one the sweep was written for. `is_countdown`
+    /// exists so a payload with no words in it is not refused as `Unsafe::Nothing`;
+    /// widening it to recognise a warning field would do the opposite — it would
+    /// wave through a payload that has a colour rule and no deadline, no text and no
+    /// reference, and paint an empty screen while every log said the fire succeeded.
+    ///
+    /// So the recognition arms were deliberately NOT touched, and this is that
+    /// decision written down where it can fail. `countdown_warn_ms` says WHEN to
+    /// worry about a clock; it is not a clock.
+    #[test]
+    fn a_warning_threshold_with_no_deadline_is_still_an_empty_screen() {
+        let c = OutputContent {
+            countdown_warn_ms: Some(120_000),
+            countdown_warn_default_ms: Some(150_000),
+            ..Default::default()
+        };
+        assert_eq!(
+            preflight(&c),
+            Err(Unsafe::Nothing),
+            "a warning window with nothing to warn about was taken for a countdown, \
+             so the validator let a blank screen through"
+        );
     }
 
     /// A TEMPLATE THE OUTPUT PAGE CANNOT READ IS REFUSED HERE, WHERE SOMEBODY IS

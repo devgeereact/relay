@@ -130,9 +130,13 @@
   // BUILDING a plan is not this screen's job. That is the Planner: a different
   // task, done on a Tuesday, not with a congregation waiting.
   import { onMount, onDestroy } from 'svelte';
+  import Button from '../ui/Button.svelte';
+  import { whyDisabled, ENGINE_OFF, BUSY } from '../ui/whydisabled.js';
+  import IconButton from '../ui/IconButton.svelte';
   import { describeScreen } from '../outputHealth.js';
+  import { programmeScreen } from '../channelroles.js';
   import TemplateRender from '../TemplateRender.svelte';
-  import { resolveOutputTemplate, isKeyedTemplate } from '../layers.js';
+  import { resolveOutputTemplate, isKeyedTemplate, formatCountdown } from '../layers.js';
   import ModelSetup from '../ModelSetup.svelte';
   import { registerContext } from '../shortcuts.js';
   import { t } from '../i18n.js';
@@ -166,6 +170,7 @@
     MAX_RESOLVED,
     live,
     screenBlack,
+    background,
     liveCue,
     templates,
     loadTemplates,
@@ -191,6 +196,10 @@
     planItems,
     getSong,
     setStageNext,
+    startTimer,
+    listTimers,
+    stopTimer,
+    countdownWarnMs,
     rehearsing,
     loadRehearsal,
     setRehearsal,
@@ -198,6 +207,10 @@
     chapterVerses,
     readErrors,
   } from '../stores/capture.js';
+  // The programme timer's two pure questions — which rows belong here, and how
+  // long is left on one. `timerRemainingMs` ENDS in `countdownRemainingMs`, which
+  // stays the only countdown arithmetic on this side of the bridge.
+  import { stageTimers, timerRemainingMs } from '../timers.js';
 
   // ── the plan being RUN (not edited) ──────────────────────────────────────
   let plans = [];
@@ -408,6 +421,124 @@
     wasDown = nowDown;
   }
 
+  // ── THE PROGRAMME TIMER ────────────────────────────────────────────────────
+  //
+  // A clock for the PREACHER, with a life of its own: it survives a verse, a song
+  // and a notice, because it is never the live content the way the congregation
+  // countdown is. The registry behind it (`timers.rs`) is reachable through
+  // `start_timer` / `list_timers` / `stop_timer`, and a registry no rendered
+  // control can get to is a command nobody calls — which this repository counts
+  // as attack surface nobody is watching rather than as a feature. This is the
+  // control.
+  //
+  // ── WHERE IT IS, AND THE FOUR PLACES IT CANNOT BE ──────────────────────────
+  //
+  // Every obvious home for this is already spoken for, each by a rule with more
+  // weight than a preference, so the search is written down rather than left to
+  // be repeated:
+  //
+  //   · **Quick tools**, beside the `Stage Message` box — the other tool that is
+  //     about the stage monitor and nothing else, and semantically the right
+  //     home. `docs/REBRAND.md` §2 says that card holds THREE things that change
+  //     during a service, the emergency announcement was taken out of it on the
+  //     operator's instruction (2026-09-14, L3) for being a fourth, and
+  //     `quicktools.test.js` pins the count. Putting a fourth back is an operator
+  //     decision, not an agent's.
+  //   · **The Controls card** — it never scrolls, because an operator may never
+  //     have to scroll to reach `Clear screens`, and a list whose length is
+  //     decided by how many timers somebody started is exactly what would make it.
+  //   · **The rack** — nothing may be added that could grow tall enough to push
+  //     TAKE or the arrows, and at ~118px a name, a figure and a Stop do not fit.
+  //   · **The inspector column** — `docs/REBRAND.md` §2 gives it ONE pane, four
+  //     things were moved out of it for competing with the AI's claims, and
+  //     `livedesk.test.js` counts the panes. Tried, and it turned that test red.
+  //
+  // So it is one wrapping row in the stage column, between the monitors and the
+  // slide grid: on the run surface, costing the grid a single row of height, and
+  // taking nothing away from any control an operator reaches for without looking.
+  // The cost worth writing down is that unlike the dock this exists only on the
+  // Live workspace, so an operator editing a template cannot stop a programme
+  // timer without coming back here. Whether that trade is right, or whether Quick
+  // tools should become four, is an operator's call and is flagged as one.
+  //
+  // ── WHAT IT DOES NOT SAY, AND WHY (rule 35) ────────────────────────────────
+  //
+  // No colour and no badge. Amber means ON AIR and is never allowed to lie; cyan
+  // means a guess; amethyst means rehearsal. A row here could honestly wear none
+  // of them, because the only facts this band has are the registry's — a timer
+  // EXISTS and this much is left on it. Whether a stage tablet is painting one is
+  // not a fact available on this side, so the band claims it in no words and in
+  // no colour. A badge that says "on stage" whatever is happening is not a badge.
+  //
+  // What it does distinguish is the three things the list can mean, because a
+  // failed read answering `[]` renders exactly like a quiet Sunday:
+  //   not asked yet → "Reading…"   ·   asked, none → "No programme timer."
+  //   asked, refused → the reason, and the LAST GOOD LIST is kept on screen
+  // `listTimers` throws for that reason (contract group 1) and this band must not
+  // undo it by catching into an empty array.
+  let ptMins = 25;
+  let ptName = '';
+  /** `null` = never read. `[]` = read, and there are none. The two differ. */
+  let ptTimers = null;
+  let ptErr = '';
+  let ptBusy = false;
+  let ptNow = Date.now();
+
+  async function loadProgrammeTimers() {
+    try {
+      const rows = stageTimers(await listTimers());
+      if (dead) return;
+      ptTimers = rows;
+      ptErr = '';
+    } catch (e) {
+      if (dead) return;
+      // The list is NOT emptied. What was last known to be running is better
+      // information than a blank panel, and the reason sits above it.
+      ptErr = humanError(e);
+    }
+  }
+
+  async function startProgrammeTimer() {
+    ptBusy = true;
+    ptErr = '';
+    try {
+      // `start_timer` creates the timer and publishes nothing. Putting a clock in
+      // front of a congregation is `startCountdown` or `showTimer`, and neither is
+      // reachable from here on purpose.
+      await startTimer({ minutes: Number(ptMins), label: ptName.trim(), scope: 'stage' });
+      ptName = '';
+      await loadProgrammeTimers();
+    } catch (e) {
+      ptErr = humanError(e);
+    }
+    ptBusy = false;
+  }
+
+  async function stopProgrammeTimer(id) {
+    ptBusy = true;
+    ptErr = '';
+    try {
+      await stopTimer(id);
+      await loadProgrammeTimers();
+    } catch (e) {
+      ptErr = humanError(e);
+    }
+    ptBusy = false;
+  }
+
+  // Read every two seconds; TICK every half second. The figures are arithmetic
+  // this side already owns, so asking the engine for them at the speed of a clock
+  // would be a round trip per second for a whole service to learn something
+  // already known. There is no `timer://` event to subscribe to, so a poll is
+  // what there is; when one arrives this becomes a listener and both intervals go.
+  const ptTick = setInterval(() => (ptNow = Date.now()), 500);
+  const ptPoll = setInterval(loadProgrammeTimers, 2000);
+  $: ptRows = (ptTimers ?? []).map((t) => ({
+    id: t.id,
+    label: (t.label ?? '').trim(),
+    left: timerRemainingMs(t, ptNow),
+  }));
+
   // HAS THIS VIEW ALREADY GONE AWAY? `onMount` is async and Svelte does not wait
   // for it: `onDestroy` runs the instant the operator switches workspace, which
   // can be in the middle of the awaits below. Every step after an await has to
@@ -446,7 +577,7 @@
     // now, and the panic key and a spoken clear never went through it anyway. What
     // must still happen when the wall goes clear, however it was cleared:
     //   · a press armed a beat ago must not paint a verse over a cleared wall
-    //   · the preacher's "up next" must not outlive the content it was about
+    //   · the preacher's "Up Next" must not outlive the content it was about
     // The second one reports its own failure, because until 2026-08-14 nothing
     // anywhere did and a preacher read a stale hint for a whole service.
     let wasLive = !!get(live);
@@ -455,7 +586,7 @@
       if (wasLive && !now) {
         gridPress.cancel();
         setStageNext(null, null).catch((e) =>
-          flash(`The preacher's stage monitor may still show the old "up next" — ${humanError(e)}`),
+          flash(`The preacher's stage monitor may still show the old "Up Next" — ${humanError(e)}`),
         );
       }
       wasLive = now;
@@ -515,6 +646,11 @@
     // Only now: everything above IS the restore, and a watcher armed before it
     // would race the mount for the same plan.
     if (!dead) watchChosenPlan = true;
+
+    // LAST, and not awaited by anything above it. Nothing an operator sees during
+    // the restore depends on the timer list, and a round trip in front of the
+    // plan restore would delay the one thing this mount exists to get right.
+    if (!dead) await loadProgrammeTimers();
   });
 
   // ── LOAD WHOLE PLAN, FROM QUICK TOOLS ──────────────────────────────────────
@@ -547,6 +683,8 @@
     clearTimeout(liveMsgT);
     unsubLive?.();
     clearTimeout(relatedT); // a pending poll must not fire into a destroyed view
+    clearInterval(ptTick);
+    clearInterval(ptPoll);
     // A view that has gone away must not put scripture on a wall a beat later.
     gridPress.cancel();
   });
@@ -579,6 +717,13 @@
     const p = payloadOf(item);
     const s = slidesOf(item)[i];
     if (!s) return;
+    // Was this cue ALREADY the one on air? Read before the fire, because the take
+    // below is what makes it so — see the timer at the bottom of this function.
+    const cueWasOnAir = planOnAir && liveCueId === item.id;
+    // WHICH CUE THIS TAKE RETIRES. Read here, beside `cueWasOnAir` and for the same
+    // reason: the take below is what moves the playhead, so after it there is no
+    // way left to ask which cue the programme has just left. See `retireCueTimer`.
+    const leavingCueId = liveCueId;
     const stageNote = p.stage_note || null;
     // The template the operator set for THIS cue in the Planner. Passed on every
     // fire so a plan item renders with its own chosen look, not just the
@@ -598,10 +743,19 @@
         }
         await fireMedia(p.media_id, tpl, true); // keepPlan — this IS the plan's slide
       } else if (item.cue_type === 'countdown') {
+        // THE CUE'S OWN WORDS, AND NO OTHERS. These two arguments used to fall
+        // back to 'Service begins in' and 'Welcome' — the fourth copy of a pair of
+        // constants that the Planner wrote, `capture.js` defaulted to and the dock
+        // named outright. Now that the Planner can leave them blank on purpose, a
+        // fallback here would put the words back over an operator who had just
+        // taken them out, on the surface furthest from where they were typed.
+        // Blank is a real answer: the wall shows the digits alone. A cue built
+        // before this change still carries its words in its payload and still
+        // shows them.
         await startCountdown(
           Number(p.minutes) || 5,
-          p.label || 'Service begins in',
-          p.done || 'Welcome',
+          p.label ?? '',
+          p.done ?? '',
           tpl,
           true, // keepPlan — this IS the plan's slide
         );
@@ -624,8 +778,19 @@
       setLive(item.id, i);
       selId = item.id;
       flash(`Live: ${s.label}`);
+      // INSIDE the try, AFTER the take, so a fire that failed starts no clock: the
+      // cue never reached a screen, and a timer for a cue nobody is looking at is
+      // a clock the operator has to hunt down and stop mid-service. And BEFORE the
+      // "up next" hint below, which is deliberately not awaited: the clock is part
+      // of the take and the hint is a shrug, so the one that carries a guarantee
+      // goes first rather than racing the one that does not.
+      await startCueTimer(item, cueWasOnAir);
+      // AND THE CUE THIS ONE REPLACED STOPS. Second, not first: the clock the
+      // preacher needs is the one for the cue that has just gone on air, so the
+      // start happens even if the retire cannot.
+      if (leavingCueId && leavingCueId !== item.id) await retireCueTimer(leavingCueId);
       const n = nextOf(items, item.id, i);
-      // Deliberately shrugged: a missing "up next" is an absent hint, and the
+      // Deliberately shrugged: a missing "Up Next" is an absent hint, and the
       // wall — and this catch — already report anything that matters. Contrast
       // the CLEAR below, which cannot be shrugged.
       setStageNext(n?.label ?? null, n?.text ?? null).catch(() => {});
@@ -634,13 +799,149 @@
     }
   }
 
-  // THE EMERGENCY ANNOUNCEMENT moved to Quick tools (docs/REBRAND.md §2 — the
-  // things that change during a service), which is in the dock row and therefore
-  // one reach away on EVERY workspace rather than on this one. It paints over
-  // live scripture on every screen at once; a control like that being reachable
-  // only from the tab you happen to be on was the argument for moving it, not
-  // against. Its two-step arm, and the `pushAnnouncement` contract that makes a
-  // failure loud, moved with it unchanged.
+  /**
+   * A CUE THAT CARRIES A CLOCK STARTS IT HERE, AND NOWHERE ELSE.
+   *
+   * `plan_items.timer_minutes` is a request the Planner stores and cannot act on —
+   * that workspace may not reach an output or the preacher's monitor
+   * (`plannerbuildonly.test.js`). So the run surface is what acts on it, and this
+   * is the ONE call site: `fireSlide` is the single door a plan cue goes on air
+   * through, which is rule 36's reasoning applied to a timer. A second call beside
+   * `stepLive` or beside the grid press would be the fifth bug in this repository
+   * with that shape.
+   *
+   * THE CONDITIONS, each for its own reason:
+   *
+   * · `cueWasOnAir` — a clock starts when the cue GOES on air, not on every slide
+   *   of it. A five-section song would otherwise restart the sermon clock five
+   *   times as the operator walked it, and stepping back and forward would do it
+   *   again. The backend keeps one clock per cue as well (`start_timer` stops the
+   *   cue's previous one), so the two agree rather than one covering for the other.
+   * · `$rehearsing` — a rehearsal publishes no timers (`channels::publish_timers`
+   *   suppresses them), so a clock started here would be one the registry holds
+   *   and nobody can see, waiting to appear on the preacher's rail the moment the
+   *   service goes live. A rehearsal changes nothing about the service.
+   *
+   * It reports its own failure rather than riding in the fire's `catch`. The verse
+   * or the notice is already on the wall by this point and the fire SUCCEEDED; a
+   * flash saying otherwise would be the console lying about the congregation's
+   * screen, which is the more expensive of the two mistakes.
+   */
+  async function startCueTimer(item, cueWasOnAir) {
+    const mins = Number(item.timer_minutes) || 0;
+    if (mins <= 0 || cueWasOnAir || $rehearsing) return;
+    try {
+      await startTimer({
+        minutes: mins,
+        label: item.label,
+        // STAGE, never `both`. This is the preacher's bookkeeping; a congregation
+        // countdown is `start_countdown` and is an action an operator takes on
+        // purpose. A cue silently putting a clock on the wall is the one mistake
+        // that cannot be taken back quietly.
+        scope: 'stage',
+        planItemId: item.id,
+        // THE WARNING THRESHOLD TRAVELS ON THE TIMER, because the surface that has
+        // to obey it cannot look it up. `Settings → General → Countdown warning` is
+        // one row in the console's database (`countdown.warn_ms`); the stage page
+        // has no Tauri bridge and never reads it, so `Stage.svelte::programmeWarn`
+        // warns at the figure the FRAME carries or does not warn at all — which is
+        // Track A's rule and is right. Without this the rail could never warn on
+        // any install, because nothing shipped ever put a figure in the frame.
+        //
+        // `countdownWarnMs` is the console's mirror of the row in force, loaded at
+        // launch by `App.svelte` and rewritten by the Settings control. It is the
+        // SAME figure the dock and the programme pane already turn red at, so the
+        // preacher's rail and the operator's screen agree by construction. No
+        // default is invented here: an unreadable setting has already fallen back
+        // to the shipped minute inside `applyCountdownWarn`, once, in one place.
+        warnMs: $countdownWarnMs,
+        // AND NO DONE MESSAGE. The rail's finished state shows the OPERATOR'S own
+        // words at zero, and a cue carries none — there is no field on `plan_items`
+        // for one and no control that writes one. Relay composing a sentence here
+        // would be Relay's words presented as somebody's choice, and it would cost
+        // something measured: a finished row's message renders at 30px against the
+        // digits' 64px (`docs/qa/audits/2026-09-17-WAVE4-STAGE-PLANNER.md` §1.3), so
+        // every bound cue on every install would end less legible than `0:00`, with
+        // nobody having asked for it. That half of RG-162 is left open against the
+        // timer surface that owns message text — wave 3 Track E.
+      });
+    } catch (e) {
+      flash(`On air — but its ${mins}-minute timer did not start: ${humanError(e)}`);
+    }
+  }
+
+  /**
+   * A CUE'S CLOCK ENDS WHEN THE CUE DOES — and this is the only thing that ends one.
+   *
+   * `TimerRegistry` never reaps: a `Stage` timer lives until something stops it or
+   * the process ends. Nothing did. One walk of a three-cue plan left three finished
+   * clocks on the preacher's rail for the rest of the service, and the rail's floor
+   * keeps the OLDEST cells — so on a phone in portrait the one clock shown was a
+   * dead one from the start of the service and the live sermon clock was inside
+   * `+3 more` (RG-163). Live is what starts a cue's clock, so Live is what stops it.
+   *
+   * WHICH DOORS THIS IS, AND WHICH IT DELIBERATELY IS NOT. A plan cue stops being
+   * what the congregation is looking at through several of them, and only one of
+   * them means the PROGRAMME has moved on:
+   *
+   * · ANOTHER CUE GOES ON AIR — `fireSlide`, which is the single door a cue goes on
+   *   air through (the transport, the slide grid, the preview take and TAKE all
+   *   arrive here). The programme has moved on, so the clock for the slot it left
+   *   is over. THIS IS THE ONE.
+   * · A manual fire, an accepted suggestion, a verse off the rail — `leavePlan()`
+   *   clears `onAir` and the cue is off the screens. Its clock must KEEP RUNNING:
+   *   that is the preacher going off-script in the middle of the sermon slot, which
+   *   is the case the clock exists for.
+   * · `Clear screens` and `Blackout` — same, and settled: the panic controls take
+   *   `Both` and leave `Stage` on purpose (wave 3). A panic control may never gain
+   *   a question it can fail to answer (rule 15).
+   * · Closing the plan, or opening another — the cue is gone from the run surface,
+   *   and the preacher is still preaching. Killing the sermon clock because the
+   *   operator went to look at a different plan would take away the one thing this
+   *   rail is for. The end-of-service sweep (`main::end_service`) is what takes
+   *   those, at the point the programme really is over.
+   *
+   * IT ASKS THE BACKEND WHICH TIMER, rather than remembering the id `startTimer`
+   * handed back. Live is unmounted and remounted every time an operator visits
+   * another workspace mid-service (`liveunmount.test.js`), and a remembered id does
+   * not survive that — it would work all through a rehearsal and fail on the one
+   * Sunday somebody checked the Library between cues. `plan_item_id` rides on the
+   * timer precisely so this question has an answer that outlives a view.
+   *
+   * It reports its own failure and never fails the fire. The new cue is already on
+   * the screens and its clock is already running; a flash saying otherwise would be
+   * the console lying about a take that succeeded.
+   */
+  async function retireCueTimer(cueId) {
+    if (!cueId) return;
+    try {
+      const running = await listTimers();
+      for (const t of running) {
+        // `scope` is checked as well as `plan_item_id`, because a congregation
+        // countdown is not the programme and is taken down by a panic control or by
+        // the operator, never by the plan walking past it.
+        if (t.scope === 'stage' && t.plan_item_id === cueId) await stopTimer(t.id);
+      }
+    } catch (e) {
+      flash(`The previous cue's timer is still running: ${humanError(e)}`);
+    }
+  }
+
+  // THE EMERGENCY ANNOUNCEMENT IS GONE. It left this surface for Quick tools
+  // (docs/REBRAND.md §2 — the things that change during a service), which is in
+  // the dock row and therefore one reach away on EVERY workspace rather than on
+  // this one; a control that paints over live scripture on every screen at once
+  // being reachable only from the tab you happen to be on was the argument for
+  // moving it. It was then removed altogether on 2026-09-14 on the operator's
+  // instruction, and `push_announcement` and `pushAnnouncement` were DELETED
+  // rather than left registered with nothing rendering them — this repository's
+  // own precedent, the five commands deleted on 2026-08-30: a command nothing
+  // calls is attack surface nobody is watching.
+  //
+  // What it proved is worth keeping in words even though the code is not. A
+  // control of that shape needs a two-step arm, and its wrapper must THROW rather
+  // than swallow, because an operator told the room has been warned will stop
+  // warning it themselves. `announce.test.js` carries the same register.
 
   // ── AI suggestions ───────────────────────────────────────────────────────
   $: dets = $detections;
@@ -1346,12 +1647,25 @@
   // Resolved from the reactive `$templates` store (not a one-shot snapshot), so a
   // template edit — which updates `$templates` app-wide via saveTemplate →
   // loadTemplates — flows straight into these panes instead of leaving them stale.
-  $: mainChannel = channels.find((c) => c.render_target === 'native_window') ?? channels[0] ?? null;
+  //
+  // WHICH SCREEN, read from `output_channels.role` rather than guessed at. The
+  // expression that used to sit here was `channels.find((c) => c.render_target
+  // === 'native_window') ?? channels[0] ?? null` — a render target is how a screen
+  // is WIRED, not what it is for, so renaming the main screen changed nothing,
+  // deleting it silently promoted whatever came first, and a church whose wall is
+  // an OBS browser source had this pane previewing its streaming feed. All three
+  // read identically on the bar below. `channelroles.js` is the one reader, and it
+  // keeps the old heuristic as an explicit, LABELLED fallback so an install that
+  // has never opened Outputs still previews something.
+  $: programme = programmeScreen(channels);
+  $: mainChannel = programme.channel;
   $: mainTpl =
-    (mainChannel && $templates.find((t) => t.id === mainChannel.template_id)) ||
-    $templates.find((t) => t.id === $defaultTemplateId) ||
-    $templates[0] ||
-    null;
+    resolveOutputTemplate(
+      (mainChannel && $templates.find((t) => t.id === mainChannel.template_id)) || null,
+      null,
+      false,
+      $templates.find((t) => t.id === $defaultTemplateId) || null,
+    ) || $templates[0] || null;
   $: previewTpl = mainTpl;
 
   // ── output status ────────────────────────────────────────────────────────
@@ -1378,6 +1692,46 @@
   // asked for. Measured in the T2 review note.
   $: fullscreen = !!$session.liveFullscreen;
   const setFullscreen = (v) => setSession({ liveFullscreen: v });
+
+  // ── HOW BIG A SLIDE CELL IS ──────────────────────────────────────────────
+  //
+  // The grid was fixed at `minmax(158px, 1fr)`, and 158px is the width
+  // `runsurface.test.js` names in its own describe title as the size at which a
+  // live cell and a cued cell must be unmistakable. It is not the size at which
+  // the WORDS on a slide are readable, and the words are what an operator is
+  // choosing between — so a cell could be told apart and not read.
+  //
+  // THE STEP MOVES THE GRID TRACK, NEVER THE THUMB. `.sg-thumb` carries
+  // `container-type: inline-size` and is the container query every `cqw` inside a
+  // cell resolves against; changing IT would resize the box the type is measured
+  // in and each cell would render at the wrong scale rather than bigger. The
+  // custom property is set on the pane body instead and the grid's own
+  // `minmax` reads it, so `<div class="sgrid">` keeps its exact spelling for the
+  // tests that locate it by literal string match.
+  //
+  // FOUR STEPS, and the first is the width the grid has always had, so a console
+  // nobody has touched is unchanged. The names are one or two characters because
+  // this rail is narrow and has clipped a label before: the density segment that
+  // used to sit here wanted 135px inside 114px and rendered `Compact` as `Compa`.
+  const SLIDE_SIZES = [
+    { px: 158, name: 'S' },
+    { px: 210, name: 'M' },
+    { px: 280, name: 'L' },
+    { px: 370, name: 'XL' },
+  ];
+  /** A stored index, made safe. Rubbish, a float and an out-of-range step all
+   *  land on a real one — the session is a file on a disk and this is the only
+   *  place that knows how many steps there are. */
+  const clampSlideSize = (v) =>
+    Math.min(SLIDE_SIZES.length - 1, Math.max(0, Math.trunc(Number(v)) || 0));
+  $: slideSizeIdx = clampSlideSize($session.liveSlideSize);
+  $: slideSize = SLIDE_SIZES[slideSizeIdx];
+  /** Step by a DELTA, read off the store rather than off the reactive
+   *  derivation. Two presses in one frame both see the same stale `slideSizeIdx`
+   *  and the second one does nothing — a stepper that loses a press is a control
+   *  that goes quiet, which is the thing the disabled ends exist to avoid. */
+  const stepSlideSize = (d) =>
+    setSession({ liveSlideSize: clampSlideSize(clampSlideSize(get(session).liveSlideSize) + d) });
 
   // §5 INSPECTOR. The claim panel has room for the verdict; the reasoning needs
   // a surface of its own. Opened per-detection, never a tab: an operator does not
@@ -1658,6 +2012,15 @@
           <span class="tag off">Blackout</span>
         {:else if $live}
           <span class="tag onair">Program · On Air</span>
+        {:else if $background}
+          <!-- A THIRD STATE, BECAUSE THERE IS A THIRD STATE. A standing background
+               with nothing fired over it is not a clear wall — the church's picture
+               is up and the congregation can see it. Saying `Clear` here would be a
+               status line that reads the same when something is on the screens as
+               when nothing is (rule 35), on the one pane an operator watches during
+               a service. Not amber: amber means ON AIR and a backdrop is not
+               content. -->
+          <span class="tag off">Program · Background</span>
         {:else}
           <span class="tag off">Program · Clear</span>
         {/if}
@@ -1669,7 +2032,16 @@
              joins two facts that are both present, and disappears with the tail. -->
         {#if mainChannel}
           <span class="mon-sep" aria-hidden="true">·</span>
-          <span class="mon-as r-mono" title="This pane renders through {mainChannel.name}'s template">as {mainChannel.name}</span>
+          <!-- AND WHETHER IT WAS TOLD OR IT GUESSED. `programme.label` carries
+               both cases and they read differently on purpose: a bar that says
+               `as Main screen` whether or not a main screen has been chosen is a
+               status line that reads the same when the setting behind it is
+               missing, which is rule 35. The fallback is kept — a blank programme
+               pane is a worse answer — and it announces itself. -->
+          <span class="mon-as r-mono" class:guessed={!programme.byRole}
+            title={programme.byRole
+              ? `This pane renders through ${mainChannel.name}'s template`
+              : `No screen is set as the main screen, so this pane is showing ${mainChannel.name}. Set one in Outputs → Screens → Role.`}>{programme.label}</span>
         {/if}
         <span class="spring"></span>
         <!-- The REFERENCE, amber only when a congregation is genuinely looking
@@ -1689,11 +2061,25 @@
       </header>
       <div class="screen">
         {#if $live && progTpl}
+          <!-- THE STANDING BACKGROUND RIDES WITH THE CONTENT, because the wall
+               paints both and this pane must not disagree with the wall. It is a
+               prop and not a field on the content on purpose: a verse replaces
+               `$liveContent` and leaves `$background` exactly where it is, which
+               is the whole of the feature. -->
           <TemplateRender
             template={progTpl}
             content={$liveContent}
+            backdrop={$background}
             onFit={noteFit}
           />
+        {:else if $background && progTpl}
+          <!-- BACKDROP, NOTHING FIRED. The wall is painting the church's picture,
+               so this pane paints it too. Without this branch the pane would print
+               "Screens clear" over a screen that demonstrably is not. `content` is
+               explicitly null: `TemplateRender` draws the backdrop layer alone and
+               nothing else, so no empty band or shape appears here that is not on
+               the wall. -->
+          <TemplateRender template={progTpl} content={null} backdrop={$background} />
         {:else if $live}
           <!-- CONTENT, AND NOTHING TO RENDER IT WITH. Measured on 2026-09-14: with
                no template resolved this pane drew an amber ON AIR frame over a
@@ -1714,6 +2100,72 @@
       </div>
     </section>
 
+  </div>
+
+  <!-- ══════ A CLOCK FOR THE PREACHER ══════════════════════════════════════
+       The operator's surface for the timer registry: start one, see what is
+       running, stop the one under your finger. See the block comment on
+       `loadProgrammeTimers` for why it is here rather than anywhere more
+       obvious, and for what it deliberately does not claim.
+
+       ONE ROW, `flex: 0 0 auto`, AND IT WRAPS RATHER THAN SCROLLING. The slide
+       grid below keeps `flex: 1 1 0` and takes everything left, so this costs it
+       one row of height and nothing else. A list that could grow without bound
+       would eat the surface an operator picks from most often, so the running
+       timers are inline chips on the same row as the control that starts them. -->
+  <div class="pt-band">
+    <span class="pt-lbl">Programme timer</span>
+    <input
+      class="r-input pt-min"
+      type="number"
+      min="1"
+      max="240"
+      bind:value={ptMins}
+      aria-label="Programme timer minutes" />
+    <span class="pt-unit">min</span>
+    <input
+      class="r-input pt-name-in"
+      type="text"
+      bind:value={ptName}
+      placeholder="Sermon · Notices"
+      autocomplete="off"
+      aria-label="Programme timer name"
+      on:keydown={(e) => e.key === 'Enter' && startProgrammeTimer()} />
+    <button
+      class="r-btn sm primary"
+      on:click={startProgrammeTimer}
+      disabled={ptBusy || !$capture.available || !(Number(ptMins) > 0)}
+      title="Start a clock for the preacher's monitor. It puts nothing on a congregation screen."
+      >Start timer</button>
+    <span class="pt-spring"></span>
+    <!-- THREE ANSWERS, NOT TWO. A failed read keeps whatever was last known to be
+         running and says the reason beside it; it never reports a quiet programme
+         it was not told about (rule 35). -->
+    {#if ptErr}<span class="pt-err" role="alert">{ptErr}</span>{/if}
+    {#if ptTimers == null && !ptErr}
+      <span class="pt-cap">Reading…</span>
+    {:else if ptRows.length}
+      {#each ptRows as t (t.id)}
+        <span class="pt-chip">
+          <!-- A timer with no name shows its figure alone rather than a collapsed
+               box with nothing in it. A later track makes label-less the default
+               supply, so this survives it already. -->
+          {#if t.label}<span class="pt-name">{t.label}</span>{/if}
+          <!-- NO GLYPH STANDS IN FOR A FIGURE. A dash in a value slot cannot tell
+               "there is no deadline" from "we have not asked yet"; the words can,
+               and this surface already forbids the glyph. -->
+          <span class="pt-fig r-mono">{t.left == null ? 'no deadline' : formatCountdown(t.left)}</span>
+          <button
+            class="r-btn sm ghost"
+            on:click={() => stopProgrammeTimer(t.id)}
+            disabled={ptBusy}
+            aria-label={t.label ? `Stop ${t.label}` : 'Stop this timer'}
+            title="Take this timer off. It touches no screen.">Stop</button>
+        </span>
+      {/each}
+    {:else if !ptErr}
+      <span class="pt-cap">No programme timer.</span>
+    {/if}
   </div>
 
   <!-- ══════ THE SLIDE GRID — full width, directly under the monitors ══════
@@ -1750,7 +2202,14 @@
              operator is looking for when they glance here mid-service. -->
         <span class="sg-hint r-mono" title="A single click sends the slide to the programme; a double click only previews it."><b class="cnt">{grid.cells.length}</b><span class="sg-say">{' · single click goes to air · double click previews'}</span></span>
         {#if openPlan}
-          <button class="mini ghost" on:click={leave} title="Stop running {openPlan.title}">Close plan</button>
+          <!-- `.mini` was a button shape with ONE call site, and that call site
+               used `.ghost`, which overrode the whole of it. So its base rule —
+               a solid `--v-amber` fill with amber ink — was a control painted in
+               the tally colour that nothing in the product rendered, sitting in
+               the file where a future reader would reach for it. Deleted rather
+               than kept: this is the shared small ghost, on the ladder. -->
+          <Button variant="ghost" size="sm" class="mini" on:click={leave}
+            title="Stop running {openPlan.title}">Close plan</Button>
         {/if}
         <!-- THE VIEW CONTROL LIVES HERE NOW (L2), not in the browsing rail.
              It changes how the console LOOKS and never what reaches a screen,
@@ -1766,13 +2225,31 @@
              left for `qa-inventory` to find and nothing for a future reader to
              mistake for a preference somebody forgot to wire up. -->
         <div class="view-ctl">
+          <!-- THE SLIDE SIZER. Two steppers and a readout, the idiom the template
+               editor's zoom already uses — each end disabled at its end, so the
+               control says where it has run out rather than going quiet. It
+               changes how the console LOOKS and never what reaches a screen,
+               which is why it belongs in this slot beside Full screen. -->
+          <span class="view-size" title="How big the slide cells are">
+            <IconButton size="sm" class="view-szbtn" on:click={() => stepSlideSize(-1)}
+              disabled={slideSizeIdx === 0} label="Smaller slide cells"
+              disabledReason="Already the smallest slide cell.">−</IconButton>
+            <span class="view-szval r-mono">{slideSize.name}</span>
+            <IconButton size="sm" class="view-szbtn" on:click={() => stepSlideSize(1)}
+              disabled={slideSizeIdx === SLIDE_SIZES.length - 1} label="Bigger slide cells"
+              disabledReason="Already the largest slide cell.">+</IconButton>
+          </span>
           <button class="view-fs" on:click={() => setFullscreen(!fullscreen)}>
             {fullscreen ? 'Show tabs' : 'Full screen'}
           </button>
         </div>
       </header>
 
-      <div class="pane-body sg-body">
+      <!-- THE GRID TRACK'S FLOOR, carried as a custom property on the BODY rather
+           than on the grid: `<div class="sgrid">` is located by literal string
+           match by `slidegridwiring.test.js`, and an attribute on it would break
+           that test by spelling rather than by meaning. -->
+      <div class="pane-body sg-body" style="--sg-min:{slideSize.px}px">
         {#if grid.cells.length}
           <div class="sgrid">
             {#each grid.cells as c (c.key)}
@@ -1900,7 +2377,7 @@
        THE RUNNING ORDER is the grid: every slide of every cue, in order, each
        rendered as the wall would render it, with the playhead on the cell that is
        actually on air. What the removed rail added on top of that was a cue's
-       stage note — an operator-only line for the PREACHER'S monitor, authored in
+       Stage Note — an operator-only line for the PREACHER'S monitor, authored in
        the Planner and delivered by the fire itself. It is not lost from the
        service; it is no longer previewed here. Recorded in the review note. -->
 
@@ -1954,11 +2431,16 @@
                Dashboard, which is not a Sunday-morning path. Recorded in the
                review note as a thing that should move to the dock's audio card
                (agent L3's file), beside the ARMED switch it belongs with. -->
-          <button class="ibtn" on:click={toggleListen} title={$capture.capturing ? 'Stop listening' : 'Start listening'}
-            aria-label={$capture.capturing ? 'Stop listening' : 'Start listening'}
-            disabled={!$capture.available || !$capture.stt.loaded || listenBusy}>
+          <IconButton class="ibtn" on:click={toggleListen} title={$capture.capturing ? 'Stop listening' : 'Start listening'}
+            label={$capture.capturing ? 'Stop listening' : 'Start listening'}
+            disabled={!$capture.available || !$capture.stt.loaded || listenBusy}
+            disabledReason={whyDisabled(
+              [!$capture.available, ENGINE_OFF],
+              [!$capture.stt.loaded, 'No speech model is loaded. Download one in Settings → Audio before Relay can listen.'],
+              [listenBusy, BUSY],
+            )}>
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v4"/></svg>
-          </button>
+          </IconButton>
         </header>
 
         <!-- NO SENSITIVITY DIAL HERE either. It lives in the dock, one row below,
@@ -2025,6 +2507,29 @@
               {#if d.matched_text}
                 <!-- THE EVIDENCE — the words that actually triggered the match. -->
                 <p class="mt-q">“{d.matched_text}”</p>
+              {/if}
+
+              <!-- RG-135 · THE TRANSLATION THE PREACHER NAMED, WHICH RELAY DOES
+                   NOT HAVE. Field service 2026-09-13: the preacher said "the
+                   Passion Translation" and read it aloud while the wall carried the
+                   King James Version at 0.88, wearing the same badge as the seven
+                   correct fires around it. The reference was right, so no
+                   instrument here treated it as a fault of any kind.
+
+                   It is a CAVEAT, not a failure: quiet type, no law colour, and
+                   deliberately not amber, cyan or amethyst — none of those three
+                   promises is what this is about, and a colour that carries a
+                   promise cannot be borrowed for a footnote. It sits below the
+                   verse rather than above it, because the verse is still the
+                   answer. The backend sets the field only when it can tell the
+                   operator something they do not already know. -->
+              {#if d.named_translation_missing}
+                <p class="claim-tx">
+                  {$t('live.translation_not_installed', {
+                    named: d.named_translation_missing,
+                    shown: d.translation ?? 'what it has',
+                  })}
+                </p>
               {/if}
 
               {#if d.text}<p class="clm-verse">{d.text}</p>{/if}
@@ -2156,7 +2661,12 @@
     onClose={() => (inspecting = null)}
     onAccept={inspectAccept}
     onDismiss={inspectDismiss}
-    onTuning={() => { inspecting = null; setSession({ activeTab: 'settings' }); }}
+    onTuning={() => {
+      inspecting = null;
+      // The inspector's link names a control, so it lands on the section that has
+      // it rather than on General with the operator left to find it.
+      setSession({ activeTab: 'settings', settingsSection: 'ai' });
+    }}
   />
 </div>
 
@@ -2180,6 +2690,26 @@
      collection switch is `.lr-seg`, its own class with its own rules, because
      Svelte scopes a component's styles and this `.seg` never reached it. */
   .view-ctl{ flex:0 0 auto; display:flex; align-items:center; gap:5px; }
+  /* 22px, not the shared 26px: this row is 22px tall and has clipped a label
+     before. The readout is one or two mono characters on a fixed width, so the
+     control cannot widen as the step changes and push `Full screen` out. */
+  .view-size{ display:flex; align-items:center; gap:3px; }
+  /* THE THIRD INSTANCE of the step `.r-iconbtn.sm` was published for, and the
+     only one a scanner found rather than a person: this pair sits beside a 22px
+     `.view-fs`, so it hand-drew a 22px box over `.r-iconbtn`'s 26px one. That is
+     the override docs/REBRAND.md §1 forbids ("a component may override a shared
+     control's width and padding, never its height"), and it was invisible because
+     the file was internally consistent — the drift only exists in the row where
+     this control meets its neighbour. The ladder owns the box now. */
+  :global(.view-szbtn){ line-height:1; }
+  :global(.view-szbtn:disabled){ opacity:.4; cursor:not-allowed; }
+  .view-szval{ min-width:18px; text-align:center; font-size:var(--v-fs-b3);
+    letter-spacing:.06em; color:var(--v-dim); }
+  /* A VIEW TOGGLE, not a button. It changes how the console looks and can never
+     reach a screen, so it is deliberately quieter than the shared control: no
+     fill of its own beyond the panel's, faint ink, and the 22px of the row it
+     shares with the slide-size pair rather than the 26px of an action. Naming it
+     is the difference between a choice and a button that lost its class. */
   .view-fs{ height:22px; padding:0 8px; border-radius:var(--v-r-sm); cursor:pointer;
     background:var(--v-surf); border:1px solid var(--v-line2); color:var(--v-faint);
     font-family:var(--f-body); font-size:var(--v-fs-b3); font-weight:600; }
@@ -2232,8 +2762,33 @@
      sizes to its own content — but a small booth screen reaches the grid's
      scrollbar sooner than it used to. Retuning this to compensate would shrink
      Preview and Program for everybody, so it was left alone deliberately. */
-  .con-top{flex:0 0 auto; height:clamp(268px,33vh,364px);
-    display:grid; grid-template-columns:1fr 118px 1fr; gap:var(--v-sp-sm); min-height:0}
+  /* A FLOOR, NOT A HEIGHT (RG-146). This was `height:clamp(268px,33vh,364px)`
+     — a definite height, so the row was that tall whatever was in it. `.rack`
+     is `align-self:start` and sizes to its own CONTENT, which is about 320px
+     whatever the viewport is (a fixed 118px column, a 64px TAKE, two 26px
+     arrows, a two-line caption and two 22px pickers), so on any window shorter
+     than roughly 970px the rack was taller than the row, the row does not clip,
+     and the transition pickers painted OUTSIDE it, on top of whatever came
+     next. For years that was a slide grid and the overlap was cosmetic; wave 3
+     put the programme timer band there and it became a button that does
+     something else. Measured at 1320x860, the size `tauri.conf.json` opens the
+     window at: `.rack` 320.2px inside a 283.8px row, and `elementFromPoint`
+     over the centre of `Start timer` returned `.xpick.xdur`.
+     `min-height` keeps every small-window promise the clamp made — the row
+     never collapses below 268px, still tracks 33vh, still stops at 364px — and
+     lets a taller rack push the row down instead of painting over the band.
+     CLIPPING WOULD HAVE BEEN THE WRONG FIX: the thing in the overflow is the
+     transition pair, so `overflow:hidden` here makes a control unreachable
+     rather than merely misplaced, which is strictly worse. What it costs is
+     stated honestly: below ~970px tall the row takes the height the rack was
+     already painting over — 36.4px at 1320x860, 52.2px at 1280x800 — off the
+     slide grid, which scrolls. None of it was ever really the grid's.
+     It is also what the narrow steps below have always done (`height:auto` at
+     ≤1180px), so this makes the default agree with them rather than inventing
+     anything. Held by `liverackfit.test.js`; the pixel evidence is a browser
+     pass, because jsdom computes no layout. */
+  .con-top{flex:0 0 auto; min-height:clamp(268px,33vh,364px);
+    display:grid; grid-template-columns:1fr 118px 1fr; gap:var(--v-sp-sm)}
 
   /* ── the desk: rail, stage, inspector ──────────────────────────────────── */
   /* THE SAME TWO TOKENS EVERY OTHER DESK USES. Live builds its own grid rather
@@ -2254,6 +2809,41 @@
      column with nothing under it. One child, one rule. */
   .insp-col{display:flex; flex-direction:column; gap:var(--v-sp-sm); min-height:0; min-width:0}
   .insp-col > .pane{flex:1 1 auto; min-height:0}
+  /* ── THE PROGRAMME TIMER ───────────────────────────────────────────────────
+     ONE ROW THAT WRAPS, never a list that scrolls. The slide grid under it keeps
+     `flex: 1 1 0` and takes everything left, so this costs the surface an
+     operator picks from most often one row of height and nothing more.
+
+     NO STATE COLOUR ANYWHERE IN HERE, DELIBERATELY. Amber is ON AIR, cyan is a
+     guess, amethyst is rehearsal. The only facts this band holds are the
+     registry's — a timer exists, this much is left — and whether a stage tablet
+     is painting one is not among them. A chip that wore any of the three would be
+     making a claim nothing here can check (rule 35), so it wears none. */
+  .pt-band{flex:0 0 auto; display:flex; align-items:center; flex-wrap:wrap;
+    gap:var(--v-sp-xs); min-width:0}
+  .pt-lbl{flex:0 0 auto; font-family:var(--f-mono); font-size:var(--v-fs-cap);
+    letter-spacing:var(--v-tr-caps); color:var(--v-faint)}
+  .pt-min{width:54px; flex:0 0 auto}
+  .pt-unit{flex:0 0 auto; font-family:var(--f-mono); font-size:var(--v-fs-cap); color:var(--v-faint)}
+  .pt-name-in{flex:0 1 180px; min-width:0}
+  .pt-spring{flex:1 1 auto; min-width:0}
+  .pt-chip{display:flex; align-items:center; gap:var(--v-sp-xs); min-width:0;
+    padding:2px 4px 2px 8px; border:1px solid var(--v-line);
+    border-radius:var(--v-r-sm); background:var(--v-surf)}
+  /* The name TRUNCATES rather than pushing the figure and Stop out of the chip.
+     A run surface once rendered a failing screen's name seven pixels wide by
+     letting a sibling win the row; the figure and the control are the two things
+     that must survive a long name, so they hold their size and the name is the
+     one thing allowed to shrink. */
+  .pt-name{flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap; font-size:var(--v-fs-b2); color:var(--v-txt)}
+  .pt-fig{flex:0 0 auto; font-size:var(--v-fs-b2); color:var(--v-dim)}
+  .pt-chip > :global(button){flex:0 0 auto}
+  .pt-cap{flex:0 0 auto; font-family:var(--f-mono); font-size:var(--v-fs-cap);
+    letter-spacing:var(--v-tr-caps); color:var(--v-faint)}
+  /* The reason a read failed, BESIDE whatever was last known to be running, so
+     the operator sees both the stale list and why it is stale. */
+  .pt-err{flex:0 1 auto; min-width:0; font-size:var(--v-fs-cap); color:var(--v-red)}
 
   /* THE GRID TAKES WHAT IS LEFT. It shared the stage with a SERVICE PLAN pane
      and the two split the remaining height 1.15 : 1; the plan pane has gone —
@@ -2349,6 +2939,12 @@
   .mon-name.live{color:var(--v-amber)}
   .mon-as{flex:0 0 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
     font-size:var(--v-fs-fig); letter-spacing:.11em; text-transform:uppercase; color:var(--v-faint)}
+  /* NO MAIN SCREEN IS SET, so this name is a fallback rather than a setting. It
+     is drawn differently because it MEANS differently: the pane is previewing
+     whichever screen the old heuristic picked, and an operator who cannot tell
+     that from a chosen one has the status line rule 35 is about. Not amber and
+     not amethyst — those are ON AIR and REHEARSAL and are never spent elsewhere. */
+  .mon-as.guessed{color:var(--v-dim); text-decoration:underline dotted; text-underline-offset:3px}
   /* The join between two facts that are both present. It carries no value of its
      own, so it is hidden from the accessibility tree rather than read aloud. */
   .mon-sep{flex:0 0 auto; margin-left:-2px; font-family:var(--f-mono);
@@ -2491,15 +3087,22 @@
     text-transform:uppercase; color:var(--v-rose); border:1px solid var(--v-rose);
     border-radius:var(--v-r-sm); padding:1px 5px}
 
-  .ibtn{flex:0 0 auto; width:26px; height:26px; border-radius:var(--v-r-sm); display:grid;
-    place-items:center; cursor:pointer; background:var(--v-surf2); border:1px solid var(--v-line2);
-    color:var(--v-dim); transition:.14s}
-  .ibtn:hover:not(:disabled){color:var(--v-amber)}
-  .ibtn:disabled{opacity:.4; cursor:not-allowed}
+  /* POSITION ONLY. `.ibtn` was a HAND-ROLLED COPY of `.r-iconbtn` — the same
+     26px box, the same corner, the same grid centring, the same fill — differing
+     in two places, and both of them were the wrong half to differ in: it drew its
+     edge from `--v-line2` where the shared control draws `--v-line`, and it
+     HOVERED AMBER. Amber means the congregation is looking at something
+     (DESIGN_SYSTEM §1: never "selected", never "active"), so the only icon button
+     on the run surface lit the tally colour whenever a pointer crossed it. One
+     call site, the microphone toggle. It is `ui/IconButton.svelte` now, so the
+     box and the hover both come from the ladder. */
+  :global(.ibtn){flex:0 0 auto}
 
   /* ── 2 · slides ───────────────────────────────────────────────── */
   .sg-body{padding:var(--v-sp-sm)}
-  .sgrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(158px,1fr));
+  /* `--sg-min` is set on `.sg-body` by the slide sizer; the fallback is the 158px
+     this grid has always had, so a console with no stored choice is unchanged. */
+  .sgrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(var(--sg-min,158px),1fr));
     gap:var(--v-sp-sm)}
   .sg-cell{display:flex; flex-direction:column; gap:5px; padding:0; text-align:left;
     background:none; border:0; cursor:pointer; min-width:0; font-family:var(--f-body)}
@@ -2599,7 +3202,7 @@
      2000px the head carries five things and fits, and the two narrower rungs the
      integrator asked about are answered by the ladder at the foot of this file
      rather than by hoping flexbox picks the right victim. */
-  .sg-head .mini{flex:0 0 auto}
+  .sg-head :global(.mini){flex:0 0 auto}
 
   /* ── 3 · detection ─────────────────────────────────────────────────────── */
   /* THE `Armed` CHIP AND ITS ROW ARE GONE (L4), and so are `.chip` / `.btnchip`
@@ -2670,9 +3273,20 @@
     text-transform:uppercase; color:var(--v-faint)}
   /* No verse behind the reference. Rose is the failure colour on this screen;
      amber is never spent here, because nothing about this is on air. */
+  /* A footnote on a correct fire. Same size as `.claim-absent` next to it and the
+     faint ink, because this is the quietest thing on the card: the verse is right
+     and the operator is being told one extra fact about it. No law colour. */
+  .claim-tx{margin:0; font-size:var(--v-fs-cap); line-height:1.5; color:var(--v-faint);}
   .claim-absent{margin:0; font-size:var(--v-fs-cap); line-height:1.5;
     color:var(--v-rose)}
   .cacts{display:grid; grid-template-columns:1fr 1fr; gap:6px}
+  /* A TWO-LINE ACTION BUTTON, and the second line is why it is not `.r-btn`.
+     Accept and Dismiss each carry a label over the reference they would act on, so
+     the operator is never choosing between two identically-worded buttons on a
+     screen showing several claims at once. The shared control ladder is one line by
+     definition (`docs/REBRAND.md` §12), so a two-line control cannot be a size of
+     it without making every other button taller. It keeps the ladder's radius,
+     type and disabled treatment, and only the height differs. */
   .act{display:flex; flex-direction:column; gap:1px; align-items:center; padding:7px 8px;
     border-radius:var(--v-r-sm); cursor:pointer; border:1px solid transparent;
     font-family:var(--f-body); transition:filter .14s; min-width:0}
@@ -2702,13 +3316,14 @@
     text-transform:uppercase; color:var(--v-faint)}
   .sub{display:flex; align-items:center; gap:var(--v-sp-sm); margin-top:var(--v-sp-sm);
     padding-top:var(--v-sp-sm); border-top:1px solid var(--v-line)}
-  .mini{padding:4px 10px; border-radius:var(--v-r-sm); border:0; cursor:pointer;
-    font-family:var(--f-body); font-size:var(--v-fs-cap); font-weight:600;
-    background:var(--v-amber); color:var(--v-amber-ink)}
-  .mini.ghost{background:transparent; border:1px solid var(--v-line2); color:var(--v-dim)}
-  .mini:hover{filter:brightness(1.08)}
+  /* `.mini`'s own rule is gone — see the markup note where `Close plan` is
+     rendered. It was a button shape with one call site that overrode all of it. */
   .rel-note{margin:0; font-size:var(--v-fs-b3); color:var(--v-faint)}
   .rel-chips{display:flex; flex-wrap:wrap; gap:6px}
+  /* A CHIP, not a button. One related reference per chip, offered rather than
+     recommended: mono, caption-sized, quiet ink, and a row of them wraps. A row
+     of `.r-btn`s here would read as a row of actions the operator is expected to
+     take, which is the opposite of what an offer is. */
   .rel-chip{font-family:var(--f-mono); font-size:var(--v-fs-cap); color:var(--v-dim);
     background:var(--v-surf2); border:1px solid var(--v-line2); border-radius:var(--v-r-sm);
     padding:5px 11px; cursor:pointer}
@@ -2754,10 +3369,18 @@
      nobody asked for; the removal is documented at the markup site. */
 
   /* ── accessibility ─────────────────────────────────────────────────────── */
+  /* STEEL, NOT AMBER — the same colour-law fix `Stage.svelte` needed, found here
+     by the widened button sweep. Six focus rings on the RUN SURFACE were drawn in
+     the tally colour, so tabbing across the transport during a service lit the
+     one colour that means "the congregation is looking at this" on control after
+     control that was not on air. DESIGN_SYSTEM §5 names the ring explicitly:
+     `outline: 2px solid var(--v-sel)`, which is also §1's colour for "the thing
+     you are working on" — which is exactly what a focused control is.
+     `.mini` and `.ibtn` are gone from the list because both are shared controls
+     now and app.css's focus group already covers them. */
   .take:focus-visible,.rk:focus-visible,.slide:focus-visible,
   .act:focus-visible,
-  .mini:focus-visible,.ibtn:focus-visible,
-  .reh-end:focus-visible{outline:2px solid var(--v-amber); outline-offset:2px}
+  .reh-end:focus-visible{outline:2px solid var(--v-sel); outline-offset:2px}
   @media (prefers-reduced-motion:reduce){
     .reh-dot{animation:none}
   }

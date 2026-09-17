@@ -211,7 +211,15 @@
 
   async function pickLang(code) {
     lang = code;
-    await setSttLanguage(code);
+    // GROUP 1 — it throws (RG-138): the language is written to the active voice
+    // profile, and a wizard that shows a language it failed to store is the
+    // wizard's own promise broken on the step that makes it.
+    try {
+      await setSttLanguage(code);
+      error = '';
+    } catch (e) {
+      error = humanError(e);
+    }
   }
 
   // Prove it. Not "setup complete" — an actual verse, on the actual screen.
@@ -258,9 +266,13 @@
   // `elementFromPoint` over `Clear screens` returned `DIV.fr-scrim`, and Escape
   // fired neither `clear_screens` nor `blackout`. Both panic paths, gone together.
   //
-  // That is not hypothetical here: `Settings → Run the setup walk-through` calls
-  // `restartSetup()` with no service-lock guard, so this can be mounted over a
-  // recorded service in one click.
+  // That was not hypothetical here: before `f1498ed`, `Settings → Run the setup
+  // walk-through` called `restartSetup()` with no service-lock guard, so this
+  // could be mounted over a recorded service in one click. The button is now
+  // disabled while a service is recording or the microphone is live — but the
+  // guarantee below still matters for a session already inside the wizard when
+  // one of those starts, and for any future caller of `restartSetup()` that
+  // does not check first.
   //
   // Escape leaves the wizard by the same door `Skip setup` uses — `done()`, which
   // stops the microphone this wizard opened and re-arms detection. It must never

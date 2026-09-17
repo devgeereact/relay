@@ -67,6 +67,7 @@ export const LEVELS = ['blocked', 'reduced'];
  * @param s.detectionOn    is detection armed?
  * @param s.capturing      is the microphone live?
  * @param s.safeMode       is safe mode on?
+ * @param s.safeModeError  why safe mode could NOT be enforced, or null
  * @param s.denoise        is the denoiser running? (null = not capturing, so unknown)
  * @param s.gpuBackends    what whisper.cpp was COMPILED with — a build fact
  * @param s.macos          is this macOS? (where a CPU-only build is a known trap)
@@ -80,12 +81,52 @@ export function degradations(s = {}) {
   // ── Blocked ───────────────────────────────────────────────────────────────
 
   if (s.safeMode) {
+    // SAFE MODE THAT COULD NOT BE ENFORCED IS NOT SAFE MODE.
+    //
+    // This row printed the promise word for word, from the boot record alone, and
+    // the record is written BEFORE anything is enforced (`capture.js::applySafeMode`,
+    // DECISIONS §86). So a screen that refused to close was described, on every
+    // workspace, as "nothing Relay does can reach a screen" — one sentence over two
+    // situations, which is rule 35 exactly, one step along from the defect §86 was
+    // written to fix. `what` is the consequence for the service, and when the
+    // enforcement failed the consequence is the opposite of that sentence.
+    const notEnforced = !!s.safeModeError;
+    // AND THE SAME AGAIN FOR THE OTHER HALF OF THE SENTENCE.
+    //
+    // "detection is disarmed" is a claim about right now, and `applySafeMode`
+    // disarms detection ONCE, at the transition. Anything that arms it afterwards
+    // — the dock's Detection switch before it asked about safe mode, the first-run
+    // wizard putting back whatever it found on the way in — left this row printing
+    // the promise over an armed detector. That matters here more than it reads: an
+    // OBS source and a kiosk page keep their hub connection through safe mode, so
+    // an AutoFire still paints on them, and an auto-fire is Relay's own initiative
+    // — the half §86 says IS covered. Asserted from the fact, never from the
+    // transition. `undefined` is not `false`: a caller that does not know says
+    // nothing new, and gets the plain sentence.
+    const rearmed = s.detectionOn === true;
     out.push({
       id: 'safemode',
       level: 'blocked',
-      title: 'Safe mode is on',
-      what: 'Outputs will not open and detection is disarmed — nothing Relay does can reach a screen.',
-      fix: 'Settings → General → Turn off safe mode.',
+      title: notEnforced
+        ? 'Safe mode is on, and it could not be enforced'
+        : rearmed
+          ? 'Safe mode is on, but detection has been armed again'
+          : 'Safe mode is on',
+      what: notEnforced
+        ? 'Safe mode is recorded, and something may still be able to reach a screen. Do not rely on it until you have looked at the screens themselves.'
+        : rearmed
+          ? 'Outputs will not open, but detection is armed — so Relay can still fire a verse to a screen that kept its connection, such as an OBS source or a kiosk page.'
+          : 'Outputs will not open and detection is disarmed — nothing Relay does can reach a screen.',
+      fix: notEnforced
+        ? 'Press Esc to clear the screens, then check each one by hand. Settings → General says what failed.'
+        : rearmed
+          ? // NOT "turn detection off in the Live audio card": that switch is
+            // disabled under safe mode, deliberately, and telling an operator to
+            // press a control that cannot be pressed is the shape of thing this
+            // register exists to remove. Turning safe mode off is what actually
+            // works, and it hands the detection switch back in the same movement.
+            'Settings → General → Turn off safe mode, which gives you the detection switch back — then turn detection off if that is what you wanted.'
+          : 'Settings → General → Turn off safe mode.',
     });
   }
 

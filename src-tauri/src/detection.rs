@@ -780,6 +780,103 @@ fn language_aliases() -> Vec<(String, &'static str)> {
     out
 }
 
+/// ── THE TRANSLATION THE SPEAKER NAMED, IF THEY NAMED ONE (RG-135) ──────────
+///
+/// A preacher who says *"the Passion Translation says…"* and then reads aloud is
+/// telling the room which words are coming. Relay has one translation installed on
+/// a fresh install, so what went on the wall on 2026-09-13 was the King James
+/// Version, at 0.88, `direct`, wearing the same badge as the seven correct fires
+/// around it. **The reference was right.** No instrument in the product treats that
+/// as a fault of any kind, and none could: the only thing wrong was that the words
+/// on the screen were not the words being read out.
+///
+/// That is rule 35 on the AI Detection panel — a claim that reads identically
+/// whether or not it is the thing the preacher asked for.
+///
+/// This answers only the first half: WAS a translation named. Whether Relay has it
+/// is a database question and is asked by the caller, because this module is
+/// DB-free and is staying that way.
+///
+/// ── WHAT IT DELIBERATELY DOES NOT DO ───────────────────────────────────────
+///
+/// It does not fetch, license or render another translation. RG-50 is an operator
+/// unable to ADD one and is a different row with a different answer; this is Relay
+/// unable to SAY that the one it used is not the one that was named. A label, not a
+/// licensing decision.
+///
+/// It also does not guess. Only whole-token matches against a fixed list of names
+/// and abbreviations count, because a false positive here puts a warning on a
+/// correct fire — and an operator who learns to ignore this line has lost the one
+/// case it exists for. `message` is an ordinary English word and is not on the
+/// list for that reason; `msg` is, because nobody says it by accident.
+pub fn named_translation(text: &str) -> Option<String> {
+    // (canonical abbreviation, the things a decoder actually produces for it).
+    // Spoken forms matter more than written ones here: this reads a TRANSCRIPT, so
+    // "the Passion Translation" is far likelier than "TPT".
+    const NAMES: &[(&str, &[&str])] = &[
+        (
+            "KJV",
+            &[
+                "king james",
+                "kjv",
+                "authorised version",
+                "authorized version",
+            ],
+        ),
+        ("NKJV", &["new king james", "nkjv"]),
+        ("NIV", &["new international", "niv"]),
+        ("ESV", &["english standard", "esv"]),
+        ("NASB", &["new american standard", "nasb"]),
+        ("NLT", &["new living translation", "nlt"]),
+        ("TPT", &["passion translation", "the passion", "tpt"]),
+        ("MSG", &["the message translation", "msg"]),
+        ("AMP", &["amplified bible", "amplified version", "amp"]),
+        ("CSB", &["christian standard", "csb"]),
+        ("RSV", &["revised standard", "rsv"]),
+        ("NRSV", &["new revised standard", "nrsv"]),
+        (
+            "GNB",
+            &["good news bible", "good news translation", "gnb", "gnt"],
+        ),
+        ("YLT", &["young's literal", "youngs literal", "ylt"]),
+    ];
+    let hay = text.to_lowercase();
+    // Longest phrase first, so "new king james" is not answered by "king james".
+    let mut best: Option<(usize, &str)> = None;
+    for (canon, forms) in NAMES {
+        for form in *forms {
+            if contains_token_run(&hay, form) {
+                let len = form.len();
+                if best.map(|(n, _)| len > n).unwrap_or(true) {
+                    best = Some((len, canon));
+                }
+            }
+        }
+    }
+    best.map(|(_, c)| c.to_string())
+}
+
+/// `needle` appears in `hay` on whole-token boundaries.
+///
+/// A plain `contains` would answer "amp" inside "example" and "example" is a word a
+/// preacher says. The boundary test is "not alphanumeric on either side", which is
+/// enough for a transcript: whisper emits words separated by spaces and punctuation.
+fn contains_token_run(hay: &str, needle: &str) -> bool {
+    let bytes = hay.as_bytes();
+    let mut from = 0;
+    while let Some(rel) = hay[from..].find(needle) {
+        let at = from + rel;
+        let end = at + needle.len();
+        let before_ok = at == 0 || !(bytes[at - 1] as char).is_alphanumeric();
+        let after_ok = end == bytes.len() || !(bytes[end] as char).is_alphanumeric();
+        if before_ok && after_ok {
+            return true;
+        }
+        from = at + 1;
+    }
+    false
+}
+
 /// Find all direct scripture references in `text`. Returns them left-to-right.
 pub fn detect_direct(text: &str) -> Vec<RefMatch> {
     let norm = normalize(text);
@@ -3079,6 +3176,71 @@ fn cosine(query: &[(String, f32)], doc: &HashMap<String, f32>) -> f32 {
 
 #[cfg(test)]
 mod tests {
+
+    // ── RG-135 · the translation the speaker named ─────────────────────────
+    mod named_translation_tests {
+        use super::super::named_translation;
+
+        #[test]
+        fn the_field_sentence_that_produced_this_row() {
+            // FIELD-2026-09-13 §2, verbatim in shape: the preacher named the
+            // Passion Translation and Relay put the King James Version on the wall
+            // at 0.88, wearing the same badge as the seven correct fires around it.
+            assert_eq!(
+                named_translation("it says here in the passion translation hebrews 11 verse 19"),
+                Some("TPT".into())
+            );
+        }
+
+        #[test]
+        fn the_longest_name_wins_so_a_prefix_cannot_answer_for_it() {
+            // "new king james" contains "king james". A shorter form answering
+            // first would report the wrong translation, which is worse than
+            // reporting none: it would put a confident, incorrect caveat on a fire.
+            assert_eq!(
+                named_translation("turn with me, new king james"),
+                Some("NKJV".into())
+            );
+            assert_eq!(named_translation("the king james says"), Some("KJV".into()));
+            assert_eq!(
+                named_translation("read it from the new revised standard"),
+                Some("NRSV".into())
+            );
+        }
+
+        #[test]
+        fn it_does_not_answer_from_inside_another_word() {
+            // The whole reason for the boundary test. "amp" sits inside "example"
+            // and "campus"; "msg" sits inside nothing a preacher says, which is why
+            // it is on the list and "message" is not.
+            assert_eq!(named_translation("for example, let us look"), None);
+            assert_eq!(named_translation("on the campus last week"), None);
+            assert_eq!(named_translation("the message of the gospel"), None);
+            assert_eq!(named_translation("i have a message for you"), None);
+        }
+
+        #[test]
+        fn an_ordinary_sermon_window_names_nothing() {
+            // The case that must stay silent, because a caveat on a correct fire is
+            // how an operator learns to ignore the line this exists to show them.
+            assert_eq!(
+                named_translation("turn with me to romans chapter eight verse twenty eight"),
+                None
+            );
+            assert_eq!(named_translation(""), None);
+            assert_eq!(named_translation("and the lord spoke to abraham"), None);
+        }
+
+        #[test]
+        fn it_reads_a_transcript_so_case_and_punctuation_do_not_matter() {
+            assert_eq!(
+                named_translation("The Passion Translation, Hebrews 11."),
+                Some("TPT".into())
+            );
+            assert_eq!(named_translation("(NIV)"), Some("NIV".into()));
+            assert_eq!(named_translation("...ESV..."), Some("ESV".into()));
+        }
+    }
 
     use super::*;
 
@@ -5667,6 +5829,7 @@ mod r4_audit {
 
         // The operator drags the two Settings sliders.
         crate::set_thresholds(
+            h.clone(),
             h.state::<crate::Routing>(),
             h.state::<crate::Db>(),
             Thresholds {

@@ -6,14 +6,15 @@
   // Thumbnails are the SAME TemplateRender the output window uses, so a card is
   // what the wall shows, not a drawing of it.
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
+  import Field from '../../ui/Field.svelte';
   import TemplateRender from '../../TemplateRender.svelte';
   import WorkspaceFrame from '../WorkspaceFrame.svelte';
-  import DeskStrip from './DeskStrip.svelte';
   import EmptyState from '../../ui/EmptyState.svelte';
   import Loading from '../../ui/Loading.svelte';
   import ErrorState from '../../ui/ErrorState.svelte';
   import { templateKind, kindsPresent, KIND_META, KIND_ORDER } from '../../templateKind.js';
   import { STARTERS, isLayered, regionsToLayers, CONTENT_KINDS, layerLabel, isKeyedTemplate } from '../../layers.js';
+  import { DEFAULT_TEMPLATE } from '../../templates.js';
   // THE ONE CAMERA PLATE, shared with Outputs (`ui/CameraPlate.svelte`). A KEYED
   // template — a lower third — paints a band and leaves the rest transparent,
   // because the rest is a camera the switcher supplies. Previewed against
@@ -257,6 +258,18 @@
   );
   $: sel = $templates.find((t) => t.id === selId) || null;
 
+  // A kind with no content look bound still wears something the moment it
+  // fires: the CONFIGURED DEFAULT (`cue_or_content_tpl`'s Rust-side fallback —
+  // Task 4), or the bundled floor when no default is configured either. "Not
+  // set" said nothing would be worn, which stopped being true the day that
+  // fallback landed; this names what will actually paint. Pure, so it can be
+  // tested without mounting the component.
+  function defaultLookLabel(templatesList, defaultId) {
+    const d = templatesList.find((t) => t.id === defaultId) || null;
+    return `Default · ${d?.name ?? DEFAULT_TEMPLATE.name}`;
+  }
+  $: unboundLookLabel = defaultLookLabel($templates, $defaultTemplateId);
+
   function sortList(list, mode, defaultId) {
     const a = [...list];
     if (mode === 'name') a.sort((x, y) => x.name.localeCompare(y.name));
@@ -307,16 +320,28 @@
   // row of chips that also SET it, two headings up. One of the two could act;
   // the other only agreed with it.
 
-  // New template = pick a starting point (a layer stack), save it, open the editor.
+  // New template = pick a starting point (a layer stack) and open the editor on
+  // it AS A DRAFT. Nothing is written here.
+  //
+  // It used to `saveTemplate` first and open the editor on the row it had just
+  // inserted, which made "what does Countdown Timer look like?" an act of
+  // creation: the only way to see a starter was to own one, and the only way to
+  // change your mind was to notice and go back and delete it. Because the shelf
+  // seeds BY NAME, the rows that accumulated sat beside the built-in of the same
+  // name and were indistinguishable from it in the grid.
+  //
+  // The draft carries `id: null`, which is exactly what `upsert_template` reads
+  // as "insert" — so Save in the editor is the same call this used to make, made
+  // by the person who meant it. `selId` is deliberately NOT moved: there is no
+  // row to select, and pointing the inspector at an id that does not exist is
+  // how the import path once showed a successful action as an empty panel.
   let newOpen = false;
-  async function newFrom(starter) {
+  function newFrom(starter) {
     newOpen = false;
     err = '';
     try {
       const t = starter.make();
-      const id = await saveTemplate({ name: starter.label, layout: t.layout, style: t.style });
-      selId = id;
-      dispatch('edit', { id });
+      dispatch('edit', { id: null, name: starter.label, layout: t.layout, style: t.style });
     } catch (e) { err = humanError(e); }
   }
   async function duplicate(t) {
@@ -482,12 +507,6 @@
   standfirst="Editing a template repaints every screen already wearing it."
   columns="var(--v-rail) minmax(0,1fr) var(--v-insp)">
   <svelte:fragment slot="head">
-    <!-- THE DESK STRIP. Themes moved INTO this workspace (docs/REBRAND.md §2);
-         the shell's strip carries workspaces, and Themes is a desk within
-         Templates rather than a workspace beside it. Nothing became
-         unreachable: every control the Themes tab carried is still rendered,
-         one press away. -->
-    <DeskStrip desk="templates" on:desk />
     <input type="file" accept=".json,application/json" bind:this={fileInput} on:change={onImportFile} style="display:none" />
     <button class="r-btn ghost sm" on:click|stopPropagation={() => fileInput.click()}>Import</button>
     <span class="tg-newwrap">
@@ -558,10 +577,15 @@
         {:else}
           <!-- Not a disabled button. There is nothing for this row to select, and
                a control an operator can press and learn nothing from is worse
-               than a line of text that states the fact. -->
+               than a line of text that states the fact. It used to say "Not
+               set", which was true before the Rust half of this fix and false
+               after it: a kind with no binding wears the CONFIGURED DEFAULT
+               the moment it fires (`cue_or_content_tpl`), not nothing — so
+               this names that template instead of implying the screen goes
+               blank. -->
           <div class="rw-item tg-look tg-static">
             <span class="rw-itemname">{ck.label}</span>
-            <span class="tg-lookv unset">Not set</span>
+            <span class="tg-lookv unset">{unboundLookLabel}</span>
           </div>
         {/if}
       {/each}
@@ -573,10 +597,10 @@
     <div class="rw-panehead">
       <h2 class="rw-panettl">Templates</h2>
       <span class="rw-spring"></span>
-      <div class="tg-search">
-        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3" stroke-linecap="round"/></svg>
+      <Field class="tg-search">
+        <svelte:fragment slot="icon"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3" stroke-linecap="round"/></svg></svelte:fragment>
         <input placeholder="Search templates…" bind:value={q} aria-label="Search templates" />
-      </div>
+      </Field>
       <label class="tg-sort">
         <span class="r-lbl">Sort</span>
         <select class="r-select" bind:value={sort}>
@@ -949,12 +973,14 @@
      a contrast failure that only exists on hover is still a contrast failure. */
   .tg-newmi:hover .tg-newhint{ color:var(--v-dim); }
 
-  .tg-search{ display:flex; align-items:center; gap:7px; background:var(--v-bg); border:1px solid var(--v-line2);
-    border-radius:var(--v-r-sm); padding:0 9px; height:24px; flex:1 1 160px; max-width:260px; }
-  .tg-search:focus-within{ border-color:var(--v-sel-line); }
-  .tg-search svg{ color:var(--v-faint); flex:0 0 auto; }
-  .tg-search input{ flex:1; min-width:0; background:transparent; border:0; outline:none; color:var(--v-txt); font-size:var(--v-fs-b2); }
-  .tg-search input::placeholder{ color:var(--v-faint); }
+  /* POSITION ONLY — see `.ch-search` in Channels for the same note. This one is
+     the reason `.r-well` was given a body at all: its focus state drew
+     `--v-sel-line` and nothing else, which composited over the field's own ground
+     is rgb(55,86,130) and measures 2.28:1 against it, under WCAG 2.2 SC 1.4.11's
+     3:1 floor for a non-text focus indicator. The well's outline is a solid
+     `--v-sel`, 6.1:1 on the same ground. Its height was also 24px, which is not a
+     step this product publishes; it is the ladder's 26 now. */
+  :global(.tg-search){ flex:1 1 160px; max-width:260px; }
   .tg-sort{ display:flex; align-items:center; gap:7px; flex:0 0 auto; }
   .tg-sort .r-select{ width:auto; }  /* height is the shared control's; was 24px */
   .tg-viewtog{ display:flex; gap:2px; background:var(--v-bg); border:1px solid var(--v-line2);

@@ -2,7 +2,7 @@
 
 How the application is built and how the pieces fit together, end to end. For the *why* behind decisions see [DECISIONS.md](DECISIONS.md); for the entities, invariants, and event catalog see [DATA_MODEL.md](DATA_MODEL.md); for the visual/interaction system see [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md); for operating the app see [USER_GUIDE.md](USER_GUIDE.md); for the original brief see [SPEC.md](SPEC.md); for what is deferred see [KNOWN_ISSUES.md](KNOWN_ISSUES.md). The whole doc hierarchy is indexed in [README.md](README.md).
 
-Relay is **AI-assisted live presentation software for churches**. It listens to a live sermon, detects scripture references (direct quotes *and* paraphrases), and routes the right content to multiple independently-styled output screens in real time — built to sit **above** the AV chain (OBS, ATEM, ProPresenter) over NDI/HDMI/network, not replace it. Everything core runs **fully offline**.
+Relay is **AI-assisted live presentation software for churches**. It listens to a live sermon, detects scripture references (direct quotes *and* paraphrases), and routes the right content to multiple independently-styled output screens in real time — built to sit **above** the AV chain (OBS, ATEM, ProPresenter), not replace it. OBS, vMix and kiosk screens are reached over the local network; a projector or a switcher over HDMI, plus a converter on the SDI-only rack-mount ATEMs. NDI is parked, and no ATEM accepts NDI in any case ([OUTPUT_ROUTING.md](OUTPUT_ROUTING.md) §2). Everything core runs **fully offline**.
 
 ---
 
@@ -115,7 +115,7 @@ A cue is a row in `plan_items`: `{ cue_type, label, payload_json, template_id }`
 - **Per-content-type templates** — a cue can carry a `template_json` override (lyrics use the lyric template, scripture the scripture template); the output honors it, else the channel's own template. Still one renderer — the override is just data.
 - **No on-screen chrome for the congregation** — titles, section labels, and slide numbers stay in the operator UI and on stage/confidence monitors, never on the main output.
 
-**Countdown** rides the same renderer: `start_countdown` broadcasts a target epoch once; each output **ticks MM:SS locally** (a client-side interval), so there is zero per-second network traffic and the digits update in place without re-keying (no crossfade per tick). At zero the "begins in" label drops and only the done message ("Welcome") shows. A one-at-a-time guard prevents a second countdown starting while one runs.
+**Countdown** rides the same renderer: `start_countdown` broadcasts a target epoch once; each output **ticks MM:SS locally** (a client-side interval), so there is zero per-second network traffic and the digits update in place without re-keying (no crossfade per tick). At zero the label drops and only the done message shows; with no done message the figure reads `0:00`. **Both the label and the done message are payload the operator writes, and both default to nothing** — the label rides in `content.reference` and a template's `reference`-bound layer draws it, so a surface with no field for it (the dock's Start) sends none and the screens show the digits alone. The Planner is where a cue that wants words beside the clock says so. A one-at-a-time guard prevents a second countdown starting while one runs.
 
 `OutputContent` (the broadcast payload) carries: `reference, text, translation, media_url, media_kind, template_id, template_json, stage_note, countdown_to, countdown_done`. All render surfaces read from this one struct.
 
@@ -205,7 +205,7 @@ Frontend↔core contract. Commands are `invoke()` (camelCase JS args → snake_c
 > `qa-inventory.mjs` traces one hop further — to a control something actually renders.
 
 **Areas, which do not rot:** audio & STT · detection & routing · scripture search · outputs and
-channels · templates and themes · planner · lyrics and arrangements · library (saved scripture,
+channels · templates · planner · lyrics and arrangements · library (saved scripture,
 announcements, media) · service history and the service record · voice profiles · rooms ·
 service lock · update safety · diagnostics · models.
 
@@ -217,21 +217,45 @@ service lock · update safety · diagnostics · models.
 | `stt://transcript` | A whole-window transcript with `is_final`. **Deliberately one event, not two** — splitting it would be a second vocabulary for the same fact |
 | `stt://language_unstable` | Auto language detection is flapping, which the operator should know before blaming the AI |
 | `detection://match` | A candidate, with `matched_text` and `method` — so the operator can see *which kind* of claim is being made ([DECISIONS.md](DECISIONS.md) §21) |
+| `detection://thresholds` | The gate moved: `auto_fire`, `suggest`, and the dial position they map back to through `to_sensitivity`, so a listener never re-derives the inverse and the two directions cannot drift. **Five things in Rust move the gate and until 2026-09-17 not one of them said so** — `apply_thresholds`, `apply_profile` and `record_feedback` — while Live's dial was read once at `onMount` into a component-local `let` on the one card the workspace router never rebuilds. So Settings moved the gate and Live showed the old number for the rest of the session, Live moved it and the next profile save silently reverted it from Settings' stale copy, and the router's own self-calibration drifted the dock stale with nobody touching anything. Rule 35 on the one control governing what the AI may put on a wall unasked; `hardrules.test.js` fails on a sixth writer that does not announce |
 | `output://content` · `output://clear` · `output://black` | The three things a screen can be told |
 | `output://panic_failed` | A panic control that did **not** achieve what it claimed ([DECISIONS.md](DECISIONS.md) §20) |
+| `output://error` | A LAN server could not bind, so every networked output is dead at once: OBS browser sources, kiosk screens, the preacher's stage monitor. It used to be an `eprintln!` nobody saw, and the operator's only clue was that last week's screens never came up |
+| `output://transition` | Which transition a screen should use for its NEXT change. Configuration rather than content, so it paints nothing on its own and is deliberately not rehearsal-gated: gating it would leave every screen still wearing the transition from before the rehearsal once the operator went live |
+| `output://background` | The standing background — the church's own picture, behind everything — went up or came down (`{media_url, media_kind}` or null). A SECOND payload beside the content, not a field on it, which is what lets scripture and a backdrop be on a wall at the same time (DECISIONS §94). Rehearsal-gated like the content it sits under; kiosk and OBS clients get the hub frame of the same name, retained in its own slot and replayed on hello. A `clear` or a `black` takes it with them and sends no frame of its own to do so |
 | `nav://blocked` | A nav that could not move, and which of the four reasons it was |
 | `template://updated` | A template changed; every surface re-renders from one engine |
 | `model://progress` · `done` · `error` · `cancelled` | The in-app STT model download. **`done` has no listener on purpose** — `download_model` resolves when the file is installed and verified, so the command's own return *is* the completion signal; a listener as well would handle it twice |
+| `output://channel_roles` | What each screen is FOR — channel ids against `main`/`stage` (DECISIONS §89). Configuration, so it paints nothing; what it decides is whether the NEXT Stage Message is accepted, which is filtered at the receiving page because the kiosk hub records nothing about who connected (§35). Emitted for native output windows because the hub frame reaches only browser sources, and a projector and an OBS source disagreeing about which of them is the stage is the "guarantee kept on one door" mistake |
+| `output://screen_state` | The operator took ONE screen out of the wall, or put it back — `{ channel, state }` where `state` is `clear`, `black` or `live`. Native output windows get this event and filter it by their own channel; kiosk and OBS clients get the hub frame of the same name, which carries the WHOLE set and is retained and replayed on hello AFTER the screen frame, so a browser source that restarted mid-sermon comes back down rather than bringing itself back up. It is **not** a panic control: `clear_screens` and `blackout` still address every screen and ask nothing about which (rule 15, DECISIONS §20), and the split is in the call |
+| `output://default_template` | The operator's configured fallback template changed. Native windows get this event; kiosk and OBS clients get the hub frame of the same name, which is cached and replayed on hello, because a browser source has no database to read the setting from. Landed in wave 2 and reached neither this table nor CLAUDE.md's count until RG-155 |
 | `channel://retemplate` | A screen's template was reassigned. The native output filters it by its own `channel` id, which is why a template swap is live and needs no new URL (DECISIONS §29) |
 | `rehearsal://changed` | Rehearsal was turned on or off. Pushed rather than polled, because every surface must agree about it at the same instant |
 
 Networked clients get the content events as JSON frames over the WS hub
-(`{kind:"content"|"clear"|"black"|"stage_next"|"stage_alert"|"channel_template", …}`), and send
-exactly three kinds back — `hello`, `beat`, `rendered` — none of which can carry content
-([SECURITY.md](SECURITY.md) T4).
+(`{kind:"content"|"clear"|"black"|"stage_next"|"stage_alert"|"template"|"transition"|"channel_template"|"default_template"|"channel_roles"|"timer", …}`),
+and send exactly three kinds back — `hello`, `beat`, `rendered` — none of which can carry
+content ([SECURITY.md](SECURITY.md) T4).
 
-**A client that says `hello` is answered with three things: its template, the custom
-themes, and WHAT IS ON THE SCREENS RIGHT NOW.** The last of those is the retained
+**Reproduce that list rather than trusting it**, from `channels.rs`'s own `FRAME_VERDICTS`
+rather than from either side of a merge. It named six of the eleven for a while —
+`template`, `transition` and `default_template` were each published, answered for in
+`FRAME_VERDICTS` and in `r6-contracts.test.js`, and missing from this sentence, so the
+prose was short by three before `timer` and `channel_roles` arrived in two separate waves
+and made it five. The two tests are the register; this line is a summary of it, and a
+summary that drifts is how the enumeration stopped being one.
+`channels::tests::every_kind_this_module_publishes_has_an_explicit_verdict` reads the
+module's own source and fails on any published kind with no verdict.
+
+**A client that says `hello` is answered with two things that decide what it shows: its
+template, and WHAT IS ON THE SCREENS RIGHT NOW.** It was three — the operator's custom
+themes were sent as well — until themes were folded into templates
+([DECISIONS.md](DECISIONS.md) §87); a template now carries its whole look, so there is
+nothing left for a browser source with no database to resolve it against. A third frame
+is sent when, and only when, the operator has a live transition override in force
+(§84): configuration rather than content, so it paints nothing on its own, and it is
+sent BEFORE the retained frame so a screen joining late is not the only one in the
+building still cutting. The second of the two is the retained
 frame — the most recent `content`, `clear` or `black` — kept by `KioskHub` so a
 screen that joins in the middle of a service is not blank until the next fire
 (DECISIONS §68, CLAUDE.md rule 43). `stage_next` is deliberately not retained: it is
@@ -240,6 +264,23 @@ a monitor-only extra and must not stand in for the content it accompanies. Neith
 moment, and a tablet rejoining ten minutes later must not be handed it. Because
 `clear` and `black` are published through the same door, joining late can never undo
 a panic control.
+
+**The programme timers are replayed too, and in their own slot.** A `Stage`-scoped
+timer publishes no content frame at all — which is exactly why it survives a verse,
+a song or a notice — so it reaches a stage tablet as a `timer` frame carrying the
+whole stage-visible set, and `KioskHub` keeps the last one in `last_timers`. It is a
+STATE and not a moment, which is the difference from `stage_alert`: it is still
+running when the tablet comes back, and a phone that locked its screen mid-sermon
+would otherwise get no clock until the operator next touched a timer. **It is never
+retained as the screen frame**, for the same reason as `transition` and the two
+template frames: `last_screen` holds one frame and the newest wins, so a clock there
+would replace the verse and the next screen to join would be sent the programme over
+a blank wall. **The full hello order is template, `default_template`, `channel_roles`, `transition`,
+`timer`, then the retained screen frame last** — every configuration frame first, the
+reading last, so a late-joining tablet never flashes a clock or a role map over it. Two
+waves added a slot to that sequence independently and neither displaced the rule: the
+screen frame is still sent last, and nothing but `content`, `clear` and `black` is ever
+retained as one.
 
 **Every kind needs a verdict per client, and two of them are `false` on purpose.** `stage_next`
 and `stage_alert` are for the platform, not the room: the first is the verse coming up, the
@@ -253,10 +294,13 @@ live — it fails on any new hub message that no client has an explicit answer f
 
 - **One store** — `src/lib/stores/capture.js` — holds all writable stores (`capture`, `transcript`, `detections` = pending suggestions, `live` = what's on screen, `templates`, `screenBlack`, `panicError`, `serviceLock`) plus every command wrapper and event listener. The file's header states which wrappers **throw** and which **swallow**, and a test holds each one in its group — a contract stated only in a comment was false for `stopCapture` for as long as the comment existed.
 - **`TemplateRender.svelte`** is the single renderer (see §4).
-- **Tabs** — **Live · Outputs · Templates · Themes · Library · Planner · Settings · Help.** There is **no Console tab**: `Live` *is* the console, and the plan runs there, because an operator running a plan on a separate tab could not see the AI's suggestions — and the preacher going off-script is the entire product. (The Outputs tab's internal key is still `channels` and its file is `Channels.svelte`; the label is what an operator reads.)
+- **Workspaces** — **Live · Library · Planner · Templates · Outputs · Settings**, in that order
+  (docs/REBRAND.md §2). Themes was a tab here, then a desk inside Templates, and is now neither:
+  it was folded into the template model (DECISIONS §87). **Help** left the strip and is still a
+  real route, reached from Settings and from the cheatsheet. There is **no Console tab**: `Live` *is* the console, and the plan runs there, because an operator running a plan on a separate tab could not see the AI's suggestions — and the preacher going off-script is the entire product. (The Outputs tab's internal key is still `channels` and its file is `Channels.svelte`; the label is what an operator reads.)
 - **Sub-surfaces** — `Library` (Scripture / Lyrics / Media / Announcements / History, plus `SongEditor`, `ImportReview`, the arrangement editor and the Sunday report), `Settings` (11 sections, including **Diagnostics** — which holds the readiness screen, inside Settings and not on the tab bar — **Scripture & Languages** and **Privacy & Advanced**); plus standalone `Output` and `Stage` pages.
 - **Cross-cutting shell state** — the panic bar, the rehearsal band, the update banner, and the one-line **degraded** state are mounted once in `App.svelte`, on every tab, never per view. So is `shortcuts.js`, the single global keydown listener.
-- **Design system** — global `--v-*` tokens in `src/app.css`; every view shares them, and the four promise-carrying colours are defined once (amber = on air, amethyst = rehearsal, cyan = a guess, grey = cued).
+- **Design system** — global `--v-*` tokens in `src/tokens.css` (imported by `src/app.css`, and imported directly by the output and stage pages, which take the palette and none of the console's rules); every view shares them, and the four promise-carrying colours are defined once (amber = on air, amethyst = rehearsal, cyan = a guess, grey = cued).
 
 ---
 
@@ -305,7 +349,7 @@ These were learned the hard way (hours-long freezes/crashes). Do not regress the
 
 Not faked — clearly bounded. The full deferral + technical-debt register is [KNOWN_ISSUES.md](KNOWN_ISSUES.md); the highlights:
 
-- **NDI output** — needs the proprietary SDK; `open_ndi_output` returns a clear error. NDI + HDMI only; **no native SDI** (served by existing ATEM/converter hardware).
+- **NDI output** — needs the proprietary SDK; `open_ndi_output` returns a clear error. HDMI only today; **no native SDI**, served by a **converter** rather than by a switcher. This line used to read "existing ATEM/converter hardware": no ATEM ingests NDI, and a rack-mount ATEM takes SDI inputs only, so a small HDMI-to-SDI box is the bridge ([OUTPUT_ROUTING.md](OUTPUT_ROUTING.md) §2).
 - **Neural paraphrase embedder** — TF-IDF is the current seam behind `SemanticIndex::top_k`.
 - **African-language STT fine-tunes** — base multilingual model is weak on Yoruba/Hausa; fine-tunes pending.
 - **Document (PDF/PPTX) rendering** — stored as media pointers; slide extraction/presentation is a later phase.

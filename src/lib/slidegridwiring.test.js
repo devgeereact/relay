@@ -93,7 +93,7 @@ describe('the grid is rendered, and its presses go through the arbiter', () => {
     const watch = src.slice(src.indexOf('unsubLive = live.subscribe('), src.indexOf('unsubLive = live.subscribe(') + 500);
     expect(watch).toMatch(/if \(wasLive && !now\) \{/);
     expect(watch).toMatch(/gridPress\.cancel\(\);/);
-    // The preacher's "up next" must not outlive the content it was about, and
+    // The preacher's "Up Next" must not outlive the content it was about, and
     // that one reports its own failure rather than going quiet.
     expect(watch).toMatch(/setStageNext\(null, null\)/);
     expect(watch).toMatch(/\.catch\(/);

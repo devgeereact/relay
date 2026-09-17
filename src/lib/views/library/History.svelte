@@ -1,5 +1,7 @@
 <script>
   import { humanError } from '../../errors.js';
+  import Button from '../../ui/Button.svelte';
+  import { whyDisabled, ENGINE_OFF, BUSY } from '../../ui/whydisabled.js';
   import { onMount } from 'svelte';
   import { showsConfidence } from '../../detect.js';
   import { sundayReport, replayAt, weekOnWeek, describeTrend } from '../../report.js';
@@ -155,7 +157,15 @@
   // `asked` is the third fact the array cannot carry. `readErrors.listServices` is
   // the reason, kept by `guardedRead` instead of discarded.
   let asked = false;
+  // Declared beside `refresh` because `refresh` clears the first of them — see
+  // `stopRecording`, further down, for what they are for.
+  let endErr = '';
+  let ending = false;
   async function refresh() {
+    // A failure line belongs to the press that caused it. Nothing else cleared
+    // `endErr`, so a refusal could sit under the buttons after the service had
+    // been ended from the dock — a stale accusation on a screen that is now right.
+    endErr = '';
     services = await listServices();
     asked = true;
     page = 0;
@@ -242,9 +252,22 @@
     detail = null;
     refresh();
   }
+  // `endService` is GROUP 1 — it throws. It used to swallow, and this function
+  // called `refresh()` unconditionally afterwards: a refused `end_service`
+  // repainted the identical list under the identical button, which is as close to
+  // a claim of success as a screen can get without words. A failure now says so
+  // beside the button that caused it, and the list is NOT repainted — an
+  // unchanged surface is the disguise, not the report.
   async function stopRecording() {
-    await endService();
-    refresh();
+    ending = true;
+    endErr = '';
+    try {
+      await endService();
+      refresh();
+    } catch (e) {
+      endErr = humanError(e);
+    }
+    ending = false;
   }
 </script>
 
@@ -573,15 +596,20 @@
     <div class="lib-actionbar">
       <p class="r-lead">Every processed service is recorded locally to SQLite — transcript, fired detections, and operator overrides — and read back here.</p>
       <div class="lib-actions">
-        <button class="r-btn ghost" on:click={refresh} disabled={!$capture.available}>
+        <Button variant="ghost" on:click={refresh} disabled={!$capture.available}
+          disabledReason={whyDisabled([!$capture.available, ENGINE_OFF])}>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
           Refresh
-        </button>
-        <button class="r-btn danger" on:click={stopRecording} disabled={!$capture.available}>
+        </Button>
+        <Button variant="danger" on:click={stopRecording} disabled={!$capture.available || ending}
+          disabledReason={whyDisabled([!$capture.available, ENGINE_OFF], [ending, BUSY])}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
-          End current service
-        </button>
+          {ending ? 'Ending…' : 'End current service'}
+        </Button>
       </div>
+      {#if endErr}
+        <p class="lib-enderr" role="alert">The service was not ended — {endErr}</p>
+      {/if}
     </div>
 
     {#if !$capture.available}
@@ -733,6 +761,11 @@
   .lib-actions{ display:flex; gap:10px; flex-shrink:0; }
 
   .lib-warn{ margin-top:-6px; }
+  /* The one failure this bar can report. Full width so it wraps onto its own
+     line under the buttons rather than squeezing the lead paragraph, and ROSE —
+     a refusal, never amber, which means on air and nothing else. */
+  .lib-enderr{ flex:0 0 100%; margin:0; font-size:var(--v-fs-lbl);
+    color:var(--v-rose); word-break:break-word; }
 
   /* ── Stat cards ── */
   .lib-stats{ display:grid; grid-template-columns:repeat(3, 1fr); gap:14px; }

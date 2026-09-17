@@ -1,5 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
+  import Button from '../ui/Button.svelte';
+  import { whyDisabled, ENGINE_OFF, SERVICE_LOCKED, MIC_LIVE, BUSY } from '../ui/whydisabled.js';
   import { rangeFill } from '../rangefill.js';
   import { get } from 'svelte/store';
   import ModelSetup from '../ModelSetup.svelte';
@@ -9,15 +11,17 @@
   import History from './library/History.svelte';
   import Dashboard from './Dashboard.svelte';
   import { locale, setLocale, LOCALES, t } from '../i18n.js';
-  import { restartSetup, setSession } from '../session.js';
+  import { restartSetup, setSession, session } from '../session.js';
   // THE shortcut table — one array, shared with the keydown handler, the
   // cheatsheet, Help and `sectionkeys.js::RESERVED`. See the note further down.
   import { SHORTCUTS } from '../shortcuts.js';
   import { humanError } from '../errors.js';
   import { settingValue, CHECKING } from '../settingvalue.js';
-  import { safeMode, setSafeMode } from '../boot/boot.js';
+  import { safeMode } from '../boot/boot.js';
   import { checkForUpdate, updateAvailable, updateChannel, describeChannel } from '../updater.js';
   import {
+    applySafeMode,
+    safeModeError,
     listVoiceProfiles,
     createVoiceProfile,
     updateVoiceProfile,
@@ -45,7 +49,7 @@
     Math.round(
       (Object.keys(CATALOGUES[code] ?? {}).filter((k) => !k.startsWith('_')).length / TOTAL) * 100,
     );
-  import { capture, meter, templates, initAudio, startCapture, stopCapture, setThresholds, setSttLanguage, setInputDevice, listTranslations, getActiveTranslation, setActiveTranslation, localIp, loadTemplates, getContentTemplates, setContentTemplate, getCrashReporting, setCrashReporting, serviceTargetMinutes, loadServiceTarget, setServiceTarget, latencyReport, latencyReset, latencySetEnabled, serviceLock, loadServiceLock, setServiceLock, rooms, loadRooms, saveRoom, useRoom, deleteRoom,
+  import { capture, meter, templates, initAudio, startCapture, stopCapture, setThresholds, setSttLanguage, setInputDevice, listTranslations, getActiveTranslation, setActiveTranslation, localIp, loadTemplates, contentTemplates, loadContentTemplates, setContentTemplate, getCrashReporting, setCrashReporting, serviceTargetMinutes, loadServiceTarget, setServiceTarget, countdownWarnMs, loadCountdownWarnMs, setCountdownWarnMs, latencyReport, latencyReset, latencySetEnabled, serviceLock, loadServiceLock, setServiceLock, rooms, loadRooms, saveRoom, useRoom, deleteRoom,
     listOutputChannels, setChannelDisplay, activeVoiceProfile, languageReport, exportDiagnostics, readErrors,
     demoStatus, loadDemoContent, removeDemoContent } from '../stores/capture.js';
   import Loading from '../ui/Loading.svelte';
@@ -53,6 +57,7 @@
   import { captureRoom, observedNote, applyRoom, describeApply } from '../rooms.js';
   import { snapshotPath, KEEP_SNAPSHOTS } from '../updater.js';
   import { diagnose, drift } from '../latency.js';
+  import { CONTENT_KINDS } from '../layers.js';
 
   // ─────────────────────────────────────────────────────────────────────────
   // SECTION NAV — ELEVEN SECTIONS, MERGED FROM EIGHTEEN (docs/REBRAND.md §11).
@@ -91,6 +96,23 @@
     { key: 'privacy',     label: 'Privacy & Advanced',     desc: 'What is on this machine, what can leave it, and the one thing that does.', icon: 'shield' },
   ];
   let section = 'general';
+  // ── A CONTROL THAT POINTED HERE MAY SAY WHERE ─────────────────────────────
+  //
+  // Eleven sections behind one tab, and every control that meant one of them
+  // could only say "Settings". `Change sensitivity in Settings` named a control
+  // and landed on General; `All history` pointed at the Library, where History
+  // has not lived since it moved in here.
+  //
+  // One-shot, and cleared as soon as it is used: `session.settingsSection` is an
+  // instruction from the control that was just pressed, not a resume point. An
+  // operator who opens Settings themselves should land where they left it.
+  // Checked against `SECTIONS` rather than trusted, because a stale key persisted
+  // from an older layout would otherwise render an empty pane.
+  onMount(() => {
+    const want = get(session)?.settingsSection;
+    if (want && SECTIONS.some((s) => s.key === want)) section = want;
+    if (want) setSession({ settingsSection: null });
+  });
   $: activeSection = SECTIONS.find((s) => s.key === section) ?? SECTIONS[0];
 
   const ICONS = {
@@ -158,14 +180,67 @@
   // ─────────────────────────────────────────────────────────────────────────
   let crash = { enabled: false, dsn: '' };
   let crashMsg = '';
+  // ── THE DSN NEEDS A COMMIT OF ITS OWN ──────────────────────────────────────
+  //
+  // `setCrashReporting` had exactly one caller, the switch. With the switch
+  // already ON, editing the DSN wrote only this local object: the field showed
+  // the new address, the engine went on reporting to the old one, and leaving
+  // Settings and coming back re-read `get_crash_reporting` and silently put the
+  // old address back. The one control in Relay that decides where data leaves
+  // this machine could be changed and keep pointing somewhere else.
+  //
+  // A SAVE BUTTON, not commit-on-blur. Blur fires on any focus change, so a
+  // half-typed or mis-pasted address would become the live destination with no
+  // moment at which the operator said so — and crash reports that have gone to
+  // the wrong endpoint cannot be recalled. The button's own failure mode is an
+  // edit that is never saved, and that one can be made VISIBLE: `dsnDirty` marks
+  // the field as unsaved, so "I typed it and nothing happened" is on the screen
+  // rather than discovered a week later.
+  let savedDsn = '';
+  let dsnBusy = false;
+  $: dsnDirty = (crash.dsn ?? '').trim() !== savedDsn.trim();
   // The Privacy screen reads the LIVE value, never a literal. A page that says
   // "off" because somebody typed "off" is worth less than no page at all — it is
   // the one row a person opens it to check.
   $: crashOn = !!crash.enabled;
+  /** Take whatever the backend LANDED on, never what was asked for (rule 15). */
+  function acceptCrash(landed) {
+    // Guarded on both halves. `$: crashOn = !!crash.enabled` runs on every
+    // assignment, so a null here takes the whole section down rather than showing
+    // a wrong word.
+    crash = landed ?? { enabled: false, dsn: '' };
+    savedDsn = landed?.dsn ?? '';
+  }
+  // A READ THAT FAILED IS NOT AN EMPTY ADDRESS.
+  //
+  // `getCrashReporting` is GROUP 2 and its safe default is `{ enabled:false, dsn:'' }`
+  // — so a failed read on mount put `savedDsn = ''` on this page, and flipping the
+  // switch would then send `('', true)`. `set_crash_reporting` writes the string
+  // unconditionally, so the stored DSN was DESTROYED by a control the operator
+  // pressed to turn reporting on. Nothing leaked (`telemetry::enable` returns early
+  // on an empty DSN), and losing the one address a church configured is bad enough.
+  // While the reason is recorded, both writing controls stand down and say why.
+  $: crashReadFailed = $readErrors.getCrashReporting ?? null;
   async function toggleCrash(enabled) {
     crashMsg = '';
+    // THE DRAFT IS THE OPERATOR'S, AND A SWITCH IS NOT A DISCARD.
+    // `acceptCrash` takes the whole landed object, `crash.dsn` included, so a flip
+    // silently replaced a half-typed address with the saved one — and took the
+    // "Not saved yet" mark with it, which is the instrument that exists so an edit
+    // that went nowhere is visible rather than discovered a week later.
+    const draft = crash.dsn ?? '';
     try {
-      crash = await setCrashReporting(enabled, crash.dsn);
+      // `savedDsn`, NOT `crash.dsn`. The switch is the operator saying yes to
+      // WHETHER, and it is not their yes to WHERE. Sending the bound field here
+      // let a half-typed address that the page was calling "not saved yet" become
+      // the live destination the moment the switch was flipped — `set_crash_reporting`
+      // persists the string and calls `telemetry::enable` on it in the same breath,
+      // and reports already sent cannot be recalled. Changing the address is
+      // `saveDsn`'s job and has its own button.
+      acceptCrash(await setCrashReporting(enabled, savedDsn));
+      // Put the draft back where the operator left it. `savedDsn` is untouched, so
+      // `dsnDirty` re-marks it and Save address is still the only way to commit it.
+      if (draft.trim() !== savedDsn.trim()) crash = { ...crash, dsn: draft };
       crashMsg = crash.enabled
         ? 'Crash reporting on.'
         : enabled
@@ -175,18 +250,37 @@
       crashMsg = humanError(e);
     }
   }
+  /** Commit the address WITHOUT changing whether reporting is on. */
+  async function saveDsn() {
+    dsnBusy = true;
+    crashMsg = '';
+    try {
+      acceptCrash(await setCrashReporting(crashOn, crash.dsn));
+      crashMsg = savedDsn
+        ? crash.enabled
+          ? 'Saved. Crash reports now go to that address.'
+          : 'Saved. Crash reporting is still off — the switch below turns it on.'
+        : 'The address was cleared. Crash reporting cannot run without one.';
+    } catch (e) {
+      crashMsg = humanError(e);
+    }
+    dsnBusy = false;
+  }
 
   // Per-content-type default templates (ProPresenter-style).
-  const contentTypes = [
-    { key: 'scripture', label: 'Scripture' },
-    { key: 'song', label: 'Lyrics' },
-    { key: 'media', label: 'Media' },
-    { key: 'announce', label: 'Announcements' },
-  ];
-  let ctMap = { scripture: null, song: null, media: null, announce: null };
+  //
+  // THE KINDS AND THE MAP BOTH COME FROM ELSEWHERE, and neither used to.
+  // `contentTypes` was a private four-entry list that predated the timer, so the
+  // Countdown look could be set in the Templates gallery and was invisible here;
+  // `ctMap` was a private object with the same four keys, refilled once on mount,
+  // over the top of a store whose own comment says three surfaces used to hold
+  // private copies of exactly this and silently disagreed. `CONTENT_KINDS`
+  // (lib/layers.js) is the canonical list the gallery and the editor render, and
+  // `$contentTemplates` is the one store `setContentTemplate` writes — so this
+  // surface now cannot drift from either.
+  const contentTypes = CONTENT_KINDS;
   async function pickCt(kind, val) {
     const id = val ? parseInt(val, 10) : null;
-    ctMap[kind] = id;
     await setContentTemplate(kind, id);
   }
 
@@ -222,13 +316,32 @@
       : ($templates.find((t) => t.id === ch.template_id)?.name ?? `template #${ch.template_id}`);
 
   // Threshold sliders push to the router; keep the invariant auto_fire ≥ suggest.
+  //
+  // A SLIDER THAT DID NOT TAKE MUST SAY SO. `setThresholds` throws now (it was the
+  // last swallowing door onto the gate), and a rejection here left the store
+  // unchanged, which left the bound value unchanged, which meant Svelte never
+  // rewrote the DOM property — so the thumb stayed exactly where it was dragged,
+  // over a gate that had not moved, with nothing on the page saying otherwise.
+  let gateErr = '';
+  async function pushThresholds(auto_fire, suggest) {
+    gateErr = '';
+    try {
+      await setThresholds(auto_fire, suggest);
+    } catch (e) {
+      gateErr = humanError(e);
+      // Put the thumbs back where the ENGINE is, not where the drag ended. The
+      // store is the only thing that knows, and reassigning it is what forces the
+      // DOM property back.
+      capture.update((st) => ({ ...st, thresholds: { ...st.thresholds } }));
+    }
+  }
   function onAuto(v) {
     const suggest = Math.min($capture.thresholds.suggest, v);
-    setThresholds(v, suggest);
+    return pushThresholds(v, suggest);
   }
   function onSuggest(v) {
     const suggest = Math.min(v, $capture.thresholds.auto_fire);
-    setThresholds($capture.thresholds.auto_fire, suggest);
+    return pushThresholds($capture.thresholds.auto_fire, suggest);
   }
 
   // --- live audio input (real cpal capture through the Rust engine) ---
@@ -496,12 +609,48 @@
   async function refreshOutputs() {
     outDevices = await listOutputDevices();
   }
+  // WHAT THE BUTTON FOUND. Pressing *Detect speakers* used to re-render this
+  // block pixel for pixel in three different situations — the operator declined
+  // the prompt, the machine has no input device to ask about, and it worked and
+  // this computer genuinely has one speaker — because `ensureDeviceAccess`
+  // returned a bare `false` for the first two and the list stayed empty for the
+  // third. `outMsg` is what happened, `outMsgBad` whether that is a refusal
+  // (rose) or merely news (the ordinary foot colour). Rose, never amber: nothing
+  // on this page is on air.
+  let outMsg = '';
+  let outMsgBad = false;
   /** Unlock real speaker names by tripping the media permission once. */
   async function detectSpeakers() {
     outBusy = true;
+    outMsg = '';
+    outMsgBad = false;
     try {
-      await ensureDeviceAccess();
+      const access = await ensureDeviceAccess();
       await refreshOutputs();
+      if (access.ok) {
+        // Granted. Whether anything NEW appeared is the second question, and it
+        // is the one the operator actually pressed the button to settle.
+        outMsg = outDevices.length
+          ? `Found ${outDevices.length} speaker${outDevices.length === 1 ? '' : 's'} besides the system default.`
+          : 'Microphone access granted — this computer reports no speakers besides the system default. There is nothing more to choose, and video sound is already going to the right place.';
+      } else if (access.reason === 'denied') {
+        outMsgBad = true;
+        // The way back is the point. A refusal that only says "refused" leaves an
+        // operator with a dead button and no next action.
+        // BOTH PLATFORMS. Relay ships Windows from day one, and this is new copy
+        // whose entire job is telling the operator where to go — a macOS-only
+        // path sends half of them to a menu that does not exist.
+        outMsg =
+          'Microphone access was refused, so the speaker names stay hidden. Turn Relay back on — on macOS in System Settings → Privacy & Security → Microphone, on Windows in Settings → Privacy & security → Microphone — then press Detect speakers again.';
+      } else if (access.reason === 'no-input') {
+        outMsg =
+          'This computer has no microphone to ask about, so the speaker names stay hidden. Plug an input in, or leave video sound on the system default.';
+      } else if (access.reason === 'unsupported') {
+        outMsg = 'This webview cannot ask for microphone access at all.';
+      } else {
+        outMsgBad = true;
+        outMsg = 'Asking for microphone access failed, and the reason was not one Relay recognises.';
+      }
     } finally {
       outBusy = false;
     }
@@ -570,7 +719,74 @@
     });
   // Edit a COPY. Binding the row itself would show edits that were never saved —
   // and on this form an unsaved "change" reads as a calibration that is live.
-  const openEditor = (p) => (editing = { ...p });
+  // ── THE EDITOR OPENS ON THE ROW AS IT IS NOW ──────────────────────────────
+  //
+  // `profiles` was loaded on mount and refreshed only inside `profileAction`.
+  // `onAuto`/`onSuggest` move the gate and, through `apply_thresholds`, rewrite
+  // the active profile's row — and they do not refresh. So: drag the slider at the
+  // top of this page, scroll down, press Edit, press Save profile, and
+  // `update_voice_profile` compares the STALE figure against the already-updated
+  // row, concludes the dial moved, and re-derives the gate from it. The operator's
+  // change of thirty seconds earlier, on this same screen, is silently reverted.
+  //
+  // One await closes it. The editor is a working copy of a row, so the only
+  // question is which row — and the answer must be the current one.
+  const openEditor = async (p) => {
+    try {
+      await refreshProfiles();
+    } catch {
+      /* fall back to what is already loaded rather than refusing to open */
+    }
+    editing = { ...(profiles.find((r) => r.id === p.id) ?? p) };
+  };
+
+  // ── Recognition language (RG-138) ───────────────────────────────────────────
+  //
+  // TWO TABS, ONE FACT. This control lives in Scripture & Languages; the voice
+  // profile editor above lives in AI & Detection, and its Language select is the
+  // same column. There is exactly one store — `voice_profiles.language` — and
+  // `set_stt_language` writes to whichever profile is ACTIVE, which is why the
+  // line under the select names it rather than leaving the operator to find out.
+  //
+  // `refreshProfiles()` afterwards is not cosmetic: `profiles` is what the editor
+  // opens a copy FROM, so a stale copy saved later would quietly put the old
+  // language back.
+  let langErr = '';
+  let langBusy = false;
+  $: activeProfile = profiles.find((p) => p.is_active) ?? null;
+
+  async function pickLanguage(code) {
+    langBusy = true;
+    langErr = '';
+    try {
+      const landed = await setSttLanguage(code);
+      await refreshProfiles();
+      // AND THE OPEN EDITOR FOLLOWS THE FACT — the comment above claims this and
+      // `refreshProfiles()` alone does not deliver it.
+      //
+      // The sections of this page are `{#if}` branches of ONE component, so
+      // `editing` — a working copy taken by `openEditor` — survives a walk to
+      // Scripture & Languages and back. An operator who opened the editor to nudge
+      // sensitivity, came here, pinned Yoruba, went back and pressed Save
+      // calibration sent the STALE language: `update_voice_profile` wrote it and
+      // called `apply_profile`, so the database AND the live engine silently
+      // reverted, and nothing said a word. Pinning the language by hand is the
+      // RG-116 mitigation; a save that quietly undoes it is rule 35.
+      //
+      // Only the LANGUAGE, and only on the profile the backend says it wrote to.
+      // Re-reading the whole row would throw away the unsaved edits the operator
+      // came back for, which is the opposite mistake.
+      const wrote = landed?.id ?? profiles.find((p) => p.is_active)?.id ?? null;
+      if (editing && wrote !== null && editing.id === wrote)
+        editing = { ...editing, language: code ?? null };
+    } catch (e) {
+      // GROUP 1 — it throws, and this is the surface that has to say so. Without
+      // this the select would sit on a language nothing was told about.
+      langErr = humanError(e);
+    } finally {
+      langBusy = false;
+    }
+  }
 
   // RMS on speech sits well below 1.0; scale so normal talking fills the meter.
   $: levelPct = Math.min(100, Math.round($meter.level * 320));
@@ -665,17 +881,12 @@
     updateMsg = '';
     try {
       const v = await checkForUpdate();
-      // The check can complete without having reached anything. Saying "you're on
-      // the latest version" after a failed check is the same lie the status row
-      // used to tell, moved into a button.
-      const ch = get(updateChannel);
-      updateMsg = v
-        ? `Relay ${v} is available.`
-        : ch.state === 'failed'
-          ? "Relay could not reach the update server, so it does not know whether there is a newer version. This is normal offline — if you are online, the update channel may be broken."
-          : ch.state === 'unavailable'
-            ? 'This build has no update channel.'
-            : "You're on the latest version.";
+      // The button used to compose its own sentence from ch.state here — the
+      // exact second surface rule 35 warns about, and the one that kept printing
+      // "You're on the latest version." about a refusal (mid-service) that never
+      // asked the server anything. `describeChannel` is the ONE place a channel
+      // state becomes words; the button goes through it too, same as the row.
+      updateMsg = v ? `Relay ${v} is available.` : describeChannel(get(updateChannel));
     } catch (e) {
       updateMsg = humanError(e);
     }
@@ -699,6 +910,10 @@
   // DECISIONS §69, and CLAUDE.md rule 15 in its quietest form.
 
   onMount(loadServiceTarget);
+  // Also loaded at the shell (App.svelte), because the dock reads the same rule
+  // on every tab. Re-read here so this page shows what is in the row rather than
+  // what this session happens to be holding.
+  onMount(loadCountdownWarnMs);
   onMount(async () => {
     // Session uptime — a real, honest number (this run of the app).
     bootAt = performance.now();
@@ -718,9 +933,11 @@
     try {
       await loadTranslations();
       activeTranslation = await getActiveTranslation();
-      crash = await getCrashReporting();
+      acceptCrash(await getCrashReporting());
       await loadTemplates();
-      ctMap = await getContentTemplates();
+      // Into the STORE, not a private copy. `loadContentTemplates` is the one
+      // reader that fills it, and every other surface subscribes.
+      await loadContentTemplates();
     } catch (e) {
       crashMsg = humanError(e);
     } finally {
@@ -885,6 +1102,35 @@
           </div>
         </div>
 
+        <!-- COUNTDOWN WARNING. How long before zero a countdown turns red, on
+             the wall, on the preacher's page and in the dock. One rule
+             (`layers.js::countdownWarning`), one number, and this is where it is
+             set — the comment above that rule used to say the threshold was
+             deliberately not a setting because the control belonged in a Settings
+             pass. This is it.
+
+             SECONDS in the field, milliseconds in the row: an operator says
+             "ninety seconds", nobody says "ninety thousand". The floor is five
+             seconds, because a window shorter than the eye takes to find the
+             screen is a colour that is never seen.
+
+             It is READ. `App.svelte` loads it at launch and `setCountdownWarnMs`
+             applies it to the rule, so this is not another of the seven controls
+             removed on 2026-09-10 for saving a preference nothing opened. -->
+        <div class="rw-nv">
+          <div class="s-nvtext">
+            <div class="rw-nvk">Countdown warning</div>
+            <p class="rw-nvnote">How long before zero a countdown turns red, on every screen showing it. A countdown shorter than ten times this warns for its last tenth instead, so a short one is not red for half its life.</p>
+          </div>
+          <div class="rw-nvctl s-lenctl">
+            <input class="r-input s-leninput" type="number" min="5" max="600" step="5"
+              value={Math.round($countdownWarnMs / 1000)}
+              on:change={(e) => setCountdownWarnMs(Number(e.target.value) * 1000)}
+              aria-label="Countdown warning in seconds" />
+            <span class="s-lenunit r-mono">sec</span>
+          </div>
+        </div>
+
         <!-- SAFE MODE. Moved here from Backup & Recovery, which is where it was
              least likely to be looked for: safe mode is not a backup and not a
              recovery, it is whether this copy of Relay is ARMED — the one switch
@@ -917,9 +1163,16 @@
               role="switch"
               aria-checked={$safeMode}
               aria-label="Safe mode"
-              on:click={() => setSafeMode(!$safeMode)}></button>
+              on:click={() => applySafeMode(!$safeMode)}></button>
           </div>
         </div>
+        <!-- SAFE MODE COULD NOT KEEP ITS PROMISE. Rose, never amber — amber is
+             ON AIR and this page never is. The switch throws from the boot
+             record, which the door writes first, so the record can read `on`
+             while a screen is still open; this line is the only thing that says
+             so, and it is the same contract as a panic control (rule 15,
+             DECISIONS §20 · §86). -->
+        {#if $safeModeError}<p class="rw-foot s-netbad" role="alert">{$safeModeError}</p>{/if}
 
         <!-- SCREENS AT LAUNCH. A statement of what Relay already does, in the
              place an operator asks the question — NOT a switch.
@@ -960,7 +1213,7 @@
         {#each contentTypes as ct}
           <div class="rw-nv">
             <span class="rw-nvk">{ct.label}</span>
-            <select class="r-select rw-nvctl s-sel" value={ctMap[ct.key] ?? ''} on:change={(e) => pickCt(ct.key, e.target.value)} aria-label="{ct.label} content look">
+            <select class="r-select rw-nvctl s-sel" value={$contentTemplates[ct.key] ?? ''} on:change={(e) => pickCt(ct.key, e.target.value)} aria-label="{ct.label} content look">
               <option value="">Channel default</option>
               {#each $templates as tpl}<option value={tpl.id}>{tpl.name}</option>{/each}
             </select>
@@ -1023,7 +1276,8 @@
           </div>
 
           <div class="s-listen">
-            <button class="r-btn primary" on:click={toggleCapture} disabled={!$capture.available}>
+            <Button variant="primary" on:click={toggleCapture} disabled={!$capture.available}
+              disabledReason={whyDisabled([!$capture.available, ENGINE_OFF])}>
               {#if $capture.capturing}
                 <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
                 Stop listening
@@ -1031,7 +1285,7 @@
                 <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><path d="M7 5.5v13l11-6.5-11-6.5z"/></svg>
                 Start Listening
               {/if}
-            </button>
+            </Button>
             {#if $capture.capturing}
               <span class="s-rms" class:voice={$meter.isVoice}>
                 <span class="s-dot" class:on={$meter.isVoice}></span>
@@ -1091,6 +1345,13 @@
               browser sources are left muted — OBS mixes their audio itself.
             </p>
           {/if}
+          <!-- OUTSIDE the branch chain on purpose. Three of the four outcomes
+               leave `outLocked` true and redraw the identical block, which is the
+               defect; the fourth flips the branch and would drop the sentence that
+               explains why. One place, all four. -->
+          {#if outMsg}
+            <p class="rw-foot" class:s-netbad={outMsgBad} role="status">{outMsg}</p>
+          {/if}
         </div>
 
         <div class="rw-group">Rooms</div>
@@ -1131,6 +1392,13 @@
 
       {:else if section === 'ai'}
         <div class="rw-group">Detection thresholds</div>
+        <!-- A GATE THAT DID NOT MOVE SAYS SO. Until this existed, a rejected
+             `set_thresholds` left the thumb where it was dragged and printed
+             nothing anywhere in this section, on the one control that governs what
+             the AI may put on a wall without asking. -->
+        {#if gateErr}
+          <div class="r-err" role="alert">The gate did not move — {gateErr}</div>
+        {/if}
         <div class="s-prose">
           <div class="s-inline"><span class="s-count">self-calibrating</span></div>
           <div class="s-slider">
@@ -1230,6 +1498,10 @@
               <option value="sw">Swahili</option>
               <option value="ha">Hausa</option>
             </select>
+            <p class="rw-foot">
+              The same setting as <b>Scripture &amp; Languages → Recognition language</b>, which
+              writes to whichever profile is active. There is one store for it, not two.
+            </p>
 
             <label class="r-lbl" for="vp-bias">Expected names and places</label>
             <input
@@ -1274,14 +1546,38 @@
       {:else if section === 'scripture'}
         <div class="rw-group">Recognition language</div>
         <div class="s-prose">
-          <select class="r-select" value={$capture.stt.language ?? ''} on:change={(e) => setSttLanguage(e.target.value || null)} disabled={!$capture.stt.loaded} aria-label="Recognition language">
+          <!-- NOT disabled when no model is loaded. The language is a stored
+               preference now, not a setting on a live engine: a church that has
+               just installed Relay has no model yet, and pinning the language
+               before the first service is exactly what RG-116 asks a pilot to do.
+               `stt_status` reports the stored value while there is no engine, so
+               the select cannot read "Auto-detect" over a profile that says
+               English. -->
+          <select class="r-select" value={$capture.stt.language ?? ''} on:change={(e) => pickLanguage(e.target.value || null)} disabled={langBusy} aria-label="Recognition language">
             <option value="">Auto-detect (code-switching)</option>
             <option value="en">English</option>
             <option value="yo">Yoruba</option>
             <option value="sw">Swahili</option>
             <option value="ha">Hausa</option>
           </select>
+          {#if langErr}
+            <p class="s-alert" role="alert">{langErr}</p>
+          {/if}
           <p class="rw-foot">Auto-detect handles English mixed with a local language mid-sentence — the normal case. Tier-1: Yoruba · Swahili · Hausa.</p>
+          <!-- WHOSE SETTING THIS IS. One fact, one store: this writes to the
+               ACTIVE voice profile, the same field the profile editor on AI &
+               Detection edits. Saying so is the difference between a setting that
+               persists and a setting that silently rewrites a profile the operator
+               is not looking at. -->
+          <p class="rw-foot">
+            Saved to the active voice profile{activeProfile ? ` — “${activeProfile.name}”` : ''}, and
+            applied before the first word of the next service. The same setting is on
+            <b>AI &amp; Detection → Voice profiles</b>; one preacher, one language.
+            {#if !$capture.stt.loaded}
+              No speech model is loaded yet, so nothing is listening — the choice is stored
+              now and applied the moment one is.
+            {/if}
+          </p>
         </div>
 
         <div class="rw-group">Bible translations</div>
@@ -1419,10 +1715,15 @@
         <div class="rw-nv"><span class="rw-nvk">OBS / vMix (browser source)</span><span class="rw-nvv">http://{lanIp || 'this-pc'}:8032/output.html?channel=&lt;screen&gt;&amp;template_id=&lt;n&gt;</span></div>
         <div class="rw-nv"><span class="rw-nvk">Kiosk screen / stage tablet</span><span class="rw-nvv">:8032 · http</span></div>
         <div class="rw-nv"><span class="rw-nvk">NDI</span><span class="rw-nvv">not available</span></div>
-        <div class="rw-nv"><span class="rw-nvk">ATEM / SDI switcher</span><span class="rw-nvv">via HDMI</span></div>
+        <!-- "via HDMI" alone was an instruction a church cannot follow on half the
+             range: an ATEM Mini has HDMI inputs, a rack-mount ATEM has SDI inputs
+             and no HDMI in (the Television Studio HD8's single HDMI connector is an
+             OUTPUT). The converter is the mechanism, not the switcher.
+             docs/OUTPUT_ROUTING.md §2. -->
+        <div class="rw-nv"><span class="rw-nvk">ATEM / SDI switcher</span><span class="rw-nvv">via HDMI, plus a converter on SDI-only models</span></div>
         <div class="s-prose">
           <p class="rw-foot">Relay sends its output to other software over your local network — no plugins to install. Add a <b>Browser Source</b> pointing at Relay; the exact per-channel URL is in <b>Outputs → Sharing</b>. Connected devices (OBS · kiosk · stage remote) pull the live output from this machine on the same Wi-Fi.</p>
-          <p class="rw-foot"><b>NDI is parked</b> — it needs a proprietary SDK Relay does not bundle, so there is no NDI source to select. For an <b>ATEM or other SDI switcher</b>, open a Relay output window on an HDMI screen and feed that HDMI into the switcher — Relay does not speak SDI directly (and won't; that is served by the hardware you already own).</p>
+          <p class="rw-foot"><b>NDI is parked</b> — it needs a proprietary SDK Relay does not bundle, so there is no NDI source to select. For a switcher, open a Relay output window on a display and feed that HDMI in. An <b>ATEM Mini</b> takes it directly. A <b>rack-mount ATEM</b> has SDI inputs only, so it needs a small HDMI-to-SDI converter first, costing about as much as a microphone cable. Relay does not speak SDI directly and will not; that is what the converter is for.</p>
         </div>
 
       {:else if section === 'history'}
@@ -1435,7 +1736,29 @@
           <p class="rw-foot" style="margin-top:0; padding-top:0; border-top:0;">
             <b>New here?</b> The setup walk-through picks your projector, checks the microphone is actually hearing something, and ends by putting a real verse on your real screen — so you have <i>seen</i> it work before Sunday.
           </p>
-          <button class="r-btn ghost sm" on:click={restartSetup}>Run the setup walk-through</button>
+          <!-- THREE facts, and the third is the one the copy was already claiming.
+               `engaged` and `recording` are deliberately different (main.rs's own
+               note on `servicelock`): lifting the lock is a first-class operator
+               override and it does NOT end the service. So mid-service, an operator
+               who unlocked to delete something and stopped the microphone between
+               readings — exactly the gap `updater.js::idle` was widened for — had
+               both of the old terms false, and one click mounted `FirstRun` over a
+               recorded service: an opaque `.fr-scrim` at z-index 950 over the
+               dock's Clear screens, leaving only Esc, whose first press dismisses
+               the wizard and not the wall (rule 44). It then stops the microphone
+               and fires a verse. `recording` is in the same store and the dock
+               already reads it. -->
+          <button
+            class="r-btn ghost sm"
+            on:click={restartSetup}
+            disabled={$serviceLock.engaged || $serviceLock.recording || $capture.capturing}
+            title={whyDisabled(
+              [$capture.capturing, MIC_LIVE],
+              [$serviceLock.engaged || $serviceLock.recording, SERVICE_LOCKED],
+            ) || undefined}>Run the setup walk-through</button>
+          {#if $serviceLock.engaged || $serviceLock.recording || $capture.capturing}
+            <p class="rw-foot s-netwarn">Not while the microphone is live, or while a service is being recorded — including one you have unlocked, because unlocking does not end it. The walk-through stops the microphone and puts a verse on your screens. Stop listening and end the service first.</p>
+          {/if}
         </div>
 
         <!-- DEMO CONTENT. See the block in the script for why it lives on this
@@ -1452,7 +1775,14 @@
               Everything it added is named “Demo · …”, except the saved verses, whose
               names are real Bible references and stay true ones.
               {#if demo.edited > 0}
-                <b style="color:var(--v-amber);"
+                <!-- `.s-netwarn` (amethyst), not an inline amber. Amber means ON
+                     AIR and nothing else (rule 18), and Settings is never on air.
+                     This file's own comments say "Rose, never amber" three times
+                     and define the two colours a value may wear instead; this was
+                     the last inline exception left. Amethyst rather than rose
+                     because an edited demo item is a caution, not a failure — it
+                     is the thing the Remove button will KEEP. -->
+                <b class="s-netwarn"
                   >{demo.edited} of them {demo.edited === 1 ? 'has' : 'have'} been changed since.</b
                 >
                 Removing will <b>keep</b> {demo.edited === 1 ? 'that one' : 'those'} and delete the
@@ -1494,7 +1824,7 @@
         <div class="s-prose">
           {#if $serviceLock.engaged}
             <p class="rw-foot" style="margin-top:0; padding-top:0; border-top:0;">
-              <b style="color:var(--v-amber);">A service is being recorded.</b>
+              <b class="s-netwarn">A service is being recorded.</b>
               Relay is holding back a few things that cannot be undone, or that would take
               the speech engine away mid-sermon: {$serviceLock.held_back.join(', ')}.
               Firing, the transport, clearing and blacking out are unaffected.
@@ -1572,15 +1902,35 @@
              that already has Relay. `describeChannel` is the ONE place a check
              outcome becomes words, and both surfaces that talk about it — this
              row and the Overview rail's quick link — call it. -->
-        <div class="rw-nv"><span class="rw-nvk">Update status</span><span class="rw-nvv" class:s-netbad={$updateChannel.state === 'failed'}>{describeChannel($updateChannel)}</span></div>
+        <!-- `.s-nvp` because every answer `describeChannel` gives is a SENTENCE,
+             never a figure — and one of them is now 112 characters. `.rw-nvv` is
+             mono and sits in the `auto` half of a `minmax(0,1fr) auto` grid, so a
+             long value takes the width from the name beside it: measured in a
+             browser at an 878px row, "Update status" went from 772px with "up to
+             date" to 98.8px with the failure sentence. `.s-nvp` caps the value at
+             46ch and hands the name back 562.3px. It REPLACES `.rw-nvv` rather
+             than joining it, which is how the Privacy report already uses it —
+             keeping both left the sentence in mono. `.s-netbad` is declared after
+             `.s-nvp` at equal specificity, so a failure is still rose. -->
+        <div class="rw-nv"><span class="rw-nvk">Update status</span><span class="s-nvp" class:s-netbad={$updateChannel.state === 'failed'}>{describeChannel($updateChannel)}</span></div>
         {#if $updateChannel.state === 'failed'}
-          <div class="rw-nv"><span class="rw-nvk">Last attempt</span><span class="rw-nvv">{$updateChannel.detail || 'no reason given'}</span></div>
+          <!-- The same cell type as the row above, for the same reason: this is an
+               arbitrary backend string, and the measured page had it reading
+               "Cannot read properties of undefined (reading 'invoke')". It renders
+               only when the channel has failed, directly beneath the sentence that
+               was taking the name's width — so both halves of one moment were
+               squeezing their own labels. -->
+          <div class="rw-nv"><span class="rw-nvk">Last attempt</span><span class="s-nvp">{$updateChannel.detail || 'no reason given'}</span></div>
         {/if}
         <div class="s-prose">
           <button class="r-btn primary sm" on:click={doCheckUpdates} disabled={checking}>
             {checking ? 'Checking…' : 'Check for Updates'}
           </button>
-          {#if updateMsg}<p class="rw-foot">{updateMsg}</p>{/if}
+          <!-- ANNOUNCED. Six other message surfaces on this page carry a live
+               region and these two did not, so the two results a screen reader
+               user gets nothing for were the update check and the one control
+               that decides whether data leaves the machine. -->
+          {#if updateMsg}<p class="rw-foot" role="status">{updateMsg}</p>{/if}
         </div>
 
         <!-- WHAT AN UPDATE WOULD DO TO YOUR HISTORY.
@@ -1719,7 +2069,8 @@
             </p>
           {/if}
           <div class="s-addrow">
-            <button class="r-btn" on:click={resetLatency} disabled={!$capture.available}>Start a fresh measurement</button>
+            <Button on:click={resetLatency} disabled={!$capture.available}
+              disabledReason={whyDisabled([!$capture.available, ENGINE_OFF])}>Start a fresh measurement</Button>
           </div>
           <p class="rw-foot">Start listening and speak for a few seconds to fill the table.</p>
         </div>
@@ -1850,7 +2201,43 @@
             If you turn it on, Relay sends only the technical details of a crash — the error, where in the code it happened, and your operating system. <b>Sermon transcripts, verse text, song lyrics, announcements and service names are never sent</b>, and are stripped from every report before it leaves. Reports are queued and sent later, so a bad network can never slow down a live service.
           </p>
           <label class="r-lbl" for="crash-dsn">Sentry DSN (your own project)</label>
-          <input id="crash-dsn" class="r-input" type="text" placeholder="https://…@…ingest.sentry.io/…" bind:value={crash.dsn} disabled={!$capture.available} />
+          <!-- The field and the button that commits it are ONE decision, so they
+               are one row (`.s-addrow`). Nothing here commits on blur: see the
+               block in the script for why an address that decides where data
+               leaves this machine does not become live by accident. -->
+          <div class="s-addrow">
+            <input id="crash-dsn" class="r-input s-dsn" type="text" placeholder="https://…@…ingest.sentry.io/…" bind:value={crash.dsn} disabled={!$capture.available || !!crashReadFailed} />
+            <Button variant="ghost" size="sm" on:click={saveDsn} disabled={!$capture.available || dsnBusy || !dsnDirty || !!crashReadFailed}
+              disabledReason={whyDisabled(
+                [!$capture.available, ENGINE_OFF],
+                [dsnBusy, BUSY],
+                [!!crashReadFailed, 'The crash-reporting settings could not be read, so a new address cannot be saved over them.'],
+                [!dsnDirty, 'Nothing has changed since the last save.'],
+              )}>
+              {dsnBusy ? 'Saving…' : 'Save address'}
+            </Button>
+          </div>
+          {#if crashReadFailed}
+            <!-- ASKED AND FAILED, not "there is no address". The safe default this
+                 page was handed reads exactly like a church that never configured
+                 one — and saving over it would write the empty string. Rose, never
+                 amber: a control that has had to stand down is a failure, and
+                 Settings is never on air (rule 18). -->
+            <p class="s-alert" role="alert">
+              Relay could not read the crash-reporting setting, so it cannot say what
+              address is in force — {humanError(crashReadFailed)} The switch and
+              <b>Save address</b> are held back until it can, so nothing writes over
+              an address that may still be stored.
+            </p>
+          {:else if dsnDirty}
+            <!-- Amethyst, never amber: this is a caution, and amber means on air.
+                 An unsaved edit that says nothing is the same silence the Save
+                 button was added to end, one step along. -->
+            <p class="rw-foot s-netwarn" role="status">
+              Not saved yet. Crash reports still go to the address Relay already has —
+              press <b>Save address</b> to change that.
+            </p>
+          {/if}
         </div>
 
         <!-- §12 · ONE INSTRUMENT. This was a full-width `r-btn` reading *Turn
@@ -1879,7 +2266,7 @@
               role="switch"
               aria-checked={crashOn}
               aria-label="Send crash reports"
-              disabled={!$capture.available}
+              disabled={!$capture.available || !!crashReadFailed}
               on:click={() => toggleCrash(!crashOn)}></button>
           </div>
         </div>
@@ -1888,7 +2275,7 @@
              leaves a phantom band under the row whenever there is nothing to
              say. -->
         {#if crashMsg}
-          <div class="s-prose"><p class="rw-foot" style="margin-top:0;">{crashMsg}</p></div>
+          <div class="s-prose"><p class="rw-foot" role="status" style="margin-top:0;">{crashMsg}</p></div>
         {/if}
       {/if}
       </div>
@@ -2020,6 +2407,9 @@
      is ACTIVE, not the state that is good — the copy carries the judgement. */
   .s-nvp.on{ color:var(--v-emerald); }
   .s-sel{ width:190px; max-width:100%; }
+  /* The DSN takes the row's width and the Save button keeps its own, so a long
+     address does not push the commit off the end of the line. */
+  .s-dsn{ flex:1 1 260px; min-width:0; }
   .s-lenctl{ display:flex; align-items:center; gap:8px; justify-content:flex-end; }
   .s-leninput{ width:90px; text-align:right; }
   .s-lenunit{ color:var(--v-faint); font-size:var(--v-fs-cap); }

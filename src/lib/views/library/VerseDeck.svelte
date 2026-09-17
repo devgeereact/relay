@@ -930,9 +930,22 @@
     border-color: var(--v-accent-line);
     background: var(--v-accent-soft);
   }
+  /* ONE ROW, ONE AMBER. This drew `rgba(255,176,0,…)` for its edge and wash —
+     #ffb000, the amber this palette RETIRED — while the tally bar three rules
+     down draws `var(--v-amber)`, #ffa31a. So the row that means "the congregation
+     is looking at this" was painted in two different oranges that meet along a
+     3px seam, and no scanner in the repository could see it: the hex sweep in
+     `workspacegrammar.test.js` says in its own header that `rgba()` is not
+     scanned at all.
+     The tokens are the fix DESIGN_SYSTEM §1.3 already prescribes — "every
+     semantic colour carries a -soft fill and a -line border alongside it, use
+     them" — and the reason given there is exactly this failure: a hand-written
+     copy of a law colour becomes a chip whose fill and border are quietly two
+     colours the moment the hex moves. NAMED VISIBLE CHANGE: the wash goes from
+     5% to the published 15%, so an on-air row is a little warmer than it was. */
   .vd-row.air {
-    border-color: rgba(255, 176, 0, 0.42);
-    background: rgba(255, 176, 0, 0.05);
+    border-color: var(--v-amber-line);
+    background: var(--v-amber-soft);
   }
   .vd-row.air::before {
     content: '';

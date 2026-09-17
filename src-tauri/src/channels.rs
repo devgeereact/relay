@@ -121,6 +121,32 @@ pub struct OutputContent {
     pub countdown_paused_ms: Option<i64>,
     /// Message shown in place of the timer when the countdown reaches zero.
     pub countdown_done: Option<String>,
+    /// **THE THRESHOLD SOMEBODY CHOSE FOR THIS COUNTDOWN**, in ms before zero, or
+    /// None when nobody chose one. Projected from `timers::Timer::warn_ms` in
+    /// exactly one place (`timers::project_both`).
+    ///
+    /// It is not a second reading of when to worry. There is one rule and it is
+    /// `layers.js::countdownWarning`; this is the figure it ranks FIRST, ahead of
+    /// the configured default below and ahead of the tenth-of-span rule behind
+    /// that. None is an absent figure, never a window of zero — which would be a
+    /// warning colour that never comes on.
+    pub countdown_warn_ms: Option<i64>,
+    /// **THE CONFIGURED DEFAULT, DELIVERED RATHER THAN READ** — `Settings → General
+    /// → Countdown warning`, in ms.
+    ///
+    /// It rides with the content because the two screens that need it cannot ask
+    /// for it. `output.html` and `stage.html` are served to a browser source and a
+    /// tablet with no Tauri bridge and no console state, so the setting reached the
+    /// console alone and every congregation screen kept the shipped minute (RG-149).
+    /// Stamped at the one door content leaves by (`main::broadcast_with_clock`,
+    /// rule 36), so a content path added later carries it by construction; the same
+    /// figure reaches the stage on the programme frame, which arrives before any
+    /// content does.
+    ///
+    /// It is NOT resolved against `countdown_warn_ms` here. Ranking the two is the
+    /// far side's job, once, or there would be two authorities on when a screen
+    /// turns red and a way for them to disagree.
+    pub countdown_warn_default_ms: Option<i64>,
     /// The decode pass that produced this content (`latency::Trace`), when it came
     /// from speech. Rides to every output — the native window and every kiosk
     /// browser source — purely so the page can report back the instant it painted,
@@ -841,28 +867,69 @@ const CONSOLE: &str = "main";
 /// Gating at the choke point, not at the callers, is also what makes it honest: a
 /// new fire path added tomorrow is sandboxed by construction and cannot forget.
 ///
-/// ## The choke point is FOUR functions, and it is worth naming them
+/// ## The register is `REHEARSAL_VERDICTS`, not this paragraph
 ///
-/// "One function" was the intent and never the fact, and the gap cost a leak. Every
-/// function below that publishes to the kiosk hub is a way out of the machine:
+/// "One function" was the intent and never the fact, and the gap cost a leak:
+/// `stage_next` shipped gated in name only, leaked "up next" to a live stage
+/// tablet mid-rehearsal, and had no Tauri emit at all, so the e2e rehearsal
+/// test — which counts wall events — saw nothing wrong. A prose list here was
+/// exactly what failed to catch it, so the full, current list of publishers in
+/// this module and their verdicts now lives in `REHEARSAL_VERDICTS`, in `mod
+/// tests`, checked against the module's own source by
+/// `every_publisher_in_this_module_has_an_explicit_rehearsal_verdict` — not
+/// restated here, where it can drift the way it already once did.
 ///
-/// * `broadcast_content` — gated
-/// * `clear` — gated
-/// * `black` — gated
-/// * `stage_next` — gated, and it was NOT. It leaked "up next" to a live stage
-///   tablet mid-rehearsal, and it has no Tauri emit at all, so the e2e rehearsal
-///   test — which counts wall events — saw nothing wrong.
+/// `main.rs::set_channel_template` also publishes, from outside this module, so
+/// that scanner cannot see it. It is deliberately not gated: it carries a
+/// template, not content. Reassigning a screen's look is live by design
+/// (DECISIONS §29), puts no scripture anywhere, and suppressing it would leave a
+/// kiosk rendering a template the operator has already replaced.
 ///
-/// `main.rs::set_channel_template` also publishes, and is DELIBERATELY not gated:
-/// it carries a template, not content. Reassigning a screen's look is live by
-/// design (DECISIONS §29), puts no scripture anywhere, and suppressing it would
-/// leave a kiosk rendering a template the operator has already replaced.
-///
-/// Anything added here that carries what a person would READ belongs in the gated
-/// list. Check `rehearsing(app)` first, and add an e2e case that watches the KIOSK
-/// hub, not just the wall.
+/// Anything added here that carries what a person would READ belongs in
+/// `REHEARSAL_VERDICTS` as gated. Check `rehearsing(app)` first, and add an e2e
+/// case that watches the KIOSK hub, not just the wall.
 #[derive(Default)]
 pub struct Rehearsal(pub AtomicBool);
+
+/// **THE CONFIGURED COUNTDOWN WARNING WINDOW, AS MACHINE STATE** — `Settings →
+/// General → Countdown warning`, in ms, with `0` meaning "never set, use the
+/// shipped minute".
+///
+/// It is a mirror of one settings row, held here because the two publishers that
+/// have to stamp it run on the path between a press and a projector, and a SQLite
+/// lock is not a thing to take there for a number that changes twice a year. The
+/// row in `app_settings` remains the truth; this is warmed from it at launch and
+/// kept in step by `set_setting`, which is the one writer of that row (rule 36 —
+/// the choke point is where the check goes).
+///
+/// Lock-free on purpose, for the same reason `Rehearsal` is: it is read inside
+/// `publish_timers` and inside the one content door, and neither may ever block.
+#[derive(Default)]
+pub struct CountdownWarnDefault(pub std::sync::atomic::AtomicI64);
+
+impl CountdownWarnDefault {
+    /// The figure in force, or None when nothing is configured. Zero and anything
+    /// negative read as ABSENT rather than as a window of zero — a warning colour
+    /// that never comes on is the failure this whole chain exists to prevent, and
+    /// the far side makes the identical judgement in `setCountdownWarnDefault`.
+    pub fn get(&self) -> Option<i64> {
+        let n = self.0.load(Ordering::Relaxed);
+        (n > 0).then_some(n)
+    }
+    pub fn set(&self, ms: Option<i64>) {
+        self.0
+            .store(ms.filter(|n| *n > 0).unwrap_or(0), Ordering::Relaxed);
+    }
+}
+
+/// The configured warning window, for a publisher that has an app handle. None
+/// when nothing is configured OR when the state is not managed (headless tests,
+/// early boot) — an absence, which the far side reads as "keep the shipped minute"
+/// rather than as a figure.
+pub fn countdown_warn_default<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Option<i64> {
+    app.try_state::<CountdownWarnDefault>()
+        .and_then(|s| s.get())
+}
 
 impl Rehearsal {
     pub fn on(&self) -> bool {
@@ -877,7 +944,14 @@ impl Rehearsal {
 /// the state has not been registered (tests, early boot) — failing OPEN to a real
 /// broadcast. That is the correct default: the dangerous mistake is silently
 /// swallowing content the operator believes is live, not the reverse.
-fn rehearsing<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> bool {
+///
+/// **Public for ONE reason beyond this module**: a timer records the mode it was
+/// started in (`timers::Timer::started_in_rehearsal`, RG-150), and the two creators
+/// live in `main.rs`. It is the same question the publishers here ask, read from the
+/// same state, so a timer's stamp and a broadcast's suppression can never disagree
+/// about the same instant. It is NOT a licence for a publisher outside this module:
+/// `REHEARSAL_VERDICTS` can only see the ones in here.
+pub fn rehearsing<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> bool {
     app.try_state::<Rehearsal>()
         .map(|r| r.on())
         .unwrap_or(false)
@@ -892,7 +966,7 @@ fn rehearsing<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> bool {
 /// but were dropped from THIS json, so a kiosk stage monitor never showed the
 /// "up next" verse while a native one did. Kept as a pure function so a test can
 /// assert the field set without a Tauri app handle.
-fn kiosk_content_json(content: &OutputContent) -> String {
+pub(crate) fn kiosk_content_json(content: &OutputContent) -> String {
     serde_json::json!({
         "kind": "content",
         "content_kind": content.kind,
@@ -918,6 +992,13 @@ fn kiosk_content_json(content: &OutputContent) -> String {
         "countdown_from": content.countdown_from,
         "countdown_paused_ms": content.countdown_paused_ms,
         "countdown_done": content.countdown_done,
+        // WHEN TO WORRY, both facts, for the same reason the two above are here: a
+        // kiosk screen missing one of them turns red at a different moment from the
+        // native window beside it. `countdown_warn_ms` is the threshold chosen for
+        // this countdown; `countdown_warn_default_ms` is the configured one, which
+        // a page with no bridge has no other way of learning (RG-149).
+        "countdown_warn_ms": content.countdown_warn_ms,
+        "countdown_warn_default_ms": content.countdown_warn_default_ms,
         // Rides to every kiosk client purely so it can report back when it painted
         // — the last leg of the latency chain, over the real church network. See
         // `OutputContent::trace_id` and the `rendered` message the hub accepts.
@@ -928,11 +1009,12 @@ fn kiosk_content_json(content: &OutputContent) -> String {
 
 /// Is this frame one of the three that decide what a screen is SHOWING?
 ///
-/// Deliberately a prefix match on frames this module builds itself, not a JSON
+/// Deliberately a substring match on frames this module builds itself, not a JSON
 /// parse: it runs inside `publish`, which is on the path between a fire and the
-/// projector. `template`, `themes` and `stage_next` are excluded — the first two
-/// are already sent on hello and the third is a monitor-only extra that must not
-/// stand in for the content it accompanies.
+/// projector. (This said "prefix" directly above a body comment explaining why a
+/// prefix check matched nothing — see below.) `template` and `stage_next` are excluded — the first is already
+/// sent on hello and the second is a monitor-only extra that must not stand in
+/// for the content it accompanies.
 fn is_screen_frame(msg: &str) -> bool {
     // CONTAINS, not `starts_with`. `serde_json`'s default map is a BTreeMap, so
     // `kiosk_content_json` emits its keys in ALPHABETICAL order and a content frame
@@ -943,6 +1025,125 @@ fn is_screen_frame(msg: &str) -> bool {
     msg.contains(r#""kind":"content""#)
         || msg.contains(r#""kind":"clear""#)
         || msg.contains(r#""kind":"black""#)
+}
+
+/// Is this frame a panic control — the two that take a congregation screen back
+/// TOTALLY rather than replacing what is on it?
+///
+/// Pulled out of `is_screen_frame` rather than spelled again, because the
+/// background layer needs the same two names and a second copy of them is a
+/// second list that can drift from the first. Same `contains` discipline and for
+/// the same reason (`serde_json`'s map is a BTreeMap, so no key is first).
+fn is_wipe_frame(msg: &str) -> bool {
+    msg.contains(r#""kind":"clear""#) || msg.contains(r#""kind":"black""#)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE BACKGROUND — a picture that outlives the words painted on top of it
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A PICTURE BEHIND EVERYTHING, WITH A LIFETIME OF ITS OWN.
+///
+/// Until this existed a verse and a picture were mutually exclusive payloads:
+/// the entire layer stack renders inside `{#if content}` and `media_url` is a
+/// field on `OutputContent`, so firing the church's backdrop REPLACED the
+/// reading and firing the reading replaced the backdrop. Scripture over a
+/// church's own background could not be expressed at all.
+///
+/// So it is a second payload kind rather than a field, and the difference is the
+/// whole point: it is not what a screen is SHOWING, it is what the screen is
+/// showing it ON. It survives every content change, it is retained in its own
+/// hub slot and replayed to a screen that joins late (rule 43), and it is taken
+/// down by the two controls that take everything down.
+///
+/// Deliberately NOT a template, a fit or an opacity. Where the picture sits, how
+/// it is cropped and what is dimmed over it are the TEMPLATE's business — a
+/// `backdrop` layer decides all three, per screen, which is what makes this
+/// opt-in by template design and byte-identical on a template without one. A
+/// second authority on how a background is drawn is the defect DECISIONS §69 and
+/// §71 are the scars from.
+#[derive(Clone, Debug, Serialize)]
+pub struct Background {
+    /// Where every screen loads it from — the app's own HTTP server on :8032, so
+    /// a native window and a browser source in OBS fetch the identical bytes.
+    pub media_url: String,
+    /// `image` or `video`. The renderer needs to know which element to paint it
+    /// with, and guessing from the extension is a second rule about a fact the
+    /// database already holds.
+    pub media_kind: String,
+}
+
+/// The wire form of the background, for every kiosk client.
+///
+/// `None` is how a background is TAKEN DOWN, and it is sent as an explicit null
+/// rather than as an absent frame for the same reason `transition_json` does it:
+/// an absent frame cannot say "there is none now", and a screen that missed the
+/// take-down would carry the picture for the rest of the service.
+///
+/// Pure, like `kiosk_content_json`, `timer_frame_json` and `transition_json`, so
+/// the frame can be asserted against without a Tauri app handle.
+fn background_json(bg: Option<&Background>) -> String {
+    serde_json::json!({
+        "kind": "background",
+        "media_url": bg.map(|b| b.media_url.as_str()),
+        "media_kind": bg.map(|b| b.media_kind.as_str()),
+    })
+    .to_string()
+}
+
+/// Is this frame about the background at all?
+///
+/// True for BOTH the frame that puts one up and the frame that takes it down —
+/// they are one message kind, because a screen has to act on both and a
+/// take-down expressed as silence is not a message.
+fn is_background_frame(msg: &str) -> bool {
+    msg.contains(r#""kind":"background""#)
+}
+
+/// WHAT A PUBLISHED FRAME DOES TO THE RETAINED BACKGROUND.
+///
+/// Three answers, and the three-state return is the honest shape:
+///
+/// * `None` — this frame is not about the background. A verse, a clock, a
+///   template, an alert: the backdrop stays exactly where it is, which is the
+///   entire reason this payload exists.
+/// * `Some(None)` — take it down. A panic control does this, and so does a
+///   background frame that names no picture.
+/// * `Some(Some(frame))` — this frame IS the background now.
+///
+/// **The panic arm is why this is decided here.** `publish` is the one door every
+/// frame in this module goes through, so a `clear` or a `black` drops the
+/// backdrop by construction — no publisher has to remember, and no SECOND frame
+/// has to be sent to finish the job. A panic control that needed two frames is a
+/// panic control that can half succeed, and rule 15 does not allow one.
+///
+/// The `"media_url":null` test is a substring match on a frame this module builds
+/// itself, exactly like `is_screen_frame` and `is_timer_frame`, and it is pinned
+/// against the real `background_json` output by
+/// `the_background_retention_rule_agrees_with_what_is_published` — because a
+/// matcher that quietly stops matching looks precisely like the bug it fixes.
+fn background_retention(msg: &str) -> Option<Option<String>> {
+    if is_wipe_frame(msg) {
+        return Some(None);
+    }
+    if !is_background_frame(msg) {
+        return None;
+    }
+    Some((!msg.contains(r#""media_url":null"#)).then(|| msg.to_string()))
+}
+
+/// The frame a hub sends when every screen is following the wall.
+pub(crate) const SCREENS_ALL_UP: &str = r#"{"kind":"screen_state","screens":{}}"#;
+
+/// Does this frame say which screens the OPERATOR has taken out of the wall?
+///
+/// Disjoint from `is_screen_frame` and `is_timer_frame` by construction: a frame
+/// is `content`/`clear`/`black`, or `timer`, or this, and no frame this module
+/// builds is two of them. `contains`, not `starts_with`, for the reason recorded
+/// on `is_screen_frame` — `serde_json` orders map keys alphabetically and a prefix
+/// check there silently matched nothing while looking exactly right.
+fn is_screen_state_frame(msg: &str) -> bool {
+    msg.contains(r#""kind":"screen_state""#)
 }
 
 /// Push content to every output channel. One broadcast, N independently-styled
@@ -991,58 +1192,90 @@ fn note_wall<R: tauri::Runtime>(app: &tauri::AppHandle<R>, on_air: bool, black: 
     }
 }
 
-/// THE COUNTDOWN THAT IS IN FRONT OF THE OPERATOR, so the transport can re-aim or
-/// HOLD it without rebuilding it from a mirror.
+/// WHAT IS IN FRONT OF THE OPERATOR RIGHT NOW — the live content itself, whatever
+/// kind it is, or None over a cleared or blacked wall.
+///
+/// **This used to be `CountdownState`, and the difference is the whole of wave 3.**
+/// It held an `Option<OutputContent>` filtered down to countdowns, so the countdown
+/// had no existence apart from being the live content: fire a verse, a song or a
+/// notice and it was forgotten, `adjust_countdown` answered "Nothing is counting
+/// down.", and there was no way back. That was never a decision anybody took — it
+/// was a consequence of where the state lived. A timer's facts live in
+/// `timers::TimerRegistry` now and have a lifetime of their own; what remains here
+/// is the smaller, honest question this slot can actually answer: **is that timer
+/// what the screens are showing at this moment?**
 ///
 /// Reset and ±1 used to be assembled in the console out of `$live` — the label, the
 /// done message and the template all read back off the event and handed to
 /// `start_countdown` again. That works exactly as long as every caller remembers
 /// every field, and a paused countdown adds one more thing to forget: a `+1` that
 /// dropped `countdown_paused_ms` would quietly restart a held timer in front of a
-/// congregation. The engine owns the countdown instead, and the transport asks it to
-/// change one thing about it.
+/// congregation. The engine carries it instead, and the transport asks it to change
+/// one thing about it.
 ///
 /// Maintained at the SAME three doors as [`WallState`] — `broadcast_content`, `clear`
 /// and `black` — so it cannot drift (rule 36), with one deliberate difference: it is
 /// noted BEFORE the rehearsal branch, not after. `WallState` answers "what can a
-/// congregation see", so a rehearsal must not touch it. This answers "what countdown
-/// is the operator looking at", and in a rehearsal that is the console's own copy —
-/// which the console already mirrors, and on which ±1 works today. Noting it after
-/// the branch would take the transport away in rehearsal, which is the one place an
+/// congregation see", so a rehearsal must not touch it. This answers "what is the
+/// operator looking at", and in a rehearsal that is the console's own copy — which
+/// the console already mirrors, and on which ±1 works today. Noting it after the
+/// branch would take the transport away in rehearsal, which is the one place an
 /// operator is meant to be practising with it.
 ///
 /// **Lock discipline:** innermost, and never held across an emit (rule 2). Every
 /// reader clones and releases before it broadcasts.
 #[derive(Default)]
-pub struct CountdownState(pub std::sync::Mutex<Option<OutputContent>>);
+pub struct LiveContent(pub std::sync::Mutex<Option<OutputContent>>);
 
-/// The countdown currently in front of the operator, or None when there is not one.
+/// The content currently in front of the operator, or None over a cleared wall.
 /// A clone, taken under the lock and returned with the lock released.
-pub fn live_countdown<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Option<OutputContent> {
-    app.try_state::<CountdownState>()
+pub fn live_content<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Option<OutputContent> {
+    app.try_state::<LiveContent>()
         .and_then(|s| s.0.lock().ok().and_then(|g| g.clone()))
 }
 
-/// Remember (or forget) the countdown at one of the three doors. Anything that is
-/// not a countdown forgets it, which is the whole point: a verse, a song or a notice
-/// replaced the countdown, so there is no longer one to re-aim.
-fn note_countdown<R: tauri::Runtime>(app: &tauri::AppHandle<R>, content: Option<&OutputContent>) {
-    let Some(state) = app.try_state::<CountdownState>() else {
+/// Record what is on the screens at one of the three doors.
+///
+/// **There is no filter here, and its absence is the fix.** The old version kept the
+/// content only while it was a countdown, which made "is there a countdown" and "is
+/// a countdown on the screens" the same question — so the answer to the first was
+/// lost every time the answer to the second changed.
+fn note_live_content<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    content: Option<&OutputContent>,
+) {
+    let Some(state) = app.try_state::<LiveContent>() else {
         return;
     };
-    let next = content
-        .filter(|c| c.countdown_to.is_some() && c.kind.as_deref() == Some("countdown"))
-        .cloned();
+    let next = content.cloned();
     if let Ok(mut g) = state.0.lock() {
         *g = next;
     };
 }
 
+/// A PANIC CONTROL TAKES EVERY CONGREGATION TIMER, AND ASKS NOTHING.
+///
+/// `clear` and `black` take back every congregation screen totally, and a timer
+/// projected onto those screens goes with them — the guarantee DECISIONS §27 states,
+/// unchanged. The split between congregation and programme timers is a property of
+/// the timer (`timers::Scope`), never a question asked here: a panic control that
+/// has to work out which screen it is talking to is a panic control that can fail to
+/// answer, and rule 15 does not allow one of those.
+///
+/// A no-op when the registry is not managed, exactly like `note_wall`.
+fn stop_congregation_timers<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    if let Some(reg) = app.try_state::<crate::timers::TimerRegistry>() {
+        // Takes and releases its own lock, so nothing is held across the emits
+        // below (rule 2).
+        reg.stop_scope(crate::timers::Scope::Both);
+    }
+}
+
 pub fn broadcast_content<R: tauri::Runtime>(app: &tauri::AppHandle<R>, content: OutputContent) {
     let json = kiosk_content_json(&content);
-    // BEFORE the rehearsal branch, deliberately — see `CountdownState`. The lock is
+    // BEFORE the rehearsal branch, deliberately — see `LiveContent`. The lock is
     // taken and released here, never held across the emit below (rule 2).
-    note_countdown(app, Some(&content));
+    note_live_content(app, Some(&content));
     if rehearsing(app) {
         // Content-free by design: the reference is congregation/sermon data and this
         // log is written to disk. What matters operationally is only that the
@@ -1069,9 +1302,10 @@ pub fn broadcast_content<R: tauri::Runtime>(app: &tauri::AppHandle<R>, content: 
 /// panic control that reports a success it did not achieve is worse than one that
 /// is missing: the operator stops looking at the screen and trusts the toast.
 pub fn clear<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
-    // The countdown left the operator's screen either way, rehearsal or not — so it
+    // The content left the operator's screen either way, rehearsal or not — so it
     // is forgotten on both paths here, exactly as it is remembered on both above.
-    note_countdown(app, None);
+    note_live_content(app, None);
+    stop_congregation_timers(app);
     if rehearsing(app) {
         return app
             .emit_to(CONSOLE, "output://clear", ())
@@ -1088,7 +1322,8 @@ pub fn clear<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String>
 ///
 /// Returns Err for the same reason `clear` does — see above.
 pub fn black<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
-    note_countdown(app, None);
+    note_live_content(app, None);
+    stop_congregation_timers(app);
     if rehearsing(app) {
         return app
             .emit_to(CONSOLE, "output://black", ())
@@ -1097,6 +1332,192 @@ pub fn black<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String>
     app.emit("output://black", ()).map_err(|e| e.to_string())?;
     publish_kiosk(app, r#"{"kind":"black"}"#.to_string());
     note_wall(app, false, true);
+    Ok(())
+}
+
+/// PUT A PICTURE BEHIND EVERYTHING — or take it away (`None`).
+///
+/// Both doors, because the wall is two kinds of screen: a native output window
+/// with the Tauri bridge and no socket, and a kiosk/OBS browser source with the
+/// socket and no bridge. A background wired to one of the two is the "guarantee
+/// kept on one door" mistake this repository has now made four times, on the two
+/// screens most often in the same room.
+///
+/// REHEARSAL-GATED, and not on a technicality: this is the one publisher here
+/// besides `broadcast_content` that puts an IMAGE in front of a congregation.
+/// The suppression mirrors `broadcast_content`'s exactly — the console still
+/// receives it, so an operator rehearsing sees their own backdrop in the program
+/// pane, and nothing leaves the machine. `stage_next` is the standing reminder of
+/// what a publisher that shipped gated in name only costs.
+///
+/// **It deliberately does NOT touch `WallState`, `LiveContent` or the passage.**
+/// Each of those answers a question about the CONTENT a congregation is reading,
+/// and a backdrop is not content: it carries no reference and no words, so
+/// `/api/live` naming it would be naming a verse that is not there, and disarming
+/// the passage (rule 38) would make `next` answer `NoPassage` in the middle of a
+/// reading the preacher is still in. A background does not REPLACE the reading,
+/// which is the entire reason the payload exists.
+///
+/// Retention, and its removal by a panic control, both happen inside
+/// `KioskHub::publish` — see `background_retention` for why that is the door and
+/// not this function.
+// GENERIC OVER THE RUNTIME (rule 24) — `e2e.rs` has to be able to drive it.
+pub fn set_background<R: tauri::Runtime>(app: &tauri::AppHandle<R>, bg: Option<Background>) {
+    if rehearsing(app) {
+        // Content-free, like every other line on this path: what an operator (or a
+        // bug report) needs to know is that nothing left the machine.
+        println!("rehearsal: background SUPPRESSED — nothing left the machine");
+        let _ = app.emit_to(CONSOLE, "output://background", bg);
+        return;
+    }
+    let json = background_json(bg.as_ref());
+    let _ = app.emit("output://background", bg);
+    publish_kiosk(app, json);
+}
+
+/// ── PER-SCREEN CLEAR AND BLACKOUT ──────────────────────────────────────────
+///
+/// "Take the lobby TV down but leave the wall live" is an ordinary request and
+/// was impossible: `clear` and `black` take no channel and never will.
+///
+/// **THE SPLIT IS IN THE CALL, NEVER INSIDE THE PANIC CONTROL.** `clear` and
+/// `black` above are untouched, byte for byte. A panic control that has to work
+/// out which screen it is addressing is a panic control that can fail to answer,
+/// and rule 15 does not allow one of those — the same sentence
+/// `stop_congregation_timers` already carries, for the same reason. What follows
+/// is a SEPARATE control, reached from the Outputs desk, never from `Esc` or `B`.
+///
+/// **It is durable, not a one-shot frame.** A screen taken down stays down until
+/// it is brought back, across every fire in between. A one-shot would be undone
+/// by the next verse, which during a service is within a minute, which is to say
+/// useless for the thing it is for. That durability is the risk as well: an
+/// operator can forget. So the state is in MEMORY and not in the database — a
+/// relaunch brings every screen back, because a screen nobody can see is a worse
+/// thing to persist than a preference nobody set — and every surface that
+/// describes a screen says which screens are down, through the one helper that is
+/// allowed to turn a screen into words (`outputHealth.js::describeScreen`, rule
+/// 35).
+///
+/// **The whole set, every frame.** Like the programme timers, and for the same
+/// reason: a client that missed one delta would be wrong about itself for the
+/// rest of the service with no way to find out. An empty map is how the last
+/// screen comes back up.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum ScreenState {
+    /// Nothing of Relay's on this screen; the template background shows through,
+    /// so a keyed channel still keys out for OBS.
+    Clear,
+    /// Opaque black on this screen alone.
+    Black,
+    /// The screen follows the wall again. Never stored — it is the absence.
+    Live,
+}
+
+impl ScreenState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ScreenState::Clear => "clear",
+            ScreenState::Black => "black",
+            ScreenState::Live => "live",
+        }
+    }
+    // NO `parse`, deliberately. Nothing on any door hands this a string: the three
+    // commands each name one variant, so free text never becomes a state a screen
+    // renders and there is nothing to parse it from. A parser nothing calls is a
+    // parser nobody is checking.
+}
+
+/// The screens the operator has taken down on their own, and what they were told
+/// to do. A channel that is live is ABSENT rather than present-and-`Live`: one
+/// representation of one fact, so nothing can read "down" off an entry that says
+/// it is up.
+#[derive(Default)]
+pub struct ScreensDown(pub std::sync::Mutex<HashMap<i64, ScreenState>>);
+
+impl ScreensDown {
+    /// What this screen has been told, or `None` when it follows the wall.
+    pub fn get(&self, channel_id: i64) -> Option<ScreenState> {
+        self.0.lock().ok().and_then(|m| m.get(&channel_id).copied())
+    }
+
+    /// The whole set as the wire form: `{"4":"clear"}`, and `{}` when every
+    /// screen is following the wall.
+    pub fn as_json(&self) -> String {
+        let Ok(m) = self.0.lock() else {
+            return "{}".into();
+        };
+        let map: serde_json::Map<String, serde_json::Value> = m
+            .iter()
+            .map(|(id, st)| (id.to_string(), serde_json::Value::from(st.as_str())))
+            .collect();
+        serde_json::Value::Object(map).to_string()
+    }
+}
+
+/// TAKE ONE SCREEN DOWN, OR BRING IT BACK. The one place this is decided.
+///
+/// Rule 36: the choke point is where the check goes. Three commands call this and
+/// none of them publishes anything itself, so a fourth way of taking a screen
+/// down cannot arrive with its own idea of what that means.
+///
+/// **It does not touch anything the wall is made of.** Not `LiveContent`, not the
+/// debounce, not the congregation timers, not `WallState`. Taking the lobby TV
+/// down does not mean the verse has gone — it is still in front of the
+/// congregation on every other screen — and a control that forgot the live
+/// content would make the next spoken "next verse" answer `NoPassage` over a
+/// verse people can see.
+///
+/// Returns Err when the Tauri door refuses, for the same reason `clear` does: a
+/// control that cannot reach a screen must not report that it did.
+pub fn set_screen_state<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    channel_id: i64,
+    state: ScreenState,
+) -> Result<(), String> {
+    // ── REFUSED IN A REHEARSAL, AND THAT IS A DECISION ─────────────────────
+    //
+    // The gate is HERE rather than in the three commands, per rule 36: a fourth
+    // way of taking a screen down must not be able to arrive with its own answer.
+    //
+    // Every other publisher in this module SUPPRESSES during a rehearsal and
+    // returns success, because what it is suppressing is content and the
+    // rehearsal's promise is that no content leaves. This one is refused instead.
+    // Suppressing it would leave the operator's own belief and the screens
+    // disagreeing with nothing to say so — the desk would show the lobby TV down
+    // while the lobby TV showed the last thing it was sent — and that is rule 35's
+    // shape on a control the operator pressed deliberately. It is not a panic
+    // control, so it is allowed to refuse; `clear` and `black` are and are not,
+    // which is why the split is in the call.
+    if rehearsing(app) {
+        return Err(
+            "Relay is rehearsing, so no screen was changed. Leave rehearsal to take a screen down."
+                .into(),
+        );
+    }
+    let Some(down) = app.try_state::<ScreensDown>() else {
+        // A headless Relay manages no registry. Saying so beats pretending a
+        // screen was changed.
+        return Err("this build has no screen registry".into());
+    };
+    {
+        // Taken and released before any emit — rule 2, and this one is on the path
+        // of a control an operator presses during a service.
+        let Ok(mut m) = down.0.lock() else {
+            return Err("the screen registry is unavailable".into());
+        };
+        match state {
+            ScreenState::Live => m.remove(&channel_id),
+            other => m.insert(channel_id, other),
+        };
+    }
+    let blob = down.as_json();
+    let json = format!(r#"{{"kind":"screen_state","screens":{blob}}}"#);
+    app.emit(
+        "output://screen_state",
+        serde_json::json!({ "channel": channel_id, "state": state.as_str() }),
+    )
+    .map_err(|e| e.to_string())?;
+    publish_kiosk(app, json);
     Ok(())
 }
 
@@ -1153,6 +1574,105 @@ pub fn stage_alert<R: tauri::Runtime>(app: &tauri::AppHandle<R>, text: Option<St
     publish_kiosk(app, json);
 }
 
+/// THE WIRE FORM OF THE PROGRAMME TIMERS — the whole stage-visible set, every time.
+///
+/// **A set, not a delta.** A tablet that missed one frame would otherwise be wrong
+/// about the programme for the rest of the service, and there is no way for it to
+/// find that out. Sending the set whole also makes the empty case expressible:
+/// stopping the last timer publishes `timers: []`, which is how a clock comes OFF a
+/// preacher's screen. An absent frame cannot say "there are none now".
+///
+/// **Why these key names.** `countdown.js::countdownRemainingMs` is the ONE reader
+/// of how long is left on the frontend, and it reads `countdown_paused_ms` ahead of
+/// `countdown_to`. Naming the fields anything else would mean the stage page doing
+/// its own subtraction — a second copy of a rule that now has an exception
+/// (docs/REBRAND.md §7), on the surface a preacher reads from mid-sermon.
+///
+/// Deliberately NOT `timers::project_both`: that is the congregation wire form and
+/// carries a `reference` rather than a `label`, and no `id`. A stage entry is a row
+/// in a rail and has to be identifiable; a congregation entry is a slide.
+///
+/// Pure, so the frame can be asserted against without a Tauri app handle — the same
+/// reason `kiosk_content_json` and `transition_json` are pure.
+fn timer_frame_json(timers: &[crate::timers::Timer], warn_default_ms: Option<i64>) -> String {
+    let rows: Vec<serde_json::Value> = timers
+        .iter()
+        .map(|t| {
+            serde_json::json!({
+                "id": t.id,
+                "label": t.label,
+                "countdown_to": t.target_ms,
+                "countdown_from": t.from_ms,
+                "countdown_paused_ms": t.paused_ms,
+                "countdown_done": t.done_msg,
+                "warn_ms": t.warn_ms,
+            })
+        })
+        .collect();
+    // `warn_default_ms` sits BESIDE the rows, not on them. It is a fact about the
+    // machine — `Settings → General → Countdown warning` — and this page cannot read
+    // a setting, so it has to be delivered (RG-149). A copy per row would be a copy
+    // that can disagree with itself inside one frame. A row's own `warn_ms` is the
+    // separate fact: the threshold somebody chose for that timer, which beats this.
+    serde_json::json!({ "kind": "timer", "timers": rows, "warn_default_ms": warn_default_ms })
+        .to_string()
+}
+
+/// Is this the frame that decides what PROGRAMME TIMERS a stage tablet is showing?
+///
+/// A `contains`, and for exactly the reason `is_screen_frame` is one: `serde_json`'s
+/// default map is a BTreeMap, so the keys come out in alphabetical order and not the
+/// order anybody wrote. A `starts_with` would happen to work here (`kind` sorts
+/// before `timers`) and would break the moment a field sorting before `kind` is
+/// added — which is how the first version of `is_screen_frame` matched nothing while
+/// looking exactly like the bug it fixed.
+///
+/// `"kind":"timer"` cannot occur inside a JSON string value — an operator's label
+/// would have its quotes escaped — so a label cannot forge one.
+fn is_timer_frame(msg: &str) -> bool {
+    msg.contains(r#""kind":"timer""#)
+}
+
+/// THE PROGRAMME TIMERS, TO THE STAGE TABLET AND NOWHERE ELSE.
+///
+/// A `Stage` timer publishes no content frame at all — that is precisely why it
+/// survives a verse, a song and a notice: nothing about it rides on the live
+/// content, so replacing the live content cannot forget it. It needs a door of its
+/// own, and this is it.
+///
+/// REHEARSAL-GATED, like every publisher here that carries something a person
+/// READS. `stage_next` is the standing reminder of what that costs when it is
+/// missed: it shipped gated in name only, leaked to a live stage tablet mid-
+/// rehearsal, and had no Tauri emit, so the e2e rehearsal test — which counts wall
+/// events — saw nothing wrong. A programme clock is the same shape of leak on the
+/// same screen, so its test watches the HUB (`qa::Kiosk`), not the wall.
+///
+/// The registry is read and DROPPED before anything is published (rule 2):
+/// `snapshot_scope` returns owned values and there is no way to still be holding
+/// its lock on the far side of this call.
+// GENERIC OVER THE RUNTIME (rule 24) — `e2e.rs` has to be able to drive it.
+pub fn publish_timers<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    if rehearsing(app) {
+        // A suppression, not a redirect: there is no console stage panel to preview
+        // it on, so the stage monitor keeps showing whatever it was showing —
+        // exactly as the projector does. Same wording as `stage_next` on purpose.
+        println!("rehearsal: publish_timers SUPPRESSED — nothing left the machine");
+        return;
+    }
+    let Some(reg) = app.try_state::<crate::timers::TimerRegistry>() else {
+        // No registry managed (headless tests, early boot). There is nothing to say
+        // about timers, and saying "none" would be a claim from an absence.
+        return;
+    };
+    let stage = reg.snapshot_scope(crate::timers::Scope::Stage);
+    // The configured warning window rides with the set. This is the frame that
+    // reaches a stage tablet FIRST — a programme timer can be running before
+    // anything has been fired — so it is the only delivery that does not leave the
+    // preacher's page on the shipped minute for the start of a service (RG-149(c)).
+    let warn_default = countdown_warn_default(app);
+    publish_kiosk(app, timer_frame_json(&stage, warn_default));
+}
+
 /// WHAT AN OVERRIDE IS, once: a mode and an optional duration, or nothing at all.
 ///
 /// Named rather than spelled out at six signatures — clippy asks for this, and it
@@ -1183,7 +1703,7 @@ fn transition_json(t: Option<&(String, Option<u32>)>) -> String {
 ///
 /// NOT REHEARSAL-GATED, and that is a deliberate difference from every publisher
 /// above it. Those carry CONTENT; this carries configuration and paints nothing —
-/// exactly like `set_template` and `set_themes`, which are not gated either. A
+/// exactly like `set_template`, which is not gated either. A
 /// screen that receives this looks identical afterwards; it only changes how the
 /// NEXT change to it is drawn. So there is nothing of a rehearsal to leak, and
 /// gating it would instead leave every screen still armed with the transition from
@@ -1240,13 +1760,15 @@ pub struct KioskHub {
     /// per CHANNEL, overwritten by the next beat and gone on quit. It answers
     /// "is that screen alive", never "who is watching". See `OutputHealth`.
     clients: Arc<Mutex<HashMap<i64, usize>>>,
-    /// The operator's CUSTOM themes, as a JSON array string (the `themes.custom`
-    /// settings blob). Sent to every kiosk client on connect so a browser source
-    /// (which has no DB) can resolve a template that pins a custom theme — builtin
-    /// themes it already knows (bundled in the page). Always well-formed: only a
-    /// validated JSON array is ever stored (see `set_themes`), so embedding it raw
-    /// into a WS message can never corrupt the frame.
-    themes: Arc<Mutex<String>>,
+    /// THE CONFIGURED DEFAULT TEMPLATE, as JSON, or the literal `null`.
+    ///
+    /// The last link in every screen's resolution chain (DECISIONS §29: the
+    /// transparency law, then a pinned cue template, then the screen's own, then
+    /// the content look, then THIS). A browser source has no database, so the
+    /// hub is the only way it can learn the operator's default; without it the
+    /// output page ends at the bundled `Classic Serif` and the configured
+    /// default reaches a screen exactly once, when the channel is created.
+    default_tpl: Arc<Mutex<String>>,
     /// THE LAST FRAME THAT DECIDED WHAT IS ON THE SCREENS — content, clear or
     /// black — kept so a client that joins LATE is shown it.
     ///
@@ -1256,8 +1778,8 @@ pub struct KioskHub {
     /// reloading, a Wi-Fi blip on the lobby TV, or this hub's own 1.5 s reconnect
     /// loop all produce it, and RG-119 records the main output going away three
     /// times in one 85.5 minute service. Reproduced by opening `output.html`
-    /// while a verse was live: the page connected, was sent its template and its
-    /// themes, and painted nothing.
+    /// while a verse was live: the page connected, was sent its template, and
+    /// painted nothing.
     ///
     /// It retains the last frame of those three kinds and NOTHING else, so it can
     /// never resurrect a screen the operator cleared: `clear` and `black` are
@@ -1275,10 +1797,80 @@ pub struct KioskHub {
     /// preference and no content.
     ///
     /// Retained because a screen that joins mid-service must not be the one screen
-    /// still cutting while the rest crossfade — the same argument as the template
-    /// and the themes, which are cached and replayed here for the same reason. It
-    /// is configuration, never content: it paints nothing on its own.
+    /// still cutting while the rest crossfade — the same argument as the template,
+    /// which is cached and replayed here for the same reason. It is
+    /// configuration, never content: it paints nothing on its own.
     last_transition: TransitionSlot,
+    /// WHAT EACH SCREEN IS FOR — `{"1":"main","2":"stage"}`, or `{}`.
+    ///
+    /// A browser source has no database, so this is the only way it can learn
+    /// its own channel's role — and it needs to, because a Stage Message is
+    /// filtered at the RECEIVER. The hub broadcasts `stage_alert` to every
+    /// client and cannot address one: it records nothing about who connected,
+    /// and DECISIONS §35 is not being reversed to let it. So the message is
+    /// refused where the refusal is possible, and the fact it is refused on has
+    /// to reach the page.
+    ///
+    /// Its own slot, for the same reason `last_transition` has one: `last_screen`
+    /// holds ONE frame and the newest wins, so retaining configuration there
+    /// would replace the verse a late-joining screen is owed (rule 43).
+    ///
+    /// Ids and roles only — no names, no addresses, nothing a client chose.
+    channel_roles: Arc<Mutex<String>>,
+    /// THE PROGRAMME TIMERS A STAGE TABLET IS SHOWING — the last `timer` frame.
+    ///
+    /// ITS OWN SLOT, NOT `last_screen`, and this is the fourth time that sentence
+    /// has had to be written in this struct. One slot means the newest frame wins,
+    /// so retaining a timer beside `content` would ERASE the retained verse: the
+    /// next screen to join mid-reading would be handed a clock over a blank wall —
+    /// rule 43's own failure, delivered by rule 43's own mechanism. It is also why
+    /// `stage_next` is excluded from retention entirely.
+    ///
+    /// Retained, unlike `stage_alert`, because a programme timer is a STATE and not
+    /// a moment: it is still running when the tablet comes back. Without this, a
+    /// phone that locked its screen mid-sermon comes back with no clock until the
+    /// operator next touches a timer, which during a sermon is never.
+    ///
+    /// A rehearsal publishes nothing to this hub at all — the gate is at
+    /// `publish_timers` — so there is nothing of a rehearsal to replay here either.
+    last_timers: Arc<Mutex<Option<String>>>,
+    /// THE PICTURE EVERY SCREEN IS PAINTING ON — the last `background` frame.
+    ///
+    /// ITS OWN SLOT, NOT `last_screen`, and this is the FIFTH time that sentence
+    /// has had to be written in this struct. One slot means the newest frame wins,
+    /// so retaining a backdrop beside `content` would ERASE the retained verse:
+    /// the next screen to join mid-reading would be handed wallpaper and no words
+    /// — rule 43's own failure, delivered by rule 43's own mechanism.
+    ///
+    /// Retained, because a background is the most STATE-like thing this hub
+    /// carries: it is put up once at the top of a service and is still up an hour
+    /// later. A screen that reconnected without it comes back with the words
+    /// floating on black while every other screen in the building carries the
+    /// church's picture, and nothing anywhere says so.
+    ///
+    /// **Emptied by a panic control, at `publish`.** `clear` and `black` go
+    /// through the same door, so the drop is by construction rather than by a
+    /// publisher remembering — and the replay can no more resurrect a background
+    /// than it can resurrect a verse. A rehearsal publishes nothing to this hub at
+    /// all (the gate is at `set_background`), so there is nothing of a rehearsal
+    /// to replay here either.
+    last_background: Arc<Mutex<Option<String>>>,
+    /// THE SCREENS THE OPERATOR HAS TAKEN OUT OF THE WALL — `{"4":"clear"}`.
+    ///
+    /// ITS OWN SLOT, NOT `last_screen`, and this is the fifth time that sentence
+    /// has had to be written in this struct. One slot means the newest frame wins,
+    /// so retaining this beside `content` would erase the verse a late-joining
+    /// screen is owed (rule 43).
+    ///
+    /// Retained because it is a STATE and not a moment: a lobby TV the operator
+    /// took down at the start of the sermon is still meant to be down when its
+    /// browser source restarts twenty minutes later. Replayed LAST on hello,
+    /// AFTER the retained screen frame, because it OVERRIDES what is on the
+    /// screens — sent before it, the verse would paint over the operator's
+    /// decision and the screen would bring itself back up.
+    ///
+    /// Ids and states only. Nothing a client chose, and nothing a preacher said.
+    screens_down: Arc<Mutex<String>>,
 }
 
 impl Default for KioskHub {
@@ -1288,9 +1880,17 @@ impl Default for KioskHub {
             tx,
             templates: Arc::new(Mutex::new(HashMap::new())),
             clients: Arc::new(Mutex::new(HashMap::new())),
-            themes: Arc::new(Mutex::new("[]".to_string())),
+            default_tpl: Arc::new(Mutex::new("null".to_string())),
             last_screen: Arc::new(Mutex::new(None)),
             last_transition: Arc::new(Mutex::new(None)),
+            channel_roles: Arc::new(Mutex::new("{}".to_string())),
+            last_timers: Arc::new(Mutex::new(None)),
+            last_background: Arc::new(Mutex::new(None)),
+            // THE EMPTY FRAME, not an empty map. This slot holds a frame ready to
+            // send, so seeding it with `{}` would put a bare object on the wire on
+            // every hello before anything was ever taken down — a message with no
+            // `kind`, which every client drops in silence.
+            screens_down: Arc::new(Mutex::new(SCREENS_ALL_UP.to_string())),
         }
     }
 }
@@ -1356,11 +1956,79 @@ impl KioskHub {
                 *last = Some(msg.clone());
             }
         }
+        // A SECOND SLOT, TESTED SEPARATELY. The two matchers are disjoint by
+        // construction — a frame is `content`/`clear`/`black`, or it is `timer`, and
+        // no frame this module builds is both — so a programme clock can never
+        // become what a late-joining screen is shown, and a verse can never become
+        // the programme.
+        if is_timer_frame(&msg) {
+            if let Ok(mut last) = self.last_timers.lock() {
+                *last = Some(msg.clone());
+            }
+        }
+        // A THIRD SLOT, AND THE ONLY ONE A PANIC CONTROL REACHES INTO.
+        //
+        // `background_retention` answers for every frame in the module at once:
+        // leave it alone, take it down, or become it. The take-down arm is why the
+        // decision is here rather than at `set_background` — `clear` and `black`
+        // are published through this same door, so the church's backdrop goes with
+        // the verse by construction, and nothing new had to be sent to achieve it.
+        if let Some(next) = background_retention(&msg) {
+            if let Ok(mut last) = self.last_background.lock() {
+                *last = next;
+            }
+        }
+        // A FOURTH SLOT, and the same disjointness argument. A `screen_state` frame
+        // is neither a screen frame nor a timer — it says which screens the
+        // operator has taken OUT of the wall, which is a fact about screens rather
+        // than a thing to paint on one. The whole set rides every time, so the
+        // newest frame winning is correct here rather than lossy.
+        if is_screen_state_frame(&msg) {
+            if let Ok(mut last) = self.screens_down.lock() {
+                *last = msg.clone();
+            }
+        }
         let _ = self.tx.send(msg); // Err only means no subscribers — fine.
     }
     /// Shared handle to the retained screen frame, for the WS task to send on hello.
     pub fn last_screen_handle(&self) -> Arc<Mutex<Option<String>>> {
         self.last_screen.clone()
+    }
+    /// Shared handle to the retained programme timers, for the WS task's hello.
+    pub fn last_timers_handle(&self) -> Arc<Mutex<Option<String>>> {
+        self.last_timers.clone()
+    }
+    /// Shared handle to the retained background, for the WS task's hello.
+    pub fn last_background_handle(&self) -> Arc<Mutex<Option<String>>> {
+        self.last_background.clone()
+    }
+    /// WHAT PICTURE IS BEHIND EVERYTHING RIGHT NOW, for a screen with no socket.
+    ///
+    /// The same argument `current_transition` makes: the kiosk hub replays the
+    /// retained frame on `hello`, and a NATIVE output window has the Tauri bridge
+    /// and no socket. Without a read-back, a projector opened mid-service through
+    /// `open_channel_output` would be the one screen in the building with no
+    /// backdrop, until the operator happened to change it.
+    ///
+    /// Parsed rather than kept as a second field, deliberately: one slot is one
+    /// truth, and a struct beside the frame is a second copy that can disagree
+    /// with what the LAN screens were actually sent. The parse is off the fire
+    /// path — it runs once, when an output window mounts.
+    pub fn current_background(&self) -> Option<(String, String)> {
+        let frame = self.last_background.lock().ok()?.clone()?;
+        let v: serde_json::Value = serde_json::from_str(&frame).ok()?;
+        let url = v.get("media_url")?.as_str()?.to_string();
+        let kind = v
+            .get("media_kind")
+            .and_then(|k| k.as_str())
+            .unwrap_or("image")
+            .to_string();
+        Some((url, kind))
+    }
+    /// Shared handle to the screens the operator has taken down, for the WS task's
+    /// hello.
+    pub fn screens_down_handle(&self) -> Arc<Mutex<String>> {
+        self.screens_down.clone()
     }
     /// Shared handle to the retained transition override, for the WS task's hello.
     pub fn last_transition_handle(&self) -> TransitionSlot {
@@ -1395,7 +2063,16 @@ impl KioskHub {
     pub fn current_transition(&self) -> TransitionOverride {
         self.last_transition.lock().ok().and_then(|t| t.clone())
     }
-    pub fn sender(&self) -> broadcast::Sender<String> {
+    /// The raw broadcast sender — for the WebSocket server task to subscribe to,
+    /// and for tests to listen on.
+    ///
+    /// `pub(crate)`, deliberately. It is a door out of this module that bypasses
+    /// `publish`: `hub.sender().send(json)` reaches every connected kiosk client
+    /// and contains neither `publish_kiosk(` nor `.publish(`, so the rehearsal
+    /// enumeration cannot see it. Keeping it inside the crate keeps that door
+    /// somewhere `every_publisher_in_this_module_has_an_explicit_rehearsal_verdict`
+    /// can reach, and that test forbids its use anywhere in this module.
+    pub(crate) fn sender(&self) -> broadcast::Sender<String> {
         self.tx.clone()
     }
     /// Shared handle to the template cache, for the WS server task.
@@ -1407,34 +2084,80 @@ impl KioskHub {
     pub fn clients_handle(&self) -> ClientRegistry {
         ClientRegistry(self.clients.clone())
     }
-    /// Shared handle to the custom-themes blob, for the WS server task to read and
-    /// send to each client on `hello`.
-    pub fn themes_handle(&self) -> Arc<Mutex<String>> {
-        self.themes.clone()
+    /// Shared handle to the default-template blob, for the WS server task to read
+    /// and send to each client on `hello`.
+    pub fn default_template_handle(&self) -> Arc<Mutex<String>> {
+        self.default_tpl.clone()
     }
-    /// Validate + store the custom-themes blob WITHOUT pushing (startup warm).
-    /// Only a well-formed JSON ARRAY is kept — anything else falls back to `[]`,
-    /// so the value embedded raw into a WS frame is always valid JSON.
-    pub fn cache_themes(&self, themes_json: &str) {
-        let safe = match serde_json::from_str::<serde_json::Value>(themes_json) {
-            Ok(v) if v.is_array() => themes_json.to_string(),
-            _ => "[]".to_string(),
+    /// Validate + store the default template WITHOUT pushing (startup warm).
+    /// Anything that is not valid JSON becomes the literal `null`, because the
+    /// value is embedded raw into a WS frame and one unparseable frame stops a
+    /// client applying every frame after it.
+    pub fn cache_default_template(&self, template_json: &str) {
+        let safe = match serde_json::from_str::<serde_json::Value>(template_json) {
+            Ok(_) => template_json.to_string(),
+            Err(_) => "null".to_string(),
         };
-        if let Ok(mut t) = self.themes.lock() {
+        if let Ok(mut t) = self.default_tpl.lock() {
             *t = safe;
         }
     }
-    /// Update the custom themes AND push them live to every connected client, so a
-    /// kiosk re-resolves a custom-themed template the instant the operator saves a
-    /// theme. Same validate-then-store rule as `cache_themes`.
-    pub fn set_themes(&self, themes_json: &str) {
-        self.cache_themes(themes_json);
-        let blob = self
-            .themes
+    /// The cached default template JSON (`null` when none is configured).
+    pub fn default_template_json(&self) -> String {
+        self.default_tpl
             .lock()
             .map(|t| t.clone())
-            .unwrap_or_else(|_| "[]".into());
-        self.publish(format!(r#"{{"kind":"themes","themes":{blob}}}"#));
+            .unwrap_or_else(|_| "null".into())
+    }
+    /// Update the default template AND push it live, so a screen following the
+    /// content look re-resolves the instant the operator changes the default
+    /// instead of at the next reload. Same validate-then-store rule as
+    /// `cache_default_template`.
+    pub fn set_default_template(&self, template_json: &str) {
+        self.cache_default_template(template_json);
+        let blob = self.default_template_json();
+        self.publish(format!(
+            r#"{{"kind":"default_template","template":{blob}}}"#
+        ));
+    }
+    /// Shared handle to the role map, for the WS server task to send on `hello`.
+    pub fn channel_roles_handle(&self) -> Arc<Mutex<String>> {
+        self.channel_roles.clone()
+    }
+    /// Validate + store the role map WITHOUT pushing (startup warm).
+    ///
+    /// Same validate-then-store rule as `cache_default_template`, and for the same
+    /// reason: the value is embedded RAW into a WS frame, and one unparseable
+    /// frame stops a client applying every frame after it. Anything that is not a
+    /// JSON object becomes `{}` — which is "no screen has a role", the safe
+    /// reading, because every filter downstream asks whether a role IS `stage`.
+    pub fn cache_channel_roles(&self, roles_json: &str) {
+        let safe = match serde_json::from_str::<serde_json::Value>(roles_json) {
+            Ok(v) if v.is_object() => roles_json.to_string(),
+            _ => "{}".to_string(),
+        };
+        if let Ok(mut r) = self.channel_roles.lock() {
+            *r = safe;
+        }
+    }
+    /// The cached role map (`{}` when no screen has a role).
+    pub fn channel_roles_json(&self) -> String {
+        self.channel_roles
+            .lock()
+            .map(|r| r.clone())
+            .unwrap_or_else(|_| "{}".into())
+    }
+    /// Update the role map AND push it live, so a screen already open learns it
+    /// has become — or stopped being — the stage without waiting for a reload.
+    ///
+    /// It paints nothing on its own. What it changes is whether the NEXT Stage
+    /// Message is accepted, which is the half of this that must not wait: an
+    /// operator who has just made a tablet the stage display is about to type a
+    /// message to the person holding it.
+    pub fn set_channel_roles(&self, roles_json: &str) {
+        self.cache_channel_roles(roles_json);
+        let blob = self.channel_roles_json();
+        self.publish(format!(r#"{{"kind":"channel_roles","roles":{blob}}}"#));
     }
     /// Cache a template's JSON (no push). Used to warm the cache at startup.
     pub fn cache_template(&self, id: i64, template_json: &str) {
@@ -1533,9 +2256,13 @@ pub async fn run_kiosk_server(
     tx: broadcast::Sender<String>,
     templates: Arc<Mutex<HashMap<i64, String>>>,
     clients: ClientRegistry,
-    themes: Arc<Mutex<String>>,
+    default_tpl: Arc<Mutex<String>>,
+    channel_roles: Arc<Mutex<String>>,
     last_screen: Arc<Mutex<Option<String>>>,
     last_transition: TransitionSlot,
+    last_timers: Arc<Mutex<Option<String>>>,
+    last_background: Arc<Mutex<Option<String>>>,
+    screens_down: Arc<Mutex<String>>,
     health: OutputHealth,
     port: u16,
 ) {
@@ -1568,9 +2295,13 @@ pub async fn run_kiosk_server(
         let mut rx = tx.subscribe();
         let templates = templates.clone();
         let clients = clients.clone();
-        let themes = themes.clone();
+        let default_tpl = default_tpl.clone();
+        let channel_roles = channel_roles.clone();
         let last_screen = last_screen.clone();
         let last_transition = last_transition.clone();
+        let last_timers = last_timers.clone();
+        let last_background = last_background.clone();
+        let screens_down = screens_down.clone();
         let health = health.clone();
         tokio::spawn(async move {
             let _permit = permit;
@@ -1692,7 +2423,7 @@ pub async fn run_kiosk_server(
                                     // channel-keyed source follows a template swap
                                     // and a `template_id`-keyed one does not. So
                                     // the recommended URL was the one shape that
-                                    // got no themes and, worse, NO RETAINED FRAME:
+                                    // got NO RETAINED FRAME:
                                     // an OBS source restarting mid-reading came
                                     // back black and stayed black until the next
                                     // fire, which is the exact failure rule 43 and
@@ -1704,9 +2435,9 @@ pub async fn run_kiosk_server(
                                     // Registration and the template reply still
                                     // need an id — a client with no template id has
                                     // no template to be counted against, and the
-                                    // liveness count is per template id. The themes
-                                    // and the retained frame need nothing: they are
-                                    // about what is ON THE SCREENS, not about which
+                                    // liveness count is per template id. The
+                                    // retained frame needs nothing: it is about
+                                    // what is ON THE SCREENS, not about which
                                     // look this screen wears.
                                     if let Some(id) = v.get("template_id").and_then(|i| i.as_i64()) {
                                         // Replace, don't add: a client that says
@@ -1725,14 +2456,40 @@ pub async fn run_kiosk_server(
                                                 .await;
                                         }
                                     }
-                                    // Send the custom themes, so this client can
-                                    // resolve a template pinning a custom theme
-                                    // (builtins it already knows). Always a valid
-                                    // JSON array (see set_themes).
-                                    let blob = themes.lock().map(|t| t.clone()).unwrap_or_else(|_| "[]".into());
+                                    // The configured default template, so this
+                                    // client can end its resolution chain where
+                                    // the operator said rather than at the
+                                    // bundled builtin. Like the template above
+                                    // it, this is configuration: on its own it
+                                    // paints nothing.
+                                    let dblob = default_tpl
+                                        .lock()
+                                        .map(|t| t.clone())
+                                        .unwrap_or_else(|_| "null".into());
                                     let _ = write
                                         .send(tokio_tungstenite::tungstenite::Message::Text(
-                                            format!(r#"{{"kind":"themes","themes":{blob}}}"#),
+                                            format!(
+                                                r#"{{"kind":"default_template","template":{dblob}}}"#
+                                            ),
+                                        ))
+                                        .await;
+                                    // WHAT EACH SCREEN IS FOR. Sent on every
+                                    // hello, not only when something has a role,
+                                    // because `{}` is an answer: it is how a page
+                                    // learns it is NOT the stage. Withholding it
+                                    // would leave a screen unable to tell "no role
+                                    // is set" from "the reply has not arrived yet",
+                                    // and the only thing downstream of it is
+                                    // whether a private message may be painted.
+                                    let rblob = channel_roles
+                                        .lock()
+                                        .map(|r| r.clone())
+                                        .unwrap_or_else(|_| "{}".into());
+                                    let _ = write
+                                        .send(tokio_tungstenite::tungstenite::Message::Text(
+                                            format!(
+                                                r#"{{"kind":"channel_roles","roles":{rblob}}}"#
+                                            ),
                                         ))
                                         .await;
                                     // The operator's transition override, if one is
@@ -1740,14 +2497,50 @@ pub async fn run_kiosk_server(
                                     // retained frame, so a screen that joins late
                                     // is not the only one in the building still
                                     // cutting while the rest crossfade. Like the
-                                    // template and the themes above it, this is
-                                    // configuration: on its own it paints nothing.
+                                    // template above it, this is configuration:
+                                    // on its own it paints nothing.
                                     let x = last_transition.lock().ok().and_then(|t| t.clone());
                                     if x.is_some() {
                                         let _ = write
                                             .send(tokio_tungstenite::tungstenite::Message::Text(
                                                 transition_json(x.as_ref()),
                                             ))
+                                            .await;
+                                    }
+                                    // THE PROGRAMME TIMERS, if any are running.
+                                    // BEFORE the retained frame and after the
+                                    // configuration, which is the whole of the
+                                    // ordering rule: a tablet sent the timers after
+                                    // the reading paints the reading and then a
+                                    // clock over it — a flash at exactly the moment
+                                    // a preacher looks down. A timer is state, not
+                                    // a moment (that is `stage_alert`, which is
+                                    // deliberately not retained at all), so it is
+                                    // replayed; and it is kept in its own slot, so
+                                    // it cannot have replaced the verse below.
+                                    let timers =
+                                        last_timers.lock().ok().and_then(|t| t.clone());
+                                    if let Some(frame) = timers {
+                                        let _ = write
+                                            .send(tokio_tungstenite::tungstenite::Message::Text(frame))
+                                            .await;
+                                    }
+                                    // THE PICTURE EVERYTHING IS PAINTED ON.
+                                    // Before the reading and after the
+                                    // configuration, on the same ordering rule as
+                                    // the timers above: a screen sent the backdrop
+                                    // AFTER the verse paints the verse and then
+                                    // slides a picture in behind it, which on a
+                                    // congregation wall reads as a fault. Its own
+                                    // slot, so it cannot have replaced the verse
+                                    // below; emptied by `clear` and `black` at the
+                                    // retention door, so there is nothing here to
+                                    // replay after a panic control.
+                                    let backdrop =
+                                        last_background.lock().ok().and_then(|b| b.clone());
+                                    if let Some(frame) = backdrop {
+                                        let _ = write
+                                            .send(tokio_tungstenite::tungstenite::Message::Text(frame))
                                             .await;
                                     }
                                     // AND WHAT IS ON THE SCREENS RIGHT NOW.
@@ -1761,6 +2554,30 @@ pub async fn run_kiosk_server(
                                             .send(tokio_tungstenite::tungstenite::Message::Text(frame))
                                             .await;
                                     }
+                                    // AND WHICH SCREENS THE OPERATOR HAS TAKEN OUT
+                                    // OF THE WALL.
+                                    //
+                                    // LAST, and the order is the whole of it. This
+                                    // frame OVERRIDES what is on the screens for
+                                    // the screens it names, so sent before the
+                                    // retained verse the verse would paint over the
+                                    // operator's decision and a lobby TV whose
+                                    // browser source restarted would bring itself
+                                    // back up mid-sermon — rule 43's own mechanism
+                                    // undoing an operator's own control.
+                                    //
+                                    // Sent on EVERY hello, including when nothing
+                                    // is down, because `{}` is an answer: it is how
+                                    // a page learns it is NOT down, and a page that
+                                    // cannot tell "nobody has told me" from "I am
+                                    // up" is the distinction rule 35 is about.
+                                    let sd = screens_down
+                                        .lock()
+                                        .map(|d| d.clone())
+                                        .unwrap_or_else(|_| SCREENS_ALL_UP.into());
+                                    let _ = write
+                                        .send(tokio_tungstenite::tungstenite::Message::Text(sd))
+                                        .await;
                                 }
                             }
                         }
@@ -1781,6 +2598,47 @@ pub async fn run_kiosk_server(
 /// no dev server running. Requires `dist/` to exist at build time (the Tauri
 /// build runs `npm run build` first).
 static DIST: include_dir::Dir = include_dir::include_dir!("$CARGO_MANIFEST_DIR/../dist");
+
+/// Where the pictures Relay ships live inside the bundle.
+///
+/// The frontend half of this constant is `BUNDLED_BACKGROUND_DIR` in
+/// `src/lib/bundledbackgrounds.js`, which is what puts them there: the build
+/// emits `src/backgrounds/*` at a stable, unhashed path precisely so the seed
+/// can name one and this server can serve it (DECISIONS §90).
+pub(crate) const BUNDLED_BACKGROUND_DIR: &str = "backgrounds";
+
+/// The bundled pictures, by served file name, in a stable order.
+///
+/// Read out of the embedded bundle rather than from a list written down twice.
+/// Vite sanitises the served name (`02 Emerald …jpg` becomes
+/// `02_Emerald_…jpg`) and nothing in Rust needs to know that rule as long as it
+/// reads the answer instead of re-deriving it.
+///
+/// Empty when `dist/` was built without the folder — which is the same
+/// condition RG-127 already describes, and `db::starter`'s own tests say so in
+/// words rather than seeding nothing in silence.
+pub(crate) fn bundled_backgrounds() -> Vec<&'static str> {
+    let Some(dir) = DIST.get_dir(BUNDLED_BACKGROUND_DIR) else {
+        return Vec::new();
+    };
+    let mut names: Vec<&'static str> = dir
+        .files()
+        .filter_map(|f| f.path().file_name().and_then(|n| n.to_str()))
+        .collect();
+    names.sort_unstable();
+    names
+}
+
+/// Does the bundle hold this path? The one honest way to check that a seeded
+/// row points at something a screen can actually load.
+///
+/// Test-only: the serving path asks `DIST` for the file it was actually sent,
+/// and a second production caller asking the same question a moment earlier
+/// would be a check that can disagree with the answer.
+#[cfg(test)]
+pub(crate) fn bundle_holds(path: &str) -> bool {
+    DIST.get_file(path).is_some()
+}
 
 fn mime_for(path: &str) -> &'static str {
     match path.rsplit('.').next().unwrap_or("") {
@@ -3038,9 +3896,13 @@ mod tests {
             hub.sender(),
             hub.templates_handle(),
             hub.clients_handle(),
-            hub.themes_handle(),
+            hub.default_template_handle(),
+            hub.channel_roles_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
+            hub.last_timers_handle(),
+            hub.last_background_handle(),
+            hub.screens_down_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -3098,9 +3960,13 @@ mod tests {
             hub.sender(),
             hub.templates_handle(),
             hub.clients_handle(),
-            hub.themes_handle(),
+            hub.default_template_handle(),
+            hub.channel_roles_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
+            hub.last_timers_handle(),
+            hub.last_background_handle(),
+            hub.screens_down_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -3181,9 +4047,13 @@ mod tests {
             hub.sender(),
             hub.templates_handle(),
             hub.clients_handle(),
-            hub.themes_handle(),
+            hub.default_template_handle(),
+            hub.channel_roles_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
+            hub.last_timers_handle(),
+            hub.last_background_handle(),
+            hub.screens_down_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -3213,21 +4083,31 @@ mod tests {
         );
     }
 
-    /// A kiosk gets the operator's custom themes on connect, so a browser source
-    /// can resolve a template that pins a custom theme (builtins it bundles).
+    /// The sibling of the cached-template test above, for the hub frame this task
+    /// adds. `hello`'s reply sends several frames in sequence (template if cached,
+    /// the configured default, the transition override, the retained screen
+    /// frame); a bug in the new block's key, its position relative to the
+    /// `.await` above it, or a forgotten `write.send` would leave every OTHER
+    /// frame still arriving while this one silently never does — exactly the
+    /// class of bug the cache/validate/classify unit tests below cannot see,
+    /// because none of them opens a socket.
     #[tokio::test]
-    async fn a_kiosk_client_receives_the_custom_themes_on_hello() {
+    async fn a_kiosk_client_receives_the_configured_default_on_hello() {
         let port = free_port();
         let hub = KioskHub::default();
-        hub.cache_themes(r##"[{"id":3,"name":"Sanctuary","style":{"accent":"#abc"}}]"##);
+        hub.cache_default_template(r#"{"id":7,"name":"House Look"}"#);
         tokio::spawn(run_kiosk_server(
             log_only(),
             hub.sender(),
             hub.templates_handle(),
             hub.clients_handle(),
-            hub.themes_handle(),
+            hub.default_template_handle(),
+            hub.channel_roles_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
+            hub.last_timers_handle(),
+            hub.last_background_handle(),
+            hub.screens_down_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -3244,23 +4124,163 @@ mod tests {
             .await
             .expect("send hello");
 
-        // Read frames until the themes frame arrives (the template frame may come
-        // first when a template is cached; here none is, so themes is first).
+        // Read frames until the default_template frame arrives (no template is
+        // cached under id 7, so it is effectively first; the loop bound is
+        // generous rather than exact, matching the cached-template test above).
         let mut got = false;
-        for _ in 0..3 {
+        for _ in 0..4 {
             let Ok(Some(Ok(msg))) =
                 tokio::time::timeout(std::time::Duration::from_secs(2), read.next()).await
             else {
                 break;
             };
             let text = msg.into_text().unwrap();
-            if text.contains(r#""kind":"themes""#) {
-                assert!(text.contains("Sanctuary"), "got {text}");
+            if text.contains(r#""kind":"default_template""#) {
+                assert!(text.contains("House Look"), "got {text}");
                 got = true;
                 break;
             }
         }
-        assert!(got, "the client never received the custom themes");
+        assert!(
+            got,
+            "the client never received the configured default template"
+        );
+    }
+
+    /// WHAT THIS SCREEN IS FOR, ON EVERY HELLO — including when the answer is
+    /// "nothing".
+    ///
+    /// A browser source has no database, so this is the only way `output.html`
+    /// can learn its own channel's role, and the only thing downstream of that is
+    /// whether a Stage Message may be painted. The filter has to live at the
+    /// receiver because the hub cannot address one client: it records nothing
+    /// about who connected and DECISIONS §35 is not being reversed.
+    ///
+    /// Sent unconditionally, `{}` included. A page that never receives this
+    /// cannot tell "no screen has a role" from "the reply has not come yet", and
+    /// the two have to differ: only one of them will ever accept a message.
+    #[tokio::test]
+    async fn a_kiosk_client_is_told_what_every_screen_is_for_on_hello() {
+        let port = free_port();
+        let hub = KioskHub::default();
+        hub.cache_channel_roles(r#"{"1":"main","2":"stage"}"#);
+        tokio::spawn(run_kiosk_server(
+            log_only(),
+            hub.sender(),
+            hub.templates_handle(),
+            hub.clients_handle(),
+            hub.default_template_handle(),
+            hub.channel_roles_handle(),
+            hub.last_screen_handle(),
+            hub.last_transition_handle(),
+            hub.last_timers_handle(),
+            hub.last_background_handle(),
+            hub.screens_down_handle(),
+            OutputHealth::default(),
+            port,
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
+            .await
+            .expect("connect");
+        let (mut write, mut read) = ws.split();
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"kind":"hello","template_id":7}"#.to_string(),
+            ))
+            .await
+            .expect("send hello");
+
+        let mut got = None;
+        for _ in 0..5 {
+            let Ok(Some(Ok(msg))) =
+                tokio::time::timeout(std::time::Duration::from_secs(2), read.next()).await
+            else {
+                break;
+            };
+            let text = msg.into_text().unwrap();
+            if text.contains(r#""kind":"channel_roles""#) {
+                got = Some(text);
+                break;
+            }
+        }
+        let text = got.expect(
+            "a client that joins is never told what its own screen is for, so it can \
+             never accept a stage message",
+        );
+        assert!(
+            text.contains(r#""2":"stage""#) && text.contains(r#""1":"main""#),
+            "got {text}"
+        );
+    }
+
+    #[test]
+    fn the_role_map_carries_ids_and_roles_and_nothing_else() {
+        // DECISIONS §35 is not being reversed. This frame goes to every client on
+        // the LAN, so what it may contain is exactly what the Outputs desk already
+        // shows: which channel holds which role. No names, no addresses, nothing a
+        // client chose, nothing about who is connected.
+        let hub = KioskHub::default();
+        hub.cache_channel_roles(r#"{"1":"main","2":"stage"}"#);
+        assert_eq!(hub.channel_roles_json(), r#"{"1":"main","2":"stage"}"#);
+        let mut rx = hub.sender().subscribe();
+        hub.set_channel_roles(r#"{"2":"stage"}"#);
+        let frame = rx.try_recv().expect("the change is published");
+        assert_eq!(frame, r#"{"kind":"channel_roles","roles":{"2":"stage"}}"#);
+    }
+
+    #[test]
+    fn a_malformed_role_map_degrades_to_no_roles_rather_than_breaking_the_frame() {
+        // The blob is embedded RAW into a WS frame, exactly like the default
+        // template — one unparseable frame stops a client applying every frame
+        // after it. `{}` is the safe reading, because every filter downstream asks
+        // whether a role IS `stage`, so degrading refuses rather than admits.
+        let hub = KioskHub::default();
+        hub.cache_channel_roles("{not json");
+        assert_eq!(hub.channel_roles_json(), "{}");
+        // A valid JSON value that is not an object is the same failure wearing
+        // better clothes: `roles[id]` on an array or a string is not a role.
+        hub.cache_channel_roles(r#"["stage"]"#);
+        assert_eq!(hub.channel_roles_json(), "{}");
+    }
+
+    #[test]
+    fn the_configured_default_is_sent_to_a_screen_that_joins_later() {
+        // A BROWSER SOURCE HAS NO DATABASE. The configured default template is a
+        // settings row, so the only way a kiosk or OBS client can end its
+        // resolution chain at the operator's default — rather than at the bundled
+        // Classic Serif — is for the hub to carry it. Cached without a push at
+        // startup, pushed when it changes, and replayed on hello, exactly like the
+        // per-template cache beside it.
+        let hub = KioskHub::default();
+        hub.cache_default_template(r#"{"id":7,"name":"House Look"}"#);
+        assert_eq!(
+            hub.default_template_json(),
+            r#"{"id":7,"name":"House Look"}"#
+        );
+    }
+
+    #[test]
+    fn a_malformed_default_degrades_to_null_rather_than_breaking_the_frame() {
+        // The blob is embedded RAW into a WS frame, so anything that is not valid
+        // JSON would produce a frame no client can parse — and a client that fails
+        // to parse one frame is a screen that stops applying every frame after it.
+        let hub = KioskHub::default();
+        hub.cache_default_template("{not json");
+        assert_eq!(hub.default_template_json(), "null");
+    }
+
+    #[test]
+    fn the_default_template_frame_is_configuration_not_a_screen_frame() {
+        // Rule: only `content`, `clear` and `black` decide what a screen is
+        // SHOWING and are retained as the screen frame (rule 43). The default
+        // template paints nothing on its own — it tells a screen what to wear when
+        // nothing else answers — so retaining it would let it stand in for the
+        // verse a late-joining screen is owed.
+        assert!(!is_screen_frame(
+            r#"{"kind":"default_template","template":null}"#
+        ));
     }
 
     /// The retained-frame test above can only be trusted if the matcher agrees
@@ -3292,9 +4312,24 @@ mod tests {
         assert!(!is_screen_frame(
             r#"{"kind":"stage_alert","text":"two minutes"}"#
         ));
-        assert!(!is_screen_frame(r#"{"kind":"themes","themes":[]}"#));
         assert!(!is_screen_frame(
             r#"{"kind":"template","id":1,"template":{}}"#
+        ));
+        // Configuration and a look. Both are retained, each in its own slot and
+        // replayed on hello from there; neither may be retained as THE screen
+        // frame, because that slot holds one message and the newest wins — a
+        // preference or a template would replace the verse and the next screen to
+        // join would be sent it over a blank wall. Both were in FRAME_VERDICTS
+        // and neither was asserted here, which is the half of the pair that
+        // checks the matcher rather than the list.
+        assert!(!is_screen_frame(r#"{"kind":"transition","mode":"cut"}"#));
+        assert!(!is_screen_frame(
+            r#"{"kind":"channel_template","channel_id":1,"template":{}}"#
+        ));
+        // And the third of that family. A screen that joins late is owed the
+        // verse, not a map of what every screen is for.
+        assert!(!is_screen_frame(
+            r#"{"kind":"channel_roles","roles":{"1":"main","2":"stage"}}"#
         ));
     }
 
@@ -3307,7 +4342,6 @@ mod tests {
         ("black", true),
         ("stage_next", false),
         ("stage_alert", false),
-        ("themes", false),
         ("template", false),
         // Configuration, not content. It is retained — in its OWN slot, and
         // replayed on hello from there — because a screen that joins late must not
@@ -3315,6 +4349,53 @@ mod tests {
         // means the newest frame wins, so a transition would replace the verse and
         // the next screen to join would be sent a preference and a blank wall.
         ("transition", false),
+        // A screen's own look, pushed from main.rs when the operator reassigns it.
+        // Not retained HERE: `last_screen` holds one frame and the newest wins, so
+        // retaining a template would replace the verse and the next screen to join
+        // would be sent a look and a blank wall. The hub keeps templates in their
+        // own per-id cache (`cache_template`) and replays them on hello from there.
+        ("channel_template", false),
+        // The operator's configured default. Not retained HERE, for the same
+        // reason as `transition` and `channel_template`: `last_screen` holds one
+        // frame and the newest wins, so retaining it would replace the verse and
+        // the next screen to join would be sent a look and a blank wall. The hub
+        // keeps it in its own slot (`default_tpl`) and replays it on hello from
+        // there.
+        ("default_template", false),
+        // WHAT EACH SCREEN IS FOR. Configuration again, and not retained HERE for
+        // the third time for the third identical reason: `last_screen` holds one
+        // frame and the newest wins. It has its own slot (`channel_roles`) and is
+        // replayed on hello from there, on EVERY hello — a page that does not know
+        // its role cannot tell "I am not the stage" from "nobody has told me yet",
+        // and what hangs off that distinction is whether a word meant for the
+        // platform gets painted.
+        ("channel_roles", false),
+        // The programme timers a stage tablet is showing. Not retained HERE, for
+        // the same reason as the three above: `last_screen` holds one frame and the
+        // newest wins, so retaining a clock would replace the verse and the next
+        // screen to join would be sent the programme over a blank wall. It IS
+        // retained — in its own slot (`last_timers`), replayed on hello from there,
+        // and sent BEFORE the screen frame so the reading is painted last.
+        ("timer", false),
+        // THE PICTURE EVERYTHING IS PAINTED ON. Not retained HERE, for the fifth
+        // time for the fifth identical reason: `last_screen` holds one frame and
+        // the newest wins, so a backdrop retained beside the verse would replace
+        // it and the next screen to join mid-reading would be handed wallpaper and
+        // no words. It IS retained — in its own slot (`last_background`), replayed
+        // on hello from there, and sent BEFORE the screen frame so the reading is
+        // painted last. **It is the one slot a panic control reaches into**: a
+        // `clear` or a `black` empties it at this same door, so the replay can no
+        // more resurrect a background than it can resurrect a verse.
+        ("background", false),
+        // WHICH SCREENS THE OPERATOR HAS TAKEN OUT OF THE WALL. Not retained HERE,
+        // for the fifth time for the fifth identical reason: `last_screen` holds
+        // one frame and the newest wins, so retaining this would replace the verse
+        // and the next screen to join would be sent a map of what is down over a
+        // blank wall. It IS retained — in its own slot (`screens_down`), replayed
+        // on hello from there, and sent AFTER the screen frame rather than before
+        // it, because it overrides what is on the screens rather than being what
+        // is on them.
+        ("screen_state", false),
     ];
 
     /// THE ENUMERATION MUST GROW WITH THE MODULE, OR IT IS NOT AN ENUMERATION.
@@ -3331,31 +4412,44 @@ mod tests {
     /// that nobody has answered for is the finding.
     #[test]
     fn every_kind_this_module_publishes_has_an_explicit_verdict() {
-        let src = include_str!("channels.rs");
-        let body = src.split("mod tests").next().unwrap_or(src);
-
-        let mut found: Vec<&str> = Vec::new();
-        for line in body.lines() {
-            // Comments talk ABOUT frames without publishing any.
-            if line.trim_start().starts_with("//") {
-                continue;
-            }
-            let mut rest = line;
-            while let Some(i) = rest.find("\"kind\"") {
-                rest = &rest[i + "\"kind\"".len()..];
-                let Some(after) = rest.trim_start().strip_prefix(':') else {
+        /// Every `"kind":"…"` literal in `src`, in order, without duplicates.
+        /// Comment lines talk ABOUT frames without publishing any.
+        ///
+        /// It finds SOURCE LITERALS only. A frame built from a type carrying
+        /// `#[serde(tag = "kind")]` produces no `"kind"` literal anywhere in this
+        /// file, so it would need no verdict and none of this would notice — the
+        /// scanner would stay green while the enumeration stopped being one.
+        fn kinds_in(src: &str, out: &mut Vec<String>) {
+            for line in src.lines() {
+                if line.trim_start().starts_with("//") {
                     continue;
-                };
-                let Some(after) = after.trim_start().strip_prefix('"') else {
-                    continue;
-                };
-                let Some(end) = after.find('"') else { continue };
-                let kind = &after[..end];
-                if !found.contains(&kind) {
-                    found.push(kind);
+                }
+                let mut rest = line;
+                while let Some(i) = rest.find("\"kind\"") {
+                    rest = &rest[i + "\"kind\"".len()..];
+                    let Some(after) = rest.trim_start().strip_prefix(':') else {
+                        continue;
+                    };
+                    let Some(after) = after.trim_start().strip_prefix('"') else {
+                        continue;
+                    };
+                    let Some(end) = after.find('"') else { continue };
+                    let kind = after[..end].to_string();
+                    if !out.contains(&kind) {
+                        out.push(kind);
+                    }
                 }
             }
         }
+
+        let chan = include_str!("channels.rs");
+        let mut found: Vec<String> = Vec::new();
+        // channels.rs strips its own tests: its `mod tests` is full of example
+        // frames that are not published by the module.
+        kinds_in(chan.split("mod tests").next().unwrap_or(chan), &mut found);
+        // main.rs is scanned WHOLE. It carries `#[cfg(test)]` from line 16, so no
+        // split can separate its tests, and it holds exactly one frame literal.
+        kinds_in(include_str!("main.rs"), &mut found);
 
         assert!(
             !found.is_empty(),
@@ -3364,7 +4458,7 @@ mod tests {
         );
         for kind in &found {
             assert!(
-                FRAME_VERDICTS.iter().any(|(k, _)| k == kind),
+                FRAME_VERDICTS.iter().any(|(k, _)| *k == kind.as_str()),
                 "`{kind}` is published to the kiosk hub and no one has said whether \
                  a screen that joins late should be shown it. Add it to \
                  FRAME_VERDICTS with a reason, and assert it in the matcher test."
@@ -3372,7 +4466,7 @@ mod tests {
         }
         for (kind, retained) in FRAME_VERDICTS {
             assert!(
-                found.contains(kind),
+                found.iter().any(|f| f == kind),
                 "FRAME_VERDICTS names `{kind}`, which this module no longer \
                  publishes — a verdict about nothing"
             );
@@ -3385,10 +4479,377 @@ mod tests {
         }
     }
 
+    /// Every function that can put something on a LAN device, and whether a
+    /// rehearsal must stop it.
+    ///
+    /// `true` means the function checks `rehearsing(app)` and returns early.
+    /// `false` means it deliberately does not, and the third column is why — the
+    /// same reason that must be at the call site.
+    const REHEARSAL_VERDICTS: &[(&str, bool, &str)] = &[
+        (
+            "broadcast_content",
+            true,
+            "it carries what a congregation reads",
+        ),
+        ("clear", true, "a rehearsal must not take a real wall down"),
+        ("black", true, "a rehearsal must not black a real wall"),
+        (
+            "stage_next",
+            true,
+            "it leaked 'up next' to a live stage tablet mid-rehearsal, and it has \
+             no Tauri emit, so the e2e wall test saw nothing wrong",
+        ),
+        (
+            "stage_alert",
+            true,
+            "a word to the preacher is for a person, and a rehearsal has no person \
+             waiting for it",
+        ),
+        (
+            "publish_timers",
+            true,
+            "a rehearsal has no stage tablet waiting for a programme clock. Same \
+             shape of leak as `stage_next` and on the same screen — it publishes to \
+             the hub and emits nothing, so the e2e wall test could not see it, and \
+             its rehearsal case watches `qa::Kiosk` instead",
+        ),
+        (
+            "set_background",
+            true,
+            "it puts an IMAGE in front of a congregation, which is the same claim \
+             `broadcast_content` makes and gets the same answer. A rehearsing \
+             operator's backdrop reaches their own console preview and nothing \
+             else — and because it publishes to the hub as well as emitting, its \
+             rehearsal case watches `qa::Kiosk`, not `qa::Wall`",
+        ),
+        (
+            "set_transition",
+            false,
+            "configuration, not content. A screen that receives it looks identical \
+             afterwards; gating it would leave every screen armed with the \
+             pre-rehearsal transition once the operator went live",
+        ),
+        (
+            "set_template",
+            false,
+            "a template, not content. Reassigning a screen's look is live by \
+             design (DECISIONS §29), and suppressing it would leave a kiosk \
+             rendering a template the operator has already replaced",
+        ),
+        (
+            "set_channel_template",
+            false,
+            "main.rs's own publisher, and the same verdict as `set_template` for \
+             the same reason: the operator has reassigned a screen's look, that is \
+             live by design (DECISIONS §29), and a look is not something a person \
+             reads. It used to be answered for in this doc comment, in prose, \
+             which is the mechanism this test exists to replace",
+        ),
+        (
+            "set_default_template",
+            false,
+            "configuration, not content — the operator's chosen fallback look. \
+             Gating it would leave a screen already following the content look \
+             wearing the pre-rehearsal default once the operator went live, the \
+             same reasoning as `set_template` and `set_channel_template`",
+        ),
+        (
+            "set_screen_state",
+            true,
+            "it takes a real screen out of a real wall. Every other gated publisher \
+             here SUPPRESSES and returns success, because what it is suppressing is \
+             content; this one REFUSES, because suppressing it would leave the \
+             Outputs desk showing the lobby TV down while the lobby TV showed the \
+             last thing it was sent, with nothing to say so — rule 35's shape on a \
+             control the operator pressed deliberately. It is not a panic control, \
+             so it is allowed to refuse; `clear` and `black` are and are not, which \
+             is why the split is in the call",
+        ),
+        (
+            "set_channel_roles",
+            false,
+            "what each screen is FOR. It paints nothing and carries nothing a \
+             person reads; what it decides is whether the NEXT stage message is \
+             accepted, and the alert itself is gated one line above. Gating this \
+             too would leave a screen that changed role during a rehearsal \
+             refusing real messages once the operator went live — the failure \
+             `set_default_template` describes, on a surface where the cost is a \
+             preacher not being told something",
+        ),
+    ];
+
+    /// THE ENUMERATION MUST GROW WITH THE MODULE, OR IT IS NOT AN ENUMERATION.
+    ///
+    /// Retention has had a scanner since rule 43; rehearsal gating has had a doc
+    /// comment. That comment is honest about why it exists — `stage_next` shipped
+    /// ungated and leaked to a live stage tablet — and a doc comment is exactly
+    /// what failed to catch it. A sixth publisher added to this module with no
+    /// `rehearsing()` check currently fails nothing.
+    ///
+    /// This reads the source, finds every function that reaches a LAN device, and
+    /// requires a verdict for each. For a function whose verdict is `true` it goes
+    /// further and requires the gate to actually be IN the function body — an
+    /// enumeration that only counted names would pass on a publisher whose check
+    /// had been deleted.
+    ///
+    /// **It reads `channels.rs` AND `main.rs`, the same two files the retention
+    /// scanner reads.** For a while it read only `channels.rs`, and `main.rs`'s
+    /// `set_channel_template` — a real publisher, holding a real `kiosk.publish(`
+    /// — was answered for in prose in this doc comment instead. That is the
+    /// mechanism this test replaces, so it cannot be the mechanism this test
+    /// leans on. `main.rs` is scanned WHOLE: it carries `#[cfg(test)]` from line
+    /// 16, so no split can separate its tests, exactly as the retention scanner
+    /// already records.
+    #[test]
+    fn every_publisher_in_this_module_has_an_explicit_rehearsal_verdict() {
+        /// The name the `fn` declaration on this line declares, whatever it is
+        /// qualified with — `pub`, `pub(crate)`, `pub(super)`, `pub(in path)`,
+        /// `async`, `const`, `unsafe`, `extern "C"`, in any order.
+        ///
+        /// The first version recognised four spellings (`fn`, `pub fn`,
+        /// `async fn`, `pub async fn`) and this module already held three
+        /// `pub(crate) fn` declarations. **An unrecognised declaration is not
+        /// skipped**: a body runs until the NEXT declaration the scanner
+        /// recognises, so the missed function's lines are appended to the
+        /// PREVIOUS function's buffer and its `.publish(` call is credited to
+        /// whichever publisher came before it. An ungated `pub(crate) fn`
+        /// placed immediately after `stage_alert` — which is exactly where a
+        /// timer publisher would land — passed green, with no new name found and
+        /// no panic. The publish tripwire below is the other half of the fix: it
+        /// is what notices the loss when a spelling gets past this function.
+        fn declared_fn_name(line: &str) -> Option<&str> {
+            let mut rest = line.trim_start();
+            loop {
+                if let Some(after) = rest.strip_prefix("fn ") {
+                    let name = after.trim_start().split(['(', '<', ' ', ':']).next()?;
+                    return if name.is_empty() { None } else { Some(name) };
+                }
+                // One qualifier at a time, in whatever order they were written.
+                let next = if let Some(a) = rest.strip_prefix("pub(") {
+                    &a[a.find(')')? + 1..]
+                } else if let Some(a) = rest.strip_prefix("pub ") {
+                    a
+                } else if let Some(a) = rest.strip_prefix("async ") {
+                    a
+                } else if let Some(a) = rest.strip_prefix("const ") {
+                    a
+                } else if let Some(a) = rest.strip_prefix("unsafe ") {
+                    a
+                } else {
+                    let a = rest.strip_prefix("extern ")?.trim_start();
+                    match a.strip_prefix('"') {
+                        Some(q) => &q[q.find('"')? + 1..],
+                        None => a,
+                    }
+                };
+                rest = next.trim_start();
+            }
+        }
+
+        /// A function reaches a LAN device if it hands the hub a message. Matched
+        /// generically on `.publish(` — any receiver, not a hardcoded list of
+        /// variable names — because a publisher can be written against any local
+        /// (`kiosk.publish(...)`, as `main.rs` already does). `publish_kiosk(` is
+        /// matched separately because it is a free function call, not a method
+        /// call on a receiver, so it never contains `.publish(`.
+        fn publishes_in(text: &str) -> usize {
+            text.matches(".publish(").count() + text.matches("publish_kiosk(").count()
+        }
+
+        /// Deliberately broader than `declared_fn_name`: `fn` as a word, followed
+        /// by an identifier, with nothing before it on the line but characters a
+        /// qualifier could be made of. It accepts spellings `declared_fn_name`
+        /// does not — including ones nobody has written yet — which is the whole
+        /// point. The two must agree exactly on every buffer, and where they stop
+        /// agreeing the narrow one has gone blind.
+        fn looks_like_a_declaration(line: &str) -> bool {
+            let t = line.trim_start();
+            let Some(i) = t.find("fn ") else { return false };
+            if !t[..i]
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "(): \"\t".contains(c))
+            {
+                return false;
+            }
+            t[i + 3..]
+                .trim_start()
+                .starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+        }
+
+        let chan = include_str!("channels.rs");
+        // channels.rs strips its own tests: its `mod tests` is full of example
+        // publishers that the module does not ship.
+        let chan_body = chan.split("mod tests").next().unwrap_or(chan);
+        let main_rs = include_str!("main.rs");
+
+        // (file, function name, its body) for every fn in both sources, in order.
+        //
+        // Keyed on POSITION, never on name: `set` and `transition` are each
+        // declared twice in this module, so `find(|(n, _)| n == name)` answers
+        // about the first one and can be answering about the wrong function
+        // entirely.
+        let mut fns: Vec<(&str, &str, String)> = Vec::new();
+        let mut scanned_publishes = 0usize;
+        for (file, body) in [("channels.rs", chan_body), ("main.rs", main_rs)] {
+            let mut current: Option<&str> = None;
+            let mut buf = String::new();
+            for line in body.lines() {
+                let t = line.trim_start();
+                // Comment lines talk ABOUT a gate or a publish call without being
+                // one — `kinds_in` above already knows this, and this scanner has
+                // to know it too, or a doc comment that merely mentions
+                // `rehearsing(` or `.publish(` reads as the real thing. Skipped
+                // before the count as well as before the buffer, so the tripwire
+                // compares like with like.
+                if t.starts_with("//") {
+                    continue;
+                }
+                if let Some(name) = declared_fn_name(t) {
+                    if let Some(prev) = current.take() {
+                        fns.push((file, prev, std::mem::take(&mut buf)));
+                    }
+                    current = Some(name);
+                }
+                scanned_publishes += publishes_in(line);
+                if current.is_some() {
+                    buf.push_str(line);
+                    buf.push('\n');
+                }
+            }
+            if let Some(prev) = current.take() {
+                fns.push((file, prev, buf));
+            }
+        }
+
+        assert!(
+            fns.len() > 20,
+            "the scanner found only {} functions — it has stopped reading these \
+             sources, and a scanner that quietly narrows passes everything",
+            fns.len()
+        );
+
+        // THE TRIPWIRE, IN TWO HALVES, BECAUSE THE FAILURE HAS TWO SHAPES.
+        //
+        // First: every publish call in the sources is attributed to some function.
+        // A call counted in the source and absent from every buffer fell outside
+        // all of them — it is gone from this test entirely.
+        let attributed: usize = fns.iter().map(|(_, _, b)| publishes_in(b)).sum();
+        assert_eq!(
+            attributed, scanned_publishes,
+            "{attributed} publish calls were attributed to functions and the \
+             sources contain {scanned_publishes}. Some call fell outside every \
+             function this scanner can see."
+        );
+
+        // Second, and this is the half that catches what actually happened: a
+        // function this scanner cannot read is not SKIPPED, it is ABSORBED. A body
+        // runs until the next declaration `declared_fn_name` recognises, so an
+        // unreadable declaration and everything under it are appended to the
+        // PREVIOUS function's buffer — its publish call credited to whichever
+        // publisher came before it, its gate assertion satisfied by that
+        // neighbour's gate. The totals do not move, so the first half sees
+        // nothing. An ungated `pub(crate) fn push_timer` placed immediately after
+        // `stage_alert` passed green that way, which is where a timer publisher
+        // would naturally land.
+        //
+        // So: every buffer must hold exactly ONE thing that looks like a
+        // declaration — its own. A second one means a function was absorbed.
+        for (file, name, b) in &fns {
+            let decls = b.lines().filter(|l| looks_like_a_declaration(l)).count();
+            assert_eq!(
+                decls, 1,
+                "the body this scanner attributed to `{name}` ({file}) contains \
+                 {decls} function declarations. A declaration `declared_fn_name` \
+                 cannot read has been absorbed into it, along with whatever that \
+                 function publishes — which is then credited to `{name}` and \
+                 covered by `{name}`'s gate. Teach `declared_fn_name` the spelling."
+            );
+        }
+
+        let publishes = |b: &str| publishes_in(b) > 0;
+
+        let mut found: Vec<(&str, &str, &String)> = Vec::new();
+        for (file, name, b) in &fns {
+            // `publish_kiosk` and `publish` are the plumbing, not publishers.
+            if *name == "publish_kiosk" || *name == "publish" {
+                continue;
+            }
+            if publishes(b) {
+                found.push((file, name, b));
+            }
+        }
+
+        assert!(
+            !found.is_empty(),
+            "the scanner found no publisher at all — it has stopped reading these \
+             sources, and a scanner that quietly narrows passes everything"
+        );
+
+        for (file, name, b) in &found {
+            let Some((_, gated, _)) = REHEARSAL_VERDICTS.iter().find(|(n, _, _)| n == name) else {
+                panic!(
+                    "`{name}` ({file}) publishes to the kiosk hub and no one has said \
+                     whether a rehearsal must stop it. Add it to REHEARSAL_VERDICTS \
+                     with a reason, and if it is gated, add an e2e case that watches \
+                     `qa::Kiosk` rather than `qa::Wall`."
+                );
+            };
+            if *gated {
+                // This entry's OWN body, not a lookup by name.
+                assert!(
+                    b.contains("rehearsing("),
+                    "REHEARSAL_VERDICTS says `{name}` ({file}) is gated, and its body \
+                     does not call `rehearsing(`. A verdict is not a gate."
+                );
+            }
+        }
+
+        for (name, _, reason) in REHEARSAL_VERDICTS {
+            assert!(
+                found.iter().any(|(_, n, _)| n == name),
+                "REHEARSAL_VERDICTS names `{name}`, which nothing here publishes any \
+                 more — a verdict about nothing"
+            );
+            assert!(
+                !reason.is_empty(),
+                "`{name}` has a verdict and no reason. The reason is the half a \
+                 future reader needs."
+            );
+        }
+
+        // THE ACCESSOR IS A DOOR TOO.
+        //
+        // `KioskHub::sender()` hands out the raw `broadcast::Sender`, so
+        // `hub.sender().send(json)` reaches every connected kiosk client while
+        // containing neither `publish_kiosk(` nor `.publish(` — a publisher every
+        // assertion above is blind to. It is `pub(crate)`, not `pub`, so nothing
+        // outside this crate can take that route at all; the in-crate callers that
+        // remain take a sender to SUBSCRIBE (`qa.rs`'s Kiosk door, this module's
+        // tests) or to hand to the WebSocket server task (`main.rs`), never to
+        // publish. Inside this module nothing but the accessor itself may touch it.
+        //
+        // Residual, stated rather than hidden: `let tx = hub.sender();` followed by
+        // `tx.send(…)` on a later line is still invisible here. The `pub(crate)`
+        // is what keeps that inside a crate where this test can be extended.
+        for (file, name, b) in &fns {
+            if *file != "channels.rs" || *name == "sender" {
+                continue;
+            }
+            assert!(
+                !b.contains(".sender()"),
+                "`{name}` reaches `KioskHub::sender()`, which hands out the raw \
+                 broadcast sender. `hub.sender().send(json)` publishes to every \
+                 connected kiosk and matches neither `publish_kiosk(` nor \
+                 `.publish(`, so no verdict would ever be required of it. Publish \
+                 through `KioskHub::publish` or `publish_kiosk`."
+            );
+        }
+    }
+
     /// A SCREEN THAT JOINS LATE IS SHOWN WHAT IS ON THE SCREENS.
     ///
     /// Reproduced against the real backend: with a verse live, opening
-    /// `output.html` connected, was sent its template and its themes, and painted
+    /// `output.html` connected, was sent its template, and painted
     /// NOTHING — a black rectangle in front of a congregation until the operator
     /// happened to fire the next thing. An OBS source restarting, a kiosk page
     /// reloading, a Wi-Fi blip on the lobby TV and this hub's own reconnect loop
@@ -3403,9 +4864,13 @@ mod tests {
             hub.sender(),
             hub.templates_handle(),
             hub.clients_handle(),
-            hub.themes_handle(),
+            hub.default_template_handle(),
+            hub.channel_roles_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
+            hub.last_timers_handle(),
+            hub.last_background_handle(),
+            hub.screens_down_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -3466,9 +4931,13 @@ mod tests {
             hub.sender(),
             hub.templates_handle(),
             hub.clients_handle(),
-            hub.themes_handle(),
+            hub.default_template_handle(),
+            hub.channel_roles_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
+            hub.last_timers_handle(),
+            hub.last_background_handle(),
+            hub.screens_down_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -3618,6 +5087,735 @@ mod tests {
         );
     }
 
+    /// One `Stage` timer, five minutes out, for the tests below.
+    fn stage_timer(id: i64, label: &str) -> crate::timers::Timer {
+        crate::timers::Timer {
+            id,
+            label: label.into(),
+            done_msg: String::new(),
+            target_ms: 1_700_000_000_000 + 5 * 60_000,
+            from_ms: 1_700_000_000_000,
+            paused_ms: None,
+            warn_ms: None,
+            scope: crate::timers::Scope::Stage,
+            plan_item_id: None,
+            started_in_rehearsal: false,
+        }
+    }
+
+    /// A PROGRAMME TIMER IS NOT WHAT A SCREEN IS SHOWING.
+    ///
+    /// Rule 43's trap 1, one slot further along, and the fourth time this module has
+    /// walked up to it: `last_screen` holds ONE frame and the newest wins, so a
+    /// timer retained there would ERASE the retained verse — and the next screen to
+    /// join mid-reading would be handed a clock over a blank wall. That is the
+    /// failure DECISIONS §68 exists to prevent, delivered by its own mechanism, for
+    /// the same reason `transition`, `channel_template` and `default_template` each
+    /// have a slot of their own.
+    ///
+    /// **The frame is built by the module's own serialiser, never by hand.** A
+    /// `serde_json` map is a BTreeMap, so the key order is alphabetical and not the
+    /// order anybody wrote — the first version of `is_screen_frame` was a
+    /// `starts_with` that matched nothing while looking exactly like the bug it
+    /// fixed. A hand-written literal here would reproduce that: it would assert
+    /// about a string this module never emits.
+    #[test]
+    fn a_timer_frame_is_never_retained_as_a_screen_frame() {
+        let frame = timer_frame_json(&[stage_timer(1, "Offering")], None);
+        assert!(
+            !is_screen_frame(&frame),
+            "the real timer frame this module publishes matched the screen-frame \
+             matcher, so a programme clock would stand in for the reading: {frame}"
+        );
+        assert!(
+            is_timer_frame(&frame),
+            "the timer matcher does not recognise the frame this module actually \
+             serialises — the retained slot would stay empty and a tablet that \
+             rejoined would come back with no timer: {frame}"
+        );
+
+        // And the two slots do not touch each other, in the operator's real order:
+        // the verse is up, and then a programme timer starts.
+        let hub = KioskHub::default();
+        let verse = r#"{"kind":"content","reference":"Romans 8:28","text":"And we know"}"#;
+        hub.publish(verse.to_string());
+        hub.publish(frame.clone());
+        assert_eq!(
+            hub.last_screen
+                .lock()
+                .ok()
+                .and_then(|l| l.clone())
+                .as_deref(),
+            Some(verse),
+            "starting a programme timer erased the verse a late screen is shown"
+        );
+        assert_eq!(
+            hub.last_timers.lock().ok().and_then(|t| t.clone()),
+            Some(frame),
+            "the timer was published and not retained, so a tablet that rejoins \
+             comes back without it"
+        );
+    }
+
+    /// AN OPERATOR'S LABEL CANNOT FORGE A FRAME.
+    ///
+    /// `label` is free text an operator types, and it rides to every stage tablet.
+    /// `serde_json` escapes the quotes, so `"kind":"content"` cannot occur
+    /// unescaped inside a string value — the same argument `is_screen_frame` makes
+    /// about a verse, asserted here rather than reasoned about, because this is the
+    /// first retained frame in the module whose payload a person composes.
+    #[test]
+    fn a_label_cannot_smuggle_a_screen_frame_into_a_timer() {
+        let forged = r#"","kind":"content","text":"x"#;
+        let frame = timer_frame_json(&[stage_timer(1, forged)], None);
+        assert!(
+            !is_screen_frame(&frame),
+            "an operator's label was read as a content frame and would become what \
+             a late-joining screen is shown: {frame}"
+        );
+        let v: serde_json::Value = serde_json::from_str(&frame).expect("valid JSON");
+        assert_eq!(v["kind"], "timer");
+        assert_eq!(v["timers"][0]["label"], forged);
+    }
+
+    /// WHAT A STAGE ENTRY CARRIES, AND WHY IT WEARS THE COUNTDOWN'S FIELD NAMES.
+    ///
+    /// `countdown.js::countdownRemainingMs` is the ONE reader of how long is left on
+    /// the frontend, and it reads `countdown_paused_ms` and `countdown_to`. Naming
+    /// these fields anything else would mean the stage page doing its own
+    /// subtraction — a second copy of a rule that now has an exception, on the one
+    /// surface a preacher reads from mid-sermon.
+    #[test]
+    fn a_stage_entry_speaks_the_countdown_reader_s_own_field_names() {
+        let mut held = stage_timer(4, "Sermon");
+        held.paused_ms = Some(90_000);
+        held.warn_ms = Some(120_000);
+        let frame = timer_frame_json(&[stage_timer(3, "Offering"), held], None);
+        let v: serde_json::Value = serde_json::from_str(&frame).expect("valid JSON");
+
+        assert_eq!(v["kind"], "timer");
+        assert_eq!(v["timers"][0]["id"], 3);
+        assert_eq!(v["timers"][0]["label"], "Offering");
+        assert_eq!(
+            v["timers"][0]["countdown_to"],
+            1_700_000_000_000i64 + 5 * 60_000
+        );
+        assert_eq!(v["timers"][0]["countdown_from"], 1_700_000_000_000i64);
+        assert_eq!(
+            v["timers"][0]["countdown_paused_ms"],
+            serde_json::Value::Null
+        );
+        assert_eq!(
+            v["timers"][1]["countdown_paused_ms"], 90_000,
+            "a held timer must carry the figure it is held at, or the tablet counts \
+             down through a hold the operator applied"
+        );
+        assert_eq!(v["timers"][1]["warn_ms"], 120_000);
+        // The order is the registry's own, oldest first — a rail whose rows swap
+        // places between frames is a rail nobody can read.
+        assert_eq!(v["timers"][1]["id"], 4);
+    }
+
+    /// THE CONFIGURED WARNING WINDOW RIDES WITH THE PROGRAMME — RG-149(c), the
+    /// stage half.
+    ///
+    /// `Settings → General → Countdown warning` is console state: its only writer is
+    /// `stores/capture.js`, and `stage.html` does not and cannot import that module
+    /// — it has no Tauri bridge. So the figure has to be DELIVERED, and this frame
+    /// is the one that reaches the preacher's page first: a programme timer can be
+    /// running before anything at all has been fired, and waiting for a content
+    /// frame would leave the surface whose whole purpose is the clock on the shipped
+    /// minute for that entire time.
+    ///
+    /// It sits beside `timers` rather than on each row on purpose. It is a fact
+    /// about the MACHINE, not about a timer; a copy per row is a copy that can
+    /// disagree with itself in one frame.
+    #[test]
+    fn the_programme_frame_carries_the_configured_warning_window() {
+        let frame = timer_frame_json(&[stage_timer(3, "Offering")], Some(150_000));
+        let v: serde_json::Value = serde_json::from_str(&frame).expect("valid JSON");
+        assert_eq!(
+            v["warn_default_ms"], 150_000,
+            "the stage page has no way to learn the configured window"
+        );
+        // An empty set still carries it: that frame is how the last clock comes OFF
+        // the screen, and it is also the first frame a tablet may ever receive.
+        let none = timer_frame_json(&[], Some(150_000));
+        let v: serde_json::Value = serde_json::from_str(&none).expect("valid JSON");
+        assert_eq!(v["warn_default_ms"], 150_000);
+        assert_eq!(v["timers"].as_array().map(|a| a.len()), Some(0));
+        // Unset is an explicit null, never a zero — the page then keeps the shipped
+        // minute rather than a window that never opens.
+        let bare = timer_frame_json(&[], None);
+        let v: serde_json::Value = serde_json::from_str(&bare).expect("valid JSON");
+        assert_eq!(v["warn_default_ms"], serde_json::Value::Null);
+        // And the frame is still recognised as the programme frame, so it is still
+        // the one retained and replayed to a tablet that joins late (rule 43).
+        assert!(is_timer_frame(&bare));
+    }
+
+    /// AN EMPTY SET IS A FRAME, NOT A SILENCE.
+    ///
+    /// Stopping the last programme timer has to reach the tablet, or the clock stays
+    /// on the preacher's screen for the rest of the service. An absent frame cannot
+    /// say "there are none now".
+    #[test]
+    fn stopping_the_last_timer_publishes_an_empty_set_rather_than_nothing() {
+        let frame = timer_frame_json(&[], None);
+        let v: serde_json::Value = serde_json::from_str(&frame).expect("valid JSON");
+        assert_eq!(v["kind"], "timer");
+        assert_eq!(
+            v["timers"].as_array().map(|a| a.len()),
+            Some(0),
+            "an empty set must still be a timer frame: {frame}"
+        );
+        assert!(is_timer_frame(&frame));
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    //  THE BACKGROUND LAYER — a picture that outlives the words painted on it
+    //
+    //  Relay had no persistent background. The whole layer stack sits inside
+    //  `{#if content}` and `media_url` was written at exactly one site in the
+    //  binary, so a verse and a picture were MUTUALLY EXCLUSIVE payloads:
+    //  scripture over the church's own background could not be expressed at all.
+    //  A background is therefore a second payload kind with a lifetime of its
+    //  own, and the first thing that had to be true of it is the thing that can
+    //  hurt a congregation — a clear must still remove EVERYTHING.
+    //
+    //  These four were written BEFORE any of the rendering work, watched to fail,
+    //  and each was watched to fail again with its guard reverted.
+    // ════════════════════════════════════════════════════════════════════════
+
+    /// A PANIC CONTROL TAKES THE BACKGROUND WITH IT.
+    ///
+    /// The invariant the whole layer was built against, at the retention door
+    /// rather than at a publisher: a `clear` and a `black` are published through
+    /// the same `publish` every other frame goes through, so the drop happens by
+    /// construction and a content kind added next year cannot forget it. Nothing
+    /// new is sent to do this — a panic control that needed a SECOND frame to
+    /// finish its job is a panic control that can half succeed, and rule 15 does
+    /// not allow one of those.
+    #[test]
+    fn a_panic_control_takes_the_retained_background_with_it() {
+        for wipe in [r#"{"kind":"clear"}"#, r#"{"kind":"black"}"#] {
+            let hub = KioskHub::default();
+            hub.publish(background_json(Some(&Background {
+                media_url: "http://10.0.0.5:8032/media/3".into(),
+                media_kind: "image".into(),
+            })));
+            assert!(
+                retained_background(&hub).is_some(),
+                "the hub did not retain a background it was handed"
+            );
+            hub.publish(wipe.to_string());
+            assert!(
+                retained_background(&hub).is_none(),
+                "{wipe} left a picture retained, so the next screen to join would \
+                 have been painted a background over a wall the operator took down"
+            );
+        }
+    }
+
+    /// AND A BACKGROUND CAN NEVER BECOME WHAT A SCREEN IS SHOWING.
+    ///
+    /// Its own slot, for the fifth time in this module: `last_screen` holds ONE
+    /// frame and the newest wins, so retaining a picture beside the verse would
+    /// ERASE the verse and the next screen to join mid-reading would be handed
+    /// wallpaper and no words — rule 43's own failure delivered by rule 43's own
+    /// mechanism.
+    #[test]
+    fn a_background_is_not_what_a_screen_is_showing() {
+        let hub = KioskHub::default();
+        hub.publish(
+            r#"{"kind":"content","reference":"Romans 8:28","text":"And we know"}"#.to_string(),
+        );
+        hub.publish(background_json(Some(&Background {
+            media_url: "http://10.0.0.5:8032/media/3".into(),
+            media_kind: "image".into(),
+        })));
+        let screen = hub.last_screen_handle().lock().unwrap().clone();
+        assert!(
+            screen.as_deref().unwrap_or("").contains("Romans 8:28"),
+            "a background replaced the retained verse: {screen:?}"
+        );
+        assert!(retained_background(&hub).is_some());
+    }
+
+    /// THE RETENTION RULE AGREES WITH WHAT IS PUBLISHED.
+    ///
+    /// The other half of every matcher in this module, and the half that caught
+    /// `is_screen_frame` matching nothing while looking exactly like the bug it
+    /// fixed. `background_json(None)` is how a background is TAKEN DOWN, and a
+    /// hub that retained that frame would hold a message whose only effect is to
+    /// say "nothing" — two spellings of an absence, which is how two spellings of
+    /// an absence come to disagree.
+    #[test]
+    fn the_background_retention_rule_agrees_with_what_is_published() {
+        let up = background_json(Some(&Background {
+            media_url: "http://10.0.0.5:8032/media/3".into(),
+            media_kind: "image".into(),
+        }));
+        let down = background_json(None);
+        assert!(is_background_frame(&up), "a real background frame: {up}");
+        assert!(is_background_frame(&down), "so is the one that clears it");
+        assert_eq!(
+            background_retention(&up),
+            Some(Some(up.clone())),
+            "a frame naming a picture IS the background now"
+        );
+        assert_eq!(
+            background_retention(&down),
+            Some(None),
+            "a frame naming no picture takes it down: {down}"
+        );
+        assert_eq!(
+            background_retention(r#"{"kind":"clear"}"#),
+            Some(None),
+            "a panic control takes it down"
+        );
+        assert_eq!(
+            background_retention(r#"{"kind":"black"}"#),
+            Some(None),
+            "and so does the other one"
+        );
+        // Everything else leaves it exactly as it is. A verse must not take the
+        // church's backdrop down, which is the entire point of the payload.
+        for other in [
+            r#"{"kind":"content","reference":"Romans 8:28"}"#,
+            r#"{"kind":"timer","timers":[]}"#,
+            r#"{"kind":"stage_alert","text":"two minutes"}"#,
+            r#"{"kind":"transition","mode":"cut"}"#,
+        ] {
+            assert_eq!(
+                background_retention(other),
+                None,
+                "{other} moved the background, and it is not about the background"
+            );
+        }
+        // And it is never a screen frame — the assertion that keeps the two slots
+        // disjoint by construction.
+        assert!(!is_screen_frame(&up));
+        assert!(!is_screen_frame(&down));
+    }
+
+    /// A SCREEN THAT JOINS MID-SERVICE IS PAINTED THE BACKGROUND TOO.
+    ///
+    /// Rule 43 for the second payload kind. Without this an OBS source that
+    /// restarted came back with the verse and no backdrop — the words floating on
+    /// black while every other screen in the building carried the church's own
+    /// picture, and nothing anywhere saying so.
+    #[tokio::test]
+    async fn a_screen_that_joins_mid_service_is_sent_the_background() {
+        let port = free_port();
+        let hub = KioskHub::default();
+        tokio::spawn(run_kiosk_server(
+            log_only(),
+            hub.sender(),
+            hub.templates_handle(),
+            hub.clients_handle(),
+            hub.default_template_handle(),
+            hub.channel_roles_handle(),
+            hub.last_screen_handle(),
+            hub.last_transition_handle(),
+            hub.last_timers_handle(),
+            hub.last_background_handle(),
+            hub.screens_down_handle(),
+            OutputHealth::default(),
+            port,
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        // The background went up before this screen existed.
+        hub.publish(background_json(Some(&Background {
+            media_url: "http://10.0.0.5:8032/media/3".into(),
+            media_kind: "image".into(),
+        })));
+
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
+            .await
+            .expect("connect");
+        let (mut write, mut read) = ws.split();
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"kind":"hello","template_id":7}"#.to_string(),
+            ))
+            .await
+            .expect("send hello");
+
+        let mut got = None;
+        for _ in 0..8 {
+            let Ok(Some(Ok(msg))) =
+                tokio::time::timeout(std::time::Duration::from_secs(2), read.next()).await
+            else {
+                break;
+            };
+            let text = msg.into_text().unwrap_or_default();
+            if is_background_frame(&text) {
+                got = Some(text);
+                break;
+            }
+        }
+        assert!(
+            got.as_deref().unwrap_or("").contains("/media/3"),
+            "a screen that joined mid-service was sent no background: {got:?}"
+        );
+    }
+
+    /// …AND A SCREEN THAT JOINS AFTER A CLEAR IS SENT NOTHING AT ALL.
+    ///
+    /// The panic half of the test above, and the one that matters. The retained
+    /// slot is emptied by the clear itself, so there is nothing left to replay —
+    /// the replay can no more resurrect a background than it can resurrect a
+    /// verse.
+    #[tokio::test]
+    async fn a_screen_that_joins_after_a_clear_is_sent_no_background() {
+        let port = free_port();
+        let hub = KioskHub::default();
+        tokio::spawn(run_kiosk_server(
+            log_only(),
+            hub.sender(),
+            hub.templates_handle(),
+            hub.clients_handle(),
+            hub.default_template_handle(),
+            hub.channel_roles_handle(),
+            hub.last_screen_handle(),
+            hub.last_transition_handle(),
+            hub.last_timers_handle(),
+            hub.last_background_handle(),
+            hub.screens_down_handle(),
+            OutputHealth::default(),
+            port,
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        hub.publish(background_json(Some(&Background {
+            media_url: "http://10.0.0.5:8032/media/3".into(),
+            media_kind: "image".into(),
+        })));
+        hub.publish(r#"{"kind":"clear"}"#.to_string());
+
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
+            .await
+            .expect("connect");
+        let (mut write, mut read) = ws.split();
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"kind":"hello","template_id":7}"#.to_string(),
+            ))
+            .await
+            .expect("send hello");
+
+        let mut frames: Vec<String> = Vec::new();
+        for _ in 0..8 {
+            let Ok(Some(Ok(msg))) =
+                tokio::time::timeout(std::time::Duration::from_millis(600), read.next()).await
+            else {
+                break;
+            };
+            frames.push(msg.into_text().unwrap_or_default());
+        }
+        assert!(
+            !frames.iter().any(|f| is_background_frame(f)),
+            "a screen that joined after a clear was painted the background back: \
+             {frames:?}"
+        );
+        assert!(
+            frames.iter().any(|f| f.contains(r#""kind":"clear""#)),
+            "and it must still have been told the wall is clear: {frames:?}"
+        );
+    }
+
+    /// The retained background, read the way the WS task reads it.
+    fn retained_background(hub: &KioskHub) -> Option<String> {
+        hub.last_background_handle().lock().unwrap().clone()
+    }
+
+    /// A STAGE TABLET THAT JOINS MID-SERVICE IS SENT THE PROGRAMME TIMERS.
+    ///
+    /// The same failure as rule 43's, on the screen most likely to produce it: a
+    /// phone locking, a tablet reloading, or a walk out of wifi range. Without this
+    /// the programme clock comes back only when the operator next touches a timer,
+    /// which during a sermon is never.
+    #[tokio::test]
+    async fn a_stage_tablet_that_joins_mid_service_is_sent_the_programme_timers() {
+        let port = free_port();
+        let hub = KioskHub::default();
+        tokio::spawn(run_kiosk_server(
+            log_only(),
+            hub.sender(),
+            hub.templates_handle(),
+            hub.clients_handle(),
+            hub.default_template_handle(),
+            hub.channel_roles_handle(),
+            hub.last_screen_handle(),
+            hub.last_transition_handle(),
+            hub.last_timers_handle(),
+            hub.last_background_handle(),
+            hub.screens_down_handle(),
+            OutputHealth::default(),
+            port,
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        // The programme timer started BEFORE this tablet existed.
+        hub.publish(timer_frame_json(&[stage_timer(1, "Offering")], None));
+
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
+            .await
+            .expect("connect");
+        let (mut write, mut read) = ws.split();
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"kind":"hello","template_id":7}"#.to_string(),
+            ))
+            .await
+            .expect("send hello");
+
+        let mut got = None;
+        for _ in 0..6 {
+            let Ok(Some(Ok(msg))) =
+                tokio::time::timeout(std::time::Duration::from_secs(2), read.next()).await
+            else {
+                break;
+            };
+            let text = msg.into_text().unwrap_or_default();
+            if is_timer_frame(&text) {
+                got = Some(text);
+                break;
+            }
+        }
+        assert!(
+            got.as_deref().unwrap_or("").contains("Offering"),
+            "a stage tablet that rejoined mid-service came back with no programme \
+             timer: {got:?}"
+        );
+    }
+
+    /// AND THE READING IS PAINTED LAST.
+    ///
+    /// Order, not merely presence. A tablet sent the timers AFTER the retained
+    /// content frame paints the reading and then a clock over it — the flash a
+    /// preacher sees at exactly the moment they look down. So: template,
+    /// default_template, channel_roles, transition, timers, and WHAT IS ON THE
+    /// SCREENS last, which is why the retained frame has always been last.
+    ///
+    /// **THE LIST IS EXHAUSTIVE ON PURPOSE, AND THAT IS WHY IT WENT RED IN A
+    /// MERGE.** Wave 3 added the `timer` slot and wave 5 added `channel_roles`,
+    /// on branches that never met until they were merged; both are configuration,
+    /// both belong before the screen frame, and the compiler cannot see either
+    /// omission. This assertion is the only instrument that noticed, and it
+    /// noticed by failing rather than by being right — which is what it is for.
+    /// A new slot goes in the middle of this list, never after `content`.
+    ///
+    /// **`screen_state` IS THE ONE EXCEPTION, AND IT IS AFTER `content`.** It went
+    /// red in exactly the way the paragraph above describes and the answer was the
+    /// other one: it is not configuration and it is not something to paint — it
+    /// says which screens the operator has taken OUT of the wall, which overrides
+    /// what is on them. Sent before the retained verse, the verse would paint over
+    /// the operator's decision and a lobby TV whose browser source restarted would
+    /// bring itself back up mid-sermon: rule 43's own mechanism undoing an
+    /// operator's own control. So the rule is not "content is last" but "the thing
+    /// that decides what shows is last", and content was last for as long as
+    /// nothing could override it.
+    #[tokio::test]
+    async fn the_hello_order_puts_the_screen_frame_last() {
+        let port = free_port();
+        let hub = KioskHub::default();
+        tokio::spawn(run_kiosk_server(
+            log_only(),
+            hub.sender(),
+            hub.templates_handle(),
+            hub.clients_handle(),
+            hub.default_template_handle(),
+            hub.channel_roles_handle(),
+            hub.last_screen_handle(),
+            hub.last_transition_handle(),
+            hub.last_timers_handle(),
+            hub.last_background_handle(),
+            hub.screens_down_handle(),
+            OutputHealth::default(),
+            port,
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        // Everything a tablet could be owed, all in force at once.
+        hub.cache_template(7, r#"{"name":"Stage"}"#);
+        hub.cache_default_template(r#"{"name":"House"}"#);
+        hub.set_transition(Some("crossfade".into()), Some(320));
+        hub.publish(timer_frame_json(&[stage_timer(1, "Offering")], None));
+        hub.publish(background_json(Some(&Background {
+            media_url: "http://10.0.0.5:8032/media/3".into(),
+            media_kind: "image".into(),
+        })));
+        hub.publish(
+            r#"{"kind":"content","reference":"Romans 8:28","text":"And we know"}"#.to_string(),
+        );
+
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
+            .await
+            .expect("connect");
+        let (mut write, mut read) = ws.split();
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"kind":"hello","template_id":7}"#.to_string(),
+            ))
+            .await
+            .expect("send hello");
+
+        // READ UNTIL THE REPLY STOPS, NEVER UNTIL THE CONTENT ARRIVES. Stopping at
+        // the content frame would make a timer sent AFTER it — which is the exact
+        // defect this test exists to catch — look like a timer that never arrived,
+        // and the failure message would then send the next reader after the wrong
+        // bug. The loop ends on the read timeout, so a wrong order is reported as a
+        // wrong order.
+        let mut order: Vec<String> = Vec::new();
+        for _ in 0..8 {
+            let Ok(Some(Ok(msg))) =
+                tokio::time::timeout(std::time::Duration::from_millis(600), read.next()).await
+            else {
+                break;
+            };
+            let text = msg.into_text().unwrap_or_default();
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+                continue;
+            };
+            if let Some(k) = v.get("kind").and_then(|k| k.as_str()) {
+                order.push(k.to_string());
+            }
+        }
+        assert_eq!(
+            order,
+            vec![
+                "template",
+                "default_template",
+                "channel_roles",
+                "transition",
+                "timer",
+                "background",
+                "content",
+                "screen_state"
+            ],
+            "the hello reply reached this tablet in the wrong order — the reading \
+             must be painted last of the things that paint, after the clock and the \
+             backdrop that accompany it, and the screens the operator took down must \
+             be named AFTER the reading or the reading would paint over them"
+        );
+    }
+
+    /// A SCREEN THE OPERATOR TOOK DOWN COMES BACK DOWN.
+    ///
+    /// Rule 43 in the other direction, and the reason the per-screen state is
+    /// retained at all. The operator takes the lobby TV down for the sermon; its
+    /// browser source restarts twenty minutes later, says hello, and is handed the
+    /// retained verse. Without this frame it would paint that verse and bring
+    /// itself back up — rule 43's own mechanism undoing an operator's own control,
+    /// in front of the room the control was used to spare.
+    ///
+    /// Two claims, and the second is the one that is easy to get wrong: the frame
+    /// must ARRIVE, and it must arrive AFTER the content. Sent before it, the verse
+    /// paints over it and the screen is up again with nothing to say why.
+    ///
+    /// Both watched to fail: deleting the send (the first assertion), and moving it
+    /// above the retained screen frame (the second, which reported the real order).
+    #[tokio::test]
+    async fn a_screen_the_operator_took_down_rejoins_still_down() {
+        let port = free_port();
+        let hub = KioskHub::default();
+        tokio::spawn(run_kiosk_server(
+            log_only(),
+            hub.sender(),
+            hub.templates_handle(),
+            hub.clients_handle(),
+            hub.default_template_handle(),
+            hub.channel_roles_handle(),
+            hub.last_screen_handle(),
+            hub.last_transition_handle(),
+            hub.last_timers_handle(),
+            hub.last_background_handle(),
+            hub.screens_down_handle(),
+            OutputHealth::default(),
+            port,
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        // A verse on the wall, and one screen taken out of it.
+        hub.publish(
+            r#"{"kind":"content","reference":"Psalms 23:1","text":"The LORD is my shepherd"}"#
+                .to_string(),
+        );
+        hub.publish(r#"{"kind":"screen_state","screens":{"4":"clear"}}"#.to_string());
+
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
+            .await
+            .expect("connect");
+        let (mut write, mut read) = ws.split();
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"kind":"hello","channel":4,"template_id":null}"#.to_string(),
+            ))
+            .await
+            .expect("send hello");
+
+        let mut order: Vec<String> = Vec::new();
+        for _ in 0..8 {
+            let Ok(Some(Ok(msg))) =
+                tokio::time::timeout(std::time::Duration::from_millis(600), read.next()).await
+            else {
+                break;
+            };
+            order.push(msg.into_text().unwrap_or_default());
+        }
+        let down = order
+            .iter()
+            .position(|m| m.contains(r#""kind":"screen_state""#));
+        assert!(
+            down.is_some_and(|i| order[i].contains(r#""4":"clear""#)),
+            "a lobby TV whose browser source restarted came back UP mid-sermon: {order:?}"
+        );
+        let content = order
+            .iter()
+            .position(|m| m.contains(r#""kind":"content""#))
+            .expect("the retained verse should still be replayed");
+        assert!(
+            down.expect("checked above") > content,
+            "the operator's decision was sent BEFORE the verse, so the verse painted \
+             over it: {order:?}"
+        );
+    }
+
+    /// A WHOLE-WALL CLEAR DOES NOT PUT A SCREEN BACK UP.
+    ///
+    /// The tempting simplification, written down so nobody reaches for it: "a panic
+    /// control takes everything, so it should reset the per-screen states too". It
+    /// must not. A panic control is about what is ON the screens; which screens are
+    /// IN the wall is a separate decision the operator took deliberately, and an
+    /// `Esc` that silently re-armed the lobby TV would put the next verse in front
+    /// of exactly the room the operator had taken it out of. The way back is a
+    /// control (`restore_screen`), which is findable, and the Outputs desk says
+    /// which screens are down.
+    #[test]
+    fn a_whole_wall_clear_leaves_the_per_screen_states_alone() {
+        let hub = KioskHub::default();
+        hub.publish(r#"{"kind":"screen_state","screens":{"4":"black"}}"#.to_string());
+        hub.publish(r#"{"kind":"clear"}"#.to_string());
+
+        let retained = hub.screens_down.lock().expect("slot").clone();
+        assert!(
+            retained.contains(r#""4":"black""#),
+            "a whole-wall clear wiped the operator's per-screen decision: {retained}"
+        );
+        // And the reverse, which is the half that would break rule 43: taking one
+        // screen down must never become the frame a late-joining screen is shown
+        // INSTEAD of the wall.
+        let screen = hub.last_screen.lock().expect("slot").clone();
+        assert_eq!(
+            screen.as_deref(),
+            Some(r#"{"kind":"clear"}"#),
+            "a per-screen state became the retained screen frame"
+        );
+    }
+
     /// …AND A CHANNEL-KEYED SCREEN IS ONE OF THEM.
     ///
     /// The test above says hello with a `template_id`, and for a long time that was
@@ -3640,9 +5838,13 @@ mod tests {
             hub.sender(),
             hub.templates_handle(),
             hub.clients_handle(),
-            hub.themes_handle(),
+            hub.default_template_handle(),
+            hub.channel_roles_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
+            hub.last_timers_handle(),
+            hub.last_background_handle(),
+            hub.screens_down_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -3700,9 +5902,13 @@ mod tests {
             hub.sender(),
             hub.templates_handle(),
             hub.clients_handle(),
-            hub.themes_handle(),
+            hub.default_template_handle(),
+            hub.channel_roles_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
+            hub.last_timers_handle(),
+            hub.last_background_handle(),
+            hub.screens_down_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -3771,9 +5977,13 @@ mod tests {
             hub.sender(),
             hub.templates_handle(),
             hub.clients_handle(),
-            hub.themes_handle(),
+            hub.default_template_handle(),
+            hub.channel_roles_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
+            hub.last_timers_handle(),
+            hub.last_background_handle(),
+            hub.screens_down_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -3828,9 +6038,13 @@ mod tests {
             tx,
             hub.templates_handle(),
             hub.clients_handle(),
-            hub.themes_handle(),
+            hub.default_template_handle(),
+            hub.channel_roles_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
+            hub.last_timers_handle(),
+            hub.last_background_handle(),
+            hub.screens_down_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -4009,22 +6223,57 @@ mod tests {
         assert_eq!(v["countdown_done"], "Welcome");
     }
 
+    /// WHEN TO WORRY CROSSES THE WIRE TOO — RG-149, the kiosk half.
+    ///
+    /// Two separate facts and they are deliberately two fields. `countdown_warn_ms`
+    /// is a threshold somebody CHOSE for this countdown; `countdown_warn_default_ms`
+    /// is the figure in `Settings → General → Countdown warning`, which a browser
+    /// source cannot read because it has no bridge and no console state. Ranking
+    /// them stays `layers.js::countdownWarning`'s job on the far side — chosen, else
+    /// configured, else the tenth-of-span rule — so neither of these is a second
+    /// reading of when to worry.
+    ///
+    /// Same reasoning as `next_*` and `countdown_from` above: a field dropped from
+    /// THIS json and present on the Tauri struct means the browser source in OBS and
+    /// the projector on HDMI turn red at different moments, in the same room.
     #[test]
-    fn the_themes_blob_is_only_stored_when_it_is_a_valid_json_array() {
-        let hub = KioskHub::default();
-        // A well-formed array is kept verbatim.
-        hub.cache_themes(r#"[{"id":1,"name":"Mine","style":{}}]"#);
-        assert!(hub.themes_handle().lock().unwrap().contains("Mine"));
-        // Junk, a non-array, or an object all fall back to "[]" so the value can
-        // never corrupt the WS frame it is embedded raw into.
-        for bad in [r#"not json"#, r#"{"id":1}"#, r#"42"#, r#"null"#] {
-            hub.cache_themes(bad);
-            assert_eq!(
-                hub.themes_handle().lock().unwrap().as_str(),
-                "[]",
-                "bad blob {bad}"
-            );
-        }
+    fn the_warning_window_reaches_a_kiosk_screen_as_well_as_a_native_one() {
+        let c = OutputContent {
+            kind: Some("countdown".into()),
+            reference: "Service begins in".into(),
+            countdown_to: Some(1_700_000_300_000),
+            countdown_from: Some(1_700_000_000_000),
+            countdown_warn_ms: Some(120_000),
+            countdown_warn_default_ms: Some(150_000),
+            ..Default::default()
+        };
+        let v: serde_json::Value = serde_json::from_str(&kiosk_content_json(&c)).unwrap();
+        assert_eq!(
+            v["countdown_warn_ms"], 120_000,
+            "a threshold chosen for this countdown never left the machine"
+        );
+        assert_eq!(
+            v["countdown_warn_default_ms"], 150_000,
+            "the configured default never left the machine, so every screen \
+             without a bridge keeps the shipped minute"
+        );
+
+        // AND IT IS THE RETAINED FRAME, so a screen that joins mid-service is sent
+        // the figure with the content rather than warning at the wrong moment until
+        // the next fire (rule 43). The replay itself is held by
+        // `a_client_that_connects_mid_service_is_sent_what_is_on_the_screens`; what
+        // this asserts is that the carrier is the frame that replay retains.
+        assert!(is_screen_frame(&kiosk_content_json(&c)));
+
+        // Absent is absent. A zero would be a warning window that never opens.
+        let bare = OutputContent {
+            kind: Some("countdown".into()),
+            countdown_to: Some(1_700_000_300_000),
+            ..Default::default()
+        };
+        let v: serde_json::Value = serde_json::from_str(&kiosk_content_json(&bare)).unwrap();
+        assert_eq!(v["countdown_warn_ms"], serde_json::Value::Null);
+        assert_eq!(v["countdown_warn_default_ms"], serde_json::Value::Null);
     }
 
     #[test]
@@ -4049,9 +6298,13 @@ mod tests {
             hub.sender(),
             hub.templates_handle(),
             hub.clients_handle(),
-            hub.themes_handle(),
+            hub.default_template_handle(),
+            hub.channel_roles_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
+            hub.last_timers_handle(),
+            hub.last_background_handle(),
+            hub.screens_down_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -4103,9 +6356,13 @@ mod tests {
             hub.sender(),
             hub.templates_handle(),
             hub.clients_handle(),
-            hub.themes_handle(),
+            hub.default_template_handle(),
+            hub.channel_roles_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
+            hub.last_timers_handle(),
+            hub.last_background_handle(),
+            hub.screens_down_handle(),
             health.clone(),
             port,
         ));

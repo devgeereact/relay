@@ -68,19 +68,40 @@ export const MIN_BROADCAST_MS = 1000;
  *                                  means "it finished" and shows the done message;
  *                                  null means there is nothing here to show.
  *
+ * ══ AND THE OTHER SIDE OF ZERO, WHICH IS THE SAME SUBTRACTION ═════════════
+ *
+ * `past: true` lifts the floor and answers the NEGATIVE once the instant has gone
+ * by. It exists for one caller: the stage page's programme rail, where a timer that
+ * has run out counts upward so a preacher can see how far over they are (RG-153,
+ * the operator's decision of 2026-09-17). `+4:37` on that rail is this figure
+ * negated and formatted, and nothing else.
+ *
+ * It is an OPT-IN rather than the default because zero is a real answer everywhere
+ * else: the wall reads zero as "it finished" and paints the done message over the
+ * digits, and a wall handed a negative would never reach that branch. And it is an
+ * option on this function rather than a second exported helper because a second
+ * helper is a second subtraction, which is the defect `docs/REBRAND.md` phase 7
+ * records as fixed once already.
+ *
+ * The HOLD exception still comes first, and must: a countdown paused at 4:00 whose
+ * instant went by six minutes ago is stopped at four minutes, not ten minutes over.
+ *
  * @param {object|null} content the live output content
  * @param {number} nowMs        the caller's tick, so a renderer's clock and this
  *                              cannot disagree about "now"
- * @returns {number|null} ms left, 0 when finished, null when there is no countdown
+ * @param {{past?: boolean}} opts `past` answers the negative past the instant
+ *                              instead of flooring at zero
+ * @returns {number|null} ms left, 0 when finished (negative with `past`), null when
+ *                        there is no countdown
  */
-export function countdownRemainingMs(content, nowMs = Date.now()) {
+export function countdownRemainingMs(content, nowMs = Date.now(), { past = false } = {}) {
   const c = content || {};
   const held = Number(c.countdown_paused_ms);
   if (Number.isFinite(held) && held > 0) return held;
   const to = Number(c.countdown_to);
   if (!Number.isFinite(to) || to <= 0) return null;
   const left = to - (Number(nowMs) || 0);
-  return left > 0 ? left : 0;
+  return left > 0 || past ? left : 0;
 }
 
 /** Is the countdown on this content being HELD? One reader, same reason as above. */
@@ -252,4 +273,75 @@ export function countdownCan(action, setMs, runningMs = null, paused = false) {
   return action === 'clear' || action === 'plus' || action === 'minus'
     ? true
     : r.broadcastMs !== null;
+}
+
+/**
+ * ══ IS A COUNTDOWN WHAT IS ON THE SCREENS RIGHT NOW ═════════════════════════
+ *
+ * The frontend statement of `main::is_countdown_content` — the same three arms,
+ * asked of the same slot. The engine reads `channels::live_content`; this reads
+ * `$live`, which is that slot mirrored across the bridge by the output events.
+ * One fact, stated once on each side and never twice on one, for the same reason
+ * `remaining_ms` and `countdownRemainingMs` are.
+ *
+ * **It is deliberately NOT `countdownRemaining() !== null`.** That reader calls a
+ * countdown that has run out null, correctly — ±1 cannot re-aim something with
+ * nothing left — and a countdown at `0:00` is still on the wall. A way back that
+ * asked the transport's question would offer to put a countdown back while the
+ * congregation is looking at it, which is a control lying about what is on the
+ * screens (rule 35).
+ *
+ * @param {object|null} content the live output content
+ * @returns {boolean}
+ */
+export function isCountdownContent(content) {
+  const c = content || {};
+  return c.countdown_to != null || c.countdown_paused_ms != null || c.kind === 'countdown';
+}
+
+/**
+ * ══ THE WAY BACK ONTO A CONGREGATION SCREEN (RG-152) ════════════════════════
+ *
+ * A timer outlives the content that replaced it, so after a reading there is
+ * something to go back to; `showTimer` is how an operator goes back to it. This
+ * decides whether that is a thing to offer, and about which timer — pure, because
+ * the question is "what do these two facts mean", and a component deciding it is a
+ * component that can decide it differently from the next one.
+ *
+ * FOUR ANSWERS, and the first is not the second:
+ *
+ *   `unknown`  the registry has not answered yet (or answered something that is
+ *              not a list). NOT "there is nothing" — a caller that renders silence
+ *              for both says the same thing over a working console and a broken
+ *              bridge, which is rule 35's own failure. The caller holds the read's
+ *              failure separately and says so.
+ *   `none`     read, and there is no congregation timer. Nothing to offer.
+ *   `showing`  there is one and a countdown is already on the screens. The way
+ *              back is not a thing to offer for something you are already looking
+ *              at, and this is read through `isCountdownContent`, the same fact
+ *              `adjust_countdown` reads before it decides whether to repaint.
+ *   `offered`  there is one and the screens are showing something else.
+ *
+ * A `Stage` timer is never a candidate: it has no congregation wire form and
+ * `show_timer` refuses one in words. A control that has to be refused is a control
+ * that should not have been offered.
+ *
+ * THE NEWEST `Both` TIMER, because that is what the engine means by "the
+ * congregation countdown" (`main::newest_congregation_timer`). `list_timers` hands
+ * them back oldest first. There is at most one — `start_countdown` stops the one
+ * before it — and agreeing with the engine costs one line either way.
+ *
+ * It cannot create anything and names no action: it returns a timer and a word.
+ *
+ * @param {Array|null|undefined} timers what `list_timers` answered, or null when
+ *                                      it has not been asked yet
+ * @param {object|null} content the live output content
+ * @returns {{ state: 'unknown'|'none'|'showing'|'offered', timer: object|null }}
+ */
+export function wayBack(timers, content) {
+  if (!Array.isArray(timers)) return { state: 'unknown', timer: null };
+  const both = timers.filter((t) => t && t.scope === 'both');
+  if (!both.length) return { state: 'none', timer: null };
+  const timer = both[both.length - 1];
+  return { state: isCountdownContent(content) ? 'showing' : 'offered', timer };
 }

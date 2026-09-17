@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
+import { bundledAssetFileName } from './src/lib/bundledbackgrounds.js';
 
 // Relay = project block NN=03 in the workspace port registry
 // (~/.claude/CLAUDE.md, "Dev-server ports").
@@ -92,6 +93,19 @@ export default defineConfig({
         main: 'index.html',
         output: 'output.html',
         stage: 'stage.html',
+      },
+      output: {
+        // THE BACKGROUNDS ARE NOT HASHED, AND NOTHING ELSE CHANGES.
+        //
+        // A fresh install now seeds one `media_assets` row per picture in
+        // `src/backgrounds/` (DECISIONS §90), and the Rust seed that writes
+        // those rows cannot know a Vite content hash. Emitting them at
+        // `backgrounds/<file>` gives the seed a path it can name and the
+        // embedded HTTP server a path it can already serve, with the files
+        // still bundled exactly once. The rule — including why the name is
+        // sanitised — lives in `src/lib/bundledbackgrounds.js`, where it is
+        // tested rather than only rebuilt and eyeballed.
+        assetFileNames: bundledAssetFileName,
       },
     },
   },

@@ -14,8 +14,11 @@
   // nothing. The Outputs workspace had already solved it for its screen cards
   // and its inspector preview, with this markup written out twice, four hundred
   // lines apart. It is one component now rather than a third copy — the same
-  // reasoning as `DeskStrip`, and as the `Copy URL` builder this branch already
-  // records, where one of two copies was corrected and the other was not.
+  // reasoning as the `Copy URL` builder this branch already records, where one
+  // of two copies was corrected and the other was not. (`DeskStrip` was the
+  // other precedent cited here and has itself been deleted: themes were folded
+  // into templates, so the Templates workspace has one desk and a segmented
+  // control offering one option is a control that does nothing — DECISIONS §87.)
   //
   // ── IT IS LABELLED, ALWAYS ────────────────────────────────────────────────
   // An unlabelled picture on these surfaces could be mistaken for something

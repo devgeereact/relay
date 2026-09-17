@@ -37,7 +37,7 @@
 //       duplicate cannot come back unnoticed.
 //
 // What is left here is the thing this pane uniquely owns and nothing else in
-// Relay renders: UP NEXT, and Go Live.
+// Relay renders: Up Next, and Go Live.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { tick } from 'svelte';
@@ -93,7 +93,7 @@ afterEach(() => {
   app = host = null;
 });
 
-describe('up next is the queue, and nothing else renders it', () => {
+describe('Up Next is the queue, and nothing else renders it', () => {
   it('an empty queue says what fills it rather than reading as broken', () => {
     mount();
     expect(host.textContent).toMatch(/Nothing queued/i);

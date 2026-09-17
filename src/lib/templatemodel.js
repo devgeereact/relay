@@ -64,8 +64,12 @@ export const STYLE_DEFAULTS = Object.freeze({
   refTransform: 'none',
   verseShadow: 0,
   refShadow: 0,
-  verseFont: 'var(--f-serif)',
-  refFont: 'var(--f-serif)',
+  // A REAL FAMILY, not `var(--f-serif)`. This default is filled into every
+  // template that never chose a face, and it is read on a congregation's screen —
+  // so it may not be a token the operator console can re-alias underneath it
+  // (wave 5, Track E). Fraunces is what `--f-serif` already resolved to.
+  verseFont: 'Fraunces',
+  refFont: 'Fraunces',
   bgOpacity: 1,
   bgDim: 0,
   panelRadius: 1.4,

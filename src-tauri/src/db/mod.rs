@@ -21,6 +21,7 @@ mod profiles;
 mod services;
 mod settings;
 mod songs;
+mod starter;
 mod templates;
 mod verses;
 
@@ -32,6 +33,7 @@ pub use profiles::*;
 pub use services::*;
 pub use settings::*;
 pub use songs::*;
+pub use starter::*;
 pub use templates::*;
 pub use verses::*;
 
@@ -39,12 +41,14 @@ use rusqlite::{Connection, OptionalExtension};
 use std::path::PathBuf;
 
 // Migration + seed helpers, pulled from the aggregates they belong to.
-use channels::seed_channels;
+use channels::{ensure_channel_role, seed_channels};
 #[cfg(test)]
 use serde_json::Value;
 use templates::{
     ensure_lower_third_band_is_not_a_law_colour, ensure_lyrics_template, ensure_preset_templates,
-    reset_builtin_templates, seed_templates,
+    ensure_retired_presets_are_gone, ensure_template_seed_identity,
+    ensure_templates_name_real_families, ensure_themes_are_inlined, reset_builtin_templates,
+    seed_templates,
 };
 #[cfg(test)]
 use verses::clean_verse;
@@ -352,12 +356,42 @@ fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
     ensure_app_settings(conn)?; // key/value settings
     ensure_voice_profiles(conn)?; // per-preacher accent + gate calibration
     ensure_template_active(conn)?; // console-active templates (max 4)
-    ensure_lyrics_template(conn)?; // the song template — see templates.rs
+                                   // THE IDENTITY COLUMNS, BEFORE ANYTHING READS THEM. `seed_key` and
+                                   // `edited_at` are what retirement decides on, and the back-fill matches
+                                   // by NAME against the frozen pre-wave-5 record — which is only sound
+                                   // before anything has renamed a row. Nothing between here and
+                                   // `ensure_retired_presets_are_gone` may rename a seeded template.
+    ensure_template_seed_identity(conn)?;
+    // RETIRE BEFORE SEEDING, not after. The seed became five families this wave and
+    // the rows they replaced are removed from installs that already have them. But
+    // seeds insert BY NAME and only when absent, and one retired shelf row shares
+    // the name `Lower Third · Scripture` with a new family member. Seeding first
+    // would see that name present, skip the family member, and this would then
+    // delete the old row: a family one member short until the next boot. Their bytes
+    // differ, so a name-plus-bytes match tells them apart either way; this is about
+    // ordering, not about matching. See templates.rs for the three conditions.
+    ensure_retired_presets_are_gone(conn)?;
     ensure_preset_templates(conn)?; // ready-to-use preset designs (additive, by name)
                                     // …and correct the one seeded value that additive-by-name cannot reach: see
                                     // the function's own note. The band only became visible this wave, and on an
                                     // existing install it would have become visible in the REHEARSAL colour.
     ensure_lower_third_band_is_not_a_law_colour(conn)?;
+    // AFTER the seed, not before it. This chooses the row songs render through and
+    // no longer creates one, so the row has to be on the shelf before it can be
+    // chosen — which on an install being upgraded is only true once
+    // `ensure_preset_templates` has run. See templates.rs.
+    ensure_lyrics_template(conn)?;
+    // Themes were folded into templates: every template that pinned one keeps the
+    // look it had, written into its own style. See templates.rs for why it is one
+    // transaction and what a dangling ref does.
+    ensure_themes_are_inlined(conn)?;
+    // A template names a real family; the operator console names tokens. Seeds
+    // that stopped storing `var(--f-serif)` reach a fresh install and no existing
+    // one, so the rows a church already has are rewritten here. LAST of the
+    // template migrations, and after the retirement in particular, which matches
+    // a leftover row by its BYTES — see the function's own note. Wave 5, Track E.
+    ensure_templates_name_real_families(conn)?;
+    ensure_channel_role(conn)?; // output_channels.role — what a screen is FOR
     ensure_service_plans(conn)?; // Planner
     ensure_songs(conn)?; // Lyrics
     ensure_saved_scripture(conn)?; // Library
@@ -379,6 +413,43 @@ fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
 /// Called once at startup (not on a live-service path), so surfacing a hard
 /// error here is correct — a broken DB must fail loudly before a service, not
 /// silently mid-sermon.
+/// Every pragma a Relay connection needs, in one place so a second opener cannot
+/// get a different set.
+///
+/// ── WHAT HAPPENS WHEN TWO THINGS WANT THIS FILE AT ONCE (RG-113(2)) ──────
+///
+/// `foreign_keys` was the only pragma set here, which left the two that decide
+/// how contention behaves at SQLite's defaults: no busy timeout, and the
+/// rollback journal.
+///
+/// NO BUSY TIMEOUT MEANS A WRITER THAT COLLIDES FAILS INSTANTLY, with
+/// `SQLITE_BUSY`, rather than waiting the moment it usually takes for the other
+/// writer to finish. That is not hypothetical here: `plans.rs` explicitly
+/// anticipates two Relay processes on one file, the kiosk HTTP server and the
+/// detection thread both write while a service runs, and the failure surfaces
+/// as an error banner mid-sermon for a condition that would have cleared itself
+/// in milliseconds. Five seconds is long enough to cover any write this
+/// application makes and short enough that a genuine deadlock still reports
+/// rather than hanging a service.
+///
+/// WAL, because the default journal makes a reader and a writer exclude each
+/// other. Relay reads verses on the detection path while the timeline and the
+/// latency samples are being written, so the two collide by design rather than
+/// by accident. WAL lets them proceed together, and it is the mode a
+/// single-file desktop database is expected to run in.
+///
+/// NEITHER IS FATAL IF IT FAILS. `journal_mode` returns a row rather than
+/// nothing, so it is queried rather than executed, and a filesystem that cannot
+/// support WAL (a network share) answers something else and keeps working in
+/// the mode it can. A pragma that could not be set is not a reason to refuse to
+/// open a church's database.
+pub fn connection_pragmas(conn: &Connection) -> rusqlite::Result<()> {
+    conn.busy_timeout(std::time::Duration::from_secs(5))?;
+    let _ = conn.query_row("PRAGMA journal_mode = WAL;", [], |r| r.get::<_, String>(0));
+    conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+    Ok(())
+}
+
 pub fn open() -> rusqlite::Result<Connection> {
     let path = default_db_path();
     if let Some(dir) = path.parent() {
@@ -399,7 +470,7 @@ pub fn open() -> rusqlite::Result<Connection> {
     }
     let fresh = !path.exists();
     let conn = Connection::open(&path)?;
-    conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+    connection_pragmas(&conn)?;
     migrate(&conn, fresh)?;
     Ok(conn)
 }
@@ -645,8 +716,21 @@ pub fn init_fresh(conn: &Connection) -> rusqlite::Result<()> {
     seed(conn)?;
     // Guarantee an active voice profile exists even on a bare in-memory DB.
     ensure_tables(conn)?;
-    // NOTHING SEEDS DEMO CONTENT HERE, and nothing ever may. `db::demo::load` has
-    // exactly one caller, the `load_demo_content` command an operator presses.
+    // A FRESH INSTALL SHIPS STARTER CONTENT, AND THIS LINE USED TO FORBID IT.
+    //
+    // It said *"NOTHING SEEDS DEMO CONTENT HERE, and nothing ever may."* That
+    // rule is reversed on the operator's decision and written up as **DECISIONS
+    // §90**: an empty install is not neutral, the instruments this repository
+    // trusts are about drift rather than emptiness, and starter content is not
+    // demo content. `db::starter` writes a few announcements, one row per
+    // picture Relay ships, and one example plan.
+    //
+    // The half of the old rule that did NOT move: `db::demo::load` still has
+    // exactly one caller, the `load_demo_content` command an operator presses,
+    // and neither module calls the other. Starter content carries no `Demo · `
+    // mark and no ledger, because it is the church's from the moment they see
+    // it; demo content is a labelled sample that can be taken back out.
+    starter::seed_starter(conn)?;
     // Stamp it, so a brand-new DB is never mistaken for a v0 one and put through
     // the legacy sniff-based forward-fills it has no need of.
     set_user_version(conn, SCHEMA_VERSION)?;
@@ -942,6 +1026,59 @@ mod tests {
         assert!(manual_is_allowed(&conn));
     }
 
+    /// RG-113(2) — the two pragmas that decide what happens when two things want
+    /// this file at once, and which were left at SQLite's defaults.
+    #[test]
+    fn a_connection_waits_for_a_busy_database_instead_of_failing_instantly() {
+        // A PATH PER RUN, not per process. `db::tests` is compiled into more than
+        // one test binary, so a name keyed on the pid alone is shared by two
+        // concurrent copies of this test — and they raced on one file: the first
+        // set WAL, the second opened the same path and read back `delete`. It
+        // failed as a pragma bug and was a test-isolation bug, which is the more
+        // expensive of the two to believe.
+        let uniq = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!("relay-pragma-{}-{uniq}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("pragmas.db");
+        let conn = Connection::open(&path).expect("open");
+        connection_pragmas(&conn).expect("pragmas");
+
+        // WITHOUT THIS, a writer that collides fails at once with SQLITE_BUSY, for a
+        // condition that clears itself in milliseconds -- and it surfaces as an error
+        // banner mid-sermon. `plans.rs` explicitly anticipates two Relay processes on
+        // one file, so this is a real arrangement rather than a hypothetical one.
+        let busy: i64 = conn
+            .query_row("PRAGMA busy_timeout", [], |r| r.get(0))
+            .expect("busy_timeout is readable");
+        assert_eq!(busy, 5000, "a busy database fails instantly again");
+
+        // WAL, so a reader and a writer stop excluding each other: Relay reads verses
+        // on the detection path while the timeline and the latency samples are being
+        // written. Asserted as "not the default journal" rather than as the exact
+        // word, because a filesystem that cannot support WAL must still open -- and
+        // that tolerance is the point, so it is not asserted away here.
+        let mode: String = conn
+            .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+            .expect("journal_mode is readable");
+        assert_eq!(
+            mode.to_lowercase(),
+            "wal",
+            "on an ordinary filesystem the journal mode should be WAL, got {mode}"
+        );
+
+        // And the pragma that was already here is still here.
+        let fk: i64 = conn
+            .query_row("PRAGMA foreign_keys", [], |r| r.get(0))
+            .expect("foreign_keys is readable");
+        assert_eq!(fk, 1);
+
+        drop(conn);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Foreign keys must be back ON when the migration returns, and no transaction
     /// may be left dangling. The pragma is a no-op inside an open transaction, so a
     /// migration that failed without rolling back used to return with FKs silently
@@ -996,34 +1133,185 @@ mod tests {
 
     #[test]
     fn seeds_the_builtin_templates() {
-        // Five now, not four: "Worship Lyrics" was added because every previous
-        // built-in was scripture-shaped (a reference region and small type), and
-        // lyrics rendered through one put the song title where the words should
-        // be. See templates.rs.
+        // FORTY, AND NOT ONE OF THEM REGION-MODEL. The five region-model built-ins
+        // stopped being seeded in wave 5 — `builtin_templates()` survives only as
+        // the frozen mirror of the frontend's `BUILTINS`, which is what a `region`
+        // layer's `templateRef` resolves against on a kiosk page with no database
+        // (DECISIONS §74). What a church finds is the shelf.
         let conn = fresh_db();
         let ts = list_templates(&conn).unwrap();
-        // Five built-ins plus the ready-to-use presets, all seeded on a fresh DB.
-        assert_eq!(ts.len(), 5 + templates::preset_template_count());
+        assert_eq!(ts.len(), templates::preset_template_count());
+        assert_eq!(ts.len(), 40);
+        assert_eq!(ts[0].name, "Scripture · Dayspring");
         assert!(
-            ts.iter().any(|t| t.name == "Worship Lyrics"),
-            "the lyrics template is missing from the seed"
+            ts[0].layout["layers"].is_array(),
+            "the first seeded row is region-model again"
         );
-        assert_eq!(ts[0].name, "Classic Serif");
-        assert_eq!(ts[0].style["font"], "var(--f-serif)");
-        assert_eq!(ts[0].layout["align"], "center");
+        // A REAL FAMILY, not `var(--f-serif)`. A seeded row naming an app-chrome
+        // token is a template whose typeface the console's stylesheet decides —
+        // and `--f-display` was re-aliased from Space Grotesk to Inter exactly
+        // that way, changing every template naming it without one being edited.
+        // Wave 5, Track E; `ensure_templates_name_real_families` carries the same
+        // guarantee to a church that already has Relay installed.
+        //
+        // The forty are layer-model, so a face is a LAYER's property and `style`
+        // is `{}` on most of them. Track E's assertion used to read
+        // `ts[0].style["font"]`, which said nothing once the shelf changed shape:
+        // the scan below is the claim it was making, over every row and both
+        // halves of each.
+        let token_rows: Vec<&str> = ts
+            .iter()
+            .filter(|t| {
+                t.layout.to_string().contains("var(--") || t.style.to_string().contains("var(--")
+            })
+            .map(|t| t.name.as_str())
+            .collect();
+        assert!(
+            token_rows.is_empty(),
+            "a seeded row names an app-chrome token: {token_rows:?}"
+        );
+        assert!(
+            ts.iter().any(|t| t.layout.to_string().contains("Fraunces")),
+            "no seeded row names a real family, so the scan above proved nothing"
+        );
+        assert!(
+            ts.iter().any(|t| t.name == "Song · Anthem"),
+            "the lyric look is missing from the seed"
+        );
+        for t in &ts {
+            assert!(
+                t.layout["layers"].is_array(),
+                "{}: a region-model row is being seeded again (RG-140, RG-141)",
+                t.name
+            );
+        }
+    }
+
+    #[test]
+    fn no_seeded_template_names_an_app_chrome_token() {
+        // THE SEAL, asserted where it cannot be argued with: over the rows a
+        // fresh install actually has, not over the source that wrote them. A
+        // template's style is data that reaches a congregation's screen, and
+        // `var(--f-serif)` / `var(--v-amber)` are declared in the operator
+        // console's stylesheet — so a row naming one renders in whatever the
+        // console aliases that name to today. `--f-display` was re-aliased once,
+        // from Space Grotesk to Inter, and silently changed the typeface of every
+        // template naming it.
+        //
+        // Reading the ROWS is what makes this hold against a seed list that is
+        // rewritten: it does not care how many templates there are, what they are
+        // called, or whether they are region-model or layer-model. Wave 5, Track E.
+        //
+        // IT IS THE END-TO-END HALF AND NOT THE WHOLE TEST, and the difference was
+        // measured rather than reasoned. Putting `var(--f-serif)` back into
+        // `builtin_templates()` leaves this green, because
+        // `ensure_templates_name_real_families` runs inside `fresh_db()` and
+        // repairs the row before the assertion reads it. What it does catch is a
+        // row arriving by a door the migration does not cover. The half that fails
+        // on a bad seed is `templates::preset_template_tests::
+        // no_seed_list_writes_an_app_chrome_token`, and neither replaces the other.
+        let conn = fresh_db();
+        let mut offenders: Vec<String> = Vec::new();
+        for t in list_templates(&conn).unwrap() {
+            for (what, json) in [("style", &t.style), ("layout", &t.layout)] {
+                let text = json.to_string();
+                if text.contains("var(--") {
+                    offenders.push(format!("{} ({what}): {text}", t.name));
+                }
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "a seeded template names an app-chrome token; templates name real \
+             families (wave 5, Track E):\n{}",
+            offenders.join("\n")
+        );
+    }
+
+    #[test]
+    fn an_existing_install_stops_naming_app_chrome_tokens_and_the_fix_is_retryable() {
+        // The other half: emptying the seed lists reaches a FRESH install and no
+        // existing one. A church already running Relay has rows holding the token,
+        // in both columns — a region template keeps one face in `style_json`, a
+        // layer template keeps one per layer inside `region_config_json`.
+        let conn = fresh_db();
+        conn.execute(
+            "INSERT INTO templates (name, region_config_json, style_json) VALUES (?1, ?2, ?3)",
+            (
+                "A church's own",
+                r##"{"layers":[{"id":"a","type":"text","font":"var(--f-display)"},
+                     {"id":"b","type":"text","font":"var(--f-mono)"}]}"##,
+                r##"{"font":"var(--f-serif)","verseFont":"var(--f-body)","accent":"#e8a33d"}"##,
+            ),
+        )
+        .unwrap();
+
+        let faces = |conn: &rusqlite::Connection| -> (String, String) {
+            conn.query_row(
+                "SELECT style_json, region_config_json FROM templates WHERE name = ?1",
+                ["A church's own"],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap()
+        };
+
+        ensure_templates_name_real_families(&conn).unwrap();
+        let (style, layout) = faces(&conn);
+        assert!(
+            !style.contains("var(--"),
+            "the style still names a token: {style}"
+        );
+        assert!(
+            !layout.contains("var(--"),
+            "a layer still names a token: {layout}"
+        );
+        // The family each token already rendered as — the wall does not move.
+        assert!(style.contains(r#""font":"Fraunces""#), "{style}");
+        assert!(style.contains(r#""verseFont":"Inter""#), "{style}");
+        assert!(layout.contains(r#""font":"Inter""#), "{layout}");
+        assert!(layout.contains(r#""font":"IBM Plex Mono""#), "{layout}");
+        // …and nothing else in the row was touched.
+        assert!(style.contains(r##""accent":"#e8a33d""##), "{style}");
+
+        // Rule 25: a second run is a no-op and a third is identical to the second.
+        ensure_templates_name_real_families(&conn).unwrap();
+        let twice = faces(&conn);
+        ensure_templates_name_real_families(&conn).unwrap();
+        assert_eq!(
+            twice,
+            faces(&conn),
+            "re-running the migration changed a row"
+        );
+        assert_eq!(twice, (style, layout), "the second run was not a no-op");
     }
 
     #[test]
     fn upsert_updates_existing_template() {
         let conn = fresh_db();
         let mut t = get_template(&conn, 1).unwrap().unwrap();
-        t.name = "Classic Serif (edited)".into();
+        t.name = "Scripture · Dayspring (edited)".into();
         t.style["accent"] = serde_json::json!("#ffffff");
         let id = upsert_template(&conn, &t).unwrap();
         assert_eq!(id, 1);
         let reloaded = get_template(&conn, 1).unwrap().unwrap();
-        assert_eq!(reloaded.name, "Classic Serif (edited)");
+        assert_eq!(reloaded.name, "Scripture · Dayspring (edited)");
         assert_eq!(reloaded.style["accent"], "#ffffff");
+        // THE IDENTITY SURVIVES THE EDIT AND THE EDIT IS RECORDED. Both halves in
+        // one place: an operator renaming a seeded row keeps its `seed_key` — or a
+        // row could rename itself into or out of the retired set — and gains an
+        // `edited_at`, which is what stops retirement taking it.
+        let (key, edited): (Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT seed_key, edited_at FROM templates WHERE id = 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(key.as_deref(), Some("scripture.dayspring"));
+        assert!(
+            edited.is_some(),
+            "a save that is not the seeder's left no record"
+        );
     }
 
     #[test]
@@ -1036,7 +1324,7 @@ mod tests {
             style: serde_json::json!({ "font": "var(--f-body)" }),
             active: false,
         };
-        let seeded = 5 + templates::preset_template_count() as i64;
+        let seeded = templates::preset_template_count() as i64;
         let id = upsert_template(&conn, &t).unwrap();
         // The new row's id follows every seeded template (built-ins + presets).
         assert_eq!(id, seeded + 1);
@@ -1087,8 +1375,13 @@ mod tests {
         let conn = fresh_db();
         ensure_service_plans(&conn).unwrap();
 
+        // COUNTED AGAINST WHAT A FRESH INSTALL ALREADY HAS. This read `== 1` and
+        // `is_empty()` while a first launch had no plans; DECISIONS §90 gives it
+        // the example plan, and what this test is about is one plan's cues, not
+        // how many plans exist.
+        let before = list_plans(&conn).unwrap().len();
         let pid = create_plan(&conn, "Sunday Morning", "2026-07-05").unwrap();
-        assert_eq!(list_plans(&conn).unwrap().len(), 1);
+        assert_eq!(list_plans(&conn).unwrap().len(), before + 1);
 
         // Append three cues; positions are assigned 0,1,2.
         let a = add_plan_item(&conn, pid, "scripture", "Psalm 23:1", "{}", None).unwrap();
@@ -1113,7 +1406,7 @@ mod tests {
         remove_plan_item(&conn, a).unwrap();
         assert_eq!(plan_items(&conn, pid).unwrap().len(), 2);
         delete_plan(&conn, pid).unwrap();
-        assert!(list_plans(&conn).unwrap().is_empty());
+        assert_eq!(list_plans(&conn).unwrap().len(), before);
         assert!(plan_items(&conn, pid).unwrap().is_empty());
     }
 
@@ -1293,11 +1586,14 @@ mod tests {
     fn announcements_crud() {
         let conn = fresh_db();
         ensure_announcements(&conn).unwrap();
-        assert!(list_announcements(&conn).unwrap().is_empty());
+        // The starter notices are already here (DECISIONS §90), so this counts
+        // the one it makes rather than the whole table. `list_announcements` is
+        // newest first, so the new row is still at the front.
+        let before = list_announcements(&conn).unwrap().len();
 
         let id = save_announcement(&conn, None, "Midweek", "Wed 7pm", "2026-07-07").unwrap();
         let list = list_announcements(&conn).unwrap();
-        assert_eq!(list.len(), 1);
+        assert_eq!(list.len(), before + 1);
         assert_eq!(list[0].title, "Midweek");
         assert_eq!(list[0].body, "Wed 7pm");
 
@@ -1311,12 +1607,12 @@ mod tests {
         )
         .unwrap();
         let list = list_announcements(&conn).unwrap();
-        assert_eq!(list.len(), 1);
+        assert_eq!(list.len(), before + 1);
         assert_eq!(list[0].title, "Midweek Service");
         assert_eq!(list[0].body, "Wed 7:30pm");
 
         delete_announcement(&conn, id).unwrap();
-        assert!(list_announcements(&conn).unwrap().is_empty());
+        assert_eq!(list_announcements(&conn).unwrap().len(), before);
     }
 
     #[test]
@@ -1863,6 +2159,7 @@ mod tests {
             include_str!("plans.rs"),
             include_str!("environments.rs"),
             include_str!("settings.rs"),
+            include_str!("channels.rs"),
         ];
         let mut adds: Vec<(String, String)> = Vec::new();
         for src in SOURCES {
@@ -2015,6 +2312,7 @@ mod tests {
             include_str!("plans.rs"),
             include_str!("environments.rs"),
             include_str!("settings.rs"),
+            include_str!("channels.rs"),
         ];
         let migrated: Vec<String> = SOURCES
             .iter()
@@ -2076,6 +2374,43 @@ mod tests {
             body.contains("ensure_lower_third_band_is_not_a_law_colour(conn)?"),
             "ensure_tables must run the forward-fill, or an existing install keeps the \
              rehearsal colour on a band that now paints"
+        );
+    }
+
+    /// The retirement runs BEFORE the seed, and only a comment held that until
+    /// this test. Same source-scan pattern as its sibling above, and the same
+    /// reason: driving `migrate` proves the outcome on one database, while the
+    /// thing that must not drift is the order of two lines.
+    ///
+    /// The cost of a silent reorder is one template on every upgrading install,
+    /// for good. One name is on both lists: the shelf's `Lower Third · Scripture`
+    /// is retired and the keyed family's member of that name is seeded. Seeding
+    /// first finds the name PRESENT (the old shelf row still holds it), so it
+    /// skips the family member; the retirement then deletes the row that blocked
+    /// it, and the name is absent with nothing left to insert it until the next
+    /// boot. Retiring first makes the first boot correct. Their bytes differ, so
+    /// the name-plus-bytes match tells them apart in either order: this is about
+    /// ordering, not about matching, which is exactly why no other test can see it.
+    #[test]
+    fn ensure_tables_retires_before_it_seeds() {
+        const MOD: &str = include_str!("mod.rs");
+        let from = MOD
+            .find("fn ensure_tables(")
+            .expect("ensure_tables must exist");
+        let body = &MOD[from..];
+        let body = &body[..body.find("\n}").expect("unterminated fn")];
+        let retire = body
+            .find("ensure_retired_presets_are_gone(conn)?")
+            .expect("ensure_tables must run the retirement, or an upgraded install keeps every old preset AND gains the twenty-five");
+        let seed = body
+            .find("ensure_preset_templates(conn)?")
+            .expect("ensure_tables must run the preset seed");
+        assert!(
+            retire < seed,
+            "ensure_retired_presets_are_gone must run BEFORE ensure_preset_templates: \
+             seeding first skips the `Lower Third · Scripture` family member (the retired \
+             shelf row still holds that name), and the retirement then deletes the row that \
+             blocked it, leaving the Lower Third family one member short until the next boot"
         );
     }
 

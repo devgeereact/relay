@@ -46,7 +46,7 @@ describe('the update channel reports on itself', () => {
     updateChannel.set({ state: 'unchecked', at: null, detail: '' });
     updateAvailable.set(null);
     capture.update((s) => ({ ...s, capturing: false }));
-    serviceLock.set({ engaged: false });
+    serviceLock.set({ engaged: false, recording: false });
   });
 
   it('starts as UNCHECKED, not as up to date', () => {
@@ -77,7 +77,12 @@ describe('the update channel reports on itself', () => {
     check.mockRejectedValue(new Error('Could not fetch a valid release JSON: 404'));
     expect(await checkForUpdate()).toBeNull();
     expect(get(updateChannel).state).toBe('failed');
-    expect(describeChannel(get(updateChannel))).toBe('could not reach the update server');
+    // The guidance a failed check used to carry only in the BUTTON's own
+    // hand-composed sentence is restored here, inside describeChannel, so the
+    // row and the button can never disagree about what a failure means again.
+    expect(describeChannel(get(updateChannel))).toBe(
+      'could not reach the update server. This is normal offline — if you are online, the update channel may be broken.',
+    );
     expect(get(updateChannel).detail).toMatch(/404/);
   });
 
@@ -98,7 +103,7 @@ describe('the update channel reports on itself', () => {
     expect(describeChannel(get(updateChannel))).toBe('no update channel in this build');
   });
 
-  it('never checks during a service, and does not overwrite what it last knew', async () => {
+  it('never checks the server during a service — the plugin is never asked again', async () => {
     check.mockResolvedValue(null);
     await checkForUpdate();
     expect(get(updateChannel).state).toBe('ok');
@@ -107,7 +112,57 @@ describe('the update channel reports on itself', () => {
     check.mockRejectedValue(new Error('should never be called'));
     expect(await checkForUpdate()).toBeNull();
     expect(check).toHaveBeenCalledTimes(1);
+  });
+
+  it('a check refused because a service is recording is its own outcome, not a stale success', async () => {
+    // RULE 35. Before this, the refusal returned null WITHOUT recording anything,
+    // so the caller fell back to whatever the last successful check had said —
+    // "up to date" survived unchanged into a button press that never asked the
+    // server anything. One reassuring sentence over two different situations, on
+    // the one path by which a fix reaches a church that already has Relay.
+    check.mockResolvedValue(null);
+    await checkForUpdate();
     expect(get(updateChannel).state).toBe('ok');
+
+    serviceLock.set({ engaged: true });
+    check.mockRejectedValue(new Error('should never be called'));
+    expect(await checkForUpdate()).toBeNull();
+    expect(get(updateChannel).state).toBe('skipped');
+    expect(describeChannel(get(updateChannel))).not.toMatch(/up to date|latest version/i);
+    // PAST TENSE. `checkForUpdate` only runs on launch and from this button, so
+    // this sentence is the last word in the store until the next check — which
+    // can be read long after the service that caused the refusal has ended.
+    // "is being recorded" would be a false claim by then; rule 35 displaced by
+    // one tense is still rule 35.
+    expect(describeChannel(get(updateChannel))).toBe('not checked — a service was being recorded');
+  });
+
+  it('an UNLOCKED service still refuses the check, and still names the service', async () => {
+    // `engaged` and `recording` are deliberately different facts: lifting the lock
+    // is a first-class override and does NOT end the service. `idle()` read only
+    // `engaged`, under a comment asserting the lock is armed for the whole of a
+    // recorded service — so an operator who unlocked to delete something, with the
+    // microphone momentarily stopped between readings, had every term false. The
+    // second call site of `idle()` downloads and restarts the application.
+    check.mockResolvedValue(null);
+    await checkForUpdate();
+    expect(get(updateChannel).state).toBe('ok');
+
+    serviceLock.set({ engaged: false, recording: true });
+    check.mockRejectedValue(new Error('should never be called'));
+    expect(await checkForUpdate()).toBeNull();
+    expect(get(updateChannel).state).toBe('skipped');
+    // …and it names the SERVICE, not the microphone. "Stop listening" is unhelpful
+    // advice to somebody whose microphone is already off.
+    expect(describeChannel(get(updateChannel))).toBe('not checked — a service was being recorded');
+  });
+
+  it('a check refused because the microphone is live names that reason instead, also in the past tense', async () => {
+    capture.update((s) => ({ ...s, capturing: true }));
+    check.mockRejectedValue(new Error('should never be called'));
+    expect(await checkForUpdate()).toBeNull();
+    expect(get(updateChannel).state).toBe('skipped');
+    expect(describeChannel(get(updateChannel))).toBe('not checked — Relay was listening');
   });
 });
 

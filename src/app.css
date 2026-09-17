@@ -1,68 +1,43 @@
-/* Relay — global design system.
+/* Relay — THE OPERATOR CONSOLE'S STYLESHEET.
  *
  * Ported from the design references in `docs/design/` (the working HTML mock they
- * came from is not in this repository). This is the shared visual
- * language (tokens + reusable component classes). Per-screen markup lives in
+ * came from is not in this repository). The shared visual language: the token
+ * sheet below, plus the reusable component classes. Per-screen markup lives in
  * src/lib/views/*.svelte; anything reused across screens lives here so Svelte's
  * per-component style scoping doesn't strip it.
  *
- * Fonts are self-hosted via @fontsource (imported in main.js) — never a CDN.
- * Offline-first is non-negotiable (see CLAUDE.md): the app must render with
+ * THIS FILE IS THE CONSOLE'S, AND ONLY THE CONSOLE'S (wave 5, Track E). It used
+ * to be imported by `output.js` and `stage.js` as well, and Svelte does not scope
+ * a global stylesheet — so every unscoped rule in it was live on `output.html`
+ * and `stage.html` too, one class-name collision away from painting on a wall in
+ * front of a congregation. The palette moved into `./tokens.css`, which may
+ * declare custom properties and nothing else; the two congregation-facing entry
+ * points import THAT, so they still share every colour and every face and take no
+ * rule. `src/lib/seal.test.js` fails on the first rule added to the token sheet,
+ * and on the first import of this file from a page that is not the console.
+ *
+ * Fonts are self-hosted via @fontsource (imported in src/lib/fonts.js) — never a
+ * CDN. Offline-first is non-negotiable (see CLAUDE.md): the app must render with
  * zero network, so no fonts.googleapis.com links anywhere in shipped code.
  */
+@import './tokens.css';
 
-/* ── LEGACY PALETTE + the few rules still standing on it ────────────────────
-   The app moved to the --v-* tokens; this block is what remains of the first
-   design system. 89 orphaned rules were deleted after checking every class name
-   against every class actually rendered by a component (including the root HTML
-   entry points). What is left is here because something still renders it — and
-   Svelte does NOT scope a global stylesheet, so deleting a rule whose class is
-   still on an element silently restyles the app.
+/* ── THE LEGACY RULES, and why they are still here ──────────────────────────
+   The app moved to the --v-* tokens; what follows this import is what remains of
+   the first design system. 89 orphaned rules were deleted after checking every
+   class name against every class actually rendered by a component (including the
+   root HTML entry points). What is left is here because something still renders
+   it — and Svelte does NOT scope a global stylesheet, so deleting a rule whose
+   class is still on an element silently restyles the app. That judgement has not
+   changed and still needs eyes on a running console.
 
-   --text-faint was #5f6470: 2.27:1 at worst, a WCAG AA failure on every surface
-   it sat on. It is now 4.54:1. It stays because Channels still uses it as a chip
-   colour, and the output window shares this file. */
-:root{
-  /* Neutrals, aliased to the design system's 950→500 ramp. `--bg` is what the
-     BODY and the output-window canvas paint, so it is the deepest step. */
-  --bg:var(--v-void); --surface:var(--v-surf); --surface2:var(--v-surf2); --surface3:var(--v-surf3);
-  --border:var(--v-line2); --border-soft:var(--v-line);
-  --text:var(--v-txt); --text-dim:var(--v-dim);
-  /* #5f6470 failed WCAG AA on every surface it sits on — 2.27:1 at worst.
-     This is the LEGACY palette (the app moved to --v-*), and the rules below it are
-     mostly orphaned — but Svelte does NOT scope a global stylesheet, so deleting them
-     wholesale could silently restyle any component using a generic class name (.tab,
-     .dot, .live, .chip all still exist somewhere). That needs eyes on a running app,
-     and this machine cannot screenshot one. So the gun is unloaded rather than
-     removed: 4.54:1 at worst now. Delete the dead rules when someone can look. */
-  --text-faint:var(--v-faint);
-  /* Every legacy colour name is now an ALIAS of the design-system token it maps to.
-     They are kept (rather than deleted) because they are still referenced from
-     places a grep does not reach cleanly — `TemplateRender` builds an inline
-     `--accent`, `Channels` picks chip colours from an array, and the output window
-     shares this file. Aliasing means anything still on an old name is on-brand by
-     construction, and there is exactly ONE place any of these hexes live. */
-  --amber:var(--v-amber);   --amber-soft:var(--v-amber-soft);
-  --green:var(--v-emerald); --green-soft:var(--v-emerald-soft);
-  --teal:var(--v-cyan);     --teal-soft:var(--v-cyan-soft);
-  --violet:var(--v-amethyst); --violet-soft:var(--v-amethyst-soft);
-  --rose:var(--v-red);      --rose-soft:var(--v-red-soft);
-  --red:var(--v-red);       --red-soft:var(--v-red-soft);
-  /* The design sheet publishes ONE UI family: Inter. `--f-display` (Space Grotesk)
-     is aliased to it rather than deleted — templates.js and a couple of views still
-     name it, and a font that is only in the bundle for one preset is dead weight. */
-  --f-display:'Inter',system-ui,sans-serif; --f-body:'Inter',sans-serif;
-  --f-serif:'Fraunces',serif;
-  /* `--f-mono` is NOT declared here. It used to be, as 'JetBrains Mono', and it
-     was dead the whole time: the design-system :root below is later in the same
-     file at the same specificity, so its 'IBM Plex Mono' won. A reader looking
-     up the console's figure face found this line first and read the wrong
-     answer, and a reorder of the two blocks would have silently changed every
-     clock, confidence and latency in the app. It is declared ONCE now, below.
-     JetBrains Mono stays in the bundle because TEMPLATES offer it by name
-     (`TemplateEditor.svelte`) — an operator's saved choice, not chrome. */
-}
-*{box-sizing:border-box;}
+   WHAT CHANGED IS WHO THEY CAN REACH. Six of them — .prev-main .verse,
+   .prev-stage .verse, .prev-stream .lower-third, .prev-lobby .verse,
+   .tmpl-row.active and .toggle.on — were live on the output and stage pages as
+   well, which is a different kind of risk from restyling a console: those pages
+   are what a room looks at. They are unchanged and undeleted, and they now reach
+   the console alone. */
+
 /* 12px, not 14px. A control room is read at a glance from a metre away, and
    the extra two pixels cost a row of the slide grid and, on a 1366x768 booth
    laptop, the status bar itself. */
@@ -102,229 +77,6 @@ body{ margin:0; background:var(--bg); color:var(--text); font-family:var(--f-bod
   .templates-layout{ flex-direction:column; }
 }
 
-/* ══════════════════════════════════════════════════════════════════════════
-
-   RELAY STUDIO — the control-room rebrand (docs/REBRAND.md, phase 1).
-   Global shell + shared component system. Fit-to-screen, retina, responsive.
-   The token NAMES are stable, so the output window (which shares this file via
-   output.js and relies on --f-serif/--bg) and Stage move with the console
-   rather than being left on an older palette.
-   ══════════════════════════════════════════════════════════════════════════ */
-:root{
-  /* ══ RELAY STUDIO — the rebrand palette (docs/REBRAND.md §1) ══════════════
-     The grammar is a control room: OBS Studio's studio split and dock row
-     crossed with ProPresenter's object inspector. Dark only, because the booth
-     is dark and the wall is black.
-
-     The NAMES are unchanged, so every consumer moves together — the console,
-     the output window (via output.js) and Stage (via stage.js) all read these.
-     What changed is the tuning: the neutral ramp carries a slight blue cast so
-     a grey surface reads as equipment rather than as paper, and the semantic
-     colours were re-measured against it.
-
-     WHAT DID NOT CHANGE IS THE LAW. Amber still means ON AIR and nothing else,
-     amethyst still means rehearsal, cyan is still a guess and grey is still
-     CUED (CLAUDE.md rule 18, DECISIONS §21). A rebrand may retune a hex; it may
-     not move a promise onto a different colour. */
-
-  /* ── Neutrals, deepest to lightest ────────────────────────────────────── */
-  --v-void:#131418;   /* shell + main + the output-window canvas */
-  --v-bg:#1a1c21;     /* sidebar, dock, top bar, input fields    */
-  --v-surf:#212429;   /* default card                            */
-  --v-surf2:#292d34;  /* raised / selected card                  */
-  --v-surf3:#343942;  /* hover, lightest chrome                  */
-  --v-500:#3a404a;    /* edge — a visible hairline on a card     */
-  /* The seam between two regions is DARKER than either of them. A control room
-     divides by shadow, not by a light rule: a pale divider on a dark desk is the
-     first thing the eye goes to, and nothing on this desk deserves that. */
-  --v-rule:#0c0d10;
-  --v-line:rgba(255,255,255,.075); --v-line2:rgba(255,255,255,.13);
-
-  /* ── Text ramp: primary / secondary / muted ───────────────────────────────
-     Every one of these is measured against every surface it can sit on by
-     `tokencontrast.test.js` (RG-74), which requires a hex literal here and
-     WCAG AA's 4.5:1 body bar. It has caught two real failures already.
-
-     THE PROTOTYPE'S MUTED STEP DID NOT SURVIVE THAT TEST. It was #7e8695, which
-     measures 4.25:1 on --v-surf and 3.77:1 on --v-surf2 — below AA on two of the
-     four surfaces muted text is actually placed on. The repository's rule wins
-     over the prototype (REBRAND.md, Context), so it is lifted to #8c94a1: same
-     hue, 4.52:1 at worst, and indistinguishable at a glance.
-
-     The measured matrix, at 4.5:1:
-       --v-txt   on void 15.28 · bg 14.15 · surf 12.92 · surf2 11.48
-       --v-dim   on void  8.43 · bg  7.81 · surf  7.13 · surf2  6.33
-       --v-faint on void  6.02 · bg  5.57 · surf  5.09 · surf2  4.52
-     --v-faint on --v-surf3 is 3.79 and NOTHING pairs them; the test asserts that
-     stays true, because clearing surf3 needs ~#9b9ba6 and collapses muted into
-     --v-dim. */
-  --v-txt:#e8eaee; --v-dim:#a9b0bc; --v-faint:#8c94a1;
-  --v-disabled:#5a6270; --v-inverse:#131418;
-
-  /* ── The four colours that carry a promise ────────────────────────────────
-     Retuned, not reassigned. Each has a soft fill (a chip's background) and a
-     line (its border) so no component has to hand-write an rgba() of it — five
-     rules drifted from the token that way before. */
-  /* ON AIR. The congregation is looking at this right now. */
-  --v-amber:#ffa31a; --v-amber2:#ffc266; --v-amber-ink:#251700;
-  --v-amber-soft:rgba(255,163,26,.15); --v-amber-line:rgba(255,163,26,.45);
-  --v-amber-glow:rgba(255,163,26,.42);
-  /* A GUESS — a paraphrase or semantic match, never a heard reference. */
-  --v-cyan:#4cc9f0; --v-cyan-soft:rgba(76,201,240,.15); --v-cyan-line:rgba(76,201,240,.4);
-  /* REHEARSAL — this cannot reach the congregation. No longer doing double duty
-     as the interactive accent: chrome moved to steel blue below, so amethyst now
-     means one thing again. */
-  --v-amethyst:#a96bf5; --v-amethyst2:#c49bfa; --v-amethyst-mute:#4a4658;
-  --v-amethyst-soft:rgba(169,107,245,.16); --v-amethyst-line:rgba(169,107,245,.45);
-  /* CUED — where the transport resumes, and NOT on screen. */
-  --v-grey:#8a929e; --v-grey-soft:rgba(138,146,158,.16);
-
-  /* ── The rest of the semantic set ─────────────────────────────────────── */
-  --v-emerald:#3fcf6a; --v-emerald-soft:rgba(63,207,106,.14); --v-emerald-line:rgba(63,207,106,.4);
-  /* Destructive, and the stage alert. --v-rose is the same colour under its
-     older name; both are kept because the output window shares this file. */
-  --v-red:#f4515b; --v-red-soft:rgba(244,81,91,.15); --v-red-line:rgba(244,81,91,.5);
-  --v-rose:#f4515b; --v-rose-soft:rgba(244,81,91,.15);
-
-  /* ── SELECTION — the thing you are working on ─────────────────────────────
-     Steel blue. The selected tab, a focus ring, a switch that is on, the filled
-     part of a slider, the transcript line being read right now.
-
-     This is the rebrand's one structural colour change. Interactive chrome used
-     to be amethyst, which was already an improvement on amber — but it meant the
-     rehearsal colour was also lit on every hover, every switch and every primary
-     button, in a product where telling a rehearsal from a live service is a
-     safety distinction. A colour that carries a promise cannot also be the
-     default for "clicked". So selection gets its own colour, and the promise
-     colours are now used ONLY where they mean what they say.
-
-     White on --v-sel-fill (#2e6fd4) is 4.84:1 — above AA for button text. The
-     lighter --v-sel is for borders, dots and text on a dark surface, where it is
-     the thing being read rather than the thing behind it. */
-  --v-sel:#5b9cf8; --v-sel-fill:#2e6fd4; --v-sel-ink:#ffffff;
-  --v-sel-soft:rgba(91,156,248,.16); --v-sel-line:rgba(91,156,248,.45);
-  --v-sel-glow:rgba(91,156,248,.5);
-  /* The --v-accent* family is the SAME colour under the name several hundred
-     rules already use. Kept as aliases rather than renamed, so the whole console
-     moves in one edit and nothing is left behind on a stale hex. */
-  --v-accent:var(--v-sel);
-  --v-accent2:#8bbcff;
-  --v-accent-fill:var(--v-sel-fill);
-  --v-accent-ink:var(--v-sel-ink);
-  --v-accent-soft:var(--v-sel-soft);
-  --v-accent-line:var(--v-sel-line);
-  --v-accent-glow:var(--v-sel-glow);
-
-  /* ── Collection colours (the Library) ─────────────────────────────────────
-     A collection is a KIND of content, so it borrows the colour that kind
-     already wears on the wall. None of these is a status: they tint an icon and
-     a row's left edge, never a badge that could be mistaken for ON AIR. */
-  --v-col-scripture:var(--v-amber);
-  --v-col-song:var(--v-sel);
-  --v-col-notice:var(--v-red);
-  --v-col-media:var(--v-amethyst);
-
-  /* ── Radius. 3px, and 5px for the things that hold other things ───────────
-     No pills on buttons, tabs or cards: a pill in a control room reads as a toy.
-     --v-r-round survives for the two shapes that are genuinely round — a slider
-     thumb and a status dot — and for nothing else. */
-  --v-r-sm:3px; --v-r-md:3px; --v-r-lg:5px; --v-r-xl:5px; --v-r-2xl:6px;
-  --v-r-round:99px;
-
-  /* Spacing (8pt grid) */
-  --v-sp-xs:4px; --v-sp-sm:8px; --v-sp-md:16px; --v-sp-lg:24px; --v-sp-xl:32px;
-  --v-sp-2xl:48px; --v-sp-3xl:64px; --v-sp-4xl:96px; --v-sp-5xl:128px;
-
-  /* Elevation — a dark room, so shadows are for depth, never for decoration. */
-  --v-shadow-sm:0 1px 2px rgba(0,0,0,.45);
-  --v-shadow-md:0 4px 16px rgba(0,0,0,.5);
-  --v-shadow-lg:0 20px 60px -24px #000;
-
-  /* Motion. One duration and one curve for every piece of chrome, so the desk
-     feels like one instrument. Honoured against prefers-reduced-motion below. */
-  --v-dur:120ms; --v-ease:cubic-bezier(.2,.7,.3,1);
-
-  /* ── TYPOGRAPHY ───────────────────────────────────────────────────────────
-     Inter for the interface, IBM Plex Mono for EVERY figure — a clock, a
-     confidence, a latency, a verse number — because tabular digits mean a
-     changing number never reflows the row beside it. Fraunces is the serif the
-     scripture templates render in; it is template content, not chrome, and the
-     console does not use it.
-
-     --f-display (Space Grotesk) and --f-head (Playfair) are aliases of Inter,
-     kept because templates.js and a few views still name them. */
-  --f-head:'Inter',system-ui,-apple-system,sans-serif;
-  --f-mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,monospace;
-
-  /* The scale is DENSER than the one it replaces: 11–12px is the control-room
-     register, and the old 14px body pushed the dock row and the status bar off
-     the bottom of a 1366×768 booth laptop. */
-  --v-fs-d1:30px;  --v-lh-d1:34px;   /* Display — a splash, a gate           */
-  --v-fs-d2:21px;  --v-lh-d2:26px;   /* Page title                           */
-  --v-fs-h1:17px;  --v-lh-h1:22px;   /* Section heading                      */
-  --v-fs-h2:14px;  --v-lh-h2:19px;   /* Card heading                         */
-  /* ── The four steps the console proper actually uses, added wave 5 (M1).
-     The reference type scale is nine steps and six of them were already here
-     (12.5 · 12 · 11.5 · 11 · 9.5, plus 11 mono). The other four had NO token at
-     all, which is why a hundred and one hand-typed sizes survived wave 4's
-     sweep: there was nothing to convert them TO. They are named for their role
-     rather than for a position in a heading ladder, because that is what they
-     are — the ladder above ends at `h3` and these sit beside it, not under it.
-
-     THE LADDER IS NOT A COMPLETE INVENTORY OF WHAT RENDERS, and saying so here
-     is cheaper than discovering it again. 10px became a real step below
-     (`--v-fs-b3`) once the widened scan showed twenty-seven of them in one role;
-     10.5px, 8px, 7px, 16px, 18px and 22px are still typed by hand, and those are
-     genuinely one-control decisions rather than a missing step — eight distinct
-     judgements that happened to land near each other. Converting one is a
-     restyle decision about that control, not a sweep, so they are left visible
-     rather than rounded into a neighbouring step to make a scanner quiet. */
-  --v-fs-ttl:15px; --v-lh-ttl:20px;  /* Object title — a settings page head, a
-                                        claim's reference. 600, -.012em.     */
-  --v-fs-h3:12.5px;--v-lh-h3:17px;   /* Row heading                          */
-  --v-fs-pr:13px;  --v-lh-pr:20px;   /* Prose — a paragraph, a standfirst.
-                                        13/1.55, the one step that is a
-                                        READING size rather than a UI one.   */
-  --v-fs-b1:12px;  --v-lh-b1:17px;   /* Body — the default                   */
-  --v-fs-b2:11.5px;--v-lh-b2:16px;   /* Body, secondary                      */
-  --v-fs-lbl:11px; --v-lh-lbl:15px;  /* Label                                */
-  /* THE TWO VERTICAL RULES OF THE DESK.
-     Measured at 1280 before these existed: left rails of 180/206/206/206/212 and
-     inspectors of 250/276/312/320/330, so BOTH seams moved on every tab press —
-     Live to Planner shifted the left one 26px and the right one 80px.
-     `WorkspaceFrame`'s own comment says an operator moving between the run
-     surface and a desk "should not be able to tell that two people built them".
-     One token each, referenced by the frame and by Live's hand-built desk. */
-  --v-rail:206px; --v-insp:300px;
-  --v-fs-b3:10px;  --v-lh-b3:14px;   /* Sub-label — the quieter line UNDER a
-                                        label. Added wave 5 (2026-09-15) after
-                                        the grammar scan was widened from six
-                                        desks to every view and reported 39
-                                        off-scale literals, of which TWENTY-SEVEN
-                                        were 10px, in one visual role, across
-                                        fourteen files. That is the definition of
-                                        a step the ladder did not publish — the
-                                        same finding that produced `ttl`, `pr`,
-                                        `fig` and `kind` above — and not
-                                        twenty-seven restyle decisions. The
-                                        reference uses 10px more than any other
-                                        size it omits from the nine-step table.
-                                        Converting is behaviour-preserving: every
-                                        one of them already rendered at 10px.   */
-  --v-fs-cap:9.5px;--v-lh-cap:13px;  /* Caption / the uppercase key line     */
-  --v-fs-mono:11px;--v-lh-mono:15px; /* Mono row                             */
-  --v-fs-fig:9px;  --v-lh-fig:12px;  /* Figure — a count, a unit, a key cap.
-                                        Mono, and never a sentence: at 9px a
-                                        line of prose is not readable at a
-                                        booth's viewing distance.            */
-  --v-fs-kind:8.5px;--v-lh-kind:11px;/* Kind chip — the smallest thing in the
-                                        product. Mono, uppercase, .09em, and
-                                        only ever ONE WORD.                  */
-  --v-tr-tight:-.022em; --v-tr-h2:-.01em; --v-tr-wide:.02em;
-  --v-tr-ttl:-.012em;  /* the object title, per the reference scale */
-  --v-tr-caps:.09em;   /* the uppercase caption line, and only that */
-}
-
 /* Fit-to-screen base — no body scroll; the shell owns the viewport, panels
    scroll internally. Retina smoothing. Applies to the app window (and harmless
    for the single-surface output window). */
@@ -339,7 +91,26 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
 .mainscroll::-webkit-scrollbar-thumb:hover, .r-scroll::-webkit-scrollbar-thumb:hover{ background:#33333a; background-clip:content-box; }
 
 /* ── Shell ─────────────────────────────────────────────────────────────── */
-.shell{ display:flex; height:100dvh; background:var(--v-void); color:var(--v-txt);
+/* A COLUMN. `display:flex` with no direction is a ROW, and the shell's two in-flow
+   rose banners (`.audiobar`) are direct children of it — so a banner designed as a
+   full-width bar with a `border-bottom` was laid out BESIDE the desk as a narrow
+   vertical strip, and the desk was squeezed to make room for it. Measured in a
+   browser against the real stylesheet at 1200px: with the microphone banner
+   present, `.main-v` went from 1200px wide to 730px and the banner took 470px of
+   full-height column down the right-hand side. With two banners up, `.main-v`
+   measured **0px** — `flex:1` is `flex-basis:0`, so once the banners' content had
+   taken the row there was nothing left, and the whole console vanished.
+
+   This has shipped since RG-117 put the first one here. Every static instrument in
+   the repository was blind to it; it is exactly the class the 2026-09-10 rendered
+   pass exists for. `.panicbar` and `.prac` escaped it only by being `position:fixed`.
+
+   The banners are ordered BEFORE `.main-v` in `App.svelte` so they stack at the top,
+   under the fixed panic bar, which is what `.audiobar`'s own comment always said
+   they did. `.main-v` is already `flex:1` and `flex-direction:column` internally, so
+   it takes the remaining height; it gains `min-height:0` because in a column that is
+   the axis a flex item must be allowed to shrink on. */
+.shell{ display:flex; flex-direction:column; height:100dvh; background:var(--v-void); color:var(--v-txt);
   font-family:var(--f-body); overflow:hidden; }
 /* The panic bar is `position:fixed` at the top, so it USED TO COVER the first
    ~56px of the app: the sidebar brand, and part of the top bar — including the
@@ -357,7 +128,7 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
    menu and its foot is the status bar. Its rules went with its markup: a rule
    whose class nothing renders is the dead CSS §6 warns about, and leaving these
    would have left 238px of layout waiting for a class name to come back. */
-.main-v{ flex:1; min-width:0; display:flex; flex-direction:column; overflow:hidden; background:var(--v-void); }
+.main-v{ flex:1; min-width:0; min-height:0; display:flex; flex-direction:column; overflow:hidden; background:var(--v-void); }
 /* THE CHROME BAR (docs/REBRAND.md §2). 34px: a control room's title bar, not a
    web page's masthead. The 62px header and the 42px footer it replaces took 66
    pixels of desk between them — on a 1366x768 booth laptop that is a row of the
@@ -454,6 +225,7 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
      chrome bar    34   .topbar-v          status bar 26   .footer-v
      dock head     26   Dock.svelte .dhead (min-height, the head may grow)
      button        26   .r-btn             small button 22  .r-btn.sm
+     icon button   26   .r-iconbtn         small icon   22  .r-iconbtn.sm
      input·select  26   .r-input,.r-select tab          26  .ws-tab
      pill          26   .r-pill            segment btn  22  .r-seg button
      switch     38x21   .r-switch          colour well  38x21  input[type=color]
@@ -535,6 +307,67 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
   background:var(--v-surf2); border:1px solid var(--v-line); color:var(--v-dim);
   transition:color var(--v-dur) var(--v-ease), border-color var(--v-dur) var(--v-ease); }
 .r-iconbtn:hover{ color:var(--v-accent2); border-color:var(--v-accent-line); }
+/* THE SMALL ICON BUTTON, and the reason it did not exist until now.
+   The ladder publishes two heights for the text button, 26 and 22, and app.css has
+   carried both since wave 5. It carried ONE for the icon button, and an icon button
+   is the control most likely to be sitting in a row of small ones: a kebab beside a
+   `.r-btn.sm`, an undo beside a segment button, a favourite star over a card.
+   Earlier waves then did the correct thing and stripped the LOCAL size override off
+   every icon button that had one, each with its reason recorded in the file it came
+   out of (`Browse.svelte` .br-fav, `Library.svelte` .lib-more). That sweep was right
+   and it made the gap permanent, because the 4px step could no longer be closed at a
+   call site without putting back the override the sweep had just removed. Publishing
+   it here is the only place it can go: one step, named, in the ladder, asked for by
+   `ui/IconButton.svelte` and by nothing hand-rolled.
+   It is a box and not only a height, because this control is SQUARE — width and
+   height move together or the glyph stops being centred. */
+.r-iconbtn.sm{ width:22px; height:22px; }
+
+/* ── THE POPOVER MENU ──────────────────────────────────────────────────────
+   Six of these exist and no two were the same shape. Measured on this tree
+   before the class was written: five row paddings (9/11, 8/10, 6/9, 8/10, 7/9),
+   four row font sizes, three row radii (8px, --v-r-md, --v-r-sm), two shell
+   radii (11px against --v-r-md) and two shadows (a hand-rolled
+   `0 18px 44px -18px #000` against --v-shadow-lg). Four of the six already
+   agreed with each other, which is what makes this a consolidation rather than
+   a redesign: the values below are that majority, written down.
+
+   THE VISIBLE CHANGE, named so it is not discovered: `Library.svelte`'s New and
+   More menus were the outlier at both ends. An 11px shell corner and an 8px row
+   corner are off the radius scale entirely (DESIGN_SYSTEM §3 — the largest step
+   this product publishes is 6px, and a pill in a control room reads as a toy),
+   and its rows were 13px type where every other menu in the app is 11.5px. Those
+   corners get smaller and that type gets smaller. Nothing else about those menus
+   moves, and no menu ANYWHERE changes what it does.
+
+   It lives here rather than in `ui/Menu.svelte` for the reason the `.b-*` ladder
+   gives a few hundred lines down: Svelte scopes a component's styles to that
+   component, and a menu's ROWS are written by the caller and arrive through a
+   slot. A rule in the shell component could only reach them through `:global`,
+   which is the same global rule with the scoping machinery in front of it.
+
+   WHAT IS NOT HERE: position. A menu is anchored by whatever opened it, and
+   `position`, `top`, `right`, `z-index` and `width` are that anchor's business.
+   The caller keeps those in its own file, which is exactly the "width and
+   padding, never the height" split docs/REBRAND.md §1 asks for elsewhere. */
+.r-menu{ display:flex; flex-direction:column; gap:1px; padding:5px;
+  background:var(--v-surf2); border:1px solid var(--v-line2); border-radius:var(--v-r-md);
+  box-shadow:var(--v-shadow-lg); }
+/* A MENU ROW, not a button. It is full-bleed and left-aligned because the
+   floating menu is the surface it sits on, and it has no edge and no fill of its
+   own for the same reason. Forcing it into `.r-btn` would centre the label and
+   put a hairline round every row, which is a different control. */
+.r-menuitem{ display:flex; align-items:center; gap:9px; width:100%; box-sizing:border-box;
+  text-align:left; padding:7px 9px; border:0; border-radius:var(--v-r-sm);
+  background:transparent; color:var(--v-txt); cursor:pointer;
+  font-family:var(--f-body); font-size:var(--v-fs-b2); }
+.r-menuitem:hover:not(:disabled){ background:var(--v-surf3); }
+.r-menuitem:disabled{ opacity:.45; cursor:not-allowed; }
+/* The one destructive row. Same red as `.r-btn.danger`, from the same token:
+   a Delete that is rose in a menu and a different rose in a dialog foot is the
+   defect `.r-btn.danger` was already fixed for. */
+.r-menuitem.danger{ color:var(--v-red); }
+.r-menuitem.danger:hover:not(:disabled){ background:var(--v-red-soft); }
 
 .r-badge{ display:inline-flex; align-items:center; gap:6px; padding:3px 8px; border-radius:var(--v-r-sm);
   font-family:var(--f-mono); font-size:var(--v-fs-cap); font-weight:600;
@@ -557,6 +390,46 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
   border:1px solid var(--v-500); color:var(--v-txt); font-family:var(--f-body); font-size:var(--v-fs-b2);
   outline:none; transition:border-color var(--v-dur) var(--v-ease), box-shadow var(--v-dur) var(--v-ease); }
 .r-input.mono{ font-family:var(--f-mono); }
+/* ── THE FIELD WELL, which was named in the focus group and nowhere else ────
+   `.r-well` has appeared in this stylesheet for several waves in exactly one
+   place: the `:focus-within` line a dozen rules below, alongside `.r-btn` and
+   `.r-iconbtn`. It had no rule body and, measured on this tree, zero call sites.
+   So the product published a focus treatment for a control that did not exist,
+   while four search boxes each invented their own.
+
+   What those four did, measured: `.ch-search` sets an accent border plus a 3px
+   soft ring, `.sp-railsearch` and `.sp-addsearch` set an inset hairline, and
+   `.tg-search` sets a border colour and nothing else. All four first set
+   `outline:none` on the input inside them, which is the move DESIGN_SYSTEM §5
+   forbids without an equally visible replacement.
+
+   THE ONE THAT IS NOT MERELY INCONSISTENT: `.tg-search:focus-within` draws
+   `--v-sel-line`, `rgba(91,156,248,.45)`. Composited over the field's own
+   `--v-bg` ground that is rgb(55,86,130), which measures 2.28:1 against it.
+   WCAG 2.2 SC 1.4.11 asks 3:1 of a non-text focus indicator, so a keyboard
+   operator has no reliable way to tell whether the template search has focus.
+   The outline the focus group already promises this class is a solid `--v-sel`,
+   which is 6.1:1 on the same ground. Giving `.r-well` a body is therefore not a
+   new treatment; it is connecting the one that was already written down.
+
+   The height is the ladder's 26px, the same as `.r-input` and `.r-select`,
+   because a well IS a field and the thing the ladder protects is a column
+   (docs/REBRAND.md §1). A caller may still set width, flex and margin. */
+.r-well{ display:flex; align-items:center; gap:8px; height:26px; padding:0 9px;
+  box-sizing:border-box; border-radius:var(--v-r-sm);
+  background:var(--v-bg); border:1px solid var(--v-line2); }
+/* The input inside a well has no box of its own: the well IS the box, and two
+   nested borders read as a field inside a field. It surrenders its outline to
+   the well's `:focus-within`, which is the only circumstance in which
+   `outline:none` is allowed anywhere in this product. */
+.r-well > input, .r-well > select{ flex:1; min-width:0; height:100%;
+  background:transparent; border:0; outline:none; color:var(--v-txt);
+  font-family:var(--f-body); font-size:var(--v-fs-b2); }
+.r-well > input::placeholder{ color:var(--v-faint); }
+/* The leading glyph, and whatever sits after the field (a count, a clear button).
+   Both are `flex:0 0 auto` so a long value never squeezes them out of the row. */
+.r-well > svg, .r-well > .r-well-tail{ flex:0 0 auto; color:var(--v-faint); }
+
 .r-input::placeholder{ color:var(--v-faint); }
 .r-input:focus, .r-select:focus{ border-color:var(--v-accent-line); box-shadow:0 0 0 3px var(--v-accent-soft); }
 .r-input:disabled, .r-select:disabled{ opacity:.5; }
@@ -641,7 +514,24 @@ input[type=color]::-moz-color-swatch{ border:0; border-radius:2px; }
      Clear screens red   — it takes the wall away.
      Blackout     black  — it is the black itself, with a light hairline so the
                            button is still findable on a dark desk.
-     Rehearse     amethyst — the rehearsal colour, and nothing else uses it.
+     Rehearse     amethyst — see below; it is the whole of this colour's promise
+                  and not the whole of its use.
+
+   AMETHYST MEANS "NOTHING HERE REACHES A CONGREGATION" (DECISIONS section 92).
+   This line used to read "the rehearsal colour, and nothing else uses it", and
+   that was false about the file it is written in: the boot ladder below spends
+   amethyst about eleven times, the practice strip twice, and components spend it
+   on the splash, on safe mode and on the Media collection ink. Reading those uses
+   rather than counting them is what settled it — almost none is a borrowing.
+   Rehearsal is the case the colour was named for; safe mode ("outputs disabled")
+   and the launch sequence (no console, no output window, nothing on any wall) are
+   the same fact said where the word "rehearsal" does not fit, and a boot ladder
+   and a rehearsal badge can never be on screen together because `.b-shell`
+   renders instead of `App.svelte`.
+   What is deliberately NOT settled is CAUTION. Four surfaces spend amethyst on a
+   warning because this palette publishes no caution ink and every other colour is
+   already a promise. That gap is filed, not improvised. `colourlaw.test.js`
+   enumerates all of it.
 
    A panic control is never placed behind a validator and never scrolled out of
    reach (CLAUDE.md rule 36, DECISIONS section 20), so these are sized to stay
@@ -731,7 +621,7 @@ input[type="checkbox"]{ accent-color:var(--v-accent); }
 .r-empty{ color:var(--v-faint); font-size:var(--v-fs-b2); }
 .r-focus:focus-visible, .r-btn:focus-visible, .r-iconbtn:focus-visible, .ws-tab:focus-visible,
 .r-input:focus-visible, .r-select:focus-visible, .r-switch:focus-visible,
-.r-cbtn:focus-visible, .r-pill:focus-visible, .r-well:focus-within{
+.r-cbtn:focus-visible, .r-pill:focus-visible, .r-menuitem:focus-visible, .r-well:focus-within{
   outline:2px solid var(--v-sel); outline-offset:2px; }
 
 /* ── Responsive ─────────────────────────────────────────────────────────── */
@@ -921,8 +811,16 @@ input[type="checkbox"]{ accent-color:var(--v-accent); }
   background:var(--v-void); color:var(--v-txt); font-family:var(--f-body); overflow:hidden; }
 .b-shell::before{ content:""; position:absolute; inset:0; pointer-events:none;
   background:
-    radial-gradient(60% 40% at 50% 0%, rgba(139,92,246,.10), transparent 70%),
-    radial-gradient(45% 55% at 100% 100%, rgba(139,92,246,.05), transparent 70%); }
+    /* THE RETIRED AMETHYST, replaced. `rgba(139,92,246,…)` is #8b5cf6, the hex
+       this palette moved off; the current amethyst is #a96bf5. So the launch
+       screen's own glow was a different purple from the `--v-amethyst` every
+       other rule on it draws, which is the two-colours-in-one-surface defect
+       `--v-amber-line` was already introduced to stop. `color-mix` because the
+       alphas here (.10 and .05) are decorative washes the palette does not
+       publish, and inventing two more `-soft` tokens for one gradient would be a
+       worse trade than reading the one token twice. */
+    radial-gradient(60% 40% at 50% 0%, color-mix(in srgb, var(--v-amethyst) 10%, transparent), transparent 70%),
+    radial-gradient(45% 55% at 100% 100%, color-mix(in srgb, var(--v-amethyst) 5%, transparent), transparent 70%); }
 
 /* Brand row — the identity half of the splash's title bar, so the sequence
    reads as one screen changing rather than four different apps. */
@@ -943,7 +841,10 @@ input[type="checkbox"]{ accent-color:var(--v-accent); }
   letter-spacing:.12em; text-transform:uppercase; color:var(--v-faint); }
 .b-rail .s .n{ width:18px; height:18px; border-radius:50%; display:grid; place-items:center;
   border:1px solid var(--v-line2); font-size:var(--v-fs-fig); color:var(--v-faint); }
-.b-rail .s.on .n{ border-color:var(--v-amethyst); color:var(--v-amethyst); box-shadow:0 0 0 3px rgba(139,92,246,.14); }
+/* One amethyst: the halo drew the RETIRED #8b5cf6 against a border and a text
+   colour that both draw the current one, in a single declaration. */
+.b-rail .s.on .n{ border-color:var(--v-amethyst); color:var(--v-amethyst);
+  box-shadow:0 0 0 3px color-mix(in srgb, var(--v-amethyst) 14%, transparent); }
 .b-rail .s.on{ color:var(--v-txt); }
 .b-rail .s.done .n{ border-color:rgba(34,197,94,.5); color:var(--v-emerald); }
 .b-rail .sep{ width:16px; height:1px; background:var(--v-line2); }
@@ -1016,7 +917,10 @@ input[type="checkbox"]{ accent-color:var(--v-accent); }
   border-radius:var(--v-r-sm); border:1px solid var(--v-line2); background:var(--v-surf2);
   font-family:var(--f-mono); font-size:var(--v-fs-fig); letter-spacing:.08em; text-transform:uppercase; color:var(--v-faint); }
 
-.b-spinner{ width:14px; height:14px; border-radius:50%; border:2px solid rgba(139,92,246,.25);
+/* One amethyst — the track was the retired #8b5cf6 under a head drawing the
+   current one, so the spinner changed hue as it turned. */
+.b-spinner{ width:14px; height:14px; border-radius:50%;
+  border:2px solid color-mix(in srgb, var(--v-amethyst) 25%, transparent);
   border-top-color:var(--v-amethyst); animation:bspin .7s linear infinite; }
 @keyframes bspin{ to{ transform:rotate(360deg); } }
 @media (prefers-reduced-motion: reduce){ .b-spinner{ animation:none; } }

@@ -212,7 +212,11 @@ describe('the card is not too small — the diagnosis, computed', () => {
     // identical on a 120px grid cell and on a 1920px wall. Only a size that is
     // not in cqw — the inherited 12px above — can break that, which is why one
     // fix in the one renderer covers all five surfaces.
-    const [, lyric] = everyLowerThird().find(([n]) => /Lyric/.test(n));
+    // `/lyric/i`, not `/Lyric/`. The named subject used to be the shelf's
+    // `Lower Third · Lyric`; wave 5 rebuilt the shelf and its bands are the five
+    // `Scroll · …` lower thirds, so the lyric band left on this list is the
+    // `lower.lyric` STARTER — same shape, lower-case key.
+    const [, lyric] = everyLowerThird().find(([n]) => /lyric/i.test(n));
     const [{ L, box, text }] = drawnTextLayers(lyric).filter((r) => r.text);
     const at = () =>
       fitScale({
@@ -226,9 +230,14 @@ describe('the card is not too small — the diagnosis, computed', () => {
       });
     expect(at()).toBe(at());
     // And the renderer has exactly one text path per mode, so there is no second
-    // place for a surface to declare a size of its own.
+    // place for a surface to declare a size of its own. Task 5 added two more
+    // `lfit` sites — the default countdown's label and digits — but both are the
+    // SAME contract (`.ltext` > `.lfit` with `data-base`/`data-fit`), read by the
+    // same `fitLayers`, not a second mechanism; they carry `reference`/`countdown`
+    // alongside `lfit` to keep their own type styling (weight, tabular-nums, the
+    // warn pulse), so the match is on the CLASS TOKEN, not the literal attribute.
     const src = readFileSync(resolve(__dirname, './TemplateRender.svelte'), 'utf8');
-    expect([...src.matchAll(/class="lfit"/g)]).toHaveLength(1);
+    expect([...src.matchAll(/class="[^"]*\blfit\b[^"]*"/g)]).toHaveLength(3);
   });
 
   it('while the app’s UI body size does not, which is what was being painted', () => {
@@ -254,7 +263,15 @@ describe('rule 37 has an instrument on the path that ships', () => {
   // mount, rule 37's report covered NOTHING a church renders. Live's "may not be
   // readable from the back" line could not fire for any template on the shelf,
   // and it read exactly the same as a look that was working: rule 35.
-  const layered = SHELF.find((t) => /Lower Third · Scripture/.test(t.name));
+  // The named band has moved twice — `Lower Third · Scripture`, then
+  // `Lower Third · Lyric` — and wave 5 rebuilt the shelf as forty looks whose
+  // bands are the five `Scroll · …` lower thirds. `Scroll · Banner` is the same
+  // layer model and the same `.ltext` box inside a declared-membership band, so
+  // the fit path under test is unchanged. Asserted present rather than assumed,
+  // because `mount(undefined)` renders nothing and every assertion below would
+  // fail for the wrong reason.
+  const layered = SHELF.find((t) => /Scroll · Banner/.test(t.name));
+  if (!layered) throw new Error('the shelf has no layered band left to fit');
 
   it('a layered template reports its fit, like a region one always has', async () => {
     let seen = null;
@@ -328,7 +345,19 @@ describe('rule 37 has an instrument on the path that ships', () => {
 // ever answered "did we shrink past 45%?", never "does it actually fit", so the
 // most reassuring possible report sat over the worst possible outcome. Rule 35.
 describe('a fit that still clips says so', () => {
-  const layered = SHELF.find((t) => /Lower Third · Scripture/.test(t.name));
+  // THE SUBJECT IS NO LONGER A BAND, AND IT CANNOT BE. It was
+  // `Lower Third · Scripture`, then `Lower Third · Lyric`; wave 5 rebuilt the
+  // shelf and every band on it is a `Scroll · …` crawl. A SCROLLING layer is
+  // deliberately exempt from the fit loop — it runs on one line inside a clipped
+  // box and its length is time, not overflow — so a band whose words crawl can
+  // never demonstrate a fit that clips, and the round-2 case below reads "no
+  // layer moved" because the loop genuinely did not run. `Scripture · Dayspring`
+  // is a shipped layered template whose words DO go through `fitLayers`, which is
+  // the path this block is about. Asserted present rather than assumed, because
+  // `mount(undefined)` renders nothing and every assertion below would fail for
+  // the wrong reason.
+  const layered = SHELF.find((t) => /Scripture · Dayspring/.test(t.name));
+  if (!layered) throw new Error('the shelf has no layered template left to fit');
 
   /** Make the rendered boxes report an overflow jsdom cannot produce on its own.
    *  jsdom does no layout, so every box measures 0 — this drives the component's

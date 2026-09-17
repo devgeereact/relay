@@ -158,8 +158,12 @@ bottom**.
 - Beside the reading the countdown is **three stacked pairs** (HH / MM / SS), each filling the rail;
   the rail is its own container so the figure is a share of the rail, not the frame.
 - **Word to the preacher**: an operator types a line and sends it to the **stage only** — the whole
-  screen, red pulsing `#C8121C` → `#7A0A11`, 8.5cqw white type with a black shadow. It exists inside
-  the stage renderer, so no congregation screen can show it.
+  screen, red pulsing `#C8121C` → `#7A0A11`, 8.5cqw white type with a black shadow. **No
+  congregation screen can show it, and the reason changed in wave 5** (DECISIONS §89): it used to be
+  that it existed only inside the stage renderer, which was true and was a guarantee by omission.
+  A `stage_message` layer binding ends the omission, so `Output.svelte` now REFUSES the frame unless
+  its own channel's role is `stage` — at the receiver, because the kiosk hub records nothing about
+  who connected (DECISIONS §35) and so cannot address one screen.
 
 ## 6 · SuperSource
 
@@ -283,6 +287,17 @@ the stage look carries monitor-only bindings. **§5's switchable zones are still
 that is off is translated as a layer that is not present, which is the same screen and no new
 machinery, and that is the whole of the claim.
 
+> **Superseded in part, 2026-09-16 — the paragraph above is what was true on 2026-09-14 and is kept
+> as the record, but three of its statements no longer describe what ships.** The shelf holds
+> **seven**, not eight: `Lower Third · Scripture` was retired when the five coordinated template
+> families landed, because the keyed family seeds a member under that exact name and a seed that
+> inserts by name cannot hold both. So it is **one** lower third with declared `members`, not two —
+> `Lower Third · Lyric`. And three of the nine looks named above as "already shipping under Relay's
+> own names" were themselves retired into those families in the same wave: `Lower Third Light`,
+> `Nocturne · Scripture` and `Lyric Bold`. The bytes of all four are frozen in
+> `src-tauri/data/retired_presets.json` so a migration can clear them from installs that already have
+> them; `src/lib/shelf.test.js` holds the remaining seven by name.
+
 **Three departures, each recorded in the file beside the value it changes.** *(a)* Relay publishes no
 monospace family on purpose (`app.css`), so the prototype's `font:'mono'` is the display sans. *(b)*
 `SuperSource · Word left`'s fill is prototype template 7, which is not one of Relay's five built-ins —
@@ -349,7 +364,8 @@ Each was fixed, re-rendered by the integrator, and only then called done. **What
 touch: the release decision, the model question, or word error rate.**
 
 Shipped by that wave: six workspaces on the strip in the prototype's order (Themes folded into
-Templates as a desk, Help still a real route — `qa-inventory` says nothing became unreachable),
+Templates as a desk — and folded again, into the template model itself, by wave 2's track E:
+DECISIONS §87. Help still a real route — `qa-inventory` says nothing became unreachable),
 screen lamps and a transition-free chrome, a status bar whose every figure can say `no data`, four
 equal 178px docks, a slide grid of RENDERED slides, the AI's claims in the 286px inspector with no
 percentage on a guess, Outputs as cards that repaint what each screen is showing, a Library of real
@@ -379,7 +395,7 @@ suite totals survived the merge**.
 | 4 | Roles and the look register | **done** | a screen may follow the content look (DECISIONS §70), "Used for" on the template, a tag on each gallery card. `e2e::r4_a_screen_may_follow_the_content_look`, `e2e::r4_a_following_screen_wears_a_different_look_for_each_kind` |
 | 5 | Lower thirds | **done** | three starters (Name · Lyric · Scripture), each keyed, each its own template. A non-hex shape fill no longer paints black. The band is now a real `band` layer running to the bottom edge, naming the words inside it (`members`), and **giving ground** before they shrink. `band.test.js` 24, measured in the browser. DECISIONS §75 |
 | 6 | Stage monitor | **done** | a word to the preacher (new `stage_alert` hub message, stage-only by contract, and NEVER a retained frame — `channels::tests` holds `("stage_alert", false)` so a preacher's private message cannot replay to a lobby TV joining late), the reading can no longer push the clock off the top, **switchable zones** persisted per device (`relay.stage.zones`) and the **stacked rail clock**. **The zones now default ON** (note · next · elapsed, 2026-09-14): they were off until a preacher found the switch, which meant the timer and the word-to-preacher shipped invisible on the one device they exist for, and a stage display is not "clean" when it is empty of the three things it is for. The reading fits to **130px at 1920** rather than the old 64px cap. `e2e::r5_a_word_to_the_preacher_reaches_the_stage_and_not_a_rehearsal`, `e2e::r5_a_word_to_the_preacher_reaches_no_congregation_channel`, `stagezones.test.js` 9, `screenpreview.test.js` 7. **This row said zones and the clock were not built until 2026-09-14 and was wrong.** |
-| 7 | Countdown | **done** | one formatter (`formatCountdown`), one warning rule, and now ONE reader of how long is left (`countdown.js::countdownRemainingMs`) — the wall, the stage page and the console all go through it, because the subtraction acquired an exception. **Pause IS built**: `countdown_paused_ms` on `OutputContent`, held and released through `adjust_countdown`, which also carries Reset and ±1 so a re-aim can never drop the hold. `countdown_from` is now WRITTEN by `start_countdown`, so §7's short-countdown warning rule finally fires. `countdown.test.js` 31, `countdownwiring.test.js` 13, `e2e::r7_*` 7, `layers.test.js` 32, `templatestyle.test.js` 29. **The button landed in wave 3**: `Dock.svelte`'s transport row draws Start · Pause · Reset · ±1 · Clear, wired to `countdownPress('pause'/'resume')` and `capture.js::pauseCountdown`, with `paused` passed to `countdownCan` so a `+1` cannot release a hold. Pause and Resume are two actions rather than one toggle, because a toggle computed from state the caller might hold stale is how a press does the opposite of what it says |
+| 7 | Countdown | **done** | one formatter (`formatCountdown`), one warning rule, and now ONE reader of how long is left (`countdown.js::countdownRemainingMs`) — the wall, the stage page and the console all go through it, because the subtraction acquired an exception. **Pause IS built**: `countdown_paused_ms` on `OutputContent`, held and released through `adjust_countdown`, which also carries Reset and ±1 so a re-aim can never drop the hold. `countdown_from` is now WRITTEN by `start_countdown`, so §7's short-countdown warning rule finally fires. `countdown.test.js` 31, `countdownwiring.test.js` 13, `e2e::r7_*` 7, `layers.test.js` 32, `templatestyle.test.js` 29. **The button landed in this document's own wave 3** — the rebrand's third delivery wave, and NOT the wave 3 of `docs/superpowers/plans/2026-09-16-wave3-timers.md`, which is the timers wave and is a different numbering of a subject this row is also about. The two collide precisely because both are about countdowns; say which one is meant whenever a countdown claim cites a wave. `Dock.svelte`'s transport row draws Start · Pause · Reset · ±1 · Clear, wired to `countdownPress('pause'/'resume')` and `capture.js::pauseCountdown`, with `paused` passed to `countdownCan` so a `+1` cannot release a hold. Pause and Resume are two actions rather than one toggle, because a toggle computed from state the caller might hold stale is how a press does the opposite of what it says |
 | 8 | Transitions | **done** | seven in one register (`transitions.js`), played by the renderer, migrated from the three old names, reduced motion is a cut. DECISIONS §71. `transitions.test.js` 15. **Wave 3 gave it an operator**: the chrome bar carries the picker and its duration, the override rides its own retained hub frame (never `last_screen`, which would erase the verse a late screen is shown), the native window gets `output://transition`, and the duration control is disabled while a template is followed rather than offered as a number that changes nothing. `resolveTransition` is the ONE place the two authorities are ranked and it reports which answered. DECISIONS §84 |
 | 9 | Search | **done** | glued digits parse, a literal hit must cover 55% of the query, and nothing a search does reaches a screen (DECISIONS §72). `search.rs` — one pure module, five named match kinds, **every hit says why it matched** and a guess says so in words with no percentage; a ≥2-letter book prefix resolves, **search-only** (`detection.rs` was not opened, and `e2e::r9_nothing_a_search_offers_can_reach_an_auto_fire` states rule 10 at the boundary); one click takes a hit the whole way. `search::tests` 8, `e2e::r9_*` ×9, `livesearchrail.test.js` 11 |
 | 10 | Library | **partly done** | the operator label reaches the record again and still not the glass (DECISIONS §73); announcements say which fields the room sees; the collection rail and reflow editing were already built when the previous line said they were not. **Section keys** (`v c r t i o` — **not `b`; see the departure note below** — numbered on repeat, per song, `[Bridge:g]` to ask for one), the key printed on the slide it fires, **media looked at before it is added** with the name the operator gives it, and the dead selection tick box off three panes. DECISIONS §76. `sectionkeys.test.js` 42, `medialook.test.js` 4, `db::giving_a_section_its_own_fire_key_flags_the_arrangement_rather_than_repointing_it`. **`b` is BLACKOUT, so a Bridge is on `r`** — CLAUDE.md beats the spec's alphabet. **The caption is CLOSED WITHOUT A COLUMN** (P2, wave 4): `media_assets.filename` is already the operator's own words — the add sheet writes what they typed into it and keeps the real file name only as a hint on screen — so a caption would be a SECOND operator-authored string beside the one that exists, and §10's own sentence for media is *the slide is the picture*, which means none of it reaches a congregation. The card's second line is `collections.js::mediaSub` instead — the kind and the date added, which are facts the name and the thumbnail could not already say, and the date is printed exactly as stored because an ISO date with no time run through `toLocaleDateString` is the day before it west of Greenwich. `librarysubline.test.js` 8. **Still not built: a key that fires from the Live tab's own grid** — and P2 looked at it, did not build it, and leaves the answer rather than a guess. What IS settled: `assignKeys` / `resolveKeystroke` are pure and tested, `Cell` carries a `tag`, and `gridSource` has three sources, of which exactly ONE has a clean namespace — `source: 'song'` is a single hand-picked song, so the song owns the letters exactly as it does in `LyricsPane`, and `stageSong` already holds `full.sections`, which is what `assignKeys` wants. `source: 'plan'` still has no answer: the grid is flat across every cue, two songs in one plan both want `c`, and nothing says which owns the namespace. **The obstacle that stopped P2 is a SECOND one, and it is the harder of the two**: `shortcuts.js` calls `preventDefault()` and dispatches to `ctx.sectionKey` whenever the handler is registered at all, and `Live.svelte` registers its context ONCE at mount, before any await, deliberately and pinned by `liveunmount.test.js`. So adding `sectionKey` to that registration swallows every `a`–`z0`–`9` keystroke on the run surface for a whole service, staged song or not — the exact thing the branch's own comment forbids (*a dead branch must not eat a keystroke the browser had a use for*). The two ways out are both bigger than a parity detail and neither may be chosen quietly: either `sectionKey` returns whether it CONSUMED the key and `shortcuts.js` defers `preventDefault` until it says so — a contract change inside the file that owns the panic keys — or Live re-registers its context reactively when `grid.source` changes, which is last-writer-wins on one global slot on the run surface, and is the shape of the bug `liveunmount.test.js` exists for. Whoever takes it: answer the plan namespace FIRST, decide the `preventDefault` contract SECOND, and print the key only on the cells it actually fires — a key printed on a slide that does nothing is the cheatsheet-that-lies failure `sectionkeys.js` spends a paragraph avoiding. And one thing to say out loud when it lands: the grid's press path arms a send on a **190 ms** double-click timer (`pressArbiter`), so a key that fires at once and a click that fires after a beat are two latencies on one cell |
@@ -496,7 +512,12 @@ likely to carry a gradient is a lower-third band, and that is the layer keyed ov
 **Phase 6 built the half that carries a guarantee.** "A word to the preacher" is a new hub
 message rather than content, which is what makes *no congregation screen can show it* a property
 of the system: `r6-contracts.test.js` requires every hub message to have an explicit verdict per
-client, and the output page's verdict is `false`. It is suppressed in a rehearsal like every
+client, and the output page's verdict was `false` — it had no branch for the frame at all. **Wave 5
+moved that verdict to `true` and moved the guarantee with it** (DECISIONS §89). A `stage_message`
+layer binding means a renderer reads the value, so an absence stopped protecting anything: the page
+now has a branch that refuses the frame unless its own channel's role is `stage`, and
+`src/lib/stagemessage.test.js` holds the claim by driving the real page and asserting on what it
+PAINTS, which is a thing a source scan cannot reach. It is suppressed in a rehearsal like every
 other publisher here — the defect `stage_next` had once, where the wall does not move so the
 sandbox looks intact while the preacher's own tablet is handed a practice message. It is
 deliberately **not retained** (rule 43 retains what decides what a screen is SHOWING): a tablet
@@ -546,7 +567,8 @@ owns it once. *(b)* Reset and ±1 re-broadcast the countdown, and the console us
 broadcast out of its own mirror — label, done message and template read back off the event. That
 works while every caller remembers every field, and forgetting THIS one restarts a timer the
 operator deliberately stopped, from a button that says "+1". So the engine keeps the countdown
-(`channels::CountdownState`, noted at the same three doors as `WallState`) and `adjust_countdown`
+(`channels::LiveContent`, noted at the same three doors as `WallState` — it was `CountdownState`
+until the timer registry gave a timer a lifetime of its own) and `adjust_countdown`
 changes one thing about it; it can never create one, which keeps Start the only control that puts a
 countdown in front of people. *(c)* The hold rides in the kiosk wire form, so a screen that rejoins
 mid-service is sent a held countdown rather than a running one (rule 43). Clear already existed (the

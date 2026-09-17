@@ -85,21 +85,27 @@ describe('the file door — parseImportedTemplate', () => {
   });
 });
 
-describe('the theme door — a background style reaches the wall', () => {
-  it('survives applyTheme, which drops any key not on the whitelist', async () => {
-    // A theme is a SPARSE set of defaults and `applyTheme` copies only the keys
-    // in THEME_STYLE_KEYS. A control offering a choice whose key is not on that
-    // list is a control that saves and then silently loses — the theme editor
-    // would show "Centre glow" while the wall painted flat colour.
-    const { applyTheme } = await import('./themes.js');
-    const out = applyTheme(
-      { layout: {}, style: {} },
-      { style: { background: '#123456', bgStyle: 'glow' } },
-    );
-    expect(out.style.bgStyle).toBe('glow');
-
-    const { slideBG } = await import('./templatemodel.js');
-    expect(slideBG(out.style)).toContain('radial-gradient');
+describe('the token door — a style a layer BINDS to reaches the wall', () => {
+  it('resolves a bound layer against the template own style, not a default', async () => {
+    // THE DOOR THAT REPLACED A WHITELIST. This used to assert that `applyTheme`
+    // carried `bgStyle` through the THEME_STYLE_KEYS whitelist — a control
+    // offering a choice whose key was off the list saved and then silently lost
+    // it. Themes were folded into templates (DECISIONS §87), so there is no
+    // whitelist and no second style to be filtered: a template's own `style` is
+    // the whole answer, and `templatemodel.test.js` holds `slideBG` over the
+    // background treatments directly.
+    //
+    // What still passes through a door is a LAYER bound to a token. A starter
+    // dropped onto a template must wear THAT template's colours, so the wrong
+    // answer here is the renderer's default silently standing in for a colour an
+    // operator chose — which is the same failure in the same place.
+    const { resolveTokens } = await import('./styletokens.js');
+    const out = resolveTokens({
+      style: { accent: '#123456', background: '#010203' },
+      layout: { layers: [{ id: 'a', type: 'text', color: 'theme:accent', fill: 'theme:background' }] },
+    });
+    expect(out.layout.layers[0].color).toBe('#123456');
+    expect(out.layout.layers[0].fill).toBe('#010203');
   });
 });
 
@@ -172,7 +178,7 @@ describe('no door reads a legacy key directly', () => {
     const offenders = [];
     for (const f of [
       'src/lib/layers.js',
-      'src/lib/themes.js',
+      'src/lib/styletokens.js',
       'src/lib/templates.js',
       'src/lib/TemplateRender.svelte',
     ]) {

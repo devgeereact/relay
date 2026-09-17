@@ -34,7 +34,6 @@
     booting,
     bootRecord,
     clearCrash,
-    setSafeMode,
     safeMode,
     runStage,
     rollUp,
@@ -42,6 +41,11 @@
     resetBoot,
   } from './boot.js';
   import { makeProbes } from './probes.js';
+  // SAFE MODE IS A PROMISE, NOT A LABEL. The crash gate's answer goes through the
+  // same door the Settings switch does, so a volunteer who chooses safe mode here
+  // gets the enforcement and not only the record. `setSafeMode` writes the record
+  // alone and has exactly one caller for that reason (`safemode.test.js`).
+  import { applySafeMode } from '../stores/capture.js';
   import { session, setSession, clearSession } from '../session.js';
   import {
     updateAvailable,
@@ -125,12 +129,15 @@
     gate.set('safemode');
   }
   function enterSafeMode() {
-    setSafeMode(true);
+    // Deliberately not awaited: the boot may never wait on the engine, and a
+    // machine with no backend attached yet must still reach the console. The
+    // door reports through `safeModeError`, which Settings renders.
+    applySafeMode(true);
     gate.set(null);
     runAll();
   }
   function declineSafeMode() {
-    setSafeMode(false);
+    applySafeMode(false);
     gate.set(null);
     runAll();
   }

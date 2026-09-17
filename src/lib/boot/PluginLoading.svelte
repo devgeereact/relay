@@ -54,9 +54,11 @@
   <CheckList {items} />
 
   <p class="b-lead" style="margin-top:var(--v-sp-md);font-size:var(--v-fs-b2);">
-    Relay is built to sit alongside OBS, ATEM and ProPresenter over NDI, HDMI and the
-    network — not to replace them. Point a browser source at the output server and it
-    behaves like any other source.
+    Relay is built to sit alongside OBS, ATEM and ProPresenter rather than replace
+    them. OBS, vMix and kiosk screens take a browser source over the network, and it
+    behaves like any other source. A projector or a switcher takes HDMI: an ATEM Mini
+    directly, an SDI-only rack-mount ATEM through a small converter. NDI is parked,
+    and no ATEM accepts NDI in any case.
   </p>
 
   {#if verdict !== 'running'}

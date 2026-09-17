@@ -114,7 +114,7 @@
     if (!item?.reference) return;
     if (queued) {
       onQueueChange(queue.filter((q) => q.reference !== item.reference));
-      msg = `${item.title} removed from Up Next`;
+      msg = `${item.title} removed from Staging`;
       return;
     }
     onQueueChange([
@@ -236,7 +236,7 @@
         <!-- Steel blue: this is the thing you are working on, and cueing is not
              a live act. Amber would be a lie and red would be a threat. -->
         <button class="r-btn primary sm" disabled={!item.reference} on:click={cue}>
-          {queued ? 'Remove from Up Next' : 'Cue in Live'}
+          {queued ? 'Remove from Staging' : 'Cue in Live'}
         </button>
         <button
           class="r-btn ghost sm"

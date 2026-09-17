@@ -20,8 +20,28 @@
 //   GROUP 1 — THROWS. Anything that changes what is on the screens, what the AI is
 //   allowed to do, or whether the microphone is live. `manualFire`, `confirmDetection`,
 //   `setDetection`, `setRehearsal`, `navVerse`, `startCapture`, `stopCapture`,
-//   `fireContent`, `startCountdown`, `adjustCountdown`. The caller MUST handle it and
-//   tell the operator.
+//   `fireContent`, `startCountdown`, `adjustCountdown`, `endService`, `setSttLanguage`,
+//   `setDefaultTemplate`, and the five timer wrappers — `startTimer`, `adjustTimer`,
+//   `stopTimer`, `listTimers`, `showTimer` (held there by `timerwrappers.test.js`).
+//   The caller MUST handle it and tell the operator.
+//   `setDefaultTemplate` was missed when it stopped being a bare `set_setting` and
+//   became the `set_default_template` COMMAND — which writes the row, pushes the
+//   frame to every kiosk client and emits `output://default_template` to every
+//   native window. It changes the LOOK every screen following the content look is
+//   wearing, live, so a failure an operator is not told about is a gallery that
+//   says one thing and a wall that says another.
+//   `showBackground` is the most literal member there is: it puts a picture on every
+//   congregation screen and takes it off again. A swallowed failure on the take-down
+//   is the worse half — the operator believes the church's backdrop has gone and it
+//   is still up behind the next thing they fire.
+//   `setSttLanguage` joined this group with RG-138, when it stopped being a setting on
+//   a live engine and became a WRITE to the active voice profile. It changes what the
+//   AI hears, and it is the control RG-116 names as the mitigation for a service lost
+//   to whisper electing the wrong language — a pin that silently did not happen is
+//   exactly the failure it exists to prevent.
+//   `endService` is the quiet member: it puts nothing on a wall, but it releases the
+//   service lock, so a swallowed failure leaves Relay refusing deletions, imports and
+//   model changes with nothing on screen saying why.
 //   A silent failure here is a lie told to someone standing in front of a congregation.
 //
 //   GROUP 2 — SWALLOWS, and returns a safe default. Reads: `listPlans`, `listSongs`,
@@ -35,6 +55,9 @@
 //   button that must survive a crashed view, and NEITHER CAN CATCH. A throw there is
 //   an unhandled rejection — silence with extra steps. They return a boolean and set
 //   `panicError`, so a failure surfaces however the control was triggered.
+//   `applySafeMode` is in this group for the same reason and sets `safeModeError`:
+//   it makes a LARGER promise than a panic key — "nothing Relay does can reach a
+//   screen" — and the surface that flips it may be one that has already crashed.
 //
 // If you add a wrapper, put it in a group deliberately. "It seemed fine" is how a
 // panic key came to do nothing.
@@ -49,9 +72,17 @@ import { markTranscript } from '../latency.js';
 // (docs/REBRAND.md §7). The console reads it through the same function the wall and
 // the stage page do, so a held countdown cannot go on ticking on one of the three.
 import { countdownRemainingMs, countdownIsPaused } from '../countdown.js';
+// The warning WINDOW, as distinct from how long is left. `layers.js` holds the
+// one number the wall, the stage page and the dock all measure against; this file
+// is its one writer, because this file is the only one that can read the row.
+import { COUNTDOWN_WARN_MS, setCountdownWarnDefault } from '../layers.js';
 // X1 · the transition override's store lives beside its register — see the block
 // further down for why it is not declared in this file.
 import { liveTransition } from '../transitions.js';
+// Safe mode's record lives in the boot record, and this file is the only thing
+// allowed to write it — see `applySafeMode` below. `boot.js` imports only
+// `svelte/store` and `../errors.js`, so there is no cycle here.
+import { setSafeMode, safeMode } from '../boot/boot.js';
 
 /**
  * The audio meter — RMS level + voice-activity, arriving 10–50 times a second.
@@ -92,6 +123,16 @@ export const capture = writable({
   // router.rs, which IS from_sensitivity(50); it used to say 0.9/0.6, which was
   // the other, contradictory baseline.
   thresholds: { auto_fire: 0.5, suggest: 0.35 },
+  // THE DIAL POSITION, AND WHETHER ANYBODY HAS ACTUALLY ASKED. `sensitivity` is
+  // `to_sensitivity(thresholds)` — the one inverse mapping, computed in Rust so
+  // the two directions cannot drift — and `sensitivityKnown` is the answer to a
+  // different question: has the engine ever told us? 50 is both the shipped
+  // default and a perfectly ordinary real setting, so the number alone cannot
+  // separate "the gate is at 50" from "nobody has asked since launch". A surface
+  // that cannot tell those apart is rule 35 on the one control governing what the
+  // AI may put on a wall unasked.
+  sensitivity: 50,
+  sensitivityKnown: false,
 });
 
 // What is currently ON the output screens (last fired content, null = cleared).
@@ -102,6 +143,18 @@ export const live = writable(null);
 // True when the operator has blacked out the screens (opaque, not a transparent
 // clear). Reset by the next fire/clear. Mirrors the output://black broadcast.
 export const screenBlack = writable(false);
+
+// THE STANDING BACKGROUND — `{ media_url, media_kind }`, or null.
+//
+// A SECOND payload beside `live`, not a field on it, and the separation is the
+// whole feature: `live` is what the screens are showing and this is what they are
+// showing it ON, so a verse arriving replaces one and leaves the other. Until it
+// existed a church could have scripture or its own backdrop and never both.
+//
+// Mirrors `output://background`, and — the line that matters — is set to null by
+// the `output://clear` and `output://black` listeners below, because a panic
+// control takes everything.
+export const background = writable(null);
 
 // The last SPOKEN next/back that did nothing, and why (a NavResult). The console
 // consumes it, shows it, and clears it. Null when there is nothing to say.
@@ -224,12 +277,6 @@ function noteResolved(d, outcome) {
 // Output templates (Phase 8), loaded from the DB.
 export const templates = writable([]);
 
-// CUSTOM themes (the style layer beneath templates — see lib/themes.js). Builtin
-// themes live in the frontend (themes.js); the operator's own themes are
-// persisted as a JSON blob in the settings KV under THEMES_KEY. The store holds
-// ONLY the custom ones — surfaces concatenate BUILTIN_THEMES + $customThemes.
-export const customThemes = writable([]);
-
 // Planned service length in MINUTES (0 = no target). Drives a monitor's REMAINING
 // timer. Persisted in the settings KV and read by the backend at start_service.
 export const serviceTargetMinutes = writable(0);
@@ -261,7 +308,11 @@ export async function loadDefaultTemplate() {
 /** Set (or clear, with null) the default template. */
 export async function setDefaultTemplate(id) {
   const call = await invoke();
-  await call('set_setting', { key: 'default_template_id', value: id == null ? '' : String(id) });
+  // The COMMAND, not the raw setting. Rust owns the fact now: it writes the
+  // row, pushes `default_template` to every kiosk client and emits
+  // `output://default_template` to native windows, so a screen following the
+  // content look re-resolves at once instead of at its next reload.
+  await call('set_default_template', { templateId: id ?? null });
   defaultTemplateId.set(id ?? null);
 }
 
@@ -479,8 +530,34 @@ export async function initAudio() {
       // looking at — while the topbar, reading `$live`, simultaneously said the
       // screens were clear. Two indicators in one window, disagreeing, and amber
       // is never allowed to be the wrong one (CLAUDE.md §18).
-      await listen('output://clear', () => { live.set(null); screenBlack.set(false); leavePlan(); noteOperatorAction('clear'); });
-      await listen('output://black', () => { screenBlack.set(true); leavePlan(); noteOperatorAction('black'); });
+      // THE STANDING BACKGROUND, and the two controls that take it away.
+      //
+      // `background.set(null)` sits on both panic listeners for the same reason
+      // `leavePlan()` does: these events are the console's ONLY report of a clear
+      // that did not originate here — the preacher's phone, the spoken "clear the
+      // screen", the exit from a rehearsal — and the program pane renders through
+      // the same `TemplateRender` the wall does. A backdrop left in this store
+      // would paint the church's picture in the pane over a wall that had none,
+      // which is the console disagreeing with the room about what a congregation
+      // is looking at.
+      await listen('output://background', (e) => {
+        const p = e.payload;
+        background.set(p?.media_url ? { media_url: p.media_url, media_kind: p.media_kind || 'image' } : null);
+      });
+      await listen('output://clear', () => { live.set(null); screenBlack.set(false); background.set(null); leavePlan(); noteOperatorAction('clear'); });
+      // RG-151. `live` IS TAKEN DOWN HERE TOO, and for the reason stated one line
+      // up rather than a new one. `Live.svelte` takes the preacher's `stage_next`
+      // panel off the monitor by watching the truthy→falsy edge of `live`, and
+      // this listener set `screenBlack` and nothing else — so `Esc` took the hint
+      // down and `B` left it standing, and the two panic controls disagreed about
+      // a screen the congregation cannot see and the preacher is reading from.
+      //
+      // Nothing is on the screens after a blackout, so `live` being null is the
+      // truth and not a convenience. `screenBlack` is what keeps a blackout
+      // distinguishable from a clear, and it still does. The backdrop goes with it:
+      // a blackout that left the church's picture up would be the panic control
+      // failing at the one thing it is for.
+      await listen('output://black', () => { live.set(null); screenBlack.set(true); background.set(null); leavePlan(); noteOperatorAction('black'); });
       // A SPOKEN "next"/"back" that did nothing. The STT thread has no caller to
       // return a NavResult to, so it pushes it here — the preacher says "next", the
       // wall does not move, and the console explains why instead of staying silent.
@@ -493,6 +570,38 @@ export async function initAudio() {
       // "internal lock error: poisoned lock: …" inside an assertive live region.
       await listen('output://panic_failed', (e) => panicError.set(humanError(e.payload)));
       await listen('rehearsal://changed', (e) => rehearsing.set(e.payload === true));
+      // THE GATE MOVED, AND EVERY SURFACE SHOWING IT HEARS HERE.
+      //
+      // Five things in Rust move `Router.thresholds` — the dial, the two Settings
+      // sliders, a profile saved, a profile selected or a room applied, and the
+      // learning on every confirm and dismiss — and until 2026-09-17 not one of
+      // them announced it. Live's dial was read once at `onMount` into a plain
+      // `let`, and the dock is mounted OUTSIDE the workspace router, so unlike
+      // every view it is never rebuilt. It therefore showed its launch reading for
+      // the rest of the session while the engine moved underneath it, and Settings
+      // — holding the figure IT loaded when the tab opened — silently reverted the
+      // operator's change on the next profile save.
+      //
+      // One event, one store, every surface derived. A surface that keeps its own
+      // copy of this number is the defect, not the fix.
+      await listen('detection://thresholds', (e) => {
+        const p = e.payload || {};
+        const auto_fire = Number(p.auto_fire);
+        const suggest = Number(p.suggest);
+        const sensitivity = Number(p.sensitivity);
+        capture.update((s) => ({
+          ...s,
+          thresholds: {
+            auto_fire: Number.isFinite(auto_fire) ? auto_fire : s.thresholds.auto_fire,
+            suggest: Number.isFinite(suggest) ? suggest : s.thresholds.suggest,
+          },
+          // A malformed payload leaves the READING alone and does not claim to
+          // know it: answering a broken frame with 50 would put a number on screen
+          // that is nobody's setting.
+          sensitivity: Number.isFinite(sensitivity) ? sensitivity : s.sensitivity,
+          sensitivityKnown: s.sensitivityKnown || Number.isFinite(sensitivity),
+        }));
+      });
       // A device failure (permission denied, unplugged) is non-fatal: surface
       // it and reflect that capture stopped, but never freeze.
       await listen('audio://error', (e) =>
@@ -601,14 +710,28 @@ export async function startService(title, date) {
   return id;
 }
 
-/** Stop recording the current service (history kept). */
+/**
+ * Close the open service record — the history is kept.
+ *
+ * THROWS (contract group 1). It does not change what is on a screen, but it
+ * releases the SERVICE LOCK — the list of things Relay is currently refusing to
+ * do — and `end_service` takes `session.0.lock()?`, so a poisoned session mutex
+ * refuses it for real. Swallowed, the operator presses End current service, the
+ * list repaints unchanged, and the console goes on refusing deletions and model
+ * changes for a reason that has scrolled out of view. Pinned by
+ * `endservice.test.js`.
+ */
 export async function endService() {
+  let call = null;
   try {
-    const call = await invoke();
-    await call('end_service');
+    call = await invoke();
   } catch {
-    /* backend absent */
+    /* no Tauri bridge at all (a plain browser) — there is no service to end */
   }
+  // Deliberately NOT in a try: a rejection must reach the caller, and must reach
+  // it before the lock is re-read — re-reading over a failure repaints an
+  // unchanged surface, which is the original defect's whole disguise.
+  if (call) await call('end_service');
   await loadServiceLock();
 }
 
@@ -1067,7 +1190,7 @@ try {
 }
 
 /** Manual override: fire a free-text reference now (throws if unparseable).
- *  `stageNote` is an optional confidence-monitor note for this cue.
+ *  `stageNote` is this cue's optional Stage Note, for the monitors only.
  *  `keepPlan` — when a PLAN slide is being fired (the operator stepping the plan
  *  in Slide mode), the transport must STAY on the plan. Without this, firing a
  *  scripture plan cue ran `leavePlan()` below and flipped the transport out of
@@ -1201,7 +1324,7 @@ const call = await invoke();
 await call('move_plan_item', { id, direction });
 }
 
-/** Set/clear a cue's operator stage note (confidence-monitor only; blank clears). */
+/** Set/clear a cue's Stage Note (confidence-monitor only; blank clears). */
 export async function setPlanNote(id, note) {
 const call = await invoke();
 await call('set_plan_note', { id, note: note ?? '' });
@@ -1223,6 +1346,22 @@ await call('set_plan_section', { id, title: title ?? '' });
 export async function setPlanDuration(id, seconds) {
 const call = await invoke();
 await call('set_plan_duration', { id, seconds });
+}
+
+/**
+ * Bind a cue to a programme timer of `minutes`, or clear it with `null`.
+ *
+ * A REQUEST, STORED — not a clock started. Nothing about this reaches a screen or
+ * a preacher's rail: the Planner may not, and does not (`plannerbuildonly.test.js`).
+ * Live is what reads the binding and starts the timer when the cue goes on air.
+ *
+ * This is NOT `setPlanDuration`. That is the running-time estimate the Planner adds
+ * up; this is a clock somebody will be watching. `db/plans.rs`'s `PlanItem` records
+ * why there are two.
+ */
+export async function setPlanTimer(id, minutes) {
+const call = await invoke();
+await call('set_plan_timer', { id, minutes: minutes ?? null });
 }
 
 /** Override the template a cue renders with. `null` re-inherits the channel's. */
@@ -1391,25 +1530,142 @@ if (!keepPlan) leavePlan();
 /** Start a pre-service countdown on every output. Outputs tick MM:SS locally
  *  from the broadcast target; `label` shows above, `doneMsg` replaces it at 0.
  *  Guarded: refuses to start a second countdown while one is still running —
- *  clear the screen (or let it finish) first. */
+ *  clear the screen (or let it finish) first.
+ *
+ *  THE WORDS DEFAULT TO NOTHING, and that is the whole of them. They used to
+ *  default to "Service begins in" and "Welcome", which meant a caller with no
+ *  field for either — the dock had none for months — put words on a wall that
+ *  nobody in the building had chosen and nobody could change. The words are
+ *  payload, not template: they ride in `content.reference` and a template's
+ *  `reference`-bound layer draws them, so a caller that has nothing to say says
+ *  nothing and the screens show the digits alone. The Planner is the surface
+ *  that does have something to say, and it passes it here.
+ *
+ *  `warnMs` is a threshold chosen for THIS countdown — how long before zero the
+ *  figure turns red — and null means "nobody chose one", which falls to the
+ *  configured default and then to the tenth-of-span rule. That ranking is
+ *  `layers.js::countdownWarning`'s and is not restated anywhere. The engine used to
+ *  hard-code `None` here, so a `Both` timer started from the transport could not
+ *  express one at all (RG-149(b)); `startTimer` has taken the same figure since
+ *  wave 3. **No control chooses one yet** — a per-cue field in the planner is what
+ *  would, and that is recorded as still open in RG-149's row rather than implied by
+ *  this parameter. */
 export async function startCountdown(
 minutes,
-label = 'Service begins in',
-doneMsg = 'Welcome',
+label = '',
+doneMsg = '',
 templateId = null,
 keepPlan = false,
+warnMs = null,
 ) {
 if (countdownRunning()) {
   throw new Error('A countdown is already running — clear the screen to start a new one.');
 }
 const call = await invoke();
-await call('start_countdown', { minutes, label, doneMsg, templateId });
+await call('start_countdown', { minutes, label, doneMsg, templateId, warnMs });
 if (!keepPlan) leavePlan();
+}
+
+// ── TIMERS ────────────────────────────────────────────────────────────────────
+//
+// A timer has an identity and a lifetime of its own (`src-tauri/src/timers.rs`).
+// `startCountdown` above is still the dock's one-press congregation countdown and
+// still creates one; these five address timers by id, which is what lets a console
+// show several and move the one the operator is pointing at.
+//
+// **All five are GROUP 1 — THROWS.** They change what is on a screen, what a
+// preacher is being told, or what an operator believes about either, and a failure
+// the caller cannot see is a control that lies about what it did. `timerwrappers.
+// test.js` is what holds them in this group; a comment on its own does not.
+
+/**
+ * START A TIMER AND HAND BACK ITS IDENTITY. It puts nothing in front of anybody.
+ *
+ * `scope` is `'both'` (a congregation countdown) or `'stage'` (a programme timer
+ * for the preacher's monitor). Putting a `'both'` timer on the screens is
+ * `showTimer`; there are exactly two doors onto a congregation wall and this is
+ * deliberately not one of them.
+ *
+ * THROWS (contract group 1).
+ */
+export async function startTimer({
+minutes,
+label = '',
+doneMsg = '',
+scope = 'both',
+warnMs = null,
+planItemId = null,
+}) {
+const call = await invoke();
+return call('start_timer', { minutes, label, doneMsg, scope, warnMs, planItemId });
+}
+
+/**
+ * RE-AIM OR HOLD ONE TIMER, BY ITS IDENTITY.
+ *
+ * `adjustCountdown` is this same action aimed at "whichever congregation countdown
+ * is running", which is what the dock's transport means. This one names the timer.
+ *
+ * It repaints a wall only when that timer is what the screens are already showing.
+ * Changing a number on a timer that is not up must not put it up — the way back is
+ * `showTimer`, an action that says what it does.
+ *
+ * THROWS (contract group 1).
+ */
+export async function adjustTimer(timerId, { remainingMs = null, paused = null } = {}) {
+const call = await invoke();
+await call('adjust_timer', { timerId, remainingMs, paused });
+}
+
+/**
+ * TAKE A TIMER OFF THE REGISTRY. It does not touch a screen — `Clear screens` is
+ * how a wall is taken back, and it is one key away at every moment (rule 15).
+ *
+ * THROWS (contract group 1).
+ */
+export async function stopTimer(timerId) {
+const call = await invoke();
+await call('stop_timer', { timerId });
+}
+
+/**
+ * EVERY TIMER, OLDEST FIRST, WITH HOW LONG IS LEFT ON EACH.
+ *
+ * THROWS (contract group 1) — and this one is worth saying out loud, because the
+ * obvious swallow returns `[]`, which is exactly what a console with no timers
+ * renders. A broken bridge would look like a quiet Sunday on the one surface an
+ * operator would use to find a clock counting down to the wrong thing.
+ *
+ * `remaining_ms` on each row is the engine's own figure. The frontend still ticks
+ * through `countdown.js::countdownRemainingMs`, which stays the only arithmetic on
+ * this side of the bridge.
+ */
+export async function listTimers() {
+const call = await invoke();
+return call('list_timers');
+}
+
+/**
+ * PUT A CONGREGATION TIMER BACK IN FRONT OF PEOPLE — the explicit way back.
+ *
+ * A timer outlives the content that replaced it now, so after a reading there is
+ * something to return to. This is how an operator returns to it, on purpose. It
+ * carries whatever the timer says NOW, so what goes back up is the figure in the
+ * list rather than the length it started as. A `'stage'` timer is refused by the
+ * engine, in words: it has no congregation wire form.
+ *
+ * THROWS (contract group 1) — it is one of two doors onto a congregation wall, so
+ * a failure nobody is told about is an operator believing in a countdown that is
+ * not there.
+ */
+export async function showTimer(timerId, templateId = null) {
+const call = await invoke();
+await call('show_timer', { timerId, templateId });
 }
 
 /** Fire arbitrary content to the screens. `kind` ('song'|'announce') selects the
  *  content-type default template (per-content-type templates). `stageNote` is an
- *  optional confidence-monitor note for this cue. `templateId`, when set, is the
+ *  optional Stage Note for this cue, monitors only. `templateId`, when set, is the
  *  cue's OWN template override (Planner) — it wins over the content-type default. */
 export async function fireContent(
 label,
@@ -1557,19 +1813,51 @@ const call = await invoke();
 return await call('create_voice_profile', { name, language });
 }
 
+// ── ONE FACT, ONE STORE (RG-138) ─────────────────────────────────────────────
+//
+// `voice_profiles.language` is the ONLY place the recognition language lives, and
+// `capture.stt.language` is the console's copy of it — what Settings → Scripture &
+// Languages renders, and what the Privacy overview reads. `setSttLanguage` keeps
+// them in step; these two did not, and both of them change that column and apply
+// it to the live engine:
+//
+//   - `update_voice_profile` writes the row and calls `apply_profile` when the
+//     profile is the active one, so saving the profile editor with a different
+//     Language moved the database and the engine and left the other tab's select
+//     displaying the language it had just moved away from.
+//   - `select_voice_profile` applies the newly-active profile by construction,
+//     which is the same disagreement reached by a different door — and it is the
+//     door `rooms.js::applyRoom` goes through.
+//   - `delete_voice_profile` is the THIRD door, and it is the one that is easiest
+//     to miss because nobody chose a language on it: deleting the ACTIVE profile
+//     promotes the next remaining one and applies it live (`main.rs`), so the
+//     engine moves to a language the operator never picked while Scripture &
+//     Languages goes on showing the deleted profile's. This enumeration named two
+//     doors when there were three, which is the mistake CLAUDE.md records four
+//     times over — *"enumerate every caller of the thing you fixed"*.
+//
+// `is_active` is the BACKEND'S answer, not the caller's copy of it: `main.rs`
+// stamps it from the database after the write, because the payload's own field is
+// whatever the frontend happened to be holding.
+function noteProfileLanguage(landed) {
+if (landed?.is_active)
+  capture.update((s) => ({ ...s, stt: { ...s.stt, language: landed.language ?? null } }));
+return landed;
+}
+
 export async function updateVoiceProfile(profile) {
 const call = await invoke();
-return await call('update_voice_profile', { profile });
+return noteProfileLanguage(await call('update_voice_profile', { profile }));
 }
 
 export async function selectVoiceProfile(id) {
 const call = await invoke();
-return await call('select_voice_profile', { id });
+return noteProfileLanguage(await call('select_voice_profile', { id }));
 }
 
 export async function deleteVoiceProfile(id) {
 const call = await invoke();
-return await call('delete_voice_profile', { id });
+return noteProfileLanguage(await call('delete_voice_profile', { id }));
 }
 
 // ── Media (Library → Media) ──────────────────────────────────────────────────
@@ -1598,6 +1886,26 @@ export async function fireMedia(id, templateId = null, keepPlan = false) {
 const call = await invoke();
 await call('fire_media', { id, templateId });
 if (!keepPlan) leavePlan();
+}
+
+/**
+ * PUT A PICTURE BEHIND THE WORDS — or take it away (`id: null`).
+ *
+ * GROUP 1: it throws. It changes what every congregation screen is showing, and
+ * the take-down is the half a swallowed failure hurts most — the operator believes
+ * the backdrop has gone and it is still there behind the next thing they fire.
+ *
+ * ONE wrapper for both directions, mirroring the one command: a separate
+ * `clearBackground` would be a second door onto one piece of state, and this
+ * repository's register of that mistake runs to four entries.
+ *
+ * It does NOT call `leavePlan()`. A backdrop does not replace the cue on the wall,
+ * so the plan is exactly where it was — the same reasoning that keeps the passage
+ * armed on the Rust side.
+ */
+export async function showBackground(id = null) {
+const call = await invoke();
+await call('show_background', { id });
 }
 
 /** Parse a lyric file into songs WITHOUT saving — for the pre-save review. */
@@ -1813,46 +2121,6 @@ await loadTemplates();
 await loadContentTemplates();
 }
 
-// ── THEMES ───────────────────────────────────────────────────────────────────
-// Custom themes persist as ONE JSON blob in the settings KV. This deliberately
-// reuses the generic get_setting/set_setting commands rather than adding a
-// themes table + five commands: a theme is small, edited rarely, and always read
-// as a whole set. Builtins never touch persistence — they live in themes.js.
-const THEMES_KEY = 'themes.custom';
-
-/** Load the operator's custom themes into the store. Degrades to [] (builtins
- *  only) if the backend has no get_setting yet or the blob is corrupt — a bad
- *  themes blob must never break boot. Mirrors loadTemplates' resilience. */
-export async function loadThemes() {
-return guardedRead(
-    'loadThemes',
-    async (call) => {
-      const raw = await call('get_setting', { key: THEMES_KEY });
-      const { parseThemes } = await import('../themes.js');
-      const list = parseThemes(raw);
-      customThemes.set(list);
-      return list;
-    },
-    [],
-    () => customThemes.set([]),
-  );
-}
-
-/** Persist the whole custom-theme set (the store IS the source of truth here),
- *  then push it to any connected kiosk/OBS client so a browser source resolves a
- *  custom-themed template live. The kiosk sync is best-effort — a failure to
- *  reach the hub must never block saving a theme locally. */
-async function persistThemes(list) {
-  const call = await invoke();
-  const value = JSON.stringify(list);
-  await call('set_setting', { key: THEMES_KEY, value });
-  try {
-    await call('sync_kiosk_themes', { themesJson: value });
-  } catch {
-    /* no hub / no clients — the blob is saved; kiosks get it on next connect */
-  }
-}
-
 // ══ X1 · THE TRANSITION CONTROL (docs/REBRAND.md §8 · DECISIONS §84) ═══════════
 // One block, deliberately self-contained: this file is being edited by more than
 // one agent this wave, so an integrator can move these lines whole.
@@ -1892,28 +2160,6 @@ export async function loadLiveTransition() {
 }
 // ══ end X1 block ══════════════════════════════════════════════════════════════
 
-/**
- * Insert or update a custom theme; returns its id. A theme with no id (or a
- * builtin's negative id) is treated as NEW and gets a fresh positive id, so
- * "duplicate a builtin" always creates rather than trying to overwrite a
- * read-only builtin. Ids are max+1 (never Date-based — the app forbids it).
- */
-export async function saveTheme(theme) {
-  const list = get(customThemes);
-  const isExisting = typeof theme.id === 'number' && theme.id > 0 && list.some((t) => t.id === theme.id);
-  let next;
-  if (isExisting) {
-    next = list.map((t) => (t.id === theme.id ? { ...theme, builtin: false } : t));
-  } else {
-    const id = list.reduce((m, t) => Math.max(m, t.id), 0) + 1;
-    next = [...list, { ...theme, id, builtin: false }];
-    theme = { ...theme, id };
-  }
-  await persistThemes(next);
-  customThemes.set(next);
-  return theme.id;
-}
-
 /** Load the configured service length (minutes) into the store. Degrades to 0
  *  (no target) if the backend/setting is absent. */
 export async function loadServiceTarget() {
@@ -1938,39 +2184,75 @@ export async function setServiceTarget(minutes) {
   serviceTargetMinutes.set(n);
 }
 
-/** Delete a custom theme by id. Builtins (negative ids) are not stored, so this
- *  is a no-op for them by construction. */
-export async function deleteTheme(id) {
-  const next = get(customThemes).filter((t) => t.id !== id);
-  await persistThemes(next);
-  customThemes.set(next);
+// ── THE COUNTDOWN WARNING WINDOW ───────────────────────────────────────────────
+//
+// How long before zero a countdown turns red. Shipped as the last minute; an
+// operator can move it in Settings → General. Persisted in the settings KV under
+// `countdown.warn_ms` and READ, which is the whole point of it: seven controls
+// were removed from that page on 2026-09-10 for saving a preference nothing
+// opened (DECISIONS §69), and a threshold nobody reads is that defect with a
+// congregation-facing colour attached.
+//
+// The reader is `layers.js::countdownWarning`, through `setCountdownWarnDefault`,
+// which is the one rule the wall, the preacher's page and the dock all ask. A
+// figure carried by one timer still beats this default — that ranking lives in
+// `countdownWarning` and is not restated here.
+const COUNTDOWN_WARN_MIN_MS = 5_000;
+const COUNTDOWN_WARN_MAX_MS = 60 * 60_000;
+
+/** The warning window in force, in ms. Mirrors what `layers.js` is using. */
+export const countdownWarnMs = writable(COUNTDOWN_WARN_MS);
+
+/** A readable window, or the shipped minute. Never zero — a window of zero is a
+ *  warning colour that never comes on, on the one surface whose job is to. */
+function clampCountdownWarn(ms) {
+  const n = Number(ms);
+  return Number.isFinite(n) && n > 0
+    ? Math.max(COUNTDOWN_WARN_MIN_MS, Math.min(COUNTDOWN_WARN_MAX_MS, Math.round(n)))
+    : COUNTDOWN_WARN_MS;
 }
 
-/** Download a theme (builtin or custom) as a portable `.relaytheme.json` file.
- *  Pure client-side — a Blob + a transient anchor click, so it needs no backend
- *  and works the same in the app webview and a plain browser. */
-export async function exportTheme(theme) {
-  const { serializeTheme } = await import('../themes.js');
-  const safeName = String(theme?.name ?? 'theme').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
-  const blob = new Blob([serializeTheme(theme)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `${safeName}.relaytheme.json`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
+/** Apply a figure to the store AND to the rule, so the two cannot come apart. */
+function applyCountdownWarn(ms) {
+  const ok = clampCountdownWarn(ms);
+  setCountdownWarnDefault(ok);
+  countdownWarnMs.set(ok);
+  return ok;
 }
 
-/** Read a picked theme file, validate it, and save it as a NEW custom theme.
- *  Returns the new id. Throws a plain-language Error (via parseImportedTheme) the
- *  caller shows through the ONE humaniser — a bad file must never blank the UI. */
-export async function importThemeFromFile(file) {
-  const { parseImportedTheme } = await import('../themes.js');
-  const text = await file.text();
-  const theme = parseImportedTheme(text); // throws on a non-theme file
-  return saveTheme(theme); // fresh positive id, persisted, pushed to kiosks
+/**
+ * Load the configured warning window. GROUP 2 — SWALLOWS: a console that could not
+ * ask falls back to the shipped minute, which is what it had before.
+ *
+ * The fallback is applied OUT HERE rather than through a fourth argument to
+ * `guardedRead`, which takes three: `loadDefaultTemplate` and `loadServiceTarget`
+ * each pass a reset closure that is silently dropped, so on a failed read their
+ * stores keep the last good value while a comment beside them says otherwise.
+ * Not fixed here — that is three other surfaces' behaviour — but not copied either.
+ */
+export async function loadCountdownWarnMs() {
+  const raw = await guardedRead(
+    'countdownWarnMs',
+    (call) => call('get_setting', { key: 'countdown.warn_ms' }),
+    null,
+  );
+  return applyCountdownWarn(parseInt(raw, 10));
+}
+
+/**
+ * Set the warning window (ms). Persisted in the KV and applied at once, so the
+ * dock and the programme pane turn red at the new figure without a relaunch.
+ *
+ * THE ROW IS WRITTEN FIRST, and only then is the figure applied. The other order
+ * moves what the wall does while leaving the row at the old value, so a write that
+ * failed would show an operator a setting that is in force this session and gone
+ * at the next launch — a control saying one thing and the machine another.
+ */
+export async function setCountdownWarnMs(ms) {
+  const n = clampCountdownWarn(ms);
+  const call = await invoke();
+  await call('set_setting', { key: 'countdown.warn_ms', value: String(n) });
+  return applyCountdownWarn(n);
 }
 
 
@@ -1998,7 +2280,7 @@ return guardedRead('listOutputChannels', async (call) => {
 export const stageAlert = writable(null);
 
 /**
- * A WORD TO THE PREACHER — one line, the whole stage monitor, and no other
+ * The Stage Message — one line, the whole stage monitor, and no other
  * screen (docs/REBRAND.md §5). Empty or whitespace clears it.
  *
  * GROUP 1 (throws). The operator is sending a message to a person and is looking
@@ -2087,8 +2369,29 @@ const call = await invoke();
 await call('set_active_translation', { id });
 }
 
-/** Open a channel's output on its assigned display (HDMI). Returns the label. */
+/**
+ * Open a channel's output on its assigned display (HDMI). Returns the label.
+ *
+ * REFUSES IN SAFE MODE, here rather than at the four call sites (Channels'
+ * Open button, the first-run wizard, the Dashboard's Open main screen, and
+ * whatever is written next). Safe mode's row says "outputs will not open", and
+ * that clause is an ONGOING promise, not a one-off transition — `applySafeMode`
+ * closes what is already open, and this is what keeps it closed. Channels.svelte
+ * did not import `safeMode` at all, so the Outputs workspace opened a projector
+ * window with safe mode on, which is the capability `degraded.js` reports as
+ * blocked. DECISIONS §86.
+ *
+ * It REFUSES rather than quietly doing nothing: a button that silently no-ops is
+ * the defect this whole area was fixed for. All four callers already humanise
+ * what they catch, so the sentence reaches the operator wherever they pressed.
+ */
 export async function openChannelOutput(channelId) {
+if (get(safeMode)) {
+  const msg =
+    'Safe mode is on, so Relay will not open an output screen. ' +
+    'Turn it off in Settings → General if you want screens back.';
+  throw Object.assign(new Error(msg), { kind: 'refused', message: msg });
+}
 const call = await invoke(); // throws in browser
 return call('open_channel_output', { channelId });
 }
@@ -2098,12 +2401,88 @@ return call('open_channel_output', { channelId });
  *  onto connected, non-primary displays, so it never covers the operator's
  *  console. Best-effort — a plain browser (no backend) just no-ops. */
 export async function autoOpenOutputs() {
+// The OTHER way a screen opens, and it is a different backend command, so the
+// refusal in `openChannelOutput` does not cover it. No refusal here: nobody
+// pressed anything, this runs from the launch sequence, and not restoring the
+// screens IS what safe mode means. `App.svelte` states the same thing at the
+// call site; this is the half that a new caller inherits. DECISIONS §86.
+if (get(safeMode)) return null;
 try {
   const call = await invoke();
   return await call('auto_open_outputs');
 } catch {
   return [];
 }
+}
+
+/**
+ * WHAT A SCREEN IS FOR — `'main'`, `'stage'`, or `null` for no special role.
+ *
+ * GROUP 1 (throws), and the throw is the point. The backend refuses a second main
+ * screen by name ("Main screen is already the main screen…"), and a refusal that
+ * is swallowed leaves the picker showing a role the screen does not hold — the
+ * same failure `setChannelTemplate` describes, on the setting that decides
+ * whether a word meant for the preacher may be painted. The caller renders it
+ * through `src/lib/errors.js`, never as a raw Rust string.
+ */
+export async function setChannelRole(id, role) {
+const call = await invoke();
+await call('set_channel_role', { id, role: role || null });
+}
+
+/**
+ * RENAME A SCREEN.
+ *
+ * GROUP 1 (throws). It is an operator action with a visible result and the
+ * backend refuses a blank name, an over-long one and a screen that has been
+ * deleted on another surface — each in a sentence. A swallowed refusal would
+ * leave the field showing a name the screen does not have, which is worse than
+ * the rename failing, because the desk is where everybody else in the building
+ * looks that name up. The caller renders it through `src/lib/errors.js`.
+ */
+export async function renameChannel(id, name) {
+  const call = await invoke();
+  await call('rename_channel', { id, name });
+}
+
+/**
+ * TAKE ONE SCREEN OUT OF THE WALL, OR PUT IT BACK.
+ *
+ * Three wrappers, and they are NOT panic controls. `clearScreens` and `blackout`
+ * are — first, largest, one action, every screen, and they never ask which (rule
+ * 15, DECISIONS §20). These are the ordinary control beside them: "take the lobby
+ * TV down but leave the wall live". Nothing here is bound to a key, and nothing
+ * here goes near `panicError`.
+ *
+ * GROUP 1 (throws), all three. Every one of them is an operator action with a
+ * visible result, and a failure that is swallowed leaves the Outputs desk saying
+ * a screen is down while a congregation is looking at it — the worse half of the
+ * two ways this can go wrong. The backend refuses during a rehearsal, by name,
+ * and the caller renders that through `src/lib/errors.js` like every other
+ * refusal on that desk. Never a raw Rust string.
+ */
+export async function clearScreen(channelId) {
+  const call = await invoke();
+  await call('clear_screen', { channelId });
+}
+
+/** Blackout ONE screen (opaque), leaving every other screen as it is. */
+export async function blackoutScreen(channelId) {
+  const call = await invoke();
+  await call('blackout_screen', { channelId });
+}
+
+/**
+ * Put one screen back into the wall: it shows whatever the wall is showing.
+ *
+ * The way back is a CONTROL and not a side effect of the next fire. A screen
+ * taken down stays down across every fire in between — a one-shot would be undone
+ * within a minute of being used — so there has to be something that undoes it,
+ * and it has to be as easy to find as the control that did it.
+ */
+export async function restoreScreen(channelId) {
+  const call = await invoke();
+  await call('restore_screen', { channelId });
 }
 
 /** Assign a physical display (monitor index string, or null) to a channel. */
@@ -2322,6 +2701,95 @@ return panicRun('blackout', 'Blackout');
 export const panicError = writable(null);
 
 /**
+ * The reason safe mode could not keep its promise, humanised — or null.
+ *
+ * Module scope, and set by `applySafeMode` itself rather than returned to the
+ * caller, for the same reason `panicError` is: the control that flips safe mode
+ * can be a view that has crashed, and a view that cannot `catch` cannot report.
+ */
+export const safeModeError = writable(null);
+
+/**
+ * TURN SAFE MODE ON OR OFF, AND MAKE THE PROMISE TRUE. (GROUP 3.)
+ *
+ * Safe mode's row says "outputs will not open and detection is disarmed —
+ * nothing Relay does can reach a screen". `setSafeMode` writes that into the
+ * boot record; for as long as it was the only thing that happened, the sentence
+ * was false until the next launch — App.svelte honoured it inside onMount only,
+ * Live.svelte never mentioned it, and Rust has no notion of it.
+ *
+ * So the enforcement lives HERE, at the one door, and not as a `$safeMode` check
+ * at each fire site. This repository has had four separate bugs whose single
+ * root cause is a rule enforced on one surface and skipped on its twin; a check
+ * per caller would be the fifth. DECISIONS §86.
+ *
+ * Returns whether the promise was kept, AND sets `safeModeError`. Turning safe
+ * mode OFF restores the operator's freedom to arm things and deliberately arms
+ * nothing for them: a detector that switches itself back on is a different
+ * surprise from the one this control prevents.
+ *
+ * EVERY screen is attempted, even after one refuses to close. Stopping at the
+ * first failure would leave the operator reading one screen's name while the
+ * ones behind it are still lit and nothing ever asked them to go dark; the
+ * message names each one that would not, so what is left to do by hand is the
+ * whole of it.
+ */
+export async function applySafeMode(on) {
+  safeModeError.set(null);
+  setSafeMode(on);
+  if (!on) return true;
+
+  const failures = [];
+
+  try {
+    await setDetection(false);
+  } catch (e) {
+    failures.push(humanError(e));
+  }
+
+  // TAKE THE SCREENS DOWN FIRST, and not only the ones with a window.
+  // `close_channel_output` closes a native webview; a channel with no window is
+  // a silent no-op there, so an OBS browser source or a lobby TV on the kiosk hub
+  // would keep its RETAINED frame (rule 43) and go on showing the last verse
+  // while this function returned true. `clear_screens` reaches every render
+  // target and its `clear` becomes the retained frame in its turn, so a screen
+  // that reconnects afterwards comes back blank rather than to the verse.
+  //
+  // Deliberate, and worth being deliberate about: safe mode takes a congregation's
+  // screen down. It is an explicit operator action asking for exactly that, not
+  // something Relay decides on its own — which is the line §20 draws.
+  if (!(await clearScreens())) {
+    failures.push('the screens could not be cleared');
+  }
+
+  // `listOutputChannels` is GROUP 2: it swallows and returns `[]`, so a `catch`
+  // around it can never fire and a door that trusted the empty list would report
+  // "every screen closed" having never been told about one. The swallowed reason
+  // is in `readErrors`, which is exactly what that store exists for.
+  const chans = await listOutputChannels();
+  const listFailed = get(readErrors).listOutputChannels;
+  if (listFailed) {
+    failures.push(`the list of screens could not be read (${humanError(listFailed)})`);
+  }
+  for (const c of chans ?? []) {
+    try {
+      await closeChannelOutput(c.id);
+    } catch (e) {
+      failures.push(`${c.name ?? `screen ${c.id}`}: ${humanError(e)}`);
+    }
+  }
+
+  if (failures.length) {
+    safeModeError.set(
+      `Safe mode is recorded, and it could not be enforced: ${failures.join('; ')}. ` +
+        'Something may still be able to reach a screen.',
+    );
+    return false;
+  }
+  return true;
+}
+
+/**
  * WHY A LIST WAS EMPTY — failure, or genuinely nothing.
  *
  * Every read wrapper below is GROUP 2: it swallows and returns a safe default. The
@@ -2345,13 +2813,23 @@ export const panicError = writable(null);
 export const readErrors = writable({});
 
 /** Run a GROUP 2 read, remembering why it failed instead of discarding it. */
-async function guardedRead(key, run, fallback) {
+async function guardedRead(key, run, fallback, onFail) {
 try {
   const value = await run(await invoke());
   readErrors.update((m) => (m[key] ? { ...m, [key]: null } : m));
   return value;
 } catch (e) {
   readErrors.update((m) => ({ ...m, [key]: e }));
+  // THE FOURTH ARGUMENT WAS BEING DROPPED ON THE FLOOR, AND TWO CALL SITES WERE
+  // ALREADY PASSING IT. A fallback VALUE cannot carry a side effect: a read that
+  // populates a store has nothing to hand back, so letting go of the stale value
+  // is something the catch has to DO. Without this, `loadDefaultTemplate` left
+  // `defaultTemplateId` holding an id the backend could no longer confirm and
+  // `loadServiceTarget` left the stopwatch counting against a length nobody had
+  // answered for — each under a comment saying the reset was explicit. Pinned by
+  // `readstates.test.js`, "a failed read resets the store its call site asked to
+  // reset". Optional: most reads degrade to a value and want nothing here.
+  if (typeof onFail === 'function') onFail();
   return fallback;
 }
 }
@@ -2377,6 +2855,16 @@ try {
   const call = await invoke();
   await call(cmd);
   panicError.set(null);
+  // AND THE CONSOLE'S MIRROR OF THE STAGE MESSAGE GOES WITH IT (RG-145).
+  // DECISIONS §91: a panic control takes back every sentence anybody put on a
+  // screen, so `Stage.svelte` clears the alert on both controls. This store is what
+  // Quick tools paints its "on stage" badge and its Take down button from, so
+  // leaving it set offered the operator a control for a word that was already down,
+  // under a comment claiming the badge says what the monitor is painting right now.
+  // After the call resolves and never before — the same discipline `sendStageAlert`
+  // keeps — because a panic that FAILED has taken nothing off any screen, and a
+  // console that said otherwise is rule 15 one surface along.
+  stageAlert.set(null);
   return true;
 } catch (e) {
   // In a plain browser there is no backend AND no output screen, so there is
@@ -2397,6 +2885,17 @@ try {
 }
 }
 
+/**
+ * Operator has read the safe-mode warning.
+ *
+ * Says "I have looked", never "it is fixed" — same contract as
+ * `dismissPanicError`. It clears again on the next `applySafeMode`, which is the
+ * only thing that can honestly say the promise is being kept.
+ */
+export function dismissSafeModeError() {
+safeModeError.set(null);
+}
+
 /** Operator has read the panic warning (or a later panic control succeeded). */
 export function dismissPanicError() {
 panicError.set(null);
@@ -2413,7 +2912,7 @@ export function dismissAudioError() {
 capture.update((s) => ({ ...s, audioError: null }));
 }
 
-/** Push the "up next" preview to the stage/confidence monitor (null clears).
+/** Push the "Up Next" preview to the stage/confidence monitor (null clears).
  *
  *  GROUP 1 (THROWS), moved out of GROUP 2 on 2026-08-14 (R5-8) — and the reason is
  *  a correction to the group rule itself, not just to this wrapper.
@@ -2421,7 +2920,7 @@ capture.update((s) => ({ ...s, audioError: null }));
  *  GROUP 2's test is *"can the congregation see the difference?"*. For this call the
  *  honest answer is **no, but the preacher can, and he is the one acting on it.**
  *  The stage monitor is a real screen on a stand in front of a person, and
- *  `setStageNext(null, null)` is how the "up next" panel comes DOWN. A swallowed
+ *  `setStageNext(null, null)` is how the "Up Next" panel comes DOWN. A swallowed
  *  failure there leaves a preacher reading a stale next-verse for the rest of the
  *  service with nothing, anywhere, reporting it.
  *
@@ -2433,26 +2932,47 @@ const call = await invoke();
 await call('set_stage_next', { label: label ?? null, text: text ?? null });
 }
 
-/** Set STT language: a code ("yo"/"sw"/"ha"/"en") or null for auto-detect. */
+/** Set the recognition language: a code ("yo"/"sw"/"ha"/"en") or null for
+ *  auto-detect. Returns the voice profile it was written to.
+ *
+ *  GROUP 1 — THROWS, and it was in GROUP 2 until RG-138. It changes what the AI
+ *  hears, which is the same class as `setDetection`, and it is now also a WRITE:
+ *  the language is stored on the active voice profile, which is what makes the
+ *  choice survive a relaunch. A swallowed failure here leaves the select showing
+ *  a language nothing was told about — on the one control RG-116 names as the
+ *  mitigation for a service lost to whisper's language election wandering.
+ *
+ *  `rooms.js` already depended on this throwing: its per-step report exists to say
+ *  which pieces of a room did not come back, and a wrapper that cannot fail
+ *  reported "recognition language" as applied every time, unconditionally. */
 export async function setSttLanguage(language) {
-try {
-  const call = await invoke();
-  await call('set_stt_language', { language: language ?? null });
-  capture.update((s) => ({ ...s, stt: { ...s.stt, language: language ?? null } }));
-} catch {
-  /* backend absent */
-}
+const call = await invoke();
+const profile = await call('set_stt_language', { language: language ?? null });
+// Only after the backend agreed. An optimistic update is the same lie one step
+// earlier: the select would move and nothing would have been stored.
+capture.update((s) => ({ ...s, stt: { ...s.stt, language: language ?? null } }));
+return profile ?? null;
 }
 
-/** Manual threshold override (Settings sliders). */
+/** Manual threshold override (Settings sliders).
+ *
+ *  GROUP 1 (THROWS), and it moved here on 2026-09-17. It was the last swallowing
+ *  door onto the gate, and its twin `setSensitivity` had already been repaired for
+ *  exactly this — the two controls are the same act expressed at different
+ *  precision, and they had opposite failure contracts. The consequence was silent
+ *  and specific: on failure the store is unchanged, so `value={$capture.thresholds
+ *  .auto_fire}` is unchanged, so Svelte never rewrites the DOM property and the
+ *  dragged thumb STAYS WHERE THE OPERATOR PUT IT, over a gate that did not move,
+ *  with no error line anywhere in the section.
+ *
+ *  `set_thresholds` really can fail — `routing.0.lock()?` on a poisoned router
+ *  mutex, the same shape as the `stopCapture` bug — and this is the control that
+ *  governs what the AI may put on a wall without asking. */
 export async function setThresholds(auto_fire, suggest) {
-try {
-  const call = await invoke();
-  const thresholds = await call('set_thresholds', { thresholds: { auto_fire, suggest } });
-  capture.update((s) => ({ ...s, thresholds }));
-} catch {
-  /* backend absent */
-}
+const call = await invoke();
+const thresholds = await call('set_thresholds', { thresholds: { auto_fire, suggest } });
+capture.update((s) => ({ ...s, thresholds }));
+return thresholds;
 }
 
 /** The single operator sensitivity dial (0..100), read from the live thresholds.
@@ -2461,8 +2981,23 @@ try {
 export async function getSensitivity() {
 try {
   const call = await invoke();
-  return await call('get_sensitivity');
+  const sensitivity = await call('get_sensitivity');
+  // THE ANSWER GOES IN THE STORE, and the store records that an answer arrived.
+  // This used to return the number to one caller and tell nothing else, which is
+  // how the dock came to hold the only copy of it.
+  if (Number.isFinite(Number(sensitivity))) {
+    capture.update((st) => ({
+      ...st,
+      sensitivity: Number(sensitivity),
+      sensitivityKnown: true,
+    }));
+  }
+  return sensitivity;
 } catch {
+  // 50 is still returned for a caller that wants a number, and `sensitivityKnown`
+  // stays false so nothing can mistake this fallback for a reading. The two facts
+  // are kept apart deliberately: a substitute "unknown" VALUE would put a figure
+  // on screen that is nobody's setting, which is a second lie covering the first.
   return 50;
 }
 }
@@ -2486,7 +3021,16 @@ export async function setSensitivity(sensitivity) {
 const call = await invoke();
 const landed = await call('set_sensitivity', { sensitivity });
 const thresholds = await call('get_thresholds');
-capture.update((s) => ({ ...s, thresholds }));
+// `detection://thresholds` will say the same thing a moment later and this is not
+// redundant with it: the event is how OTHER surfaces find out, and this is how the
+// surface that just acted stops showing a stale figure between the command
+// returning and the event arriving.
+capture.update((s) => ({
+  ...s,
+  thresholds,
+  sensitivity: Number.isFinite(Number(landed)) ? Number(landed) : s.sensitivity,
+  sensitivityKnown: s.sensitivityKnown || Number.isFinite(Number(landed)),
+}));
 return landed;
 }
 
@@ -2499,12 +3043,17 @@ return landed;
  * text before it is sent (see src-tauri/src/telemetry.rs).
  */
 export async function getCrashReporting() {
-try {
-  const call = await invoke();
-  return await call('get_crash_reporting');
-} catch {
-  return { enabled: false, dsn: '' };
-}
+// GROUP 2 THROUGH `guardedRead`, and the reason is not tidiness. This swallowed
+// into a bare `catch` and returned the safe default, which Settings takes as the
+// truth: `savedDsn` became `''`. Flipping the switch then sent `('', true)`, and
+// `set_crash_reporting` writes the string unconditionally — so a read that failed
+// on mount DESTROYED the stored DSN one click later, and the operator's only clue
+// was an address field that had gone empty. (Nothing leaked: `telemetry::enable`
+// returns early on an empty DSN.) The reason now lands in `readErrors`, which is
+// what Settings disables the switch and Save on.
+return guardedRead('getCrashReporting', async (call) => {
+    return await call('get_crash_reporting');
+}, { enabled: false, dsn: '' });
 }
 
 export async function setCrashReporting(enabled, dsn) {

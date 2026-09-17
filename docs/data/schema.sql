@@ -58,7 +58,9 @@ CREATE TABLE templates (
     name               TEXT NOT NULL,
     region_config_json TEXT NOT NULL,     -- layout regions, see docs/SPEC.md §5
     style_json         TEXT NOT NULL,     -- fonts, colors, transitions
-    console_active     INTEGER NOT NULL DEFAULT 0  -- one of the (max 4) styles on the console output grid
+    console_active     INTEGER NOT NULL DEFAULT 0, -- one of the (max 4) styles on the console output grid
+    seed_key           TEXT,               -- the seeder's stable slug; NULL = hand-made. Never written by an operator.
+    edited_at          TEXT                -- stamped by any save that is not the seeder's
 );
 
 CREATE TABLE output_channels (
@@ -67,7 +69,8 @@ CREATE TABLE output_channels (
     render_target  TEXT NOT NULL CHECK (render_target IN ('native_window', 'ndi_encode', 'network_client')),
     template_id    INTEGER REFERENCES templates(id),
     display_target TEXT,                  -- display index, NDI source name, or kiosk client id
-    status         TEXT NOT NULL DEFAULT 'offline' CHECK (status IN ('online', 'offline'))
+    status         TEXT NOT NULL DEFAULT 'offline' CHECK (status IN ('online', 'offline')),
+    role           TEXT CHECK (role IS NULL OR role IN ('main', 'stage'))  -- what this screen is FOR; NULL = a congregation screen with no special job
 );
 
 -- ===== Service plans & the unified cue (db/plans.rs) =====
@@ -82,15 +85,27 @@ CREATE TABLE service_plans (
 
 -- One polymorphic cue for every content type. cue_type selects how payload_json
 -- is read; template_id is an optional per-content-type override. See docs/DATA_MODEL.md §4.
+--
+-- The last three columns arrived after this table did, each through the idempotent
+-- `add_plan_item_column` in db/plans.rs, and for a while this file did not show
+-- them at all: a fresh install got them from the migration rather than from the
+-- baseline, so the two agreed by accident. They are stated here now, because this
+-- file IS the shipped fresh-install shape.
 CREATE TABLE plan_items (
-    id           INTEGER PRIMARY KEY,
-    plan_id      INTEGER NOT NULL REFERENCES service_plans(id) ON DELETE CASCADE,
-    position     INTEGER NOT NULL,
-    cue_type     TEXT NOT NULL,           -- 'scripture' | 'song' | 'media' | 'announce' | 'countdown'
+    id            INTEGER PRIMARY KEY,
+    plan_id       INTEGER NOT NULL REFERENCES service_plans(id) ON DELETE CASCADE,
+    position      INTEGER NOT NULL,
+    cue_type      TEXT NOT NULL,          -- 'scripture' | 'song' | 'media' | 'announce' | 'countdown'
                                           -- (the canonical list is CONTENT_KINDS in src/lib/layers.js)
-    label        TEXT NOT NULL,
-    payload_json TEXT NOT NULL DEFAULT '{}',
-    template_id  INTEGER
+    label         TEXT NOT NULL,
+    payload_json  TEXT NOT NULL DEFAULT '{}',
+    template_id   INTEGER,
+    section_title TEXT NOT NULL DEFAULT '',  -- non-empty = this cue BEGINS a section
+    duration_sec  INTEGER NOT NULL DEFAULT 0, -- planned length, for the running-time
+                                              -- estimate only (plan.js). 0 = untimed.
+    timer_minutes INTEGER                     -- a programme clock this cue asks Live to
+                                              -- start when it goes on air. NULL = unbound,
+                                              -- which is NOT the same as 0. See PlanItem.
 );
 CREATE INDEX idx_plan_items ON plan_items(plan_id, position);
 

@@ -22,7 +22,7 @@ Relay's wedge is not rebuilding all four categories to parity. It's the combinat
 | African-language STT priority | — | — | — | English-first today | Yoruba / Swahili / Hausa tier 1 |
 | Offline-first | N/A | N/A | Partial | Yes | Yes |
 
-**Design stance:** Relay sits above the existing AV chain, not in place of it. It talks to OBS, ATEM, and ProPresenter over NDI, HDMI, and the local network.
+**Design stance:** Relay sits above the existing AV chain, not in place of it. It reaches OBS, vMix and kiosk screens over the local network, and a projector or an ATEM over HDMI. **NDI is parked, not shipped** (§9): `open_ndi_output` returns a clear error, and it is what a direct ProPresenter or TriCaster ingest would need. No ATEM accepts NDI in any case, which is why the parking costs the ATEM path nothing. [OUTPUT_ROUTING.md](OUTPUT_ROUTING.md) is the map, one section per case a church actually has.
 
 ## 2. Goals & non-goals
 
@@ -98,7 +98,7 @@ A **channel** is a configured destination. A **template** is a layout + style + 
 | Target type | What it is | Maps to |
 |---|---|---|
 | Native window | Borderless fullscreen window pinned to a display | HDMI output |
-| Headless render → NDI encode | Off-screen render, encoded as an NDI source | NDI into OBS / ATEM / vMix / ProPresenter |
+| Headless render → NDI encode | Off-screen render, encoded as an NDI source | NDI into OBS / vMix / ProPresenter. **Not an ATEM**: no ATEM model ingests NDI, and it is reached over HDMI instead ([OUTPUT_ROUTING.md](OUTPUT_ROUTING.md) §2) |
 | Networked browser client | Any LAN device hitting a local URL, state pushed over WebSocket | Kiosk screens — e.g. a $50 Raspberry Pi |
 
 ### Template shape (draft)
@@ -166,9 +166,9 @@ Community datasets to evaluate: Masakhane (African NLP research), Mozilla Common
 
 ## 9. Integration & interoperability
 
-- **NDI** — **parked.** The intent stands (Relay as an NDI source that OBS, ATEM, vMix and ProPresenter ingest directly), but it needs the proprietary SDK and is not built. `open_ndi_output` returns a clear error rather than pretending. Bridge with hardware the church already owns.
+- **NDI** — **parked.** The intent stands (Relay as an NDI source that OBS, vMix and ProPresenter ingest directly), but it needs the proprietary SDK and is not built. `open_ndi_output` returns a clear error rather than pretending. Bridge with a converter, which a church may already own or can buy for about the price of a microphone cable — this clause used to say "hardware the church already owns", three clauses before its own correction of that exact assumption. **An ATEM was on that list and should never have been**: no ATEM model ingests NDI, whatever the tier, so NDI would buy nothing at all toward the switcher churches most often ask about ([OUTPUT_ROUTING.md](OUTPUT_ROUTING.md) §2).
 - **HDMI** — not a special integration, a borderless fullscreen window on whichever display is physically connected. No hardware SDK needed.
-- **SDI — explicitly out of scope.** True SDI I/O needs dedicated hardware (Blackmagic DeckLink-class) and a C++ SDK — high cost, narrow reach. Anyone with SDI gear already owns hardware (an ATEM, or a converter) that accepts NDI/HDMI and re-outputs SDI. Relay's NDI/HDMI output preserves full SDI-setup compatibility without owning the SDI hardware problem.
+- **SDI — explicitly out of scope.** True SDI I/O needs dedicated hardware (Blackmagic DeckLink-class) and a C++ SDK: high cost, narrow reach. **The constraint is right, and the reason this line used to give for it was false.** It said anyone with SDI gear already owns an ATEM or a converter "that accepts NDI/HDMI and re-outputs SDI". No ATEM accepts NDI, and a rack-mount ATEM accepts no HDMI either, so the capability that made the constraint safe did not exist on the hardware it named. The true mechanism is a converter: a church bridges HDMI into its SDI chain with a small HDMI-to-SDI box costing about as much as a microphone cable, and Relay emits a plain HDMI display signal, so nothing SDI-aware is needed in software. Model-by-model detail belongs in one place and is in [OUTPUT_ROUTING.md](OUTPUT_ROUTING.md) §2 rather than restated here.
 
 ## 10. Roadmap & open items
 
@@ -176,7 +176,7 @@ Community datasets to evaluate: Masakhane (African NLP research), Mozilla Common
 > technical-debt register is [KNOWN_ISSUES.md](KNOWN_ISSUES.md); where the two differ, KNOWN_ISSUES.md wins.
 
 ### Parked, not eliminated
-- Native SDI hardware output — revisit only if a real target segment has SDI gear with no ATEM/converter at all
+- Native SDI hardware output — revisit only if a real target segment has SDI gear with no way to bridge HDMI into it at all. An ATEM alone is not that way on every tier: the Minis take HDMI, the rack-mount models take SDI only, so the converter is the mechanism rather than the switcher
 - Recording / full scene compositing — not a differentiation target, OBS already does this well
 - Song-lyric / setlist detection — separate subsystem, not scoped for v1
 - Sustainability path for the free/open-source model (donations, grants, optional paid add-on)

@@ -209,7 +209,15 @@ describe('R3-01 · Escape belongs to the popup menu, not to the panic key', () =
     expect(menu).toBeTruthy();
     expect(menu.getAttribute('role')).toBe('menu');
 
-    press('Escape', menu.querySelector('.lib-newitem'));
+    // The row's class moved from `.lib-newitem` to the shared `.r-menuitem` when
+    // the Escape contract was consolidated into `ui/Menu.svelte` (one copy, not
+    // four). The CLAIM is unchanged and is still driven against a real mount; only
+    // the selector for the row moved, so it is asserted rather than assumed — a
+    // `querySelector` that silently returned null would send the keypress to the
+    // document and pass this test for the wrong reason.
+    const row = menu.querySelector('.r-menuitem');
+    expect(row, 'a row inside the open menu').toBeTruthy();
+    press('Escape', row);
     await tick();
 
     // Both halves, as in the original 2026-08-14 fix (P1-3): the wall is
@@ -531,6 +539,92 @@ describe('R3-04 · CLOSED — a list does not say Empty before it knows', () => 
     expect(el.querySelector('[role="alert"]')).toBeTruthy();
     expect(el.textContent).toMatch(/disk I\/O error|didn't work|try/i);
   });
+
+  // ── A REFUSED END, ON THE SURFACE AND NOT ONLY IN THE WRAPPER ─────────────
+  //
+  // `endservice.test.js` and `qa-r5-groups.test.js` both hold that `endService`
+  // throws. Neither can see what History does with the throw — and the original
+  // defect was entirely on this side of the call: `await endService(); refresh();`
+  // repainted an identical list under an identical button, which is as close to a
+  // claim of success as a screen gets without words.
+  //
+  // So this is the door, not the wrapper. A later tidy-up that moved `refresh()`
+  // out of the `try` "so the list is always current" would leave both wrapper
+  // tests green and put the defect straight back. CLAUDE.md: a guarantee is only
+  // kept on the doors you checked.
+  itMounted('a refused End current service says so, and does NOT repaint the list', async () => {
+    invoke.mockImplementation((cmd) =>
+      cmd === 'end_service'
+        ? Promise.reject({ kind: 'refused', message: 'A service is being recorded.' })
+        : Promise.resolve([]),
+    );
+    const History = (await import('./views/library/History.svelte')).default;
+    const el = mountInto(History);
+    // Wait for the MOUNT'S OWN read to land before counting. Sampling before it
+    // does makes the count move for a reason that has nothing to do with the
+    // press, which is how the first version of this test failed.
+    await until(
+      () => invoke.mock.calls.some(([c]) => c === 'list_services'),
+      'History to finish its first read',
+    );
+    await settle();
+
+    const before = invoke.mock.calls.filter(([c]) => c === 'list_services').length;
+    [...el.querySelectorAll('button')].find((b) => /End current service/.test(b.textContent)).click();
+    await until(() => el.querySelector('[role="alert"]'), 'the refusal to be reported');
+
+    expect(el.querySelector('[role="alert"]').textContent).toMatch(/A service is being recorded/);
+    const after = invoke.mock.calls.filter(([c]) => c === 'list_services').length;
+    expect(
+      after,
+      'the list was re-read over a refusal. Repainting an unchanged surface is how ' +
+        'the original defect read as success.',
+    ).toBe(before);
+  });
+
+  itMounted('and the refusal belongs to the press — Refresh clears it', async () => {
+    // `endErr` was cleared only by pressing the same button again, so a failure
+    // line could sit under the buttons after the service had been ended from the
+    // dock: a stale accusation on a screen that is now right.
+    invoke.mockImplementation((cmd) =>
+      cmd === 'end_service'
+        ? Promise.reject({ kind: 'refused', message: 'A service is being recorded.' })
+        : Promise.resolve([]),
+    );
+    const History = (await import('./views/library/History.svelte')).default;
+    const el = mountInto(History);
+    await until(() => invoke.mock.calls.some(([c]) => c === 'list_services'), 'the first read');
+    await settle();
+
+    [...el.querySelectorAll('button')].find((b) => /End current service/.test(b.textContent)).click();
+    await until(() => el.querySelector('[role="alert"]'), 'the refusal to be reported');
+
+    [...el.querySelectorAll('button')].find((b) => /Refresh/.test(b.textContent)).click();
+    await until(() => !el.querySelector('[role="alert"]'), 'the stale refusal to be cleared');
+    expect(el.querySelector('[role="alert"]')).toBe(null);
+  });
+
+  itMounted('…and an end that WORKED re-reads the list and says nothing', async () => {
+    // The paired control. A test that only ever saw the failure would stay green
+    // if the fix stopped refreshing on success too.
+    invoke.mockImplementation((cmd) => (cmd === 'end_service' ? Promise.resolve(null) : Promise.resolve([])));
+    const History = (await import('./views/library/History.svelte')).default;
+    const el = mountInto(History);
+    await until(
+      () => invoke.mock.calls.some(([c]) => c === 'list_services'),
+      'History to finish its first read',
+    );
+    await settle();
+
+    const before = invoke.mock.calls.filter(([c]) => c === 'list_services').length;
+    [...el.querySelectorAll('button')].find((b) => /End current service/.test(b.textContent)).click();
+    await until(
+      () => invoke.mock.calls.filter(([c]) => c === 'list_services').length > before,
+      'the list to be re-read after a successful end',
+    );
+
+    expect(el.querySelector('[role="alert"]')).toBe(null);
+  });
 });
 
 
@@ -752,40 +846,11 @@ describe('R3-06 · every surface goes through the ONE humaniser', () => {
     expect(msg.getAttribute('role')).toBe('alert');
   });
 
-  itMounted('ThemeEditor shows a sentence too', async () => {
-    // Was `Err("…")` verbatim — a shape a volunteer has no way to read.
-    const RUST = 'no such column: style_json (code 1)';
-    invoke.mockImplementation((cmd) => {
-      if (cmd === 'set_setting') return Promise.reject(RUST); // saveTheme persists via app_settings
-      if (cmd === 'save_theme') return Promise.reject(RUST);
-      if (cmd === 'get_setting')
-        return Promise.resolve(JSON.stringify([{ id: 7, name: 'Mine', style: {} }]));
-      return Promise.resolve([]);
-    });
-
-    const ThemeEditor = (await import('./views/themes/ThemeEditor.svelte')).default;
-    const el = mountInto(ThemeEditor, { themeId: 7 });
-    for (let i = 0; i < 6; i++) await settle();
-
-    // Save is disabled until the draft is dirty, so edit the name first — which is
-    // also the only way an operator ever reaches this button.
-    const name = el.querySelector('.te-name');
-    expect(name).toBeTruthy();
-    name.value = 'Mine, edited';
-    name.dispatchEvent(new Event('input', { bubbles: true }));
-    await tick();
-
-    const save = [...el.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Save');
-    expect(save).toBeTruthy();
-    save.click();
-    for (let i = 0; i < 6; i++) await settle();
-
-    const err = el.querySelector('.te-err');
-    expect(err).toBeTruthy();
-    expect(err.textContent.trim()).not.toBe(RUST);
-    expect(err.textContent).not.toContain('[object Object]');
-    expect(err.textContent).toMatch(/didn't work/i);
-  });
+  // The THEME EDITOR's own sentence stood here and its surface is gone: themes
+  // were folded into templates (DECISIONS §87). The claim it made — a failed save
+  // reaches a volunteer through `errors.js`, never as a raw Rust `Err` — is the
+  // same claim the TEMPLATE editor's `.te-err` makes, and that one is asserted
+  // directly above, on the surface that survived.
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1200,7 +1265,7 @@ describe('R3-12 · errors.js is the one humaniser, on every surface', () => {
     expect(f).toMatch(/role="alert"/);
   });
 
-  it('ImportReview, ThemeEditor and the TEMPLATE pair route through the humaniser, not String(e)', () => {
+  it('ImportReview and the TEMPLATE pair route through the humaniser, not String(e)', () => {
     // The template pair was added 2026-09-05. `String(e)` on a typed error from
     // `error.rs` — which serialises as `{ kind, message }` — renders literally
     // **"[object Object]"**, and six controls did it: every delete, duplicate and
@@ -1209,8 +1274,6 @@ describe('R3-12 · errors.js is the one humaniser, on every surface', () => {
     // in the set that is already written for a volunteer.
     for (const f of [
       'src/lib/views/library/ImportReview.svelte',
-      'src/lib/views/themes/ThemeEditor.svelte',
-      'src/lib/views/themes/ThemeGallery.svelte',
       'src/lib/views/templates/TemplateGallery.svelte',
       'src/lib/views/templates/TemplateEditor.svelte',
       'src/lib/views/library/Announcements.svelte',
@@ -1290,14 +1353,13 @@ describe('R3-12 · dialogs and the panic-key guard', () => {
 
 describe('R3-12 · CLOSED — every view a screen reader lands on has a heading', () => {
   // A screen-reader operator navigates by heading. The whole Library tab — five
-  // sub-views and the deck — had none, and neither did Themes or Templates.
+  // sub-views and the deck — had none, and neither did Templates.
   //
   // Inverted from the findings it replaces: these now fail if a heading is removed.
   for (const f of [
     'src/lib/views/Library.svelte',
-    'src/lib/views/themes/ThemeGallery.svelte',
-    'src/lib/views/themes/ThemeEditor.svelte',
     'src/lib/views/templates/TemplateGallery.svelte',
+    'src/lib/views/templates/TemplateEditor.svelte',
     'src/lib/views/library/Scripture.svelte',
   ]) {
     it(`${f.split('/').pop()} renders a heading`, () => {
@@ -1313,17 +1375,16 @@ describe('R3-12 · CLOSED — every view a screen reader lands on has a heading'
   // The requirement belongs to the children, and all four are asserted above.
   // Recorded rather than silently dropped from the list.
   //
-  // `Themes.svelte` used to be the second entry here and no longer exists: Themes
+  // `Themes.svelte` used to be the second entry here and no longer exists. Themes
   // became a DESK inside the Templates workspace (docs/REBRAND.md §2, DECISIONS
-  // §79), so one router now picks between four children instead of two routers
-  // picking between two each. Its children are unchanged and still asserted above.
+  // §79) and were then folded into the template model itself (DECISIONS §87), so
+  // this router now picks between two children: browse, or make.
   for (const f of ['src/lib/views/Templates.svelte']) {
     it(`${f.split('/').pop()} is a router and correctly has none`, () => {
       const t = src(f);
       expect(t).not.toMatch(/<h[1-6][\s>]/);
-      // It really is just the switch: a desk, then a mode within it.
+      // It really is just the switch: browse, or make.
       expect(t).toMatch(/mode === 'editor'/);
-      expect(t).toMatch(/desk === 'themes'/);
     });
   }
 });
@@ -1339,7 +1400,7 @@ describe('R3-12 · the two genuinely unlabelled controls — CLOSED 2026-08-30',
   // reintroducing either defect turns them red.
   it('the Planner stage-note textarea is named by a real <label for>', () => {
     const t = src('src/lib/views/ServicePlanner.svelte');
-    expect(t).toMatch(/<label class="r-lbl sp-flbl" for="sp-stage-note">Stage note<\/label>/);
+    expect(t).toMatch(/<label class="r-lbl sp-flbl" for="sp-stage-note">Stage Note<\/label>/);
     expect(t).toMatch(/<textarea id="sp-stage-note"/);
     // …and NOT with an aria-label, which would be a second copy of the same words.
     expect(t).not.toMatch(/sp-note[^>]*aria-label/);

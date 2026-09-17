@@ -35,10 +35,24 @@ export const WALL_STATES = Object.freeze(['safe', 'rehearsal', 'blackout', 'onai
  * same wall on the same screen. The order is not arbitrary:
  *
  *   safe mode   outranks everything, including rehearsal. Both mean "not
- *               reaching the screens", but safe mode also means the operator
- *               cannot change that without restarting, so it is the thing they
- *               must read or they will spend the service wondering why nothing
- *               fires.
+ *               reaching the screens", but rehearsal is a mode somebody chose for
+ *               the next few minutes while safe mode is a whole copy of Relay
+ *               disarmed — so it is the thing they must read, or they will spend
+ *               the service wondering why nothing fires.
+ *               This used to say safe mode "cannot be changed without
+ *               restarting", and DECISIONS §86 made that false in the same wave
+ *               it was written: `applySafeMode` is a live transition, and
+ *               Settings → General turns it off without a relaunch. That was the
+ *               defect §86 fixed — a label that had stopped describing the thing
+ *               behind it — so the comment describing it had to stop saying so
+ *               too.
+ *               `safeModeFailed` is the honest half of that. Safe mode's record
+ *               is written before it is enforced (DECISIONS §86), so this cell
+ *               used to print "outputs disabled" over a screen that had refused
+ *               to close and was still painting a verse — the FIRST branch,
+ *               outranking `live`, on the one strip an operator reads all
+ *               service. A cell that says the same thing whether the thing
+ *               behind it worked or not is not a status cell (rule 35).
  *   rehearsal   outranks the wall: nothing is reaching a congregation, so the
  *               strip must not say On air on any tab.
  *   blackout    outranks live: something is loaded, and the wall is black.
@@ -48,8 +62,11 @@ export const WALL_STATES = Object.freeze(['safe', 'rehearsal', 'blackout', 'onai
  * `label` is what is on the screens, already humanised by the caller (a verse
  * reference, "picture", "video"). It is never a raw payload.
  */
-export function wallState({ safeMode = false, rehearsing = false, black = false, live = false, label = '' } = {}) {
-  if (safeMode) return { tone: 'safe', words: 'Safe mode — outputs disabled' };
+export function wallState({ safeMode = false, safeModeFailed = false, rehearsing = false, black = false, live = false, label = '' } = {}) {
+  if (safeMode)
+    return safeModeFailed
+      ? { tone: 'safe', words: 'Safe mode — NOT enforced, check the screens' }
+      : { tone: 'safe', words: 'Safe mode — outputs disabled' };
   if (rehearsing) return { tone: 'rehearsal', words: 'Rehearsal — nothing reaches the screens' };
   if (black) return { tone: 'blackout', words: 'Blackout' };
   if (live) return { tone: 'onair', words: label ? `On air — ${label}` : 'On air' };

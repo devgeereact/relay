@@ -3,8 +3,14 @@
   import { DEFAULT_TEMPLATE, builtinById } from './lib/templates.js';
   import TemplateRender from './lib/TemplateRender.svelte';
   import { parseTemplateOverride } from './lib/templates.js';
-  import { isKeyedTemplate, resolveOutputTemplate, templateShows } from './lib/layers.js';
-  import { resolveThemed, parseThemes } from './lib/themes.js';
+  import {
+    isKeyedTemplate,
+    resolveOutputTemplate,
+    templateShows,
+    setCountdownWarnDefault,
+  } from './lib/layers.js';
+  import { acceptsStageMessage, roleOf } from './lib/channelroles.js';
+  import { resolveTokens } from './lib/styletokens.js';
   import { markOutput } from './lib/latency.js';
   import { startBeat, paintState } from './lib/outputHealth.js';
 
@@ -29,6 +35,141 @@
   let content = null;
   let visible = false;
   let black = false; // opaque blackout overlay
+  // ── THE STANDING BACKGROUND (the second payload) ───────────────────────────
+  //
+  // `{ media_url, media_kind }`, or null. It is NOT a field on the content and
+  // that is the whole point: the content is what the screen is showing, this is
+  // what it is showing it ON, and a verse arriving must leave it exactly where it
+  // is. Until it existed the two were one field, so a church could have scripture
+  // or its own backdrop and never both.
+  //
+  // **A PANIC CONTROL TAKES IT.** `clear` and `black` set this to null on both
+  // doors below, beside the `visible`/`black` they already set — the single most
+  // important line in this file's half of the feature, because a clear that left
+  // the church's picture on the wall is the worst class of bug in this product.
+  // The hub empties its retained slot at the same instant, so a screen that
+  // reconnects a second later is not painted it back either.
+  let backdrop = null;
+  /**
+   * ONE WRITER, called from both doors, for the reason `applyRoles` above it
+   * gives: a native output window has the Tauri bridge and no socket, a kiosk
+   * page has the socket and no bridge, and a rule kept on one of the two is the
+   * mistake this file's own comments count four times — here on the two screens
+   * most often in the same room. An absent or blank URL is a take-down, never a
+   * background with nothing in it.
+   */
+  function applyBackdrop(url, kind) {
+    backdrop = url ? { media_url: url, media_kind: kind || 'image' } : null;
+  }
+  // THE OPERATOR'S CONFIGURED DEFAULT (`default_template_id`) — the LAST link in
+  // the resolver's chain, applied only when nothing above it answered. Pushed by
+  // the kiosk hub on connect and whenever the operator changes it, and mirrored
+  // to a native output window over `output://default_template`.
+  let defaultTpl = null;
+
+  // ── THE STAGE MESSAGE, AND WHY THIS PAGE MAY REFUSE IT ─────────────────────
+  //
+  // `channels::stage_alert` publishes to EVERY kiosk client. It has to: the hub
+  // records nothing about who connected and DECISIONS §35 is not being reversed,
+  // so it cannot address one screen. Until now this page was safe by OMISSION —
+  // it had no `stage_alert` branch at all, and docs/REBRAND.md §5's guarantee
+  // ("no congregation screen can show it") rested on that absence.
+  //
+  // A `stage_message` layer binding ends the omission: a renderer now reads the
+  // value, so the absence protects nothing and the refusal has to be explicit.
+  // It lives HERE, at the receiver, because the receiver is the only party that
+  // knows which screen it is — the URL is channel-keyed (DECISIONS §29) and the
+  // backend publishes what each channel is for.
+  //
+  // `stageMessage` is renderer state and NEVER a field on `OutputContent`. On the
+  // content it would be broadcast to every screen, and the only thing between it
+  // and a lobby TV would be which layers that TV's template happens to have.
+  let roles = {};
+  let stageMessage = '';
+
+  // ── THE OPERATOR TOOK THIS SCREEN OUT OF THE WALL ───────────────────────────
+  //
+  // `clear_screens` and `blackout` address every screen and ask nothing about
+  // which — that is what makes them panic controls (rule 15, DECISIONS §20) and
+  // they are untouched. `screen_state` is the separate, deliberate control beside
+  // them: "take the lobby TV down but leave the wall live".
+  //
+  // Refused, or rather APPLIED, at the receiver, for the third time in this file
+  // and for the same reason as `channel_template` and `stage_alert`: the hub
+  // broadcasts to everybody and records nothing about who connected (DECISIONS
+  // §35), so the only party that knows which screen this is, is this screen.
+  //
+  // THE WHOLE SET ARRIVES EVERY TIME, never a delta — the same rule the programme
+  // timers follow. A page that missed one frame would otherwise be wrong about
+  // itself for the rest of the service with no way to find out, and the thing it
+  // would be wrong about is whether a congregation can see anything.
+  //
+  // `content` KEEPS BEING TRACKED WHILE THIS SCREEN IS DOWN, and only the
+  // rendering is withheld. Throwing the content away would make coming back up
+  // mean "blank until the next fire", which is RG-129 — a screen that rejoined
+  // mid-service and stayed black — reached through a control instead of a
+  // reconnect.
+  let downMode = null; // 'clear' | 'black' | null
+  /**
+   * The set has changed. `screens` is `{"4":"clear"}`, keyed by channel id, and
+   * `{}` is the answer that every screen is up.
+   *
+   * Keys arrive as strings because JSON objects have string keys and this page's
+   * channel is a number — the same comparison `roleOf` documents, and the same
+   * way a filter that looks right comes to refuse everything.
+   *
+   * A page on NO channel (a raw template preview, `?channel=` absent, parsed to
+   * 0) can never be named: channel ids start at 1, and a preview that belongs to
+   * no screen must not be taken down by a decision about a screen.
+   */
+  function applyScreenState(screens) {
+    if (!channelId || !screens || typeof screens !== 'object') {
+      downMode = null;
+      return;
+    }
+    const mine = screens[String(channelId)];
+    downMode = mine === 'clear' || mine === 'black' ? mine : null;
+  }
+  // WHAT IS ACTUALLY PAINTED. Two derived facts rather than two more writers of
+  // `visible` and `black`: a control that WROTE those would be indistinguishable
+  // from a whole-wall clear one line later, and coming back up would then have
+  // nothing to come back to.
+  $: shownContent = visible && !downMode ? content : null;
+  // AND THE BACKDROP GOES DOWN WITH IT — a point neither branch could see alone.
+  //
+  // The per-screen control and the standing background landed on two branches on
+  // the same day. Separately each is right; together they ask a question neither
+  // was in a position to answer: what does a screen the operator has taken OUT of
+  // the wall paint? A backdrop is congregation furniture, so a lobby TV that has
+  // been taken down while still showing the church's picture has not been taken
+  // down — it has been half taken down, which is the state `downMode` exists to
+  // make impossible.
+  //
+  // Derived, not written, for the reason immediately above: a writer here would be
+  // indistinguishable from a whole-wall clear, and coming back up would have
+  // nothing to come back to. The retained hub slot still holds the picture, so
+  // restoring the screen restores it.
+  $: shownBackdrop = downMode ? null : backdrop;
+  $: shownBlack = black || downMode === 'black';
+  $: myRole = roleOf(roles, channelId);
+  /**
+   * The role map has changed. ONE writer, called from both doors, because a
+   * screen that stops being a stage must lose the message AT ONCE: an operator
+   * who moves the stage role off a tablet has said that tablet is a congregation
+   * screen now, and a refusal that only applied to the NEXT message would leave
+   * the last one painted on it for the rest of the service.
+   *
+   * Deliberately NOT a blanket `$:` that re-clears whenever the role is not
+   * `stage`. That reads as belt and braces and is worse than either: it makes the
+   * acceptance check in `stage_alert` redundant, so removing the check breaks no
+   * test — and the message would still be ASSIGNED for an instant before the
+   * reactive pass took it away, which on a congregation screen is a flash of
+   * something private. Each path guards its own case, once.
+   */
+  function applyRoles(next) {
+    roles = next && typeof next === 'object' ? next : {};
+    if (!acceptsStageMessage(roleOf(roles, channelId))) stageMessage = '';
+  }
 
   // ── THE OPERATOR'S TRANSITION OVERRIDE, SNAPSHOTTED (DECISIONS §84) ──────────
   //
@@ -61,7 +202,7 @@
   // own template `t`.
   $: override = parseTemplateOverride(content?.template_json);
   // THE TRANSPARENCY LAW WINS OVER THE OVERRIDE. A keyed channel must NEVER render
-  // opaque — an opaque content-type override (e.g. a full-screen scripture theme)
+  // opaque — an opaque content-type override (e.g. a full-screen scripture look)
   // would blot out the very camera the lower third exists to caption. So on a
   // keyed channel an opaque override is ignored: the channel keeps its own keyed
   // template and the verse still flows into its band. Opaque channels apply the
@@ -74,18 +215,14 @@
   // no content look is set either, still has to paint something legible rather
   // than nothing at all.
   $: activeTemplate =
-    resolveOutputTemplate(t, override, !!content?.template_pinned) || DEFAULT_TEMPLATE;
-  // THE THEME LAYER. If the resolved template pins a theme (style.themeRef), fill
-  // its unset style keys from that theme — the same merge the editor previews, so
-  // the wall matches the editor. Custom themes are fetched on desktop (below);
-  // kiosk/OBS has no DB, so `customThemes` stays [] and only BUILT-IN themes
-  // resolve there. A template pinning a custom theme therefore themes on desktop
-  // and degrades to its own look on a kiosk — never blanks (applyTheme is safe).
-  // Style-only, so it can't change keyed-ness: isBand stays on activeTemplate.
-  let customThemes = [];
+    resolveOutputTemplate(t, override, !!content?.template_pinned, defaultTpl) || DEFAULT_TEMPLATE;
   // Set on mount; a no-op until then so onDestroy is safe if mounting threw.
   let stopBeat = () => {};
-  $: themedTemplate = resolveThemed(activeTemplate, customThemes);
+  // LAYER STYLE TOKENS. A layer bound to `theme:accent` resolves against the
+  // template's own style, so a stage or confidence starter wears whatever
+  // template it was dropped into. Style-only, so it can't change keyed-ness:
+  // isBand stays on activeTemplate.
+  $: renderedTemplate = resolveTokens(activeTemplate);
   // "Keyed" for blackout purposes — resolved on what is ACTUALLY rendering.
   $: isBand = isKeyedTemplate(activeTemplate);
   // PAGE BACKGROUND. A KEYED (lower-third) channel stays transparent so OBS/ATEM
@@ -123,21 +260,10 @@
     const tpl = await call('get_template', { id: templateId });
     t = tpl ?? null;
   }
-  // Desktop only — the operator's custom themes, so a template pinning one wears
-  // it on the real wall. Guarded: a missing command / corrupt blob leaves the
-  // set empty (builtins still resolve), never throwing on a live output page.
-  async function loadCustomThemes() {
-    try {
-      const call = await invoke();
-      customThemes = parseThemes(await call('get_setting', { key: 'themes.custom' }));
-    } catch {
-      customThemes = [];
-    }
-  }
   // Desktop only — the override already in force when this window opened. The
   // kiosk hub replays it on `hello`; a native output window has no socket, so
   // without this read a projector opened mid-service is the one screen still
-  // cutting. Guarded the same way `loadCustomThemes` is: a missing command leaves
+  // cutting. Guarded: a missing command or a backend that says nothing leaves
   // the screen following its template, never throwing on a live output page.
   async function loadLiveTransition() {
     try {
@@ -147,6 +273,71 @@
       noteTransition(Array.isArray(cur) ? cur[0] : null, Array.isArray(cur) ? cur[1] : null);
     } catch {
       noteTransition(null, null);
+    }
+  }
+  // Desktop only — the picture already behind everything when this window opened,
+  // on exactly the argument `loadLiveTransition` above makes. The kiosk hub
+  // replays the retained background on `hello`; a native output window has no
+  // socket, so without this read a projector opened mid-service is the one screen
+  // in the building painting the words on black. Guarded the same way: a missing
+  // command or a backend that says nothing leaves this screen with no backdrop,
+  // which is the plain answer and the safe one, and never throws on a live output
+  // page.
+  async function loadLiveBackground() {
+    try {
+      const call = await invoke();
+      const cur = await call('live_background');
+      // Rust hands back `[url, kind]` or null.
+      applyBackdrop(Array.isArray(cur) ? cur[0] : null, Array.isArray(cur) ? cur[1] : null);
+    } catch {
+      applyBackdrop(null, null);
+    }
+  }
+  // Desktop only — the configured default already in force when this window
+  // opened, on exactly the same argument as `loadLiveTransition` above and for
+  // exactly the same reason. The kiosk hub seeds `defaultTpl` on `hello`; a
+  // native output window has no socket and was seeded by NOTHING, so a projector
+  // opened through `open_channel_output` on a channel that follows the content
+  // look rendered the bundled Classic Serif until the operator happened to CHANGE
+  // the default and `output://default_template` fired. That is the half of "the
+  // default does not activate on all screens" this wave exists to close, hidden
+  // because the other half works. Guarded the same way: a missing command or a
+  // backend that says nothing leaves this screen following its template, never
+  // throwing on a live output page.
+  async function loadDefaultTemplate() {
+    try {
+      const call = await invoke();
+      const raw = await call('get_setting', { key: 'default_template_id' });
+      const id = parseInt(raw, 10);
+      if (!Number.isFinite(id)) {
+        defaultTpl = null;
+        return;
+      }
+      defaultTpl = (await call('get_template', { id })) ?? null;
+    } catch {
+      defaultTpl = null;
+    }
+  }
+  // Desktop only — what each screen is for, read when this window opens. Exactly
+  // the argument `loadDefaultTemplate` above makes: the hub replays the role map
+  // on `hello`, a native output window has no socket, and the event only fires
+  // when the operator CHANGES something. Without this read a projector opened
+  // mid-service knows nothing about itself until the next change.
+  //
+  // Guarded the same way — a missing command or a backend that says nothing
+  // leaves this screen with no role, which is the refusing answer and the safe
+  // one, and never throws on a live output page.
+  async function loadChannelRoles() {
+    try {
+      const call = await invoke();
+      const list = await call('list_output_channels');
+      const next = {};
+      for (const c of Array.isArray(list) ? list : []) {
+        if (c?.role) next[String(c.id)] = c.role;
+      }
+      applyRoles(next);
+    } catch {
+      applyRoles({});
     }
   }
   async function fetchTemplate(id) {
@@ -171,17 +362,52 @@
     }
   }
 
+  /**
+   * THE CONFIGURED WARNING WINDOW, DELIVERED RATHER THAN READ — RG-149(c).
+   *
+   * `Settings → General → Countdown warning` is applied through
+   * `layers.js::setCountdownWarnDefault`, whose only writer is `stores/capture.js`
+   * — a module a browser source cannot import, because it has no Tauri bridge. So
+   * the figure rides with the content instead, on both doors, and this is where it
+   * is applied. The RULE does not move: `countdownWarning` still ranks a threshold
+   * chosen for one countdown ahead of this, and this ahead of the tenth-of-span
+   * rule behind it.
+   *
+   * An absent figure resets to the shipped minute rather than leaving the last
+   * delivered one standing — that is what the setting means when it is cleared, and
+   * a screen warning at a figure nothing on the machine holds is the shape of
+   * defect this whole chain exists to close.
+   */
+  function applyWarnDefault(ms) {
+    setCountdownWarnDefault(ms);
+  }
+
   function applyMessage(m) {
     if (m.kind === 'content') {
       // PER-SCREEN VISIBILITY. If THIS screen's template doesn't show this content
       // kind (e.g. a stage monitor set to scripture + songs + timer only, and a
       // picture just fired), ignore it and hold what's already up — the online
       // wall shows the picture, this screen keeps the passage.
+      //
+      // SITE 8 OF THE CONTENT-KIND SWEEP, THE KIOSK DOOR. Nothing changed: a
+      // congregation timer arrives as `countdown`, which every `shows` list names,
+      // and a programme timer is never published as content so it cannot reach this
+      // page by any route. The TWIN of this line is the `output://content` listener
+      // in `onMount` — the native window has the Tauri bridge and no socket, so a
+      // filter written here and not there is the "guarantee kept on one door"
+      // mistake, on the two screens most often in the same room.
       if (m.content_kind && !templateShows(t, m.content_kind)) return;
       // The override takes effect WITH the content, never before it — see the
       // snapshot comment at the top of this file.
       appliedTransition = pendingTransition;
-      content = { kind: m.content_kind, reference: m.reference, text: m.text, translation: m.translation, media_url: m.media_url, media_kind: m.media_kind, template_json: m.template_json, template_pinned: m.template_pinned, countdown_to: m.countdown_to, countdown_from: m.countdown_from, countdown_paused_ms: m.countdown_paused_ms, countdown_done: m.countdown_done, stage_note: m.stage_note, next_reference: m.next_reference, next_text: m.next_text, service_started_at: m.service_started_at, service_target_ms: m.service_target_ms };
+      // `countdown_warn_ms` is copied across like every other field this door
+      // rebuilds by hand: it is the threshold chosen for THIS countdown, and
+      // `TemplateRender` reads it off the content. The list is the reason this door
+      // has dropped fields before (`next_reference`), so a field added to the wire
+      // and not added here is a kiosk screen disagreeing with the wall beside it.
+      content = { kind: m.content_kind, reference: m.reference, text: m.text, translation: m.translation, media_url: m.media_url, media_kind: m.media_kind, template_json: m.template_json, template_pinned: m.template_pinned, countdown_to: m.countdown_to, countdown_from: m.countdown_from, countdown_paused_ms: m.countdown_paused_ms, countdown_done: m.countdown_done, countdown_warn_ms: m.countdown_warn_ms, stage_note: m.stage_note, next_reference: m.next_reference, next_text: m.next_text, service_started_at: m.service_started_at, service_target_ms: m.service_target_ms };
+      // THE CONFIGURED DEFAULT, which this page cannot read for itself.
+      applyWarnDefault(m.countdown_warn_default_ms);
       visible = true;
       black = false;
       // Report the paint back over the SAME socket the content came in on. This is
@@ -189,16 +415,24 @@
       // browser source in OBS, to the projector — and it is the leg every other
       // instrument in this codebase has had to assume was fast.
       markOutput(m.trace_id, ws);
-    } else if (m.kind === 'themes') {
-      // The operator's custom themes, pushed by the hub on connect and whenever a
-      // theme is saved. Lets THIS browser source resolve a template that pins a
-      // custom theme; builtins it already knows (bundled). Safe-parsed.
-      customThemes = parseThemes(JSON.stringify(m.themes ?? []));
+    } else if (m.kind === 'default_template') {
+      // THE CONFIGURED DEFAULT, pushed by the hub on connect and whenever the
+      // operator changes it. This screen follows the content look, so a change
+      // here is a change to what it wears — it is applied live rather than at
+      // the next reload, which is what "the default does not activate on all
+      // screens" actually was.
+      defaultTpl = m.template ?? null;
     } else if (m.kind === 'transition') {
       // HOW the next thing appears. Deliberately NOT applied here: it arms the
       // next content and repaints nothing. `mode: null` clears the override and
       // this screen goes back to following its template (DECISIONS §71 unchanged).
       noteTransition(m.mode, m.ms);
+    } else if (m.kind === 'background') {
+      // THE STANDING BACKGROUND, up or down. `media_url: null` is the take-down
+      // and arrives as an explicit null rather than as silence, because an absent
+      // frame cannot say "there is none now" and a screen that missed it would
+      // carry the picture for the rest of the service.
+      applyBackdrop(m.media_url, m.media_kind);
     } else if (m.kind === 'clear') {
       // A PANIC CONTROL NEVER TRANSITIONS. `clear` and `black` do not touch
       // `appliedTransition`, and `TemplateRender` has no `out:` transition at all
@@ -206,11 +440,37 @@
       // offers. A blackout that could fade is a blackout that can be late.
       visible = false;
       black = false;
+      // AND IT TAKES THE BACKGROUND. `Clear screens` means everything, and the
+      // background is part of everything.
+      backdrop = null;
     } else if (m.kind === 'black') {
       black = true;
       // On a band channel, blacking out means the band goes away — the camera
       // must not be covered.
       if (isBand) visible = false;
+      // On EVERY channel the backdrop goes, band or not. The opaque overlay hides
+      // it on an ordinary screen, but a keyed channel paints no overlay at all —
+      // so leaving it here would put the church's picture over the live camera at
+      // the one moment the operator asked for the camera alone.
+      backdrop = null;
+    } else if (m.kind === 'screen_state') {
+      // WHICH SCREENS THE OPERATOR HAS TAKEN OUT OF THE WALL. Retained by the hub
+      // in its own slot and replayed on hello AFTER the screen frame, so a browser
+      // source that restarted mid-sermon comes back down rather than bringing
+      // itself back up (rule 43, `channels::tests`).
+      applyScreenState(m.screens);
+    } else if (m.kind === 'channel_roles') {
+      // WHAT EVERY SCREEN IS FOR. Sent on every hello and whenever it changes, so
+      // this page can answer the only question it asks of it: am I the stage?
+      applyRoles(m.roles);
+    } else if (m.kind === 'stage_alert') {
+      // ONLY A STAGE. No role is not a stage — a lobby TV and a streaming feed
+      // both arrive here with no role at all, and a filter whose default is yes
+      // is not a filter. `text: null` (or blank) clears it; an alert is an
+      // instruction about a moment, never a state of the wall, which is why the
+      // hub does not retain it (rule 43, FRAME_VERDICTS).
+      if (!acceptsStageMessage(myRole)) return;
+      stageMessage = (m.text || '').trim();
     } else if (m.kind === 'channel_template') {
       // This screen's assigned template was changed. Filter by our channel (the
       // hub broadcasts to all; each client applies only its own) — live, no re-copy.
@@ -234,7 +494,13 @@
       ws.onopen = () => {
         // Ask the hub for this channel's real template.
         try {
-          ws.send(JSON.stringify({ kind: 'hello', template_id: templateId }));
+          // THE CHANNEL RIDES WITH IT NOW. The template id is what the hub
+          // counts clients against; the channel is what it needs to replay a
+          // state retained for ONE screen (`screen_state`). A client that never
+          // says which screen it is cannot be told it is one the operator took
+          // down. `channel: 0` is an honest answer for a raw preview and the hub
+          // treats it as no channel, exactly as this page does.
+          ws.send(JSON.stringify({ kind: 'hello', channel: channelId, template_id: templateId }));
         } catch {
           /* ignore */
         }
@@ -270,15 +536,28 @@
   onMount(async () => {
     try {
       await loadTemplate();
-      await loadCustomThemes();
       await loadLiveTransition();
+      await loadLiveBackground();
+      await loadDefaultTemplate();
+      await loadChannelRoles();
       const { listen } = await import('@tauri-apps/api/event');
       unlisten.push(await listen('output://content', (e) => {
         // Per-screen visibility (see applyMessage) — hold what's up if this screen
-        // doesn't show the fired kind.
+        // doesn't show the fired kind. SITE 8's other half: the kiosk protocol
+        // renames `kind` to `content_kind`, so the two doors read a differently
+        // named field off differently shaped messages and only the rule is shared.
+        // Swept with the kiosk door and needed nothing for the same reason.
         if (e.payload?.kind && !templateShows(t, e.payload.kind)) return;
         appliedTransition = pendingTransition;
         content = e.payload;
+        // BOTH DOORS. The struct emit carries every field, so the chosen threshold
+        // arrives here for free — the configured DEFAULT does not, because it is
+        // module state rather than content, and applying it on one door only is the
+        // mistake this file's own comments count four times. A projector on HDMI
+        // and a browser source in OBS are usually in the same room, and a warning
+        // colour that comes on at different moments on the two is worse than one
+        // that comes on late on both.
+        applyWarnDefault(e.payload?.countdown_warn_default_ms);
         visible = true;
         black = false;
         // The native output window has the bridge, not the kiosk socket.
@@ -290,11 +569,40 @@
       // differently — the "guarantee kept on one door" mistake, on the two screens
       // that are most often in the same room.
       unlisten.push(await listen('output://transition', (e) => noteTransition(e.payload?.mode, e.payload?.ms)));
-      unlisten.push(await listen('output://clear', () => { visible = false; black = false; }));
+      // THE STANDING BACKGROUND, on the door a native window has. Its twin is the
+      // `background` branch in `applyMessage`; a projector on HDMI and a browser
+      // source in OBS are usually in the same room, and a backdrop that reached
+      // one of the two is this file's own recurring mistake.
+      unlisten.push(
+        await listen('output://background', (e) =>
+          applyBackdrop(e.payload?.media_url, e.payload?.media_kind),
+        ),
+      );
+      // …AND THE PANIC CONTROLS TAKE IT, on this door too. The line that matters:
+      // a clear means everything.
+      unlisten.push(await listen('output://clear', () => { visible = false; black = false; backdrop = null; }));
+      // BOTH DOORS, for the fifth time in this file. A native output window on
+      // HDMI has the bridge and no socket; the browser source in the same room has
+      // the socket and no bridge. A per-screen control wired to one of them would
+      // take the lobby TV down over the network and leave the projector beside it
+      // untouched — the "guarantee kept on one door" mistake, on the control whose
+      // entire purpose is that exactly one screen changes.
+      unlisten.push(
+        await listen('output://screen_state', (e) => {
+          // The Tauri door carries ONE screen and its state, because the emit is
+          // per call; the kiosk door carries the whole set, because it is a
+          // retained frame and a set is the only shape that survives a missed
+          // frame. Both end in the same place.
+          if (!channelId || e.payload?.channel !== channelId) return;
+          const st = e.payload?.state;
+          downMode = st === 'clear' || st === 'black' ? st : null;
+        }),
+      );
       unlisten.push(
         await listen('output://black', () => {
           black = true;
           if (isBand) visible = false;
+          backdrop = null;
         }),
       );
       unlisten.push(
@@ -315,6 +623,20 @@
           }
         }),
       );
+      unlisten.push(
+        await listen('output://default_template', (e) => {
+          defaultTpl = e.payload?.template ?? null;
+        }),
+      );
+      // BOTH DOORS. A native output window has the bridge and no socket; the
+      // kiosk page has the socket and no bridge. A role change that reached one
+      // of the two would leave a projector and a browser source disagreeing about
+      // which of them may be shown a word meant for the preacher.
+      unlisten.push(
+        await listen('output://channel_roles', (e) => {
+          applyRoles(e.payload?.roles);
+        }),
+      );
       isDesktop = true;
     } catch {
       startKiosk();
@@ -332,7 +654,11 @@
     // reconnect, so a captured reference would keep beating into a dead one.
     stopBeat = startBeat({
       channelId,
-      getState: () => paintState({ black, visible, content }),
+      // WHAT THIS SCREEN IS ACTUALLY SHOWING, not what it was last told. A screen
+      // the operator took down is painting `clear`, and a beat that still claimed
+      // `content` would put `describeScreen` into a standing `Not confirmed` —
+      // an alarm about a screen doing exactly what it was told (rule 35).
+      getState: () => paintState({ black: shownBlack, visible: !!shownContent, content }),
       getWs: () => ws,
     });
   });
@@ -347,25 +673,43 @@
 </script>
 
 <TemplateRender
-  template={themedTemplate}
-  content={visible ? content : null}
+  template={renderedTemplate}
+  content={shownContent}
+  backdrop={shownBackdrop}
   audio={isDesktop}
+  stageMessage={stageMessage}
   transitionOverride={appliedTransition} />
 <!-- BLACKOUT NEVER BLACKS OUT A LOWER THIRD. On a keyed channel "black" would
      paint an opaque rectangle over the live camera — the opposite of what the
      operator pressed it for. On that channel the panic control removes the
      BAND, which is all this channel was ever contributing, and the camera keeps
      going out. Every other channel goes properly black. -->
-{#if black && !isBand}<div class="blackout"></div>{/if}
+{#if shownBlack && !isBand}<div class="blackout"></div>{/if}
 
 <style>
   /* Transparent by default — a template with a transparent background keys out
-     for OBS/ATEM. Solid templates paint their own background in TemplateRender. */
+     for OBS/ATEM. Solid templates paint their own background in TemplateRender.
+
+     THE TYPE BASE IS DECLARED HERE, AND IT IS NOT DECORATION (wave 5, Track E).
+     These four properties used to arrive from `app.css`'s `body{}` rule, because
+     `output.js` imported the operator console's whole stylesheet — which also put
+     every unscoped console rule on the congregation's screen. The page now imports
+     `tokens.css` and takes no rules, so it declares the base it always rendered
+     with. `line-height` in particular is inherited by any template element that
+     does not set its own (`.reference` is one), and it is an input to the fit
+     loop: dropping it would have changed both what a reference looks like and the
+     size the binary search settles on, on a wall, silently. Measured in a browser
+     before and after — with the console sheet and without, these four are the
+     whole difference. */
   :global(html, body) {
     margin: 0;
     height: 100%;
     background: transparent;
     overflow: hidden;
+    font-family: var(--f-body);
+    font-size: var(--v-fs-b1);
+    line-height: 1.45;
+    color: var(--v-txt);
   }
   /* Blackout: opaque black over everything (kills the screen, unlike clear). */
   .blackout {

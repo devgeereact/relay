@@ -151,9 +151,11 @@ describe('a tab that moved sends the operator where it went', () => {
     // Both became sections INSIDE Settings.
     expect(resolveActiveTab('dashboard', KNOWN)).toBe('settings');
     expect(resolveActiveTab('history', KNOWN)).toBe('settings');
-    // Themes became a DESK inside the Templates workspace (docs/REBRAND.md §2).
-    // Without the map entry an operator who was last on Themes lands on Live and
-    // has no reason to believe the surface still exists.
+    // Themes were folded INTO templates (DECISIONS §87) — first as a desk inside
+    // the Templates workspace, then into the template model itself. Without the
+    // map entry an operator who was last on Themes lands on Live and has no
+    // reason to believe the thing they were editing still exists. It does: it is
+    // the template's own style.
     expect(resolveActiveTab('themes', KNOWN)).toBe('templates');
   });
 
@@ -191,25 +193,29 @@ describe('a tab that moved sends the operator where it went', () => {
     }
   });
 
-  // ── The desk, not just the workspace ──────────────────────────────────────
+  // ── THE DESK THE REDIRECT LANDED ON IS ITSELF GONE, AND THE REDIRECT IS NOT ──
   //
   // `MOVED_TABS` gets somebody who was on the old Themes tab into the Templates
-  // WORKSPACE. That workspace has two desks, and landing on the wrong one reads
-  // exactly like the surface having been deleted — which is the failure the whole
-  // redirect exists to prevent, one level deeper. `migrateSession` is the half
-  // that answers "which desk", and it is pure so it can be asserted here.
-  it('somebody last on the Themes tab lands on the Themes desk', async () => {
-    const { migrateSession } = await import('./session.js?desk1');
-    expect(migrateSession({ activeTab: 'themes', templatesDesk: 'templates' }).templatesDesk).toBe('themes');
+  // WORKSPACE. That workspace briefly had two desks and `migrateSession` chose
+  // between them; themes are now folded into the template model (DECISIONS §87),
+  // so there is one desk and `templatesDesk` is dropped like any other key with
+  // no reader. The redirect still matters — more, not less: an operator whose
+  // laptop was left on that tab must land on the workspace that now holds what
+  // they were editing rather than bounce to Live.
+  it('still sends somebody last on the Themes tab to the Templates workspace', async () => {
+    const { resolveActiveTab, MOVED_TABS } = await import('./session.js?desk1');
+    expect(MOVED_TABS.themes).toBe('templates');
+    expect(resolveActiveTab('themes', KNOWN)).toBe('templates');
   });
 
-  it('leaves a session that never saw the old tab alone', async () => {
+  it('drops the desk key nothing reads any more, and nothing else', async () => {
     const { migrateSession } = await import('./session.js?desk2');
-    // The whole point of a migration is that it is a no-op for everyone else.
-    const fresh = { activeTab: 'live', templatesDesk: 'templates' };
-    expect(migrateSession(fresh)).toEqual(fresh);
-    const chosen = { activeTab: 'templates', templatesDesk: 'themes' };
-    expect(migrateSession(chosen)).toEqual(chosen);
+    // A key with no reader is re-persisted for the life of the install by the
+    // store's subscriber, exactly as `liveDensity` was — same defect, same fix.
+    const out = migrateSession({ activeTab: 'templates', templatesDesk: 'themes' });
+    expect('templatesDesk' in out).toBe(false);
+    // A deletion, not a reset: everything else about that session survives.
+    expect(out).toEqual({ activeTab: 'templates' });
   });
 });
 
@@ -236,22 +242,25 @@ describe('a density that no longer exists is dropped, not carried', () => {
     const { migrateSession } = await import('./session.js?dens1');
     const out = migrateSession({
       activeTab: 'live',
-      templatesDesk: 'templates',
+      liveFullscreen: true,
       liveDensity: 'compact',
     });
     expect('liveDensity' in out).toBe(false);
     // Everything else about that session is untouched — this is a deletion, not
     // a reset, and an operator mid-service keeps their place.
-    expect(out).toEqual({ activeTab: 'live', templatesDesk: 'templates' });
+    expect(out).toEqual({ activeTab: 'live', liveFullscreen: true });
   });
 
-  it('drops it on the moved-tab path too, which is the SECOND return', async () => {
-    // Two returns, and fixing one while leaving the other is the exact shape of
-    // "a guarantee is only kept on the doors you checked".
+  it('drops it for a session that still names the old Themes tab', async () => {
+    // This used to be the SECOND of two returns, and fixing one while leaving the
+    // other is the exact shape of "a guarantee is only kept on the doors you
+    // checked". There is one return now, which is why there is one to check.
     const { migrateSession } = await import('./session.js?dens2');
     const out = migrateSession({ activeTab: 'themes', liveDensity: 'compact' });
     expect('liveDensity' in out).toBe(false);
-    expect(out.templatesDesk).toBe('themes');
+    // `activeTab` is left exactly as saved: `resolveActiveTab` redirects it at
+    // render, against the tabs that exist then.
+    expect(out).toEqual({ activeTab: 'themes' });
   });
 
   it('a stored density does not survive a real load', async () => {

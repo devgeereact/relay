@@ -3,7 +3,7 @@
   import { get } from 'svelte/store';
   import { trapFocus } from './lib/focus.js';
   import { t } from './lib/i18n.js';
-  import { capture, capturing, live, screenBlack, rehearsing, initAudio, autoOpenOutputs, setDetection, clearScreens, blackScreen, panicError, dismissPanicError, dismissAudioError, loadServiceLock, channelHealth, channelWaiting, startChannelHealth, latencyReport, ping, onOperatorAction, noteOperatorAction, loadLiveTransition } from './lib/stores/capture.js';
+  import { capture, capturing, live, screenBlack, rehearsing, initAudio, autoOpenOutputs, applySafeMode, safeModeError, dismissSafeModeError, clearScreens, blackScreen, panicError, dismissPanicError, dismissAudioError, loadServiceLock, channelHealth, channelWaiting, startChannelHealth, latencyReport, ping, onOperatorAction, noteOperatorAction, loadLiveTransition, loadCountdownWarnMs } from './lib/stores/capture.js';
   import * as training from './lib/training.js';
   import { practice, stopPractice } from './lib/practice.js';
   import { degradations, worstLevel, summarise } from './lib/degraded.js';
@@ -63,6 +63,9 @@
     detectionOn: $capture.detectionOn,
     capturing: $capturing,
     safeMode: $safeMode,
+    // …and whether it actually took. The record is written before the enforcement
+    // runs, so this row asserted the promise over a screen that refused to close.
+    safeModeError: $safeModeError,
     // `undefined` until the first quality frame — no row until Relay has looked.
     denoise: $capture.quality?.denoise,
     gpuBackends,
@@ -134,12 +137,12 @@
     live:      () => import('./lib/views/Live.svelte'),
     library:   () => import('./lib/views/Library.svelte'),
     planner:   () => import('./lib/views/ServicePlanner.svelte'),
-    // THE TEMPLATES WORKSPACE HOLDS TWO DESKS (docs/REBRAND.md §2). Themes is the
-    // style layer beneath templates and was never a seventh thing an operator
-    // runs a service from — it is where you go while you are already editing a
-    // look. `Templates.svelte` is the router that picks the desk; `themes` is in
-    // `MOVED_TABS` so an operator whose session still remembers the old tab lands
-    // on the desk it went to rather than being dumped on Live.
+    // THE TEMPLATES WORKSPACE IS ONE DESK: browse, then make. Themes was a tab,
+    // then a second desk here, and is now neither — it was folded into the
+    // template model (DECISIONS §87), because a theme's every field was already
+    // a template `style` key. `themes` stays in `MOVED_TABS` so an operator whose
+    // session still remembers the old tab lands on the workspace that now holds
+    // what they were editing rather than being dumped on Live.
     templates: () => import('./lib/views/Templates.svelte'),
     channels:  () => import('./lib/views/Channels.svelte'),
     settings:  () => import('./lib/views/Settings.svelte'),
@@ -163,11 +166,11 @@
   // two are places you go from somewhere else rather than places you run a
   // service from:
   //
-  //   THEMES is the style layer BENEATH templates. A theme never reaches a wall
-  //   on its own: it is applied to a template, and the template is what fires.
-  //   It is now a DESK inside the Templates workspace (`views/Templates.svelte`
-  //   is the router, and the two-way switch is in its header) — one pipeline,
-  //   one workspace, instead of two tabs an operator has to know are related.
+  //   THEMES was the style layer BENEATH templates, and a theme never reached a
+  //   wall on its own. It became a DESK inside the Templates workspace, and then
+  //   stopped existing: a theme had no field a template does not have, so it was
+  //   inlined into every template that pinned it and deleted (DECISIONS §87).
+  //   One pipeline, one workspace, one model.
   //
   //   HELP is not a workspace at all. It is still a real route (see
   //   `viewLoaders`), reached from Settings → Support & guide and from the
@@ -182,7 +185,10 @@
     { key: 'live',      label: 'tab.live',      title: 'Live Service' },
     { key: 'library',   label: 'tab.library',   title: 'Content Library' },
     { key: 'planner',   label: 'tab.planner',   title: 'Service Planner' },
-    { key: 'templates', label: 'tab.templates', title: 'Templates & Themes' },
+    // `title` is the tooltip an operator reads, so it says what the workspace is
+    // rather than what it used to hold: it was 'Templates & Themes' until themes
+    // were folded into templates (DECISIONS §87).
+    { key: 'templates', label: 'tab.templates', title: 'Templates' },
     // Outputs — the ONE surface for every render target: the congregation wall,
     // stage/confidence/preacher monitors, streaming and lobby screens. Each is a
     // real backend channel (native window or LAN/OBS URL over :8032) with its own
@@ -357,6 +363,7 @@
   let perf = null;
   $: wall = wallState({
     safeMode: $safeMode,
+    safeModeFailed: !!$safeModeError,
     rehearsing: $rehearsing,
     black: $screenBlack,
     live: !!$live,
@@ -424,6 +431,11 @@
     // and a picker reading "Follow template" over screens that are crossfading is
     // a control that says the same thing whether or not it is in force (rule 35).
     loadLiveTransition();
+    // …nor a countdown that turns red at a figure the operator did not choose.
+    // The window is a setting (`Settings → General → Countdown warning`), and the
+    // dock and the programme pane ask the rule long before anybody opens that
+    // page — so it is loaded HERE, at the shell, not on the page that writes it.
+    loadCountdownWarnMs();
     // One poller for the whole app: Live, the Outputs table and the degraded
     // banner all read the same store (see `startChannelHealth`).
     startChannelHealth();
@@ -490,12 +502,12 @@
     // engine is attached — before any view has had a chance to arm anything. A
     // screen that says "outputs disabled" over a live detector is worse than no
     // safe mode at all.
+    // One door, so a console reopened in safe mode and a switch flipped in
+    // Settings enforce exactly the same thing. `applySafeMode` disarms detection
+    // AND closes any screen that is already open, and reports rather than throws
+    // — there is nothing here in a position to catch. DECISIONS §86.
     if ($safeMode) {
-      try {
-        await setDetection(false);
-      } catch {
-        /* no backend — nothing was armed in the first place */
-      }
+      await applySafeMode(true);
     }
     clearTimeout(capTimer);
     holdTimer = setTimeout(
@@ -575,6 +587,65 @@
      the operator most needs to see what is on the wall is the moment this bar is
      up, and it was sitting on top of that exact readout. -->
 <div class="shell" class:has-panic={$panicError} class:chromeless={liveFullscreen} style="--panic-h:{panicH}px">
+
+  <!-- THE TWO IN-FLOW BANNERS COME FIRST, ABOVE THE DESK.
+       `.shell` is a flex COLUMN (`app.css`), so these stack across the top under
+       the fixed panic bar — which is what `.audiobar`'s own comment has always
+       said they do, and what a full-width bar with a `border-bottom` is drawn to
+       be. They were below `.main-v` in the markup and beside it on the screen;
+       see the measurement in `app.css`'s `.shell` note. -->
+  <!-- THE MICROPHONE DIED (RG-117, PR #56). In the SHELL, for the reason the panic
+       bar is: a volunteer may well be in Settings or Templates when the desk feed
+       is knocked out, and a message on a tab they are not looking at is not a
+       message. `role="alert"`, because it interrupts the service; it does not
+       auto-dismiss, because "the microphone stopped" stays true until somebody
+       does something about it.
+
+       IT IS NOT A DUPLICATE OF `degraded.js`'s `audio` row, and the two cannot
+       disagree because both read this one store field. They do different jobs:
+       this INTERRUPTS, and the register INVENTORIES — the status bar's Reduced
+       cell and the Dashboard's readiness rollup both walk `degradations()`, so a
+       dead microphone that appeared only as a banner would be missing from the
+       one list that answers "what is wrong right now". Severity earns the banner;
+       completeness earns the row. -->
+  {#if $capture.audioError}
+    <div class="audiobar" role="alert" aria-live="assertive">
+      <div class="panic-t">
+        <b>Relay has stopped hearing the microphone.</b>
+        <span>{$capture.audioError}</span>
+      </div>
+      <button class="r-btn ghost sm" on:click={dismissAudioError}>Dismiss</button>
+    </div>
+  {/if}
+
+  <!-- SAFE MODE COULD NOT KEEP ITS PROMISE (DECISIONS §86). In the SHELL, for the
+       reason the other two rose bars are: the switch is in Settings, the failure
+       is about the OUTPUT SCREENS, and an operator who flips safe mode and then
+       walks to Live to see what is still lit must not be told there that outputs
+       are disabled. The rose line on the Settings row is the only other place
+       this exists, and it is on the one page they have just left.
+
+       `.audiobar`, not `.panicbar`: in flow, paints over nothing, and takes no
+       part in the `--panic-h` offset that a second fixed bar would have to
+       share. Rule 44 — an overlay may never cover `Clear screens`, and the
+       cheapest way to keep that true is not to overlay anything.
+
+       AFTER the microphone bar on purpose: `audioerror.test.js` slices the shell
+       from the FIRST `class="audiobar"` to find that banner, so a second one
+       above it shadows the assertion. A dead microphone is also the more urgent
+       of the two — this one is about screens nobody is firing to.
+
+       Rose, never amber. It does not auto-dismiss: "a screen may still be live"
+       stays true until somebody has looked at the screen. -->
+  {#if $safeModeError}
+    <div class="audiobar" role="alert" aria-live="assertive">
+      <div class="panic-t">
+        <b>Safe mode is NOT enforced.</b>
+        <span>{$safeModeError}</span>
+      </div>
+      <button class="r-btn ghost sm" on:click={dismissSafeModeError}>Dismiss</button>
+    </div>
+  {/if}
 
   <!-- Main -->
   <div class="main-v">
@@ -786,30 +857,6 @@
         <span>{$panicError}</span>
       </div>
       <button class="r-btn ghost sm" on:click={dismissPanicError}>Dismiss</button>
-    </div>
-  {/if}
-
-  <!-- THE MICROPHONE DIED (RG-117, PR #56). In the SHELL, for the reason the panic
-       bar is: a volunteer may well be in Settings or Templates when the desk feed
-       is knocked out, and a message on a tab they are not looking at is not a
-       message. `role="alert"`, because it interrupts the service; it does not
-       auto-dismiss, because "the microphone stopped" stays true until somebody
-       does something about it.
-
-       IT IS NOT A DUPLICATE OF `degraded.js`'s `audio` row, and the two cannot
-       disagree because both read this one store field. They do different jobs:
-       this INTERRUPTS, and the register INVENTORIES — the status bar's Reduced
-       cell and the Dashboard's readiness rollup both walk `degradations()`, so a
-       dead microphone that appeared only as a banner would be missing from the
-       one list that answers "what is wrong right now". Severity earns the banner;
-       completeness earns the row. -->
-  {#if $capture.audioError}
-    <div class="audiobar" role="alert" aria-live="assertive">
-      <div class="panic-t">
-        <b>Relay has stopped hearing the microphone.</b>
-        <span>{$capture.audioError}</span>
-      </div>
-      <button class="r-btn ghost sm" on:click={dismissAudioError}>Dismiss</button>
     </div>
   {/if}
 

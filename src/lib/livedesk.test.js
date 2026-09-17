@@ -32,7 +32,18 @@ const settle = (ms = 80) => new Promise((r) => setTimeout(r, ms));
 // be one a wall actually uses.
 const { BUILTINS } = await import('./templates.js');
 const TPL = BUILTINS[0];
-const CHANNEL = { id: 1, name: 'Main screen', render_target: 'native_window', template_id: 1 };
+// `role: 'main'` is what a fresh install seeds. It used to be absent here and the
+// pane still named this channel, because the old expression picked it off
+// `render_target` — which is the guess DECISIONS §89 replaced. A fixture that
+// leaves it out is now an install where nobody has set a main screen, and the
+// head says so.
+const CHANNEL = {
+  id: 1,
+  name: 'Main screen',
+  render_target: 'native_window',
+  template_id: 1,
+  role: 'main',
+};
 
 const VERSES = [
   { verse: 1, reference: 'Psalms 23:1', text: 'The LORD is my shepherd; I shall not want.' },
@@ -321,10 +332,11 @@ describe('the inspector column', () => {
     // here: no rendered control anywhere reaches `push_announcement`.
     //
     // This is a real consequence and it is asserted rather than left implicit —
-    // `capture.js::pushAnnouncement` and the Rust command both still exist, so
-    // `ipc.test.js` and `qa-inventory`'s command count are BOTH still green over
-    // a command nothing renders. Deleting the pair is the lead's call; until
-    // then this test is what says so out loud.
+    // `capture.js::pushAnnouncement` and the Rust command were both DELETED
+    // rather than left registered with nothing rendering them, following the
+    // same precedent as the five commands deleted on 2026-08-30 (a command
+    // nothing calls is attack surface nobody is watching). This test is what
+    // says so out loud now that the pair is gone.
     for (const f of ['LiveRail.svelte', 'Dock.svelte', 'views/Live.svelte']) {
       const s = readFileSync(resolve(__dirname, f), 'utf8');
       expect(s, `${f} still renders an announcement control`)
@@ -560,9 +572,38 @@ describe('L2 · the studio head reads as one statement', () => {
     // quotes the prototype's rendered head, which is why this reads the ELEMENT
     // rather than the file.)
     const src = liveSrc();
-    const el = src.slice(src.indexOf('<span class="mon-as'), src.indexOf('<span class="mon-as') + 220);
-    expect(el).toContain('>as {mainChannel.name}<');
+    const el = src.slice(src.indexOf('<span class="mon-as'), src.indexOf('<span class="mon-as') + 420);
+    expect(el).toContain('{programme.label}');
     expect(el).not.toMatch(/AS MAIN SCREEN/);
+    // The sentence itself is composed in `channelroles.js`, which is now the one
+    // place that decides WHICH screen this pane is a preview of (DECISIONS §89).
+    // It is read here too, because the words moving out of this file is exactly
+    // how a capitalised string could reappear without this test noticing.
+    const roles = readFileSync(resolve(__dirname, 'channelroles.js'), 'utf8');
+    expect(roles).toContain('`as ${byRole.name}`');
+    expect(roles).not.toMatch(/AS MAIN SCREEN|`AS \$/);
+  });
+
+  // AND THE HEAD SAYS WHEN IT IS GUESSING. The old expression answered the same
+  // way whether a main screen had been chosen, renamed or deleted — one sentence
+  // over three different situations, which is rule 35. The fallback is kept
+  // because a blank programme pane is a worse answer; it is drawn as a fallback.
+  it('says so when no screen has been set as the main screen', async () => {
+    invoke.mockImplementation((cmd) => {
+      if (cmd === 'list_output_channels')
+        return Promise.resolve([{ ...CHANNEL, role: null }]);
+      if (cmd === 'list_templates') return Promise.resolve([TPL]);
+      if (cmd === 'list_plans') return Promise.resolve([]);
+      if (cmd === 'list_books') return Promise.resolve([{ book: 'Psalms', chapters: 150 }]);
+      if (cmd === 'rehearsal') return Promise.resolve(false);
+      if (cmd === 'get_sensitivity') return Promise.resolve(50);
+      return Promise.resolve(null);
+    });
+    new Live({ target: host, props: {} });
+    await settle();
+    const el = host.querySelector('.mon.prog .mon-as');
+    expect(el.textContent).toContain('no main screen set');
+    expect(el.className).toContain('guessed');
   });
 
   // The reference is the one figure on this head read from across a booth.
@@ -662,6 +703,14 @@ describe('L2 · the slides head says what it is and what a press does', () => {
   // T2: the pair became ONE. `Normal | Compact` was removed on the operator's
   // instruction, and this test's real subject is the PLACE, so it keeps that and
   // narrows its claim rather than being deleted with the control.
+  //
+  // WAVE 4: a second control joined it, and the list is asserted exactly so the
+  // arrival is deliberate rather than absorbed. The slide sizer belongs in this
+  // slot for the same reason Full screen does — it changes how the console LOOKS
+  // and never what reaches a screen — and it is deliberately NOT the density
+  // segment coming back: that changed spacing and type, this changes the width of
+  // the picture an operator is reading the words off. `slidesizer.test.js` holds
+  // its behaviour, including that it moves the grid track and not `.sg-thumb`.
   it('the full-screen control left the rail and is still reachable', async () => {
     new Live({ target: host, props: {} });
     await settle();
@@ -671,7 +720,10 @@ describe('L2 · the slides head says what it is and what a press does', () => {
     const ctl = host.querySelector('.sg-head .view-ctl');
     expect(ctl).not.toBeNull();
     expect([...ctl.querySelectorAll('button')].map((b) => b.textContent.trim()))
-      .toEqual(['Full screen']);
+      .toEqual(['−', '+', 'Full screen']);
+    // The two glyphs are NAMED — a bare − is punctuation to a screen reader.
+    expect([...ctl.querySelectorAll('button')].map((b) => b.getAttribute('aria-label')))
+      .toEqual(['Smaller slide cells', 'Bigger slide cells', null]);
   });
 
   // ── THE DENSITY CONTROL IS DELETED, NOT HIDDEN (T2) ──────────────────────
@@ -1029,7 +1081,13 @@ describe('L2/2 · the slides head at a booth laptop’s width', () => {
   it('Close plan holds its size in the head', async () => {
     const { sess } = await mountPlan();
     expect(host.querySelector('.sg-head .mini.ghost').textContent.trim()).toBe('Close plan');
-    expect(src).toMatch(/\.sg-head \.mini\{flex:0 0 auto\}/);
+    // `:global(...)`, because `.mini` is now a class on the shared
+    // `ui/Button.svelte` rather than on an element in this file, and Svelte drops
+    // a scoped selector that matches nothing in the component's own markup. The
+    // claim is unchanged: the way OUT of a running plan does not shrink or wrap
+    // when the head gets crowded. The MOUNTED half above is the stronger of the
+    // two assertions and is untouched.
+    expect(src).toMatch(/\.sg-head :global\(\.mini\)\{flex:0 0 auto\}/);
     sess.setSession({ planId: null });
   });
 });

@@ -201,42 +201,90 @@ mod tests {
     /// and one that can refuse `manual_fire` takes the override away at the exact
     /// moment the AI has got something wrong. Over-blocking is the more dangerous
     /// failure of the two this file can commit.
+    const LIVE_PATH: &[&str] = &[
+        "manual_fire",
+        "nav",
+        "clear_screens",
+        "blackout",
+        "set_rehearsal",
+        "confirm_detection",
+        "dismiss_detection",
+        "set_stage_next",
+        "fire_content",
+        "fire_media",
+        "show_background",
+        "start_countdown",
+        "adjust_countdown",
+        // A timer control is a live control: it changes a number a congregation or a
+        // preacher is looking at, and `show_timer` puts one on a wall. The lock may
+        // never reach any of them — an operator mid-service who cannot stop a clock
+        // that is counting down to the wrong thing has no way out of it.
+        "start_timer",
+        "adjust_timer",
+        "stop_timer",
+        "list_timers",
+        "show_timer",
+        "set_detection_enabled",
+        "set_sensitivity",
+        "set_thresholds",
+        "open_channel_output",
+        "close_channel_output",
+        "set_channel_template",
+        "save_template",
+        "start_capture",
+        "stop_capture",
+        "end_service",
+        "output_beat",
+    ];
+
     #[test]
     fn the_lock_can_never_reach_the_live_path() {
-        let live = [
-            "manual_fire",
-            "nav",
-            "clear_screens",
-            "blackout",
-            "set_rehearsal",
-            "confirm_detection",
-            "dismiss_detection",
-            "set_stage_next",
-            "fire_content",
-            "fire_media",
-            "push_announcement",
-            "start_countdown",
-            "adjust_countdown",
-            "set_detection_enabled",
-            "set_sensitivity",
-            "set_thresholds",
-            "open_channel_output",
-            "close_channel_output",
-            "set_channel_template",
-            "save_template",
-            "start_capture",
-            "stop_capture",
-            "end_service",
-            "output_beat",
-        ];
         let lock = ServiceLock::default();
         lock.arm();
-        for cmd in live {
+        for cmd in LIVE_PATH {
             assert!(
                 lock.guard(cmd).is_ok(),
                 "{cmd} is a live control and must never be held back by the service lock"
             );
             assert!(describe(cmd).is_none());
+        }
+
+        // A NAME IN A HAND-WRITTEN LIST IS NOT A COMMAND.
+        //
+        // This list held `push_announcement` for as long as it took somebody to
+        // grep for it: the assertion checks that each name is NOT protected, and
+        // a name that is not a command is trivially not protected, so a dead
+        // entry passes for ever while looking like coverage.
+        let main = include_str!("main.rs");
+        let handler = main
+            .split("generate_handler!")
+            .nth(1)
+            .and_then(|s| s.split(']').next())
+            .expect("generate_handler! block");
+        assert!(
+            !handler.is_empty(),
+            "the generate_handler! block read as empty — the split found the macro \
+             and nothing inside it, and every assertion below would then be about \
+             nothing"
+        );
+        // Split on `,` and compare whole tokens. A substring match passes on a
+        // PREFIX: delete `nav` while `navigate_history` survives and
+        // `handler.contains("nav")` is still true, so the dead entry goes on
+        // looking like coverage — the same defect as the dead name itself, one
+        // level down.
+        let registered: Vec<&str> = handler
+            .trim_start()
+            .trim_start_matches('[')
+            .split(',')
+            .map(str::trim)
+            .collect();
+        for name in LIVE_PATH {
+            assert!(
+                registered.contains(name),
+                "`{name}` is named here as a command the lock may never reach, and \
+                 it is not registered in generate_handler! — a guarantee about \
+                 nothing"
+            );
         }
     }
 

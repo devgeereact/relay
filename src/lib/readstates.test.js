@@ -2,19 +2,23 @@
 //
 // `readErrors` exists because a GROUP 2 read swallows to `[]` and the view cannot
 // tell those three apart from the list alone (`capture.js`, "WHY A LIST WAS EMPTY").
-// RG-95 fixed the panes that were found at the time. This file covers four that
-// were not, each of which printed the EMPTY sentence over a failed read:
+// RG-95 fixed the panes that were found at the time. This file covered four that
+// were not, each of which printed the EMPTY sentence over a failed read. Three
+// remain; the fourth's pane no longer exists (themes were folded into templates,
+// DECISIONS §87) and is recorded here rather than silently dropped, because the
+// defect it names is the one this whole file is about:
 //
 //   · Outputs → Content looks   "No templates yet — make one in the Templates tab
 //                                first." A fresh install ships five built-ins, so
 //                                that sentence cannot be true of a working Relay —
 //                                and the operator's answer to it is to build five
 //                                more. Same defect RG-95 was filed for, third door.
-//   · Templates → Themes        The gallery hid it better than anywhere else,
-//                                because the BUILT-INS always render: a failed read
-//                                showed `Custom 0` and "No theme matches this
-//                                filter", and the operator rebuilds themes they
-//                                still have.
+//   · Templates → Themes        GONE with the desk. It hid the defect better than
+//                                anywhere else, because the BUILT-INS always
+//                                rendered: a failed read showed `Custom 0` and "No
+//                                theme matches this filter", and the operator
+//                                rebuilds themes they still have. Worth keeping in
+//                                mind for the next gallery that ships built-ins.
 //   · Settings → Dashboard      "No plans yet. Build one in Planner" — the sentence
 //                                `Loading.svelte`'s own header names as the one that
 //                                makes an operator think they have lost their work,
@@ -46,7 +50,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a) => invoke(...a) }));
 vi.mock('@tauri-apps/api/app', () => ({ getVersion: () => Promise.resolve('0.0.0-test') }));
 
 const cap = await import('./stores/capture.js');
-const { readErrors, templates, customThemes } = cap;
+const { readErrors, templates } = cap;
 
 let host;
 let app;
@@ -111,32 +115,6 @@ const text = (el) => el.textContent.replace(/\s+/g, ' ');
 /** The one assertive line. `ErrorState` is `role="alert"` and nothing else is. */
 const alertText = (el) =>
   [...el.querySelectorAll('[role="alert"]')].map((n) => n.textContent.replace(/\s+/g, ' ')).join(' | ');
-
-describe('Templates → Themes says why the custom themes are missing', () => {
-  it('a failed read is not "No theme matches this filter."', async () => {
-    customThemes.set([]);
-    // The real read has to fail: seeding `readErrors` by hand would be cleared by
-    // the gallery's own `onMount(loadThemes)` a moment later, and the test would
-    // then be asserting against a store nothing had written.
-    invoke.mockImplementation((cmd) =>
-      cmd === 'get_setting' ? Promise.reject('database is locked') : Promise.resolve([]),
-    );
-    const el = await mount('./views/themes/ThemeGallery.svelte');
-
-    // Humanised through errors.js (the ONE humaniser) and announced.
-    expect(alertText(el)).toMatch(/Relay could not save that just now/);
-    expect(alertText(el)).not.toMatch(/database is locked/);
-  });
-
-  it('and a read that worked says nothing at all', async () => {
-    customThemes.set([]);
-    invoke.mockResolvedValue([]);
-    const el = await mount('./views/themes/ThemeGallery.svelte');
-    expect(el.querySelector('[role="alert"]')).toBe(null);
-    // The built-ins are still there, which is exactly why this pane hid the defect.
-    expect(text(el)).not.toMatch(/No theme matches this filter/);
-  });
-});
 
 describe('Settings → Dashboard tells the truth about its lists', () => {
   // ── A NOTE ON WHICH OF THE TWO CARDS IS DRIVEN HERE ────────────────────────
@@ -257,5 +235,222 @@ describe('Settings → Bible translations', () => {
     );
     await settings();
     expect(get(readErrors).listTranslations).toBeTruthy();
+  });
+});
+
+// ── SETTINGS → THE SENTRY DSN ───────────────────────────────────────────────
+//
+// The one control in Relay that decides WHERE data leaves the machine, driven
+// rather than scanned. `settingssections.test.js` holds the structure — that a
+// second commit path exists, that the field has no `on:blur`, that `savedDsn` is
+// written from what the backend returned. What it cannot hold is the sequence:
+// type, don't save, read a banner promising the old address is still in force,
+// and have that remain true whatever else is pressed.
+//
+// A Save button was chosen over commit-on-blur because a half-typed address must
+// not become the live destination without a moment where the operator said so.
+// `set_crash_reporting` persists the string AND calls `telemetry::enable` on it
+// in the same breath, and reports already sent cannot be recalled — so every
+// path that reaches that command with something other than the saved address is
+// the same defect wearing a different button.
+describe('Settings → the Sentry DSN', () => {
+  const OLD = 'https://old@o1.ingest.sentry.io/1';
+  const NEW = 'https://new@o2.ingest.sentry.io/2';
+
+  /** Mount Settings with crash reporting ON and an address already in force. */
+  const privacy = async (onSet) => {
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === 'get_crash_reporting') return Promise.resolve({ enabled: true, dsn: OLD });
+      if (cmd === 'set_crash_reporting') return onSet(args);
+      return Promise.resolve([]);
+    });
+    const el = await mount('./views/Settings.svelte');
+    await press(el, 'Privacy & Advanced');
+    return el;
+  };
+
+  const field = (el) => el.querySelector('#crash-dsn');
+  const type = async (el, value) => {
+    const input = field(el);
+    input.value = value;
+    input.dispatchEvent(new Event('input'));
+    await settle(2);
+  };
+  const setCalls = () =>
+    invoke.mock.calls.filter(([c]) => c === 'set_crash_reporting').map(([, a]) => a);
+
+  it('an edit that has not been saved says so, and commits nothing', async () => {
+    const el = await privacy(() => Promise.resolve({ enabled: true, dsn: OLD }));
+    expect(field(el).value).toBe(OLD);
+
+    await type(el, NEW);
+    expect(text(el)).toMatch(/Not saved yet/);
+    expect(text(el)).toMatch(/still go to the address Relay already has/);
+    expect(setCalls(), 'typing reached the backend').toEqual([]);
+  });
+
+  it('flipping the switch does NOT smuggle the unsaved address through', async () => {
+    // The switch is the operator saying yes to WHETHER, not to WHERE. Sending the
+    // bound field here made the "Not saved yet" banner a lie: the half-typed
+    // address became the live crash-report destination one click later.
+    const el = await privacy((a) => Promise.resolve({ enabled: !a.enabled, dsn: a.dsn }));
+    await type(el, NEW);
+
+    el.querySelector('[role="switch"]').click();
+    await settle();
+
+    expect(setCalls().length).toBe(1);
+    expect(
+      setCalls()[0].dsn,
+      'the switch sent the UNSAVED address. Turning reporting on is not consent ' +
+        'to change where the reports go.',
+    ).toBe(OLD);
+  });
+
+  it('Save address commits it, and the unsaved line goes away', async () => {
+    const el = await privacy((a) => Promise.resolve({ enabled: true, dsn: a.dsn }));
+    await type(el, NEW);
+
+    const save = [...el.querySelectorAll('button')].find((b) => b.textContent.includes('Save address'));
+    expect(save, 'no Save address button').toBeTruthy();
+    save.click();
+    await settle();
+
+    expect(setCalls()).toEqual([{ enabled: true, dsn: NEW }]);
+    expect(text(el)).not.toMatch(/Not saved yet/);
+    expect(text(el)).toMatch(/Saved\./);
+  });
+
+  it('a backend answer with no shape at all does not take the section down', async () => {
+    // `acceptCrash` guards `savedDsn` and used to assign `crash` unguarded, and
+    // `$: crashOn = !!crash.enabled` runs on every assignment — so a null answer
+    // threw inside the reactive statement rather than showing a wrong word. Half
+    // a guard is the kind of thing that only ever fires on the day it matters.
+    const el = await privacy(() => Promise.resolve(null));
+    [...el.querySelectorAll('button')].find((b) => b.textContent.includes('Save address')) ??
+      el.querySelector('[role="switch"]').click();
+    await type(el, NEW);
+    [...el.querySelectorAll('button')].find((b) => b.textContent.includes('Save address')).click();
+    await settle();
+
+    expect(text(el)).toMatch(/Crash reporting/);
+    expect(
+      field(el).value,
+      'the section did not repaint from the backend answer — `crash = landed` on a ' +
+        'null throws inside `$: crashOn = !!crash.enabled`.',
+    ).toBe('');
+  });
+
+  it('a read that FAILED is not an empty address — and cannot be written over', async () => {
+    // `getCrashReporting` swallowed into a bare `catch` and returned the safe
+    // default, which this page takes as the truth: `savedDsn` became `''`. Flipping
+    // the switch then sent `('', true)`, and `set_crash_reporting` writes the string
+    // unconditionally — so a failed read DESTROYED the one address a church had
+    // configured, one click later, with an empty field as the only clue. Nothing
+    // leaked (`telemetry::enable` returns early on an empty DSN), and losing it is
+    // bad enough. The reason now lands in `readErrors` and both writing controls
+    // stand down. Watched to go red by restoring the bare `catch`.
+    invoke.mockImplementation((cmd) =>
+      cmd === 'get_crash_reporting'
+        ? Promise.reject('database is locked')
+        : Promise.resolve([]),
+    );
+    const el = await mount('./views/Settings.svelte');
+    await press(el, 'Privacy & Advanced');
+
+    expect(get(readErrors).getCrashReporting, 'the reason was thrown away').toBeTruthy();
+    // Humanised through errors.js (the ONE humaniser), and announced.
+    expect(alertText(el)).toMatch(/could not read the crash-reporting setting/i);
+    expect(alertText(el)).not.toMatch(/database is locked/);
+    expect(el.querySelector('[role="switch"][aria-label="Send crash reports"]').disabled).toBe(true);
+    const save = [...el.querySelectorAll('button')].find((b) =>
+      b.textContent.includes('Save address'),
+    );
+    expect(save.disabled).toBe(true);
+
+    // And the switch cannot be pressed into writing the empty string over it.
+    el.querySelector('[role="switch"][aria-label="Send crash reports"]').click();
+    await settle();
+    expect(setCalls()).toEqual([]);
+  });
+
+  it('flipping the switch does not throw away a half-typed address', async () => {
+    // `acceptCrash` takes the whole landed object, `crash.dsn` included, so a flip
+    // replaced the draft with the saved address and took the "Not saved yet" mark
+    // with it — the one instrument that makes an edit which went nowhere visible
+    // rather than discovered a week later. The draft is the operator's; a switch is
+    // not a discard. Watched to go red by removing the restore line.
+    const el = await privacy((a) => Promise.resolve({ enabled: !a.enabled, dsn: a.dsn }));
+    await type(el, NEW);
+
+    el.querySelector('[role="switch"][aria-label="Send crash reports"]').click();
+    await settle();
+
+    expect(field(el).value, 'the draft was discarded by a switch flip').toBe(NEW);
+    expect(text(el)).toMatch(/Not saved yet/);
+    // …and it still went nowhere: the switch committed the SAVED address.
+    expect(setCalls()[0].dsn).toBe(OLD);
+  });
+
+  it('a save the backend does not honour leaves the field showing what is in force', async () => {
+    // Rule 15, on the smallest control on the page. If the local copy were taken
+    // from what was ASKED for, the field would show the new address, the banner
+    // would clear, and the engine would go on reporting somewhere else — a
+    // control claiming a success it did not achieve.
+    const el = await privacy(() => Promise.resolve({ enabled: true, dsn: OLD }));
+    await type(el, NEW);
+
+    [...el.querySelectorAll('button')].find((b) => b.textContent.includes('Save address')).click();
+    await settle();
+
+    expect(field(el).value).toBe(OLD);
+    expect(text(el)).not.toMatch(/Not saved yet/);
+  });
+});
+
+// ── A RESET THE READ GUARD SILENTLY DROPPED ──────────────────────────────────
+//
+// `guardedRead(key, run, fallback)` takes three arguments. Two call sites pass a
+// FOURTH — a closure that resets the store — and each carries a comment saying in
+// as many words that a fallback VALUE cannot carry a side effect, so "the reset is
+// explicit". It was not explicit; it was dropped on the floor. A failed read left
+// `defaultTemplateId` holding an id the backend could no longer confirm and
+// `serviceTargetMinutes` holding a length nobody had answered for, which is the
+// same shape as rule 35: the store says the same thing whether the read worked or
+// not. Found while auditing wave 3's Track D.
+//
+// Both cases below were watched to go RED by removing the `onFail` call from
+// `guardedRead`'s catch, which is the defect exactly as it shipped.
+describe('a failed read resets the store its call site asked to reset', () => {
+  it('the configured default template is let go rather than kept stale', async () => {
+    const { loadDefaultTemplate, defaultTemplateId } = cap;
+
+    invoke.mockResolvedValue('7');
+    await loadDefaultTemplate();
+    expect(get(defaultTemplateId), 'the good read never landed').toBe(7);
+
+    invoke.mockRejectedValue(new Error('database is locked'));
+    await loadDefaultTemplate();
+
+    expect(
+      get(defaultTemplateId),
+      'a failed read left the store holding an id the backend could not confirm',
+    ).toBe(null);
+  });
+
+  it('the service length is let go rather than kept stale', async () => {
+    const { loadServiceTarget, serviceTargetMinutes } = cap;
+
+    invoke.mockResolvedValue('75');
+    await loadServiceTarget();
+    expect(get(serviceTargetMinutes), 'the good read never landed').toBe(75);
+
+    invoke.mockRejectedValue(new Error('database is locked'));
+    await loadServiceTarget();
+
+    expect(
+      get(serviceTargetMinutes),
+      'a failed read left the on-air stopwatch counting against a target nobody answered for',
+    ).toBe(0);
   });
 });

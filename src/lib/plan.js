@@ -45,6 +45,35 @@
  * If a real taxonomy ramp is ever wanted, magenta and lime are the only two gaps,
  * and it needs a designer looking at a rendered screen — not a constant edited
  * here. Do not reach for a promise colour because it is the one that reads well.
+ *
+ * ── 2026-09-16: asked again, and refused again ───────────────────────────────
+ *
+ * Wave 4's design proposed exactly the thing the paragraph above forbids, and it
+ * is recorded here so the next reader knows it was CONSIDERED rather than never
+ * raised. The proposal was to colour cues from the `--v-col-*` family in
+ * `app.css` — already kind-mapped, already used this way in the Library — plus a
+ * new `--v-col-timer`, on the argument that the Planner is never on air.
+ *
+ * It was examined and refused on 2026-09-16, on the operator's decision. The
+ * argument does not survive one lookup: `--v-col-scripture` is `var(--v-amber)`
+ * (`app.css:222` → `:169`), and amber means ON AIR. Reusing it would put the
+ * live colour on a SCRIPTURE cue, which is the one kind the AI may fire by
+ * itself — the exact row the measurement above was taken from. `--v-col-media`
+ * is amethyst, which means rehearsal, and that is the second one. "The Planner
+ * is never on air" explains why the Library gets away with it; it does not make
+ * the colour mean something else on the surface an operator reads on a Sunday,
+ * and the Planner's rows are rendered beside Live's in the same session.
+ *
+ * `colourlaw.test.js` holds the floor, and it is worth knowing exactly how much
+ * of it, because the wave-4 plan overstated this and the overstatement is the
+ * dangerous direction. Its sweep over every `TYPE` entry (`:60-66`) is a
+ * SUBSTRING match on the token text, so `var(--v-col-scripture)` sails through
+ * it — the indirection is invisible to the scanner even though it resolves to
+ * amber. What actually catches a ramp is the identity assertion at `:98`, and
+ * that covers `song` and `slideAccent('C')` and nothing else. So a ramp built
+ * from `--v-col-*` and left off `song` would pass the whole file while painting
+ * ON AIR amber on an auto-detect cue. **The test is not the reason to refuse
+ * this; the meaning of the colour is.** Nothing in this wave amends that file.
  */
 export const TAXONOMY_INK = 'var(--v-faint)';
 

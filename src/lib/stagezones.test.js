@@ -64,14 +64,26 @@ function cleanup() {
   host = null;
 }
 
-/** Mount the stage page and deliver one hub frame through the real socket path. */
+/**
+ * Mount the stage page and deliver one hub frame through the real socket path.
+ *
+ * THE PAGE IS MOUNTED ON A CHANNEL, and the role map is delivered before
+ * anything else. `stage.html` used to accept a Stage Message from anybody; it
+ * now refuses one unless its own channel holds the `stage` role, exactly as
+ * `output.html` does (`stagepageidentity.test.js`). Channel 2 is the screen a
+ * fresh install seeds as `Stage display`, so this fixture is the stage monitor a
+ * church actually has rather than an anonymous page that happens to work.
+ */
+const STAGE_ROLES = { 1: 'main', 2: 'stage' };
 async function mount(frame) {
+  window.history.replaceState({}, '', '/stage.html?channel=2');
   host = document.createElement('div');
   document.body.appendChild(host);
   app = new Stage({ target: host });
   await tick();
+  socket.onopen?.();
+  socket.onmessage({ data: JSON.stringify({ kind: 'channel_roles', roles: STAGE_ROLES }) });
   if (frame) {
-    socket.onopen?.();
     socket.onmessage({ data: JSON.stringify(frame) });
   }
   await tick();
@@ -101,7 +113,7 @@ const verse = {
 //
 // §5 said "clean by default … the rest is switched on", and `next`, `note` and
 // `elapsed` shipped OFF. All three carry something an operator DELIBERATELY SENT
-// TO THE PREACHER and to nobody else — a line typed against a cue, an up-next
+// TO THE PREACHER and to nobody else — a line typed against a cue, an Up Next
 // published to the stage, the service clock. So the operator typed a word to the
 // preacher, the console showed it had gone, and the preacher's screen showed
 // nothing, because of a switch on a device the operator cannot see. No surface
@@ -112,7 +124,7 @@ const verse = {
 // it is the reason this is safe rather than a busier screen: four of the six
 // zones render NOTHING unless the operator has made something for them to render.
 describe('zones — everything the operator sent, and nothing they did not', () => {
-  it('a fresh stage screen carries the note, the up-next and the service clock the operator sent it', async () => {
+  it('a fresh stage screen carries the note, the Up Next and the service clock the operator sent it', async () => {
     const note = 'Wrap at 11:40';
     const { container } = await mount({ ...verse, stage_note: note, service_started_at: Date.now() - 60_000 });
     socket.onmessage({ data: JSON.stringify({ kind: 'stage_next', label: 'Offering', text: 'Ushers come forward' }) });
@@ -133,7 +145,7 @@ describe('zones — everything the operator sent, and nothing they did not', () 
   it('and a screen nobody has sent anything to is still just the reading, the countdown and the clock', async () => {
     // The other half of the same change, and the one that keeps §5's sentence
     // true. Four zones are on and four render nothing, because a zone with no
-    // content behind it is not a row — there is no note, no up-next, and no
+    // content behind it is not a row — there is no note, no Up Next, and no
     // service recording in this frame.
     const { container } = await mount(verse);
 
@@ -155,7 +167,7 @@ describe('zones — everything the operator sent, and nothing they did not', () 
     expect(container.querySelector('.noterow')).toBeTruthy();
 
     await click('Zones');
-    await click('Note');
+    await click('Stage Note');
     await tick();
     expect(container.querySelector('.noterow')).toBeNull();
     expect(JSON.parse(localStorage.getItem(ZONE_KEY)).note).toBe(false);
@@ -176,6 +188,93 @@ describe('zones — everything the operator sent, and nothing they did not', () 
     // with site data blocked is exactly the device nobody can go and configure.
     expect(container.querySelector('.noterow')).toBeTruthy();
     spy.mockRestore();
+  });
+
+  // ── WAVE 4 TRACK A · THE SEVENTH ZONE ───────────────────────────────────────
+  //
+  // `ZONES` had six keys and the programme rail was not one of them, so the one
+  // region on this screen that carries the OPERATOR'S bookkeeping was the one
+  // region with no switch behind it. A lobby TV running the stage page had no way
+  // to stop showing the preacher's programme, and §5's whole premise is that the
+  // switches remove things on the device that wants them removed.
+  const programme = (at) => ({
+    kind: 'timer',
+    timers: [
+      {
+        id: 7,
+        label: 'Offering',
+        countdown_to: at + 300_000,
+        countdown_from: at,
+        countdown_paused_ms: null,
+        countdown_done: '',
+        warn_ms: null,
+      },
+    ],
+  });
+
+  it('the programme rail is a zone, it is on by default, and switching it off gives up its room', async () => {
+    const { container } = await mount(programme(Date.now()));
+    expect(
+      container.querySelector('.progrow'),
+      'every other zone ships on; this one must too',
+    ).toBeTruthy();
+
+    await click('Zones');
+    await click('Programme');
+    await tick();
+
+    // Not hidden — GONE. `.progrow` is a `flex-basis: auto` row, so a switched-off
+    // rail that still rendered would keep taking the room it needs for its content.
+    expect(container.querySelector('.progrow')).toBeNull();
+    expect(JSON.parse(localStorage.getItem(ZONE_KEY)).programme).toBe(false);
+
+    cleanup();
+    const again = await mount(programme(Date.now()));
+    expect(again.container.querySelector('.progrow')).toBeNull();
+  });
+
+  it('a layout stored before this zone existed still loads, and gets the default', async () => {
+    // `loadZones` reads key by key OFF THE DEFAULTS, which is what makes a zone
+    // added in a later version arrive switched ON rather than `undefined` — and
+    // `undefined` is not false in a `{#if}`, so this is the difference between the
+    // rail appearing and the whole page reading a stale object. Written out as a
+    // stored payload from the version before this one, not as a doctored object.
+    localStorage.setItem(
+      ZONE_KEY,
+      JSON.stringify({
+        reading: true,
+        next: true,
+        note: false,
+        countdown: true,
+        clock: true,
+        elapsed: true,
+        figures: 'beside',
+      }),
+    );
+
+    const { container } = await mount(programme(Date.now()));
+    expect(container.querySelector('.progrow'), 'the new zone did not get its default').toBeTruthy();
+
+    // …and the six that WERE stored are untouched, `figures` included — a
+    // migration that quietly resets a device's layout is a migration nobody asked
+    // for. `figures` is the one of the seven that is not a boolean, so it is the
+    // one a key-by-key loop is most likely to lose.
+    await click('Zones');
+    const pressed = (label) =>
+      [...container.querySelectorAll('.zonebtn')]
+        .find((b) => b.textContent.trim() === label)
+        ?.getAttribute('aria-pressed');
+    // `Stage Note`, not `Note`. Wave 5's name register gave this zone the name the
+    // rest of the product uses for the same thing, and wave 4 wrote this assertion
+    // against the older label on a branch that could not see it. A `?.` on a lookup
+    // that misses returns `undefined`, so the failure read as "a stored choice was
+    // reset" when the choice was fine and the BUTTON was what had moved — which is
+    // why the message now names the label it is looking for.
+    expect(pressed('Stage Note'), 'a stored choice was reset, or the zone was renamed').toBe(
+      'false',
+    );
+    expect(pressed('Programme')).toBe('true');
+    expect(pressed('Figures beside the reading')).toBe('true');
   });
 });
 
@@ -250,7 +349,7 @@ describe('nothing may leave the screen', () => {
   // if that property is not honoured. It got away with it for as long as the zone
   // was off by default and nobody's screen had the row on it. Switching a zone on
   // is what makes its bound necessary, so the two land together.
-  it('the up-next and the note are bounded and clipped, like every other row', () => {
+  it('the Up Next and the note are bounded and clipped, like every other row', () => {
     for (const sel of ['.next', '.noterow']) {
       const r = rule(sel);
       expect(r, `${sel} needs a ceiling, not a line-clamp`).toMatch(/max-height:\s*\d/);
@@ -380,7 +479,7 @@ describe('the reading is sized to the room and to the passage', () => {
   });
 });
 
-describe('a word to the preacher', () => {
+describe('the Stage Message', () => {
   // S3 · A MESSAGE THAT DOES NOT FIT IS A MESSAGE NOBODY READ.
   //
   // §5 fixes the type at 8.5cqw and the panel at `overflow: hidden`, which is the
@@ -396,7 +495,14 @@ describe('a word to the preacher', () => {
       'Wrap up in five minutes please. The band is already on the platform and we still have the offering and the announcements to get through.',
       'md',
     ],
-    ['x'.repeat(240), 'sm'],
+    // THE LONGEST MESSAGE THAT CAN ARRIVE, and the step that has to take it.
+    // This row read `['x'.repeat(240), 'sm']` and was green over a defect: a
+    // 240-character message cannot reach this page at all, because
+    // `main::send_stage_alert` takes the first 140 characters — so the `sm` step,
+    // which only began above 150, was unreachable and `.alert.sm` could not
+    // render (RG-165). A test that asserts on a state nothing can produce is the
+    // same mistake as the branch it was asserting on.
+    ['x'.repeat(140), 'md'],
   ];
 
   for (const [text, step] of longer) {
@@ -413,6 +519,39 @@ describe('a word to the preacher', () => {
       expect(el.textContent).toContain(text);
     });
   }
+
+  // ── WAVE 4 TRACK E · THE STEPS AND THE CAP ARE ONE FIGURE (RG-165) ────────
+  //
+  // Read out of BOTH files in one assertion, which is the only shape that holds a
+  // claim living in two places: the last step's boundary and `send_stage_alert`'s
+  // cap must be the same number, so neither can move without the other and a dead
+  // step cannot come back. `crossrefs.test.js` uses the same shape for citations.
+  it('the last sizing step is exactly the length the backend will deliver', () => {
+    const step = SRC.match(/const ALERT_MAX = (\d+);/);
+    expect(step, '`ALERT_MAX` is how the page states its longest step').toBeTruthy();
+
+    const rust = readFileSync(
+      path.resolve(__dirname, '../../src-tauri/src/main.rs'),
+      'utf8',
+    );
+    const body = rust.slice(rust.indexOf('fn send_stage_alert'));
+    const cap = body.match(/const MAX: usize = (\d+);/);
+    expect(cap, 'the cap moved or was renamed').toBeTruthy();
+    expect(
+      Number(step[1]),
+      'a step above the cap is a rule no message can reach',
+    ).toBe(Number(cap[1]));
+  });
+
+  it('there is no sizing step the stylesheet cannot draw', () => {
+    // The other half. Deleting `.alert.sm` while leaving a step that yields `sm`
+    // would be the same defect wearing the opposite coat: a class with no rule.
+    const steps = [...SRC.matchAll(/size: '(\w+)'/g)].map((m) => m[1]);
+    expect(steps.length, 'the steps table moved').toBeGreaterThan(0);
+    const style = SRC.slice(SRC.indexOf('<style>'));
+    for (const s of steps) expect(style, `no rule for .alert.${s}`).toContain(`.alert.${s} {`);
+    expect(style, 'the unreachable step is still in the stylesheet').not.toContain('.alert.sm {');
+  });
 
   it('and the short message is still §5’s own figure, unchanged', () => {
     const style = SRC.slice(SRC.indexOf('<style>'));
@@ -543,7 +682,7 @@ describe('S4 · the stage reads as one instrument', () => {
 
   // The labels were console pixels on a platform monitor: `.figk` 9px, `.note-lbl`
   // 9px, `.next-lbl` a hardcoded 10px — three treatments, none of which scaled, on
-  // a page where the reference, the verse, the note, the up-next and every figure
+  // a page where the reference, the verse, the note, the Up Next and every figure
   // are all sized to the room. Photographed at 1920×1080 they were hairlines.
   it('every region label is ONE label, and it is sized to the room', () => {
     const r = rule('.figk, .note-lbl, .next-lbl');
@@ -665,5 +804,94 @@ describe('S4 · the stage reads as one instrument', () => {
       ...[...row.querySelectorAll('.figv')].map((n) => n.textContent.trim().length),
     );
     expect(Number(row.style.getPropertyValue('--ch'))).toBe(longest);
+  });
+});
+
+// ── WAVE 4 TRACK E · AN OPEN PANEL YIELDS THE RAIL, NOT THE READING ──────────
+//
+// RG-164. `Zones` and `Control` are two taps in the header, and both of them put a
+// panel into the same flex column the reading is in. Measured in a browser at
+// 1024×768 with the rail on and both panels open, the reading collapsed to 74.2px,
+// the verse was already on its 26px floor with nothing left for the fit to shrink,
+// and 38.9px of ink was cut off the bottom of the passage the preacher was reading
+// aloud — on a page that is `overflow: hidden` by design, so there was nothing to
+// scroll and nothing saying the verse was incomplete. With the Programme zone
+// switched off the same two panels left the verse whole
+// (`docs/qa/audits/2026-09-17-WAVE4-STAGE-PLANNER.md` §2.3).
+//
+// jsdom has no layout engine, so the 38.9px is not reproducible here and this file
+// already records why (the split at the top). What IS reproducible is the cause:
+// whether the rail is in the column at all while a panel is open. That is the fact
+// the measurement was a consequence of, and asserting it would have caught the
+// finding as the browser pass found it.
+describe('an open panel yields the programme rail', () => {
+  const clock = (at) => ({
+    kind: 'timer',
+    timers: [
+      {
+        id: 7,
+        label: 'Sermon',
+        countdown_to: at + 1_500_000,
+        countdown_from: at,
+        countdown_paused_ms: null,
+        countdown_done: '',
+        warn_ms: null,
+      },
+    ],
+  });
+
+  /** A verse on the screen and a clock on the rail — the state §2.3 measured. */
+  async function reading() {
+    const r = await mount(verse);
+    socket.onmessage({ data: JSON.stringify(clock(Date.now())) });
+    await tick();
+    await tick();
+    expect(r.container.querySelector('.progrow'), 'no rail to yield').toBeTruthy();
+    expect(r.container.querySelector('.verse'), 'no verse to protect').toBeTruthy();
+    return r.container;
+  }
+
+  it('the Zones panel takes the rail’s room and leaves the verse alone', async () => {
+    const container = await reading();
+    await click('Zones');
+    expect(container.querySelector('.zonepanel'), 'the panel did not open').toBeTruthy();
+    // GONE, not hidden. `.progrow` is a flex row with `flex-basis: auto`, so a rail
+    // that still rendered would still be taking the room the reading needs.
+    expect(
+      container.querySelector('.progrow'),
+      'the rail and both panels shared the column with the verse',
+    ).toBeNull();
+    expect(container.querySelector('.verse'), 'the reading is what this screen is for').toBeTruthy();
+
+    // …and it comes straight back. The panel is a moment, not a choice.
+    await click('Zones');
+    expect(container.querySelector('.progrow')).toBeTruthy();
+  });
+
+  it('the Control panel does the same, because it is the same column', async () => {
+    // The second door. The measurement in §2.3 opened BOTH, and a fix that knew
+    // about one of them would be this repository's recurring bug once more.
+    const container = await reading();
+    await click('Control');
+    expect(container.querySelector('.ctl'), 'the panel did not open').toBeTruthy();
+    expect(container.querySelector('.progrow')).toBeNull();
+    expect(container.querySelector('.verse')).toBeTruthy();
+
+    await click('Done');
+    expect(container.querySelector('.progrow')).toBeTruthy();
+  });
+
+  it('yielding is not switching the zone off — the device keeps its layout', async () => {
+    // A zone is a choice a device keeps across reloads; this is a moment. Writing
+    // the zone would mean a preacher who opened the panel once lost the rail for
+    // good, and would have to find the switch to get it back.
+    const container = await reading();
+    await click('Zones');
+    const pressed = [...container.querySelectorAll('.zonebtn')]
+      .find((b) => b.textContent.trim() === 'Programme')
+      ?.getAttribute('aria-pressed');
+    expect(pressed, 'the panel turned the zone off behind the operator').toBe('true');
+    const stored = localStorage.getItem(ZONE_KEY);
+    expect(stored === null || JSON.parse(stored).programme === true).toBe(true);
   });
 });

@@ -15,6 +15,16 @@
 // reference, its translation, a countdown, the clock — or a fixed string the
 // operator types. Binding is what makes a layer template render live scripture
 // rather than lorem ipsum.
+//
+// A STARTER NAMES A REAL FAMILY, NEVER AN APP-CHROME TOKEN (wave 5, Track E).
+// The starters below are template DATA the moment a layer is added, and they used
+// to seed `var(--f-serif)` / `var(--f-display)` / `var(--f-body)` — names declared
+// in the operator console's own stylesheet. `--f-display` was Space Grotesk and
+// was re-aliased to Inter, an edit to the app's chrome that silently changed the
+// typeface of every template naming it. `Fraunces` and `Inter` are the families
+// those tokens already resolved to, so nothing on a wall moved; what moved is who
+// decides. `theme:font` is a different thing and stays: it resolves against the
+// TEMPLATE's own style (DECISIONS §87), not against the app's.
 
 import { migrateStyle, STYLE_DEFAULTS, bandLayout, faceOf } from './templatemodel.js';
 
@@ -33,13 +43,22 @@ export const BINDINGS = [
   { key: 'countdown', label: 'Countdown timer' },
   { key: 'clock', label: 'Clock' },
   // ROLE-MONITOR fields. These carry data that reaches OUTPUT content but is not
-  // for the congregation: the next verse coming up and the operator's private
-  // note. A congregation template simply omits these layers; a stage/confidence
+  // for the congregation: the verse coming up and the Stage Note.
+  // A congregation template simply omits these layers; a stage/confidence
   // monitor includes them. `note` has flowed to output for ages with nothing
   // rendering it; `next` fields are populated by the fire path (resolve_fire).
-  { key: 'next', label: 'Next verse text' },
-  { key: 'next_reference', label: 'Next reference' },
-  { key: 'note', label: 'Operator note (monitors only)' },
+  { key: 'next', label: 'Up Next (verse text)' },
+  { key: 'next_reference', label: 'Up Next (reference)' },
+  { key: 'note', label: 'Stage Note (monitors only)' },
+  // THE STAGE MESSAGE, as a layer. Unlike every other binding here the
+  // value does NOT ride on the fired content: it is its own hub frame
+  // (`stage_alert`), held in the renderer's own state, so it can never travel on
+  // an `OutputContent` to a congregation screen. The output page accepts the
+  // frame only when its own channel's role is `stage` — the filter is at the
+  // receiver because the kiosk hub records nothing about who connected
+  // (DECISIONS §35) — and `boundValue` therefore returns nothing for it, the same
+  // answer it gives the ticking binds below.
+  { key: 'stage_message', label: 'Stage Message' },
   { key: 'elapsed', label: 'Service timer (elapsed)' },
   { key: 'remaining', label: 'Service timer (remaining)' },
   { key: 'static', label: 'Fixed text' },
@@ -50,6 +69,7 @@ export const LAYER_TYPES = [
   { type: 'band', label: 'Band (lower third)', icon: '▬' },
   { type: 'region', label: 'Slide region (composite)', icon: '▣' },
   { type: 'media', label: 'Media (image / video)', icon: '▷' },
+  { type: 'backdrop', label: 'Backdrop (the standing background)', icon: '▨' },
   { type: 'shape', label: 'Shape', icon: '▢' },
   { type: 'background', label: 'Background', icon: '▦' },
   { type: 'timer', label: 'Timer / Countdown', icon: '⏱' },
@@ -109,6 +129,39 @@ export function makeLayer(type, over = {}) {
         radius: 0,
       };
       break;
+    case 'backdrop':
+      // THE STANDING BACKGROUND — the church's own picture, which OUTLIVES the
+      // words painted on it.
+      //
+      // The difference from `media` above is the whole of it, and it is a
+      // difference of LIFETIME rather than of appearance. A `media` layer binds to
+      // the fired content: a picture IS the slide, and firing a verse replaces it.
+      // A `backdrop` binds to a second payload that nothing on the content can
+      // touch — put up once, painted under every verse, song and notice that
+      // follows, and taken down only by the operator or by a panic control.
+      //
+      // **A template WITHOUT one behaves exactly as it did before this existed.**
+      // That is the opt-in, and it is why there is no setting: a stored preference
+      // nothing reads is the defect the 2026-09-10 pass closed seven controls of.
+      //
+      // Its z-order is its own, like every other layer. It is NOT forced to the
+      // bottom of the stack, because every built-in ships an opaque `background`
+      // layer and a backdrop pinned beneath one would never be seen — the feature
+      // would look broken rather than absent. Put it above the fill it should
+      // replace.
+      spec = {
+        name: 'Backdrop',
+        x: 0, y: 0, w: 100, h: 100,
+        fit: 'cover', // cover | contain
+        opacity: 1,
+        radius: 0,
+        // A WASH OVER THE PICTURE, not over the words. A photograph behind a
+        // verse is the classic way to make scripture unreadable, and the dim is
+        // how a designer buys the contrast back without editing the file. Zero by
+        // default: nothing is changed unless somebody asks for it.
+        dim: 0,
+      };
+      break;
     case 'shape':
       spec = {
         name: 'Shape',
@@ -148,7 +201,7 @@ export function makeLayer(type, over = {}) {
         type: 'text',
         bind: 'countdown',
         x: 20, y: 34, w: 60, h: 32,
-        font: 'var(--f-display)',
+        font: 'Inter',
         color: '#ffffff',
         size: 12,
         align: 'center',
@@ -168,7 +221,7 @@ export function makeLayer(type, over = {}) {
         name: 'Text',
         bind: 'verse',
         x: 10, y: 34, w: 80, h: 34,
-        font: 'var(--f-serif)',
+        font: 'Fraunces',
         color: '#f4e4c8',
         size: 5.2,
         align: 'center',
@@ -224,7 +277,22 @@ export function isKeyedTemplate(template) {
   return !hasBg;
 }
 
-/** The content kinds a screen can be set to show/hide. */
+/**
+ * The content kinds a screen can be set to show/hide.
+ *
+ * THE CANONICAL VOCABULARY. `main.rs`'s `ContentTemplates` mirrors it by hand and
+ * no test links the two, so a sixth kind has to be written in both places.
+ *
+ * ── SITE 6 OF THE CONTENT-KIND SWEEP. NOTHING CHANGED HERE, AND WHY ───────────
+ *
+ * The timer registry adds no kind to this list. A congregation timer is still
+ * broadcast as `countdown`, which is already the fifth row and is why the row is
+ * labelled "Timer / Countdown" rather than "Countdown". A programme timer never
+ * becomes content: it is published to the stage tablet on its own frame, so there
+ * is no per-screen visibility question to answer about it — a congregation screen
+ * cannot show one whether or not it is ticked here, which is a stronger guarantee
+ * than a checkbox and is the reason not to offer the checkbox.
+ */
 export const CONTENT_KINDS = [
   { key: 'scripture', label: 'Scripture' },
   { key: 'song', label: 'Songs / Lyrics' },
@@ -242,6 +310,38 @@ export const CONTENT_KINDS = [
  * `layout.shows` is the explicit allow-list (an array of kinds). When it's absent
  * the screen shows everything — except the legacy per-screen media opt-out
  * (`layout.noMedia`), folded in here so old templates keep working.
+ *
+ * ── SITE 7 OF THE CONTENT-KIND SWEEP. NOTHING CHANGED HERE, AND WHY ───────────
+ *
+ * This is the site that hides a kind SILENTLY: an explicit `shows` list is an
+ * allow-list, so a kind nobody thought to add to it is dropped before
+ * `resolveOutputTemplate` is ever consulted, and the screen simply holds what it
+ * had. Nothing anywhere reports that. The timer registry adds no kind — a
+ * congregation timer is `countdown`, which every list already names, and a
+ * programme timer never arrives here at all — so no list needs touching.
+ *
+ * **WHAT THE SEED ACTUALLY LOOKS LIKE, checked rather than assumed**, because the
+ * reassuring version of this ("every seeded template writes `shows` explicitly,
+ * which is what makes a new kind safe") is not what is in the tree and points the
+ * next reader at the wrong half:
+ *
+ *   - `db/templates.rs::builtin_templates()` — the five a fresh install actually
+ *     seeds — carry **no `shows` key at all**, so they fall to the `return true`
+ *     below and show every kind, including one added tomorrow. Safe by absence.
+ *   - `db/templates.rs::theme_templates()` — the TWENTY-FIVE on the preset shelf,
+ *     five families across five kinds — each carry an EXPLICIT list of exactly
+ *     the five current kinds, pinned by a Rust test whose `all` array is a third
+ *     hand-mirrored copy of `CONTENT_KINDS`. These are the ones a sixth kind
+ *     would be hidden by, and the test would not say so: it asserts the
+ *     twenty-five agree with its own hard-coded five. (This comment said
+ *     THIRTEEN, which was the shelf before wave 2 reshaped it into families —
+ *     RG-155. Count it: `awk '/fn theme_templates/,/^\}/' src-tauri/src/db/
+ *     templates.rs | grep -cE '^ +\('.)
+ *
+ * So the exposure runs the opposite way round from the comfortable reading. A new
+ * kind is safe on a fresh install and invisible on any screen wearing a preset,
+ * until `CONTENT_KINDS`, `ContentTemplates`, the twenty-five presets and that
+ * test's `all` array are all four updated together.
  */
 export function templateShows(template, kind) {
   if (!kind) return true;
@@ -258,14 +358,19 @@ export function templateShows(template, kind) {
  * keyed channel is ignored so the lower third / ticker keeps keying over the live
  * camera; the verse still flows into the channel's own template. Opaque channels
  * take the override; a keyed override on a keyed channel is fine.
+ *
+ * `fallback` is the operator's CONFIGURED DEFAULT (`default_template_id`) and is
+ * the last link: it answers only when nothing above it did. It is not part of
+ * the ranking §29 and §70 describe — those decide between authorities that each
+ * chose a look for this screen, and the default is what remains when none did.
  */
-export function resolveOutputTemplate(channelTpl, override, pinned = false) {
+export function resolveOutputTemplate(channelTpl, override, pinned = false, fallback = null) {
   // NO TEMPLATE OF ITS OWN = this screen follows the content look (DECISIONS §70).
   // It has to be answered before the transparency law below, because
   // `isKeyedTemplate(null)` is true — a template with no background layer is keyed,
   // and an absent template has no layers at all — so a following screen would have
   // "kept its keyed template", which is nothing, and painted an empty frame.
-  if (!channelTpl) return override ?? null;
+  if (!channelTpl) return override ?? fallback ?? null;
   if (!override) return channelTpl;
   // TRANSPARENCY LAW: a keyed (lower-third) screen never goes opaque for an opaque
   // override — the camera it keys over must not be covered. Wins over everything.
@@ -314,26 +419,67 @@ export function formatCountdown(ms, mode = 'auto') {
   return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`;
 }
 
-/** How long is left is a countdown's business; WHEN TO WORRY is this. */
+/** How long is left is a countdown's business; WHEN TO WORRY is this.
+ *  The SHIPPED figure — what a church that has never opened Settings gets. */
 export const COUNTDOWN_WARN_MS = 60_000;
+
+/**
+ * The DEFAULT warning window in force on this machine — the shipped minute until
+ * an operator sets `Settings → General → Countdown warning`, which is persisted in
+ * the settings KV under `countdown.warn_ms`.
+ *
+ * It lives here, as one number behind one setter, because the three surfaces that
+ * ask the rule (the wall through `TemplateRender`, the preacher's page through
+ * `Stage.svelte`, and the dock) each call `countdownWarning` with two arguments
+ * and must not be able to disagree about the third. `stores/capture.js` is the
+ * ONE writer: it reads and writes the row, and applies the figure here.
+ *
+ * Deliberately NOT a store. `layers.js` is imported by the output and stage pages,
+ * which have no Tauri bridge and no console state; a store here would drag the
+ * whole capture module into two bundles that cannot use it.
+ */
+let warnDefaultMs = COUNTDOWN_WARN_MS;
+
+/** Apply the configured default. Anything not a positive number is the shipped
+ *  minute rather than a window of zero, which is a colour that never comes on. */
+export function setCountdownWarnDefault(ms) {
+  const n = Number(ms);
+  warnDefaultMs = Number.isFinite(n) && n > 0 ? n : COUNTDOWN_WARN_MS;
+  return warnDefaultMs;
+}
 
 /**
  * Is this countdown inside its warning window?
  *
- * The last minute — or the last tenth of a countdown shorter than ten minutes,
- * because a minute's warning on a two-minute countdown is a colour that is on for
- * half its life and therefore says nothing.
+ * `warnMs` is the figure somebody CHOSE — a timer's own threshold, or a cue's.
+ * When one is given it is used as asked and nothing scales it: the tenth rule
+ * below exists because nobody had chosen the minute, and that reason does not
+ * survive somebody choosing.
  *
- * A rule rather than a setting, deliberately: the control belongs in the Settings
- * pass, and a setting with nowhere to set it is worse than a sensible default.
+ * Absent (the ordinary case: the three call sites pass two arguments), the rule
+ * is what it has always been — the last minute, or the last tenth of a countdown
+ * shorter than ten minutes, because a minute's warning on a two-minute countdown
+ * is a colour that is on for half its life and therefore says nothing.
+ *
+ * This USED to say the threshold was a rule rather than a setting, deliberately,
+ * because the control belonged in the Settings pass and a setting with nowhere to
+ * set it is worse than a sensible default. That pass has happened. The MINUTE in
+ * the rule below is now `warnDefaultMs`, which is `Settings → General → Countdown
+ * warning`, persisted under `countdown.warn_ms` and applied through
+ * `setCountdownWarnDefault`; `warnMs` is a figure chosen for one timer, which
+ * beats both. Two authorities, ranked once, here.
  */
-export function countdownWarning(remainingMs, totalMs = null) {
+export function countdownWarning(remainingMs, totalMs = null, warnMs = null) {
   const left = Number(remainingMs);
   if (!Number.isFinite(left) || left <= 0) return false;
+  const chosen = Number(warnMs);
+  // A blank field, a cleared setting or a failed parse is an ABSENT threshold,
+  // never a window of zero — which would be a warning colour that never comes on.
+  if (Number.isFinite(chosen) && chosen > 0) return left <= chosen;
   const span = Number(totalMs);
   const window = Number.isFinite(span) && span > 0
-    ? Math.min(COUNTDOWN_WARN_MS, span / 10)
-    : COUNTDOWN_WARN_MS;
+    ? Math.min(warnDefaultMs, span / 10)
+    : warnDefaultMs;
   return left <= window;
 }
 
@@ -365,6 +511,14 @@ export function boundValue(layer, content) {
     case 'elapsed':
     case 'remaining':
       return ''; // computed live in the renderer (ticks), not from content
+    case 'stage_message':
+      // NOT FROM CONTENT, AND THAT IS THE GUARANTEE. Reading it off `content`
+      // here is exactly how a private message would reach a congregation screen:
+      // it would then be a field on `OutputContent`, broadcast to every screen,
+      // and the only thing between it and a lobby TV would be which layers that
+      // TV's template happens to have. The renderer supplies it, from its own
+      // state, having already decided whether this screen may be shown one.
+      return '';
     default:
       return c.text || '';
   }
@@ -379,6 +533,7 @@ export function layerLabel(layer) {
   }
   if (layer.type === 'background') return 'Background';
   if (layer.type === 'media') return 'Media';
+  if (layer.type === 'backdrop') return 'Backdrop';
   if (layer.type === 'band') return 'Band';
   if (layer.type === 'region') return 'Slide region';
   return 'Shape';
@@ -496,7 +651,7 @@ function songLyrics() {
         makeLayer('background', { fill: '#07070a' }),
         makeLayer('text', {
           name: 'Words', bind: 'verse', x: 6, y: 24, w: 88, h: 52,
-          font: 'var(--f-body)', size: 7.6, color: '#ffffff',
+          font: 'Inter', size: 7.6, color: '#ffffff',
           align: 'center', valign: 'middle', lineHeight: 1.24, shadow: 0.3,
         }),
       ],
@@ -643,9 +798,9 @@ function stageDisplay() {
         makeLayer('text', { name: 'Clock', bind: 'clock', x: 70, y: 3, w: 26, h: 7, size: 2.2, color: 'theme:accent', font: 'theme:font', align: 'right', valign: 'middle' }),
         makeLayer('text', { name: 'Verse', bind: 'verse', x: 6, y: 16, w: 88, h: 46, size: 4.6, color: 'theme:verse', font: 'theme:font', align: 'left', valign: 'middle' }),
         makeLayer('text', { name: 'Reference', bind: 'reference', x: 6, y: 63, w: 88, h: 7, size: 2.4, color: 'theme:reference', font: 'theme:font', align: 'left', valign: 'middle', transform: 'uppercase', letterSpacing: 0.06 }),
-        makeLayer('text', { name: 'Up-next label', bind: 'static', text: 'UP NEXT', x: 6, y: 74, w: 40, h: 5, size: 1.5, color: 'theme:accent', font: 'theme:font', align: 'left', valign: 'middle', transform: 'uppercase', letterSpacing: 0.14 }),
-        makeLayer('text', { name: 'Next reference', bind: 'next_reference', x: 6, y: 79, w: 88, h: 5, size: 1.8, color: 'theme:reference', font: 'theme:font', align: 'left', valign: 'middle' }),
-        makeLayer('text', { name: 'Next verse', bind: 'next', x: 6, y: 84, w: 88, h: 13, size: 2.2, color: 'theme:verse', font: 'theme:font', align: 'left', valign: 'top', opacity: 0.8 }),
+        makeLayer('text', { name: 'Up Next label', bind: 'static', text: 'Up Next', x: 6, y: 74, w: 40, h: 5, size: 1.5, color: 'theme:accent', font: 'theme:font', align: 'left', valign: 'middle', transform: 'uppercase', letterSpacing: 0.14 }),
+        makeLayer('text', { name: 'Up Next (reference)', bind: 'next_reference', x: 6, y: 79, w: 88, h: 5, size: 1.8, color: 'theme:reference', font: 'theme:font', align: 'left', valign: 'middle' }),
+        makeLayer('text', { name: 'Up Next (verse)', bind: 'next', x: 6, y: 84, w: 88, h: 13, size: 2.2, color: 'theme:verse', font: 'theme:font', align: 'left', valign: 'top', opacity: 0.8 }),
       ],
       align: 'left',
     },
@@ -665,7 +820,7 @@ function confidenceMonitor() {
         makeLayer('text', { name: 'Clock', bind: 'clock', x: 66, y: 4, w: 30, h: 8, size: 2.2, color: 'theme:accent', font: 'theme:font', align: 'right', valign: 'middle' }),
         makeLayer('text', { name: 'Verse', bind: 'verse', x: 8, y: 20, w: 84, h: 48, size: 5.2, color: 'theme:verse', font: 'theme:font', align: 'center', valign: 'middle' }),
         makeLayer('text', { name: 'Reference', bind: 'reference', x: 8, y: 69, w: 84, h: 7, size: 2.6, color: 'theme:reference', font: 'theme:font', align: 'center', valign: 'middle' }),
-        makeLayer('text', { name: 'Operator note', bind: 'note', x: 8, y: 88, w: 84, h: 9, size: 2, color: 'theme:accent', font: 'theme:font', align: 'center', valign: 'middle', italic: true }),
+        makeLayer('text', { name: 'Stage Note', bind: 'note', x: 8, y: 88, w: 84, h: 9, size: 2, color: 'theme:accent', font: 'theme:font', align: 'center', valign: 'middle', italic: true }),
       ],
       align: 'center',
     },
@@ -687,9 +842,9 @@ function preacherView() {
         makeLayer('text', { name: 'Clock', bind: 'clock', x: 66, y: 3, w: 30, h: 7, size: 2.2, color: 'theme:accent', font: 'theme:font', align: 'right', valign: 'middle' }),
         makeLayer('text', { name: 'Verse', bind: 'verse', x: 6, y: 15, w: 88, h: 45, size: 5.4, color: 'theme:verse', font: 'theme:font', align: 'center', valign: 'middle' }),
         makeLayer('text', { name: 'Reference', bind: 'reference', x: 6, y: 61, w: 88, h: 7, size: 2.8, color: 'theme:reference', font: 'theme:font', align: 'center', valign: 'middle', transform: 'uppercase', letterSpacing: 0.05 }),
-        makeLayer('text', { name: 'Up-next label', bind: 'static', text: 'UP NEXT', x: 6, y: 72, w: 88, h: 5, size: 1.5, color: 'theme:accent', font: 'theme:font', align: 'center', valign: 'middle', transform: 'uppercase', letterSpacing: 0.14 }),
-        makeLayer('text', { name: 'Next verse', bind: 'next', x: 6, y: 77, w: 88, h: 12, size: 2.4, color: 'theme:verse', font: 'theme:font', align: 'center', valign: 'top', opacity: 0.8 }),
-        makeLayer('text', { name: 'Operator note', bind: 'note', x: 6, y: 90, w: 88, h: 8, size: 2, color: 'theme:accent', font: 'theme:font', align: 'center', valign: 'middle', italic: true }),
+        makeLayer('text', { name: 'Up Next label', bind: 'static', text: 'Up Next', x: 6, y: 72, w: 88, h: 5, size: 1.5, color: 'theme:accent', font: 'theme:font', align: 'center', valign: 'middle', transform: 'uppercase', letterSpacing: 0.14 }),
+        makeLayer('text', { name: 'Up Next (verse)', bind: 'next', x: 6, y: 77, w: 88, h: 12, size: 2.4, color: 'theme:verse', font: 'theme:font', align: 'center', valign: 'top', opacity: 0.8 }),
+        makeLayer('text', { name: 'Stage Note', bind: 'note', x: 6, y: 90, w: 88, h: 8, size: 2, color: 'theme:accent', font: 'theme:font', align: 'center', valign: 'middle', italic: true }),
       ],
       align: 'center',
     },
@@ -736,7 +891,7 @@ export const STARTERS = [
   { key: 'announcement', label: 'Announcement Ticker', make: announcement, hint: 'A scrolling crawl along the bottom.' },
   { key: 'stage', label: 'Stage Display', make: stageDisplay, hint: 'Platform monitor: current verse, reference and clock. Theme-aware.' },
   { key: 'confidence', label: 'Confidence Monitor', make: confidenceMonitor, hint: 'Booth-facing "what\'s on screen now" view with clock. Theme-aware.' },
-  { key: 'preacher', label: 'Preacher View', make: preacherView, hint: 'Big centred verse, the next verse, service timer and your note.' },
+  { key: 'preacher', label: 'Preacher View', make: preacherView, hint: 'Big centred verse, the verse coming up, the service timer and your Stage Note.' },
   { key: 'timer', label: 'Countdown Timer', make: timerScreen, hint: 'Huge MM:SS for a pre-service countdown, with a label and clock.' },
   { key: 'supersource', label: 'SuperSource', make: superSource, hint: 'Camera on one side, a rendered slide on the other. Keyed — the switcher supplies the camera.' },
   { key: 'freestyle', label: 'Freestyle', make: freestyle, hint: 'A blank canvas — add layers yourself.' },

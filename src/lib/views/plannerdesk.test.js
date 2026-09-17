@@ -474,11 +474,22 @@ describe('§2 · the cue inspector answers the question it is asked', () => {
 
   });
 
-  itMounted('states kind, template and fires as name/value rows', async () => {
+  itMounted('states kind, template, timer and fires as name/value rows', async () => {
+    // TIMER JOINED THIS ROW IN WAVE 4 and the list is asserted exactly, so the
+    // change is deliberate rather than absorbed. It sits BETWEEN Template and
+    // Fires because the two either side of it are read-only facts about the cue
+    // and the two in the middle are the things an operator sets — and it is the
+    // second SET row rather than a third fact, which is what earns it a control
+    // in the value column (REBRAND §11).
+    //
+    // Timer is not Duration. Duration is the running-time estimate this workspace
+    // adds up in its own header; Timer is a clock a preacher watches, started by
+    // Live when the cue goes on air. `db/plans.rs`'s `PlanItem` records why they
+    // are two columns and `cuetimer.test.js` holds the behaviour.
     await mount();
     await until(() => host.querySelector('.sp-kv'), 'the inspector facts');
     const keys = [...host.querySelectorAll('.sp-kv .rw-nvk')].map((e) => e.textContent.trim());
-    expect(keys).toEqual(['Kind', 'Template', 'Fires']);
+    expect(keys).toEqual(['Kind', 'Template', 'Timer', 'Fires']);
     // The first cue is an announcement: it may not claim the auto-detect that
     // only scripture has (`typeOf`, the one door).
     expect(host.querySelector('.sp-kv').textContent).toContain('NOTICE');
@@ -552,7 +563,7 @@ describe('P1/W3 · the slide is the first thing in the inspector', () => {
     // slide, then LABEL/SECTION/DURATION, then Kind/Template/Fires, then the
     // actions. Relay keeps the tabs because they carry function the prototype
     // never had (rule 39's stale-arrangement warning lives on Slides, and the
-    // operator-only stage note on Notes), but a panel whose whole job is
+    // operator-only Stage Note on Notes), but a panel whose whole job is
     // answering "what does this put on the wall?" may not open on three buttons.
     //
     // Fails with the preview moved back under the tab strip.

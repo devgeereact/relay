@@ -23,6 +23,10 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+// A real import, not `require`. This package is `"type": "module"` and CI runs
+// this suite on Node 20, 22 and 24 precisely because runtime differences have
+// bitten here before.
+import { CONTENT_KINDS } from './layers.js';
 
 const ROOT = path.resolve(__dirname, '../..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
@@ -270,7 +274,10 @@ describe('acceptance 1 · no setting writes a preference nothing reads', () => {
   describe('§12 · every binary setting wears the one switch', () => {
     /** The three real on/off settings on this page, and where each one lives. */
     const BINARY = [
-      { label: 'Safe mode', section: 'general', handler: 'setSafeMode' },
+      // `applySafeMode`, not `setSafeMode`: the switch goes through the one door
+      // that actually disarms detection and closes the screens, and the record
+      // writer has exactly one caller (DECISIONS §86, `safemode.test.js`).
+      { label: 'Safe mode', section: 'general', handler: 'applySafeMode' },
       { label: 'Measuring latency', section: 'diagnostics', handler: 'toggleLatency' },
       { label: 'Send crash reports', section: 'privacy', handler: 'toggleCrash' },
     ];
@@ -332,10 +339,24 @@ describe('acceptance 1 · no setting writes a preference nothing reads', () => {
     it('an ACTION is still a button — the two grammars are not merged the other way', () => {
       // The opposite failure: everything becoming a switch. Resetting the
       // measurement performs something once and has no state to show, so it
-      // stays an `r-btn`, beside the switch rather than instead of it.
-      expect(MARKUP_ONLY).toMatch(
-        /<button class="r-btn" on:click=\{resetLatency\}[^>]*>Start a fresh measurement</,
+      // stays a BUTTON, beside the switch rather than instead of it.
+      //
+      // WIDENED, and it is worth saying why rather than just doing it. The
+      // assertion used to read the literal string `<button class="r-btn"`, and
+      // that is not the claim in its own title: the claim is that this control is
+      // an action and not a state. When the control moved to `ui/Button.svelte` --
+      // which renders exactly `.r-btn` and adds the reason a disabled control owes
+      // the operator -- this went red over a change that made it strictly better,
+      // which is a scanner measuring the spelling instead of the thing. Both
+      // spellings are accepted and the NEGATIVE half is stated explicitly, because
+      // that is the half the title is about: it may not become a switch.
+      const control = MARKUP_ONLY.slice(
+        Math.max(0, MARKUP_ONLY.indexOf('Start a fresh measurement') - 400),
+        MARKUP_ONLY.indexOf('Start a fresh measurement'),
       );
+      expect(control).toMatch(/<(?:button class="r-btn"|Button)\b/);
+      expect(control).toMatch(/on:click=\{resetLatency\}/);
+      expect(control, 'the action became a state').not.toMatch(/r-switch|role="switch"/);
     });
   });
 
@@ -391,6 +412,14 @@ describe('acceptance 2 · the update line still reports the CHANNEL', () => {
   it('a failed check is coloured as a failure, not as news', () => {
     expect(MARKUP_ONLY).toMatch(/class:s-netbad=\{\$updateChannel\.state === 'failed'\}/);
     expect(STYLE).toMatch(/\.s-netbad\{[^}]*--v-rose/);
+  });
+
+  // The mirror of the assertion above: `.s-netbad` → rose is pinned, but
+  // nothing pinned `.s-netwarn` → amethyst, so recolouring it to amber (rule
+  // 18's colour reserved for ON AIR, on a page that is never on air) would
+  // leave every other test green.
+  it('the caution class is amethyst, not the colour reserved for ON AIR', () => {
+    expect(STYLE).toMatch(/\.s-netwarn\{[^}]*--v-amethyst/);
   });
 });
 
@@ -629,5 +658,375 @@ describe('the Shortcuts section reads the canonical table', () => {
     const flat = [...table.matchAll(/\{ keys: \[([^\]]+)\]/g)].map((m) => m[1]).join(' ');
     for (const k of ["'A'", "'D'", "'/'", "'PgDn'", "'PgUp'", "'Esc'", "'B'", "'?'"])
       expect(flat, `${k} is missing from the canonical table`).toContain(k);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE SETUP WALK-THROUGH IS GUARDED DURING A RECORDED SERVICE.
+//
+// One click on this button sets `session.setupDone = false`, which mounts
+// FirstRun full-screen over a live console. From inside it, `stopMicTest()` and
+// `chooseDevice()` each stop the LIVE microphone, and "Try it" fires John 3:16
+// to the congregation's screens — under a label that says none of that. The
+// service lock could not reach it on its own: `restartSetup` is a session
+// write, so `servicelock::guard` is never consulted, which is why the guard has
+// to be on the button itself, reading the same live fact the "Unlock for this
+// service" control six rows below it already reads. CLAUDE.md rule 44 names
+// this exact sentence — its Escape half is fixed and pinned; this is the other
+// half.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('the setup walk-through is held back while a service is recording', () => {
+  const history = MARKUP_ONLY.slice(
+    MARKUP_ONLY.indexOf("section === 'history'"),
+    MARKUP_ONLY.indexOf("section === 'shortcuts'"),
+  );
+
+  it('the button is disabled by a live fact that AGREES with the unlock control below it', () => {
+    const btn = history.match(
+      /<button\b[^<]*?on:click=\{restartSetup\}[^<]*?>Run the setup walk-through<\/button>/,
+    )?.[0];
+    expect(btn, 'no button calling restartSetup was found').toBeTruthy();
+    // A bare/literal disable is furniture, same rule as the switches above.
+    expect(btn).not.toMatch(/disabled(?![-\w=])|disabled=\{(true|false)\}|disabled="/);
+    const cond = btn.match(/disabled=\{([^}]*)\}/)?.[1];
+    expect(cond, 'the button must be conditionally disabled').toBeTruthy();
+    const terms = cond.split('||').map((s) => s.trim());
+
+    // AGREEMENT, not a remembered literal: the "Service lock" block below reads
+    // its own `{#if …}` condition to decide whether to show "Unlock for this
+    // service" at all. A guard that names a different or narrower fact than
+    // that control is worse than no guard, so this asks the source for the
+    // real condition rather than hard-coding a string that could drift from it.
+    const serviceLockBlock = MARKUP_ONLY.slice(
+      MARKUP_ONLY.indexOf('<div class="rw-group">Service lock</div>'),
+      MARKUP_ONLY.indexOf('Unlock for this service'),
+    );
+    const lockCond = serviceLockBlock.match(/\{#if ([^}]*)\}/)?.[1]?.trim();
+    expect(lockCond, 'could not find the Service lock block\'s own condition').toBeTruthy();
+    expect(terms, 'disagrees with the unlock control it sits above').toContain(lockCond);
+
+    // idle() (updater.js) deliberately reads more than one fact: a service can be
+    // recording with the mic momentarily stopped, and a rehearsal can have the mic
+    // live with no service lock armed at all — either one stopping the
+    // walk-through's own microphone out from under an operator. Its lock half is
+    // now two terms rather than one, for the reason this guard gained a third:
+    // lifting the lock does not end the service. The button must cover the mic.
+    expect(terms).toContain('$capture.capturing');
+  });
+
+  it('a disabled control carries its reason, in amethyst — never amber', () => {
+    // Scoped to the {#if}…{/if} block itself, not a fixed character window —
+    // a window wide enough to catch the warning text is also wide enough to
+    // catch an unrelated control's amber a few hundred characters later.
+    //
+    // The block is found through the BUTTON'S OWN condition, not a remembered
+    // literal. This line held the guard's exact three-term string and broke the
+    // moment a third fact was added to it — the test above already makes the point
+    // that a hard-coded copy of a condition drifts from the condition, and this one
+    // was the copy. The reason that MATTERS is that a guard whose explanation sits
+    // under a different condition can be disabled with nothing said.
+    const guardCond = history
+      .match(/<button\b[^<]*?on:click=\{restartSetup\}[^<]*?>/)?.[0]
+      ?.match(/disabled=\{([^}]*)\}/)?.[1];
+    expect(guardCond, 'no disabled condition on the walk-through button').toBeTruthy();
+    const ifAt = history.indexOf(`{#if ${guardCond}}`);
+    expect(
+      ifAt,
+      `the explanation does not sit under the button's own condition (${guardCond})`,
+    ).toBeGreaterThanOrEqual(0);
+    const closeAt = history.indexOf('{/if}', ifAt);
+    const block = history.slice(ifAt, closeAt + '{/if}'.length);
+    expect(block).toMatch(/class="rw-foot s-netwarn"/);
+    expect(block).toMatch(/microphone is live|service is being recorded/i);
+    expect(block).not.toMatch(/var\(--v-amber\)/);
+    expect(block).not.toMatch(/class="[^"]*\bs-netbad\b/);
+  });
+
+  it('the Service lock label six rows below states the same fact in the same colour', () => {
+    // One condition — a service is recording — said twice on this page, and it
+    // used to be two different colours: amethyst here, amber (ON AIR — reserved,
+    // and this page is never on air) at "Service lock". Both must read the same.
+    const serviceLockBlock = MARKUP_ONLY.slice(
+      MARKUP_ONLY.indexOf('<div class="rw-group">Service lock</div>'),
+      MARKUP_ONLY.indexOf('Unlock for this service'),
+    );
+    expect(serviceLockBlock).toMatch(/A service is being recorded\./);
+    expect(serviceLockBlock).not.toMatch(/var\(--v-amber\)/);
+    expect(serviceLockBlock).toMatch(/class="s-netwarn"/);
+  });
+});
+
+// The gap Important 1 (fix round 1) closed: every guard above reads MARKUP_ONLY,
+// which is correct for the row (RG-133 records that exemption deliberately) but
+// left the SCRIPT half of the same bug uncovered. `doCheckUpdates` composing its
+// own "You're on the latest version." ternary instead of calling `describeChannel`
+// is the Task 3 defect verbatim, and it lives entirely inside `<script>` — so a
+// scanner that only ever reads MARKUP_ONLY would watch it come back and stay green.
+describe('the update BUTTON goes through describeChannel too — not only the row', () => {
+  it('doCheckUpdates calls describeChannel rather than composing its own sentence', () => {
+    const fn = SCRIPT_ONLY.slice(
+      SCRIPT_ONLY.indexOf('async function doCheckUpdates'),
+      SCRIPT_ONLY.indexOf('checking = false;', SCRIPT_ONLY.indexOf('async function doCheckUpdates')),
+    );
+    expect(fn, 'doCheckUpdates was not found').toBeTruthy();
+    expect(fn).toMatch(/describeChannel\(get\(updateChannel\)\)/);
+  });
+
+  it('and the script never re-invents the sentence describeChannel already owns', () => {
+    // Comments are stripped by `strip()`, so this is the live code only — the
+    // explanatory comment beside the fix is allowed to use these words; a
+    // literal fallback string in the handler is not.
+    expect(SCRIPT_ONLY).not.toMatch(/latest version/i);
+    expect(SCRIPT_ONLY).not.toMatch(/up to date/i);
+  });
+});
+
+// ── THE FIVE SMALLER FINDINGS (2026-09-15) ──────────────────────────────────
+//
+// Five controls on this page that did not say what had happened, plus a private
+// copy of a map that has a store. A source scan is the right instrument for the
+// structural claims below — which class, which handler, which region the markup
+// carries — and it is an APPROXIMATION for the DSN ones, which are claims about
+// behaviour over time.
+//
+// The first version of this paragraph said "nothing in this repository mounts
+// Settings, and a fixture that did would be a fixture of everything". THAT WAS
+// FALSE. `readstates.test.js` mounts `views/Settings.svelte`, presses through to
+// a section and asserts on rendered text, in about four lines — and a false
+// statement in a test file about what can be tested is the exact mechanism that
+// kept the `stopCapture` comment alive. The behavioural half of F-8 lives there,
+// under "Settings → the Sentry DSN": typing without saving, saving, and a save
+// the backend does not honour.
+describe('a Settings control says which of its outcomes happened', () => {
+  it('F-3 · Detect speakers reads WHICH failure it was, not a bare false', () => {
+    const fn = SCRIPT_ONLY.slice(
+      SCRIPT_ONLY.indexOf('async function detectSpeakers'),
+      SCRIPT_ONLY.indexOf('function pickOutput'),
+    );
+    expect(fn, 'detectSpeakers was not found').toBeTruthy();
+    // The three situations that used to render identically.
+    expect(fn).toMatch(/\.ok\b/);
+    expect(fn).toMatch(/'denied'/);
+    expect(fn).toMatch(/'no-input'/);
+  });
+
+  it('F-3 · and a refusal carries the way to reverse it', () => {
+    // A refusal that only says "refused" leaves an operator with a dead button
+    // and no next action. The OS path is the whole point of distinguishing it.
+    const fn = SCRIPT_ONLY.slice(
+      SCRIPT_ONLY.indexOf('async function detectSpeakers'),
+      SCRIPT_ONLY.indexOf('function pickOutput'),
+    );
+    expect(fn).toMatch(/Privacy & Security/);
+    expect(fn).toMatch(/Microphone/);
+  });
+
+  it('F-3 · the outcome is rendered, and in a live region', () => {
+    expect(MARKUP_ONLY).toMatch(/\{#if outMsg\}[\s\S]{0,200}role="status"/);
+  });
+
+  it('F-9 · no inline amber survives anywhere in the markup', () => {
+    // Amber means ON AIR and nothing else (rule 18). Settings is never on air,
+    // and this file's own style block says "Rose, never amber" three times while
+    // the demo-content edited count carried `style="color:var(--v-amber)"`.
+    expect(
+      MARKUP_ONLY,
+      'An inline amber in Settings. Amber means ON AIR; use .s-netbad (rose, a ' +
+        'failure) or .s-netwarn (amethyst, a caution).',
+    ).not.toMatch(/--v-amber/);
+  });
+
+  it('F-9 · the demo edited count wears the caution class instead', () => {
+    const demoBlock = MARKUP_ONLY.slice(
+      MARKUP_ONLY.indexOf('<div class="rw-group">Demo content</div>'),
+      MARKUP_ONLY.indexOf('<div class="rw-group">Service lock</div>'),
+    );
+    expect(demoBlock).toMatch(/been changed since/);
+    expect(demoBlock).toMatch(/class="s-netwarn"/);
+  });
+
+  it('F-10 · both results that were announced to nobody now have live regions', () => {
+    expect(MARKUP_ONLY).toMatch(/\{#if updateMsg\}[\s\S]{0,120}role="status"/);
+    expect(MARKUP_ONLY).toMatch(/\{#if crashMsg\}[\s\S]{0,200}role="status"/);
+  });
+
+  it('F-8 · the Sentry DSN has a commit path of its own', () => {
+    // `setCrashReporting` had exactly one caller — the switch — so with crash
+    // reporting already on, editing the address wrote only a local object and
+    // the next re-read put the old one back. The one control in Relay that
+    // decides where data leaves this machine.
+    const calls = SCRIPT_ONLY.match(/setCrashReporting\(/g) ?? [];
+    expect(
+      calls.length,
+      'setCrashReporting has one caller again. The DSN can be edited with no way ' +
+        'to commit it while the switch is already on.',
+    ).toBeGreaterThan(1);
+    expect(SCRIPT_ONLY).toMatch(/async function saveDsn/);
+    expect(MARKUP_ONLY).toMatch(/on:click=\{saveDsn\}/);
+  });
+
+  it('F-8 · the switch commits the SAVED address, never the bound field', () => {
+    // Turning reporting on is the operator's yes to WHETHER, not to WHERE. With
+    // `crash.dsn` here, a half-typed address the page was calling "not saved yet"
+    // became the live destination one click later — and `set_crash_reporting`
+    // calls `telemetry::enable` on it in the same breath. The behavioural half is
+    // in `readstates.test.js`; this is the one-line version that a reader of
+    // `toggleCrash` will see.
+    const fn = SCRIPT_ONLY.slice(
+      SCRIPT_ONLY.indexOf('async function toggleCrash'),
+      SCRIPT_ONLY.indexOf('async function saveDsn'),
+    );
+    expect(fn, 'toggleCrash was not found').toBeTruthy();
+    expect(fn).toMatch(/setCrashReporting\(enabled, savedDsn\)/);
+    // SCOPED TO THE CALL. This read `not.toMatch(/crash\.dsn/)` over the whole
+    // function, which also forbade READING the bound field — and the function has
+    // to read it, to put the operator's half-typed draft back after `acceptCrash`
+    // has overwritten it with the saved address. What must never happen is
+    // `crash.dsn` reaching the command, so that is what is asserted; `savedDsn` is
+    // written in exactly one place (the test below), so it cannot be forged into
+    // carrying the draft either.
+    expect(fn).not.toMatch(/setCrashReporting\([^)]*crash\.dsn/);
+    // …and the draft is restored AFTER the call, never merged into it.
+    const call = fn.indexOf('setCrashReporting(');
+    const restore = fn.indexOf('crash = { ...crash, dsn: draft }');
+    expect(restore, 'the half-typed draft is discarded by a switch flip').toBeGreaterThan(-1);
+    expect(restore).toBeGreaterThan(call);
+  });
+
+  it('F-8 · and does not commit on blur or on every keystroke', () => {
+    // The failure mode of the option NOT taken: blur fires on any focus change,
+    // so a half-typed or mis-pasted address would become the live destination
+    // with no moment at which the operator said so — and reports already sent to
+    // the wrong endpoint cannot be recalled.
+    const field = MARKUP_ONLY.slice(
+      MARKUP_ONLY.indexOf('id="crash-dsn"'),
+      MARKUP_ONLY.indexOf('</div>', MARKUP_ONLY.indexOf('id="crash-dsn"')),
+    );
+    expect(field).toMatch(/bind:value=\{crash\.dsn\}/);
+    expect(field).not.toMatch(/on:blur|on:change|on:input/);
+  });
+
+  it('F-8 · an unsaved address says so rather than looking committed', () => {
+    // The Save button's own failure mode is an edit that is never saved. That one
+    // can be made visible, which is why it was chosen over the silent one.
+    expect(SCRIPT_ONLY).toMatch(/dsnDirty\s*=/);
+    // `{#if}` or `{:else if}` — the unsaved line now sits behind the "could not
+    // read the setting" branch, because an address the page could not read is not
+    // an address with unsaved edits. Either spelling renders it; a literal `{#if}`
+    // here would have failed on a correct page.
+    expect(MARKUP_ONLY).toMatch(/\{(?:#if|:else if) dsnDirty\}/);
+  });
+
+  it('F-8 · savedDsn is only ever written from what the backend returned', () => {
+    // Rule 15 on the smallest possible control: if the local copy were written
+    // from what was ASKED for, a refused save would leave the field looking
+    // committed while the engine reported somewhere else.
+    // The declaration is not a write; every assignment after it must be one.
+    const writes = SCRIPT_ONLY.match(/(?<!let )savedDsn\s*=/g) ?? [];
+    expect(writes.length, 'savedDsn is written in more than one place').toBe(1);
+    expect(SCRIPT_ONLY).toMatch(/function acceptCrash\(landed\)[\s\S]{0,160}savedDsn = landed/);
+  });
+});
+
+describe('Settings keeps no private copy of a thing that has a store', () => {
+  it('reads the canonical content kinds rather than a list of its own', () => {
+    // A four-entry private list that predated the timer: the Countdown look could
+    // be set in the Templates gallery and was invisible here.
+    expect(SCRIPT_ONLY).toMatch(/contentTypes = CONTENT_KINDS/);
+    expect(
+      SCRIPT_ONLY,
+      'Settings has grown its own content-kind list again.',
+      // The SECTION list at the top of the file legitimately has a `scripture`
+      // key — it is a Settings section, not a content kind. Anchor on the pairing
+      // that only a content-look list has.
+    ).not.toMatch(/key: 'song',\s*label:/);
+  });
+
+  it('and Settings, the gallery and the editor all agree about every kind', () => {
+    const gallery = read('src/lib/views/templates/TemplateGallery.svelte');
+    const editor = read('src/lib/views/templates/TemplateEditor.svelte');
+    expect(CONTENT_KINDS.map((k) => k.key)).toContain('countdown');
+    for (const src of [SRC, gallery, editor]) {
+      expect(src).toMatch(/CONTENT_KINDS/);
+    }
+  });
+
+  it('subscribes to the one store instead of refilling a local map', () => {
+    expect(MARKUP_ONLY).toMatch(/\$contentTemplates\[ct\.key\]/);
+    expect(
+      SCRIPT_ONLY,
+      'Settings holds a private ctMap again. `contentTemplates` is the one store ' +
+        'and three surfaces used to keep private copies that silently disagreed.',
+    ).not.toMatch(/\bctMap\b/);
+    expect(SCRIPT_ONLY).toMatch(/loadContentTemplates\(\)/);
+  });
+});
+
+describe('the offline model install goes through the one humaniser', () => {
+  // Stripped, for the same reason the Settings scan is: the comment beside the
+  // fix quotes the expression it replaced, and a scanner that reads comments
+  // reports a fixed defect as still present.
+  const MODEL = strip(read('src/lib/ModelSetup.svelte'));
+
+  it('F-5 · installFound renders humanError, not a raw Rust string', () => {
+    // Its six siblings on this surface already do. The defect is latent —
+    // `install_from_file`'s own refusals are written for a volunteer — but the
+    // command returns Result<String, String>, not the typed { kind, message },
+    // so nothing constrains the next string it grows.
+    const fn = MODEL.slice(MODEL.indexOf('async function installFound'), MODEL.indexOf('async function get('));
+    expect(fn, 'installFound was not found').toBeTruthy();
+    expect(fn).toMatch(/installMsg = humanError\(e\)/);
+    expect(fn).not.toMatch(/e\?\.message \?\? String\(e\)/);
+  });
+});
+
+// ── THE UPDATE STATUS VALUE IS PROSE, AND PROSE IN A FIGURE COLUMN EATS THE ──
+//    NAME BESIDE IT.
+//
+// Task 3 grew `describeChannel`'s `failed` answer from 33 characters to 112, to
+// carry the guidance the button used to hold on its own. That is the right
+// sentence in the wrong cell: `.rw-nvv` is mono, right-aligned and sits in the
+// `auto` half of `minmax(0,1fr) auto` (`views/WorkspaceFrame.svelte`), so the
+// value takes its max-content width and the name is squeezed into whatever is
+// left. MEASURED in a browser at an 878px row: "Update status" occupied 772px
+// beside "up to date" and 98.8px beside the failure sentence. Through `.s-nvp` —
+// the class this file already defines for exactly this case, and already uses on
+// the Privacy report — the name gets 562.3px back and the value is capped at
+// 46ch. A failure is still rose, because `.s-netbad` is declared after `.s-nvp`
+// at equal specificity.
+describe('the Update status row does not let its own sentence eat the name', () => {
+  it('the value is a sentence cell, not a figure cell', () => {
+    const row = MARKUP_ONLY.slice(
+      MARKUP_ONLY.indexOf('<span class="rw-nvk">Update status</span>'),
+      MARKUP_ONLY.indexOf('</div>', MARKUP_ONLY.indexOf('<span class="rw-nvk">Update status</span>')),
+    );
+    expect(row, 'the Update status row was not found').toBeTruthy();
+    expect(row).toMatch(/class="s-nvp"/);
+    // `.s-nvp` REPLACES `.rw-nvv` rather than joining it — keeping both leaves
+    // the sentence in mono, which is the half of the defect that is about
+    // reading rather than about width.
+    expect(row).not.toMatch(/rw-nvv/);
+    // And the failure is still rose.
+    expect(row).toMatch(/class:s-netbad=/);
+  });
+
+  it('and so does the Last attempt row directly beneath it', () => {
+    // The same defect at the same moment on the same screen: an arbitrary backend
+    // string in the figure cell, rendered only when the channel has failed. The
+    // measured page had it reading "Cannot read properties of undefined (reading
+    // 'invoke')" — 51 characters of diagnostic squeezing a two-word name.
+    const row = MARKUP_ONLY.slice(
+      MARKUP_ONLY.indexOf('<span class="rw-nvk">Last attempt</span>'),
+      MARKUP_ONLY.indexOf('</div>', MARKUP_ONLY.indexOf('<span class="rw-nvk">Last attempt</span>')),
+    );
+    expect(row, 'the Last attempt row was not found').toBeTruthy();
+    expect(row).toMatch(/class="s-nvp"/);
+    expect(row).not.toMatch(/rw-nvv/);
+  });
+
+  it('.s-netbad is declared after .s-nvp, so a failure still wins the colour', () => {
+    // Equal specificity, same stylesheet: source order decides. Reordering them
+    // would paint a failed update channel in the dim body colour.
+    expect(STYLE.indexOf('.s-netbad{')).toBeGreaterThan(STYLE.indexOf('.s-nvp{'));
   });
 });

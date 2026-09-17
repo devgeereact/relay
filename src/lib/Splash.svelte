@@ -1,27 +1,66 @@
 <script>
-  // The boot screen — docs/design/relay-splash-screen.png.
+  // The boot screen — the first thing a church ever sees.
+  //
+  // ORIGINAL REFERENCE: docs/design/relay-splash-screen.png. This screen now
+  // DELIBERATELY DIVERGES from it — the 2026-09-15 design pass took out a
+  // false status badge, three feature bullets, a glowing divider and a pulse
+  // glyph that the reference draws. Per CLAUDE.md, the references are not a
+  // spec: where a reference and the stylesheet disagree, the stylesheet is
+  // what shipped. The reasons are below, so the PNG can still be read as the
+  // starting point rather than as a thing this file has drifted away from.
   //
   // It is DECORATION OVER A FACT, never a fact of its own. It covers the shell
   // only while the engine is being attached, and App.svelte drops it on a hard
   // timeout as well as on success — a splash that outlives its boot is an app
-  // that looks hung, and this one is the first thing an operator ever sees.
+  // that looks hung.
   //
   // Nothing here is amber. Amber is the tally light and means the congregation
   // is looking at something; during boot nothing is on any wall. The brand is
   // amethyst, which in this app means "not reaching the screens" — which, at
   // boot, is exactly true.
+  //
+  // ── What this screen is allowed to SAY ────────────────────────────────────
+  // Only what it actually knows, which is very little: Relay is starting. The
+  // four boot stages that know things about this machine run AFTER it and
+  // report themselves (lib/boot/). So there is ONE status line here and it is
+  // honest; there is no invented progress, and there are no standing claims
+  // dressed as readouts.
+  //
+  // Two of those claims were removed in the 2026-09-15 design pass:
+  //   · "SAFE MODE · Outputs disabled" was hard-coded markup, so it read the
+  //     same whether or not safe mode was on — CLAUDE.md rule 35's defect
+  //     exactly, on the only screen where nobody could check. It is NOT that
+  //     the fact is unavailable here: `boot/boot.js` derives `safeMode` from
+  //     the boot record and `App.svelte` already reads it while `booting` is
+  //     still true. The fact is PARTIAL — the crash-streak path can still turn
+  //     safe mode on at the gate a moment later — so this screen chooses to
+  //     say nothing rather than to say a half of it, and BootShell says the
+  //     settled answer through a real `safe` prop one screen on.
+  //   · "No Internet · Privacy First · Local Processing" were three feature
+  //     bullets restating the offline line beside them, and they were already
+  //     hidden below 860px — chrome that vanishes on a small booth laptop was
+  //     never load-bearing.
+  //
+  // ── Continuity with the launch sequence ───────────────────────────────────
+  // The brand row and the footer strip are deliberately the same shape and the
+  // same type as BootShell's `.b-bar` / `.b-foot`, so the handover reads as one
+  // screen changing rather than two different apps. If you restyle one, look at
+  // the other.
 
   import BrandMark from './ui/BrandMark.svelte';
 
   /** Shown next to the wordmark. Empty in a plain browser (no backend). */
   export let version = '';
-  /** The line that changes as boot progresses. */
-  export let stage = 'starting engine…';
-  /** The quieter line under the spinner. */
-  export let detail = 'Initializing offline systems';
+  /** The one status line. Sentence case, no ellipsis — the spinner beside it
+   *  already says "still going", and two of those is one too many. */
+  export let stage = 'Starting Relay';
 </script>
 
-<div class="splash" role="status" aria-live="polite" aria-busy="true">
+<!-- No `aria-busy`. It tells assistive technology to withhold announcements
+     until it goes false, and this region only ever unmounts — so the screen's
+     one line of information was silent to a screen-reader operator for the
+     whole boot. Nothing here updates in place, so there is nothing to suppress. -->
+<div class="splash" role="status" aria-live="polite">
   <!-- Edge line-art. Pure decoration, so it is hidden from assistive tech. -->
   <svg class="waves" viewBox="0 0 1536 1024" preserveAspectRatio="none" aria-hidden="true">
     <g fill="none" stroke="currentColor" stroke-width="1">
@@ -34,7 +73,7 @@
 
   <!-- Brand row. The native window keeps its own minimise/maximise/close —
        Relay does not draw its own window controls, so only the identity half
-       of the reference title bar is reproduced here. -->
+       of the reference title bar is reproduced here. Matches BootShell. -->
   <header class="bar">
     <BrandMark size="16px" />
     <b>RELAY</b>
@@ -42,78 +81,39 @@
   </header>
 
   <div class="core">
-    <!-- The hero mark. SEVEN bars — this was hand-drawn with five, which is not
-         the mark on the design sheet. It now comes from the one component that
-         also matches the app icon, sized fluidly with the viewport. -->
+    <!-- The hero mark, and the one focal point on the screen. SEVEN bars — this
+         was hand-drawn with five, which is not the mark on the design sheet. It
+         comes from the one component that also matches the app icon, sized
+         fluidly with the viewport. -->
     <div class="logo">
       <BrandMark
-        size="clamp(96px, 22.5vh, 230px)"
+        size="clamp(80px, 17vh, 168px)"
         fill="linear-gradient(180deg, var(--v-amethyst2), var(--v-amethyst))"
       />
     </div>
 
     <h1 class="word">RELAY</h1>
     <p class="tag">AI-Assisted Live Church Production</p>
-    <div class="rule" aria-hidden="true"></div>
 
-    <svg class="pulse" viewBox="0 0 120 24" fill="none" aria-hidden="true">
-      <path
-        d="M0 12h44l6-9 6 18 5-13 5 8 4-4h50"
-        stroke="currentColor"
-        stroke-width="1.6"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      />
-    </svg>
-
-    <p class="stage">{stage}</p>
-
-    <div class="spin" aria-hidden="true">
-      {#each Array(8) as _, i}<span style="--i:{i}"></span>{/each}
-    </div>
-
-    <p class="detail">{detail}</p>
+    <!-- The status, beside its spinner rather than stacked above it. One row,
+         one fact, at the place the eye is already looking. -->
+    <p class="status">
+      <span class="spin" aria-hidden="true">
+        {#each Array(8) as _, i}<span style="--i:{i}"></span>{/each}
+      </span>
+      {stage}
+    </p>
   </div>
 
+  <!-- The one standing claim left on this screen. It is a statement about how
+       Relay PROCESSES — nothing a church says leaves the device — rather than a
+       claim that no socket is open: `App.svelte` runs `checkForUpdate()` in the
+       same onMount, so an update check may well be in flight behind it. The
+       wording is verbatim from BootShell's footer and must stay that way. It
+       sits on the RIGHT because that is where BootShell puts the same words:
+       the one line that survives the handover does not move. -->
   <footer class="foot">
-    <div class="f-lead">
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"
-        stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M12 3 4.5 6v5.5c0 4.4 3.1 8.3 7.5 9.5 4.4-1.2 7.5-5.1 7.5-9.5V6L12 3Z" />
-        <path d="m9 12 2 2 4-4" />
-      </svg>
-      <span class="f-t"><b>Offline Mode</b><i>All systems local</i></span>
-    </div>
-
-    <ul class="f-mid">
-      <li>
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"
-          stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M6.5 18.5A4.5 4.5 0 0 1 6 9.6a6 6 0 0 1 9.3-3.7" />
-          <path d="M17.3 10a4.5 4.5 0 0 1 .7 8.5H9" /><path d="m3 3 18 18" />
-        </svg>No Internet
-      </li>
-      <li>
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"
-          stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <rect x="4" y="10.5" width="16" height="10" rx="2" />
-          <path d="M8 10.5V7.5a4 4 0 0 1 8 0v3" />
-        </svg>Privacy First
-      </li>
-      <li>
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"
-          stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <rect x="3.5" y="4.5" width="17" height="6" rx="1.6" />
-          <rect x="3.5" y="13.5" width="17" height="6" rx="1.6" />
-          <path d="M7 7.5h.01M7 16.5h.01" />
-        </svg>Local Processing
-      </li>
-    </ul>
-
-    <div class="f-trail">
-      <span class="f-dot"></span>
-      <span class="f-t"><b>Safe Mode</b><i>Outputs disabled</i></span>
-    </div>
+    <span>Offline · all processing local</span>
   </footer>
 </div>
 
@@ -131,15 +131,25 @@
     font-family: var(--f-body);
     overflow: hidden;
   }
-  /* A very slight violet lift out of the corners, as on the reference. */
+  /* A very slight violet lift out of the corners, so the void is not flat.
+     Centred a little above the middle, where the mark sits. */
   .splash::before {
     content: '';
     position: absolute;
     inset: 0;
     background:
-      radial-gradient(70% 45% at 50% 42%, rgba(169, 107, 245, 0.09), transparent 70%),
-      radial-gradient(40% 60% at 3% 60%, rgba(169, 107, 245, 0.06), transparent 70%),
-      radial-gradient(40% 60% at 97% 45%, rgba(169, 107, 245, 0.06), transparent 70%);
+      /* THE TOKEN, not a hand-typed copy of it. These were
+         `rgba(169,107,245,…)`, which happens to be the CURRENT amethyst spelled
+         out — so unlike the boot ladder's glow they were not the wrong purple,
+         they were the right one written somewhere a hex sweep could not see it.
+         That is the failure mode DESIGN_SYSTEM §1.3 describes: when the hex moves,
+         every hand-written copy becomes a surface quietly painted in the old
+         colour, and `workspacegrammar.test.js`'s own header says `rgba()` is not
+         scanned at all. `color-mix` because these alphas are decorative washes the
+         palette does not publish as tokens. */
+      radial-gradient(64% 42% at 50% 38%, color-mix(in srgb, var(--v-amethyst) 8.5%, transparent), transparent 70%),
+      radial-gradient(38% 58% at 2% 62%, color-mix(in srgb, var(--v-amethyst) 5%, transparent), transparent 70%),
+      radial-gradient(38% 58% at 98% 44%, color-mix(in srgb, var(--v-amethyst) 5%, transparent), transparent 70%);
     pointer-events: none;
   }
   .waves {
@@ -148,42 +158,62 @@
     width: 100%;
     height: 100%;
     color: var(--v-amethyst);
-    opacity: 0.26;
+    /* Quieter than it was (0.26). The line-art is the ground, not a subject —
+       at 1024 the old weight ran right up to the wordmark. */
+    opacity: 0.17;
     /* Two masks: fade out through the centre (so the line-art never runs behind
-       the wordmark) and out at the bottom (the reference's footer is clean). */
+       the lockup) and out at the bottom (the footer strip stays clean). The
+       centre window is wider than it was, because the lockup is centred and the
+       art used to crowd it on a narrow window. */
     -webkit-mask-image:
-      linear-gradient(90deg, #000 0%, #000 18%, transparent 44%, transparent 56%, #000 82%, #000 100%),
-      linear-gradient(180deg, #000 0%, #000 84%, transparent 96%);
+      linear-gradient(90deg, #000 0%, #000 12%, transparent 40%, transparent 60%, #000 88%, #000 100%),
+      linear-gradient(180deg, #000 0%, #000 80%, transparent 95%);
     -webkit-mask-composite: source-in;
     mask-image:
-      linear-gradient(90deg, #000 0%, #000 18%, transparent 44%, transparent 56%, #000 82%, #000 100%),
-      linear-gradient(180deg, #000 0%, #000 84%, transparent 96%);
+      linear-gradient(90deg, #000 0%, #000 12%, transparent 40%, transparent 60%, #000 88%, #000 100%),
+      linear-gradient(180deg, #000 0%, #000 80%, transparent 95%);
     mask-composite: intersect;
     pointer-events: none;
   }
 
-  /* ── Brand row ── */
+  /* ── Brand row ──
+     60px with a hairline under it, matching BootShell's `.b-bar` exactly: this
+     is the one element that survives the handover, so it must not move. */
   .bar {
     position: relative;
     flex: 0 0 auto;
     display: flex;
     align-items: center;
     gap: var(--v-sp-sm);
-    height: 68px;
+    height: 60px;
     padding: 0 28px;
+    border-bottom: 1px solid var(--v-line);
   }
   .bar b {
-    font-size: var(--v-fs-ttl);
+    font-size: var(--v-fs-h2);
     font-weight: 700;
     letter-spacing: 0.1em;
     color: var(--v-txt);
   }
   .ver {
-    font-size:var(--v-fs-b1);
+    font-size: var(--v-fs-lbl);
     color: var(--v-faint);
   }
+  /* `app.css` narrows `.b-bar` to 16px below 640. The brand row is the one
+     element that survives the handover, so it narrows at the same width or it
+     jumps there. */
+  @media (max-width: 640px) {
+    .bar {
+      padding: 0 16px;
+    }
+  }
 
-  /* ── Centre stack ── */
+  /* ── Centre stack ──
+     Four things, not seven. The pulse glyph and the glowing divider were both
+     removed: the glyph was a heartbeat line that never beat, sitting directly
+     above the spinner that does the same job, and the divider put a 950px
+     second light source across the screen beside the mark it was competing
+     with. A boot screen gets one focal point. */
   .core {
     position: relative;
     flex: 1;
@@ -192,7 +222,9 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    padding-top: clamp(8px, 2.2vh, 22px);
+    /* The footer is taller than the brand row, so a mathematically centred
+       stack sits low. Lift it by the difference. */
+    padding-bottom: clamp(16px, 3vh, 34px);
   }
 
   .logo {
@@ -201,96 +233,84 @@
   }
 
   .word {
-    margin: clamp(14px, 3.5vh, 36px) 0 0;
+    margin: clamp(18px, 3.6vh, 40px) 0 0;
     font-family: var(--f-body);
-    font-size: clamp(52px, 12.8vh, 132px);
+    font-size: clamp(40px, 8vh, 84px);
     font-weight: 700;
-    letter-spacing: 0.355em;
+    letter-spacing: 0.3em;
     /* The tracking pushes a phantom gap past the Y; pull it back so the
        wordmark is optically centred rather than mathematically centred. */
-    text-indent: 0.355em;
+    text-indent: 0.3em;
     line-height: 1;
     /* A faint top-to-bottom sheen, as on the reference wordmark. */
-    background: linear-gradient(180deg, #ffffff 45%, var(--v-dim) 130%);
+    background: linear-gradient(180deg, #ffffff 50%, var(--v-dim) 135%);
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
   }
   .tag {
-    margin: clamp(6px, 1.35vh, 14px) 0 0;
-    font-size: clamp(11px, 1.95vh, 20px);
+    margin: clamp(10px, 1.7vh, 18px) 0 0;
+    font-size: clamp(10.5px, 1.3vh, 14.5px);
     font-weight: 500;
-    letter-spacing: 0.29em;
-    text-indent: 0.29em;
+    letter-spacing: 0.24em;
+    text-indent: 0.24em;
     text-transform: uppercase;
     color: var(--v-amethyst2);
   }
-  .rule {
-    position: relative;
-    margin-top: clamp(12px, 3vh, 31px);
-    width: min(62%, 950px);
-    height: 1px;
-    background: linear-gradient(
-      90deg,
-      transparent,
-      rgba(169, 107, 245, 0.28) 22%,
-      var(--v-amethyst2) 50%,
-      rgba(169, 107, 245, 0.28) 78%,
-      transparent
-    );
-    box-shadow: 0 0 12px 0 rgba(169, 107, 245, 0.3);
-  }
-  /* The reference lights the divider from a hotspot at its centre — a soft
-     violet bloom that reads as a glow, not a second rule. */
-  .rule::after {
-    content: '';
-    position: absolute;
-    left: 50%;
-    top: 50%;
-    width: 34%;
-    height: 46px;
-    transform: translate(-50%, -50%);
-    background: radial-gradient(
-      50% 50% at 50% 50%,
-      rgba(196, 176, 255, 0.5),
-      rgba(169, 107, 245, 0.18) 38%,
-      transparent 72%
-    );
-    pointer-events: none;
-  }
 
-  .pulse {
-    margin-top: clamp(20px, 5.5vh, 56px);
-    width: clamp(66px, 8vw, 120px);
-    color: var(--v-amethyst2);
-  }
-  .stage {
-    margin: clamp(8px, 2.05vh, 21px) 0 0;
-    font-size: clamp(18px, 3.3vh, 34px);
+  /* The status and its spinner on ONE row. */
+  .status {
+    display: flex;
+    align-items: center;
+    gap: clamp(10px, 1.2vw, 16px);
+    margin: clamp(30px, 5.8vh, 64px) 0 0;
+    font-size: clamp(15.5px, 1.95vh, 20px);
     font-weight: 400;
+    letter-spacing: 0.01em;
+    /* Full text weight, not the dim ramp: everything above this line is
+       identity, and this is the only INFORMATION on the screen. */
     color: var(--v-txt);
   }
 
   .spin {
     position: relative;
-    margin-top: clamp(14px, 2.9vh, 30px);
-    width: clamp(30px, 5.4vh, 55px);
-    height: clamp(30px, 5.4vh, 55px);
+    flex: 0 0 auto;
+    width: clamp(19px, 2.4vh, 24px);
+    height: clamp(19px, 2.4vh, 24px);
   }
   .spin span {
     position: absolute;
     top: 0;
     left: 50%;
-    width: 13%;
-    height: 13%;
-    margin-left: -6.5%;
-    border-radius: 50%;
+    width: 16%;
+    height: 16%;
+    margin-left: -8%;
+    border-radius: var(--v-r-round);
     background: var(--v-amethyst2);
-    transform-origin: 50% 385%;
+    /* The pivot is the ring's centre: half the ring's height expressed in the
+       DOT's own height, so (0.5 / 0.16) = 312.5%. Recompute it whenever the
+       dot size changes — 333% was a carry-over and sat the ring 0.8px high. */
+    transform-origin: 50% 312.5%;
     transform: rotate(calc(var(--i) * 45deg));
-    opacity: 0.2;
-    animation: spindot 1.2s linear infinite;
-    animation-delay: calc(var(--i) * 0.15s);
+    /* Motion is OPT-IN (DESIGN_SYSTEM §5): this IS the state an operator who
+       asked for no animation gets, and the animation is added inside
+       `no-preference`. The old shape animated by default and switched off
+       under `reduce` — the same result by the riskier route, since a query
+       cannot unset a declaration made outside it.
+       0.55 IS NOT A ROUND NUMBER AND MUST NOT BE LOWERED. It is what the old
+       `reduce` block rested at, and it is the side of the line that clears
+       WCAG's 3:1 non-text floor: composited over --v-void, --v-amethyst2
+       measures 3.32:1 at 0.55 and 2.06:1 at 0.35 (sRGB relative luminance,
+       computed in the live DOM). These are ~3px dots in a dark booth, read by
+       the one user this branch exists to serve. The animation writes opacity
+       every frame, so this value reaches nobody else. */
+    opacity: 0.55;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .spin span {
+      animation: spindot 1.2s linear infinite;
+      animation-delay: calc(var(--i) * 0.15s);
+    }
   }
   @keyframes spindot {
     0% {
@@ -300,100 +320,25 @@
       opacity: 0.15;
     }
   }
-  .detail {
-    margin: clamp(10px, 2.35vh, 24px) 0 0;
-    font-size: clamp(13px, 2vh, 21px);
-    color: var(--v-faint);
-  }
 
-  /* ── Footer strip ── */
+  /* ── Footer strip ──
+     Same padding, same hairline and the same type as BootShell's `.b-foot`,
+     and the text is right-aligned to land where BootShell puts the identical
+     phrase. The amethyst dot and the stage slot on the left belong to the
+     launch sequence, which has something to put in them; a dot here would be
+     decoration standing where a real status is about to appear. */
   .foot {
     position: relative;
     flex: 0 0 auto;
     display: flex;
     align-items: center;
-    gap: var(--v-sp-lg);
-    padding: clamp(14px, 2.35vh, 24px) clamp(20px, 3.6vw, 56px) clamp(22px, 3.8vh, 39px);
-    border-top: 1px solid var(--v-line);
-  }
-  .f-lead,
-  .f-trail {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    flex: 1 1 0;
-  }
-  .f-trail {
     justify-content: flex-end;
-  }
-  .f-lead > svg {
-    color: var(--v-emerald);
-    flex: 0 0 auto;
-  }
-  .f-dot {
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-    flex: 0 0 auto;
-    background: var(--v-amethyst);
-  }
-  .f-t {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    line-height: 1.2;
-  }
-  .f-t b {
-    font-size: var(--v-fs-ttl);
-    font-weight: 700;
-    letter-spacing: 0.02em;
+    padding: 14px 28px;
+    border-top: 1px solid var(--v-line);
+    font-family: var(--f-mono);
+    font-size: var(--v-fs-b3);
+    letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: var(--v-txt);
-  }
-  .f-t i {
-    font-size: var(--v-fs-pr);
-    font-style: normal;
     color: var(--v-faint);
-  }
-  .f-trail .f-t {
-    align-items: flex-end;
-  }
-
-  .f-mid {
-    display: flex;
-    align-items: center;
-    gap: clamp(14px, 2vw, 26px);
-    margin: 0;
-    padding: 0;
-    list-style: none;
-  }
-  .f-mid li {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-size: var(--v-fs-ttl);
-    color: var(--v-dim);
-  }
-  .f-mid li + li {
-    padding-left: clamp(14px, 2vw, 26px);
-    border-left: 1px solid var(--v-line2);
-  }
-  .f-mid svg {
-    color: var(--v-faint);
-    flex: 0 0 auto;
-  }
-
-  /* Tight windows: the footer's middle rail is the first thing to go. */
-  @media (max-width: 860px) {
-    .f-mid {
-      display: none;
-    }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .spin span {
-      animation: none;
-      opacity: 0.55;
-    }
   }
 </style>

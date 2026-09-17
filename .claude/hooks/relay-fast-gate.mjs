@@ -62,7 +62,7 @@ const WATCHED = [
   { match: /src\/lib\/degraded\.js$/, tests: ['degraded'] },
   { match: /src\/lib\/updater\.js$/, tests: ['updatesafety'] },
   { match: /src\/lib\/views\/library\/LiveOutputRail\.svelte$/, tests: ['liveoutputrail'] },
-  { match: /src\/lib\/TemplateRender\.svelte$/, tests: ['layers', 'templatestyle', 'themerender', 'rendercontent'] },
+  { match: /src\/lib\/(TemplateRender\.svelte|styletokens\.js)$/, tests: ['layers', 'templatestyle', 'thememerge', 'rendercontent'] },
   // Renaming a #[tauri::command] does not break the build, does not fail a test and
   // does not log — it just makes a button quietly stop working. `ipc.test.js` is the
   // only thing standing between that and a Sunday.

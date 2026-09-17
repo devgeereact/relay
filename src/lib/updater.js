@@ -88,15 +88,37 @@ export async function restoreSnapshot(snapshot) {
 
 let pending = null; // the Update handle from the plugin
 
+/**
+ * Is a service running right now, by either of the two names it has?
+ *
+ * `engaged` and `recording` are DELIBERATELY different facts (`main.rs`, on
+ * `servicelock`): lifting the lock is a first-class operator override and it does
+ * not end the service. This function existed as `!engaged` alone, under a comment
+ * asserting that "the service lock is armed for the whole of a recorded service",
+ * which the engine says is false the moment somebody lifts it — and the second of
+ * `idle()`'s two call sites DOWNLOADS AND RESTARTS THE APPLICATION.
+ *
+ * So the reachable sequence was: unlock mid-service to delete something (which is
+ * what the override is for), stop the microphone between readings (which the
+ * comment below enumerates as the gap the lock was added to close), press the
+ * update banner that has been sitting in the shell the whole time — and Relay
+ * restarts mid-sermon. That is this file's own rule in capitals, broken by the
+ * guard written to keep it.
+ */
+const inService = () => {
+  const lock = get(serviceLock);
+  return !!lock.engaged || !!lock.recording;
+};
+
 /** Is it safe to touch the updater right now? */
 function idle() {
   // TWO facts, because the microphone alone was not enough. A service can be
   // recording with the mic momentarily stopped — between readings, while the
   // operator changes an input, after an `audio://error` — and every one of those
   // is a moment when restarting the app is the worst thing Relay could offer.
-  // The service lock is armed for the whole of a recorded service, so it closes
-  // the gap the mic flag left open.
-  return !get(capture).capturing && !get(serviceLock).engaged;
+  // The second fact is "a service is running", and `inService` above says why that
+  // is not the same question as "is the lock armed".
+  return !get(capture).capturing && !inService();
 }
 
 /**
@@ -104,12 +126,16 @@ function idle() {
  *
  * `{ state, at, detail }` where `state` is one of:
  *
- *   `unchecked`   — no check has completed this session (or a service was running).
+ *   `unchecked`   — no check has ever completed this session.
  *   `ok`          — the update server answered. `detail` is the version, or ''.
  *   `unavailable` — there is no updater here at all: a browser, a dev build, an
  *                   unsigned build. NOT a fault, and not worth a word to anyone.
  *   `failed`      — a check ran and could not get an answer. Offline is the common
  *                   and harmless reason; a manifest that does not exist is not.
+ *   `skipped`     — a check was ASKED FOR and refused, because the mic is live or
+ *                   a service is recording. `detail` is `'service'` or `'listening'`.
+ *                   A refusal is its own outcome: it must never be read back as
+ *                   whatever the last successful check happened to say.
  *
  * ── Why this store had to exist ──────────────────────────────────────────────
  *
@@ -142,7 +168,20 @@ const noteChannel = (state, detail = '') =>
  * outcome is RECORDED (`updateChannel`) rather than raised.
  */
 export async function checkForUpdate() {
-  if (!idle()) return null;
+  if (!idle()) {
+    // A REFUSAL IS A THIRD OUTCOME, NOT AN ABSENCE. Returning a bare `null` here
+    // let the caller fall back to whatever the LAST successful check had said, so
+    // a button pressed mid-service printed "You're on the latest version." about
+    // a check that never ran — rule 35: if the line reads the same when the thing
+    // behind it did not happen, it is not a status line. The reason names the
+    // same two facts `installUpdate` already distinguishes below.
+    // `inService`, not `engaged`: keyed on the narrower fact, a check refused
+    // during an UNLOCKED recorded service reported `'listening'`, and Settings
+    // then told the operator to stop listening over a microphone that was
+    // already off.
+    noteChannel('skipped', inService() ? 'service' : 'listening');
+    return null;
+  }
   let check;
   try {
     ({ check } = await import('@tauri-apps/plugin-updater'));
@@ -177,9 +216,23 @@ export function describeChannel(ch) {
     case 'ok':
       return ch.detail ? `${ch.detail} available` : 'up to date';
     case 'failed':
-      return 'could not reach the update server';
+      // The guidance this used to carry only in the button's own hand-composed
+      // sentence — restored HERE, not as a second ternary at the call site, so
+      // the row and the button can never say a different thing about the same
+      // failure again.
+      return 'could not reach the update server. This is normal offline — if you are online, the update channel may be broken.';
     case 'unavailable':
       return 'no update channel in this build';
+    case 'skipped':
+      // PAST TENSE, deliberately. `checkForUpdate` only runs on launch and on
+      // this button, so this sentence is the last word in the store until the
+      // next check — which can be long after the service that caused the
+      // refusal has ended. Present tense ("is being recorded") reads as a live
+      // fact for however long that gap is; it is already history by the time
+      // anyone reads it.
+      return ch.detail === 'service'
+        ? 'not checked — a service was being recorded'
+        : 'not checked — Relay was listening';
     default:
       return 'not checked yet';
   }
@@ -208,7 +261,7 @@ export async function installUpdate() {
     // "Stop listening" is unhelpful advice to someone whose microphone is already
     // off and whose service is still recording.
     updateError.set(
-      get(serviceLock).engaged
+      inService()
         ? "Relay won't update during a service — an update restarts the app. End the service first."
         : "Relay won't update while you're listening. Stop listening first — an update restarts the app.",
     );

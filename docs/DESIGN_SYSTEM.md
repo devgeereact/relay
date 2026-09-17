@@ -5,10 +5,11 @@ component vocabulary. For the *why* behind any rule here follow the link into
 [DECISIONS.md](DECISIONS.md); for how the pieces fit see [ARCHITECTURE.md](ARCHITECTURE.md);
 for the entities being rendered see [DATA_MODEL.md](DATA_MODEL.md).
 
-**The source of truth is [`src/app.css`](../src/app.css), not this page.** That file is the
-shipped stylesheet and it carries the reasoning inline, at each token. This document is the map
-and the rules a reader needs *before* opening it. If the two disagree, `app.css` is right and
-this page is a bug.
+**The source of truth is the shipped stylesheet, not this page.** It is two files:
+[`src/tokens.css`](../src/tokens.css) carries the palette, the type ramp and the spacing scales,
+and [`src/app.css`](../src/app.css) imports it and adds the console's own rules. Both carry the
+reasoning inline, at each token. This document is the map and the rules a reader needs *before*
+opening them. If the two disagree, the stylesheet is right and this page is a bug.
 
 ---
 
@@ -25,14 +26,23 @@ Those are different design problems and Relay keeps them in different systems:
 
 | | Console chrome | Output surfaces |
 |---|---|---|
-| Styled by | `src/app.css` — one global stylesheet | **Themes → Templates**, resolved by `TemplateRender.svelte` |
+| Styled by | `src/app.css` — the console's global stylesheet, which imports `src/tokens.css` | **Templates**, resolved by `TemplateRender.svelte`. There is no separate theme layer any more: a theme had no field a template does not already have, so the two were folded into one (DECISIONS §87) |
 | Who changes it | Only a developer | The operator, in the app, per screen |
 | Units | `px` | **`cqw`** — so a template looks identical at any output size |
 | Background | Always dark | Whatever the template says, **including transparent** (so it keys out in OBS) |
 
 Never style an output surface from `app.css`, and never put a console token into a template.
-The one file both share is `app.css` itself (the output window imports it for its reset), which
-is why deleting a legacy rule from it is riskier than it looks — see §6.
+**Both halves of that sentence used to be unenforceable, and both are enforced now** (wave 5,
+Track E). `output.js` and `stage.js` imported `app.css` in full, and Svelte does not scope a
+global stylesheet, so every unscoped console rule in it was live on `output.html` and
+`stage.html` — a class-name collision away from painting on a wall. They now import
+`src/tokens.css`, which may declare custom properties and nothing else, so the palette is still
+shared and no rule can cross. And a seeded `style_json` stored `"font":"var(--f-serif)"`, a
+token declared in the console's chrome: `--f-display` was re-aliased once, from Space Grotesk to
+Inter, and silently changed the typeface of every template naming it. Templates name real
+families; `ensure_templates_name_real_families` carries that to an install that already exists.
+`src/lib/seal.test.js` fails on the first rule added to the shared sheet and on the first
+app-chrome token written back into template data.
 
 ---
 
@@ -46,7 +56,7 @@ operator during a live service is the same class of failure as a control that li
 | Colour | Token | Means, and *only* means |
 |---|---|---|
 | 🟠 **Amber** `#ffa31a` | `--v-amber` | **ON AIR.** The congregation is looking at this right now. |
-| 🟣 **Amethyst** `#a96bf5` | `--v-amethyst` | **Rehearsal.** Nothing else — see §1.1. |
+| 🟣 **Amethyst** `#a96bf5` | `--v-amethyst` | **Nothing here reaches a congregation** — rehearsal, safe mode, the launch sequence. See §1.1 and DECISIONS §93. |
 | 🔵 **Cyan** `#4cc9f0` | `--v-cyan` | **A guess.** A paraphrase / semantic match. Never a heard reference. |
 | ⚫ **Grey** `#8a929e` | `--v-grey` | **CUED** — this is where `→` resumes, and it is **not** on screen. |
 | 🔷 **Steel** `#5b9cf8` | `--v-sel` | **The thing you are working on.** Selection, focus, tabs, keys. Carries no promise about a screen. |
@@ -61,6 +71,15 @@ The rules that follow from that:
 - **A cued position is grey, never amber.** `liveCue` is `{ cueId, slide, onAir }`, and position
   and on-air-ness are separate facts — panic keys clear only `onAir`. A cue that is where `→`
   resumes but is not on screen reads **CUED**, in grey (CLAUDE.md, frontend shape).
+- **Amethyst's promise is broader than the word "rehearsal" and narrower than "anything purple".**
+  `app.css` used to say "the rehearsal colour, and nothing else uses it", in a file spending
+  amethyst on fourteen other surfaces. DECISIONS §93 settles it by reading those fourteen: safe
+  mode ("outputs disabled") and the launch sequence (no console, no output window, nothing on any
+  wall) are the same fact said where "rehearsal" does not fit, and a boot ladder and a rehearsal
+  badge can never be on screen together. **What is deliberately NOT settled is caution.** Four
+  surfaces spend amethyst on a warning because this palette publishes no caution ink and every
+  other colour is already a promise. That gap is filed, not improvised; `colourlaw.test.js`
+  enumerates all of it and a human may overrule the ruling.
 - **A paraphrase is cyan and shows no percentage at all.** A TF-IDF cosine is not a probability,
   and a number that lies is worse than no number (DECISIONS §21). It is never amethyst, because
   amethyst already promises "rehearsal — this cannot reach the congregation", and a colour
@@ -292,14 +311,14 @@ read *"the screens may still be live"* is motion for its own sake.
 - **Motion is opt-in.** Decorative animation sits inside
   `@media (prefers-reduced-motion: no-preference)`, and the spinner explicitly stops under
   `reduce`. A new animation goes in the same guard.
-- **On the WALL, the default is a cut.** A template (or its theme) may choose one of seven
+- **On the WALL, the default is a cut.** A template may choose one of seven
   transitions — Cut · Crossfade · Dissolve · Fade through black · Push left · Slide up ·
   Materialise — from the one register in [`src/lib/transitions.js`](../src/lib/transitions.js).
   Three rules hold it: only `opacity`, `transform` and `filter` animate (none of them moves
   `scrollHeight`, so the measured auto-fit reads the same box mid-transition as it does at rest);
   every mode ends exactly settled, or the verse stays slightly wrong for as long as it is up;
   and **reduced motion is a cut**, not a faster animation. An unknown mode is a cut too — an
-  imported theme must not be able to stop a verse rendering (DECISIONS §71).
+  imported template must not be able to stop a verse rendering (DECISIONS §71).
 - **The AI announces itself.** The suggestion feed, the transport, and errors all reach an
   `aria-live` region in `App.svelte` — the product's whole reason to exist used to arrive in
   total silence.
@@ -318,8 +337,8 @@ read *"the screens may still be live"* is motion for its own sake.
 
 ## 6. The legacy palette — why the dead CSS is still there
 
-`app.css` opens with a legacy `:root` block. Every legacy colour name is now an **alias** of the
-design-system token it maps to (`--amber` → `--v-amber`, and so on), so anything still on an old
+`src/tokens.css` opens with a legacy `:root` block. Every legacy colour name is now an **alias**
+of the design-system token it maps to (`--amber` → `--v-amber`, and so on), so anything still on an old
 name is on-brand by construction and each hex lives in exactly one place.
 
 89 orphaned rules were deleted by checking every class name against every class a component
@@ -332,32 +351,40 @@ window — which the build machine cannot produce.
 So the gun is unloaded rather than removed: the contrast failure is fixed, and the rules stay
 until someone can look at a running app. Tracked in [KNOWN_ISSUES.md](KNOWN_ISSUES.md) §4.
 
+**What wave 5 changed is the blast radius, not the rules.** Six of the survivors —
+`.prev-main .verse`, `.prev-stage .verse`, `.prev-stream .lower-third`, `.prev-lobby .verse`,
+`.tmpl-row.active` and `.toggle.on` — were reaching `output.html` and `stage.html` as well as the
+console, because both entry points imported this file. They are still here, still un-deleted, and
+they can now only restyle the console: the congregation-facing pages import `src/tokens.css`
+instead, and the built bundles show it (`dist/output.html` and `dist/stage.html` reference the
+token sheet, not the console's). The judgement that deleting them needs eyes on a running app is
+unchanged.
+
 ---
 
-## 7. Themes and templates — the output style layer
+## 7. The template is the whole style — themes were folded into it
 
-**Themes are the style layer beneath templates** (DECISIONS §27). The whole model is one line:
+**A template is the only style layer** (DECISIONS §87, completing §27). A theme used to sit
+beneath one and fill the keys it left unset:
 
 ```js
 { ...theme.style, ...template.style }   // template wins, key by key
 ```
 
-- A **theme** is a named bag of defaults for the exact same flat `style` keys `TemplateRender`
-  already reads — typography, `accent`, `verseColor`, `refColor`, `background`, shadows,
-  transition, `refGap`. The permitted list is `THEME_STYLE_KEYS` in
-  [`src/lib/themes.js`](../src/lib/themes.js), and it is explicit so a theme can never smuggle
-  in a key that changes an unrelated template.
-- A **template** overrides the theme per key, and owns everything a theme may not touch —
-  per-region overrides, background image, panel, layout.
-- Resolving a theme produces **a normal template object**. It is not a new renderer, not a new
-  content type, and there is no `if theme == …` anywhere. A themed template and a hand-styled
-  one are indistinguishable downstream, which is what keeps WYSIWYG and *"outputs are render
-  targets of one engine"* intact.
-- Eight builtins ship (`BUILTIN_THEMES`): Modern Dark, Minimal, Light, Classic, Youth,
-  Conference, Wedding, Livestream. Their ids are **negative** so they can never collide with a
-  saved custom theme, and a template's `style.themeRef` is unambiguous. They live in the JS (not
-  only the DB) so a kiosk or OBS client with no database can still resolve one.
-- Layer colours may bind to a theme token (`theme:accent`) rather than a hex.
+Every field on the left of that merge was a key the template already had. There was no themes
+table and no Rust struct — a theme was a bag of defaults for the same flat `style` keys
+`TemplateRender` reads, whitelisted to a subset of them, and nine of its fourteen controls moved
+nothing at all on a layered template. So it could only ever say less than the template above it,
+and it could disagree with it about what a screen wears. It is gone: `ensure_themes_are_inlined`
+writes each pinned theme's style into the template's own, under the same precedence the renderer
+applied, so **no look changed**.
+
+**What survives is the half that was never about themes.** A layer's colour, fill or font may be
+a TOKEN (`theme:accent`) rather than a literal, so a stage, confidence or countdown starter
+follows whatever template it is dropped into. [`src/lib/styletokens.js`](../src/lib/styletokens.js)
+resolves it against that template's own style, which is what the merge already produced once the
+theme was out of it. The token keeps its spelling: it is written into every saved layer in every
+install, and renaming it would need a migration to buy a nicer word.
 
 **One property, one home** (`src/lib/templatemodel.js`, docs/REBRAND.md §3.1). A template stores
 only what it has changed and the model fills the rest:
@@ -379,8 +406,8 @@ only what it has changed and the model fills the rest:
   would keep the wall correct while the legacy key sat in the database for the next reader that
   does not resolve.
 - **A deletion is only safe if every reader moved with it**, and two did not. `regionsToLayers`
-  (which `TemplateGallery` runs on mount and **saves**) and `themes.js`'s `theme:font` resolver
-  both read `style.font` — real in the shape they were written against, absent in the shape that
+  (which `TemplateGallery` runs on mount and **saves**) and the `theme:font` token resolver (now
+  `styletokens.js`) both read `style.font` — real in the shape they were written against, absent in the shape that
   now reaches them. Every seeded template carries a `font`, so the first visit to the Templates
   tab after an upgrade would have re-typefaced the whole shelf to serif, silently, once, for good.
   Both now read the model (`migrateStyle` / `resolveStyle`), which is idempotent, so they are
@@ -444,12 +471,34 @@ Prefixed `r-` in `app.css`. Reach for one of these before writing a new class.
 | Class | What it is |
 |---|---|
 | `.r-btn` (+ `.amber`) | Button. The `.amber` variant is the on-air case and is named at the call site. |
-| `.r-iconbtn` | Square icon-only button |
+| `.r-iconbtn` (+ `.sm`) | Square icon-only button, 26px with a 22px step. |
+| `.r-menu`, `.r-menuitem` | The popover shell and one row of it |
+| `.r-well` | A field well: a bordered box holding an input |
 | `.r-badge` (+ colour) | Pill status chip; `.bd` is its 6px dot, `.pulse` adds a glow |
 | `.r-input`, `.r-select`, `.r-switch` | Form controls |
 | `.r-stat` (+ `.amber`) | A number-plus-label readout |
 | `.r-scroll`, `.mainscroll` | Internally-scrolling panel (slim dark scrollbars) |
 | `.r-focus` | Opt into the standard focus ring on a custom element |
+
+**The `src/lib/ui/` kit is how those classes are asked for**, and reaching for a component rather
+than remembering a class name is the point: 41% of the `<button>` elements in this tree touch no
+shared class at all, and a class is opt-in in a way a component is not.
+
+| Component | What it is for |
+|---|---|
+| `Button`, `IconButton` | The two shapes on the ladder, with `disabledReason` |
+| `Menu`, `MenuItem` | The popover, and **the one place rule 44's `Esc` contract lives** |
+| `Field` | A `.r-well` around a caller's own `<input>` |
+| `Toolbar` | A row that fixes one control height so a mixed row cannot step |
+| `ListState` | *empty ≠ loading ≠ error*, with the precedence fixed once |
+
+**A disabled control owes the operator a reason.** `disabledReason` renders `title` **and**
+`aria-describedby`, because neither channel reaches everybody: `title` is invisible to a keyboard
+or screen-reader operator, and `aria-describedby` is invisible to a mouse. The sentences live in
+[`src/lib/ui/whydisabled.js`](../src/lib/ui/whydisabled.js) — one home, for the same reason
+`errors.js` and `settingvalue.js` have one — and they may not overstate the damage: a dropped
+Tauri bridge does not take down a screen that is already lit, so the sentence says the control
+cannot act **from here** and that whatever is up is still up.
 
 **Three shared state components, and they are not interchangeable:** `EmptyState`, `Loading`,
 `ErrorState`. *Empty* ≠ *loading* ≠ *error* — Live once said "No plans yet" before the database

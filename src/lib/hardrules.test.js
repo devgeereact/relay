@@ -115,7 +115,13 @@ describe('RG-76 · the mechanically checkable hard-way rules', () => {
     // This is what makes `e2e.rs` possible. Welded to the concrete desktop runtime,
     // the one path that puts scripture on a wall cannot be driven without a window,
     // and so was never tested. A concrete `AppHandle` quietly re-welds it.
-    const missing = ['fire_manual', 'handle_nav', 'clear_or_report', 'persist_cue'].filter(
+    const missing = [
+      'fire_manual',
+      'handle_nav',
+      'clear_or_report',
+      'persist_cue',
+      'fire_media',
+    ].filter(
       (fn) => !new RegExp(`fn ${fn}<R: tauri::Runtime>`).test(mainRs),
     );
     expect(
@@ -340,5 +346,93 @@ describe('RG-76 · the mechanically checkable hard-way rules', () => {
     // And the capture callback must never BLOCK — stalling a device's real-time
     // callback is how a capture stream is killed outright.
     expect(audio).toMatch(/try_send/);
+  });
+
+  // ── The gate moved, and every surface showing it has to be told ───────────
+  it('rule 35 — nothing moves Router.thresholds without announcing it', () => {
+    // Five things in Rust move the gate: `apply_thresholds` (the dial and the two
+    // Settings sliders), `apply_profile` (a profile saved, a profile selected, a
+    // room applied) and `record_feedback` (the learning, on every confirm and
+    // dismiss). Until 2026-09-17 not one of them emitted anything, and there was no
+    // `thresholds://`-shaped event in the product at all — so Live's dial, read
+    // once at `onMount` into a component-local `let` on the one card that is never
+    // rebuilt, showed its launch reading for the rest of the session while the
+    // engine moved underneath it.
+    //
+    // A guarantee kept on four of five doors is the bug, not a mitigation. This
+    // repository has shipped that exact shape four separate times — rehearsal
+    // gating on three of four kiosk publishers, the throw-vs-swallow contract on
+    // eight of nine wrappers, `NavResult` thrown away by `remote_api`, and the
+    // first-run wizard's `micOn` flag. So the check is on the WRITERS, not on the
+    // emitters: find everything that mutates the router's thresholds, and require
+    // the announcement in the same function.
+    const src = mainRs;
+    const writers = [];
+    // Function bodies in main.rs, crudely but sufficiently: a `fn name(` at column
+    // 0 through to the next one.
+    const starts = [...src.matchAll(/^fn ([a-z0-9_]+)[<(]/gm)];
+    for (let i = 0; i < starts.length; i++) {
+      const from = starts[i].index;
+      const to = i + 1 < starts.length ? starts[i + 1].index : src.length;
+      const body = src.slice(from, to);
+      const name = starts[i][1];
+      const moves =
+        /\.set_thresholds\(/.test(body) ||
+        /\.set_baseline\(/.test(body) ||
+        /\.record_feedback\(/.test(body);
+      if (moves) writers.push({ name, announces: /thresholds_changed\(/.test(body) });
+    }
+
+    // The scanner must still be able to SEE the writers. A scanner that quietly
+    // narrows passes everything, which is how two of this repository's contract
+    // tests went green over real defects.
+    expect(
+      writers.length,
+      'the scanner found no threshold writer at all — it has stopped seeing them',
+    ).toBeGreaterThanOrEqual(3);
+
+    // ONE NAMED EXCEPTION, and it is named rather than pattern-matched away.
+    // `main`'s `setup` applies the active profile's learned gate before the window
+    // is shown, so there is no webview to emit to and nothing that could be
+    // listening. The dock asks for the figure itself on mount, which is the path
+    // that covers this one. Any OTHER function is a defect.
+    const SETUP_ONLY = ['main'];
+    expect(
+      writers.filter((w) => !w.announces && !SETUP_ONLY.includes(w.name)).map((w) => w.name),
+      'a function moves the gate and tells no surface that shows it',
+    ).toEqual([]);
+    // …and the exception must still be a writer, or it has been renamed out from
+    // under this list and the list is now protecting nothing.
+    expect(
+      writers.map((w) => w.name),
+      'the named setup exception no longer moves the gate — drop it from the list',
+    ).toEqual(expect.arrayContaining(SETUP_ONLY));
+  });
+
+  it('rule 35 — the dial is not held in a second place', () => {
+    // `Dock.svelte` kept the only copy of the dial in a component-local `let`, and
+    // the dock is mounted outside the workspace router so it is never rebuilt. A
+    // `let sensitivity =` returning to any component is that defect returning.
+    // `stripComments` blanks block comments, not `//` lines, and the note in
+    // `Dock.svelte` explaining this very defect quotes the old declaration. A
+    // scanner that cannot tell code from the comment describing it would have made
+    // the fix itself the failure.
+    const offenders = [];
+    for (const [file, src] of tree('src', '.svelte')) {
+      const code = stripComments(src)
+        .split('\n')
+        .map((l) => l.split('//')[0])
+        .join('\n');
+      if (/\blet\s+sensitivity\s*=/.test(code)) offenders.push(file);
+    }
+    // The scanner must still see a declaration when there is one to see.
+    expect(
+      /\blet\s+sensitivity\s*=/.test('  let sensitivity = 50;'),
+      'the scanner has stopped matching the shape it exists to find',
+    ).toBe(true);
+    expect(
+      offenders,
+      'a component holds its own copy of the sensitivity dial instead of deriving it',
+    ).toEqual([]);
   });
 });

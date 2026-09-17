@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { templateKind, kindsPresent, KIND_META, KIND_ORDER } from './templateKind.js';
-import { STARTERS } from './layers.js';
+import { STARTERS, regionsToLayers } from './layers.js';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 // Shapes taken verbatim from the seeded built-ins in db/templates.rs, so these
 // pin the derivation against the templates every install actually ships with.
@@ -44,6 +46,76 @@ describe('templateKind — the legacy region model', () => {
     expect(templateKind({ layout: null })).toBe('custom');
     expect(templateKind({ layout: { regions: 'nonsense' } })).toBe('custom');
     expect(templateKind({ layout: { layers: 'nonsense' } })).toBe('custom');
+    // The scroll rule below reads `style`, which need not be an object.
+    expect(templateKind({ layout: { regions: ['verse_text'] }, style: 'nonsense' })).toBe('song');
+    expect(templateKind({ layout: { regions: ['verse_text'] }, style: null })).toBe('song');
+  });
+
+  // ── THE SCROLLING ANNOUNCEMENT ───────────────────────────────────────────
+  // The two models disagreed about one template, and the disagreement was not
+  // stable — it resolved itself, wrongly, on a visit to the Templates tab.
+  const announce = (style) => ({
+    layout: { regions: ['reference', 'verse_text'], align: 'center', lowerThird: false, refFirst: true },
+    style,
+  });
+
+  it('reads a scrolling region template as an announcement', () => {
+    expect(templateKind(announce({ scroll: true }))).toBe('announcement');
+  });
+
+  it('but NOT a scrolling template with no verse region to scroll', () => {
+    // THE NARROW HALF, held so the rule cannot widen back. `regionsToLayers`
+    // carries `scroll` onto the verse layer and sets `scroll: false` on the
+    // reference layer, so a reference-only template converts to a stack with no
+    // scrolling layer — `custom`. A region rule that accepted `reference` would
+    // answer `announcement` before the conversion and `custom` after it, which is
+    // the drift this whole rule exists to remove, in the other direction. Both
+    // halves are asserted across the conversion rather than in isolation, because
+    // agreement is the actual contract.
+    const refOnly = {
+      layout: { regions: ['reference'], align: 'center', lowerThird: false, refFirst: true },
+      style: { scroll: true },
+    };
+    const converted = { ...refOnly, layout: regionsToLayers(refOnly) };
+    expect(templateKind(refOnly)).toBe('custom');
+    expect(templateKind(refOnly)).toBe(templateKind(converted));
+    // …and the reason: nothing in the converted stack scrolls.
+    expect((converted.layout.layers ?? []).some((L) => L.scroll)).toBe(false);
+  });
+
+  it('and agrees with the layer model after the conversion that SAVES', () => {
+    // THE BUG THIS RULE CLOSES. `TemplateGallery.upgradeLegacyToLayers` runs on
+    // mount and saves the result, and `regionsToLayers` carries
+    // `scroll: !!style.scroll` onto the verse layer — where `kindFromLayers` has
+    // always answered `announcement`. So before this rule the same look derived
+    // `scripture` in the gallery and `announcement` once converted, and the
+    // conversion made the change permanent. Watched to fail by removing the
+    // scroll line from the region branch: the first expectation reverts to
+    // `scripture` while the second stays `announcement`.
+    const t = announce({ scroll: true });
+    const converted = { ...t, layout: regionsToLayers(t) };
+    expect(templateKind(t)).toBe(templateKind(converted));
+    expect(templateKind(converted)).toBe('announcement');
+  });
+
+  it('but a band that scrolls is still a lower third', () => {
+    // The keyed announcement in the seeded Lower Third family. `lowerThird` is
+    // read first, and it has to be: the layer branch gives the same answer for
+    // the converted form, so reversing the order here would split the models
+    // again in the other direction.
+    const t = announce({ scroll: true });
+    t.layout.lowerThird = true;
+    expect(templateKind(t)).toBe('lower-third');
+  });
+
+  it('and a NON-scrolling notice is still scripture, which is honest', () => {
+    // A full-screen notice and a full-screen verse are the same shape — a large
+    // line and a small one. `Notice Board` records this as the reason
+    // `templateKind` refuses to guess, and the rule must not start guessing now
+    // that a neighbouring role is derivable. It also protects `Stage Mono`,
+    // which is exactly this shape and must stay scripture.
+    expect(templateKind(announce({}))).toBe('scripture');
+    expect(templateKind(stageMono)).toBe('scripture');
   });
 });
 
@@ -167,5 +239,39 @@ describe('kindsPresent', () => {
   it('is empty for an empty library', () => {
     expect(kindsPresent([])).toEqual([]);
     expect(kindsPresent(undefined)).toEqual([]);
+  });
+});
+
+describe('the seeded shelf', () => {
+  // WHAT A CHURCH ACTUALLY FINDS, asked of `templateKind` rather than of a
+  // fixture. The per-name table — which of the forty lands on which role, and why
+  // three of the eight prefixes land somewhere other than their own name — lives
+  // in `shelf.test.js`, beside the file it reads. What is held HERE is the claim
+  // this module exists for: a seeded row may never come back `custom`.
+  //
+  // The failure phase 4 closed was exactly that. `templateKind` read
+  // `layout.regions` only, so every layer template answered `custom`, the gallery
+  // rail could offer no row but Custom for any of them, and the inspector's
+  // "Content type" said Custom over a lower third. Wave 5 made the shelf entirely
+  // layer-model, which puts all forty on that branch — so if it ever regresses,
+  // it regresses for everything a fresh install has.
+  const SHELF = JSON.parse(
+    readFileSync(resolve(__dirname, '../../src-tauri/data/shelf_templates.json'), 'utf8'),
+  ).templates;
+
+  it('has forty looks and not one of them derives Custom', () => {
+    expect(SHELF).toHaveLength(40);
+    const custom = SHELF.filter((t) => templateKind(t) === 'custom').map((t) => t.name);
+    expect(custom, 'a seeded look has no rule and falls to Custom').toEqual([]);
+  });
+
+  it('derives a role KIND_META can name and KIND_ORDER can place', () => {
+    // A role with no display metadata renders as `undefined` in the rail; a role
+    // missing from the order is dropped from it silently, which is worse.
+    for (const t of SHELF) {
+      const k = templateKind(t);
+      expect(KIND_META[k], `${t.name}: no display metadata for ${k}`).toBeTruthy();
+      expect(KIND_ORDER, `${t.name}: ${k} has no place in the rail`).toContain(k);
+    }
   });
 });

@@ -14,9 +14,9 @@
 //      first visit to the Templates tab after an upgrade re-typefaced the shelf,
 //      silently, once, for good.
 //
-//   2. `themes.js`'s `theme:font` resolver read `style.font`. Every text layer in
-//      the stage, confidence and countdown starters binds to it, so on a migrated
-//      template with no theme behind it they all fell back to serif.
+//   2. The `theme:font` token resolver (`styletokens.js`) read `style.font`. Every
+//      text layer in the stage, confidence and countdown starters binds to it, so
+//      on a migrated template they all fell back to serif.
 //
 // Neither was visible from reading either file: both read a key that is real in
 // the shape they were written against and absent in the shape that now reaches
@@ -27,7 +27,7 @@ import { resolve } from 'node:path';
 import TemplateRender from './TemplateRender.svelte';
 import { migrateTemplate, migrateStyle, LEGACY_STYLE_KEYS } from './templatemodel.js';
 import { regionsToLayers } from './layers.js';
-import { applyTheme } from './themes.js';
+import { resolveTokens } from './styletokens.js';
 import { BUILTINS } from './templates.js';
 
 let host;
@@ -55,7 +55,15 @@ const CONTENT = { reference: 'Romans 8:28', text: 'And we know that all things w
  * not about a fixture that agrees with the code.
  */
 function seedBlobs() {
-  const src = readFileSync(resolve(__dirname, '../../src-tauri/src/db/templates.rs'), 'utf8');
+  const file = readFileSync(resolve(__dirname, '../../src-tauri/src/db/templates.rs'), 'utf8');
+  // A SEED IS PRODUCTION CODE, so stop at the first test module. The literals
+  // below that line are fixtures other tests argue from, and one of them is a
+  // deliberately half-built style ({themeRef, verseColor} and nothing else) that
+  // this file would otherwise read as a shipped design and then fail for not
+  // carrying the legacy keys no shipped design is allowed to be missing. The cut
+  // is asserted below so the scanner cannot silently narrow to nothing.
+  const cut = file.search(/\n#\[cfg\(test\)\]\nmod /);
+  const src = cut === -1 ? file : file.slice(0, cut);
   const out = [];
   for (const m of src.matchAll(/r##"(\{.*?\})"##/gs)) {
     try {
@@ -77,17 +85,36 @@ const seededLayouts = () => seedBlobs().filter((o) => Array.isArray(o.regions));
 describe('the fixtures this file argues from are real', () => {
   it('finds the seeded styles in the Rust seed, and they carry the legacy keys', () => {
     const styles = seededStyles();
-    expect(styles.length).toBeGreaterThan(20);
+    // FIVE SINCE WAVE 5, not the twenty-five it was. The seed is forty layer-model
+    // looks in `data/shelf_templates.json` now, and the only region-model styles
+    // left in this file are `builtin_templates()` — which is no longer seeded
+    // anywhere, and survives as the frozen mirror of the frontend's `BUILTINS`
+    // that a `region` layer's `templateRef` resolves against on a kiosk page with
+    // no database (DECISIONS §74). That is exactly the corpus this file needs: it
+    // argues about what happens to an OLD region-model template on migration, and
+    // those five are the shape every old template has.
+    expect(styles.length).toBeGreaterThanOrEqual(5);
+    // The test-module cut found a real boundary. Without this, a rename of the
+    // first `mod …_tests` would silently widen the scan back over the fixtures,
+    // or a stray match would narrow it, and either way this file would be
+    // arguing from something other than the seed it names.
+    const raw = readFileSync(resolve(__dirname, '../../src-tauri/src/db/templates.rs'), 'utf8');
+    expect(raw.search(/\n#\[cfg\(test\)\]\nmod /)).toBeGreaterThan(0);
     // Layouts are in there too, and finding none of them would mean the scanner
     // had narrowed to something that happens to agree with it.
-    expect(seededLayouts().length).toBeGreaterThan(5);
+    expect(seededLayouts().length).toBeGreaterThanOrEqual(5);
     const withLegacy = styles.filter((s) => LEGACY_STYLE_KEYS.some((k) => k in s));
     expect(withLegacy.length).toBe(styles.length);
     // The defect only bites a template whose font is not the default, so the
-    // shelf must actually contain some. It contains three faces.
+    // corpus must actually contain more than one face. It contains two.
     const faces = new Set(styles.map((s) => s.font));
     expect(faces.size).toBeGreaterThan(1);
-    expect(faces.has('var(--f-serif)')).toBe(true);
+    // A REAL FAMILY. The seed used to store `var(--f-serif)` — an operator-console
+    // token, resolved on the wall against whatever `app.css` aliased it to that
+    // week, which is how a re-alias from Space Grotesk to Inter changed the
+    // typeface of every template naming it. Wave 5, Track E.
+    expect(faces.has('Fraunces')).toBe(true);
+    expect([...faces].filter((f) => String(f).startsWith('var('))).toEqual([]);
   });
 
   it('the built-ins the kiosk falls back to carry them too', () => {
@@ -154,7 +181,9 @@ describe('§3.1 · an old template renders identically after migration', () => {
   });
 
   it('and the converted stack renders the same words in the same face', () => {
-    const mono = BUILTINS.find((t) => t.style.font === 'var(--f-display)');
+    // `var(--f-display)` since wave 5, Track E: the console token it used to name
+    // resolved to Inter, so Inter is what this built-in already rendered as.
+    const mono = BUILTINS.find((t) => t.style.font === 'Inter');
     expect(mono, 'a non-serif built-in to argue from').toBeTruthy();
 
     const regionLook = look(render(mono, CONTENT));
@@ -165,12 +194,12 @@ describe('§3.1 · an old template renders identically after migration', () => {
     const layerEl = render(converted, CONTENT);
     const fitted = [...layerEl.querySelectorAll('.ltext .lfit')];
     expect(fitted.length).toBeGreaterThan(0);
-    for (const n of fitted) expect(getComputedStyle(n).fontFamily).toBe('var(--f-display)');
-    expect(regionLook.verse).toContain('var(--f-display)');
+    for (const n of fitted) expect(getComputedStyle(n).fontFamily).toContain('Inter');
+    expect(regionLook.verse).toContain('Inter');
   });
 });
 
-describe('§3.1 · a theme token answers for the style it is given, old shape or new', () => {
+describe('§3.1 · a style token answers for the style it is given, old shape or new', () => {
   const stage = (style) => ({
     id: 7,
     name: 'Stage',
@@ -184,18 +213,24 @@ describe('§3.1 · a theme token answers for the style it is given, old shape or
 
   it('resolves `theme:font` to the template typeface after migration, not to the default', () => {
     const legacy = stage({ font: 'var(--f-display)' });
-    const before = applyTheme(legacy, null).layout.layers[0].font;
-    const after = applyTheme(migrateTemplate(legacy), null).layout.layers[0].font;
+    const before = resolveTokens(legacy).layout.layers[0].font;
+    const after = resolveTokens(migrateTemplate(legacy)).layout.layers[0].font;
     expect(before).toBe('var(--f-display)');
     expect(after).toBe('var(--f-display)');
   });
 
   it('still falls back to the renderer default when no typeface was ever chosen', () => {
-    expect(applyTheme(stage({}), null).layout.layers[0].font).toBe('var(--f-serif)');
+    // The model's default, and it is a family rather than an app-chrome token: a
+    // template that never chose a face still must not inherit one the console can
+    // re-alias underneath it (wave 5, Track E).
+    expect(resolveTokens(stage({})).layout.layers[0].font).toBe('Fraunces');
   });
 
-  it('a theme behind the template still supplies the face the template leaves unset', () => {
-    const themed = applyTheme(stage({}), { style: { font: 'var(--f-body)' } });
-    expect(themed.layout.layers[0].font).toBe('var(--f-body)');
+  it('reads the NEW shape as readily as the old one', () => {
+    // The two halves of the model, both answered by `resolveStyle` on the way
+    // through — which is the point: one home for the answer whether the style
+    // reaching it was written before the migration or after it.
+    expect(resolveTokens(stage({ verseFont: 'var(--f-body)' })).layout.layers[0].font)
+      .toBe('var(--f-body)');
   });
 });

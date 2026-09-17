@@ -188,6 +188,35 @@ pub fn update_voice_profile(conn: &Connection, p: &VoiceProfile) -> rusqlite::Re
     Ok(())
 }
 
+/// Write the recognition language onto the ACTIVE profile.
+///
+/// One fact, one place. The language a preacher is recognised in is already a
+/// column on `voice_profiles`, applied at startup (`main.rs`'s setup hook), on a profile
+/// switch and after a model reload. `Settings → Scripture & Languages →
+/// Recognition language` writes HERE rather than to a settings key of its own: a
+/// second store for the same fact would race the profile at startup, and the loser
+/// would be whichever one ran second.
+///
+/// `ensure_voice_profiles` first, so the write cannot land nowhere. It seeds a
+/// `Default` when the table is empty and promotes the lowest id when nothing is
+/// active — the same invariant every database open already relies on — so this
+/// works on a fresh install, where the active profile is the seeded `Default` with
+/// `language = NULL` (auto-detect).
+///
+/// Returns the active profile as it now stands, so the caller can apply it to the
+/// engine and say whose calibration it just changed.
+pub fn set_active_profile_language(
+    conn: &Connection,
+    language: Option<&str>,
+) -> rusqlite::Result<Option<VoiceProfile>> {
+    ensure_voice_profiles(conn)?;
+    conn.execute(
+        "UPDATE voice_profiles SET language = ?1 WHERE is_active = 1",
+        (language,),
+    )?;
+    active_voice_profile(conn)
+}
+
 /// Persist the live, feedback-adapted thresholds for a profile (the
 /// self-calibrating loop — router.rs `record_feedback`).
 pub fn save_profile_thresholds(

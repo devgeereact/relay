@@ -94,7 +94,7 @@ describe('audioOutput: the operator’s speaker choice', () => {
     navigator.mediaDevices = {
       getUserMedia: async () => ({ getTracks: () => [{ stop }] }),
     };
-    expect(await ensureDeviceAccess()).toBe(true);
+    expect(await ensureDeviceAccess()).toEqual({ ok: true, reason: 'granted' });
   });
 
   // cpal owns the microphone for real capture; the webview must never keep a
@@ -119,13 +119,56 @@ describe('audioOutput: the operator’s speaker choice', () => {
     expect(stop).toHaveBeenCalledTimes(2);
   });
 
-  it('reports failure (not a crash) when the operator declines', async () => {
+  // ── WHICH FAILURE IT WAS ──────────────────────────────────────────────────
+  //
+  // These four used to be one answer. `ensureDeviceAccess` returned a bare
+  // `false` whether the operator had declined the prompt, the machine had no
+  // input device to ask about, or the webview could not ask at all — so
+  // Settings' *Detect speakers* re-rendered identically in every one of them and
+  // the operator was left pressing a button that appeared to do nothing. The
+  // facts were one line away the whole time: a getUserMedia rejection is a
+  // DOMException whose `name` says which.
+  const rejectWith = (name) => {
     navigator.mediaDevices = {
       getUserMedia: async () => {
-        throw new Error('NotAllowedError');
+        const e = new Error(name);
+        e.name = name;
+        throw e;
       },
     };
-    expect(await ensureDeviceAccess()).toBe(false);
+  };
+
+  it('reports failure (not a crash) when the operator declines', async () => {
+    rejectWith('NotAllowedError');
+    expect(await ensureDeviceAccess()).toEqual({ ok: false, reason: 'denied' });
+  });
+
+  it('a refusal and an absent microphone are NOT the same answer', async () => {
+    rejectWith('NotAllowedError');
+    const declined = await ensureDeviceAccess();
+    rejectWith('NotFoundError');
+    const nothingToAsk = await ensureDeviceAccess();
+
+    expect(declined.reason).toBe('denied');
+    expect(nothingToAsk.reason).toBe('no-input');
+    expect(
+      declined.reason,
+      'Both are ok:false. If they carry the same reason the caller cannot tell ' +
+        'the operator how to reverse a refusal, which is the only one of the two ' +
+        'they can do anything about.',
+    ).not.toBe(nothingToAsk.reason);
+  });
+
+  it('a webview that cannot ask says so rather than reporting a refusal', async () => {
+    navigator.mediaDevices = {};
+    expect(await ensureDeviceAccess()).toEqual({ ok: false, reason: 'unsupported' });
+  });
+
+  it('an unrecognised rejection is its own answer, never folded into a refusal', async () => {
+    // Telling somebody to go and un-refuse a permission they never refused sends
+    // them to a checkbox that is already ticked.
+    rejectWith('AbortError');
+    expect(await ensureDeviceAccess()).toEqual({ ok: false, reason: 'failed' });
   });
 
   it('routes to the system default when the selection is empty', async () => {

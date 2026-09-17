@@ -60,6 +60,7 @@
     reorderPlan,
     setPlanSection,
     setPlanDuration,
+    setPlanTimer,
     setPlanTemplate,
     searchScripture,
     searchSongs,
@@ -81,6 +82,16 @@
   let openPlan = null;
   let items = [];
   let selId = null; // cue loaded in the inspector
+
+  /**
+   * The lengths a cue may ask for, in minutes. A fixed list rather than a text
+   * box: `Duration` next to it already takes typed text, and two typed fields one
+   * above the other that mean different things is how an operator puts the sermon
+   * estimate into the clock. A number is also the only thing the backend will
+   * store — `set_plan_timer` clears anything non-positive rather than putting an
+   * 0:00 clock on a preacher's rail.
+   */
+  const TIMER_CHOICES = [1, 2, 3, 5, 10, 15, 20, 25, 30, 45, 60];
   let msg = '';
   // Distinguish "still loading" from "genuinely empty": listPlans swallows errors
   // to [], so without this flag a slow cold-open renders "No plans yet" — telling
@@ -283,10 +294,19 @@
       await refresh();
     });
   }
+  // THE WORDS BESIDE THE CLOCK ARE THE OPERATOR'S, AND THIS IS WHERE THEY ARE
+  // TYPED. Both fields were written here as constants — 'Service begins in' and
+  // 'Welcome' — with no control anywhere in Relay to edit them, so every church
+  // ran the same two sentences whether or not they meant them. They are payload
+  // (`content.reference` and `countdown_done`), not template: blank is a real
+  // answer and it shows the digits alone, which is what the console's own Start
+  // sends. A cue that wants words asks for them here.
   let cdAddMin = 5;
+  let cdAddLabel = '';
+  let cdAddDone = '';
   async function addCountdownCue() {
     const m = Number(cdAddMin) || 5;
-    const payload = { minutes: m, label: 'Service begins in', done: 'Welcome' };
+    const payload = { minutes: m, label: cdAddLabel.trim(), done: cdAddDone.trim() };
     await act(async () => {
       await addPlanItem(openPlan.id, 'countdown', `Countdown · ${m} min`, payload);
       // A countdown is the one cue type whose length is known at build time, so it
@@ -494,6 +514,29 @@
     if (!selCue) return;
     await act(async () => {
       await setPlanDuration(selCue.id, parseDuration(durDraft));
+      await loadItems();
+    });
+  }
+  /**
+   * BIND THIS CUE TO A CLOCK, or clear the binding. It STORES AND NOTHING ELSE.
+   *
+   * Nothing on this surface can start, move, stop or SHOW a clock, and nothing
+   * ever may: the Planner is the workspace an operator opens on a Tuesday with a
+   * congregation in the room, and it may not reach an output or the preacher's
+   * monitor
+   * (`plannerbuildonly.test.js`, which names `start_timer`, `show_timer`,
+   * `adjust_timer` and `stop_timer` among the commands it refuses). Live reads the
+   * binding off the cue and starts the clock when the cue actually goes on air.
+   *
+   * `''` is the "No timer" option and clears it. `setPlanTimer` is not
+   * `setPlanDuration`: one is a clock a preacher watches, the other the estimate
+   * this workspace adds up in its header.
+   */
+  async function saveTimer(ev) {
+    if (!selCue) return;
+    const v = ev.target.value;
+    await act(async () => {
+      await setPlanTimer(selCue.id, v === '' ? null : Number(v));
       await loadItems();
     });
   }
@@ -810,6 +853,25 @@
             <span class="sp-cdunit r-mono">min</span>
             <button class="r-btn ghost sm sp-cdgo" on:click={addCountdownCue}>＋ Add</button>
           </div>
+          <!-- THE WORDS, AND THEY ARE OPTIONAL. A countdown's label and its
+               message at zero are payload the operator writes, and until now they
+               were two constants nothing could edit — so this is the interface
+               that never existed rather than a new feature. Blank is a real
+               answer: it puts the digits on the wall and nothing else, which is
+               what the console's own Start now sends.
+               A VISIBLE LABEL, BOUND BY `for`/`id`. A placeholder is not an
+               accessible name — it is unread by some screen readers and it
+               disappears the moment somebody types — and this planner has already
+               had that defect once, on the two controls in its inspector. -->
+          <div class="sp-cdwords">
+            <label class="r-lbl sp-cdwlbl" for="sp-cdlabel">Words above the clock</label>
+            <input id="sp-cdlabel" class="r-input sp-cdw" maxlength="60" bind:value={cdAddLabel}
+              placeholder="Optional — e.g. Service begins in" />
+            <label class="r-lbl sp-cdwlbl" for="sp-cddone">Words at zero</label>
+            <input id="sp-cddone" class="r-input sp-cdw" maxlength="60" bind:value={cdAddDone}
+              placeholder="Optional — e.g. Welcome" />
+            <p class="sp-fhelp sp-cdhelp">Leave both blank for a timer that shows the digits alone.</p>
+          </div>
           <div class="sp-results">
             {#if addSearching}
               <div class="sp-hint">Searching…</div>
@@ -905,7 +967,7 @@
              buttons. The tabs now choose what appears BELOW the answer rather than
              standing in front of it, and nothing they carried was removed: the
              slide list is where rule 39's stale-arrangement warning is read, and
-             the stage note is operator-only text that must keep a home. -->
+             the Stage Note is operator-only text that must keep a home. -->
         {#if pv.plate}
           <!-- The rendered slide, through the ONE renderer, over a chequered
                plate. The plate is what makes a KEYED template visible here: the
@@ -992,6 +1054,25 @@
                 </select>
               </span>
             </div>
+            <!-- A CLOCK THE CUE ASKS FOR — stored here, started in Live. It is
+                 deliberately in the value column beside Template rather than up
+                 with Duration: Duration is an estimate this workspace adds up,
+                 and this is a timer a preacher will be watching. The words say
+                 which is which; no colour is spent on the difference, because
+                 the taxonomy is carried by the words already printed beside
+                 every cue and `colourlaw.test.js` is not amended by this wave. -->
+            <div class="rw-nv">
+              <span class="rw-nvk">Timer</span>
+              <span class="rw-nvctl">
+                <select class="r-select sp-tmrsel" aria-label="Programme timer for this cue"
+                  value={selCue.timer_minutes ?? ''} on:change={saveTimer}>
+                  <option value="">No timer</option>
+                  {#each TIMER_CHOICES as m (m)}
+                    <option value={m}>{m} min</option>
+                  {/each}
+                </select>
+              </span>
+            </div>
             <div class="rw-nv">
               <span class="rw-nvk">Fires</span>
               <!-- `ty.trig`, never a guess from the kind at this call site: it is
@@ -1000,6 +1081,13 @@
               <span class="rw-nvv">{ty.trig}</span>
             </div>
           </div>
+          <!-- THE DIFFERENCE, IN WORDS. Two fields in one inspector can both be
+               read as "how long this cue is", and they are not the same fact —
+               one is arithmetic on a build surface, the other is a clock a person
+               watches. The taxonomy is carried by the words here, as it is for
+               every cue kind in this workspace: no colour is spent separating
+               them, and `colourlaw.test.js` is not amended. -->
+          <p class="sp-fhelp">Timer starts a clock on the preacher’s monitor when this cue goes on air, in Live. Duration, above, is only the running-time estimate this plan adds up.</p>
 
           <!-- Move up · MOVE DOWN · Delete. "Move down" was missing, and its absence
                was load-bearing once the running order's per-row ↑↓✕ buttons went:
@@ -1045,7 +1133,7 @@
           <!-- Named the native way (`for`/`id`) rather than with an aria-label:
                the visible text and the accessible name are then the same string,
                and cannot drift apart. -->
-          <label class="r-lbl sp-flbl" for="sp-stage-note">Stage note</label>
+          <label class="r-lbl sp-flbl" for="sp-stage-note">Stage Note</label>
           <textarea id="sp-stage-note" class="r-input sp-note" rows="5" bind:value={noteDraft}
             placeholder="Shows on the confidence monitor only, never on the congregation screen."
             on:blur={saveNote}></textarea>
@@ -1269,6 +1357,17 @@
   .sp-cdunit{ font-size:var(--v-fs-lbl); color:var(--v-faint); margin-left:-3px; }
   .sp-cdgo{ margin-left:auto; }
 
+  /* The words rail sits UNDER the minutes row rather than beside it: three
+     controls and a button already fill a 12px-gutter row at this pane's narrowest,
+     and a wrapping flex of fixed-width boxes is how the countdown figure ended up
+     beside its own caption in the dock. Two rows, each a label over its field. */
+  .sp-cdwords{ display:flex; flex-direction:column; gap:3px; padding:8px 12px 10px;
+    border-bottom:1px solid var(--v-line); background:var(--v-surf2); }
+  .sp-cdwlbl{ margin-top:4px; }
+  .sp-cdwlbl:first-child{ margin-top:0; }
+  .sp-cdw{ width:100%; }
+  .sp-cdhelp{ margin-top:7px; }
+
   /* The add panel's kind dot. One neutral for every kind, like the row chip: the
      heading above each group names the kind, and a dot that borrowed a colour
      would be the taxonomy painting a promise again. */
@@ -1317,6 +1416,7 @@
   .sp-kv{ margin-top:16px; border:1px solid var(--v-line); border-radius:var(--v-r-sm);
     background:var(--v-surf2); overflow:hidden; }
   .sp-tplsel{ max-width:172px; }
+  .sp-tmrsel{ max-width:172px; }
   .sp-fhelp{ margin:6px 0 0; font-size:var(--v-fs-cap); line-height:1.45; color:var(--v-faint); }
   .sp-note{ width:100%; resize:vertical; font-family:inherit; line-height:1.45; }
 

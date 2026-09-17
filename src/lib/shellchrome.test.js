@@ -79,30 +79,25 @@ describe('§2 · the strip is the six workspaces, in order', () => {
     expect(read('src/lib/views/Settings.svelte')).toMatch(/activeTab: 'help'/);
   });
 
-  it('the Themes desk is mounted inside the Templates workspace', () => {
-    // Folded, not deleted. Both galleries and both editors are still rendered —
-    // by one router now instead of two.
+  it('the Templates workspace is one desk, and nothing of Themes is left in it', () => {
+    // Themes were folded INTO templates (DECISIONS §87) rather than moved again:
+    // a theme's every field was already a template `style` key, so the desk
+    // beneath this one could only ever say less than the template above it. Every
+    // themed template had its theme inlined into its own style first, so no look
+    // changed. What is left is browse, then make.
     const TPL = read('src/lib/views/Templates.svelte');
-    for (const child of ['TemplateGallery', 'TemplateEditor', 'ThemeGallery', 'ThemeEditor']) {
+    for (const child of ['TemplateGallery', 'TemplateEditor']) {
       expect(TPL, `${child} must still be rendered by something`).toContain(`<${child}`);
     }
-    // And the switch between the two desks is a real control, not a dead branch.
-    // The strip itself is `DeskStrip`, rendered by BOTH galleries and owned by
-    // neither; this router hears its event and writes the choice to the session,
-    // so a reload puts the operator back on the desk they were on. Two strips
-    // would be two answers to "which desk am I on", which is why the router
-    // renders none of its own.
-    expect(TPL).toMatch(/on:desk=\{changeDesk\}/);
-    // The CHOICE is written to the session — not the exact expression that
-    // writes it. This asserted `setSession({ templatesDesk: e.detail.desk })`
-    // verbatim and failed on a version that validates the desk against `DESKS`
-    // before writing it, which is strictly better code. A source grep for one
-    // spelling tests the author's keystrokes; what this file is for is that the
-    // choice persists, and `templatesdesk.test.js` mounts the real component and
-    // holds that end to end.
-    expect(TPL).toMatch(/setSession\(\{\s*templatesDesk/);
-    expect(read('src/lib/views/templates/TemplateGallery.svelte')).toMatch(/<DeskStrip desk="templates" on:desk/);
-    expect(read('src/lib/views/themes/ThemeGallery.svelte')).toMatch(/<DeskStrip desk="themes" on:desk/);
+    // No desk means no desk strip, and nothing reads `templatesDesk`. A
+    // segmented control offering one option is a control that does nothing; the
+    // session key it backed is DROPPED rather than left to be re-persisted for
+    // the life of the install, which is the reasoning `session.js` already
+    // records about `liveDensity`. `session.test.js` holds that end.
+    expect(TPL).not.toMatch(/DeskStrip|templatesDesk|on:desk/);
+    // But a saved session naming the old Themes TAB still lands somewhere valid.
+    // That is a different mechanism (`MOVED_TABS`) and it is untouched.
+    expect(read('src/lib/session.js')).toMatch(/themes: 'templates'/);
   });
 });
 

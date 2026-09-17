@@ -4,7 +4,7 @@ Every decision below was made deliberately, with reasoning, in a brainstorm sess
 
 | Decision | Reasoning |
 |---|---|
-| No native SDI hardware output, ever (unless explicitly reopened) | High engineering cost (Blackmagic DeckLink-class SDK) for narrow reach. Anyone with SDI gear already owns hardware (ATEM, converter) that accepts NDI/HDMI and re-outputs SDI — interoperability is preserved without owning the SDI problem. |
+| No native SDI hardware output, ever (unless explicitly reopened) | High engineering cost (Blackmagic DeckLink-class SDK) for narrow reach. **The reason this cell used to give was false, and is corrected here rather than quietly replaced.** It said anyone with SDI gear already owns hardware "(ATEM, converter) that accepts NDI/HDMI and re-outputs SDI". No ATEM ingests NDI at any tier, and a rack-mount ATEM has SDI inputs only, so the capability that made the constraint safe did not exist on the hardware the sentence named. **The decision stands, on the mechanism that is real**: a small HDMI-to-SDI converter bridges Relay's plain HDMI display signal into any SDI chain, so interoperability is preserved without owning the SDI problem. Model-by-model detail belongs in one place: [OUTPUT_ROUTING.md](OUTPUT_ROUTING.md) §2. |
 | Core engine: Rust | Real-time audio/video/inference workloads suit Rust's performance and FFI story to C SDKs (NDI, whisper.cpp) better than a Node-based core. |
 | Desktop shell: Tauri, not Electron | ~10–20x smaller install size, lower idle memory — concretely matters for the target market's modest hardware and unreliable power. |
 | Output channels modeled as render targets of one shared template engine | Maximizes code reuse across preview/output/remote-screen use cases; enables ultra-low-cost output hardware (Raspberry Pi kiosk clients), which matters for the target market. |
@@ -500,6 +500,11 @@ path that puts scripture on a wall.
 
 ## 27. Themes, role monitors, and portable looks (2026-07-24)
 
+> **The theme half is superseded by §87 (2026-09-16)**, which completes rather than reverses the
+> sentence below: a theme had no field a template does not have, so the layer beneath templates is
+> gone and the template is the whole style. The layer TOKENS are untouched and still resolve — see
+> `src/lib/styletokens.js`. Everything else here (role monitors, portable looks) stands.
+
 A presentation-suite build-out (the ProPresenter-style IA). The load-bearing choices:
 
 **Themes are a style layer BENEATH templates, not a parallel system.** A theme is a
@@ -566,7 +571,9 @@ Built on top of the above, all tested and gate-green:
 - **Template version history**: bounded (20), deduped-by-shape restore points per template,
   persisted in the settings KV (`tplver.<id>`) — deliberately NOT a schema migration (rule
   25). Snapshotted on an EXPLICIT Save only, never on the editor's live autosave.
-- **Settings sections**: Integrations (honest OBS/vMix-via-URL, NDI parked, ATEM-via-HDMI),
+- **Settings sections**: Integrations (honest OBS/vMix-via-URL, NDI parked, ATEM over HDMI on a
+  Mini and over a converter on the SDI-only rack models — the surface said plain "via HDMI" and
+  half the range has no HDMI input),
   Diagnostics (one-glance support facts), and an honest Users note (Relay is single-operator
   on-device, by design — no accounts).
 - **Transitions**: fade / slide / zoom as ONE custom `in:`-only transition (never a
@@ -3653,6 +3660,11 @@ promise is already spoken for (CLAUDE.md rule 18).
 
 ## 79. Themes is a desk inside Templates, not a workspace beside it (2026-09-14)
 
+> **Superseded by §87 (2026-09-16).** Themes were folded into the template model itself, so the
+> Templates workspace has one desk and `DeskStrip`, `session.templatesDesk` and both theme surfaces
+> are deleted. What is recorded below stands as the reasoning that got them there, and the
+> `MOVED_TABS` half of it is untouched and still load-bearing.
+
 **Context.** `docs/REBRAND.md` §2 names the workspaces the shell's strip carries, and Themes is not
 one of them. A theme is the style layer BENEATH templates (DECISIONS §27): it sets default `style`
 keys, a template overrides them key by key, and it never reaches a wall on its own. The only way to
@@ -4054,3 +4066,993 @@ both sides: it asserts that `main.rs` calls `lock.guard("remove_plan_item")` **a
 still registered in `generate_handler!`, so a rename cannot leave the list quietly pointing at nothing.
 `the_guard_is_the_first_thing_the_command_does` holds the placement, because a guard after the work has
 started refuses the operator without preventing anything.
+
+## 86. Safe mode is enforced at one door in the frontend, and not in Rust (2026-09-15)
+
+### The state it was in
+
+Settings offers a switch whose own row reads *"Outputs will not open and detection is disarmed —
+nothing Relay does can reach a screen. A way to open the console with no risk of putting something on
+a wall."*
+
+`setSafeMode` wrote `safeMode` into the boot record and did nothing else. `App.svelte` read `$safeMode`
+inside `onMount` only, with no reactive statement re-applying it; `Live.svelte` referenced safe mode
+zero times, so the run surface's fire path was not gated at all; and `grep -rn safe_mode src-tauri/src/`
+returned nothing.
+
+So flipping the switch mid-session changed a label. Projector windows that were already open stayed
+open, the detector stayed armed, and `aria-checked` said otherwise until the next launch. A volunteer
+who turned safe mode on to poke at a broken install during a service had been told nothing could reach
+a screen, over a machine where everything still could.
+
+That is rule 15 and §20 in a different costume — a control reporting a success it did not achieve —
+and this control makes a larger promise than a panic key does.
+
+### The decision
+
+**The enforcement lives at one door, `capture.js::applySafeMode`, and `setSafeMode` has exactly one
+caller.**
+
+The door writes the record, disarms detection, closes every screen that is open, and returns whether
+the promise was kept while also setting `safeModeError` — both, for the same reason `panicError` does
+both: the surface that flips safe mode can be a view that has already crashed, and a view that cannot
+`catch` cannot report.
+
+The obvious alternative was a `$safeMode` check at each fire site. CLAUDE.md records four separate
+bugs whose single root cause is a rule enforced on one surface and skipped on its twin; a check per
+caller would have been the fifth, and the switch now has three callers already (Settings, the boot
+sequence's crash gate, and `App.svelte`'s mount) which is exactly how the first four started.
+
+### What the door covers, and what it deliberately does not
+
+The sentence "the enforcement lives at one door" is about the TRANSITION — the moment safe mode is
+turned on. The row also makes an ONGOING promise ("outputs will not open"), and that is a second thing.
+Stating the reach precisely, because a decision that overstates its own is worse than one that admits a
+limit:
+
+**Covered.**
+
+- The transition: `applySafeMode` disarms detection, clears the screens, and closes every native output
+  window, reporting each failure by name.
+- Opening a screen afterwards. `openChannelOutput` REFUSES while safe mode is on, and it refuses at the
+  door in `capture.js` rather than at its four callers — the Outputs workspace's Open button, the
+  first-run wizard, the Dashboard's *Open main screen*, and whatever is written next. `Channels.svelte`
+  did not import `safeMode` at all, so that button opened a projector window with safe mode on: the
+  exact capability this register reports as blocked. `autoOpenOutputs` is a different backend command
+  and is gated in the same file, with no refusal, because nobody pressed anything.
+- **Arming detection afterwards.** The transition disarms the detector once, and that is all a
+  transition can do. The dock's Detection switch is in the SHELL — it is on every workspace, beside the
+  sensitivity dial, including the Settings page where safe mode itself lives — and it asked about
+  `busy` and `$capture.available` and nothing else, so one press re-armed the detector under safe mode.
+  That is not a label problem: `applySafeMode` clears the screens and closes native windows, but an OBS
+  browser source and a kiosk page keep their hub connection, so the next `AutoFire` paints a verse on
+  them. An auto-fire is Relay's own initiative, which is precisely the half this section says IS
+  covered, and it is not reached by the manual-fire carve-out below. The switch is now disabled under
+  `$safeMode` with a title saying why, matching the eight library surfaces that already do it, and
+  `degraded.js` no longer asserts *"detection is disarmed"* from the transition: it reads
+  `s.detectionOn` and says something different when the detector is armed, the same correction the
+  enforcement half needed one paragraph down. `FirstRun.svelte` restores whatever detection state it
+  found on the way in, which is the second way in and the reason the register reads the fact rather
+  than trusting the door.
+
+**Not covered, deliberately: a manual fire.**
+
+`Live.svelte` has five `manualFire` call sites and none of them ask about safe mode. That is the
+decision, not an omission. Safe mode's sentence is about what *Relay* does — it opens no screens and
+arms no detector. A manual fire is the **operator's own action**, taken with their hand on the control,
+and safe mode is not a lock. Gating it would also mean teaching `pipeline::preflight` a second reason to
+refuse a broadcast, and that validator may never grow a reason to refuse a panic control (§20, rule 36).
+
+The honest reading of the row is therefore: *nothing Relay does on its own initiative can reach a
+screen.* If a future reader wants the stricter promise, the change is a lock, with its own control and
+its own name, not a broader safe mode.
+
+### Safe mode takes the screens down
+
+`applySafeMode` calls `clearScreens()` before it closes any window, and a failed clear is collected as a
+failure like any other.
+
+`close_channel_output` closes a native webview and is a silent no-op for a channel that has none — so an
+OBS browser source, a kiosk page or a lobby TV on the hub would have kept its retained frame (rule 43)
+and gone on showing the last verse while this function returned `true`. `clear_screens` reaches every
+render target, and its `clear` becomes the retained frame in its turn, so a screen that reconnects
+afterwards comes back blank rather than to the verse.
+
+This blanks a congregation's screen, which is worth being deliberate about. It is allowed because it is
+an explicit operator action asking for exactly that — not something Relay decided on its own, which is
+the line §20 draws.
+
+### A promise that was not kept may not be printed as one
+
+The record is written FIRST and unconditionally, and both of the shell's always-visible surfaces read
+the record:
+
+- `statusbar.js::wallState` returns *"Safe mode — outputs disabled"*, and it is the first branch of the
+  ladder, outranking `live`.
+- `degraded.js::degradations` printed the row's promise word for word.
+
+So a screen that refused to close and was still painting a verse was described, on every workspace, as
+*outputs disabled* — which is the defect this section exists to fix, displaced one step, and rule 35
+exactly. Both now take the failure as an input and say something different when there is one, and
+`safeModeError` is rendered in the shell beside `panicError` rather than only on the Settings row the
+operator has just walked away from.
+
+**Every screen is attempted, even after one refuses to close.** Stopping at the first failure would
+hand the operator one screen's name to fix by hand while the ones behind it were still lit and nothing
+had ever asked them to go dark. The message names each screen that would not close, so what is left to
+do by hand is the whole of it.
+
+**Turning safe mode OFF arms nothing.** It restores the operator's freedom to arm things. A detector
+that switched itself back on would be a different surprise from the one this control exists to prevent.
+
+### The open question, and its answer: no Rust flag in this wave
+
+The spec asked whether safe mode should also exist in Rust, so the engine could not be armed while the
+record says disarmed.
+
+**It should not, here.** The promise on the switch is about what Relay *does* — it opens no screens and
+arms no detector — and today both of those are initiated from the frontend. A `safe_mode` flag in Rust
+would be a second register for one fact, and duplicate registers are a failure mode this repository has
+already paid for twice (the counts in `QA_HARNESS.md` §0 exist because four documents came to disagree;
+`Thresholds::default()` is one baseline *by construction* for the same reason). The frontend choke
+point is sufficient for the sentence as written, and it is the smallest change that makes the sentence
+true.
+
+**The cost, stated plainly:** a future path that armed the engine from Rust alone — a spoken command
+handled entirely in the backend, an autostart, a scheduled service — would bypass safe mode entirely,
+and nothing in the Rust tree would stop it. Nothing does that today. If something is built that does,
+this decision is the one to reopen, and the answer then is a Rust-side gate at `pipeline::Fire` rather
+than a second copy of the boolean.
+
+`docs/SECURITY.md`'s threat register is not engaged by this: safe mode is a guard against Relay's own
+behaviour, not against an actor.
+
+### Instrument
+
+`src/lib/safemode.test.js`, plus one case each in `degraded.test.js` and `statusbar.test.js` holding
+that the two shell surfaces stop asserting the promise when it was not kept. Four of its cases drive the
+door (detection disarmed and every screen
+closed; a failure reported rather than swallowed; every screen attempted rather than the first;
+a list that could not even be read). One holds that coming out of safe mode arms nothing. The sixth
+walks every `.js` and `.svelte` file under `src/` and holds `setSafeMode` to its single caller, so the
+next surface to offer safe mode cannot reproduce the original defect by writing the record on its own;
+it asserts its own walk found a tree, because a scanner that quietly narrows passes everything, and it
+matches the import specifier as well as the call so an aliased import cannot slip past it. Four further
+cases hold the screens being taken down rather than only the windows, a failed clear counting as a
+failure, `openChannelOutput` refusing under safe mode while still opening when it is off, and the shell
+rendering the failure at all — that last one a SOURCE assertion, named as such, because the shell is not
+mounted in this file.
+
+---
+
+## 87. Themes are folded into templates; the token resolver is what outlives them (2026-09-16)
+
+**Context.** §27 introduced themes as *"a style layer BENEATH templates, not a parallel system"* and
+§79 folded the surface into the Templates workspace as a second desk. This decision finishes that
+sentence rather than contradicting it: the layer is gone and the template is the whole style.
+
+**What a theme actually was.** A named bag of defaults for the exact same flat `style` keys
+`TemplateRender` already reads, filtered through a whitelist (`THEME_STYLE_KEYS`) that was a SUBSET
+of them. There was no themes table, no Rust struct, and no key a template did not already have — a
+theme persisted as one JSON blob in `app_settings['themes.custom']` and resolved at render time as
+`{ ...theme.style, ...template.style }`. So it could only ever say LESS than the template above it,
+and on a LAYERED template it said almost nothing: `LAYER_THEME_KEYS` recorded that nine of the
+fourteen controls the theme editor offered moved nothing at all, because resolution reached a
+layer's `color`, `fill` and `font` and had no path for a size, a line height, an italic, a
+background treatment or a gap. That is §69's rule arriving at the layer itself rather than at one of
+its controls: a surface whose intent nobody honours is removed, not relabelled.
+
+**What it did have was five ways to disagree with the template model** about what a screen wears —
+a second gallery, a second editor, a second store, a second export format (`.relaytheme.json`) and a
+hub frame of its own (`{"kind":"themes"}`, pushed on every kiosk `hello`). None of them was wrong;
+all of them were a second answer to a question the template already answers.
+
+**The decision.** Delete the theme model. `db/templates.rs::ensure_themes_are_inlined`, which landed
+earlier in this same track and runs on the migration ladder before any window is shown, writes each
+pinned theme's whitelisted style into the template that pinned it, under the same precedence the
+renderer applied, so **no look changed by construction**; a custom theme nothing
+referenced is preserved as a real template rather than discarded; a malformed snapshot leaves
+everything alone. Only then are the surfaces removed: both galleries, the desk strip, the store, the
+`sync_kiosk_themes` command, `KioskHub::{cache_themes, set_themes}`, the `themes` frame and its
+`hello` reply, and the `theme` prop on `TemplateRender`.
+
+**The half that was never about themes survives, and deleting it with the desk would have blanked
+every starter.** A layer's colour, fill or font may be a TOKEN (`theme:accent`) rather than a
+literal, so a stage, confidence or countdown starter follows whatever template it is dropped into.
+`applyTheme`'s merged `effective` object is what a token resolved against, and with no theme in the
+merge that object IS the template's own style — so `src/lib/styletokens.js` resolves the same tokens
+to the same values with one argument fewer. **The token keeps its spelling.** `theme:accent` is
+written into every saved layer in every install; renaming it would need a migration, and a migration
+is too much to pay for a nicer word.
+
+**`MOVED_TABS.themes = 'templates'` stays.** A laptop left on the old Themes tab is still a laptop
+left on it. `session.templatesDesk` is DROPPED, for the reason `session.js` already records about
+`liveDensity`: the session is written back to localStorage on every change, so a key with no reader
+is not inert — it is re-persisted for the life of the install and reads, to the next person, as a
+setting somebody forgot to wire up.
+
+**What this does not settle.** High Visibility shipped as a theme and CLAUDE.md names it as an
+accessibility feature. Its style is frozen in `src-tauri/data/legacy_themes.json` and inlined into
+any template that pinned it, and `legibility.test.js` holds its 21:1 contrast against those bytes —
+but until Track D seeds it as a template FAMILY there is no high-contrast look a church can simply
+pick from the shelf. That is a real gap for the length of this wave and it is named here rather than
+left to be discovered.
+
+### Instrument
+
+`src/lib/thememerge.test.js` — the desk is gone, the redirect still lands, a layer token still
+resolves against the template's own style, and neither the render path nor the hub carries a theme
+any more. `channels.rs`'s `FRAME_VERDICTS` and `REHEARSAL_VERDICTS` are enumerations guarded in both
+directions, so removing the publisher without removing its row fails, and vice versa;
+`ipc.test.js` and `scripts/qa-inventory.mjs` both report zero unreachable commands in either
+direction after the deletion.
+
+## 88. The seed becomes five families across five kinds, and Nocturne does not survive the count (2026-09-16)
+
+**Context.** §87 folded themes into templates and named the gap it left open: *"until Track D
+seeds [High Visibility] as a template FAMILY there is no high-contrast look a church can simply
+pick from the shelf."* Before this task, `theme_templates()` carried three families — Aurora,
+Ember, Nocturne — over four kinds each (Scripture, Lyrics, Lower Third, Announcement), and neither
+Classic nor Lower Third was a family at all: `builtin_templates()` shipped `Classic Serif` and
+`Lower Third` as single, uncoordinated rows. `preset_templates()` separately shipped fourteen more
+standalone designs with no coordinated set behind any of them: picking `Midnight Blue` for
+scripture left an operator with nothing coordinated for a lyric, a notice or a countdown. Two
+galleries plus two orphaned builtins, and nothing anywhere answered Media or Timer as a kind — two
+of the five entries in `CONTENT_KINDS` (`src/lib/layers.js`) no family had ever dressed.
+
+**The decision.** Five families — Classic, Aurora, Ember, Lower Third, High Visibility — each
+answering all five content kinds (Scripture, Lyrics, Media, Announcement, Timer), named `Family ·
+Kind` so the gallery groups them visually: twenty-five rows, and `preset_templates()` is now
+permanently empty. Classic and Lower Third are promoted from single `builtin_templates()` rows into
+full families rather than staying loose: a lower third is not a sixth content kind, it is a keyed
+variant, and the transparency law in `resolveOutputTemplate` depends on keyed templates existing at
+all — so making it a family gives every one of the five kinds a keyed option, strictly more
+capability than the keyed rows shipping before this wave. High Visibility is a family for the same
+reason it could not stay a lone extra: CLAUDE.md already names it an accessibility feature beside
+`legibility.js` and the distance preview, and an accessibility look that answers only one kind is
+not one a service can actually be run on. **Nocturne is dropped, not carried to five kinds** — its
+style keys sit close enough to Ember's and Classic's that keeping it would have cost a slot the
+other two use better, rather than adding real variety to the shelf. Colours are fixed per family;
+sizes are free per kind, so a lyric (scanned) and a verse (read) are not the same size but stay the
+same look. Aurora and Ember's Scripture, Lyrics and Announcement rows are the previously-seeded
+bytes verbatim, so a church already using one sees no change on update. Lower Third's band fills
+with the neutral `#101319` rather than a law colour, per rule 18. High Visibility is
+`data/legacy_themes.json`'s frozen theme, the same look `legibility.test.js` already holds at
+21:1 — which is what closes §87's gap, with one honest deviation: its Announcement does not scroll
+(the other four families' do), because a crawl that stops under `prefers-reduced-motion` silently
+truncates a notice, and a family built for a low-vision or vestibular reader cannot ship the one
+member most likely to cut text off screen.
+
+Every one of the twenty-five rows declares all five kinds in `layout.shows`, deliberately, not as a
+shrug. `layout.shows` is a per-screen filter (`templateShows`, consulted by `Output.svelte` before
+`resolveOutputTemplate` runs), not a record of what a template was designed for — an absent list
+already means "every kind" implicitly, so writing the five down is the same behaviour with the
+filter register told the truth instead of materialising a list the first time an operator edits it.
+
+**The retirement rule, and why it is this cautious.** Twenty-one rows are frozen byte-for-byte in
+`data/retired_presets.json` — the fourteen standalone presets, six rows `theme_templates()` stops
+shipping (the `Lower Third` member the old four-kind Aurora and Ember carried, and all four
+`Nocturne · …` rows), and the shelf's old `Lower Third · Scripture`, whose name the new keyed
+family takes over. `ensure_retired_presets_are_gone` deletes a row only when its name, its
+`region_config_json` AND its `style_json` all still match what the seed shipped, AND nothing points
+at it: the four doors are the five per-kind content-look defaults, `default_template_id`, and the
+foreign keys on `output_channels` and `plan_items`. A byte mismatch means an operator edited the
+row, and edited work is not a leftover; a failed read of either settings door is treated as "a look
+is bound" and retires nothing, because the safe direction to fail in is retiring too little, not
+deleting a template a screen is wearing. A name the new seed still ships (`Lower Third ·
+Scripture`'s old namesake) is left as the pre-existing row rather than replaced, so a church
+counting its gallery does not have to diagnose a permanently missing member from scratch —
+`ensure_preset_templates` inserts by name only when the name is absent, and this name never becomes
+absent.
+
+**What this does not change.** No look moves under an existing install: every row this wave
+retires or drops is either byte-identical to what shipped before (and left alone if it was edited
+or is still referenced) or was never rendered by the family member that now shares its name.
+
+### Instrument
+
+`src-tauri/src/db/templates.rs` — `there_are_presets_across_every_screen_type` asserts
+`preset_templates()` is empty; the family suite asserts all twenty-five rows and their `shows`
+lists; `ensure_retired_presets_are_gone`'s tests cover the byte-match requirement, a preset the
+operator edited being kept, and all four reference doors asserted SEPARATELY rather than in one
+case that could pass on the first door alone — the shape of a bug this repository has had four
+times before (a guarantee checked on one surface and skipped on its twin).
+
+---
+
+## 89. An output channel says what it is for, and a stage message is refused at the receiver (2026-09-16)
+
+### Context
+
+Three questions had three separate non-answers, and they turned out to be one question.
+
+**Which screen is "the main screen"?** `Live.svelte` decided with an expression written inline:
+`channels.find((c) => c.render_target === 'native_window') ?? channels[0] ?? null`. A render target
+is how a screen is WIRED — a native window, a browser source, an NDI encoder — not what it is for.
+So renaming the main screen changed nothing, deleting it silently promoted whichever channel came
+first in the list, and a church running its wall through OBS (every channel a `network_client`) had
+the programme pane previewing its streaming feed. All three read identically on the bar above the
+pane. `channels.rs`'s `MonitorInfo::primary` is a property of a physical display and was never a
+candidate for this; `output_channels` had no column for it at all.
+
+**Which screens may be shown a word to the preacher?** `channels::stage_alert` publishes to every
+kiosk client, because the hub cannot address one: it records nothing about who connected, which is
+§35 and is not being reversed. What kept the message off a congregation screen was that
+`Output.svelte` had no `stage_alert` branch — a guarantee by OMISSION, held as a `false` in
+`r6-contracts.test.js` and as a sentence in `docs/REBRAND.md` §5 about which `.svelte` file the
+markup sits in.
+
+**Does a word to the preacher survive `Esc`?** `Stage.svelte`'s `clear`/`black` branch resets six
+fields and does not reset `alert`. Nothing recorded why. `svcStart` survives that branch too and
+says why it does, in a comment, at the line — so the tree carried one deliberate survivor and one
+accidental one, spelled identically.
+
+### Decision
+
+**One — `output_channels` gains a `role` column: `main`, `stage`, or nothing.** A fresh install is
+seeded with it (`Main screen` → `main`, `Stage display` → `stage`; `Streaming` and `Lobby screen`
+hold none). An existing install is back-filled by those same two names, and only while no row
+carries a role at all — a back-fill keyed on "this row is NULL" would re-seed the main screen at
+every launch, so clearing it or moving it elsewhere would last until the next boot with nothing to
+say why. At most one screen may hold `main`, enforced in `db::set_channel_role` rather than by a
+partial index: an index can only fail, and failing is not the same as explaining, so the refusal
+names the screen that already holds it and reaches the operator through `src/lib/errors.js` like
+every other refusal on that desk. Several screens may hold `stage` — a church may have a confidence
+monitor and a preacher's tablet.
+
+Live reads the role. The old heuristic is kept as an explicit fallback, because a blank programme
+pane is a worse answer than an imperfect one, and it is LABELLED: `as Main screen` when a screen
+holds the role, `as Main screen · no main screen set` when nothing does. A bar that read the same
+in both cases would be rule 35 in a new place.
+
+**Two — a `stage_message` layer binding exists, and the refusal moves to the receiver.** A binding
+means a renderer reads the value, so the omission stops protecting anything and the refusal has to
+be a decision the page takes out loud. `Output.svelte` accepts a `stage_alert` frame only when its
+own channel's role is `stage`, and a screen that STOPS being a stage loses the message at once. The
+filter is at the receiver because the receiver is the only party that knows which screen it is: the
+URL is channel-keyed (§29) and the backend publishes what each channel is for. §35 is untouched —
+the new `channel_roles` frame carries channel ids against roles and nothing else, which is exactly
+what the Outputs desk already shows, and no name, address or anything a client chose.
+
+The value never rides on `OutputContent`. It stays its own frame kind, held in renderer state and
+passed to `TemplateRender` as a prop. On the content it would be broadcast to every screen with the
+verse, and the only thing between it and a lobby TV would be which layers that TV's template
+happens to have — which is a thing an operator can copy in two clicks. `stage_note`,
+`next_reference` and `service_started_at` do ride on the content and are kept private exactly that
+way; a message addressed to a PERSON is not in that class. `FRAME_VERDICTS` keeps
+`("stage_alert", false)`, so it is never retained and a tablet rejoining ten minutes later is not
+handed a message meant for a moment that has passed (rule 43). The rehearsal gate is unchanged.
+
+**Three — the word to the preacher COMES DOWN with the screens, on both panic controls.**
+
+**This paragraph previously ruled the opposite, and the reversal is recorded rather than tidied
+away.** The ruling written here first was that the alert SURVIVES `Esc` and `B`, on the ground that
+an instruction to a person is not a state of the wall and is most wanted at the moment the room goes
+dark. The operator has ruled against it. §91 carries the decision and the full reasoning; the short
+form is that `.alert` is `position: fixed; inset: 0` — on `Stage.svelte` it IS the screen rather
+than a figure on it, so a survivor left a full-bleed pulsing red panel as the brightest thing in
+the room under a control the console had just reported succeeding. Clearing it is also what makes
+the live path agree with the reconnect path, since `stage_alert` is never retained (rule 43,
+`FRAME_VERDICTS`) and a tablet that reloaded came back with no alert while the one beside it kept
+the panel.
+
+What survives a panic control is what COUNTS rather than what SAYS something: `svcStart` and a
+`Stage`-scoped programme timer. That line is §91's, and this decision defers to it.
+
+**The half this does NOT make true, stated rather than glossed.** A stage display served through
+`output.html` still does not behave like `Stage.svelte` across a panic control, and the ruling
+narrows the divergence rather than closing it. `TemplateRender`'s whole layer stack is inside
+`{#if content}` and `Output.svelte` passes `content={visible ? content : null}`, so a cleared or
+blacked wall takes the `stage_message` layer away with everything else — which is now the same
+visible outcome the ruling gives `Stage.svelte`. But `stageMessage` is renderer state and not a
+field on the frame, so it is never reset: the moment the next verse is fired the message paints
+again, unbidden, after a control the operator used to take every sentence back. `Stage.svelte`
+needs a new Stage Message to say it again; `output.html` says it again on its own. That is filed as
+RG-156 rather than described as a design, and changing it means changing what `TemplateRender`
+renders with no content — which is rule 37 and rule 42 territory and is not this wave's to move.
+The second known limit is untouched by the ruling: a `stage_alert` has no Tauri emit at all, so a
+stage display wired as a NATIVE window receives nothing; that is deliberate
+(`e2e::r5_a_word_to_the_preacher_reaches_no_congregation_channel` asserts the Tauri door stays shut)
+and is filed in the same row.
+
+### Instrument
+
+`src-tauri/src/db/channels.rs` — the migration's retryability, the back-fill by name, the back-fill
+never undoing an operator's choice, the one-main refusal by name, several stages, an unknown role
+refused, and the fresh seed. `src/lib/channelroles.test.js` — the programme pane follows the role
+when the main screen is not a native window AND when a native window is not the main screen, and
+says so when nothing holds the role. `src/lib/stagemessage.test.js` drives the real `output.html`
+through the real socket and asserts what it PAINTS on a lobby screen, on the main screen, before
+the roles arrive, on a raw preview, and when a screen stops being a stage — the surface
+`r6-contracts.test.js`, which reads source text, cannot reach.
+`e2e::r5_a_word_to_the_preacher_reaches_no_screen_that_is_not_a_stage` holds the backend half: the
+roles a fresh install names, that the wire form carries ids and roles and no names, and that
+`OutputContent` has no stage-message field. `src/lib/stagealertpanic.test.js` holds the third decision,
+by driving `Stage.svelte` through `clear` and through `black`.
+
+### Addendum, 2026-09-17 — the second door, which this ruling did not close
+
+The ruling above closed `output.html`. It did not close `stage.html`, and the reasoning that let it
+pass is recorded in `r6-contracts.test.js` as a `false` verdict with a paragraph under it:
+*"stage.html is not an output CHANNEL … it is a stage screen by construction rather than by
+configuration."*
+
+**That was true of the page's intent and false of its behaviour.** Every copy of that page open
+anywhere on the network was a stage screen by construction — the lobby TV a volunteer had pointed
+at the URL, the spare tablet in the back room, a visitor's phone — and each of them was painted the
+Stage Message full-bleed, at `position: fixed; inset: 0`. One of two doors carried the guarantee,
+which is the shape CLAUDE.md names under *"a guarantee is only kept on the doors you checked"*, on
+the surface carrying private words about a service.
+
+**So the reversal.** `Stage.svelte` reads `?channel=` exactly as `Output.svelte` does, handles the
+`channel_roles` frame through the same one-writer function with the same
+stops-being-a-stage guarantee, and refuses a `stage_alert` unless `acceptsStageMessage` says yes.
+`hello` carries the channel, because rule 43's replay is answered inside the hub's `hello` handler
+and a per-screen state can only be replayed to a client that has said which screen it is.
+
+**A page opened with no channel refuses, and says so.** That is a behaviour change to a URL churches
+already have: the bare `http://<host>:8032/stage.html` that Outputs used to print no longer
+receives a Stage Message. Refusing is the only answer consistent with the rest — an unidentified
+page is precisely the page that might be anything — but a silent refusal would read exactly like a
+message nobody sent, on the one screen whose reader cannot glance at the console to find out what
+happened. So the page carries one standing line naming the fix (rule 35), and `Outputs → Sharing`
+hands out a channel-keyed address for the screen that actually holds the role, or says plainly that
+no screen holds it rather than printing a link that half works (`channelroles.js::stageRemoteUrl`).
+
+**It is not a security boundary and is not claimed as one.** The LAN is trusted by decision (§35,
+`docs/SECURITY.md` T4): anybody who can reach `:8032` can type `?channel=2` and be handed the
+message, and can already read the reading, the Stage Note and the programme off the same page. What
+this closes is the accident, by the same mechanic, in the same frame, as the page beside it.
+
+`src/lib/stagepageidentity.test.js` drives the real page through the real socket and asserts what it
+paints — the surface `r6-contracts.test.js`, which reads source text, cannot reach.
+`src/lib/stageremote.test.js` holds the sending desk.
+
+---
+
+## 90. A fresh install ships starter content, and the tripwire stops asserting zero (2026-09-16)
+
+**Context.** `db/mod.rs`'s `init_fresh` carried a flat prohibition: *"NOTHING SEEDS DEMO CONTENT
+HERE, and nothing ever may."* It was written when `db::demo` was built, and it was right about the
+thing it was written for — wiring the demo dataset into the seed was tried, and
+`qa::the_bare_fixture_is_a_first_launch_and_nothing_more` was watched to stay green over a fresh
+install that arrived with a plan, three songs, three notices and five saved verses in it. The rule
+and the tripwire were added together and they held.
+
+They also produced a first launch with an empty Library, an empty Planner, and thirty-three
+pictures that existed only inside the template editor's background picker.
+
+**The decision, and it is the operator's.** A fresh install now ships a starter set:
+**five announcements**, **one `media_assets` row per picture Relay ships**, and **one example
+service plan** whose countdown cue carries its own words, its own length and a pinned Timer look.
+`db::starter` writes it, from `init_fresh` and nowhere else. Three reasons were given and all three
+are worth keeping:
+
+1. **An empty install is not neutral.** A church opening Relay for the first time has no
+   announcement to fire, no background to choose and no plan to run, so the surfaces that exist to
+   be operated cannot be operated at all. That is how a volunteer decides a workspace is broken.
+2. **The instruments this repository trusts are about drift, not about emptiness.** The tripwire's
+   value was never the zero; it was that a seed which changes without anybody saying so fails
+   loudly. That value is kept by asserting the starter set **exactly** — these five titles, every
+   bundled picture and no other media row, one plan with this cue order and this countdown payload.
+   It is not weakened to a range and it keeps its name.
+3. **Starter content is not demo content.** `demo.rs` is untouched: still behind its Settings
+   button, still writing no `services`, `transcripts`, `detections`, `cues`, `service_events` or
+   `perf_samples`, still ledgered so it can be taken back out. Starter content has no `Demo · `
+   mark, no ledger and no removal path, because after the first Sunday it is the church's own. The
+   two modules do not call each other, and `db::demo::is_loaded` still answers `false` on a fresh
+   install — which is what keeps the older half of the tripwire meaningful.
+
+**What "the operator's title, separated from the words that reach the room" does and does not
+mean** (REBRAND §10). The five announcements are written so the title names the notice for whoever
+is looking for it at 9am and the body carries the message, with neither repeating the other. What
+it does not mean is that the title is invisible: `fire_content` sends an announce cue's label out
+as `reference`, so an announce template with a `reference`-bound layer draws it as the slide's
+heading. That is the fire path as it already stands and this decision does not move it. The
+separation being claimed is of jobs and of fields, not of audiences.
+
+**The pictures are rows, and they carry no file.** The gap being closed is real and narrow: the
+template editor's background picker reads `BACKGROUNDS`, a build-time glob, and cannot reach
+`media_assets` at all — so a picture shipping with Relay was usable in exactly one place while a
+picture in the Library was usable everywhere else. A row each makes a background an ordinary
+library item: fireable, cueable in a plan, bindable to a template's media layer.
+
+They are **not copied anywhere**. A row's `path` is `bundled:backgrounds/<file>`, a marker rather
+than a location, and the bytes are the ones already inside the binary in `dist/`, which
+`channels::serve_embedded` has always served. Copying them into the media directory would put
+fourteen megabytes on disk that are already in the binary; embedding them separately in the Rust
+binary would put fourteen megabytes into every download of a picture the frontend bundle already
+carries. `media_url` is the one place that reads the marker, and `delete_media`'s caller is the one
+place that has to know there is no file to unlink.
+
+**The build change this required, stated rather than buried.** A Rust seed cannot know a Vite
+content hash, so `vite.config.js` now emits assets from `src/backgrounds/` at a stable, unhashed
+`backgrounds/<file>` while every other asset keeps the hashed name it had. The name is sanitised in
+the same step, because `serve_embedded` takes the request path off the request line and does not
+URL-decode it, and several of these files have spaces in their names. The rule lives in
+`src/lib/bundledbackgrounds.js` where it is tested directly, and the seed reads the resulting names
+out of the bundle rather than re-deriving them, so there is one rule and not two copies of it.
+
+**The cost, named.** A template saved on an existing install that referenced a background by its
+old hashed `/assets/…` URL now points at a path the bundle no longer holds, and that picture will
+not paint. No seeded template does this (a seeded row could never have carried a build hash), so it
+can only affect a template somebody edited by hand, and re-picking the background in the editor is
+the whole repair. It is filed as RG-157 rather than left as a surprise (filed as RG-144; renumbered when wave 3 and wave 5 met, both having filed from RG-143 upward).
+
+**What this does not change.** It does not move the release decision. It does not touch detection,
+the router or any threshold. It writes nothing to the service record — a starter plan is something
+to press, not something that happened — and nothing a preacher said can reach `service_events`
+through any of it.
+
+### Instrument
+
+`src-tauri/src/db/starter.rs` — the announcements by title and by the title/body separation, every
+bundled picture resolving to a file the bundle actually holds, the example plan's cue order and its
+countdown payload, the seeding step run twice, and **the real second launch through a real file on
+disk**: `migrate(fresh = true)`, close, `migrate(fresh = false)`, counts unchanged — plus a third
+launch after the operator deletes a starter notice, which does not bring it back.
+`qa::the_bare_fixture_is_a_first_launch_and_nothing_more` holds the starter set by identity and
+still asserts zero for songs, saved verses and the demo ledger.
+`main::media_url_tests` holds the two ways a media row becomes a URL, and that a bundled row has no
+file to delete. `src/lib/bundledbackgrounds.test.js` holds the build rule, including that a served
+name never needs URL-encoding, and holds the Rust and JavaScript halves of the URL rule to the same
+prefix and the same two forms — they are two languages and cannot share an implementation.
+`src/lib/bundledmedia.test.js` holds the SECOND door: it mounts the real Library media pane and
+reads the `src` a browser would fetch, because that pane renders the file itself as the thumbnail
+and a rule kept only in Rust would have made every seeded picture a broken image on the shelf it
+ships into.
+
+`demo.rs`'s own product code is untouched by all of this; five of its TESTS moved, because they
+asked whether tables were empty or read the only media row, which was exact while a fresh install
+had nothing in it. They measure the demo dataset as a delta and scope every row to the ledger now,
+which is the claim they were always making.
+
+---
+
+## 91. A panic control silences a room; it does not stop the clocks (2026-09-16)
+
+**This supersedes the refusal in §27**, and it is worth being precise about which sentence moves,
+because the guarantee everybody actually depends on does not.
+
+§27 wrote: *"The panic 'Clear all screens' stays TOTAL — a monitor is not exempt. A persistent
+service timer that survives the clear was considered and REFUSED: it would mean adding an 'except
+monitors' branch to a life-critical control."* It then closed with the reason this section exists:
+*"Whether a stage monitor should ignore the congregation clear is a real product decision, left
+open rather than resolved by a quiet special-case."* The operator has taken that decision. §27 is
+being answered, not overruled.
+
+**The decision.** A `Stage`-scoped timer survives `Clear screens` and `Blackout`. A `Both`-scoped
+timer does not. Everything a congregation can see still goes, totally, on both controls.
+
+### Why this is safe to reverse, in three parts
+
+**One: §27 left the question open and said so.** It refused a specific implementation — an "except
+monitors" branch inside the control — and named the product question as unanswered. That refusal
+was right about the implementation and this decision keeps it: see "the split is a property of the
+timer" below.
+
+**Two: §27's "no exceptions" was already not literally true in shipped code, in two places.** The
+stage page's own clear/black branch (`src/Stage.svelte`) resets what the page is showing and then
+deliberately keeps the service elapsed clock, on a stated ground: *"A cleared or blacked wall is
+not the end of a service, and the elapsed zone is the preacher's own clock — taking it away when
+the operator hits Esc would answer a question nobody asked."* That is this decision already taken,
+locally, for one figure, eighteen months before anybody wrote it down. The second place was the
+stage `alert`, and that one was undecided rather than decided — the `alert` part below settles it.
+
+**Three: the congregation guarantee is exactly as strong as it was.** `clear` and `black` take back
+every congregation screen totally. Nothing about what reaches a congregation changes, in either
+direction, and a `Both` timer — the countdown a congregation actually sees — is stopped by both
+controls exactly as it was before this wave.
+
+### The split is a property of the timer, never a question inside the control
+
+This is the half of §27's refusal that is kept, and it is the load-bearing half. `channels::clear`
+and `channels::black` both call `stop_congregation_timers`, which is `registry.stop_scope(Scope::Both)`
+and nothing else. **No branch anywhere asks which screen it is talking to.** A panic control that
+has to work out which screen it is addressing is a panic control that can fail to answer, and rule
+15 does not allow one of those. §27 was right that an "except monitors" branch inside a life-critical
+control would be a bad way to get this, and it is not how this is got: the scope is decided once,
+when the timer is started, by the person starting it.
+
+### `alert` — the silent third answer, settled
+
+The clear/black branch reset `visible`, `note`, `cdTo`, `cdFrom`, `cdPaused` and `next`, and did not
+reset `alert`. Nothing in the tree recorded why, which made it a third answer to the very question
+this section exists to answer, given by nobody.
+
+**The decision: a word to the preacher comes down with the screens.** `alert` is cleared by both
+controls, and the code now says so where it says the same about the other five.
+
+Three things decided it, and the third is evidence rather than taste.
+
+- **A stage alert is the whole screen, not a figure on it.** `.alert` is `position: fixed; inset: 0;
+  z-index: 50`, a full-bleed pulsing red panel with the page's own comment saying *"this panel IS
+  the screen"*. So an operator pressing `B` — whose entire meaning is *every output goes opaque
+  black* — left one screen in the room as the brightest thing in it. The same branch already
+  refuses that shape in as many words: *"the harsher control must never do less than the milder
+  one… an operator who has just hit the emergency key cannot be asked to remember that it reaches
+  three screens out of four."*
+- **A timer counts; an alert says something.** That is the line this whole section draws. A panic
+  control takes back everything somebody PUT on a screen — a verse, a note, an up-next, a
+  congregation countdown, a sentence typed to the preacher. What survives is what was already
+  running and measures time rather than speaking: the service clock and a programme timer. A
+  programme timer keeps answering *how long have I got*, which is true whether or not anything is
+  on any screen. "Wrap up — five minutes" is a sentence, and the operator who hit the panic key has
+  just taken every other sentence back.
+- **The two halves of the room disagreed with each other.** `stage_alert` is not a retained frame
+  (`FRAME_VERDICTS` holds it at `false`, deliberately, so a private word cannot arrive again later
+  — rule 43). So a stage tablet that reloaded, locked its screen or dropped off the wifi came back
+  with **no** alert, while the tablet beside it that stayed connected kept the red panel through the
+  clear. Two devices, one service, two different screens, and nothing anywhere saying which was
+  right. Clearing `alert` on a panic is what makes the live path agree with the reconnect path that
+  already existed.
+
+**What this costs, stated plainly.** An operator who hits `Esc` for an unrelated reason — a wrong
+verse on the wall — also takes down an instruction the preacher may not have read. That is the
+trade, it is the same trade `clear` already makes for the cue note, and the way back is one action
+on a control that is already there.
+
+### Instrument
+
+`e2e::{a_clear_takes_the_congregation_timer_and_leaves_the_programme_timer,
+a_blackout_answers_the_same_way_as_a_clear}` — both controls, named separately, because the
+guarantee for the harsher one was being carried by the tail of a test named after the milder one.
+`src/lib/stagepanic.test.js` pins the `alert` decision against the mounted page, for both controls,
+and asserts beside it the service clock the same branch keeps — so neither half of the line can be
+tidied into the other. Both halves were watched to go red separately: removing `alert = ''` fails
+the two alert cases, which is the defect exactly as it shipped, and resetting `svcStart` beside it
+fails the two clock cases, which is the opposite mistake a reader could make from the same section.
+
+---
+
+## 92. The preacher's programme rail counts up past zero, and prose never enters a slot sized for digits (2026-09-17)
+
+**This decision existed only in a commit message and in
+`docs/superpowers/specs/2026-09-17-consolidation-design.md` §2 for the first day of its life**,
+which is the state CLAUDE.md's *"if the decision isn't there, it hasn't been made"* exists to
+stop. It is written down here because two waves built opposite behaviour into the same
+reactive block, three pairs of assertions in `src/lib/timers.test.js` could not both pass, and
+the losing side's cases were deleted rather than merged. A deletion argued from a commit
+message is a deletion nobody can audit.
+
+### The conflict
+
+`src/Stage.svelte`'s `$: programme` block was rewritten by `feat/wave3-timers` and by
+`feat/wave4-stage-planner` independently. Neither branch contained the other, so neither
+author could see the disagreement.
+
+| behaviour | wave 3 | wave 4 |
+|---|---|---|
+| past zero | counts up, `+4:37` | `0:00`, or the operator's done message |
+| `countdown_done` on the rail | deliberately no reader | read, and sized as prose |
+| warn with no chosen threshold | falls back to the shared rule | never warns |
+| held rows | not modelled | `held`, frozen, never warned |
+| row width | `progCh` → `--tch` from the widest rendered string | absent |
+| rail capacity | absent | `MIN_TIMER_PX = 132`, `capacity`, `+N more` |
+
+### The decision
+
+**Wave 3's past-zero semantics win. Wave 4's `held` state and rail capacity are kept. The
+operator's done message keeps no reader on the rail.**
+
+**It is settled on a measurable conflict rather than on which ruling came second**, which
+matters because both rulings were reasonable and both authors were right about their own
+branch. `progCh` budgets every column from the widest RENDERED string. Wave 4 puts prose into
+that same slot. An operator typing `WRAP UP NOW` sets the budget to eleven characters and
+widens every row on the rail, which is exactly the six-sixty-pixel-columns failure
+`MIN_TIMER_PX` exists to prevent. The two fixes fight each other the moment words are allowed
+into a slot sized for digits, and **neither fix may be lost**: both were filed as RG-147, by
+two different waves, for two different bugs. Wave 3's is a 95-minute clock painting `1:30:1`
+inside an `overflow:hidden` box; wave 4's is six timers collapsing into six 60px columns. The
+merged block carries `progCh`/`--tch` *and* `MIN_TIMER_PX`/`capacity`/`+N more`.
+
+**The product argument agrees with the technical one, and would have been enough on its own.**
+The rail is one preacher's bookkeeping, read mid-sermon by one person, and the only question
+it is asked past zero is *how far over*. `+4:37` escalates as the minutes pass; `WRAP UP` says
+the same thing at four minutes over as at forty. The operator's words are what a
+**congregation** countdown says when it lands, and they still say it there: `countdown_done`
+replaces the digits on the wall and on the countdown mirror above this rail. Nothing was
+taken away from the operator, it was kept where it was already going. If that is ever
+revisited it is a new row, not RG-153.
+
+**A held row is frozen and says so.** `countdownRemainingMs` answers a held timer with its
+stored figure, which is always positive, so a held row can never take the over-time branch. It
+is never warned either: a held timer is not running out, it is where the operator left it, and
+a frozen figure pulsing red says the opposite of what is true.
+
+### The warning threshold falls back to the shared rule, and wave 4's reason was deleted by the merge
+
+Wave 3's shared rule with a fallback wins, and not by preference. Wave 4 argued its
+no-fallback rule from a premise its own comment stated: *"This page has no Tauri bridge and
+does not import that module, so the default in force here is the SHIPPED minute whatever the
+church set."* Wave 3's warn-chain work makes that false — it adds
+`channels::CountdownWarnDefault` and ships `warn_default_ms` on the timer frame and
+`countdown_warn_default_ms` on content frames, which `Stage.svelte` reads through
+`applyWarnDefault`. **The merge deleted wave 4's reason, so the rule it supported could not
+stand**, and the comment stating that premise had to be rewritten rather than left arguing
+from something no longer true. A comment that survives the fact it rests on is how a future
+reader re-derives the wrong answer with confidence.
+
+The mark on an over-time row is the SIGN, not the threshold rule. `countdownWarning` answers
+false at and below zero, correctly — zero is not "nearly gone", it is gone — so a row marked
+only by it would lose its colour at the instant the time ran out. Being over needs no
+threshold to know it, and widening the shared rule to swallow a negative would be a fourth
+reading of *when to worry* on a rule three surfaces share.
+
+### Instrument
+
+`src/lib/timers.test.js` and `src/lib/stageprogrow.test.js` carry both halves: the wave 3
+cases for past-zero and `--tch`, and the wave 4 cases for `held`, `capacity` and `+N more`.
+**The losing side's three pairs were deleted rather than merged** — a "keep both sides" merge
+produces a suite that fails whichever implementation wins, which is a suite that can no longer
+be read as a claim about anything. `src/lib/progtimerjoin.test.js` covers the join itself:
+both waves' surfaces were individually green and the defects were in the seam between them,
+so it drives Live's real fire path and mounts the REAL stage page on the frame that comes out
+rather than adding cases to either side.
+
+## 93. Amethyst promises "nothing here reaches a congregation", and the caution gap is named rather than closed (2026-09-17)
+
+**A human may overrule this. It restates a law rather than moving one, and it deliberately leaves
+one question open instead of answering it with a colour nobody argued for.**
+
+### The contradiction
+
+`src/app.css` says, in the comment above the four control buttons:
+
+> Rehearse     amethyst — the rehearsal colour, and nothing else uses it.
+
+That sentence is false about the file it is written in. The same stylesheet spends amethyst on the
+boot ladder about eleven times (`.b-mark`, `.b-rail .s.on .n`, `.b-sechead`, `.b-bar` progress,
+`.b-check.warn`, `.b-check.running`, `.b-check.pending`, `.b-spinner`, `.b-foot .dot`,
+`.b-check-box:hover`, `.b-check-box:focus-visible`), on the practice strip (`.prac`, `.prac-n`),
+and in components on the splash, on Help's callout, on Settings' network caution and on the
+Library's Media collection ink. Roughly fourteen surfaces, against a sentence that says one.
+
+[DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) §1 is the law it is citing: a colour that carries a promise
+cannot be borrowed for decoration. So one of the two has to give.
+
+### What the uses actually obey
+
+Reading all fourteen rather than counting them changes the answer. Almost none of them is a
+borrowing; they are the same promise, stated somewhere the word "rehearsal" does not fit.
+
+- **Rehearsal**, in the console: `.r-badge.amethyst`, `.r-cbtn.rehearse[data-on="1"]`, `Live`'s
+  rehearsal strip, `VerseDeck`'s `.vd-card.reh`. The case the colour was named for.
+- **Practice drills** (`.prac`): literally a rehearsal, and the comment there already says so —
+  "the same colour the top bar is already showing, so the two agree rather than competing".
+- **Safe mode**: `BootShell` renders *"Safe mode — outputs disabled"* in amethyst, and app.css's
+  own lamp comment records safe mode as outranking rehearsal. Outputs disabled is the promise
+  word for word.
+- **The launch sequence** (`.b-*`, `Splash`, `BrandMark`): the console is not mounted, no output
+  window exists, and nothing can be on any wall. app.css already argues this at the top of the
+  ladder: *"the brand colour of the whole launch sequence is amethyst, which in this app means
+  'not reaching the screens': at boot, true."*
+- **The Media collection ink** (`--v-col-media`): named explicitly in docs/REBRAND.md §1 as a
+  collection colour. A settled decision, not reopened here.
+
+**The decision: amethyst's promise is `nothing here reaches a congregation`.** Rehearsal is the
+case it was named for and is not the whole of it. The sentence in app.css is the bug, and it is
+corrected in place. The launch ladder is not repainted, for a reason stronger than cost: it is
+unambiguous. `.b-shell` is `position:fixed; inset:0; z-index:1100` and renders *instead of*
+`App.svelte`, so a boot ladder and a rehearsal badge can never be on screen together. There is no
+moment at which an operator has to tell one amethyst from another.
+
+### What is NOT decided, and why leaving it open is the honest answer
+
+Four surfaces spend amethyst on a **caution**: `.b-check.warn` (a boot check that came back with a
+warning), `Settings`' `.s-netwarn`, `LyricsPane`'s `.ly-warn`, and `Help`'s callout. A caution is
+not "nothing here reaches a congregation", so under the law above these are off it.
+
+They are also not drift. Each one carries an argued comment at its call site, and the four
+arguments are the same argument, reached independently: amber is out because it is the tally light,
+cyan is out because it means the AI is guessing, red is out because it means failure, and a caution
+is none of those. `.b-check.warn`'s comment states all three in order.
+
+**So the gap is in the palette, not in the call sites.** This product publishes no caution ink, and
+four separate people each discovered that and each reached for the nearest colour that was not
+already a lie. Inventing a sixth semantic colour is a redesign: it touches every one of those
+surfaces, it needs a hue that survives the contrast matrix on four grounds, and it cannot be
+verified without eyes on a running window, which the build machine does not have
+(DESIGN_SYSTEM §6 records the same constraint about the legacy sheet). Repainting the four to red
+would be worse — it would tell a church that a boot check it can ignore has failed.
+
+So the four keep amethyst, they are enumerated by name in the instrument below with that reason
+attached, and **the missing caution ink is filed rather than improvised**. A human who wants the
+sixth colour should say so; a human who would rather rule that caution is simply inside amethyst's
+promise can say that instead, and the instrument changes by one line either way.
+
+### Instrument
+
+`src/lib/colourlaw.test.js` is widened from the two `plan.js` taxonomy tables to a repo-wide
+amethyst sweep. It asserts three things:
+
+1. **No congregation-facing surface paints amethyst.** `Output.svelte`, `Stage.svelte` and
+   `TemplateRender.svelte` are the three that can reach a wall, and a promise that says "nothing
+   here reaches a congregation" is self-refuting on one of them. This is the half that can never
+   be argued away.
+2. **Every other amethyst surface is one of the five kinds above**, enumerated by file with its
+   reason. The list can only shrink: a new amethyst in a console workspace fails, and so does a
+   new one on the four cautions' surfaces, so paying the gap off is visible and adding to it is
+   not silent.
+3. **The scanner can still see what it scans for** — the guard every source scanner in this
+   repository now carries, because two of them have narrowed quietly and passed everything
+   (`ipc.test.js`, twice, recorded in its own header).
+
+The `rgba()` blind spot that hid half of this is closed in the same pass:
+`workspacegrammar.test.js` says in its own header that "`rgba()` is not scanned at all", and that
+is exactly where the retired amethyst `rgba(139,92,246,…)` and the retired amber `rgba(255,176,0,…)`
+survived five waves of hex sweeps.
+
+## 94. A background is a payload of its own, and a clear still takes everything (2026-09-17)
+
+Relay had no persistent background. The entire layer stack in `TemplateRender` renders inside
+`{#if content}`, and `media_url` is a FIELD ON `OutputContent`, written at exactly one site in the
+whole binary (`fire_media`). A verse and a picture were therefore mutually exclusive payloads:
+firing the church's backdrop REPLACED the reading, firing the reading replaced the backdrop, and
+scripture over a church's own background could not be expressed at all.
+
+That is the largest structural gap between Relay and the presentation software churches compare it
+with, and it is the prerequisite for two other things that are not in this decision: clear groups,
+and an announcement that does not destroy the reading underneath it.
+
+**The decision.** A background is a second payload kind with a lifetime of its own — not what a
+screen is SHOWING, but what it is showing it ON. It survives every content change and is taken down
+by the operator or by a panic control, and by nothing else.
+
+### The invariant the design came from
+
+**`clear` and `black` must still remove EVERYTHING.** The rule is stated at the top of the layer
+stack and it is load-bearing: a clear that leaves something on a congregation screen is the worst
+class of bug in this product, because the operator has pressed the control that means *all of it*
+and stopped looking at the wall.
+
+So the take-down lives in `background_retention`, consulted by `KioskHub::publish` — the one door
+every frame in `channels.rs` goes through — and the two panic frames empty the retained slot on
+their way past. **Nothing new is sent to achieve it.** A panic control that needed a SECOND frame
+to finish its job is one that can half succeed, and rule 15 does not allow one of those. The output
+pages drop their own copy on `output://clear` and `output://black`, on BOTH doors, for the same
+reason `leavePlan()` sits on those listeners: those events are the only report a screen gets of a
+clear that did not originate on the console.
+
+Both invariant tests were written before any of the rendering work and each was watched to
+reproduce the defect with its guard reverted — a retained picture replayed onto the next screen to
+join, over a wall the operator had taken down, and the same picture left painted on an OBS source
+by a `clear` frame.
+
+### Its own retained slot, for the fifth time
+
+`KioskHub` now holds five: the screen frame, the transition override, the role map, the programme
+timers and the background. The argument has not changed since rule 43 — one slot holds ONE frame
+and the newest wins, so a backdrop retained beside `content` would ERASE the verse and a screen
+joining mid-reading would be handed wallpaper and no words. It is replayed on `hello` BEFORE the
+screen frame, so the reading is still painted last.
+
+### Opt-in by TEMPLATE, and there is no flag
+
+A screen shows the backdrop only where its template carries a `backdrop` layer, at that layer's own
+z-order. A template without one renders byte for byte what it rendered before this existed.
+
+**There is deliberately no setting and no feature flag.** A stored-but-unread preference is the
+defect the 2026-09-10 rendered pass closed seven Settings controls of, and a flag nobody reads is
+the same defect wearing a switch. Template design is already how a screen opts into media, a
+countdown, a stage note and a region; this is the same door.
+
+The layer is not pinned to the bottom of the stack. Every built-in ships an opaque `background`
+fill, so a backdrop forced beneath one would never be seen — the feature would look broken rather
+than absent.
+
+### Four things it deliberately does not touch
+
+Each because the question is about CONTENT and a backdrop is furniture.
+
+* **`WallState`.** A backdrop carries no reference and no words, so `/api/live` naming it would be
+  claiming the congregation is reading something.
+* **`LiveContent`.** Same fact from the console's side.
+* **The passage.** Rule 38 disarms the passage for any content that is not scripture, because
+  content REPLACES the reading. A backdrop does not, so putting a picture up behind a preacher
+  mid-reading must not make the next `next` answer `NoPassage`.
+* **Persistence.** A background belongs to the morning it went up in, like the transition override
+  and unlike a template. A church that reopened Relay on Tuesday to a Sunday backdrop would have to
+  go looking for the control that takes it off. The retained hub slot carries it across the case
+  that actually happens — a screen reconnecting.
+
+### The gate and the check are at the choke point, not at the call sites
+
+`channels::set_background` is the one publisher and it checks `rehearsing` — it puts an IMAGE in
+front of a congregation, which is the same claim `broadcast_content` makes and gets the same
+answer. `REHEARSAL_VERDICTS` names it, and the scanner requires the gate to be in the body rather
+than in this paragraph.
+
+`main::publish_background` is the one door and holds `pipeline::preflight_background`, which
+refuses the single failure that is silent: a background naming no picture, which every screen would
+fetch nothing for, paint nothing for and log nothing about, while the console said the church's
+backdrop was up. Taking the background down is `None` and is never validated — a check that could
+refuse a removal is a removal that can fail, which is §20 in a second costume.
+
+### What the stage monitor does with it: nothing, and that is recorded
+
+`stage.html` has one fixed look and does not render through `TemplateRender`, so there is no layer
+stack for a backdrop to take a place in and painting one there would mean a second, hand-rolled way
+of drawing a picture. It is also the right answer on its own terms: a backdrop is decoration chosen
+for a congregation, and this is the screen a preacher reads from mid-sermon, where a photograph
+behind the words is precisely how scripture becomes unreadable. `r6-contracts.test.js` carries the
+verdict for both clients, so the next kind cannot be forgotten quietly.
+
+### What this does NOT build
+
+Per-screen backgrounds (that reverses "one AI decision fanned out"), background transitions, a
+Planner cue type, a background that survives a restart, and masks or blend modes over it — a mask
+is precisely the object that can make a verse invisible in a way no test here would catch.
+
+## 95. A screen's display is an OS index, and there is nothing stabler to store (2026-09-17)
+
+### Context
+
+`output_channels.display_target` holds a monitor INDEX — the position of a display in the list the
+OS hands out. Unplug a dock and the list renumbers, so the projector a church configured months ago
+becomes whatever is now in that slot, or nothing at all. The obvious repair is to store a stable
+identity for the display instead of its position.
+
+**It is not available, and this section exists so nobody spends a day rediscovering that.** Measured
+against the pinned versions, `tauri 2.11.5` / `tauri-runtime 2.11.3` / `tao 0.35.3`:
+
+- `tauri_runtime::Monitor` is `{ name: Option<String>, size, position, work_area, scale_factor }`.
+  There is no native display id on it. `tao`'s own `MonitorHandle::native_identifier()` exists and
+  Tauri does not surface it — `available_monitors()` returns the flattened struct.
+- On **Windows**, `tao` names a monitor from `MONITORINFOEX.szDevice`: `\\.\DISPLAY1`. That is an
+  OS-assigned device path, and the OS renumbers it when displays are attached or detached. It is
+  exactly as unstable as the index it would be replacing.
+- On **macOS**, `tao` names a monitor `Monitor #<CGDisplay::model_number()>` — an EDID **model**
+  number, shared by every unit of the same model, so two identical projectors are indistinguishable.
+  Relay already reaches past that for a readable name (`channels::collect_macos_display_names` maps
+  `NSScreen.localizedName` by position), and `localizedName` is per-model too.
+
+A per-unit identity is reachable on macOS through new FFI (`CGDisplaySerialNumber`) and on Windows
+only through `EnumDisplayDevices` plus EDID out of the registry. **A scheme that worked on one
+platform and fell back to the index on the other would make the control that decides which physical
+screen a congregation sees behave differently on Windows and macOS**, which is worse than one honest
+index: CLAUDE.md's stack line says both platforms from day one, and the failure this would introduce
+is silent and congregation-facing.
+
+### Decision
+
+**The index stays, and the FALLBACK is what changes — because the fallback was the dangerous half.**
+
+`auto_open_outputs` was always careful: it skips a channel whose index is not connected, and skips
+the primary display too, because auto-opening a borderless fullscreen output over the console covers
+the UI the operator is running the service from. `open_channel_output` — the **Open** button, the
+path an operator presses deliberately — did neither. A stale index fell straight through
+`open_native_window`'s placement block, the window was built at its default position and then
+fullscreened, and the OS put it on the primary. Unplug the projector, press Open, and the
+congregation's output covers the console. Nothing reported anything.
+
+`main::resolve_display` is now the one place either path decides, and it answers three ways:
+`On(index)` when the named display is connected, `Missing(n)` when the operator named one and it is
+not here, and `Anywhere` for everything else. `open_channel_output` refuses a `Missing` by name
+("… is set to open on Display 3, which is not connected"), which reaches the operator through
+`src/lib/errors.js` like every other refusal on that desk; `auto_open_outputs` skips it, unchanged.
+
+**Two things are deliberately NOT `Missing`.** An unreadable `display_target` is not a claim about a
+screen, so it means the same as none. And an empty monitor list is ambiguous — `list_monitors`
+returns `[]` rather than erroring, so a probe that failed looks exactly like a machine with no
+displays — and refusing on an ambiguity would turn a transient failure into an output that cannot be
+opened at all, mid-service, under a sentence the operator cannot act on.
+
+**And the desk stops saying the wrong thing before the button is pressed.** The Display picker is a
+`<select>`, and a value matching no option shows the FIRST option, which reads **Primary display** —
+so a screen configured for the projector rendered identically to a screen configured for nothing.
+One reassuring sentence over two situations is rule 35, on this control of all controls. A screen
+whose display is missing now carries a real option saying so, selected, plus a line in the inspector
+naming what will happen if Open is pressed.
+
+### Instrument
+
+`main.rs::display_target_tests` — the three answers, both the 0-based and the 1-based spellings of a
+missing display reported by the number an operator reads off their own OS, and the two ambiguities
+that must not become refusals. `src/lib/screenrename.test.js` holds the desk, with a control case in
+the same assertion so it cannot pass by the label being wrong in both directions.
+
+**What this does not do, stated plainly:** it does not make a display target survive a replug. A
+church that unplugs a dock and plugs it back into a different port still has to re-pick the display.
+The change is that Relay now says so instead of opening the congregation's screen on the operator's
+monitor.

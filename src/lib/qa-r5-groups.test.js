@@ -1,10 +1,11 @@
 // R5 · THE THROW-vs-SWALLOW CONTRACT, HELD BY A TEST RATHER THAN BY A COMMENT.
 //
-// `capture.js`'s header names nine GROUP 1 wrappers — the ones that change what is
+// `capture.js`'s header names the GROUP 1 wrappers — the ones that change what is
 // on the screens, what the AI is allowed to do, or whether the microphone is live.
 // `stopCapture` sat in that list while swallowing for as long as the list existed,
-// and `micstop.test.js` was written to pin ONE of the nine. The other eight are
-// still held by prose, and prose is what failed the first time.
+// and `micstop.test.js` was written to pin ONE of them. The rest were still held by
+// prose, and prose is what failed the first time. The map below is the whole list;
+// a name added to the header and not to the map is the same gap reopening.
 //
 //   "A contract stated in a comment is not a contract." — CLAUDE.md, testing §
 //   "When you place a wrapper in a group, add the test that holds it there."
@@ -32,7 +33,7 @@ beforeEach(() => {
   store.live.set(null);
 });
 
-// The nine the header names, with the least-surprising argument each needs.
+// Every name the header carries, with the least-surprising argument each needs.
 // `startCapture` is excluded from the loop and driven separately: it calls
 // `start_service` first inside its own deliberate try/catch, so a blanket reject
 // has to be distinguished from the one call that is allowed to fail.
@@ -50,6 +51,24 @@ const GROUP_1 = {
   // swallowed failure would leave the operator watching the OLD target tick down
   // believing they had moved it.
   adjustCountdown: () => store.adjustCountdown(4 * 60_000),
+  // Added to the header 2026-09-15. It reaches no screen, which is why it sat in
+  // a bare `catch {}` for so long — but it releases the service lock, so a
+  // swallowed failure leaves every protected action refusing with nothing said.
+  // Its own surface-level guarantees are in `endservice.test.js`.
+  endService: () => store.endService(),
+  // Added to the header 2026-09-16. It reaches no screen DIRECTLY, which is how it
+  // was missed when it stopped being a bare `set_setting` and became the
+  // `set_default_template` command — but that command pushes the new look to every
+  // kiosk client and every native output window, so a swallowed failure leaves the
+  // gallery showing one default and the wall wearing another.
+  setDefaultTemplate: () => store.setDefaultTemplate(9),
+  // Added to the header 2026-09-17 with the background layer. The most literal
+  // member there is — it puts a picture on every congregation screen. Both
+  // directions go through it, and the TAKE-DOWN is the half a swallowed failure
+  // hurts most: the operator believes the church's backdrop has gone and it is
+  // still up behind the next thing they fire.
+  showBackground: () => store.showBackground(3),
+  clearBackground: () => store.showBackground(null),
   // `pushAnnouncement` WAS the most literal member of this group — it painted over
   // live scripture on every screen at once. The control was removed from Quick
   // tools on 2026-09-14 on the operator's instruction, and the command and its
@@ -151,7 +170,7 @@ describe('the sensitivity dial may not report a position it did not reach', () =
 // `setStageNext` publishes to (and clears) the preacher's stage monitor — a real
 // screen, on a stand, in front of a person. It is GROUP 2 (swallows). A failed
 // CLEAR is the bad direction: `Live.svelte` calls `setStageNext(null, null)` to
-// take the "up next" panel down, and if that call fails the preacher keeps reading
+// take the "Up Next" panel down, and if that call fails the preacher keeps reading
 // a stale next-verse for the rest of the service with nothing reporting it.
 describe('the stage monitor is a screen, and clearing it can fail silently', () => {
   it('setStageNext surfaces a failed clear', async () => {
@@ -164,7 +183,7 @@ describe('the stage monitor is a screen, and clearing it can fail silently', () 
     invoke.mockRejectedValue('kiosk hub is gone');
     await expect(
       store.setStageNext(null, null),
-      'clearing the preacher\'s "up next" panel failed and nothing anywhere says ' +
+      'clearing the preacher\'s "Up Next" panel failed and nothing anywhere says ' +
         'so — the stage monitor keeps showing the previous verse.',
     ).rejects.toBeTruthy();
   });

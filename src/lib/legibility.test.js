@@ -8,10 +8,35 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseColor, contrastRatio, effectiveBackground, checkContrast, checkDistance, textHeightMetres, previewScale, review, CONTRAST_FLOOR, PREVIEW_DISTANCES_M, reviewTemplate, styleOfTemplate } from './legibility.js';
-import { BUILTIN_THEMES } from './themes.js';
 
 const ROOT = path.resolve(__dirname, '../..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
+
+/**
+ * THE HIGH VISIBILITY LOOK AS THE MIGRATION INLINES IT — FROZEN BYTES, AND THE
+ * BLOCK BELOW SAYS SO RATHER THAN IMPLYING MORE.
+ *
+ * `legacy_themes.json` is a SNAPSHOT: `db/templates.rs` reads the same bytes
+ * through `include_str!` and `ensure_themes_are_inlined` writes this style into
+ * every template that pinned theme -9. The file can never change — that is what
+ * a snapshot is for — so these assertions cannot spontaneously go red, and they
+ * are deliberately NOT a claim that anything a church can pick today is legible.
+ *
+ * What they DO guard is real and is the migration: the numbers a church that
+ * already chose High Visibility now carries inside their own template. If
+ * somebody edits this file, or the migration's whitelist stops carrying a key
+ * these assertions read, this is what notices — and the failure would be a look
+ * changing on an update, which is the one promise `ensure_themes_are_inlined`
+ * makes.
+ *
+ * It does NOT cover the selection. High Visibility was picked by choosing a
+ * theme; themes are gone (DECISIONS §87) and no shelf template replaces it yet.
+ * That is RG-37, which is PARTIAL for exactly this reason, and it is not a hole
+ * this file can fill — a test cannot assert a template nobody has seeded.
+ */
+const HIGH_VIS = JSON.parse(
+  fs.readFileSync(path.join(ROOT, 'src-tauri/data/legacy_themes.json'), 'utf8'),
+).themes.find((t) => t.name === 'High Visibility');
 
 describe('the arithmetic', () => {
   it('reads the colour formats templates actually use', () => {
@@ -136,17 +161,19 @@ describe('the thresholds are reference points, and it says so', () => {
   });
 });
 
-describe('High Visibility is a THEME, not a mode', () => {
-  const hv = BUILTIN_THEMES.find((t) => t.name === 'High Visibility');
+describe('High Visibility, as the migration preserves it (frozen snapshot bytes)', () => {
+  const hv = HIGH_VIS;
 
-  it('exists as a built-in theme', () => {
+  it('is a style a template can carry, not a rendering branch', () => {
     // A parallel "accessibility mode" would be the `if channel_type ==` shape
-    // CLAUDE.md forbids, and would need a decision at every render site. As a theme
-    // it reaches the wall, the stage monitor, the lower third and the editor
-    // preview on the day it is selected (DECISIONS §27).
+    // CLAUDE.md forbids, and would need a decision at every render site. As a
+    // style it reaches the wall, the stage monitor, the lower third and the
+    // editor preview on the day it is selected, through the one renderer.
     expect(hv).toBeTruthy();
-    expect(hv.builtin).toBe(true);
-    expect(hv.id).toBeLessThan(0); // built-in ids are negative and cannot collide
+    // Every key is one `TemplateRender` already reads off a template's `style` —
+    // which is exactly why the theme layer beneath templates had nothing left to
+    // say, and why inlining it changed no look.
+    expect(Object.keys(hv.style).length).toBeGreaterThan(0);
   });
 
   it('is the highest contrast a projector can make', () => {
@@ -170,8 +197,10 @@ describe('High Visibility is a THEME, not a mode', () => {
     expect(hv.style.transitionMs).toBe('0');
   });
 
-  it('is larger than the default theme', () => {
-    const modern = BUILTIN_THEMES.find((t) => t.name === 'Modern Dark');
+  it('is larger than the look Relay opened with', () => {
+    const modern = JSON.parse(
+      fs.readFileSync(path.join(ROOT, 'src-tauri/data/legacy_themes.json'), 'utf8'),
+    ).themes.find((t) => t.name === 'Modern Dark');
     expect(Number(hv.style.verseSize)).toBeGreaterThan(Number(modern.style.verseSize));
   });
 });
@@ -202,7 +231,7 @@ describe('review answers for a layered template', () => {
   const byName = (n) => list.find((t) => t.name === n);
 
   it('a background + text template is fully answered', () => {
-    const r = reviewTemplate(byName('High Visibility'), null, ROOM);
+    const r = reviewTemplate(byName('Scripture · Meridian'), null, ROOM);
     expect(r.unknowns, 'every value is derivable from its layers').toBe(0);
     expect(r.verse.state).toBe('ok');
     expect(r.reference.state).toBe('ok');
@@ -211,20 +240,62 @@ describe('review answers for a layered template', () => {
   it('a BAND template reads its ground off the band, which is what a caption bar is', () => {
     // A lower third has no background layer on purpose — the rest of the frame is
     // a camera Relay does not control. Before this, that meant `unknown`.
-    const r = reviewTemplate(byName('Lower Third · Scripture'), null, ROOM);
+    //
+    // Was `Lower Third · Scripture`, then `Lower Third · Lyric`; wave 5 rebuilt
+    // the shelf and the bands are the five `Scroll · …` lower thirds.
+    // `Scroll · Banner` exercises the same adapter path — the ground comes off
+    // the band's own fill either way. The lookup is asserted first because
+    // `reviewTemplate(undefined)` answers `unknown`, which is exactly what this
+    // test forbids: a missing subject would have read as the very failure being
+    // guarded against.
+    const tpl = byName('Scroll · Banner');
+    expect(tpl, 'the shelf has no band left to review').toBeTruthy();
+    const r = reviewTemplate(tpl, null, ROOM);
     expect(r.verse.state).not.toBe('unknown');
-    expect(r.reference.state).not.toBe('unknown');
+
+    // THE REFERENCE HALF, RESTORED. It used to ride on the same shelf entry, and
+    // a `Scroll · …` band cannot carry it: a crawling notice has no reference-bound
+    // layer at all, on purpose (`rhide` in the prototype — a song's reference is
+    // its title, and a title under every line reads like a slide rather than a
+    // caption). Dropping the assertion with the template would have left NOTHING
+    // anywhere holding "a band template's reference is derivable", which is half
+    // the bug this block records — and `unknown` renders in the panel's
+    // reassuring branch, so the loss would have looked exactly like a pass
+    // (rule 35). The stack below is the smallest thing that has the shape: a band
+    // with a reference inside it and no background layer, which is what a
+    // scripture caption bar is.
+    const bandWithRef = {
+      name: 'a band that names its reference',
+      layout: {
+        align: 'left',
+        layers: [
+          { id: 'b', type: 'band', name: 'Band', x: 5, y: 62, w: 90, h: 38, top: 62, side: 5, pad: 3, lift: 4.4, grow: 16, members: ['v', 'r'], fill: '#0a0906', opacity: 0.9, radius: 0 },
+          { id: 'v', type: 'text', name: 'Verse', bind: 'verse', x: 8, y: 70, w: 84, h: 14, font: 'var(--f-serif)', color: '#fff7e8', size: 3, align: 'left', valign: 'middle', lineHeight: 1.2, letterSpacing: 0, shadow: 0, italic: false },
+          { id: 'r', type: 'text', name: 'Reference', bind: 'reference', x: 8, y: 85, w: 84, h: 6, font: 'var(--f-serif)', color: '#e6dccb', size: 1.7, align: 'right', valign: 'middle', lineHeight: 1.1, letterSpacing: 0.08, shadow: 0, italic: false },
+        ],
+      },
+      style: {},
+    };
+    const withRef = reviewTemplate(bandWithRef, null, ROOM);
+    expect(withRef.verse.state, 'the band is still the ground for its verse').not.toBe('unknown');
+    expect(withRef.reference.state, 'a band reference must be derivable too').not.toBe('unknown');
   });
 
   it('…and the shelf is no longer mostly unanswerable', () => {
+    // Thirty of forty since wave 5 rebuilt the shelf, up from three of seven.
+    // The floor moves with the shelf rather than the claim being quietly dropped —
+    // what it holds is that the adapter answers for the great majority of what a
+    // fresh install can actually check. The ten it cannot are honest refusals:
+    // the five composites (their words are a real inner template at a different
+    // width), and the five looks with no reference-bound layer to answer for.
     const answered = list.filter((t) => reviewTemplate(t, null, ROOM).unknowns === 0);
-    expect(answered.length, 'most of the shelf must now be checkable').toBeGreaterThanOrEqual(4);
+    expect(answered.length, 'most of the shelf must now be checkable').toBeGreaterThanOrEqual(25);
   });
 
   it('a composite is REFUSED rather than guessed at', () => {
     // Its words are a real inner template at a different width, so answering from
     // the outer one would be a guess with a number on it.
-    expect(reviewTemplate(byName('SuperSource · Word right'), null, ROOM).verse.state).toBe('unknown');
+    expect(reviewTemplate(byName('Source · Word right'), null, ROOM).verse.state).toBe('unknown');
   });
 
   it('and a gradient is still honestly unknown, not quietly passed', () => {

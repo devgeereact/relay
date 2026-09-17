@@ -82,18 +82,60 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       black: true, // a panic control
       channel_template: true,
       template: true,
-      themes: true,
       stage_next: false, // monitor-only field; no congregation template renders it
-      // A WORD TO THE PREACHER is for the platform, not the room. This `false` is
-      // the guarantee in docs/REBRAND.md §5 — "it exists inside the stage renderer,
-      // so no congregation screen can show it" — held as a test rather than as a
-      // sentence about where the code happens to live.
-      stage_alert: false,
+      // THE STAGE MESSAGE. This was `false`, and the `false` WAS the
+      // guarantee: docs/REBRAND.md §5's "no congregation screen can show it" held
+      // because this page had no branch for the frame at all — an omission, which
+      // is a fine guarantee right up until somebody has a reason to end it.
+      //
+      // The `stage_message` layer binding is that reason. A renderer reads the
+      // value now, so the absence protects nothing and the refusal has to be a
+      // decision the page takes out loud: it accepts the frame ONLY when its own
+      // channel's role is `stage`. The filter is at the receiver because the hub
+      // records nothing about who connected and DECISIONS §35 is not being
+      // reversed; the page knows its own channel because the URL is channel-keyed
+      // (DECISIONS §29).
+      //
+      // `true` here now means "has a branch", which on its own is weaker than
+      // what the `false` used to mean. `src/lib/stagemessage.test.js` holds the
+      // rest, by driving the real page and asserting on what it PAINTS — which is
+      // the claim, and is a thing a source scan cannot reach.
+      stage_alert: true,
+      // WHAT EACH SCREEN IS FOR — the fact the filter above is taken on. Sent on
+      // every hello and whenever the operator changes a role, so this page can
+      // answer "am I the stage?" and stop being one the moment it is not.
+      channel_roles: true,
       // The operator's transition override (DECISIONS §84). A congregation screen
       // is the whole point of it — a picker that moved the console preview and left
       // every OBS source cutting would be rule 35 on the one surface a congregation
       // is looking at. Held here, not inferred from the absence of a call.
       transition: true,
+      // THE CONFIGURED DEFAULT — the resolver's final fallback link (wave 2, task 2).
+      // A congregation screen with no template of its own and no content look either
+      // must still end its chain somewhere other than the bundled Classic Serif.
+      default_template: true,
+      // THE PROGRAMME TIMERS — `false`, and this is the same guarantee as
+      // `stage_next` and `stage_alert` above rather than a new one. A programme
+      // timer is the operator's bookkeeping for one person on a platform: "Sermon ·
+      // 4:12 left" behind a preacher is the running order in front of the whole
+      // building. The congregation's own countdown is a different thing entirely
+      // and reaches this page as ordinary `content` with the four `countdown_*`
+      // fields on it, which is why nothing is lost by refusing this one.
+      timer: false,
+      // THE STANDING BACKGROUND — the church's own picture, behind everything.
+      // This is a congregation screen and the backdrop is congregation furniture,
+      // so of course it is handled here. What the branch does on `clear` and
+      // `black` is the part worth naming: it drops the backdrop, on both doors,
+      // because a panic control means everything and the picture is part of
+      // everything. `src/lib/backdroppage.test.js` drives the real page and
+      // asserts on what it PAINTS, which is the claim; this row only says a
+      // branch exists.
+      background: true,
+      // WHICH SCREENS THE OPERATOR TOOK OUT OF THE WALL. This page IS a screen, so
+      // it is the party that has to act on it — the hub broadcasts to everybody and
+      // records nothing about who connected (DECISIONS §35), which is the same
+      // argument as `channel_template` two rows up and `stage_alert` above it.
+      screen_state: true,
     },
     'src/Stage.svelte': {
       content: true,
@@ -103,7 +145,10 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       stage_alert: true, // the whole point of the message
       channel_template: false, // the stage page has one fixed look
       template: false,
-      themes: false,
+      // Same reason as template/channel_template above: the stage page does not
+      // render through TemplateRender, so a template-shaped fallback has nothing
+      // to resolve for it.
+      default_template: false,
       // DELIBERATELY NOT, and for the same reason the three above are not: the
       // stage page has one fixed look and does not render through
       // `TemplateRender`, so there is no slide for a transition to be of. It is
@@ -111,6 +156,53 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       // distraction nobody asked for. A transition is about how a CONGREGATION
       // screen changes (DECISIONS §84).
       transition: false,
+      // THIS VERDICT WAS `false`, AND THE REVERSAL IS THE POINT OF THE ROW.
+      //
+      // The reasoning recorded here was that `stage.html` is not an output
+      // channel — "it has no `?channel=` in its URL, and it is a stage screen by
+      // construction rather than by configuration". That was true of the page's
+      // INTENT and false of its behaviour. Every copy of this page open anywhere
+      // on the network was a stage screen by construction, including a lobby TV
+      // somebody had pointed at the URL and a spare tablet in a back room, and
+      // each of them was painted the Stage Message full-bleed. One of two doors
+      // carried DECISIONS §89's guarantee and this was the other one.
+      //
+      // So the page now reads `?channel=`, refuses a Stage Message unless its own
+      // channel holds the `stage` role, and says plainly when it has no channel
+      // at all rather than refusing in silence (rule 35). It is not a security
+      // boundary and is not claimed as one: the LAN is trusted by decision (§35,
+      // docs/SECURITY.md T4) and anyone may type `?channel=2`. It closes the
+      // accident, by the same mechanic and in the same frame as `output.html`.
+      // `stagepageidentity.test.js` drives the real page and asserts what it
+      // paints, which this file — which reads source text — cannot reach.
+      channel_roles: true,
+      // THE PROGRAMME TIMERS, and this page is the only client that may have them.
+      // A `Stage`-scoped timer publishes no content frame at all — which is exactly
+      // why it survives a verse — so this frame is its only way onto any screen,
+      // and the screen it is for is this one.
+      timer: true,
+      // THE STANDING BACKGROUND — DELIBERATELY NOT, and for the same two reasons
+      // `template`, `channel_template`, `default_template` and `transition` above
+      // are not. This page has one fixed look and does not render through
+      // `TemplateRender`, so there is no layer stack for a backdrop to take its
+      // place in; a picture painted here would have to be a second, hand-rolled
+      // way of drawing one, which is the WYSIWYG guarantee failing one level above
+      // the renderer.
+      //
+      // And it is the right answer anyway. A backdrop is decoration chosen for a
+      // CONGREGATION, and this is the screen a preacher reads from mid-sermon:
+      // a photograph behind the words is precisely how scripture becomes
+      // unreadable, and the one reader of this page cannot fix it from where they
+      // are standing. Nothing is lost — the congregation's screens carry the
+      // picture, this one carries the words.
+      background: false,
+      // AND THE PER-SCREEN CONTROL REACHES BOTH DOORS. A confidence monitor in a
+      // foyer is a screen an operator may reasonably want down while the
+      // platform's own stays up, and this page is the door this repository has
+      // now missed four times — most recently for `black`, which left the verse
+      // on the one screen the preacher reads from while the console correctly
+      // reported success (DECISIONS §91).
+      screen_state: true,
     },
   };
 
@@ -128,6 +220,26 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       if (expected[kind] && !handled) problems.push(`${file} ignores "${kind}"`);
       if (!expected[kind] && handled) {
         problems.push(`${file} now handles "${kind}" — update the expectation and say why`);
+      }
+    }
+  }
+
+  // AND THE OTHER DIRECTION, which this table did not have.
+  //
+  // The loop above walks the kinds the hub PUBLISHES and requires a verdict for
+  // each. A verdict for a kind nobody publishes any more is invisible to it —
+  // and that is not hypothetical: `themes` sat here with a verdict on both
+  // clients after the hub frame was deleted (DECISIONS §87), reading as a
+  // guarantee about a message that no longer exists. `channels.rs`'s
+  // `FRAME_VERDICTS` has carried the reverse guard for exactly this reason since
+  // it was written ("a verdict about nothing"); this is its client-side twin and
+  // was missing it. Watched to fail by putting the `themes` rows back.
+  for (const [file, expected] of Object.entries(EXPECTED)) {
+    for (const kind of Object.keys(expected)) {
+      if (!published.includes(kind) && !INBOUND.includes(kind)) {
+        problems.push(
+          `${file}: a verdict is recorded for "${kind}", which the hub no longer publishes`,
+        );
       }
     }
   }

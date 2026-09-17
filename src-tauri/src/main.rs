@@ -45,6 +45,7 @@ mod songs;
 mod stt;
 mod sysprobe;
 mod telemetry;
+mod timers;
 mod updates;
 mod wake;
 
@@ -147,9 +148,12 @@ fn main() {
         .manage(Routing::default())
         .manage(Detecting(AtomicBool::new(true)))
         .manage(channels::Rehearsal::default())
+        .manage(channels::CountdownWarnDefault::default())
         .manage(channels::WallState::default())
-        .manage(channels::CountdownState::default())
+        .manage(channels::LiveContent::default())
+        .manage(timers::TimerRegistry::default())
         .manage(channels::OutputHealth::default())
+        .manage(channels::ScreensDown::default())
         .manage(servicelock::ServiceLock::default())
         .manage(Session::default())
         .manage(models::DownloadState::default())
@@ -214,20 +218,60 @@ fn main() {
             let kiosk_tx = kiosk.sender();
             let kiosk_templates = kiosk.templates_handle();
             let kiosk_clients = kiosk.clients_handle();
-            let kiosk_themes = kiosk.themes_handle();
+            let kiosk_default_tpl = kiosk.default_template_handle();
+            let kiosk_roles = kiosk.channel_roles_handle();
             let kiosk_last = kiosk.last_screen_handle();
             let kiosk_last_x = kiosk.last_transition_handle();
-            // Warm the custom-themes blob so a kiosk connecting before any theme is
-            // saved this session still gets the operator's themes on `hello`.
+            let kiosk_last_t = kiosk.last_timers_handle();
+            let kiosk_last_bg = kiosk.last_background_handle();
+            let kiosk_down = kiosk.screens_down_handle();
+            // The configured default, warmed before any client can connect — a
+            // screen that joins during launch must not be told the default is
+            // `null` and then corrected.
             {
                 let db = app.state::<Db>();
-                if let Some(blob) =
+                let dj =
                     db.0.lock()
                         .ok()
-                        .and_then(|conn| db::get_setting(&conn, "themes.custom").ok().flatten())
-                {
-                    kiosk.cache_themes(&blob);
-                }
+                        .and_then(|conn| {
+                            db::get_setting(&conn, "default_template_id")
+                                .ok()
+                                .flatten()
+                                .and_then(|s| s.parse::<i64>().ok())
+                                .and_then(|id| db::get_template(&conn, id).ok().flatten())
+                        })
+                        .and_then(|t| serde_json::to_string(&t).ok())
+                        .unwrap_or_else(|| "null".into());
+                kiosk.cache_default_template(&dj);
+            }
+            // …and what each screen is FOR, on the same argument: a page that
+            // connects during launch must not be told it has no role and then
+            // corrected, because between the two it would refuse a stage message
+            // meant for it.
+            {
+                let db = app.state::<Db>();
+                let rj =
+                    db.0.lock()
+                        .ok()
+                        .and_then(|conn| db::channel_roles_json(&conn).ok())
+                        .unwrap_or_else(|| "{}".into());
+                kiosk.cache_channel_roles(&rj);
+            }
+            // WARM THE CONFIGURED COUNTDOWN WARNING WINDOW, for the same reason
+            // the default template is warmed one block up: the first screen to
+            // connect must not be told the shipped minute by a machine that has
+            // been set to something else for a year (RG-149(c)). An unreadable or
+            // absent row leaves the mirror at zero, which reads as ABSENT and puts
+            // every screen on the shipped minute — the behaviour before this
+            // existed, which is the right answer when nobody has chosen one.
+            {
+                let db = app.state::<Db>();
+                let warn =
+                    db.0.lock()
+                        .ok()
+                        .and_then(|conn| db::get_setting(&conn, "countdown.warn_ms").ok().flatten())
+                        .and_then(|s| s.trim().parse::<i64>().ok());
+                app.state::<channels::CountdownWarnDefault>().set(warn);
             }
             // Warm the template cache so a browser client (OBS/kiosk) gets the
             // REAL saved template immediately on connect (matches the editor).
@@ -250,9 +294,13 @@ fn main() {
                 kiosk_tx,
                 kiosk_templates,
                 kiosk_clients,
-                kiosk_themes,
+                kiosk_default_tpl,
+                kiosk_roles,
                 kiosk_last,
                 kiosk_last_x,
+                kiosk_last_t,
+                kiosk_last_bg,
+                kiosk_down,
                 app.state::<channels::OutputHealth>().inner().clone(),
                 8031,
             ));
@@ -329,6 +377,7 @@ fn main() {
             reorder_plan,
             set_plan_section,
             set_plan_duration,
+            set_plan_timer,
             set_plan_template,
             list_songs,
             search_songs,
@@ -337,6 +386,11 @@ fn main() {
             delete_song,
             start_countdown,
             adjust_countdown,
+            start_timer,
+            adjust_timer,
+            stop_timer,
+            list_timers,
+            show_timer,
             list_arrangements,
             save_arrangement,
             delete_arrangement,
@@ -356,13 +410,14 @@ fn main() {
             remove_demo_content,
             fire_content,
             fire_media,
+            show_background,
             get_content_templates,
             set_content_template,
             get_setting,
             set_setting,
-            sync_kiosk_themes,
             set_live_transition,
             live_transition,
+            live_background,
             data_health,
             list_books,
             chapter_verses,
@@ -413,11 +468,17 @@ fn main() {
             service_lock,
             set_service_lock,
             set_channel_template,
+            rename_channel,
+            clear_screen,
+            blackout_screen,
+            restore_screen,
+            set_default_template,
             send_stage_alert,
             list_monitors,
             open_channel_output,
             auto_open_outputs,
             set_channel_display,
+            set_channel_role,
             add_channel,
             delete_channel,
             clear_screens,
@@ -546,6 +607,10 @@ fn resolve_fire(
         template_json,
         template_pinned,
         matched_text,
+        // RG-135. Filled in by the caller, for the same reason `trace_id` is: this
+        // builder has the verse and not the WINDOW, and the question is about what
+        // was said around the reference rather than about the reference itself.
+        named_translation_missing: None,
         // Filled in by the caller when a decode pass is behind this fire.
         trace_id: None,
     }
@@ -629,13 +694,48 @@ fn broadcast_with_clock<R: tauri::Runtime>(
     // (rule 36) and a new content kind added tomorrow is disarmed by construction.
     // The lock is taken and RELEASED before the broadcast below — never held across
     // an emit (rule 2).
-    if content.kind.as_deref().is_some_and(|k| k != "scripture") {
+    //
+    // AND AN ABSENT KIND IS NOT SCRIPTURE. This read `is_some_and(|k| k !=
+    // "scripture")`, which is **false for `None`**, so a payload built the way
+    // `..Default::default()` invites — every field the caller cared about, `kind`
+    // left unset — walked past the one place a passage is disarmed. Every caller in
+    // this file sets it and nothing said so, and the failure is reached by
+    // forgetting a field rather than by adding a content kind, which is the one
+    // shape the choke point did not cover.
+    //
+    // It disarms rather than refusing, deliberately. A passage wrongly disarmed
+    // makes `nav` answer `NoPassage`, a correct boundary the operator is told about
+    // (rule 38b); a passage wrongly left armed walks a reading the congregation
+    // stopped looking at and answers `Fired`. Refusing instead would blank a screen
+    // over content that renders perfectly well, and `preflight` above refuses only
+    // what is broken AND silent (rule 36). Pinned by
+    // `e2e::r2_a_payload_that_forgot_its_kind_still_disarms_the_passage`.
+    if content.kind.as_deref() != Some("scripture") {
         if let Some(ctx) = handle.try_state::<Context>() {
             if let Ok(mut c) = ctx.0.lock() {
                 c.forget();
             }
         }
     }
+
+    // THE CONFIGURED WARNING WINDOW, STAMPED AT THE ONE DOOR CONTENT LEAVES BY.
+    //
+    // `Settings → General → Countdown warning` is console state and the screens
+    // that need it cannot read it: a browser source in OBS and a kiosk page on a
+    // Pi have no Tauri bridge, so the setting moved the console and left every
+    // congregation screen on the shipped minute (RG-149(c)). It is DELIVERED
+    // instead, and delivered here rather than at `countdown_content`'s three
+    // callers, for rule 36's reason: a content path added next year carries it by
+    // construction, and there is no sixth call site to forget.
+    //
+    // Unconditional, like the service clock below it. Asking "is this a countdown?"
+    // here would be a fourth reading of that question, and the one reading of it
+    // lives in `pipeline::preflight`.
+    //
+    // It is never resolved against `countdown_warn_ms`. Ranking the chosen figure
+    // against the configured one is `layers.js::countdownWarning`'s job, once — two
+    // authorities on when a screen turns red is how they come to disagree.
+    content.countdown_warn_default_ms = channels::countdown_warn_default(handle);
 
     if let Some(session) = handle.try_state::<Session>() {
         if let Ok(g) = session.0.lock() {
@@ -885,6 +985,40 @@ mod rank_for_wall_tests {
     }
 }
 
+/// RG-135 — the translation the speaker named, when Relay does not have it.
+///
+/// Returns the named abbreviation only when ALL of these hold, because each one is
+/// a case where saying something would be noise:
+///
+///   * the window names a translation at all (`detection::named_translation`);
+///   * it is not the translation this fire is actually showing — if the preacher
+///     said "King James" and the wall says KJV, there is nothing to report;
+///   * Relay does not have it installed, so it could not have shown it anyway.
+///     A church that has added the named translation and is simply not using it for
+///     this fire is a different situation, and one an operator can see and fix.
+///
+/// A failed read of `translations` answers `None`. That is the safe direction: this
+/// is a caveat on an otherwise correct fire, and inventing one from a database error
+/// would put a warning on a verse that is right.
+fn named_translation_gap(
+    conn: &rusqlite::Connection,
+    window: &str,
+    fire: &pipeline::Fire,
+) -> Option<String> {
+    let named = detection::named_translation(window)?;
+    if fire.translation.as_deref() == Some(named.as_str()) {
+        return None; // the wall already says what the preacher said
+    }
+    let installed = db::list_translations(conn).ok()?;
+    if installed
+        .iter()
+        .any(|t| t.abbreviation.eq_ignore_ascii_case(&named))
+    {
+        return None; // Relay has it; this is not the gap this row is about
+    }
+    Some(named)
+}
+
 fn emit_detections<R: tauri::Runtime>(
     handle: &tauri::AppHandle<R>,
     text: &str,
@@ -1116,6 +1250,16 @@ fn emit_detections<R: tauri::Runtime>(
             // every output so the last leg — pixels on a projector — can be timed
             // rather than assumed.
             fire.trace_id = trace;
+            // RG-135. Did the speaker NAME a translation, and is it one Relay does
+            // not have? The detector is pure and lives in `detection`; whether the
+            // named one is installed is a database question, so it is asked here,
+            // once, under the connection this loop already holds.
+            //
+            // Set only when Relay can tell the operator something they do not
+            // already know. If the named translation IS what went on the wall,
+            // there is nothing to say, and a caveat on a correct fire is how an
+            // operator learns to stop reading the line.
+            fire.named_translation_missing = named_translation_gap(&conn, text, &fire);
 
             // Parsed, but the verse doesn't exist (garbled speech readily yields
             // "Psalms 23:99"). Demote to a suggestion rather than broadcasting a
@@ -2240,6 +2384,17 @@ fn set_plan_duration(db: tauri::State<'_, Db>, id: i64, seconds: i64) -> error::
     db::set_plan_duration(&conn, id, seconds).map_err(Into::into)
 }
 
+/// Planner: bind a cue to a programme timer of `minutes`, or clear the binding.
+///
+/// It STORES and it starts nothing. The Planner may not reach an output or a
+/// preacher's rail (`plannerbuildonly.test.js`), so the binding is a fact about
+/// the plan and Live is what acts on it when the cue goes on air.
+#[tauri::command]
+fn set_plan_timer(db: tauri::State<'_, Db>, id: i64, minutes: Option<i64>) -> error::Result<()> {
+    let conn = db.0.lock()?;
+    db::set_plan_timer(&conn, id, minutes).map_err(Into::into)
+}
+
 /// Planner: point a cue at a specific template, or back at the channel default.
 #[tauri::command]
 fn set_plan_template(
@@ -2578,7 +2733,12 @@ fn delete_media(
         db::delete_media(&conn, id)?
     };
     if let Some(p) = path {
-        let _ = std::fs::remove_file(p); // best-effort
+        // A bundled picture's path is a marker, not a location — there is no file
+        // to unlink, and asking the filesystem for one would be a no-op dressed
+        // as an attempt.
+        if media_file_is_on_disk(&p) {
+            let _ = std::fs::remove_file(p); // best-effort
+        }
     }
     Ok(())
 }
@@ -2797,6 +2957,7 @@ fn start_countdown<R: tauri::Runtime>(
     label: String,
     done_msg: String,
     template_id: Option<i64>,
+    warn_ms: Option<i64>,
 ) -> error::Result<()> {
     let mins = if minutes.is_finite() && minutes > 0.0 {
         minutes
@@ -2808,31 +2969,55 @@ fn start_countdown<R: tauri::Runtime>(
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
     let target = now_ms + (mins * 60_000.0) as i64;
-    let (tid, tjson, tpinned) = {
-        let conn = db.0.lock()?;
-        cue_or_content_tpl(&conn, template_id, "countdown")
-    };
-    broadcast_with_clock(
-        &app,
-        OutputContent {
-            kind: Some("countdown".into()),
-            reference: label.trim().to_string(),
-            countdown_to: Some(target),
+
+    // THE REGISTRY IS WHERE THE COUNTDOWN NOW LIVES, and the four wire fields below
+    // are its projection rather than a second copy of it. A second `Both` timer over
+    // the first is always a mistake, so starting one takes the one before it — the
+    // same rule the old single slot kept by construction, stated out loud now that
+    // the slot is a map.
+    let timer = {
+        let reg = app.state::<timers::TimerRegistry>();
+        reg.stop_scope(timers::Scope::Both);
+        let id = reg.start(timers::Timer {
+            id: 0, // assigned by the registry
+            label: label.trim().to_string(),
+            done_msg: clean_note(Some(done_msg)).unwrap_or_default(),
+            target_ms: target,
             // The instant it is aimed FROM, so `to - from` is the length it was
             // aimed for and the warning rule has a span to work from. This field
             // had a reader and no writer, so §7's short-countdown rule had never
             // fired in the product (see `OutputContent::countdown_from`).
-            countdown_from: Some(now_ms),
+            from_ms: now_ms,
             // A countdown that has just been STARTED is running, always. Pausing is
             // `adjust_countdown`, which is about a countdown already on a screen.
-            countdown_paused_ms: None,
-            countdown_done: clean_note(Some(done_msg)),
-            template_id: tid,
-            template_json: tjson,
-            template_pinned: tpinned,
-            ..Default::default()
-        },
-    )?;
+            paused_ms: None,
+            // The threshold chosen for THIS countdown, if the caller chose one.
+            // It was hard-coded to `None` here, so the transport's own Start was
+            // the one door into a `Both` timer that could not express a threshold
+            // at all (RG-149(b)). `start_timer` has taken one since wave 3; this
+            // is the same field on the same registry, reached from the other door.
+            // None is absent, never zero — see `BothProjection::countdown_warn_ms`.
+            warn_ms: warn_ms.filter(|n| *n > 0),
+            scope: timers::Scope::Both,
+            plan_item_id: None,
+            // The mode in force at this instant, stamped once and never rewritten
+            // (RG-150). Leaving a rehearsal happens to clear the screens, which
+            // takes every `Both` timer with it — but that is DECISIONS §27's
+            // guarantee, not this one, and a rule that holds only where something
+            // else already holds it is not a rule.
+            started_in_rehearsal: channels::rehearsing(&app),
+        });
+        // Cloned out and the lock released before the broadcast below (rule 2).
+        reg.get(id).ok_or_else(|| {
+            error::Error::refused("The countdown could not be started. Try again.")
+        })?
+    };
+
+    let (tid, tjson, tpinned) = {
+        let conn = db.0.lock()?;
+        cue_or_content_tpl(&conn, template_id, "countdown")
+    };
+    broadcast_with_clock(&app, countdown_content(&timer, tid, tjson, tpinned))?;
     persist_cue(&app, "countdown", None);
     Ok(())
 }
@@ -2852,7 +3037,7 @@ fn start_countdown<R: tauri::Runtime>(
 /// remembered every field. `countdown_paused_ms` is one more thing to forget, and
 /// forgetting THAT one restarts a held timer in front of a congregation: the operator
 /// presses `+1` on a paused countdown and it starts running. So the engine keeps the
-/// countdown (`channels::CountdownState`) and this changes one thing about it.
+/// countdown (`timers::TimerRegistry`) and this changes one thing about it.
 ///
 /// ## Two things it must not do
 ///
@@ -2872,44 +3057,334 @@ fn adjust_countdown<R: tauri::Runtime>(
     remaining_ms: Option<i64>,
     paused: Option<bool>,
 ) -> error::Result<()> {
-    let Some(mut content) = channels::live_countdown(&app) else {
+    let Some(timer) = newest_congregation_timer(&app) else {
+        // Still exactly the sentence an operator reads, and it is still true in the
+        // only case that can now produce it: there is no congregation timer at all.
+        // A cleared or blacked wall stops one, so the transport still cannot bring
+        // back what a panic control took.
         return Err(error::Error::refused("Nothing is counting down."));
     };
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0);
-    // What is left RIGHT NOW: the held figure when it is held, otherwise the gap to
-    // the instant. One reader, so the two halves of the model cannot disagree — the
-    // same rule the frontend keeps in `countdown.js::countdownRemainingMs`.
-    let was_paused = content.countdown_paused_ms;
-    let current = was_paused
-        .unwrap_or_else(|| content.countdown_to.unwrap_or(now_ms) - now_ms)
-        .max(0);
-    let next = remaining_ms.unwrap_or(current);
-    // The backend substitutes five minutes for a non-positive length (see
-    // `start_countdown`), so a re-aim to zero would put 5:00 on the wall — the
-    // opposite of what was pressed. Refused here, where there is somebody to tell.
-    if next < 1000 {
-        return Err(error::Error::refused(
-            "A countdown needs a second or more left. Clear the screens to take it down.",
-        ));
-    }
-    let hold = paused.unwrap_or(was_paused.is_some());
+    let now_ms = cd_now_ms();
+    let adjusted = app
+        .state::<timers::TimerRegistry>()
+        .adjust(timer.id, remaining_ms, paused, now_ms)
+        .map_err(timer_refusal)?;
+
+    // A RE-AIM MAY NOT TAKE A CONGREGATION SCREEN BACK FROM A SERMON.
+    //
+    // Before the registry, this could not arise: the countdown WAS the live content,
+    // so it was always what the screens were showing or it did not exist. Now it can
+    // outlive a verse, and a `+1` that repainted itself over the reading would be the
+    // same class of failure this command's own doc comment forbids for templates —
+    // a transport press with a consequence nobody asked it for.
+    //
+    // So the registry changes and nothing is published. The way back onto a wall is
+    // `show_timer`, one action that says what it does. "What is on the screens right
+    // now" is read from the one slot that already answers it (`channels::LiveContent`)
+    // rather than guessed at a second time.
+    let Some(mut content) = channels::live_content(&app).filter(is_countdown_content) else {
+        return Ok(());
+    };
+    let shown = timers::project_both(&adjusted);
     // `countdown_to` stays set even while held: it is where the countdown would land
     // if it were resumed now, and it is what keeps the content reading as a countdown
     // to `preflight`, to the retained screen frame and to the slide key.
-    content.countdown_to = Some(now_ms + next);
-    content.countdown_paused_ms = hold.then_some(next);
+    content.countdown_to = Some(shown.countdown_to);
+    content.countdown_paused_ms = shown.countdown_paused_ms;
     // `countdown_from` is NOT re-stamped. It is the instant the countdown was first
     // aimed from, so the warning span stays the countdown's own length rather than
     // shrinking to whatever is left each time somebody presses a button.
+    //
+    // Everything else — the label, the done message and above all the template
+    // triple — is carried over VERBATIM, which is what keeps a press of `+1` from
+    // silently re-skinning every screen in the building (DECISIONS §29).
     //
     // `trace_id` is cleared: an operator's press has no decode pass behind it, and
     // inventing one would put a human action into the AI's latency percentile.
     content.trace_id = None;
     broadcast_with_clock(&app, content)?;
     Ok(())
+}
+
+/// Epoch milliseconds. The clock every timer command reads, so they cannot disagree
+/// about "now" within one press.
+fn cd_now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// Is this live content a countdown — the same three-way question `pipeline`'s
+/// pre-air validator asks, so the two cannot disagree about what a countdown is.
+fn is_countdown_content(c: &channels::OutputContent) -> bool {
+    c.countdown_to.is_some()
+        || c.countdown_paused_ms.is_some()
+        || c.kind.as_deref() == Some("countdown")
+}
+
+/// The congregation timer the transport is about: the newest `Both` timer, or None.
+///
+/// Newest rather than oldest because `start_countdown` takes the previous one, so
+/// there is at most one — and if a later track ever allows two, the one an operator
+/// just started is the one the transport means.
+fn newest_congregation_timer<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Option<timers::Timer> {
+    app.try_state::<timers::TimerRegistry>()
+        .and_then(|reg| reg.snapshot_scope(timers::Scope::Both).pop())
+}
+
+/// A registry refusal in words an operator can act on. Both are `Refused`, not
+/// faults: nothing is broken in either case.
+fn timer_refusal(e: timers::TimerError) -> error::Error {
+    match e {
+        timers::TimerError::NoSuchTimer => error::Error::not_found("That timer is not running."),
+        timers::TimerError::TooShort => error::Error::refused(
+            "A countdown needs a second or more left. Clear the screens to take it down.",
+        ),
+    }
+}
+
+/// One timer as the console reads it: the timer's own fields plus how long is left.
+///
+/// `remaining_ms` is computed by `timers::remaining_ms`, the ONE Rust statement of
+/// that rule, so a list the console renders and a wall a congregation reads cannot
+/// disagree about the same timer. The frontend still ticks through
+/// `countdown.js::countdownRemainingMs` and that stays the only arithmetic on its
+/// side — one rule, stated once on each side of the bridge and never twice on one.
+#[derive(serde::Serialize)]
+struct TimerView {
+    #[serde(flatten)]
+    timer: timers::Timer,
+    remaining_ms: i64,
+}
+
+/// START A TIMER WITHOUT PUTTING IT IN FRONT OF ANYBODY.
+///
+/// It creates the timer and hands back its identity, and it publishes nothing. That
+/// is deliberate: `start_countdown` and `show_timer` are the only two things that
+/// may put a timer on a congregation screen, and a third door into that would be
+/// the shape of bug this repository keeps finding — a guarantee kept on the doors
+/// somebody remembered.
+///
+/// `scope` is `"both"` or `"stage"`. An unknown scope is refused rather than
+/// guessed at: guessing `Both` would put a programme timer in front of a
+/// congregation, which is the one mistake that cannot be taken back quietly.
+// GENERIC OVER THE RUNTIME (rule 24) — it is timer-path code and `e2e.rs` drives it.
+#[tauri::command]
+fn start_timer<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    minutes: f64,
+    label: String,
+    done_msg: String,
+    scope: String,
+    warn_ms: Option<i64>,
+    plan_item_id: Option<i64>,
+) -> error::Result<i64> {
+    let scope = match scope.trim().to_ascii_lowercase().as_str() {
+        "both" => timers::Scope::Both,
+        "stage" => timers::Scope::Stage,
+        other => {
+            return Err(error::Error::refused(format!(
+                "A timer is for \"both\" screens or the \"stage\" monitor, not \"{other}\"."
+            )))
+        }
+    };
+    let mins = if minutes.is_finite() && minutes > 0.0 {
+        minutes
+    } else {
+        5.0
+    };
+    let now_ms = cd_now_ms();
+    // ONE CLOCK PER CUE. A cue that is put on air again — the operator steps back
+    // and forward, or re-takes a slide — asks for its timer to start again, not for
+    // a second one beside it. Without this, walking a plan backwards and forwards
+    // stacks a clock on the preacher's rail per press, and rule 35's floor on that
+    // rail (Track A) would be dividing the width between clocks nobody asked for.
+    // `for_plan_item` is the reader that makes it answerable; an unbound start
+    // (`plan_item_id: None`) is untouched and still makes a new timer every time.
+    if let Some(cue) = plan_item_id {
+        let reg = app.state::<timers::TimerRegistry>();
+        if let Some(previous) = reg.for_plan_item(cue) {
+            reg.stop(previous.id);
+        }
+    }
+    let id = app.state::<timers::TimerRegistry>().start(timers::Timer {
+        id: 0, // assigned by the registry
+        label: label.trim().to_string(),
+        done_msg: clean_note(Some(done_msg)).unwrap_or_default(),
+        target_ms: now_ms + (mins * 60_000.0) as i64,
+        from_ms: now_ms,
+        paused_ms: None,
+        warn_ms,
+        scope,
+        plan_item_id,
+        // The mode in force at this instant — see `start_countdown`, and
+        // `timers::Timer::started_in_rehearsal` for why it is a property of the
+        // timer rather than a question asked at the exit.
+        started_in_rehearsal: channels::rehearsing(&app),
+    });
+    // THE STAGE TABLET IS TOLD, UNCONDITIONALLY — not "if this one was a stage
+    // timer". `publish_timers` sends the whole stage-visible SET, so it is
+    // idempotent and asks no question; a publisher that had to decide whether it
+    // was needed is a publisher that can decide wrongly, which is the shape of the
+    // four "guarantee kept on one door" bugs this repository has already had.
+    channels::publish_timers(&app);
+    Ok(id)
+}
+
+/// RE-AIM OR HOLD ONE TIMER BY ITS IDENTITY — the transport, addressed.
+///
+/// `adjust_countdown` is the same action aimed at "whichever congregation timer is
+/// running", which is what the dock's transport means. This one names the timer, so
+/// a console showing several can move the one under the operator's finger.
+///
+/// Like `adjust_countdown`, it publishes nothing: changing a number on a timer that
+/// is not on the screens must not put it on them.
+#[tauri::command]
+fn adjust_timer<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    timer_id: i64,
+    remaining_ms: Option<i64>,
+    paused: Option<bool>,
+) -> error::Result<()> {
+    let adjusted = app
+        .state::<timers::TimerRegistry>()
+        .adjust(timer_id, remaining_ms, paused, cd_now_ms())
+        .map_err(timer_refusal)?;
+
+    // …unless it IS on the screens, in which case the wall must agree with the
+    // registry. Same rule, same reading of the same slot, as `adjust_countdown`.
+    if adjusted.scope == timers::Scope::Both {
+        if let Some(mut content) = channels::live_content(&app).filter(is_countdown_content) {
+            let shown = timers::project_both(&adjusted);
+            content.countdown_to = Some(shown.countdown_to);
+            content.countdown_paused_ms = shown.countdown_paused_ms;
+            content.trace_id = None;
+            broadcast_with_clock(&app, content)?;
+        }
+    }
+    // And the stage tablet, whichever scope this was — see `start_timer`.
+    channels::publish_timers(&app);
+    Ok(())
+}
+
+/// TAKE ONE TIMER OFF THE REGISTRY.
+///
+/// It does not touch a screen. Stopping a timer that is currently painted leaves the
+/// countdown on the wall until something replaces it or a panic control takes it —
+/// which is the right way round: `Clear screens` is how a wall is taken back, and it
+/// is one key away at every moment (rule 15).
+///
+/// Stopping a timer that is not there is not an error. The operator asked for it to
+/// be gone and it is gone; refusing would be a control that fails at doing nothing.
+#[tauri::command]
+fn stop_timer<R: tauri::Runtime>(app: tauri::AppHandle<R>, timer_id: i64) -> error::Result<()> {
+    app.state::<timers::TimerRegistry>().stop(timer_id);
+    // Stopping the LAST programme timer publishes an empty set, which is how a clock
+    // comes off a preacher's screen. Not publishing would leave it there, counting,
+    // for the rest of the service — an absent frame cannot say "there are none now".
+    channels::publish_timers(&app);
+    Ok(())
+}
+
+/// EVERY TIMER, OLDEST FIRST, WITH HOW LONG IS LEFT ON EACH.
+#[tauri::command]
+fn list_timers<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> error::Result<Vec<TimerView>> {
+    let now_ms = cd_now_ms();
+    Ok(app
+        .state::<timers::TimerRegistry>()
+        .snapshot()
+        .into_iter()
+        .map(|timer| TimerView {
+            remaining_ms: timers::remaining_ms(&timer, now_ms),
+            timer,
+        })
+        .collect())
+}
+
+/// PUT A CONGREGATION TIMER BACK IN FRONT OF PEOPLE — **the explicit way back.**
+///
+/// A timer now outlives the content that replaced it, so after a reading there is
+/// something to return to. Returning to it is this, an action an operator takes on
+/// purpose; it is never a side effect of `+1`, because a transport press that
+/// repainted a countdown over a sermon would be a control doing something other
+/// than what it says.
+///
+/// It carries whatever the timer says NOW — the adjusted figure, and the hold if it
+/// is held — so what goes back up is what the operator has been looking at in the
+/// list, not the five minutes it started as.
+///
+/// A `Stage`-scoped timer is refused, in words: it has no congregation wire form,
+/// and projecting one into the four `countdown_*` fields would put the preacher's
+/// private clock on the wall.
+// GENERIC OVER THE RUNTIME (rule 24) — it puts content on a wall, so it is fire-path
+// code and `e2e.rs` has to be able to drive it.
+#[tauri::command]
+fn show_timer<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    db: tauri::State<'_, Db>,
+    timer_id: i64,
+    template_id: Option<i64>,
+) -> error::Result<()> {
+    // Cloned out of the registry, with the lock released, before anything is
+    // broadcast (rule 2).
+    let timer = app
+        .state::<timers::TimerRegistry>()
+        .get(timer_id)
+        .ok_or_else(|| error::Error::not_found("That timer is not running."))?;
+    if timer.scope != timers::Scope::Both {
+        return Err(error::Error::refused(
+            "That timer is for the stage monitor, so it cannot be put on the screens.",
+        ));
+    }
+    let (tid, tjson, tpinned) = {
+        let conn = db.0.lock()?;
+        cue_or_content_tpl(&conn, template_id, "countdown")
+    };
+    broadcast_with_clock(&app, countdown_content(&timer, tid, tjson, tpinned))?;
+    // ── SITE 11 OF THE CONTENT-KIND SWEEP. NOTHING CHANGED, AND WHY ───────────
+    //
+    // `cues.type` is free-form TEXT with no CHECK (docs/data/schema.sql), so a new
+    // value would need no migration — and none is written. Putting a timer back is
+    // recorded as `"countdown"`, the same value `start_countdown` writes, because
+    // it is the same thing appearing on the same screens; a service history that
+    // called the two different things would be making a distinction a reader of the
+    // history cannot act on. Nothing writes a sixth `plan_items.cue_type` either,
+    // so the enumerating comment at `schema.sql`'s `cue_type` column is still
+    // accurate and is deliberately left alone.
+    persist_cue(&app, "countdown", None);
+    Ok(())
+}
+
+/// Build the wire form of a `Both` timer. **The one place a timer becomes content**,
+/// so `start_countdown` and `show_timer` cannot put different things on a wall.
+fn countdown_content(
+    timer: &timers::Timer,
+    template_id: Option<i64>,
+    template_json: Option<String>,
+    template_pinned: bool,
+) -> channels::OutputContent {
+    let shown = timers::project_both(timer);
+    channels::OutputContent {
+        kind: Some("countdown".into()),
+        reference: shown.reference,
+        countdown_to: Some(shown.countdown_to),
+        countdown_from: Some(shown.countdown_from),
+        countdown_paused_ms: shown.countdown_paused_ms,
+        countdown_done: Some(shown.countdown_done).filter(|s| !s.is_empty()),
+        // The threshold chosen for THIS timer, straight off the one projection.
+        // The configured default is not resolved against it here: that ranking is
+        // `layers.js::countdownWarning`'s, once, and it is stamped at the one
+        // content door (`broadcast_with_clock`) rather than at the three callers of
+        // this function.
+        countdown_warn_ms: shown.countdown_warn_ms,
+        template_id,
+        template_json,
+        template_pinned,
+        ..Default::default()
+    }
 }
 
 /// Fire arbitrary content straight to the output screens — the generic take for
@@ -2969,23 +3444,37 @@ fn fire_content<R: tauri::Runtime>(
 /// `http://<lan-ip>:8032/media/<id>` so native windows AND kiosk/OBS clients
 /// load the same URL. Documents (pdf/pptx) aren't renderable as output yet.
 #[tauri::command]
-fn fire_media(
-    app: tauri::AppHandle,
+fn fire_media<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     db: tauri::State<'_, Db>,
     id: i64,
     template_id: Option<i64>,
 ) -> error::Result<()> {
-    let (kind, filename, tid, tjson, tpinned): (String, String, Option<i64>, Option<String>, bool) = {
+    #[allow(clippy::type_complexity)]
+    let (kind, filename, path, tid, tjson, tpinned): (
+        String,
+        String,
+        String,
+        Option<i64>,
+        Option<String>,
+        bool,
+    ) = {
         let conn = db.0.lock()?;
-        let (k, f) = conn
+        let (k, f, p) = conn
             .query_row(
-                "SELECT kind, filename FROM media_assets WHERE id = ?1",
+                "SELECT kind, filename, path FROM media_assets WHERE id = ?1",
                 [id],
-                |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                    ))
+                },
             )
             .map_err(|_| "media not found".to_string())?;
         let (tid, tjson, tpinned) = cue_or_content_tpl(&conn, template_id, "media");
-        (k, f, tid, tjson, tpinned)
+        (k, f, p, tid, tjson, tpinned)
     };
     let media_kind = match kind.as_str() {
         "image" => "image",
@@ -3001,7 +3490,7 @@ fn fire_media(
         &app,
         OutputContent {
             kind: Some("media".into()),
-            media_url: Some(format!("http://{ip}:8032/media/{id}")),
+            media_url: Some(media_url(&ip, id, &path)),
             media_kind: Some(media_kind.to_string()),
             template_id: tid,
             template_json: tjson,
@@ -3011,6 +3500,130 @@ fn fire_media(
     )?;
     persist_cue(&app, "media", Some(&filename));
     Ok(())
+}
+
+/// THE ONE DOOR A BACKGROUND LEAVES BY — `broadcast_with_clock` for the second
+/// payload kind.
+///
+/// It exists for exactly the reason that one does: the pre-air check goes at the
+/// choke point and not at the call sites (rule 36). There is one caller today and
+/// that is the point at which to build the door — a validator added to the second
+/// caller, next year, is a validator the first one never had. Four separate bugs
+/// in this repository have that shape, and `pipeline::preflight` was written
+/// after the fourth.
+///
+/// `None` takes the background down and is NOT validated, deliberately: a check
+/// that could refuse a removal is a removal that can fail, and a backdrop nobody
+/// can take off a congregation screen is the failure `clear` exists to prevent
+/// (DECISIONS §20). The rehearsal gate, both doors and the retained slot are all
+/// `channels::set_background`'s; this function owns the check and nothing else.
+///
+/// It does NOT touch the passage, `LiveContent` or `WallState`. See
+/// `channels::set_background` for why each of those is the wrong question to ask
+/// about furniture.
+// GENERIC OVER THE RUNTIME (rule 24) — `e2e.rs` has to be able to drive it.
+fn publish_background<R: tauri::Runtime>(
+    handle: &tauri::AppHandle<R>,
+    bg: Option<channels::Background>,
+) -> error::Result<()> {
+    if let Some(b) = bg.as_ref() {
+        if let Err(bad) = pipeline::preflight_background(b) {
+            // Said in the same three places a refused broadcast is said in, and for
+            // the same reason: doing nothing quietly is the failure being fixed.
+            eprintln!("preflight refused a background: {bad:?}");
+            let _ = handle.emit("output://panic_failed", bad.message());
+            return Err(error::Error::refused(bad.message()));
+        }
+    }
+    channels::set_background(handle, bg);
+    Ok(())
+}
+
+/// PUT A PICTURE BEHIND THE WORDS — or take it away (`id: None`).
+///
+/// The control that closes the largest gap between Relay and the software
+/// churches compare it with: until this existed a verse and a picture were
+/// mutually exclusive payloads, because the whole layer stack renders inside
+/// `{#if content}` and `media_url` is a field ON the content. Firing the church's
+/// backdrop REPLACED the reading; firing the reading replaced the backdrop.
+///
+/// **One command for both directions, on purpose.** A separate `clear_background`
+/// would be a second door onto one piece of state, and this repository's own
+/// register of that mistake runs to four entries. `None` is an answer here, not a
+/// missing argument.
+///
+/// Documents are refused with the same sentence `fire_media` uses, because it is
+/// the same fact about the same table: a PDF has no frame to paint.
+///
+/// **Nothing is persisted.** A background is service state, like the transition
+/// override and unlike a template: it belongs to the morning it was put up in,
+/// and a church that reopened Relay on Tuesday to a Sunday backdrop would have to
+/// find the control that took it off. The retained hub slot is what carries it
+/// across a screen reconnecting, which is the case that actually happens.
+#[tauri::command]
+fn show_background<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    db: tauri::State<'_, Db>,
+    id: Option<i64>,
+) -> error::Result<()> {
+    let Some(id) = id else {
+        // TAKE IT DOWN. No lookup, no validation, no database — the way off a
+        // congregation screen may never depend on a row still being there.
+        return publish_background(&app, None);
+    };
+    let (kind, path) = {
+        let conn = db.0.lock()?;
+        conn.query_row(
+            "SELECT kind, path FROM media_assets WHERE id = ?1",
+            [id],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+        )
+        .map_err(|_| "media not found".to_string())?
+    };
+    let media_kind = match kind.as_str() {
+        "image" => "image",
+        "video" => "video",
+        _ => {
+            return Err(error::Error::refused(
+                "documents can't be shown as an output background yet",
+            ))
+        }
+    };
+    let ip = local_ip().unwrap_or_else(|| "127.0.0.1".to_string());
+    publish_background(
+        &app,
+        Some(channels::Background {
+            // THE SAME BUILDER THE FIRED PICTURE USES. A picture Relay ships has no
+            // file under `/media/<id>` at all (DECISIONS §90), so a second rule here
+            // would hand every screen a URL that 404s — a black wall with nothing in
+            // any log, which is precisely the failure `media_url`'s own doc comment
+            // records.
+            media_url: media_url(&ip, id, &path),
+            media_kind: media_kind.to_string(),
+        }),
+    )
+}
+
+/// Where an output page loads a media asset from.
+///
+/// Two kinds of row live in `media_assets` and they are served from two
+/// different places. A file the operator imported sits in the media directory
+/// under `{id}_{name}` and is streamed by id. A picture Relay ships has no file
+/// of its own at all: its bytes are in the embedded bundle, at the stable path
+/// its `bundled:` marker names, which the same server already serves
+/// (DECISIONS §90). Building `…/media/<id>` for one of those hands every screen
+/// a URL that 404s, which paints a black wall and logs nothing.
+fn media_url(ip: &str, id: i64, path: &str) -> String {
+    match path.strip_prefix(db::BUNDLED_PREFIX) {
+        Some(rest) => format!("http://{ip}:8032/{rest}"),
+        None => format!("http://{ip}:8032/media/{id}"),
+    }
+}
+
+/// Is this stored path a real file somewhere, or a marker for bundled bytes?
+/// Deleting a bundled row removes the Library entry; there is nothing to unlink.
+fn media_file_is_on_disk(path: &str) -> bool {
+    !path.starts_with(db::BUNDLED_PREFIX)
 }
 
 /// The template a fire should render with: the CUE's own choice when it set one,
@@ -3026,6 +3639,16 @@ fn fire_media(
 /// rather than the channel's, so the intent (a deliberate, non-default look)
 /// degrades to the next best thing instead of to whatever the channel happens to
 /// be set to.
+///
+/// ── SITE 3 OF THE CONTENT-KIND SWEEP. NOTHING CHANGED HERE, AND WHY ──────────
+///
+/// `kind` here is a lookup key into the content-look register, so a kind with no
+/// row simply falls through to the configured default — it is never silently
+/// unstyled. The timer registry adds no key: `start_countdown` and `show_timer`
+/// both ask for `"countdown"`, which is the row that already exists, because a
+/// congregation timer's content kind did not change. A `Stage`-scoped timer asks
+/// nothing of this function: it renders on the stage page, which has no
+/// congregation template to resolve, and `show_timer` refuses to project one.
 fn cue_or_content_tpl(
     conn: &rusqlite::Connection,
     cue_template_id: Option<i64>,
@@ -3049,11 +3672,103 @@ fn cue_or_content_tpl(
     // MEGABYTES — one was 13 MB — so every verse took seconds to serialize, send
     // and re-parse on each screen. Reading only the id (a settings lookup) makes a
     // fire instant regardless of how heavy the default template is.
-    let id = db::content_template_id(conn, kind).ok().flatten();
+    let id = db::content_template_id(conn, kind)
+        .ok()
+        .flatten()
+        .or_else(|| {
+            // NOTHING BOUND THIS KIND, so the screens following the content look
+            // wear the configured default. The id travels so the console readout
+            // names what the wall will actually paint; the JSON still does not.
+            db::get_setting(conn, "default_template_id")
+                .ok()
+                .flatten()
+                .and_then(|s| s.parse::<i64>().ok())
+        });
     (id, None, false)
 }
 
+#[cfg(test)]
+mod media_url_tests {
+    use super::*;
+
+    /// A FILE THE OPERATOR IMPORTED IS SERVED BY ID; A PICTURE RELAY SHIPS IS
+    /// SERVED OUT OF THE BUNDLE.
+    ///
+    /// The bundled rows have no file in the media directory at all — the bytes
+    /// are inside the binary, in `dist/`, where the embedded server already
+    /// serves them. Building `…/media/<id>` for one of those gives every screen
+    /// a URL that 404s, and an image element that fails is a black wall with
+    /// nothing in any log.
+    #[test]
+    fn a_bundled_picture_is_served_from_the_bundle_and_an_imported_one_by_id() {
+        assert_eq!(
+            media_url("10.0.0.5", 7, "/Users/x/media/7_photo.jpg"),
+            "http://10.0.0.5:8032/media/7"
+        );
+        assert_eq!(
+            media_url("10.0.0.5", 7, ""),
+            "http://10.0.0.5:8032/media/7",
+            "a row whose file has not been written yet is still served by id"
+        );
+        assert_eq!(
+            media_url("10.0.0.5", 42, "bundled:backgrounds/01-2.jpg"),
+            "http://10.0.0.5:8032/backgrounds/01-2.jpg"
+        );
+    }
+
+    /// Nothing tries to unlink a picture that was never a file. `delete_media`'s
+    /// caller passes the stored path straight to `remove_file`, and a bundled
+    /// row's path is a marker, not a location.
+    #[test]
+    fn a_bundled_picture_has_no_file_to_delete() {
+        assert!(!media_file_is_on_disk("bundled:backgrounds/01-2.jpg"));
+        assert!(media_file_is_on_disk("/Users/x/media/7_photo.jpg"));
+    }
+}
+
+#[cfg(test)]
+mod cue_or_content_tpl_tests {
+    use super::*;
+
+    #[test]
+    fn a_kind_with_no_content_look_answers_with_the_configured_default() {
+        // The console readout names the template a fire will wear. With no content
+        // look set for this kind it said "none" — while the wall, since the default
+        // now reaches it, wears the operator's default. Two surfaces, one fire, two
+        // answers. The ID travels; the JSON deliberately does not (a default
+        // carrying an embedded image has been 13 MB, and it used to be serialized
+        // and broadcast on every single fire).
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        db::migrate(&conn, true).unwrap();
+        db::set_setting(&conn, "default_template_id", "3").unwrap();
+        let (id, json, pinned) = cue_or_content_tpl(&conn, None, "scripture");
+        assert_eq!(id, Some(3));
+        assert!(json.is_none(), "the default must never ship its JSON");
+        assert!(!pinned, "a default is not a deliberate per-cue choice");
+    }
+
+    #[test]
+    fn a_content_look_still_beats_the_configured_default() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        db::migrate(&conn, true).unwrap();
+        db::set_setting(&conn, "default_template_id", "3").unwrap();
+        db::set_content_template(&conn, "scripture", Some(5)).unwrap();
+        let (id, _, _) = cue_or_content_tpl(&conn, None, "scripture");
+        assert_eq!(id, Some(5));
+    }
+}
+
 /// The default template ids mapped to each content type.
+///
+/// ── SITE 4 OF THE CONTENT-KIND SWEEP. NOTHING CHANGED HERE, AND WHY ──────────
+///
+/// Five hard-coded fields, and a kind missing from them gets no row in the
+/// content-look UI — an operator can never choose its look, silently. The timer
+/// registry adds no field: a congregation timer is still `countdown`, which is
+/// already the fifth row, and a `Stage` timer has no congregation look to set.
+/// The list here must stay in step with `CONTENT_KINDS` in `src/lib/layers.js`,
+/// which is the canonical vocabulary; the two are mirrored by hand and no test
+/// links them, so a sixth kind has to be written in both places.
 #[derive(serde::Serialize)]
 struct ContentTemplates {
     scripture: Option<i64>,
@@ -3089,11 +3804,10 @@ fn set_content_template(
 }
 
 /// Read a raw app setting by key (the generic KV store). Used by the frontend
-/// for small, whole-set config blobs — currently the operator's custom THEMES
-/// (`themes.custom`), which are read and written as one JSON array. Returns None
-/// when the key was never set. This is a general primitive on purpose: it is the
-/// offline-first, local-SQLite home for future frontend-owned config that does
-/// not warrant its own table.
+/// for small, whole-set config blobs — the planned service length, the chosen
+/// STT model, and so on. Returns None when the key was never set. This is a
+/// general primitive on purpose: it is the offline-first, local-SQLite home for
+/// frontend-owned config that does not warrant its own table.
 #[tauri::command]
 fn get_setting(db: tauri::State<'_, Db>, key: String) -> error::Result<Option<String>> {
     let conn = db.0.lock()?;
@@ -3101,19 +3815,37 @@ fn get_setting(db: tauri::State<'_, Db>, key: String) -> error::Result<Option<St
 }
 
 /// Write a raw app setting (upsert). Counterpart to `get_setting`.
+///
+/// ## Why this one generic command knows about one key
+///
+/// `countdown.warn_ms` is not only a preference the console reads back: it is a
+/// figure two publishers stamp onto frames bound for screens that cannot read a
+/// setting at all (RG-149(c)). The mirror those publishers read
+/// (`channels::CountdownWarnDefault`) has to be kept in step with the row, and this
+/// is the ONE writer of the row — which is where the check goes, per rule 36. A
+/// second, dedicated command would be a second door, and the door somebody forgets
+/// is the shape of four separate bugs in this repository.
+///
+/// The write happens FIRST and the mirror follows, so a failed write cannot leave
+/// the screens warning at a figure the next launch has never heard of.
+// GENERIC OVER THE RUNTIME (rule 24) — it now reaches state that reaches a screen.
 #[tauri::command]
-fn set_setting(db: tauri::State<'_, Db>, key: String, value: String) -> error::Result<()> {
-    let conn = db.0.lock()?;
-    db::set_setting(&conn, &key, &value).map_err(Into::into)
-}
-
-/// Push the operator's custom themes to every connected kiosk/OBS client so a
-/// browser source (no DB) can resolve a template that pins a custom theme. The
-/// frontend calls this after persisting the `themes.custom` blob; builtin themes
-/// need no sync (the kiosk page bundles them). A no-op when nothing is connected.
-#[tauri::command]
-fn sync_kiosk_themes(kiosk: tauri::State<'_, channels::KioskHub>, themes_json: String) {
-    kiosk.set_themes(&themes_json);
+fn set_setting<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    db: tauri::State<'_, Db>,
+    key: String,
+    value: String,
+) -> error::Result<()> {
+    {
+        let conn = db.0.lock()?;
+        db::set_setting(&conn, &key, &value)?;
+    }
+    if key == "countdown.warn_ms" {
+        if let Some(s) = app.try_state::<channels::CountdownWarnDefault>() {
+            s.set(value.trim().parse::<i64>().ok());
+        }
+    }
+    Ok(())
 }
 
 /// THE OPERATOR'S TRANSITION OVERRIDE — how the next thing appears, on every
@@ -3148,6 +3880,19 @@ fn set_live_transition<R: tauri::Runtime>(
 #[tauri::command]
 fn live_transition(kiosk: tauri::State<'_, channels::KioskHub>) -> channels::TransitionOverride {
     kiosk.current_transition()
+}
+
+/// What picture is behind everything right now, for a screen that just opened.
+///
+/// The `live_transition` argument, on the second payload kind: the hub replays the
+/// retained background on `hello`, and a native output window has the bridge and
+/// no socket. Without this read, a projector opened mid-service is the one screen
+/// in the building painting the words on black.
+///
+/// `[url, kind]` or null.
+#[tauri::command]
+fn live_background(kiosk: tauri::State<'_, channels::KioskHub>) -> Option<(String, String)> {
+    kiosk.current_background()
 }
 
 /// Books available to browse, in canonical order — Library (§7).
@@ -3908,19 +4653,35 @@ async fn stop_capture(app: tauri::AppHandle, audio: tauri::State<'_, Audio>) -> 
 /// banner up. It used to fail silently, which on Windows (where the model lookup
 /// was broken outright) meant the operator had no idea the AI was never running.
 #[tauri::command]
-fn stt_status(stt: tauri::State<'_, Stt>) -> error::Result<StatusStt> {
-    let slot = stt.0.lock()?;
-    Ok(match slot.as_ref() {
-        Some(e) => StatusStt {
+fn stt_status(stt: tauri::State<'_, Stt>, db: tauri::State<'_, Db>) -> error::Result<StatusStt> {
+    // Read the engine under its own lock and DROP it before touching the database.
+    // Every other path here takes the database first (`set_stt_language`,
+    // `load_stt_model`), so holding the engine lock across a database lock is the
+    // one ordering that could meet them head-on.
+    let loaded = {
+        let slot = stt.0.lock()?;
+        slot.as_ref()
+            .map(|e| (e.model_path().display().to_string(), e.language()))
+    };
+    Ok(match loaded {
+        Some((model, language)) => StatusStt {
             loaded: true,
-            model: Some(e.model_path().display().to_string()),
-            language: e.language(),
+            model: Some(model),
+            language,
             install_dir: None,
         },
+        // NO ENGINE IS NOT "NO LANGUAGE". Before a model is downloaded there is
+        // nothing to ask, and the recognition language is still a real stored fact
+        // — it lives on the active voice profile and is applied the moment an
+        // engine exists. Reporting `None` here printed "Auto-detect" over a profile
+        // that said English, on a fresh install, which is the whole shape of rule 35.
         None => StatusStt {
             loaded: false,
             model: None,
-            language: None,
+            language: {
+                let conn = db.0.lock()?;
+                db::active_voice_profile(&conn)?.and_then(|p| p.language)
+            },
             install_dir: Some(stt::model_install_dir().display().to_string()),
         },
     })
@@ -3960,13 +4721,51 @@ fn set_active_translation(
 
 /// Set the STT language: a code ("yo"/"sw"/"ha"/"en"/…) or null for auto-detect
 /// (code-switching). Tier-1 targets: Yoruba, Swahili, Hausa (CLAUDE.md).
+///
+/// IT WRITES TO THE ACTIVE VOICE PROFILE, and that is the whole point (RG-138).
+/// For as long as this command existed it took no `Db` at all: it set a field on
+/// the live engine and nothing else, so an operator who chose English lost it at
+/// the next launch, silently — while `stt_status` read the engine back and made it
+/// look sticky for the rest of the run. `docs/qa/RELAY_GAP.md` RG-116 names this
+/// control as the mitigation for a real field failure (whisper's language election
+/// wandered off English and cost a service on `ggml-small`), so the register named
+/// a fix that did not survive a relaunch.
+///
+/// The language is already stored durably, once, on `voice_profiles.language` —
+/// applied in `setup`, on a profile switch, and after a model reload. So this
+/// writes there rather than adding a second key: two stores for one fact would
+/// race at startup, and nothing would say which won.
+///
+/// NOT on `servicelock::PROTECTED`, deliberately. Its two nearest neighbours are —
+/// `select_stt_model` unloads whisper and takes the ears away mid-sermon, and
+/// `set_active_translation` changes the words on the wall. This does neither: it
+/// sets a hint that the next decode window picks up, unloads nothing, and is undone
+/// by choosing again. More to the point it is the REMEDY for a live failure rather
+/// than the hazard — when auto-detect wanders mid-sermon (one real service went
+/// en·yo·pt·sw·sv·ms; `stt.rs`) pinning the language is the operator's only lever,
+/// and holding it back behind an unlock would be withholding the fix at the exact
+/// moment it is needed.
 #[tauri::command]
-fn set_stt_language(stt: tauri::State<'_, Stt>, language: Option<String>) -> error::Result<()> {
-    let slot = stt.0.lock()?;
-    if let Some(e) = slot.as_ref() {
-        e.set_language(language);
+fn set_stt_language(
+    stt: tauri::State<'_, Stt>,
+    db: tauri::State<'_, Db>,
+    language: Option<String>,
+) -> error::Result<db::VoiceProfile> {
+    // Persist first, then apply. A write that fails must not leave the engine
+    // decoding in a language nothing remembers.
+    let profile = {
+        let conn = db.0.lock()?;
+        db::set_active_profile_language(&conn, language.as_deref())?
+            .ok_or_else(|| "no voice profile to store the recognition language on".to_string())?
+    };
+    // The FULL profile, not just the language: `apply_profile_to_stt` re-derives the
+    // decoder-bias prompt for the language now chosen. Setting the language alone
+    // would leave English book names biasing a Yorùbá sermon, which is the exact
+    // thing that function's comment says pushes whisper away from the words we need.
+    if let Some(e) = stt.0.lock()?.as_ref() {
+        apply_profile_to_stt(e, &profile);
     }
-    Ok(())
+    Ok(profile)
 }
 
 #[derive(Clone, Serialize)]
@@ -4147,6 +4946,10 @@ fn confirm_detection<R: tauri::Runtime>(
         if let Ok(conn) = db.0.lock() {
             persist_active_thresholds(&conn, t);
         }
+        // AND SAY SO. This is the writer nobody presses: the gate moves on every
+        // confirm and dismiss, so a console that read it once at launch drifted
+        // stale on its own, with the operator touching nothing.
+        thresholds_changed(&app, t);
     }
     Ok(t)
 }
@@ -4221,8 +5024,58 @@ fn dismiss_detection<R: tauri::Runtime>(
         if let Ok(conn) = db.0.lock() {
             persist_active_thresholds(&conn, t);
         }
+        // AND SAY SO. This is the writer nobody presses: the gate moves on every
+        // confirm and dismiss, so a console that read it once at launch drifted
+        // stale on its own, with the operator touching nothing.
+        thresholds_changed(&app, t);
     }
     Ok(t)
+}
+
+/// ENDING A REHEARSAL ENDS THE TIMERS IT STARTED, AND THEN TELLS THE TABLET —
+/// RG-150, the operator decision of 2026-09-17.
+///
+/// A rehearsal is a sandbox in every other respect: nothing it publishes reaches a
+/// screen. A clock it started is not an exception. The alternative considered and
+/// rejected was to republish the set on the way out on the grounds the timers were
+/// real all along — which means an operator who practises a twenty-minute sermon
+/// clock at ten o'clock finds it on the preacher's tablet when the service starts,
+/// counting toward a moment that has passed.
+///
+/// **STOP, THEN PUBLISH, IN THAT ORDER.** The tablet is never shown a set that is
+/// about to change. Publishing first would put the rehearsal's clock on the
+/// preacher's screen for exactly as long as it takes to take it off again, which is
+/// a flicker nobody would ever reproduce on purpose.
+///
+/// The registry decides by the timer's own stamp and is asked nothing else
+/// (`timers::TimerRegistry::stop_started_in_rehearsal`) — a control that has to ask
+/// a question can fail to answer it, which is why the panic controls split by
+/// `Scope` rather than by what a screen is showing. **A timer started BEFORE the
+/// rehearsal began survives**, deliberately and with its own test: it was never a
+/// rehearsal's timer.
+///
+/// `publish_timers` runs unconditionally, not "if anything was taken". It sends the
+/// whole stage-visible SET, so it is idempotent and asks no question — and the
+/// measured defect was precisely an exit that published `clear` and `stage_next`
+/// and no `timer` frame at all, leaving the tablet's set and the registry to
+/// disagree in silence until something unrelated republished
+/// (`audits/DESIGN-2026-09-16-WAVE3.md` §6).
+///
+/// Called only with the rehearsal flag already flipped OFF, so the publish is a real
+/// one rather than a suppression.
+// GENERIC OVER THE RUNTIME (rule 24) — it reaches the screens, and `e2e.rs` drives it.
+fn end_the_rehearsals_timers<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    if let Some(reg) = app.try_state::<timers::TimerRegistry>() {
+        // The registry takes and releases its own lock and returns an owned count,
+        // so nothing is held across the publish below (rule 2).
+        let stopped = reg.stop_started_in_rehearsal();
+        if stopped > 0 {
+            // Content-free: a count, never a label. An operator's timer name is
+            // service data and this line goes to disk.
+            println!("rehearsal: {stopped} timer(s) started in the rehearsal stopped");
+        }
+    }
+    channels::publish_timers(app);
 }
 
 /// Is rehearsal mode on?
@@ -4280,6 +5133,9 @@ fn set_rehearsal<R: tauri::Runtime>(
         // backend's actual mode — a worse lie than the one being fixed. The operator
         // is told the clear failed via the panic banner instead.
         clear_or_report(&app);
+        if !on {
+            end_the_rehearsals_timers(&app);
+        }
         log_event(
             &app,
             if on {
@@ -4338,6 +5194,57 @@ fn set_crash_reporting(
         enabled: telemetry::is_enabled(),
         dsn: dsn.trim().to_string(),
     })
+}
+
+/// ── THE GATE MOVED. SAY SO. ─────────────────────────────────────────────────
+///
+/// `detection://thresholds` carries the whole of what every surface showing the
+/// gate needs: the two thresholds and the dial position they map back to, through
+/// `to_sensitivity` — the one inverse mapping, so a listener never re-derives it
+/// and the two directions cannot drift.
+///
+/// WHY THIS EXISTS AT ALL. Until 2026-09-17 nothing in Rust announced a threshold
+/// change, and the frontend had nothing to subscribe to. Live's dial was the one
+/// setting in the shell held in a component-local `let`, read once at `onMount`,
+/// and the dock is mounted OUTSIDE the workspace router — so unlike every view it
+/// is never rebuilt and never re-read. Three things followed, all of them
+/// measured rather than argued:
+///
+///   * Settings moved the gate and Live went on showing the old number, for the
+///     rest of the session.
+///   * Live moved the gate and Settings, holding the number it loaded when the tab
+///     opened, SILENTLY REVERTED IT on the next profile save — `update_voice_profile`
+///     compares the stale figure against an already-updated row, concludes the dial
+///     moved, and re-derives from it.
+///   * nobody had to touch anything at all: the router self-calibrates on every
+///     confirm and dismiss, so the dock drifted stale on its own.
+///
+/// That is rule 35 on the one control governing what the AI may put on a wall
+/// unasked — a reading that cannot tell "the engine says 50" from "nobody has
+/// asked the engine since launch".
+///
+/// FIVE DOORS, ONE ANNOUNCEMENT. `Router::thresholds` is moved by
+/// `apply_thresholds` (the dial and the two sliders), by `apply_profile` (a profile
+/// saved, a profile selected, a room applied) and by `record_feedback` (the
+/// learning, on every confirm and dismiss). A guarantee kept on four of five doors
+/// is not a mitigation, it is the bug — this repository has shipped that shape four
+/// separate times — so `thresholds_changed` is called from all five and
+/// `hardrules.test.js` fails on a sixth writer that does not call it.
+///
+/// RULE 2. The router lock is released before this runs, at every call site. It is
+/// never held across the emit.
+fn thresholds_changed<R: tauri::Runtime>(app: &tauri::AppHandle<R>, t: Thresholds) {
+    // An emit that fails is a console that will be one reading behind until the
+    // next change. It is not worth failing an operator's action over, and there is
+    // no second channel to report it down, so this is deliberately not a Result.
+    let _ = app.emit(
+        "detection://thresholds",
+        serde_json::json!({
+            "auto_fire": t.auto_fire,
+            "suggest": t.suggest,
+            "sensitivity": t.to_sensitivity(),
+        }),
+    );
 }
 
 /// Current gate thresholds — for the Settings sliders.
@@ -4442,7 +5349,8 @@ fn verse_repeat_count(
 
 /// Manual override of the thresholds (the always-available slider, DECISIONS.md).
 #[tauri::command]
-fn set_thresholds(
+fn set_thresholds<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     routing: tauri::State<'_, Routing>,
     db: tauri::State<'_, Db>,
     thresholds: Thresholds,
@@ -4452,7 +5360,7 @@ fn set_thresholds(
     // explains at length why doing one without the others leaves the profile
     // "describing a state that never existed". The Settings two-slider control is
     // the same act expressed more precisely, so it goes through the same door.
-    apply_thresholds(&routing, &db, thresholds)?;
+    apply_thresholds(&app, &routing, &db, thresholds)?;
     Ok(routing.0.lock()?.thresholds())
 }
 
@@ -4475,7 +5383,8 @@ fn set_thresholds(
 ///
 /// Returns the dial position that actually landed, recovered through
 /// `to_sensitivity` — the one inverse mapping, so the two directions cannot drift.
-fn apply_thresholds(
+fn apply_thresholds<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
     routing: &tauri::State<'_, Routing>,
     db: &tauri::State<'_, Db>,
     t: Thresholds,
@@ -4497,6 +5406,9 @@ fn apply_thresholds(
             );
         }
     }
+    // The gate moved. Every surface that shows it hears about it here, not from
+    // whichever control happened to move it — see `thresholds_changed`.
+    thresholds_changed(app, t);
     Ok(landed)
 }
 
@@ -4525,13 +5437,14 @@ fn apply_thresholds(
 /// The dial is the operator overruling the machine. It is the one input here
 /// that must outlast both the learning and the restart.
 #[tauri::command]
-fn set_sensitivity(
+fn set_sensitivity<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     routing: tauri::State<'_, Routing>,
     db: tauri::State<'_, Db>,
     sensitivity: u8,
 ) -> error::Result<u8> {
     let t = Thresholds::from_sensitivity(sensitivity.min(100));
-    apply_thresholds(&routing, &db, t)
+    apply_thresholds(&app, &routing, &db, t)
 }
 
 /// The current dial position, recovered from the live thresholds.
@@ -4558,7 +5471,12 @@ fn apply_profile_to_stt(engine: &SttEngine, p: &db::VoiceProfile) {
 
 /// Apply a full profile live: STT language + bias prompt, and the profile's
 /// calibrated thresholds to the router.
-fn apply_profile(stt: &Stt, routing: &Routing, p: &db::VoiceProfile) -> error::Result<()> {
+fn apply_profile<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    stt: &Stt,
+    routing: &Routing,
+    p: &db::VoiceProfile,
+) -> error::Result<()> {
     if let Some(e) = stt.0.lock()?.as_ref() {
         apply_profile_to_stt(e, p);
     }
@@ -4575,6 +5493,12 @@ fn apply_profile(stt: &Stt, routing: &Routing, p: &db::VoiceProfile) -> error::R
     router.set_baseline(Thresholds::from_sensitivity(
         p.sensitivity.clamp(0, 100) as u8
     ));
+    let t = router.thresholds();
+    drop(router); // rule 2 — never across an emit
+                  // A profile switch and a room change move the gate as surely as the dial does,
+                  // and until this line no surface displaying it was told. Switching preacher
+                  // changed what may auto-fire unattended, in silence.
+    thresholds_changed(app, t);
     Ok(())
 }
 
@@ -4979,7 +5903,8 @@ fn create_voice_profile(
 /// accumulated (docs/DECISIONS.md) and snapped `auto_fire` back to the baseline
 /// mid-preparation. The operator saw the AI "just stop working", with no error.
 #[tauri::command]
-fn update_voice_profile(
+fn update_voice_profile<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     stt: tauri::State<'_, Stt>,
     routing: tauri::State<'_, Routing>,
     db: tauri::State<'_, Db>,
@@ -5017,15 +5942,22 @@ fn update_voice_profile(
         db::active_voice_profile(&conn).ok().flatten().map(|a| a.id) == Some(profile.id)
     };
     if is_active {
-        apply_profile(&stt, &routing, &profile)?;
+        apply_profile(&app, &stt, &routing, &profile)?;
     }
+    // `is_active` comes back from the DATABASE, so say so in what is returned. The
+    // field arrived on the payload as whatever the frontend happened to be holding,
+    // and the console now decides from this answer whether the recognition language
+    // it shows on another tab has just changed underneath it (RG-138). Echoing the
+    // caller's own guess back at it would be a second register for one fact.
+    profile.is_active = is_active;
     Ok(profile)
 }
 
 /// Switch the active profile — applies its language + bias prompt + thresholds
 /// immediately, before the next transcript window.
 #[tauri::command]
-fn select_voice_profile(
+fn select_voice_profile<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     stt: tauri::State<'_, Stt>,
     routing: tauri::State<'_, Routing>,
     db: tauri::State<'_, Db>,
@@ -5037,14 +5969,15 @@ fn select_voice_profile(
         db::active_voice_profile(&conn)?
             .ok_or_else(|| "no active profile after select".to_string())?
     };
-    apply_profile(&stt, &routing, &profile)?;
+    apply_profile(&app, &stt, &routing, &profile)?;
     Ok(profile)
 }
 
 /// Delete a profile. If it was active, the next remaining profile becomes active
 /// (a Default is re-seeded if it was the last) and is applied live.
 #[tauri::command]
-fn delete_voice_profile(
+fn delete_voice_profile<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     lock: tauri::State<'_, servicelock::ServiceLock>,
     stt: tauri::State<'_, Stt>,
     routing: tauri::State<'_, Routing>,
@@ -5058,7 +5991,7 @@ fn delete_voice_profile(
         db::active_voice_profile(&conn)?
             .ok_or_else(|| "no active profile after delete".to_string())?
     };
-    apply_profile(&stt, &routing, &profile)?;
+    apply_profile(&app, &stt, &routing, &profile)?;
     Ok(profile)
 }
 
@@ -5136,7 +6069,29 @@ fn open_channel_output(
     };
     // The screen's own answer, Option and all — see `channels::output_url`.
     let template_id = channel.template_id;
-    let monitor_index = channel.display_target.as_deref().and_then(parse_display);
+    // A REMEMBERED DISPLAY THAT IS GONE IS A REFUSAL, NOT A GUESS.
+    //
+    // This used to be `.and_then(parse_display)`, and a stale index simply fell
+    // through the placement block inside `open_native_window`: the window was
+    // built at its default position and then fullscreened, so the OS put it on
+    // the primary display. Unplug the dock, press Open, and a borderless
+    // undecorated fullscreen output covers the console the operator is running
+    // the service from, with nothing reported. `auto_open_outputs` has always
+    // skipped that case; this is the manual path agreeing with it, out loud.
+    let monitor_index = match resolve_display(
+        channel.display_target.as_deref(),
+        &channels::list_monitors(&app),
+    ) {
+        DisplayChoice::On(idx) => Some(idx),
+        DisplayChoice::Anywhere => None,
+        DisplayChoice::Missing(n) => {
+            return Err(error::Error::refused(format!(
+                "{} is set to open on Display {n}, which is not connected. \
+                 Plug it in, or choose a different display for this screen.",
+                channel.name
+            )))
+        }
+    };
     // Deterministic, so the window can be traced back to this channel — that is
     // what makes the channel's "online" light real. It also makes
     // `open_native_window`'s already-open check a duplicate guard: the counter
@@ -5175,11 +6130,21 @@ fn auto_open_outputs(
         if c.render_target != "native_window" {
             continue; // OBS/kiosk auto-reconnect over the WS; nothing to open here
         }
-        let Some(idx) = c.display_target.as_deref().and_then(parse_display) else {
-            continue; // no display assigned → not a fixed physical screen
+        // ONE RESOLVER, shared with `open_channel_output` (rule 36 in miniature:
+        // the two paths that decide which physical screen an output lands on must
+        // not be able to disagree). This half was already safe and is unchanged in
+        // behaviour — `Anywhere` and `Missing` both skip here, because an
+        // automatic open has no operator to refuse to.
+        let idx = match resolve_display(c.display_target.as_deref(), &monitors) {
+            DisplayChoice::On(idx) => idx,
+            // No display assigned → not a fixed physical screen, and an unreadable
+            // one is the same. Nothing auto-opens for either.
+            DisplayChoice::Anywhere => continue,
+            // That display isn't connected right now.
+            DisplayChoice::Missing(_) => continue,
         };
         let Some(m) = monitors.iter().find(|m| m.index == idx) else {
-            continue; // that display isn't connected right now
+            continue;
         };
         if m.primary {
             continue; // never cover the operator's console
@@ -5263,6 +6228,85 @@ struct ChannelLiveness {
     /// What that beat said the screen was showing — `content` / `clear` / `black`.
     /// Parsed against a closed enum at the door; never free text off the LAN.
     paint_state: Option<&'static str>,
+    /// THE OPERATOR TOOK THIS SCREEN OUT OF THE WALL — `clear` or `black`, and
+    /// `None` when it is following the wall like every other screen.
+    ///
+    /// It is here rather than in a command of its own because every surface that
+    /// describes a screen has to know it, and there is exactly one helper allowed
+    /// to turn a row into words (`outputHealth.js::describeScreen`, rule 35).
+    /// Without it that helper would compare Relay's belief — content is on the
+    /// wall — against the screen's own beat, which says `clear`, and report
+    /// `Not confirmed` for the rest of the service: a standing alarm about a
+    /// screen doing exactly what it was told.
+    down: Option<&'static str>,
+}
+
+/// WHICH PHYSICAL DISPLAY A SCREEN SHOULD OPEN ON — and whether it can at all.
+///
+/// Three answers, and the middle one did not exist.
+///
+/// `display_target` is an INDEX into the OS monitor list (see `parse_display`),
+/// which is the honest shape of what Tauri exposes and is the reason this function
+/// has to be careful. **Tauri 2.11 hands out `Monitor { name, size, position,
+/// work_area, scale_factor }` and nothing else** — no native display id. Under it,
+/// `tao` names a Windows monitor `\\.\DISPLAY1` (the `MONITORINFOEX.szDevice`
+/// path, which the OS renumbers when displays are attached or detached) and a
+/// macOS monitor `Monitor #<EDID model number>` (per MODEL, so two identical
+/// projectors are indistinguishable). So there is no stable per-display identity
+/// to store instead of the index — not on both platforms, and a scheme that worked
+/// on one of them would make the control that decides which physical screen a
+/// congregation sees behave differently on Windows and macOS. That is recorded in
+/// full in `docs/DECISIONS.md`.
+///
+/// What CAN be fixed is the fallback, and it was the dangerous half.
+/// `auto_open_outputs` has always skipped a channel whose index is not connected
+/// — and skipped the primary display too, because auto-opening a borderless
+/// fullscreen output over the console covers the UI the operator is running the
+/// service from. `open_channel_output`, the **Open** button, did neither: a stale
+/// index fell through the placement block, the window was built at its default
+/// position and fullscreened, and the OS put it on the primary. The projector is
+/// unplugged, the operator presses Open, and the congregation's output covers the
+/// console.
+///
+/// `Missing` is that case and only that case: the operator named a screen, and
+/// that screen is not here. An unreadable target and an empty monitor list are
+/// BOTH `Anywhere` — the first is not a claim about a screen at all, and the
+/// second is ambiguous (`list_monitors` returns an empty vector rather than
+/// erroring, so a failed probe looks exactly like a machine with no displays).
+/// Refusing on an ambiguity would turn a transient probe failure into an output
+/// that cannot be opened, mid-service, with a sentence the operator cannot act on.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum DisplayChoice {
+    /// Place it on this monitor index.
+    On(usize),
+    /// No preference recorded, or nothing that could be checked. Let the OS place
+    /// it, which is exactly what has always happened when no display is assigned.
+    Anywhere,
+    /// The operator named a display (1-based, as a human reads it) and it is not
+    /// connected. Refuse, and say which.
+    Missing(usize),
+}
+
+fn resolve_display(target: Option<&str>, monitors: &[channels::MonitorInfo]) -> DisplayChoice {
+    let Some(idx) = target.and_then(parse_display) else {
+        return DisplayChoice::Anywhere;
+    };
+    if monitors.is_empty() {
+        return DisplayChoice::Anywhere;
+    }
+    if monitors.iter().any(|m| m.index == idx) {
+        return DisplayChoice::On(idx);
+    }
+    // 1-based, because that is how the picker and every OS display panel name it.
+    DisplayChoice::Missing(idx + 1)
+}
+
+/// Whether the operator has taken this screen out of the wall, flattened for
+/// `ChannelLiveness`. `None` is a screen following the wall — the ordinary case,
+/// and the one that must be an absence rather than the word "live", so nothing
+/// downstream can read "down" off a row that says it is up.
+fn down_of(down: &channels::ScreensDown, id: i64) -> Option<&'static str> {
+    down.get(id).map(|s| s.as_str())
 }
 
 /// The beat for one channel, flattened for `ChannelLiveness`.
@@ -5360,6 +6404,7 @@ fn channel_status(
     db: tauri::State<'_, Db>,
     kiosk: tauri::State<'_, channels::KioskHub>,
     health: tauri::State<'_, channels::OutputHealth>,
+    down: tauri::State<'_, channels::ScreensDown>,
 ) -> error::Result<Vec<ChannelLiveness>> {
     let list = {
         let conn = db.0.lock()?;
@@ -5418,6 +6463,7 @@ fn channel_status(
                     painting,
                     last_beat_ms: age,
                     paint_state: state,
+                    down: down_of(&down, c.id),
                 }
             }
             "network_client" => {
@@ -5464,6 +6510,7 @@ fn channel_status(
                     painting,
                     last_beat_ms: age,
                     paint_state: state,
+                    down: down_of(&down, c.id),
                 }
             }
             // NDI is parked, not broken — `open_ndi_output` says so too.
@@ -5477,6 +6524,7 @@ fn channel_status(
                 painting: false,
                 last_beat_ms: None,
                 paint_state: None,
+                down: down_of(&down, c.id),
             },
             other => ChannelLiveness {
                 id: c.id,
@@ -5488,6 +6536,7 @@ fn channel_status(
                 painting: false,
                 last_beat_ms: None,
                 paint_state: None,
+                down: down_of(&down, c.id),
             },
         })
         .collect())
@@ -5561,6 +6610,69 @@ fn set_channel_display(
     db::set_channel_display(&conn, id, display.as_deref()).map_err(Into::into)
 }
 
+/// SET (or clear) WHAT A SCREEN IS FOR, and tell every screen at once.
+///
+/// `role` is `main`, `stage`, or null for a screen with no special job. The
+/// one-main rule is enforced in `db::set_channel_role` — one place, so the
+/// console, the LAN remote and any future caller cannot disagree about it — and
+/// what comes back is turned into a sentence here rather than relayed as a
+/// constraint violation (`error.rs`, and `Channels.svelte`'s five monospace Rust
+/// strings, are why).
+///
+/// BOTH DOORS, like every other piece of screen configuration in this file. A
+/// native output window hears `output://channel_roles`; a kiosk/OBS browser
+/// source gets the hub frame and picks out its own channel. A control wired to one
+/// of the two is the mistake this repository has now made four times — and here it
+/// would mean a projector and a browser source disagreeing about which of them may
+/// be shown a word meant for the preacher.
+///
+/// Rule 2: the write and the read happen under the lock, which is released before
+/// anything is emitted or published.
+#[tauri::command]
+fn set_channel_role<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    db: tauri::State<'_, Db>,
+    id: i64,
+    role: Option<String>,
+) -> error::Result<()> {
+    let roles = {
+        let conn = db.0.lock()?;
+        match db::set_channel_role(&conn, id, role.as_deref())? {
+            db::RoleOutcome::Set => {}
+            db::RoleOutcome::MainTaken(name) => {
+                return Err(error::Error::refused(format!(
+                    "{name} is already the main screen. Clear its role first, or \
+                     choose a different role for this one."
+                )))
+            }
+            db::RoleOutcome::NotARole(r) => {
+                return Err(error::Error::refused(format!(
+                    "Relay has no screen role called \"{r}\"."
+                )))
+            }
+        }
+        db::channel_roles_json(&conn)?
+    };
+    publish_channel_roles(&app, &roles);
+    Ok(())
+}
+
+/// The two doors, once. Called by every command that can change the role map.
+///
+/// The hub is reached through `try_state`, not taken as a `State` parameter: a
+/// headless Relay manages no hub — that is the "no LAN" case `qa::bare_app`
+/// deliberately reproduces — and a `State` argument panics there instead of
+/// quietly doing nothing, which is what `channels::publish_kiosk` and
+/// `channels::transition` already do for the same reason.
+fn publish_channel_roles<R: tauri::Runtime>(app: &tauri::AppHandle<R>, roles_json: &str) {
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(roles_json) {
+        let _ = app.emit("output://channel_roles", serde_json::json!({ "roles": v }));
+    }
+    if let Some(hub) = app.try_state::<channels::KioskHub>() {
+        hub.set_channel_roles(roles_json);
+    }
+}
+
 /// Add an output channel. Returns its id.
 #[tauri::command]
 fn add_channel(
@@ -5582,16 +6694,74 @@ fn add_channel(
     db::add_channel(&conn, name.trim(), &target, template_id.unwrap_or(1)).map_err(Into::into)
 }
 
+/// RENAME A SCREEN. There was no way to do this at all.
+///
+/// The name is the only handle anybody in the building has on a screen. It is what
+/// the Outputs cards are keyed by, what the degraded banner says when a screen
+/// stops answering ("3 is not responding" was the defect that put the name on
+/// `ChannelLiveness` in the first place), and what an operator says out loud to
+/// somebody standing at the back. A church that inherits a Relay seeded with
+/// `Lobby screen` and hangs it in the crèche instead had no way to say so.
+///
+/// **Not held by the service lock, and that is a decision rather than an
+/// oversight.** `servicelock.rs` protects two things: the irreversible, and
+/// anything that takes the engine away mid-sermon. A rename is neither — it is
+/// reversible by doing it again, it moves no pixels, and the moment an operator
+/// most wants it is the moment a screen's name turns out to be wrong, which is
+/// during a service. Over-blocking is the more dangerous failure there.
+///
+/// The validation is here and only here, the same discipline `save_environment`
+/// states: two layers that both validate are two layers that can disagree about
+/// what is legal.
+#[tauri::command]
+fn rename_channel(db: tauri::State<'_, Db>, id: i64, name: String) -> error::Result<()> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(error::Error::refused("A screen needs a name."));
+    }
+    // A cap, because this string is rendered on a card, in a badge, in the shell's
+    // degraded banner and in a service's own timeline — four places sized for a
+    // name. It is generous enough that no real screen name reaches it, and the
+    // refusal says the figure rather than silently truncating: a name quietly cut
+    // in half is a name that stops matching what the operator typed.
+    const MAX: usize = 60;
+    if name.chars().count() > MAX {
+        return Err(error::Error::refused(format!(
+            "That name is too long for a screen — keep it under {MAX} characters."
+        )));
+    }
+    let conn = db.0.lock()?;
+    if !db::rename_channel(&conn, id, name)? {
+        // Deleted on another surface between the card rendering and the rename
+        // landing. Saying so beats showing the operator a name on a screen that is
+        // not there any more.
+        return Err(error::Error::refused(
+            "That screen is no longer there — it may have been deleted.",
+        ));
+    }
+    Ok(())
+}
+
 /// Delete an output channel.
 #[tauri::command]
-fn delete_channel(
+fn delete_channel<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     db: tauri::State<'_, Db>,
     lock: tauri::State<'_, servicelock::ServiceLock>,
     id: i64,
 ) -> error::Result<()> {
     lock.guard("delete_channel")?;
-    let conn = db.0.lock()?;
-    db::delete_channel(&conn, id).map_err(Into::into)
+    // Deleting the screen that held a role changes the role map, and a page that
+    // is still open would otherwise keep the role of a channel that no longer
+    // exists — which on a stage display means it keeps accepting stage messages
+    // after the operator has deleted it.
+    let roles = {
+        let conn = db.0.lock()?;
+        db::delete_channel(&conn, id)?;
+        db::channel_roles_json(&conn)?
+    };
+    publish_channel_roles(&app, &roles);
+    Ok(())
 }
 
 /// All output templates (Templates tab, Channels tab).
@@ -5714,6 +6884,48 @@ fn set_channel_template<R: tauri::Runtime>(
     Ok(())
 }
 
+/// Set (or clear, with `None`) the DEFAULT template — the last link in every
+/// screen's resolution chain — and push the change live.
+///
+/// Changing the default used to be a bare `set_setting` from the frontend: it
+/// was read at channel creation and by two console panes, and nothing else in
+/// the building was told. A screen already following the content look kept the
+/// old look until it was reopened, which is why the default "did not activate on
+/// all screens". Native windows get `output://default_template`; kiosk/OBS
+/// clients get the hub frame.
+#[tauri::command]
+fn set_default_template<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    db: tauri::State<'_, Db>,
+    kiosk: tauri::State<'_, channels::KioskHub>,
+    template_id: Option<i64>,
+) -> error::Result<()> {
+    // DB write + resolve the JSON under one lock, release BEFORE emitting
+    // (rule 2: never hold a Mutex across emit).
+    let tjson = {
+        let conn = db.0.lock()?;
+        match template_id {
+            Some(id) => {
+                db::set_setting(&conn, "default_template_id", &id.to_string())?;
+                db::get_template(&conn, id)?.and_then(|t| serde_json::to_string(&t).ok())
+            }
+            None => {
+                db::set_setting(&conn, "default_template_id", "")?;
+                None
+            }
+        }
+    };
+    let blob = tjson.unwrap_or_else(|| "null".into());
+    kiosk.set_default_template(&blob);
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&blob) {
+        let _ = app.emit(
+            "output://default_template",
+            serde_json::json!({ "template": v }),
+        );
+    }
+    Ok(())
+}
+
 /// A WORD TO THE PREACHER: take over the stage monitor with one line of text.
 ///
 /// Whitespace is not a message — a blank send CLEARS, which is also what the
@@ -5767,6 +6979,59 @@ fn blackout<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> error::Result<()> {
     forget_debounce(&app);
     persist_cue(&app, "blackout", None);
     Ok(())
+}
+
+/// ── ONE SCREEN, NOT THE WALL ───────────────────────────────────────────────
+///
+/// "Take the lobby TV down but leave the wall live" is an ordinary request. The
+/// three commands below are the whole of it, and every one of them is a thin call
+/// into `channels::set_screen_state` — the choke point (rule 36), so a fourth way
+/// of taking a screen down cannot arrive with its own idea of what that means.
+///
+/// **`clear_screens` and `blackout` above are untouched.** They are the panic
+/// controls: first, largest, reachable in one action, addressing every screen and
+/// asking nothing (rule 15, DECISIONS §20). The split is in the CALL and never
+/// inside them, because a panic control that has to work out which screen it is
+/// addressing is a panic control that can fail to answer. Nothing here is bound
+/// to `Esc` or to `B`, and `pipeline::preflight` gains no new power: these publish
+/// no content, so there is nothing for a validator to refuse.
+///
+/// **They do not touch the wall's own state.** Not `LiveContent`, not the
+/// debounce, not the congregation timers, not `WallState`. The verse is still in
+/// front of the congregation on every other screen, and a control that forgot it
+/// would make the next spoken "next verse" answer `NoPassage` — which is the
+/// class of bug rule 40 and `NavResult` exist to prevent, arriving through a
+/// side door.
+#[tauri::command]
+fn clear_screen<R: tauri::Runtime>(app: tauri::AppHandle<R>, channel_id: i64) -> error::Result<()> {
+    channels::set_screen_state(&app, channel_id, channels::ScreenState::Clear)
+        .map_err(error::Error::refused)
+}
+
+/// Blackout ONE screen (opaque black), leaving every other screen as it is.
+#[tauri::command]
+fn blackout_screen<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    channel_id: i64,
+) -> error::Result<()> {
+    channels::set_screen_state(&app, channel_id, channels::ScreenState::Black)
+        .map_err(error::Error::refused)
+}
+
+/// Put one screen back into the wall: it shows whatever the wall is showing.
+///
+/// THE WAY BACK IS A CONTROL, not a side effect of the next fire. A screen taken
+/// down stays down across every fire in between — a one-shot would be undone
+/// within a minute of being used, which is to say useless for the thing it is for
+/// — so there has to be something that undoes it, and it has to be as easy to
+/// find as the control that did it.
+#[tauri::command]
+fn restore_screen<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    channel_id: i64,
+) -> error::Result<()> {
+    channels::set_screen_state(&app, channel_id, channels::ScreenState::Live)
+        .map_err(error::Error::refused)
 }
 
 /// Clear the wall from a path that has nobody to return an error to — the STT
@@ -5906,6 +7171,27 @@ fn end_service<R: tauri::Runtime>(
     log_event(&app, db::EventKind::ServiceEnded, None);
     *session.0.lock()? = None;
     lock.release();
+    // THE PROGRAMME IS OVER, SO THE PROGRAMME CLOCKS ARE.
+    //
+    // A `Stage` timer lives until something stops it, and until this landed nothing
+    // ever did: a service's cue clocks stayed on the preacher's rail, counting past
+    // zero, for as long as Relay was open (RG-163). `Live::retireCueTimer` ends each
+    // cue's clock as the plan walks past it, which is the half that matters during a
+    // service; this is the sweep behind it, at the one moment the whole programme is
+    // finished. It is the choke point rather than the two controls that call
+    // `end_service` (the dock, and the History list) — a rule kept at call sites is
+    // the shape of four separate bugs in this repository.
+    //
+    // `Both` is untouched. A congregation countdown is on a wall and comes off it
+    // through a panic control or through the operator; emptying it from here would
+    // be a second door onto that screen, which `start_timer` already refuses to be.
+    if let Some(reg) = app.try_state::<timers::TimerRegistry>() {
+        reg.stop_scope(timers::Scope::Stage);
+    }
+    // The registry is read and dropped before this, per rule 2 — `stop_scope` takes
+    // the lock, finishes and returns a count. Publishing is how a rail learns there
+    // are none now: an absent frame cannot say that.
+    channels::publish_timers(&app);
     refresh_wake(&app);
     Ok(())
 }
@@ -6271,6 +7557,99 @@ mod display_target_tests {
         // turn it into usize::MAX and index past the monitor list.
         assert_eq!(parse_display("Display 0"), Some(0));
     }
+
+    // ── A REMEMBERED DISPLAY THAT IS GONE ──────────────────────────────────
+    //
+    // `display_target` is an INDEX into the OS monitor list, so unplugging a dock
+    // renumbers it. `auto_open_outputs` has always been safe about that — it skips
+    // a channel whose index is not connected, and skips the primary display too,
+    // because auto-opening a fullscreen borderless window over the console covers
+    // the very UI the operator needs.
+    //
+    // `open_channel_output` — the **Open** button, the path an operator presses
+    // deliberately — was not. A stale index simply fell through the placement
+    // block, and the window was built at its default position and then
+    // fullscreened, which lands it on whatever monitor the OS chooses: normally
+    // the primary. The projector is unplugged, the operator presses Open, and a
+    // borderless undecorated fullscreen window covers the console they are running
+    // the service from. Nothing reported anything.
+    //
+    // These hold the decision, as a pure function, so the refusal can be tested
+    // without a window server.
+    use super::{channels, resolve_display, DisplayChoice};
+
+    fn mon(index: usize, primary: bool) -> channels::MonitorInfo {
+        channels::MonitorInfo {
+            index,
+            name: format!("Display {}", index + 1),
+            width: 1920,
+            height: 1080,
+            x: 0,
+            y: 0,
+            scale: 1.0,
+            primary,
+        }
+    }
+
+    #[test]
+    fn no_assigned_display_means_wherever_the_os_puts_it() {
+        // An explicit "no preference". The operator never chose a screen, so
+        // there is nothing to be stale and nothing to refuse.
+        assert_eq!(
+            resolve_display(None, &[mon(0, true)]),
+            DisplayChoice::Anywhere
+        );
+    }
+
+    #[test]
+    fn an_assigned_display_that_is_connected_is_used() {
+        assert_eq!(
+            resolve_display(Some("1"), &[mon(0, true), mon(1, false)]),
+            DisplayChoice::On(1)
+        );
+    }
+
+    #[test]
+    fn an_assigned_display_that_is_gone_is_refused_rather_than_guessed() {
+        // THE WHOLE POINT. Falling through to "wherever" here is what puts a
+        // fullscreen output over the operator's console when a dock is unplugged.
+        // Refusing is the answer the automatic path already gives; this makes the
+        // manual one agree with it, and say so.
+        // BOTH FORMS, and the base conversion is the subtlety. A bare `2` is the
+        // 0-BASED index `set_channel_display` writes, so the screen the operator
+        // is looking for is `Display 3`; `Display 3` is the 1-BASED human label
+        // the seed writes. Both name the same missing screen and both must report
+        // it by the number an operator would read off their own OS.
+        assert_eq!(
+            resolve_display(Some("2"), &[mon(0, true), mon(1, false)]),
+            DisplayChoice::Missing(3)
+        );
+        assert_eq!(
+            resolve_display(Some("Display 3"), &[mon(0, true), mon(1, false)]),
+            DisplayChoice::Missing(3)
+        );
+    }
+
+    #[test]
+    fn an_unreadable_target_is_no_preference_rather_than_a_missing_screen() {
+        // A value nothing in Relay writes — a hand-edited row, or a form from an
+        // older build. It is not a claim about a screen, so it must not produce a
+        // refusal that names one; it means the same as nothing.
+        assert_eq!(
+            resolve_display(Some("HDMI-A-1"), &[mon(0, true)]),
+            DisplayChoice::Anywhere
+        );
+    }
+
+    #[test]
+    fn a_display_list_that_could_not_be_read_at_all_does_not_refuse() {
+        // `list_monitors` returns an empty vector rather than erroring, so "no
+        // monitors" is ambiguous: a machine with none, or an enumeration that
+        // failed. Refusing on an empty list would turn a transient probe failure
+        // into an output that cannot be opened at all, mid-service, and the
+        // operator has no way to act on that sentence.
+        assert_eq!(resolve_display(Some("1"), &[]), DisplayChoice::Anywhere);
+    }
 }
 
 #[cfg(test)]
@@ -6368,5 +7747,105 @@ mod import_guard_tests {
         assert_eq!(std::fs::read(&path).expect("read back"), b"hello");
         assert_eq!(db::list_media(&conn).expect("list").len(), 1);
         let _ = std::fs::remove_file(&path);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RG-135 · THE TRANSLATION THE PREACHER NAMED
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod named_translation_gap_tests {
+    use super::*;
+
+    /// A fire carrying a translation, shaped the way `resolve_fire` leaves one.
+    fn fire_showing(translation: Option<&str>) -> pipeline::Fire {
+        pipeline::Fire {
+            key: "Hebrews 11:19".into(),
+            reference: detection::VerseRef {
+                book: "Hebrews".into(),
+                chapter: 11,
+                verse: 19,
+            },
+            verse_id: Some(1),
+            text: Some("By faith Abraham, when he was tried".into()),
+            translation: translation.map(|s| s.to_string()),
+            named_translation_missing: None,
+            confidence: 0.88,
+            method: detection::DetectionMethod::Direct,
+            status: pipeline::FireStatus::Auto,
+            stage_note: None,
+            next_reference: None,
+            next_text: None,
+            template_id: None,
+            template_json: None,
+            template_pinned: false,
+            matched_text: None,
+            trace_id: None,
+        }
+    }
+
+    #[test]
+    fn the_field_case_reports_the_translation_relay_does_not_have() {
+        // FIELD-2026-09-13 §2. A fresh install has one translation, so the wall
+        // showed KJV while the preacher read the Passion Translation aloud, and
+        // the fire wore the same badge as the seven correct ones around it.
+        let app = qa::bare_app();
+        let db = app.state::<Db>();
+        let conn = db.0.lock().expect("db");
+        let fire = fire_showing(Some("KJV"));
+        assert_eq!(
+            named_translation_gap(
+                &conn,
+                "it says here in the passion translation hebrews 11 verse 19",
+                &fire,
+            ),
+            Some("TPT".into()),
+        );
+    }
+
+    #[test]
+    fn it_says_nothing_when_the_wall_already_shows_what_was_named() {
+        // The preacher says "King James" over a KJV wall. There is nothing to
+        // report, and a caveat on a correct fire is how an operator learns to stop
+        // reading the line this exists for.
+        let app = qa::bare_app();
+        let db = app.state::<Db>();
+        let conn = db.0.lock().expect("db");
+        let fire = fire_showing(Some("KJV"));
+        assert_eq!(
+            named_translation_gap(&conn, "turn with me, king james, hebrews 11", &fire),
+            None,
+        );
+    }
+
+    #[test]
+    fn it_says_nothing_when_relay_actually_has_the_named_translation() {
+        // A church that HAS added a translation and is simply not using it for this
+        // fire is a different situation, and one an operator can see and change.
+        let app = qa::bare_app();
+        let db = app.state::<Db>();
+        let conn = db.0.lock().expect("db");
+        conn.execute(
+            "INSERT INTO translations (name, abbreviation, language) VALUES (?1, ?2, ?3)",
+            ("The Passion Translation", "TPT", "en"),
+        )
+        .expect("seed a second translation");
+        let fire = fire_showing(Some("KJV"));
+        assert_eq!(
+            named_translation_gap(&conn, "in the passion translation, hebrews 11", &fire),
+            None,
+        );
+    }
+
+    #[test]
+    fn an_ordinary_window_reports_nothing() {
+        let app = qa::bare_app();
+        let db = app.state::<Db>();
+        let conn = db.0.lock().expect("db");
+        let fire = fire_showing(Some("KJV"));
+        assert_eq!(
+            named_translation_gap(&conn, "turn with me to hebrews chapter eleven", &fire),
+            None,
+        );
     }
 }

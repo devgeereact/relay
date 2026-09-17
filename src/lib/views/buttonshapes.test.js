@@ -59,11 +59,54 @@ const FILES = [
   'src/lib/views/library/MediaLibrary.svelte',
   'src/lib/views/library/Scripture.svelte',
   'src/lib/views/library/VerseDeck.svelte',
-  'src/lib/views/templates/DeskStrip.svelte',
   'src/lib/views/templates/TemplateEditor.svelte',
   'src/lib/views/templates/TemplateGallery.svelte',
-  'src/lib/views/themes/ThemeEditor.svelte',
-  'src/lib/views/themes/ThemeGallery.svelte',
+  // ── WIDENED, and this is the half the header used to say was owed ─────────
+  //
+  // The list above is two workspaces. `workspacegrammar.test.js` holds the same
+  // two claims over three more (Planner, Outputs, Settings), which left the shell
+  // itself, the run surface, the four floating panels and the new shared kit
+  // outside BOTH files -- about a third of the tree, and the third containing the
+  // dock row and Live, which are the two surfaces an operator looks at during a
+  // service. A census that reports 181 hand-rolled buttons and then polices the
+  // two workspaces with the fewest of them is a scanner measuring where the light
+  // is.
+  //
+  // Every one of these was audited a button at a time, the same as the sixteen
+  // above. Where a shape was kept it was given a class and a comment saying what
+  // it is, which is claim (2); where one had lost its class it was named.
+  'src/App.svelte',
+  'src/lib/Dock.svelte',
+  'src/lib/LiveRail.svelte',
+  'src/lib/DetectionInspector.svelte',
+  'src/lib/TemplatePreviewOverlay.svelte',
+  'src/lib/ModelSetup.svelte',
+  'src/lib/views/Live.svelte',
+  'src/lib/views/Dashboard.svelte',
+  'src/lib/views/Help.svelte',
+  'src/lib/ui/Button.svelte',
+  'src/lib/ui/IconButton.svelte',
+  'src/lib/ui/MenuItem.svelte',
+  'src/lib/ui/ErrorState.svelte',
+];
+
+// NOT IN THE LIST, each for a stated reason rather than because it was awkward.
+//
+//   · `src/lib/FirstRun.svelte` and `src/lib/Splash.svelte` render BEFORE the
+//     shell and, like the boot ladder `workspacegrammar.test.js` excludes for the
+//     same reason, must look right with the stylesheet in an unknown state.
+//   · `src/Stage.svelte` and `src/Output.svelte` are congregation- and
+//     preacher-facing pages, not console chrome. Their controls are touch targets
+//     at 44px+ on a phone held at arm's length, which is a different ladder from
+//     the 26/22 one this file polices, and forcing them into it would be a
+//     redesign of the surface a preacher operates alone.
+//   · `src/lib/TemplateRender.svelte` renders template DATA and has no chrome.
+const DELIBERATELY_OUTSIDE = [
+  'src/lib/FirstRun.svelte',
+  'src/lib/Splash.svelte',
+  'src/Stage.svelte',
+  'src/Output.svelte',
+  'src/lib/TemplateRender.svelte',
 ];
 
 // Shared instruments, all defined in `src/app.css`. A button wearing one of
@@ -72,7 +115,13 @@ const SHARED = ['r-btn', 'r-iconbtn', 'r-cbtn'];
 // Shared CONTAINERS whose members are styled by the container, not by a class
 // of their own: `.r-seg` is app.css's segmented control and its buttons are
 // deliberately classless. `.rw-item` is WorkspaceFrame's rail row.
-const SHARED_GROUP = ['r-seg', 'rw-item'];
+// `.lr-seg` joined the list when the sweep widened. It is the Live rail's
+// collection switch and it is the same construct as `.r-seg`: the container
+// styles its members through `:global(button)`, deliberately, and its own comment
+// records that Svelte scopes a component's styles so `Live.svelte`'s `.seg` could
+// never have reached it. Its buttons are classless for the same reason `.r-seg`'s
+// are, which is the one case claim (2) exempts.
+const SHARED_GROUP = ['r-seg', 'rw-item', 'lr-seg'];
 
 const styleOf = (src) => {
   const i = src.lastIndexOf('<style>');
@@ -97,7 +146,15 @@ function buttons(src) {
   const spans = sharedGroupSpans(markup);
   return [...markup.matchAll(/<button\b[^>]*?>/gs)].map((m) => {
     const tag = m[0];
-    const cls = (tag.match(/class="([^"]*)"/) || [, ''])[1];
+    const cls = (tag.match(/class="([^"]*)"/) || [, ''])[1]
+      // A TEMPLATE EXPRESSION IS NOT A CLASS NAME. `class="r-btn {variant} {size
+      // === 'sm' ? 'sm' : ''} {klass}"` is how the shared `ui/Button.svelte`
+      // composes its class list, and splitting that on whitespace yields `{variant}`,
+      // `===`, `?`, `'sm'` and `:` as though each were a class somebody had
+      // written. Stripping the braces leaves the static half, which is the half
+      // this file judges — the same distinction the next line already makes about
+      // `class:on={…}`.
+      .replace(/\{[^}]*\}/g, ' ');
     return {
       tag: tag.replace(/\s+/g, ' ').slice(0, 110),
       // Only the STATIC half. `class:on={…}` is a state, never a shape.
@@ -168,6 +225,36 @@ describe('B2 · the scanner can still see what it scans for', () => {
     expect(buttons(read('src/lib/views/templates/TemplateEditor.svelte')).length).toBeGreaterThan(30);
     expect(styleOf(read('src/lib/views/library/VerseDeck.svelte')).length).toBeGreaterThan(1000);
   });
+
+  it('and the widened list really is wider, and really is read', () => {
+    // The widening is the claim, so it is asserted rather than left to the array
+    // above being believed. Three things, each of which would silently shrink the
+    // sweep back to what it was: the file list itself, every entry in it existing
+    // on disk, and every entry actually CONTAINING buttons for the sweep to judge.
+    // A path typo would make a file vanish from the census while the array went on
+    // looking exhaustive, which is `ipc.test.js`'s failure exactly.
+    expect(FILES.length).toBeGreaterThan(25);
+    // `Templates.svelte` is the one entry with no `<button>` of its own: it is a
+    // router shell that mounts the gallery and the editor. It was in the original
+    // sixteen and it stays, named, because a file with nothing to judge is not the
+    // same as a file that has quietly left the census.
+    const empty = FILES.filter((f) => buttons(read(f)).length === 0);
+    expect(empty).toEqual(['src/lib/views/Templates.svelte']);
+    expect(new Set(FILES).size, 'a file is listed twice').toBe(FILES.length);
+    // The shell and the run surface are the two that were outside BOTH this file
+    // and `workspacegrammar.test.js`, and they are the two an operator looks at
+    // during a service. Named, so dropping one out is a deliberate act.
+    for (const f of ['src/App.svelte', 'src/lib/Dock.svelte', 'src/lib/views/Live.svelte']) {
+      expect(FILES, `${f} left the census`).toContain(f);
+    }
+    // And what is outside is outside on purpose. Every exclusion is a real file
+    // with buttons in it, so the list cannot be quietly padded with names that
+    // mean nothing.
+    for (const f of DELIBERATELY_OUTSIDE) {
+      expect(FILES, `${f} is in both lists`).not.toContain(f);
+      expect(read(f).length, `${f} does not exist`).toBeGreaterThan(0);
+    }
+  });
 });
 
 describe('B2 · a button in a row of buttons uses the shared control', () => {
@@ -189,7 +276,18 @@ describe('B2 · a button in a row of buttons uses the shared control', () => {
     // than the ordinary 26px — the same height `Dock.svelte` gives Clear screens
     // and Blackout, for the same reason. It is exempt because somebody argued
     // for it here, which is the whole difference between an exception and drift.
-    const ALLOWED = new Map([['src/lib/views/library/LiveOutputRail.svelte', { 'lo-golive': ['height'] }]]);
+    const ALLOWED = new Map([
+      ['src/lib/views/library/LiveOutputRail.svelte', { 'lo-golive': ['height'] }],
+      // The Live rail's FIRE button, argued here rather than left to drift. It is
+      // the one control in that rail that puts scripture in front of a
+      // congregation, and it is a `.r-badge`-weight caption rather than a label:
+      // mono, uppercase, tracked, so it reads as a tally rather than as a Save.
+      // That is the SAME treatment `.r-badge` and `.r-stat` get in app.css, and
+      // changing it would be a restyle of the run surface rather than a
+      // consolidation. Height, radius, fill and edge are untouched, which is what
+      // the ladder actually protects.
+      ['src/lib/LiveRail.svelte', { 'lr-fire': ['font-family', 'font-size'] }],
+    ]);
     const offenders = [];
     for (const f of FILES) {
       const src = read(f);
@@ -240,32 +338,47 @@ describe('B2 · a button in a row of buttons uses the shared control', () => {
 
     const offenders = [];
     for (const f of FILES) {
-      for (const b of buttons(read(f))) {
+      const src = read(f);
+      // ...OR IN THE COMPONENT'S OWN STYLESHEET. `.xs` was the defect because it
+      // was declared in NO stylesheet in this repository, so three buttons
+      // rendered at the full height while the source read as a deliberate choice.
+      // An unprefixed companion that the file itself declares is a different
+      // thing: `Live.svelte`'s transport wears `.rk.wide`, and `.rk`, `.rk.wide`
+      // and `.rk:active` are all right there in its own `<style>`. Flagging that
+      // would be the scanner reporting a naming convention as a defect, and the
+      // only way to satisfy it would be to rename a working class. What is being
+      // caught is a variant name that DOES NOTHING, wherever it should have been
+      // declared.
+      const own = new Set();
+      for (const m of styleOf(src).replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/\.([a-zA-Z0-9_-]+)(?=[\s,{:.>+~[])/g)) {
+        own.add(m[1]);
+      }
+      for (const b of buttons(src)) {
         if (!b.classes.includes('r-btn')) continue;
         for (const c of b.classes) {
           // A variant is a bare lowercase word; a component's own class is
           // prefixed (`tg-del`, `lo-golive`) or is a shared utility.
-          if (c === 'r-btn' || c.includes('-') || known.has(c)) continue;
+          if (c === 'r-btn' || c.includes('-') || known.has(c) || own.has(c)) continue;
           offenders.push(`${f}: .r-btn.${c} is declared nowhere`);
         }
       }
     }
-    expect(offenders, 'use a variant app.css actually publishes').toEqual([]);
+    expect(offenders, 'use a variant app.css actually publishes, or declare it here').toEqual([]);
   });
 
   it('and Delete wears the one destructive variant, on every surface', () => {
     // THE DEFECT: four separate copies of `class="r-btn ghost sm X-del"` with a
-    // local rule painting the text rose — Templates' Delete, Themes' Delete,
-    // History's Erase service, and the template editor's own Delete, which was
-    // the ONE that used `.r-btn sm danger`. So the same word drew a ghost's
-    // `--v-500` hairline on three surfaces and a red one on the fourth, and in
-    // Templates the two were a single press apart.
+    // local rule painting the text rose — Templates' Delete, the Themes desk's
+    // Delete (that desk is gone; themes were folded into templates), History's
+    // Erase service, and the template editor's own Delete, which was the ONE
+    // that used `.r-btn sm danger`. So the same word drew a ghost's `--v-500`
+    // hairline on three surfaces and a red one on the fourth, and in Templates
+    // the two were a single press apart.
     //
     // B1's own assertion could not see this: it holds the app.css rule, and all
     // four of these were correct app.css rules being overridden in a component.
     for (const [f, sel] of [
       ['src/lib/views/templates/TemplateGallery.svelte', 'tg-del'],
-      ['src/lib/views/themes/ThemeGallery.svelte', 'th-del'],
       ['src/lib/views/library/History.svelte', 'lib-del'],
     ]) {
       const hit = buttons(read(f)).find((b) => b.classes.includes(sel));

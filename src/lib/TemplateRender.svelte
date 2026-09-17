@@ -74,14 +74,7 @@
 
   export let template = {};
   export let content = null; // { reference, text, translation }
-  // Optional theme (the style layer BENEATH the template — see themes.js). When
-  // present its whitelisted defaults fill the keys the template leaves unset;
-  // the template always WINS per key, so a themed render is byte-identical to a
-  // hand-styled one downstream. When ABSENT (the default) resolution is a no-op
-  // and this component behaves exactly as it did before themes existed — zero
-  // regression on every existing call site.
-  export let theme = null;
-  import { applyTheme, themeById, templateThemeRef, BUILTIN_THEMES } from './themes.js';
+  import { resolveTokens } from './styletokens.js';
   import { resolveStyle, slideBG, faceOf, fitScale, keepShrinking, FIT_STEP } from './templatemodel.js';
   import { transitionCss, transitionDuration, resolveTransition, isOverride, liveTransition } from './transitions.js';
   import { builtinById } from './templates.js';
@@ -89,6 +82,21 @@
   // preview, and editing a template must not blast video audio across the room —
   // so only a real output surface passes audio={true}.
   export let audio = false;
+  /**
+   * THE STAGE MESSAGE — supplied by the page, never by the content.
+   *
+   * It arrives on its own hub frame (`stage_alert`) and the page has already
+   * decided whether this screen may be shown one: only a channel whose role is
+   * `stage` accepts it. Passing it as a prop rather than putting it on
+   * `OutputContent` is what keeps it off every other screen — a field on the
+   * content would be broadcast to all of them, and the only thing between it and
+   * a lobby TV would be which layers that TV's template happens to have.
+   *
+   * Empty on the console previews and in the Templates editor, deliberately:
+   * neither is a stage screen, and a preview that painted a private message
+   * would put it on the one surface an operator shows people.
+   */
+  export let stageMessage = '';
   /**
    * How deep this render is inside a composite. 0 is the screen itself.
    *
@@ -98,18 +106,11 @@
    */
   export let depth = 0;
 
-  // The theme to apply. An EXPLICIT `theme` prop always wins (the Themes editor
-  // previewing an unsaved draft, or an output page that resolved a CUSTOM theme
-  // from the DB). Otherwise the template's own pinned theme (`style.themeRef`) is
-  // resolved against the BUILT-IN themes — which are bundled everywhere, so every
-  // surface (console previews, gallery cards, the wall) shows a builtin-themed
-  // template correctly with NO per-surface wiring. Custom themes carry no store
-  // here, so they resolve only where a caller injects them via the prop.
-  $: effectiveTheme = theme ?? themeById(templateThemeRef(template), BUILTIN_THEMES);
-  // Always run applyTheme: with a theme it merges style + resolves layer tokens;
-  // WITHOUT one it still resolves any layer theme-tokens to their literal
-  // fallbacks (a literal template hits applyTheme's fast path and is unchanged).
-  $: resolved = applyTheme(template, effectiveTheme);
+  // Resolve any layer style TOKENS (`theme:accent` and friends) against this
+  // template's own style, so a starter dropped onto a template wears that
+  // template's colours and typeface. A template with no tokenised layer hits the
+  // fast path and comes back unchanged.
+  $: resolved = resolveTokens(template);
   $: layout = resolved?.layout ?? {};
   // THE MODEL, not a bag of keys. `resolveStyle` migrates the legacy
   // whole-template properties onto their elements and fills every default in one
@@ -121,7 +122,7 @@
   // ── LAYER MODE ─────────────────────────────────────────────────────────────
   // When a template carries `layout.layers`, render the free-form layer stack;
   // otherwise fall back to the legacy region rendering below (so the built-in
-  // presets and themes are untouched). Layers are drawn back-to-front.
+  // presets are untouched). Layers are drawn back-to-front.
   $: layered = isLayered(template);
   $: layers = layered ? layout.layers : [];
 
@@ -137,6 +138,32 @@
   // Media with no placement layer → it fills the frame (drawn on top).
   $: showFullMedia = !!content?.media_url && allowMedia && !hasMediaLayer;
 
+  // ── THE STANDING BACKGROUND ────────────────────────────────────────────────
+  //
+  // A SECOND PAYLOAD, not a field on the content, and the difference is lifetime.
+  // `content.media_url` is the fired picture: it IS the slide, and the next verse
+  // replaces it. `backdrop` is what the church put up behind everything at the top
+  // of the service, and a verse painted over it must leave it exactly where it is.
+  // Until this prop existed the two were the same field, so scripture over a
+  // church's own background could not be expressed at all.
+  //
+  // `{ media_url, media_kind }` or null. Null is the answer a cleared wall gives,
+  // and the panic controls are what produce it — see `Output.svelte`, which drops
+  // this on `clear` and `black` at both doors.
+  export let backdrop = null;
+  // OPT-IN BY TEMPLATE DESIGN, WHICH IS THE WHOLE OF THE OPT-IN. There is no
+  // setting and no flag: a template with no `backdrop` layer renders byte for byte
+  // what it rendered before this prop existed, because `backdropUp` is false and
+  // every expression below collapses to its old form. A stored preference nothing
+  // reads is the defect the 2026-09-10 pass closed seven Settings controls of.
+  $: hasBackdropLayer = layered && layers.some((L) => L.type === 'backdrop' && L.visible !== false);
+  $: backdropUp = !!backdrop?.media_url && hasBackdropLayer;
+  // DELIBERATELY NOT GATED ON `allowMedia`. That answers "does this SCREEN show
+  // fired media" — a lower third keeping a camera clean while a picture fills the
+  // main wall — and a backdrop is not fired media. Having the layer at all is the
+  // consent, per screen, which is the same answer `templateShows` gives by a
+  // longer route and one authority instead of two.
+
   // ── Countdown policy ─────────────────────────────────────────────────────────
   // Same idea as media: a fired countdown shows its MM:SS BY DEFAULT — the wall
   // needs no timer layer. A layered template's scripture text layers can't render
@@ -146,9 +173,28 @@
   // exists it renders the MM:SS itself and this default steps aside.
   $: hasTimerLayer = layered && layers.some((L) => L.visible !== false && (L.type === 'timer' || L.bind === 'countdown'));
   $: showDefaultCountdown = layered && content?.countdown_to != null && !hasTimerLayer;
+  // ── THE TEMPLATE'S OWN DEFAULTS, WHICH ARE NOT THE APP'S ──────────────────
+  // This component renders BOTH the console's preview and the congregation's
+  // wall, so every fallback it reaches for is a fallback a church sees. Two of
+  // them used to be operator-console tokens: `var(--f-serif)` for an unset face
+  // and `var(--v-amber)` for an unset accent. Both are declared in `app.css`,
+  // which is the app's chrome — `--f-display` has already been re-aliased once,
+  // from Space Grotesk to Inter, silently changing the typeface of every template
+  // naming it, and `--v-amber` is the console's ON AIR colour, which rule 18
+  // reserves for a meaning a wall does not carry.
+  //
+  // A default here belongs to the TEMPLATE. Fraunces is the family `--f-serif`
+  // resolves to today, so nothing on a wall moves; white is the neutral accent —
+  // it is what the High Visibility and Worship Lyrics templates already ask for,
+  // and it is none of the three colours rule 18 has spoken for (amber = ON AIR,
+  // cyan = a guess, amethyst = rehearsal). Wave 5, Track E.
+  const DEFAULT_FAMILY = "'Fraunces', Georgia, serif";
+  const DEFAULT_ACCENT = '#ffffff';
+  // A legacy row may still hold `var(--f-serif)`; it is passed through unchanged,
+  // because the token block is still shared with output.html and stage.html.
   const fontFamOf = (f) => {
-    const v = f || 'var(--f-serif)';
-    return v.startsWith('var(') ? v : `${v}, system-ui, sans-serif`;
+    if (!f) return DEFAULT_FAMILY;
+    return f.startsWith('var(') ? f : `${f}, system-ui, sans-serif`;
   };
   const shadowOf = (k) => {
     const n = Math.max(0, Math.min(1, Number(k) || 0));
@@ -208,6 +254,9 @@
     else if (L.bind === 'clock') v = clockText;
     else if (L.bind === 'elapsed') v = elapsedText;
     else if (L.bind === 'remaining') v = remainingText;
+    // From the PAGE, not from the content — see the prop above and
+    // `layers.js::boundValue`, which returns nothing for this bind on purpose.
+    else if (L.bind === 'stage_message') v = stageMessage || '';
     else v = boundValue(L, content);
     return lineTransform(v, L.lineTransform);
   }
@@ -351,6 +400,62 @@
     }
     return scale;
   }
+  /**
+   * THE CRAWL HAS A BUDGET, AND THE LABEL SPENDS IT FIRST.
+   *
+   * A ticker is a band: a fixed label on the left, then the body scrolling
+   * through whatever room is left. Neither element is `.content`, so the region
+   * fitter never saw either — the loop found zero boxes and reported a scale of
+   * 1, which is the "fit loop with no notion of failure" of rule 37 with the
+   * loop removed entirely.
+   *
+   * THE BUDGET IS A CSS FACT. `.ticker-label`'s own `max-width: 45%` and
+   * `overflow: hidden` are the one source for the label's share of the band
+   * (see the stylesheet) — `label.clientWidth` is therefore already the real,
+   * constrained box a browser paints, so it is what gets measured, not a
+   * second JS computation (`band.clientWidth * 0.45`) that could drift from
+   * the rule that actually clips.
+   *
+   * THE BASE IS THE TEMPLATE'S DECLARED SIZE, READ FRESH EVERY PASS — never
+   * the DOM's last write. `refSize` is cqw, 1% of `stageEl`'s inline size
+   * (`container-type: size` — the same fact `fitOne`'s own comment relies on
+   * for the box share above), so converting it to the px this loop measures
+   * in is `refSize / 100 * stageEl.clientWidth`. An earlier version of this
+   * function read `getComputedStyle(label).fontSize` instead, which reads
+   * back fitTicker's OWN previous px write on any later pass: `fitSig()`
+   * folds the stage's rounded w×h into every region-mode signature, so an
+   * ordinary window RESIZE with no content change — the label is not
+   * rebuilt; `{#key slideKey}` keys on content, not geometry — still calls
+   * `fitText` → `fitTicker` again for the very same `<span>`. A label shrunk
+   * once during a narrow moment stayed shrunk for the rest of that
+   * announcement even after the window widened back out, because what it
+   * thought was "the declared size" was actually its own last answer.
+   * Recomputing from `refSize` every pass is what lets a widened band grow
+   * the label back — the same ceiling `fitOne` holds via its prop-derived
+   * `vBase`, reached a different way: this loop always starts its search AT
+   * that ceiling rather than seeding a guess and growing up to it.
+   *
+   * The label is what is worth measuring: it is `nowrap`, so it never wraps,
+   * it simply takes the width its cap allows. The body is deliberately NOT
+   * shrunk: it scrolls, so its length is time, not overflow.
+   */
+  function fitTicker() {
+    if (!stageEl) return 1;
+    const band = stageEl.querySelector('.ticker');
+    const label = stageEl.querySelector('.ticker-label');
+    if (!band || !label) return 1;
+    const budget = label.clientWidth || 0;
+    if (budget <= 0) return 1;
+    const base = (refSize / 100) * stageEl.clientWidth;
+    if (!base) return 1;
+    let scale = 1;
+    label.style.fontSize = `${base}px`;
+    while (keepShrinking({ overflowing: label.scrollWidth > budget, scale })) {
+      scale *= FIT_STEP;
+      label.style.fontSize = `${base * scale}px`;
+    }
+    return scale;
+  }
   function fitText() {
     if (!stageEl) return;
     // During a crossfade the outgoing and incoming slides coexist — fit both so
@@ -361,6 +466,9 @@
     stageEl.querySelectorAll('.slide .content').forEach((box) => {
       worst = Math.min(worst, fitOne(box, stageEl));
     });
+    // Ticker mode renders instead of `.content`, so the query above finds
+    // nothing at all. Its own pass is the only measurement this mode gets.
+    worst = Math.min(worst, fitTicker());
     // The WORST of the slides on screen. It is HANDED ON rather than reported
     // here: how far this had to shrink is only half the verdict, and the other
     // half — whether it actually fits — cannot be read until a later frame. One
@@ -581,7 +689,7 @@
     return [
       ...(layered
         ? stageEl.querySelectorAll('.ltext')
-        : stageEl.querySelectorAll('.slide .content')),
+        : stageEl.querySelectorAll('.slide .content, .slide .ticker-label')),
     ];
   }
   function overflowing() {
@@ -819,7 +927,7 @@
   // "text colour"); otherwise the old behaviour — the accent, or the verse colour
   // on a band where the accent is the band fill.
   $: refColor =
-    style.refColor || (layout.lowerThird ? style.verseColor || '#1c1224' : style.accent || 'var(--v-amber)');
+    style.refColor || (layout.lowerThird ? style.verseColor || '#1c1224' : style.accent || DEFAULT_ACCENT);
 
   // ── Type styling, all template-configurable (editor "Design" controls) ─────
   // Every property below is PER REGION: the verse and the reference each carry
@@ -834,8 +942,8 @@
   // A family with a fallback: a CSS var carries its own; a bare name gets a
   // generic appended so an uninstalled font degrades to the computer default.
   const fontFam = (f) => {
-    const v = f || 'var(--f-serif)';
-    return v.startsWith('var(') ? v : `${v}, system-ui, sans-serif`;
+    if (!f) return DEFAULT_FAMILY;
+    return f.startsWith('var(') ? f : `${f}, system-ui, sans-serif`;
   };
 
   $: bgOpacity = clamp01(style.bgOpacity);
@@ -1005,13 +1113,14 @@
   // computer's default rather than something arbitrary. A CSS var already carries
   // its own generic; a bare family name ("Didot") does not, so append one.
   $: fontFamily = (() => {
-    const f = style.verseFont || 'var(--f-serif)';
-    if (f.startsWith('var(')) return f; // the var supplies its own fallback
+    const f = style.verseFont;
+    if (!f) return DEFAULT_FAMILY;
+    if (f.startsWith('var(')) return f; // a legacy token supplies its own fallback
     return `${f}, system-ui, sans-serif`;
   })();
 
   // THE SLIDE TRANSITION (docs/REBRAND.md §8). A CUT unless the template or its
-  // theme asks for something else, because that is what an operator asked for
+  // style asks for something else, because that is what an operator asked for
   // ("quick as light, remove every animation") and what a wall should do when
   // nobody has said otherwise.
   //
@@ -1029,10 +1138,9 @@
   // so the console preview and the wall cannot disagree about it.
   //
   // The override is read from the store by DEFAULT, which is what gives every
-  // console surface the picker with no per-surface wiring — the same arrangement
-  // themes use. `Output.svelte` passes the prop explicitly instead, because a
-  // congregation screen must apply an override only when CONTENT arrives: see the
-  // snapshot comment there.
+  // console surface the picker with no per-surface wiring. `Output.svelte` passes
+  // the prop explicitly instead, because a congregation screen must apply an
+  // override only when CONTENT arrives: see the snapshot comment there.
   export let transitionOverride = undefined;
   $: activeOverride = transitionOverride === undefined ? $liveTransition : transitionOverride;
   $: resolvedTransition = resolveTransition(style, activeOverride);
@@ -1098,7 +1206,15 @@
   // colour is an inline style, and an inline style beats a stylesheet rule, so a
   // `.warn` class alone would have changed nothing on the wall.
   const CD_WARN = '#f4515b';
-  $: countdownWarn = remainingMs != null && countdownWarning(remainingMs, countdownTotalMs(content));
+  // THE THIRD ARGUMENT IS A THRESHOLD SOMEBODY CHOSE FOR THIS COUNTDOWN, and it
+  // rides on the content (`countdown_warn_ms`, projected from the timer registry in
+  // `timers::project_both`). It was added to the rule in wave 3 and passed by none
+  // of the three readers, so a figure anybody chose changed nothing anywhere
+  // (RG-149(a)). The RANKING is still the rule's own and is not restated here:
+  // chosen, else the configured default, else the tenth-of-span rule.
+  $: countdownWarn =
+    remainingMs != null &&
+    countdownWarning(remainingMs, countdownTotalMs(content), content?.countdown_warn_ms);
 
   // Re-key on the actual content so a new slide crossfades but identical content
   // (a re-broadcast of the same verse) does not re-animate. Countdown ticks are
@@ -1114,6 +1230,23 @@
   // new `template` frame to every screen, and keying on it would make every such
   // edit re-animate a verse that is already up on the wall.
   $: overrideKey = isOverride(activeOverride) ? `${activeOverride.mode}|${activeOverride.ms ?? ''}` : '';
+  //
+  // ── SITE 10 OF THE CONTENT-KIND SWEEP. NOTHING CHANGED HERE, AND WHY ────────
+  //
+  // A kind that varies in none of the five keyed fields does not re-key, so it
+  // gets no transition and no refit — it paints into the box the last slide was
+  // measured for. The timer registry adds no such kind. A congregation timer keys
+  // on `countdownTo`, which is `countdown_to`, and the registry moves that field
+  // on every action that changes what the clock says: a start, a re-aim, a hold
+  // and a release all re-stamp `target_ms`. So putting a timer back after a
+  // reading re-keys on both `reference` and `countdownTo`, and a ±1 re-keys on
+  // `countdownTo` alone. A programme timer never reaches this component at all.
+  //
+  // `countdown_paused_ms` is deliberately NOT keyed, and that is a decision rather
+  // than an omission: holding a countdown changes whether the digits move, not
+  // which slide is up, and re-keying there would re-animate the one slide an
+  // operator deliberately froze. Same reasoning as `now` being excluded below — a
+  // ticking layer must not re-animate.
   $: slideKey = `${content?.reference ?? ''}|${content?.text ?? ''}|${content?.media_url ?? ''}|${countdownTo ?? ''}|${overrideKey}`;
 
   // A wall clock for clock-bound layers — ticks once a second only when needed.
@@ -1170,6 +1303,12 @@
     void clockText;
     void elapsedText;
     void remainingText;
+    // …and the Stage Message, which arrives on its own frame and moves on
+    // no clock at all. Without this line the message paints when something else
+    // happens to change — and, worse, does not go when it is CLEARED: the exact
+    // freeze this block's comment describes, on the one screen a person is
+    // reading mid-sermon. Caught by `stagemessage.test.js`, not by reasoning.
+    void stageMessage;
     // A BAND DECIDES WHERE ITS WORDS GO; it does not draw them (docs/REBRAND.md
     // §4, `bandLayout`). Members are emitted into this same list with a derived
     // box, so every text layer on a wall — inside a band or not — goes through
@@ -1191,6 +1330,20 @@
     }
     return out;
   })();
+
+  // WHAT ACTUALLY DRAWS — the whole stack, or the backdrop alone.
+  //
+  // With content on screen this IS `layerViews`, the same array by identity, so
+  // the keyed `{#each}` below sees no change at all and a template with no
+  // backdrop layer renders byte for byte what it rendered before this existed.
+  //
+  // With no content and a backdrop up, everything else is filtered OUT, and that
+  // is not tidiness. The `{#if}` above states the rule this file has always kept:
+  // a cleared wall shows NOTHING, because a band left over a live camera or a
+  // shape left standing with no words in it is furniture on a congregation's
+  // screen. A backdrop earns its place there because a church puts one up
+  // deliberately and minutes before the first fire; an empty band does not.
+  $: stackLayers = content ? layerViews : layerViews.filter(({ L }) => L.type === 'backdrop');
 
   // Per-text-layer auto-fit. Each layer's text is sized to BEST FIT its own box —
   // it scales DOWN when there is a lot of text and UP when there is little, and it
@@ -1262,7 +1415,7 @@
     // ten-thousandth short. Asking the ceiling directly is the same answer
     // (fractionally the better one — it is the true supremum of the bracket) for
     // one flush instead of the whole ladder, and a short label in a wide box —
-    // a reference line, a stage note, a name band — is the common case.
+    // a reference line, a Stage Note, a name band — is the common case.
     for (const j of jobs) write(j, j.hi);
     for (const j of jobs) {
       if (fits(j)) {
@@ -1311,15 +1464,33 @@
   // gated to prop-change + resize so countdown/clock ticks don't force reflow.
 </script>
 
-<div class="stage" bind:this={stageEl} style="--accent:{style.accent || 'var(--v-amber)'};">
+<div class="stage" bind:this={stageEl} style="--accent:{style.accent || DEFAULT_ACCENT};">
   <!-- NOTHING renders without content. "Clear all screens" (content → null) must
        remove EVERYTHING — the background, the lower-third band, every layer — not
        just the text. A background left painted after a clear, or a band left over
        a live camera after a blackout, is furniture on the congregation's wall (or
        the stream) with nothing to say. This persists across a content→content
        CROSSFADE (content stays non-null throughout); it only leaves on a real
-       clear, or a blackout of a keyed channel. -->
-  {#if content}
+       clear, or a blackout of a keyed channel.
+
+       THE STANDING BACKGROUND IS THE ONE EXCEPTION, AND IT DOES NOT WEAKEN THE
+       RULE — it restates it. A backdrop that only painted while something was
+       fired would be a background you could not put up: a church sets one at the
+       top of a service and the words arrive minutes later. So `backdropUp` opens
+       this block too. What is NOT relaxed is the clear: `Output.svelte` drops
+       `backdrop` on `output://clear` and `output://black` at BOTH doors, and the
+       hub empties its retained slot at the same instant, so both halves of this
+       condition go to nothing together and a cleared screen is as empty as it
+       ever was. Pinned from the Rust side by
+       `channels::tests::a_panic_control_takes_the_retained_background_with_it`
+       and from here by `backdrop.test.js`.
+
+       WITH NO CONTENT, ONLY THE BACKDROP DRAWS. `stackLayers` filters the rest
+       out, and that is the half of this that would otherwise be a new bug of the
+       exact kind the paragraph above is about: rendering the whole stack over a
+       cleared wall would paint an empty band and an empty shape — furniture on a
+       congregation's screen with nothing to say. -->
+  {#if content || backdropUp}
   {#if layered}
     <!-- ══ LAYER MODE ══ free-form stack, drawn back-to-front. Media shows ONLY
          where a template includes a MEDIA layer (below), at that layer's z-order —
@@ -1328,7 +1499,7 @@
          full-screen template with a media layer on top lets the picture fill it. -->
     <!-- ── THE SLIDE TRANSITION, ON THIS PATH TOO ─────────────────────────────
          `{#key slideKey}` + `in:slideIn` lived in the REGION branch only, so every
-         layered template cut regardless of what its style, its theme or the
+         layered template cut regardless of what its style or the
          operator's live override said — and layered is what everything new is.
          Same key, same `slideIn`, and the same already-resolved `transitionMode` /
          `transitionMs` pair the region branch reads — so the ranking of override
@@ -1341,10 +1512,13 @@
          key and animates only `.slide` — the words and the band they sit in. This
          is that same division:
 
-           · `background` and `media` are FURNITURE and stay out. A wrapper around
-             the whole `{#each}` would rebuild them on every fire, and rebuilding a
-             `media` layer tears down its <video> and restarts the loop, mid-fire,
-             on a congregation screen.
+           · `background`, `media` and `backdrop` are FURNITURE and stay out. A
+             wrapper around the whole `{#each}` would rebuild them on every fire,
+             and rebuilding a `media` layer tears down its <video> and restarts the
+             loop, mid-fire, on a congregation screen. `backdrop` is the strongest
+             case of the three: it is meant to be the ONE thing on the wall that a
+             fire does not touch, so a re-key on it would refetch the church's
+             picture and flash it behind every verse of the service.
            · `region` stays out because it does not need help: the composite is a
              nested `<svelte:self>` with the same content and its own style, so it
              resolves and runs its own transition. Keying it here would remount a
@@ -1363,16 +1537,46 @@
          anywhere in this file — `transitionoverride.test.js` asserts exactly that —
          so a clear and a blackout are instant at every duration the picker offers
          (rule 15, DECISIONS §20). An intro cannot delay a removal. -->
-    {#each layerViews as { L, text, box } (L.id)}
+    {#each stackLayers as { L, text, box } (L.id)}
       {#if L.visible !== false}
         {#if L.type === 'background'}
           <div class="lbg" style="{boxStyle(L)} background:{bgPaint(L)}; opacity:{L.opacity == null ? 1 : L.opacity};"></div>
           {#if L.dim > 0}<div class="lbg ldim" style="{boxStyle(L)} opacity:{L.dim};"></div>{/if}
+        {:else if L.type === 'backdrop'}
+          <!-- THE STANDING BACKGROUND. The same elements a `media` layer paints
+               with, deliberately, so a picture looks identical whichever of the two
+               put it there — one set of CSS, one `object-fit` rule, one <video>
+               configuration. What differs is the SOURCE and therefore the lifetime:
+               this reads `backdrop`, which no content can touch, so it survives
+               every fire until the operator or a panic control takes it away.
+
+               At its own z-order, like every other layer: it is not pinned to the
+               bottom, because every built-in ships an opaque `background` fill and
+               a backdrop underneath one would never be seen. -->
+          {#if backdrop?.media_url}
+            <div class="lmediabox" style="{boxStyle(L)} border-radius:{L.radius || 0}cqw; opacity:{L.opacity == null ? 1 : L.opacity};">
+              {#if backdrop.media_kind === 'video'}
+                <!-- MUTED ALWAYS, unlike a fired video. A backdrop runs for the
+                     whole service under everything else; sound from it would play
+                     under the sermon, and `routeAudio` exists to give the ONE
+                     fired video the house speakers. -->
+                <!-- svelte-ignore a11y-media-has-caption -->
+                <video class="lmediafill" src={backdrop.media_url} style="object-fit:{L.fit === 'contain' ? 'contain' : 'cover'};" autoplay loop muted playsinline></video>
+              {:else}
+                <img class="lmediafill" src={backdrop.media_url} style="object-fit:{L.fit === 'contain' ? 'contain' : 'cover'};" alt="" />
+              {/if}
+            </div>
+            <!-- A WASH OVER THE PICTURE, and only over the picture: it is emitted
+                 here, at this layer's box and this layer's place in the stack, so
+                 everything drawn ABOVE the backdrop is unaffected. Same shape as
+                 the `background` layer's dim above. -->
+            {#if L.dim > 0}<div class="lbg ldim" style="{boxStyle(L)} opacity:{L.dim};"></div>{/if}
+          {/if}
         {:else if L.type === 'media'}
           <!-- Paints only when a picture/video is on screen and this screen shows
                media; empty otherwise, so the layer is invisible on a text-only
                cue (or when the screen opts out of media). -->
-          {#if content.media_url && allowMedia}
+          {#if content?.media_url && allowMedia}
             <div class="lmediabox" style="{boxStyle(L)} border-radius:{L.radius || 0}cqw; opacity:{L.opacity == null ? 1 : L.opacity};">
               {#if content.media_kind === 'video'}
                 <!-- svelte-ignore a11y-media-has-caption -->
@@ -1411,7 +1615,6 @@
               <svelte:self
                 template={builtinById(L.templateRef)}
                 {content}
-                {theme}
                 depth={depth + 1}
               />
             </div>
@@ -1485,10 +1688,30 @@
            the template to place it instead. -->
       <div class="cd-default">
         {#if content.reference && !countdownDone}
-          <div class="reference" style="font-size:{refSize}cqw; {refStyle}">{content.reference}</div>
+          <div class="ltext cd-line cd-ref" style="align-items:center;">
+            <!-- `.reference` is kept alongside `.lfit` (not dropped): it is what
+                 carries font-weight:600 on this label, and `.lfit`'s own CSS does
+                 not restate it. -->
+            <div class="lfit reference" data-base={refSize} data-fit="shrink" style="font-size:{refSize}cqw; {refStyle} text-align:center;">{content.reference}</div>
+          </div>
         {/if}
-        <div class="verse countdown" class:warn={countdownWarn} style="font-size:{verseSize * 2}cqw; margin-top:{refGap}cqw; color:{countdownWarn ? CD_WARN : verseColor}; text-align:center; text-shadow:{verseShadowCss};">
-          {countdownDone ? (content.countdown_done || '0:00') : countdownText}
+        <div class="ltext cd-line cd-digits" style="align-items:center;">
+          <!-- THE SIZE IS DECLARED AND THE BOX IS MEASURABLE. `data-base` is the
+               designed size in cqw, so a countdown that has not been fitted yet
+               paints at the size the template asked for rather than at the app's
+               UI type (the same reasoning as the layer text path above). `shrink`
+               caps growth at that size: a countdown must never grow to fill a
+               box, because the digits change width every second and a growing
+               clock jitters. -->
+          <!-- `.countdown` is kept alongside `.lfit` (not dropped): it is what
+               carries tabular-nums, weight, tight leading and single-line
+               `white-space: nowrap` for the ticking digits, and what
+               `.countdown.warn` needs below to paint the last-minute red pulse.
+               None of that is restated inline. -->
+          <div class="lfit countdown" data-base={verseSize * 2} data-fit="shrink" class:warn={countdownWarn}
+            style="font-size:{verseSize * 2}cqw; margin-top:{refGap}cqw; color:{countdownWarn ? CD_WARN : verseColor}; text-align:center; text-shadow:{verseShadowCss};">
+            {countdownDone ? (content.countdown_done || '0:00') : countdownText}
+          </div>
         </div>
       </div>
     {/if}
@@ -1657,6 +1880,31 @@
     text-align: center;
     padding: 6% 7%;
     box-sizing: border-box;
+    /* IT CLIPS. This set no `overflow` at all, so a countdown too big for its
+       box did not slice — it painted straight over the template's own layers and
+       off the edge of the screen. Clipping is what makes the fitter's verdict
+       honest: `overflowing()` reads `scrollHeight > clientHeight`, which an
+       unclipped box never reports. */
+    overflow: hidden;
+  }
+  /* The two fit boxes inside it are flex children, not absolutely-positioned
+     layers, so they override `.ltext`'s `position: absolute`. `min-height: 0`
+     is what lets a flex child actually be shorter than its content — without it
+     the box reports that everything fits, at any size. */
+  .cd-default .cd-line {
+    position: relative;
+    display: flex;
+    width: 100%;
+    min-height: 0;
+    overflow: hidden;
+    justify-content: center;
+  }
+  .cd-default .cd-digits {
+    flex: 1 1 auto;
+  }
+  .cd-default .cd-ref {
+    flex: 0 0 auto;
+    max-height: 25%;
   }
   /* A scrolling text layer runs on one line inside its (clipped) box. */
   .lfit.lscroll {
@@ -1729,7 +1977,17 @@
   .content.panel {
     padding: 3.5cqw 4.5cqw;
     max-width: 82%;
-    overflow: visible;
+    /* IT CLIPS, LIKE `.content` DOES. This was `overflow: visible`, which took
+       away the clip the unpanelled box has — and with it the only signal
+       `overflowing()` reads. The panel is the mode an operator picks for a
+       bright background, which is where legibility is already hardest, so it
+       was the worst box in the component to have left unmeasured. The padding
+       still gives the plate room; what it no longer does is let the words leave
+       the plate. Kept explicit rather than relying on `.content`'s own
+       `overflow: hidden` falling through: belt-and-braces against this exact
+       rule regressing to `visible` again, right next to the history explaining
+       why that would be wrong. */
+    overflow: hidden;
   }
   .slide.lower-third .content {
     max-width: 100%;
@@ -1781,7 +2039,18 @@
     overflow: hidden;
   }
   .ticker-label {
+    /* THE SHARE LIVES HERE, ONLY HERE. A `flex: 0 0 auto; white-space: nowrap`
+       item sizes its own box to its content and clips nothing on its own —
+       only the parent `.ticker`'s `overflow: hidden` did, which clips the
+       whole band, not the label. Without a cap of its own, `clientWidth`
+       always equals `scrollWidth` and `fitTicker`'s shrink loop is measuring
+       a box that can never report itself as overflowing. `max-width: 45%`
+       (against the flex container, i.e. the band) makes the budget a fact a
+       real browser enforces; `fitTicker` reads `clientWidth` off THIS rule
+       rather than recomputing the share in JS, so the two cannot drift apart. */
     flex: 0 0 auto;
+    max-width: 45%;
+    overflow: hidden;
     font-weight: 700;
     white-space: nowrap;
   }

@@ -77,17 +77,63 @@ export function onAudioOutputChange(fn) {
  * The stream is stopped immediately: this only trips the permission, it never
  * holds the mic. That matters because the real capture path is cpal in Rust —
  * leaving a webview stream open would mean two things owning the microphone.
+ *
+ * ── WHY THIS RETURNS AN OBJECT AND NOT A BOOLEAN ────────────────────────────
+ *
+ * It used to return `false` for every unhappy path, so the one caller — Settings'
+ * *Detect speakers* — re-rendered pixel for pixel in three different situations:
+ * the operator declined the prompt, the machine has no input device to ask about,
+ * and the permission was granted and this computer genuinely has one speaker. The
+ * facts were here and were thrown away one line before the caller needed them:
+ * `getUserMedia` rejects with a DOMException whose `name` already says which.
+ *
+ * Alternatives considered and rejected. A string enum (`'denied'` / `'granted'`)
+ * reads well but every value is TRUTHY, so a caller writing the obvious
+ * `if (await ensureDeviceAccess())` would treat a refusal as a success — silently,
+ * which is the failure this function is being repaired for. THROWING on refusal
+ * makes the commonest, most expected outcome an exception, and an outcome the UI
+ * is designed to render is not exceptional. So: a plain object, `ok` for the one
+ * boolean anybody needs and `reason` for the word the caller renders. The object
+ * is truthy too, but nothing about it invites being read as a yes/no.
+ *
+ * @returns {Promise<{ ok: boolean, reason: 'granted'|'denied'|'no-input'|'unsupported'|'failed' }>}
  */
 export async function ensureDeviceAccess() {
-  if (!navigator?.mediaDevices?.getUserMedia) return false;
+  if (!navigator?.mediaDevices?.getUserMedia) {
+    return { ok: false, reason: 'unsupported' };
+  }
   let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    return true;
-  } catch {
-    return false; // operator declined, or no input exists
+    return { ok: true, reason: 'granted' };
+  } catch (e) {
+    return { ok: false, reason: accessReason(e) };
   } finally {
     stream?.getTracks?.().forEach((t) => t.stop());
+  }
+}
+
+/**
+ * Which failure was it? Read from `DOMException.name`, the one thing about a
+ * getUserMedia rejection that is specified rather than browser prose.
+ *
+ * `'failed'` is deliberately its own answer and not folded into `'denied'`: an
+ * unrecognised name is a situation nobody has looked at, and telling an operator
+ * to go and un-refuse a permission they never refused sends them to a checkbox
+ * that is already ticked.
+ */
+function accessReason(e) {
+  switch (e?.name) {
+    case 'NotAllowedError':
+    case 'PermissionDeniedError': // older spelling, still emitted by some webviews
+    case 'SecurityError':
+      return 'denied';
+    case 'NotFoundError':
+    case 'DevicesNotFoundError':
+    case 'OverconstrainedError':
+      return 'no-input';
+    default:
+      return 'failed';
   }
 }
 

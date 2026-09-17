@@ -76,11 +76,13 @@ pub(crate) fn bare_app() -> tauri::App<tauri::test::MockRuntime> {
         // What the congregation can actually see. `/api/live` reads it, so a test
         // that drives the remote needs it managed or the remote answers "clear".
         .manage(channels::WallState::default())
-        // The countdown in front of the operator, for the transport that re-aims or
-        // HOLDS it. Managed by the real app at startup for the same reason the two
-        // below are: without it `adjust_countdown` would answer "nothing is counting
-        // down" on a fixture where one demonstrably is.
-        .manage(channels::CountdownState::default())
+        // What the operator is looking at, and the timers that outlive it. Both are
+        // managed by the real app at startup for the same reason the two below are:
+        // without them `adjust_countdown` would answer "nothing is counting down" on
+        // a fixture where one demonstrably is, and every timer command would panic
+        // rather than fail a test with a readable message.
+        .manage(channels::LiveContent::default())
+        .manage(crate::timers::TimerRegistry::default())
         .manage(Session::default())
         // Whether the screens are answering, and whether a recorded service is
         // being protected. Both are managed by the real app at startup, so a
@@ -88,6 +90,11 @@ pub(crate) fn bare_app() -> tauri::App<tauri::test::MockRuntime> {
         // church could ever be in, and a command that reads either would panic
         // rather than fail a test with a readable message.
         .manage(channels::OutputHealth::default())
+        // AND WHICH SCREENS THE OPERATOR HAS TAKEN OUT OF THE WALL. Same argument
+        // as the two above and the same shape of failure: a fresh install manages
+        // it, so a fixture without it is an app in a state no church could be in,
+        // and `clear_screen` would refuse on a machine where it must work.
+        .manage(channels::ScreensDown::default())
         .manage(servicelock::ServiceLock::default())
         .manage(Semantic(SemanticIndex::build(&corpus)))
         .manage(Context(Mutex::new(ContextMemory::default())))
@@ -214,15 +221,25 @@ mod tests {
             db::verse_count(&conn).unwrap() > 31_000,
             "a fresh install ships the full KJV"
         );
-        assert!(
-            !db::list_templates(&conn).unwrap().is_empty(),
-            "a fresh install ships the built-in templates"
-        );
+        // THE SHELF, BY IDENTITY RATHER THAN BY NOT BEING EMPTY. The forty are
+        // eight roles of five, and a fresh install that lost a whole role would
+        // still have passed a non-emptiness check — which is what this line was.
+        let templates = db::list_templates(&conn).unwrap();
+        assert_eq!(templates.len(), 40, "a fresh install ships the shelf");
+        for t in &templates {
+            assert!(
+                t.layout["layers"].is_array(),
+                "{}: a fresh install is seeding a region-model row again (RG-140, RG-141)",
+                t.name
+            );
+        }
 
         // Song is the ONE content-look a fresh install ships with a default, and it
-        // is deliberate: every other built-in is scripture-shaped, so a lyric
-        // rendered through one put the song title where the words should be
-        // (`templates.rs::seed_templates`, which writes `tpl_song`).
+        // is deliberate: it is the one role whose words have no reference at all, so
+        // a lyric rendered through a scripture look put the song title where the
+        // words should be. `templates.rs::ensure_lyrics_template` chooses the row
+        // and writes `tpl_song`; it used to CREATE a region-model row, and the seed
+        // it named here no longer does either.
         assert!(
             db::content_template_id(&conn, "song").unwrap().is_some(),
             "the lyrics content-look is seeded on purpose and has gone missing"
@@ -240,37 +257,118 @@ mod tests {
             );
         }
 
-        // AND IT HAS NO CONTENT IN IT.
+        // AND THE CONTENT IN IT IS THE STARTER SET, EXACTLY.
         //
-        // Added when the demo dataset was built, because this test DID NOT CATCH
-        // IT. Wiring `db::demo::load` into `init_fresh` — the exact failure this
-        // tripwire exists to prevent, a fresh install arriving with a service plan,
-        // three songs, three notices and five saved verses already in it — was
-        // watched to leave this test green. Everything above asserts what a first
-        // launch CONTAINS; nothing asserted what it must not, so a seed that only
-        // added rows was invisible. That is now closed from both ends: this, and
-        // `db::demo::a_fresh_install_carries_no_demo_content`.
+        // This block used to assert ZERO for all five tables. That was the right
+        // assertion while `init_fresh` was forbidden to seed content, and it
+        // caught the failure it was written for: wiring `db::demo::load` into
+        // `init_fresh` was watched to leave the earlier version of this test
+        // green, because everything above asserts what a first launch CONTAINS
+        // and nothing asserted what it must not.
         //
-        // The ledger is the right probe rather than a row count per table: it is
-        // the one fact that means "something seeded content it intends to own", and
-        // it stays true if the dataset grows a table this list has never heard of.
+        // DECISIONS §90 reverses that rule, and this test keeps its name and its
+        // job by changing what it asserts rather than by being softened. The
+        // value here was never the zero; it was that a seed which drifts fails
+        // loudly. So the starter set is written out BY IDENTITY — these titles,
+        // this many pictures, this plan with this shape — and the literals below
+        // are the frozen copy. A seed that adds a sixth notice, renames one,
+        // drops the countdown's words or grows a song list turns this red, which
+        // is the whole point of it. It is NOT weakened to a range, and it must
+        // never be.
+        //
+        // The demo ledger is asserted separately and still says "nothing". It is
+        // the one fact that means "something seeded content it intends to own and
+        // be able to take back", and starter content deliberately is not that.
         assert!(
             !db::demo::is_loaded(&conn).unwrap(),
             "a fresh install has no demo content — something taught Relay to seed itself"
         );
+
+        // The tables the starter set does not touch. Songs and saved verses are
+        // still zero: a church's songs are its own, and a saved verse is a thing
+        // an operator chose to keep.
         for (what, sql) in [
-            ("a service plan", "SELECT COUNT(*) FROM service_plans"),
             ("a song", "SELECT COUNT(*) FROM songs"),
-            ("an announcement", "SELECT COUNT(*) FROM announcements"),
             ("a saved verse", "SELECT COUNT(*) FROM saved_scripture"),
-            ("a media asset", "SELECT COUNT(*) FROM media_assets"),
         ] {
             let n: i64 = conn.query_row(sql, [], |r| r.get(0)).unwrap();
             assert_eq!(
                 n, 0,
-                "a fresh install ships with no content of its own, and this one has {what}"
+                "the starter set does not write these, and this install has {what}"
             );
         }
+
+        // Five announcements, by title. The operator's title and the room's
+        // words are separate fields (REBRAND §10) and both are asserted, because
+        // a starter notice with an empty body is a slide with a heading and
+        // nothing under it.
+        let notices = db::list_announcements(&conn).unwrap();
+        let mut titles: Vec<&str> = notices.iter().map(|a| a.title.as_str()).collect();
+        titles.sort_unstable();
+        assert_eq!(
+            titles,
+            vec![
+                "After the service",
+                "Children's groups",
+                "Giving",
+                "Prayer meeting",
+                "Welcome",
+            ],
+            "the starter announcements drifted"
+        );
+        for a in &notices {
+            assert!(
+                !a.body.trim().is_empty(),
+                "{}: a starter notice with no words for the room",
+                a.title
+            );
+        }
+
+        // One row per picture Relay ships, each pointing into the bundle rather
+        // than at a file on disk. The count is read from the bundle rather than
+        // written down here on purpose: the identity being asserted is "every
+        // bundled picture, and nothing else", and a literal would go stale the
+        // first time somebody curated the folder while this test stayed green
+        // over a library missing one.
+        let pictures = db::list_media(&conn).unwrap();
+        let bundled = channels::bundled_backgrounds();
+        assert!(
+            !bundled.is_empty(),
+            "the bundle holds no pictures — was `npm run build` run before this \
+             crate was compiled? (RG-127)"
+        );
+        assert_eq!(
+            pictures.len(),
+            bundled.len(),
+            "a picture in the bundle with no library row, or a row with no picture"
+        );
+        for m in &pictures {
+            assert!(
+                m.path.starts_with(db::BUNDLED_PREFIX),
+                "{}: a fresh install has a media row that is not a bundled picture",
+                m.filename
+            );
+        }
+
+        // ONE example plan, with the countdown that carries its own words. That
+        // cue is the reason the plan is here at all: it is the first thing that
+        // exercises the Planner fields wave 5 gave a countdown, and a plan whose
+        // countdown lost them would still have passed a count.
+        let plans = db::list_plans(&conn).unwrap();
+        assert_eq!(plans.len(), 1, "one starter plan and no more");
+        assert_eq!(plans[0].title, "Sunday Morning (example)");
+        let items = db::plan_items(&conn, plans[0].id).unwrap();
+        let kinds: Vec<&str> = items.iter().map(|i| i.cue_type.as_str()).collect();
+        assert_eq!(kinds, vec!["countdown", "announce", "scripture"]);
+        let countdown: serde_json::Value = serde_json::from_str(&items[0].payload_json).unwrap();
+        assert_eq!(countdown["minutes"], 10);
+        assert_eq!(countdown["label"], "Service begins in");
+        assert_eq!(countdown["done"], "Welcome");
+        assert_eq!(items[0].duration_sec, 600);
+        assert!(
+            items[0].template_id.is_some(),
+            "the countdown cue lost the Timer look that can draw its words"
+        );
     }
 
     /// The stage-monitor door exists and is watchable. Guards the harness itself:
@@ -855,10 +953,16 @@ mod cold_start {
 
         // FIRST LAUNCH — exactly what `db::open()` does for a file that is absent.
         let plan;
+        // What the first launch ships on its own (DECISIONS §90), so what the
+        // operator then builds is counted on top of it rather than instead of it.
+        let starter_plans;
+        let starter_notices;
         {
             let conn = Connection::open(&path).unwrap();
             conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
             db::migrate(&conn, true).expect("first launch");
+            starter_plans = db::list_plans(&conn).unwrap().len();
+            starter_notices = db::list_announcements(&conn).unwrap().len();
             plan = db::create_plan(&conn, "Sunday Morning", "2026-08-16").unwrap();
             db::add_plan_item(&conn, plan, "scripture", "John 3:16", "{}", None).unwrap();
             db::save_announcement(&conn, None, "Midweek", "Wed 7pm", "2026-08-16").unwrap();
@@ -873,9 +977,12 @@ mod cold_start {
             conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
             db::migrate(&conn, false).expect("reopen must not fail");
 
-            assert_eq!(db::list_plans(&conn).unwrap().len(), 1);
+            assert_eq!(db::list_plans(&conn).unwrap().len(), starter_plans + 1);
             assert_eq!(db::plan_items(&conn, plan).unwrap()[0].label, "John 3:16");
-            assert_eq!(db::list_announcements(&conn).unwrap().len(), 1);
+            assert_eq!(
+                db::list_announcements(&conn).unwrap().len(),
+                starter_notices + 1
+            );
             assert!(db::active_voice_profile(&conn).unwrap().is_some());
             assert_eq!(
                 db::get_setting(&conn, "active_translation")
@@ -905,7 +1012,7 @@ mod cold_start {
             db::migrate(&conn, false).expect("third launch");
             assert_eq!(count(&conn, "output_channels"), 4);
             assert_eq!(count(&conn, "translations"), 1);
-            assert_eq!(db::list_plans(&conn).unwrap().len(), 1);
+            assert_eq!(db::list_plans(&conn).unwrap().len(), starter_plans + 1);
         }
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -943,11 +1050,19 @@ mod cold_start {
         ];
 
         let mut ids = Vec::new();
+        // The plan this test writes, and what a first launch already holds. Both
+        // used to be implicit — the plan was read back as id 1 and the cues were
+        // counted over the whole table — which was exact while a fresh install
+        // had no plan of its own. DECISIONS §90 gives it one, and id 1 is now
+        // that one.
+        let plan;
+        let starter_cues;
         {
             let conn = Connection::open(&path).unwrap();
             conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
             db::migrate(&conn, true).unwrap();
-            let plan = db::create_plan(&conn, "Ìsìn Ọjọ́ Àìkú", "2026-08-16").unwrap();
+            starter_cues = count(&conn, "plan_items") as usize;
+            plan = db::create_plan(&conn, "Ìsìn Ọjọ́ Àìkú", "2026-08-16").unwrap();
             for (name, text) in &cases {
                 let id = db::add_plan_item(&conn, plan, "announce", text, "{}", None)
                     .unwrap_or_else(|e| panic!("{name} could not be written: {e}"));
@@ -968,7 +1083,7 @@ mod cold_start {
             let conn = Connection::open(&path).unwrap();
             conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
             db::migrate(&conn, false).unwrap();
-            let items = db::plan_items(&conn, 1).unwrap();
+            let items = db::plan_items(&conn, plan).unwrap();
             for (name, text, id) in &ids {
                 let got = items
                     .iter()
@@ -979,7 +1094,10 @@ mod cold_start {
                     "{name}: came back different after closing and reopening the file"
                 );
             }
-            assert_eq!(count(&conn, "plan_items") as usize, cases.len());
+            assert_eq!(
+                count(&conn, "plan_items") as usize,
+                cases.len() + starter_cues
+            );
             let a = &db::list_announcements(&conn).unwrap()[0];
             assert_eq!(a.title, "Ẹ̀bùn 🙏🏾");
             assert!(a.body.contains('"'));
@@ -1166,8 +1284,13 @@ mod cold_start {
                 .collect()
         };
         for id in ids {
-            delete_channel(h.state::<Db>(), h.state::<servicelock::ServiceLock>(), id)
-                .expect("deleting a screen is allowed");
+            delete_channel(
+                h.clone(),
+                h.state::<Db>(),
+                h.state::<servicelock::ServiceLock>(),
+                id,
+            )
+            .expect("deleting a screen is allowed");
         }
         {
             let conn = db.0.lock().unwrap();
@@ -1284,9 +1407,15 @@ mod cold_start {
         let h = app.handle().clone();
         let db = h.state::<Db>();
 
-        let media_id = {
+        let (media_id, shipped) = {
             let conn = db.0.lock().unwrap();
-            db::insert_media(&conn, "image", "backdrop.png", "2026-08-16").unwrap()
+            // The pictures a fresh install ships are already in this table
+            // (DECISIONS §90); this test is about the one it imports.
+            let shipped = count(&conn, "media_assets");
+            (
+                db::insert_media(&conn, "image", "backdrop.png", "2026-08-16").unwrap(),
+                shipped,
+            )
         };
         let plan = create_plan(h.state::<Db>(), "Sunday".into(), "2026-08-16".into()).unwrap();
         add_plan_item(
@@ -1311,7 +1440,7 @@ mod cold_start {
         {
             let conn = db.0.lock().unwrap();
             db::delete_media(&conn, media_id).unwrap();
-            assert_eq!(count(&conn, "media_assets"), 0);
+            assert_eq!(count(&conn, "media_assets"), shipped);
             let items = db::plan_items(&conn, plan).unwrap();
             assert_eq!(
                 items.len(),
@@ -1358,8 +1487,11 @@ mod cold_start {
         let conn = db.0.lock().unwrap();
 
         // The state the old code left: a row whose file never landed.
+        // Counted against the pictures a fresh install already ships
+        // (DECISIONS §90); what this test is about is the one row it adds.
+        let shipped = db::list_media(&conn).unwrap().len();
         let id = db::insert_media(&conn, "image", "backdrop.png", "2026-08-16").unwrap();
-        assert_eq!(db::list_media(&conn).unwrap().len(), 1);
+        assert_eq!(db::list_media(&conn).unwrap().len(), shipped + 1);
 
         // The write fails the way a full disk fails. The row must not survive it.
         let nowhere = std::path::Path::new("/relay-no-such-directory-7c1b/media");
@@ -1369,8 +1501,9 @@ mod cold_start {
             !matches!(err, crate::error::Error::Refused { .. }),
             "a disk that said no is a fault, not a refusal the operator can fix"
         );
-        assert!(
-            db::list_media(&conn).unwrap().is_empty(),
+        assert_eq!(
+            db::list_media(&conn).unwrap().len(),
+            shipped,
             "the Media library must not list an asset whose file never landed —              there is still no `path == \"\"` filter anywhere, and the media server              still ignores `path` entirely, so a row that survives here is a blank              output on Sunday with no message"
         );
 
@@ -1637,26 +1770,36 @@ mod cold_start {
             31_102,
             "the FTS mirror is built"
         );
-        // Five built-ins + the ready-to-use presets. The exact total is asserted
-        // in `db::mod::seeds_the_builtin_templates` against the code's own count;
-        // here it is the NAMES that matter, because the seed audit's claim is
-        // "these five looks are shipped", not "some number of rows exist".
+        // THE SHELF. The exact total is asserted in
+        // `db::mod::seeds_the_builtin_templates` against the code's own count; here
+        // it is the ROLES that matter, because the seed audit's claim is "a church
+        // finds a look for every kind of content it fires", not "some number of
+        // rows exist".
         let names: Vec<String> = db::list_templates(&conn)
             .unwrap()
             .into_iter()
             .map(|t| t.name)
             .collect();
-        assert!(names.len() >= 5, "the built-in templates are missing");
-        // 31 at the time of the cold-start audit: 4 original built-ins +
-        // "Worship Lyrics" + 26 presets (9 solid looks, 5 lyric/lower-third/stage
-        // variants, and 3 themed families of 4). 39 since REBRAND wave 4 added
-        // the eight-look SHELF — the prototype's lower thirds, its two SuperSource
-        // composites, its stage look, its media frame, High Visibility and Notice
-        // Board (`data/shelf_templates.json`). The figure is prose, not an
-        // assertion, for the reason stated above; the real count is asserted in
-        // `db::mod::seeds_the_builtin_templates` against the code's own total.
-        for want in ["Classic Serif", "Worship Lyrics"] {
-            assert!(names.iter().any(|n| n == want), "the seed lost {want:?}");
+        // 31 at the time of the cold-start audit, 39 after REBRAND wave 4 added the
+        // shelf, 40 since wave 5 rebuilt the shelf whole: eight roles of five, every
+        // one layer-model, replacing the five region-model built-ins and the
+        // twenty-five family rows. The figure is prose, not an assertion, for the
+        // reason stated above.
+        for role in [
+            "Scripture · ",
+            "Song · ",
+            "Media · ",
+            "Announce · ",
+            "Timer · ",
+            "Scroll · ",
+            "Source · ",
+            "Stage · ",
+        ] {
+            assert_eq!(
+                names.iter().filter(|n| n.starts_with(role)).count(),
+                5,
+                "the seed does not ship five {role:?} looks"
+            );
         }
         assert_eq!(count(&conn, "output_channels"), 4);
         assert_eq!(count(&conn, "voice_profiles"), 1);
@@ -1678,16 +1821,21 @@ mod cold_start {
              Anything else here is a preference nobody chose."
         );
 
-        // Everything else is empty. This is the list a cold-start audit walks.
+        // WHAT A FRESH INSTALL CONTAINS, AND WHAT IT STILL DOES NOT.
+        //
+        // This was one list of twelve tables asserted at zero. DECISIONS §90
+        // gives a first launch a starter set, so three of the twelve now carry
+        // rows and the list is split rather than shortened: the starter set is
+        // asserted by identity in
+        // `the_bare_fixture_is_a_first_launch_and_nothing_more`, and everything
+        // else is still held at zero here. The service-record tables in
+        // particular are not negotiable — a fresh install has no history of a
+        // service that never happened.
         for table in [
-            "service_plans",
-            "plan_items",
             "songs",
             "song_sections",
             "song_arrangements",
             "saved_scripture",
-            "announcements",
-            "media_assets",
             "services",
             "transcripts",
             "detections",
@@ -1699,6 +1847,15 @@ mod cold_start {
                 "{table} is not empty on a fresh install"
             );
         }
+        // The starter set, counted here only so this audit's own walk is
+        // complete; its identity is the tripwire's job, not this test's.
+        assert_eq!(count(&conn, "service_plans"), 1);
+        assert_eq!(count(&conn, "plan_items"), 3);
+        assert_eq!(count(&conn, "announcements"), 5);
+        assert_eq!(
+            count(&conn, "media_assets") as usize,
+            channels::bundled_backgrounds().len()
+        );
     }
 
     /// The seeded voice profile's thresholds must BE the one baseline, not a
@@ -1719,6 +1876,106 @@ mod cold_start {
         assert_eq!(p.sensitivity, 50);
         assert!((p.auto_fire - baseline.auto_fire as f64).abs() < 1e-6);
         assert!((p.suggest - baseline.suggest as f64).abs() < 1e-6);
+    }
+
+    /// ONE CONVENIENCE, AND IT IS THE FRESH-INSTALL CASE RATHER THAN A SHORTCUT.
+    ///
+    /// `bare_app` does not manage `Stt` because the harness has no whisper in it.
+    /// `Stt(Mutex::new(None))` is precisely what `build_stt` returns on a machine
+    /// where no model has been downloaded yet — which is every church, on the day
+    /// the installer runs. The two tests below are about what happens BEFORE the
+    /// first download, so that is the honest state to put the fixture in.
+    fn app_with_no_speech_model() -> tauri::App<tauri::test::MockRuntime> {
+        let app = bare_app();
+        app.handle().manage(Stt(Mutex::new(None)));
+        app
+    }
+
+    /// THE RECOGNITION LANGUAGE AN OPERATOR PICKS SURVIVES THE LAUNCH THEY PICKED
+    /// IT IN (RG-138).
+    ///
+    /// `set_stt_language` used to take no `Db` at all: it set a field on the live
+    /// engine and nothing else, and `stt_status` read that field back, so the
+    /// choice looked sticky for the rest of the run and was gone at the next
+    /// launch. RG-116 names this control as the mitigation for a real field
+    /// failure, so the register named a fix that did not survive a relaunch.
+    ///
+    /// The assertion is on the DATABASE rather than on the engine on purpose:
+    /// `main.rs`'s setup hook applies `db::active_voice_profile` to whisper before the first
+    /// word, so the profile row IS what the next launch will recognise in.
+    #[test]
+    fn the_recognition_language_is_written_to_the_active_voice_profile() {
+        let app = app_with_no_speech_model();
+        let h = app.handle().clone();
+
+        // A fresh install: the seeded `Default` is active and set to auto-detect.
+        let db = h.state::<Db>();
+        {
+            let conn = db.0.lock().unwrap();
+            let p = db::active_voice_profile(&conn).unwrap().unwrap();
+            assert_eq!(p.name, "Default");
+            assert!(p.language.is_none());
+        }
+
+        let saved = set_stt_language(h.state::<Stt>(), h.state::<Db>(), Some("en".into()))
+            .expect("a fresh install must be able to pin the recognition language");
+        assert_eq!(saved.language.as_deref(), Some("en"));
+        assert_eq!(
+            saved.name, "Default",
+            "the control writes to whichever profile is ACTIVE, and on a fresh \
+             install that is the seeded one"
+        );
+
+        {
+            let conn = db.0.lock().unwrap();
+            assert_eq!(
+                db::active_voice_profile(&conn)
+                    .unwrap()
+                    .unwrap()
+                    .language
+                    .as_deref(),
+                Some("en"),
+                "the language is not on the profile, so the next launch will \
+                 recognise in whatever whisper elects — which is the defect this \
+                 test exists for"
+            );
+        }
+
+        // Auto-detect is a choice too, and it has to be able to come back.
+        set_stt_language(h.state::<Stt>(), h.state::<Db>(), None).unwrap();
+        let conn = db.0.lock().unwrap();
+        assert!(db::active_voice_profile(&conn)
+            .unwrap()
+            .unwrap()
+            .language
+            .is_none());
+    }
+
+    /// NO ENGINE IS NOT "NO LANGUAGE" (rule 35).
+    ///
+    /// Before a model is downloaded there is no engine to ask, and the recognition
+    /// language is still a real stored fact. Reporting `None` here would print
+    /// "Auto-detect" on the Settings select over a profile that says English — a
+    /// status line that reads the same when the setting is missing as when it is
+    /// set.
+    #[test]
+    fn the_stored_language_is_reported_when_no_speech_model_is_loaded() {
+        let app = app_with_no_speech_model();
+        let h = app.handle().clone();
+
+        let fresh = stt_status(h.state::<Stt>(), h.state::<Db>()).unwrap();
+        assert!(!fresh.loaded);
+        assert_eq!(fresh.language, None, "a fresh install is on auto-detect");
+
+        set_stt_language(h.state::<Stt>(), h.state::<Db>(), Some("yo".into())).unwrap();
+        let after = stt_status(h.state::<Stt>(), h.state::<Db>()).unwrap();
+        assert!(!after.loaded, "still no model — nothing downloaded one");
+        assert_eq!(
+            after.language.as_deref(),
+            Some("yo"),
+            "the pin is stored and will be applied the moment an engine exists, so \
+             the control must not read back as Auto-detect"
+        );
     }
 }
 

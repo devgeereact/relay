@@ -31,6 +31,7 @@
   // saving it is the repair. See DECISIONS §55.
 
   import { humanError } from '../../errors.js';
+  import ListState from '../../ui/ListState.svelte';
   import { listArrangements, saveArrangement, deleteArrangement } from '../../stores/capture.js';
 
   /** The open song — `{ id, title, sections: [{ tag, label, lyrics }] }`. */
@@ -40,6 +41,23 @@
 
   let list = [];
   let loading = false;
+  /**
+   * A FAILED LOAD IS ITS OWN FACT, kept apart from `error` below.
+   *
+   * `error` is this panel's message line and it carries three different things:
+   * a validation refusal from `save`, a Service Lock refusal from `remove`, and
+   * — until this pass — a failed `listArrangements` as well. Merging the third
+   * with the first two is what produced the defect: on a failed load, `list` is
+   * still `[]`, so the panel rendered "No arrangements yet. Every song plays in
+   * its own order until you build one" AND, below it, the error. An operator who
+   * built three arrangements on Tuesday is told first that they have none. The
+   * louder, more misleading sentence is the one that renders first and largest.
+   *
+   * It is the RAW error rather than a humanised string, because `ErrorState` runs
+   * it through `errors.js` itself and also asks `isRetryable` whether pressing
+   * Try again could help — a question a string cannot answer.
+   */
+  let loadError = null;
   let error = '';
 
   // The one being edited: `{ id | null, name, sequence }`. null = the list.
@@ -62,10 +80,11 @@
     }
     loading = true;
     error = '';
+    loadError = null;
     try {
       list = (await listArrangements(song.id)) ?? [];
     } catch (e) {
-      error = humanError(e);
+      loadError = e;
     }
     loading = false;
   }
@@ -157,9 +176,10 @@
   <p class="r-lbl ar-head">Arrangements</p>
 
   {#if !song}
+    <!-- Not empty, not loading, not an error: nobody has chosen a song. That is a
+         fourth fact and it stays a plain line, because `ListState` is about the
+         three that get confused with each other. -->
     <p class="ar-empty">Open a song to build a running order for it.</p>
-  {:else if loading}
-    <p class="ar-empty">Loading…</p>
   {:else if draft}
     <!-- ── BUILDING ONE ────────────────────────────────────────────────── -->
     <label class="r-lbl" for="ar-name">Name</label>
@@ -231,13 +251,19 @@
     </div>
   {:else}
     <!-- ── THE LIST ────────────────────────────────────────────────────── -->
-    {#if !list.length}
-      <p class="ar-empty">
-        No arrangements yet. Every song plays in its own order until you build one —
-        that order is called “Standard” and is never stored.
-      </p>
-    {/if}
-
+    <!-- Empty, loading and error are three different facts and this panel rendered
+         all four of its situations through one `.ar-empty` paragraph. `ListState`
+         fixes the precedence in one place: an error outranks loading and loading
+         outranks empty, so a failed load can no longer be reported as an absence.
+         `New arrangement` stays OUTSIDE it, because the way out of an empty list
+         and the way out of a failed one are the same button. -->
+    <ListState
+      {loading}
+      error={loadError}
+      items={list}
+      what="arrangements"
+      onRetry={load}
+      empty={'No arrangements yet. Every song plays in its own order until you build one — that order is called “Standard” and is never stored.'}>
     {#each list as a (a.id)}
       <div class="ar-row" class:stale={a.stale}>
         <div class="ar-rowmain">
@@ -261,9 +287,11 @@
         </button>
       </div>
     {/each}
+    </ListState>
 
     <div class="ar-acts">
-      <button class="r-btn primary sm" disabled={!sections().length} on:click={startNew}>
+      <button class="r-btn primary sm" disabled={!sections().length} on:click={startNew}
+        title={sections().length ? undefined : 'Add some lyrics first — an arrangement orders sections.'}>
         New arrangement
       </button>
       {#if !sections().length}

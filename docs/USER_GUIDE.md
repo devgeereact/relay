@@ -100,7 +100,8 @@ Both actions are held back while a service is recording, like every other deleti
 
 **Two things worth doing once, before your first Sunday:**
 
-- **Practise the drills.** The **Help** tab has six of them, and they use the real controls on the
+- **Practise the drills.** The **Help** screen has six of them — reach it from **Settings →
+  Shortcuts → Open Help & Shortcuts**, or press `?` anywhere — and they use the real controls on the
   real surface, in rehearsal. The panic controls come first — before anything about firing
   verses — because the key you need under pressure is the one you should not be reading about at
   the time. It is not a simulated service: Relay cannot produce a sermon, and practising against
@@ -155,15 +156,15 @@ Live software fails live. These are the things that actually happen.
 |---|---|---|
 | **The bar doesn't move when someone speaks** | Relay cannot hear. Nothing else will work. | Settings → Audio. Try a different input. Check the cable and that the desk is sending. |
 | **The transcript is nonsense** | Usually the mic is too quiet, not the AI being bad. | Get a stronger feed. Relay adapts to a quiet room, but it cannot invent a signal that is not there. |
-| **"Relay keeps changing its mind about the language"** | On a strong accent, leaving the language on **Auto** makes Relay re-guess every few seconds — and a wrong guess garbles the transcript, which is where most wrong verses come from. | **Settings → Scripture & Languages → Recognition language.** Pick the language instead of Auto. This is the single biggest accuracy win for an accented preacher. |
+| **"Relay keeps changing its mind about the language"** | On a strong accent, leaving the language on **Auto** makes Relay re-guess every few seconds — and a wrong guess garbles the transcript, which is where most wrong verses come from. | **Settings → Scripture & Languages → Recognition language.** Pick the language instead of Auto. This is the single biggest accuracy win for an accented preacher. **It is remembered** (since 0.2.0-3): the choice is written to the active voice profile and applied before the first word of every service after it, including after a speech-model change. It is the same setting as the Language field on **Settings → AI & Detection → Voice profiles** — one preacher, one language, one place it is stored — so changing it on either tab changes it on both. You can set it before any speech model has downloaded. |
 | **A suggestion says "Not in your Bible"** | Relay parsed a real-looking reference out of garbled speech — "Psalms 23:99" — and that verse does not exist. It is telling you it misheard a **number**. | Nothing to do about that one; its Approve button is deliberately dead. If it keeps happening, the microphone is the cause, not the AI — see the two rows above. |
-| **Wrong verses keep appearing on the wall** | Relay heard a book name and a number in ordinary speech — *"Matthew, one of the twelve"*, *"number one… number two…"*. | Turn the **sensitivity dial down** on Live. If it is still noisy, press the **Armed** chip to disarm auto-fire — everything else keeps working and you fire by hand. And fix the language above first, because that is usually the real cause. |
+| **Wrong verses keep appearing on the wall** | Relay heard a book name and a number in ordinary speech — *"Matthew, one of the twelve"*, *"number one… number two…"*. | Turn the **sensitivity dial down** on Live. If it is still noisy, press the **armed** chip beside the dial (it reads `armed` / `off`) to turn detection off altogether and fire by hand. Be clear about what that costs: it stops Relay matching anything against scripture, so the suggestion feed goes quiet with it — it is not an auto-fire switch that leaves the rest running. And fix the language above first, because that is usually the real cause. |
 | **"No speech model loaded"** | Step 2 above never happened. | Settings → Network & Integrations → Download. Manual override still works meanwhile. |
 | **Nothing appears on the projector** | The output window is not open, or it is on the wrong display. | Outputs → Screens → pick the display → **Open**. |
-| **OBS / the kiosk screen is blank** | The browser source is pointed at the wrong address. | Use the **Copy URL** button in Outputs → Screens — it is the only thing that fills in the right numbers. The address looks like `http://<this-computer>:8032/output.html?channel=1&template_id=1`. **Not 5032**, and do not drop the `channel=` part: without it the screen still shows verses, and then quietly ignores you every time you change its template. |
+| **OBS / the kiosk screen is blank** | The browser source is pointed at the wrong address. | Use the **Copy URL** button in Outputs → Screens — it is the only thing that fills in the right numbers. The address looks like `http://<this-computer>:8032/output.html?channel=1&template_id=1`. **Not 5032**, and do not drop the `channel=` part: without it the screen still shows verses, and then quietly ignores you every time you change its template. The same address and rule are in [OUTPUT_ROUTING.md](OUTPUT_ROUTING.md) §3, which also covers projectors and switchers; change one and change the other. |
 | **"The screens may still be live"** (red bar) | A clear or blackout **failed**. Relay is telling you rather than pretending. | **Look at the actual screen.** Clear it from the output window if you have to. |
 | **`→` says it did nothing** | End of the passage, or nothing is on screen yet. Relay says which. | Fire a verse first, or step back. |
-| **Relay crashed mid-service** | The console crashed. **The output screens are separate — the congregation still sees the verse.** | Press **Recover**. It puts you back where you were. |
+| **Relay crashed mid-service** | The console crashed. **The output screens are separate — the congregation still sees the verse.** | Press **Recover console**. It puts you back where you were. (**Dismiss and keep working** leaves the console as it is.) |
 
 ### The panic keys
 
@@ -177,19 +178,24 @@ Live software fails live. These are the things that actually happen.
 
 You will not need these during a service.
 
-- **Library** — your songs, saved verses, media, announcements, and the history of past services.
+- **Library** — your songs, saved verses, media and announcements. **Past services are not here any more**; they moved to Settings → History & Backup, and a laptop left on the old tab is redirected there.
 - **Planner** — build a service plan. Cannot reach a screen.
+- **Templates** — what scripture *looks like* on the wall: fonts, colours, spacing, motion, and where everything sits. **A template carries the whole look** — there is no second layer beneath it to set up first, and nothing else has to be applied for a template to be finished. What you see in the editor is exactly what the projector shows. **Import** a design someone shared, or **Export** one of yours to a file (⋮ menu / the preview panel) to hand to another church.
 - **Outputs** — three panes: **Screens** (one row per output screen — the projector, a stage monitor, OBS, the preacher's phone), **Content looks** (which template scripture, lyrics, media and announcements wear by default), and **Sharing** (the LAN address and the preacher's stage remote). Set up once.
-- **Templates** — what scripture *looks like* on the wall. What you see in the editor is exactly what the projector shows. **Import** a design someone shared, or **Export** one of yours to a file (⋮ menu / the preview panel) to hand to another church.
-- **Themes** — the *look beneath* your templates: fonts, colours, spacing, motion. Pick a theme (eight are built in), tweak a copy in the theme editor, then apply it to a template — the template inherits the theme and you override only what you want. Themes export and import as files too. A theme never reaches a screen on its own; it dresses a template, and the template is what fires.
-- **Settings** — audio, speech model, sensitivity, console language, and eight more sections. The
-  four worth knowing about: **Dashboard** (is this machine ready, and the path check above),
-  **Languages** (how much of Yorùbá, Kiswahili and Hausa Relay actually knows — including the
-  columns that are honestly empty), **Privacy** (what is on this machine and what can leave it),
-  and **Diagnostics** (the live numbers, and a **one-file export** you can attach to an email
-  when something goes wrong — it contains nothing about your church, by construction).
-- **Help** — the same guide, inside the app, where you can read it without the internet, plus the
-  six practice drills and an honest account of **what the AI is bad at**.
+- **Settings** — audio, speech model, sensitivity, **Application language** (the language the
+  console itself is written in), and seven more sections. Eleven in all. The three worth knowing
+  about: **Scripture & Languages** (how much of Yorùbá, Kiswahili and Hausa Relay actually knows
+  — including the columns that are honestly empty — and the **Recognition language** setting the
+  troubleshooting table above sends you to), **Privacy & Advanced** (what is on this machine and
+  what can leave it), and **Diagnostics** (is this machine ready, the path check above, the live
+  numbers, and a **one-file export** you can attach to an email when something goes wrong — it
+  contains nothing about your church, by construction). **History & Backup** is where past
+  services now live.
+
+**And one screen that is not a tab.** **Help** is the same guide, inside the app, where you can
+read it without the internet, plus the six practice drills and an honest account of **what the AI
+is bad at**. It is not on the strip — six workspaces is the whole of the top row — so open it
+from **Settings → Shortcuts → Open Help & Shortcuts**, or press `?` from anywhere.
 
 ### Two things you will notice mid-service and should not worry about
 
@@ -212,7 +218,7 @@ that was working. If you see it, that passage is longer than the template was de
 
 ## Afterwards
 
-**Library → History** holds every service. Open one and you get:
+**Settings → History & Backup** holds every service. Open one and you get:
 
 - **The Sunday report** — how long, how many verses, how many Relay put up by itself versus how
   many you fired, **how many of its suggestions you took and how many you turned down**, and how
@@ -250,7 +256,7 @@ These monitors show what the wall cannot:
 - the **wall clock** and a **service timer** counting up from when you started recording;
 - your **private operator note** for the cue (never shown to the congregation).
 
-They inherit their theme like any template, so a monitor matches your house style.
+They are ordinary templates, so a monitor matches your house style.
 One thing to know: pressing **Clear all screens** clears the monitors too — the panic
 key is deliberately total, so it clears *everything*, monitor timers included.
 

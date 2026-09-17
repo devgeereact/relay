@@ -127,7 +127,7 @@ describe('cueing is not a take', () => {
   it('an already-cued item offers the way back out', async () => {
     mount({ item: VERSE, queue: [{ reference: 'John 3:16' }], onQueueChange: () => {} });
     await settle();
-    expect(btn('Remove from Up Next')).toBeTruthy();
+    expect(btn('Remove from Staging')).toBeTruthy();
     expect(btn('Cue in Live')).toBeUndefined();
   });
 });
