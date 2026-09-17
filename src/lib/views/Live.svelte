@@ -2468,6 +2468,29 @@
                 <p class="mt-q">“{d.matched_text}”</p>
               {/if}
 
+              <!-- RG-135 · THE TRANSLATION THE PREACHER NAMED, WHICH RELAY DOES
+                   NOT HAVE. Field service 2026-09-13: the preacher said "the
+                   Passion Translation" and read it aloud while the wall carried the
+                   King James Version at 0.88, wearing the same badge as the seven
+                   correct fires around it. The reference was right, so no
+                   instrument here treated it as a fault of any kind.
+
+                   It is a CAVEAT, not a failure: quiet type, no law colour, and
+                   deliberately not amber, cyan or amethyst — none of those three
+                   promises is what this is about, and a colour that carries a
+                   promise cannot be borrowed for a footnote. It sits below the
+                   verse rather than above it, because the verse is still the
+                   answer. The backend sets the field only when it can tell the
+                   operator something they do not already know. -->
+              {#if d.named_translation_missing}
+                <p class="claim-tx">
+                  {$t('live.translation_not_installed', {
+                    named: d.named_translation_missing,
+                    shown: d.translation ?? 'what it has',
+                  })}
+                </p>
+              {/if}
+
               {#if d.text}<p class="clm-verse">{d.text}</p>{/if}
 
               <!-- PARSED, BUT THERE IS NO SUCH VERSE. Relay keeps showing it — the
@@ -3187,6 +3210,10 @@
     text-transform:uppercase; color:var(--v-faint)}
   /* No verse behind the reference. Rose is the failure colour on this screen;
      amber is never spent here, because nothing about this is on air. */
+  /* A footnote on a correct fire. Same size as `.claim-absent` next to it and the
+     faint ink, because this is the quietest thing on the card: the verse is right
+     and the operator is being told one extra fact about it. No law colour. */
+  .claim-tx{margin:0; font-size:var(--v-fs-cap); line-height:1.5; color:var(--v-faint);}
   .claim-absent{margin:0; font-size:var(--v-fs-cap); line-height:1.5;
     color:var(--v-rose)}
   .cacts{display:grid; grid-template-columns:1fr 1fr; gap:6px}

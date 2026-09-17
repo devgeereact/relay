@@ -75,6 +75,10 @@ pub struct Fire {
     pub verse_id: Option<i64>,
     pub text: Option<String>,
     pub translation: Option<String>,
+    /// RG-135 — see `DetectionEvent::named_translation_missing`. On `Fire` because
+    /// `Fire` is the one place an event may be built (CLAUDE.md), so a path that
+    /// forgets it is a path that does not compile.
+    pub named_translation_missing: Option<String>,
     pub confidence: f32,
     pub method: DetectionMethod,
     pub status: FireStatus,
@@ -167,6 +171,7 @@ impl Fire {
             translation: self.translation.clone(),
             matched_text: self.matched_text.clone(),
             trace_id: self.trace_id,
+            named_translation_missing: self.named_translation_missing.clone(),
         }
     }
 }
@@ -326,6 +331,19 @@ pub struct DetectionEvent {
     /// The decode pass behind this detection. See `OutputContent::trace_id`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trace_id: Option<u64>,
+    /// RG-135. A translation the SPEAKER named in this window that Relay does not
+    /// have installed, so the words on the wall are not the words being read out.
+    ///
+    /// `None` is the ordinary case and means two different things that are the same
+    /// fact here: nobody named a translation, or the one they named is the one in
+    /// use. It is set ONLY when Relay can say something the operator does not
+    /// already know, because a caveat on a correct fire is how somebody learns to
+    /// stop reading this line.
+    ///
+    /// The reference is still right. This is not a wrong verse and must not be
+    /// rendered as one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub named_translation_missing: Option<String>,
 }
 
 /// A gate candidate: the anchor verse plus how it should route, and whether it is
@@ -392,6 +410,7 @@ mod tests {
             verse_id: Some(42),
             text: Some("For God so loved the world...".into()),
             translation: Some("KJV".into()),
+            named_translation_missing: None,
             confidence: 0.93,
             method: DetectionMethod::Direct,
             status,

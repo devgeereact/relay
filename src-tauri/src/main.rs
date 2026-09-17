@@ -596,6 +596,10 @@ fn resolve_fire(
         template_json,
         template_pinned,
         matched_text,
+        // RG-135. Filled in by the caller, for the same reason `trace_id` is: this
+        // builder has the verse and not the WINDOW, and the question is about what
+        // was said around the reference rather than about the reference itself.
+        named_translation_missing: None,
         // Filled in by the caller when a decode pass is behind this fire.
         trace_id: None,
     }
@@ -970,6 +974,40 @@ mod rank_for_wall_tests {
     }
 }
 
+/// RG-135 — the translation the speaker named, when Relay does not have it.
+///
+/// Returns the named abbreviation only when ALL of these hold, because each one is
+/// a case where saying something would be noise:
+///
+///   * the window names a translation at all (`detection::named_translation`);
+///   * it is not the translation this fire is actually showing — if the preacher
+///     said "King James" and the wall says KJV, there is nothing to report;
+///   * Relay does not have it installed, so it could not have shown it anyway.
+///     A church that has added the named translation and is simply not using it for
+///     this fire is a different situation, and one an operator can see and fix.
+///
+/// A failed read of `translations` answers `None`. That is the safe direction: this
+/// is a caveat on an otherwise correct fire, and inventing one from a database error
+/// would put a warning on a verse that is right.
+fn named_translation_gap(
+    conn: &rusqlite::Connection,
+    window: &str,
+    fire: &pipeline::Fire,
+) -> Option<String> {
+    let named = detection::named_translation(window)?;
+    if fire.translation.as_deref() == Some(named.as_str()) {
+        return None; // the wall already says what the preacher said
+    }
+    let installed = db::list_translations(conn).ok()?;
+    if installed
+        .iter()
+        .any(|t| t.abbreviation.eq_ignore_ascii_case(&named))
+    {
+        return None; // Relay has it; this is not the gap this row is about
+    }
+    Some(named)
+}
+
 fn emit_detections<R: tauri::Runtime>(
     handle: &tauri::AppHandle<R>,
     text: &str,
@@ -1201,6 +1239,16 @@ fn emit_detections<R: tauri::Runtime>(
             // every output so the last leg — pixels on a projector — can be timed
             // rather than assumed.
             fire.trace_id = trace;
+            // RG-135. Did the speaker NAME a translation, and is it one Relay does
+            // not have? The detector is pure and lives in `detection`; whether the
+            // named one is installed is a database question, so it is asked here,
+            // once, under the connection this loop already holds.
+            //
+            // Set only when Relay can tell the operator something they do not
+            // already know. If the named translation IS what went on the wall,
+            // there is nothing to say, and a caveat on a correct fire is how an
+            // operator learns to stop reading the line.
+            fire.named_translation_missing = named_translation_gap(&conn, text, &fire);
 
             // Parsed, but the verse doesn't exist (garbled speech readily yields
             // "Psalms 23:99"). Demote to a suggestion rather than broadcasting a
@@ -7263,5 +7311,105 @@ mod import_guard_tests {
         assert_eq!(std::fs::read(&path).expect("read back"), b"hello");
         assert_eq!(db::list_media(&conn).expect("list").len(), 1);
         let _ = std::fs::remove_file(&path);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RG-135 · THE TRANSLATION THE PREACHER NAMED
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod named_translation_gap_tests {
+    use super::*;
+
+    /// A fire carrying a translation, shaped the way `resolve_fire` leaves one.
+    fn fire_showing(translation: Option<&str>) -> pipeline::Fire {
+        pipeline::Fire {
+            key: "Hebrews 11:19".into(),
+            reference: detection::VerseRef {
+                book: "Hebrews".into(),
+                chapter: 11,
+                verse: 19,
+            },
+            verse_id: Some(1),
+            text: Some("By faith Abraham, when he was tried".into()),
+            translation: translation.map(|s| s.to_string()),
+            named_translation_missing: None,
+            confidence: 0.88,
+            method: detection::DetectionMethod::Direct,
+            status: pipeline::FireStatus::Auto,
+            stage_note: None,
+            next_reference: None,
+            next_text: None,
+            template_id: None,
+            template_json: None,
+            template_pinned: false,
+            matched_text: None,
+            trace_id: None,
+        }
+    }
+
+    #[test]
+    fn the_field_case_reports_the_translation_relay_does_not_have() {
+        // FIELD-2026-09-13 §2. A fresh install has one translation, so the wall
+        // showed KJV while the preacher read the Passion Translation aloud, and
+        // the fire wore the same badge as the seven correct ones around it.
+        let app = qa::bare_app();
+        let db = app.state::<Db>();
+        let conn = db.0.lock().expect("db");
+        let fire = fire_showing(Some("KJV"));
+        assert_eq!(
+            named_translation_gap(
+                &conn,
+                "it says here in the passion translation hebrews 11 verse 19",
+                &fire,
+            ),
+            Some("TPT".into()),
+        );
+    }
+
+    #[test]
+    fn it_says_nothing_when_the_wall_already_shows_what_was_named() {
+        // The preacher says "King James" over a KJV wall. There is nothing to
+        // report, and a caveat on a correct fire is how an operator learns to stop
+        // reading the line this exists for.
+        let app = qa::bare_app();
+        let db = app.state::<Db>();
+        let conn = db.0.lock().expect("db");
+        let fire = fire_showing(Some("KJV"));
+        assert_eq!(
+            named_translation_gap(&conn, "turn with me, king james, hebrews 11", &fire),
+            None,
+        );
+    }
+
+    #[test]
+    fn it_says_nothing_when_relay_actually_has_the_named_translation() {
+        // A church that HAS added a translation and is simply not using it for this
+        // fire is a different situation, and one an operator can see and change.
+        let app = qa::bare_app();
+        let db = app.state::<Db>();
+        let conn = db.0.lock().expect("db");
+        conn.execute(
+            "INSERT INTO translations (name, abbreviation, language) VALUES (?1, ?2, ?3)",
+            ("The Passion Translation", "TPT", "en"),
+        )
+        .expect("seed a second translation");
+        let fire = fire_showing(Some("KJV"));
+        assert_eq!(
+            named_translation_gap(&conn, "in the passion translation, hebrews 11", &fire),
+            None,
+        );
+    }
+
+    #[test]
+    fn an_ordinary_window_reports_nothing() {
+        let app = qa::bare_app();
+        let db = app.state::<Db>();
+        let conn = db.0.lock().expect("db");
+        let fire = fire_showing(Some("KJV"));
+        assert_eq!(
+            named_translation_gap(&conn, "turn with me to hebrews chapter eleven", &fire),
+            None,
+        );
     }
 }
