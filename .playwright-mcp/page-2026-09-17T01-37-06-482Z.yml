@@ -1,0 +1,127 @@
+- generic [ref=f13e2]:
+  - status [ref=f13e3]: Screens cleared.
+  - status [ref=f13e4]:
+    - banner [ref=f13e5]:
+      - generic [ref=f13e14]: RELAY
+    - generic [ref=f13e15]:
+      - heading "RELAY" [level=1] [ref=f13e25]
+      - paragraph [ref=f13e26]: AI-Assisted Live Church Production
+      - paragraph [ref=f13e27]: Starting Relay
+    - contentinfo [ref=f13e37]:
+      - generic [ref=f13e38]: Offline · all processing local
+  - generic [ref=f13e40]:
+    - banner [ref=f13e41]:
+      - generic [ref=f13e42]:
+        - generic [ref=f13e51]: RELAY
+        - generic [aria-hidden] [ref=f13e52]: studio
+      - navigation "Workspaces" [ref=f13e53]:
+        - button "Live" [ref=f13e54] [cursor=pointer]
+        - button "Library" [ref=f13e55] [cursor=pointer]
+        - button "Planner" [ref=f13e56] [cursor=pointer]
+        - button "Templates" [ref=f13e57] [cursor=pointer]
+        - button "Outputs" [ref=f13e58] [cursor=pointer]
+        - button "Settings" [ref=f13e59] [cursor=pointer]
+    - region "Dock" [ref=f13e63]:
+      - generic [ref=f13e64]:
+        - generic [ref=f13e65]:
+          - generic [ref=f13e70]: Live audio
+          - generic [ref=f13e71]: quiet
+          - generic [ref=f13e72]: −∞ dB
+        - generic [ref=f13e73]:
+          - generic [ref=f13e74]:
+            - generic [aria-hidden]: INPUT · 20s
+          - generic [ref=f13e76]:
+            - generic [ref=f13e77]: Mic
+            - combobox "Microphone input device" [ref=f13e78] [cursor=pointer]:
+              - option "System default" [selected]
+              - option "System default"
+            - switch "Microphone" [ref=f13e79] [cursor=pointer]
+            - generic [ref=f13e84]: Listen
+          - generic [ref=f13e85]:
+            - generic [ref=f13e86]: Sens
+            - slider "Detection sensitivity" [ref=f13e87] [cursor=pointer]: "50"
+            - generic [ref=f13e88]: "50"
+            - switch "Detection" [checked] [ref=f13e89] [cursor=pointer]
+            - generic [ref=f13e93]: armed
+      - generic [ref=f13e94]:
+        - generic [ref=f13e95]:
+          - generic [ref=f13e100]: Live transcript
+          - generic [ref=f13e101]: no model
+        - paragraph [ref=f13e103]: not listening
+      - generic [ref=f13e104]:
+        - generic [ref=f13e105]:
+          - generic [ref=f13e110]: Quick tools
+          - button "Load whole plan" [disabled] [ref=f13e111]
+        - generic [ref=f13e112]:
+          - generic [ref=f13e113]:
+            - generic [ref=f13e114]:
+              - generic [ref=f13e115]: Countdown
+              - generic [ref=f13e116]:
+                - status "What Start would put on the screens. Nothing is counting." [ref=f13e117]: 5:00
+                - generic [ref=f13e118]: not counting
+            - generic [ref=f13e119]:
+              - generic [ref=f13e120]:
+                - spinbutton "Countdown hours" [ref=f13e121]: "0"
+                - generic [ref=f13e122]: ":"
+                - spinbutton "Countdown minutes" [ref=f13e123]: "5"
+                - generic [ref=f13e124]: ":"
+                - spinbutton "Countdown seconds" [ref=f13e125]: "0"
+              - combobox "Countdown format" [ref=f13e126] [cursor=pointer]:
+                - option "auto" [selected]
+                - option "m:ss"
+                - option "h:mm:ss"
+            - group "Countdown transport" [ref=f13e127]:
+              - button "Start" [ref=f13e128] [cursor=pointer]
+              - button "Pause" [disabled] [ref=f13e129]
+              - button "Reset" [disabled] [ref=f13e130]
+              - button "One minute less" [ref=f13e131] [cursor=pointer]: −1
+              - button "One minute more" [ref=f13e132] [cursor=pointer]: "+1"
+              - button "Clear" [ref=f13e133] [cursor=pointer]
+          - generic [ref=f13e134]:
+            - generic [ref=f13e135]:
+              - generic [ref=f13e136]: Name band
+              - combobox "Which lower third" [ref=f13e137] [cursor=pointer]
+            - paragraph [ref=f13e138]: No lower third yet — make one in Templates (New → Lower Third).
+          - generic [ref=f13e139]:
+            - generic [ref=f13e140]: Word to the preacher
+            - textbox "Word to the preacher — stage monitor only" [ref=f13e142]:
+              - /placeholder: Wrap up · Five minutes left · Stand by
+            - generic [ref=f13e143]:
+              - button "Send to stage" [disabled] [ref=f13e144]
+              - button "Take down" [disabled] [ref=f13e145]
+      - generic [ref=f13e146]:
+        - generic [ref=f13e147]: Controls
+        - generic [ref=f13e154]:
+          - button "No service" [disabled] [ref=f13e155]
+          - button "Rehearse" [ref=f13e156] [cursor=pointer]
+          - button "Blackout" [ref=f13e157] [cursor=pointer]
+          - button "Clear screens" [ref=f13e158] [cursor=pointer]
+    - contentinfo "Status" [ref=f13e159]:
+      - generic [ref=f13e160]: Screens clear
+      - generic "How long something has been on the screens, counted by this console. A console restarted mid-service counts from its own start." [ref=f13e163]:
+        - generic [ref=f13e164]: On air
+        - generic [ref=f13e165]: no data
+      - generic "Median time from the audio to a transcript update on this screen (audio_to_partial_transcript). Settings → Diagnostics has the whole report." [ref=f13e166]:
+        - generic [ref=f13e167]: Latency p50
+        - generic [ref=f13e168]: no data
+      - generic "Nothing measured yet." [ref=f13e169]:
+        - generic [ref=f13e170]: Dropped
+        - generic [ref=f13e171]: no data
+      - generic "No speech model is loaded." [ref=f13e172]:
+        - generic [ref=f13e173]: Model
+        - generic [ref=f13e174]: no data
+      - generic "Transcript updates per second, this session." [ref=f13e175]:
+        - generic [ref=f13e176]: Cadence
+        - generic [ref=f13e177]: no data
+      - generic "This build has no GPU acceleration — Speech decoding runs on the processor, which on this platform is roughly three times slower — the transcript will lag the preacher on anything but the smallest model. Nothing you can change here; this is how this copy of Relay was built." [ref=f13e178]:
+        - generic [ref=f13e179]: Reduced
+        - generic [ref=f13e180]: This build has no GPU acceleration
+      - generic "Screens showing the programme, out of the screens Relay knows about." [ref=f13e181]:
+        - generic [ref=f13e182]: Screens
+        - generic [ref=f13e183]: 0 of 0
+      - generic "Whether the console can still reach the Relay engine." [ref=f13e184]:
+        - generic [ref=f13e185]: Engine
+        - generic [ref=f13e186]: attached
+      - generic [ref=f13e187]:
+        - generic [ref=f13e188]: Clock
+        - generic [ref=f13e189]: 02:37:06

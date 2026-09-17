@@ -1,0 +1,13 @@
+- generic [ref=f14e3]:
+  - banner [ref=f14e4]:
+    - generic [ref=f14e5]: Relay · Stage
+    - generic [ref=f14e6]: connecting…
+    - button "Choose what this screen shows" [ref=f14e8] [cursor=pointer]: Zones
+    - button "Control panel" [ref=f14e9] [cursor=pointer]: Control
+  - main [ref=f14e10]:
+    - region "Reading" [ref=f14e11]:
+      - generic [ref=f14e12]: — standby —
+  - generic "Figures" [ref=f14e13]:
+    - generic [ref=f14e14]:
+      - generic [ref=f14e15]: Time
+      - generic [ref=f14e16]: 21:13

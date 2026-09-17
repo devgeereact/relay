@@ -1,0 +1,199 @@
+- generic [ref=f12e2]:
+  - status [ref=f12e3]: Screens cleared.
+  - status [ref=f12e4]:
+    - banner [ref=f12e5]:
+      - generic [ref=f12e14]: RELAY
+      - generic [ref=f12e15]: v0.2.0-3
+    - generic [ref=f12e16]:
+      - heading "RELAY" [level=1] [ref=f12e26]
+      - paragraph [ref=f12e27]: AI-Assisted Live Church Production
+      - paragraph [ref=f12e28]: Starting Relay
+    - contentinfo [ref=f12e38]:
+      - generic [ref=f12e39]: Offline · all processing local
+  - generic [ref=f12e41]:
+    - banner [ref=f12e42]:
+      - generic [ref=f12e43]: RELAY
+      - navigation "Workspaces" [ref=f12e53]:
+        - button "Live" [ref=f12e54] [cursor=pointer]
+        - button "Library" [ref=f12e55] [cursor=pointer]
+        - button "Planner" [ref=f12e56] [cursor=pointer]
+        - button "Templates" [ref=f12e57] [cursor=pointer]
+        - button "Outputs" [ref=f12e58] [cursor=pointer]
+        - button "Settings" [ref=f12e59] [cursor=pointer]
+    - generic [ref=f12e61]:
+      - generic [ref=f12e62]:
+        - complementary "Library rail" [ref=f12e64]:
+          - group "Collection" [ref=f12e66]:
+            - button "Bible" [pressed] [ref=f12e67] [cursor=pointer]
+            - button "Songs" [ref=f12e68] [cursor=pointer]
+          - searchbox "Search scripture" [ref=f12e70]
+          - status [ref=f12e72]:
+            - generic [ref=f12e73]: Loading books…
+        - generic [ref=f12e74]:
+          - generic [ref=f12e75]:
+            - generic [ref=f12e76]:
+              - generic [ref=f12e77]: Preview
+              - generic [ref=f12e79]: No active template — activate one in Templates
+            - complementary [ref=f12e81]:
+              - generic [ref=f12e82]:
+                - generic [ref=f12e83]: Take
+                - button "TAKE" [disabled] [ref=f12e84]
+              - group "Transport" [ref=f12e85]:
+                - button "‹ Prev" [ref=f12e86] [cursor=pointer]
+                - button "Next ›" [ref=f12e87] [cursor=pointer]
+                - generic "Arrow keys walk through the passage on screen" [ref=f12e88]:
+                  - text: walks theprogramme
+                  - generic [ref=f12e89]: VERSE
+              - generic [ref=f12e90]:
+                - generic [ref=f12e91]: Transition
+                - combobox "Slide transition" [ref=f12e92] [cursor=pointer]:
+                  - option "Follow template" [selected]
+                  - option "Cut"
+                  - option "Crossfade"
+                  - option "Dissolve"
+                  - option "Fade through black"
+                  - option "Push left"
+                  - option "Slide up"
+                  - option "Materialise"
+                - combobox "Transition duration" [disabled] [ref=f12e93] [cursor=pointer]:
+                  - option "0 ms"
+                  - option "200 ms"
+                  - option "320 ms" [selected]
+                  - option "500 ms"
+                  - option "800 ms"
+            - generic [ref=f12e94]:
+              - generic [ref=f12e95]: Program · Clear
+              - generic [ref=f12e97]: Screens clear
+          - generic [ref=f12e99]:
+            - generic [ref=f12e100]: Programme timer
+            - spinbutton "Programme timer minutes" [ref=f12e101]: "25"
+            - generic [ref=f12e102]: min
+            - textbox "Programme timer name" [ref=f12e103]:
+              - /placeholder: Sermon · Notices
+            - button "Start timer" [ref=f12e104] [cursor=pointer]
+            - generic [ref=f12e105]: Reading…
+          - generic [ref=f12e107]:
+            - generic [ref=f12e108]:
+              - heading "Slides" [level=2] [ref=f12e109]
+              - generic "A single click sends the slide to the programme; a double click only previews it." [ref=f12e110]: "0"
+              - button "Full screen" [ref=f12e112] [cursor=pointer]
+            - generic [ref=f12e113]: Nothing staged. Pick a book, a song or a plan — or put a verse on screen and its chapter appears here.
+            - generic [ref=f12e115]:
+              - status [ref=f12e116]
+              - generic [aria-hidden] [ref=f12e117]: No plan loaded
+        - generic [ref=f12e119]:
+          - generic [ref=f12e120]:
+            - heading "AI Detection" [level=2] [ref=f12e121]
+            - generic [ref=f12e122]: no speech model
+            - button "Start listening" [disabled] [ref=f12e123]
+          - status [ref=f12e127]
+          - generic [ref=f12e128]:
+            - generic [ref=f12e129]:
+              - generic [ref=f12e130]: Relay can't hear the sermon yet.
+              - paragraph [ref=f12e132]: "It needs a speech model — a one-time download. Everything else already works: you can put any verse on screen by typing its reference."
+            - generic [ref=f12e133]: No suggestions yet.
+      - paragraph [ref=f12e134]
+    - region "Dock" [ref=f12e135]:
+      - generic [ref=f12e136]:
+        - generic [ref=f12e137]:
+          - generic [ref=f12e142]: Live audio
+          - generic [ref=f12e143]: quiet
+          - generic [ref=f12e144]: −∞ dB
+        - generic [ref=f12e145]:
+          - generic [ref=f12e146]:
+            - generic [aria-hidden]: INPUT · 20s
+          - generic [ref=f12e148]:
+            - generic [ref=f12e149]: Mic
+            - combobox "Microphone input device" [ref=f12e150] [cursor=pointer]:
+              - option "System default" [selected]
+              - option "System default"
+            - switch "Microphone" [ref=f12e151] [cursor=pointer]
+            - generic [ref=f12e156]: Listen
+          - generic [ref=f12e157]:
+            - generic [ref=f12e158]: Sens
+            - slider "Detection sensitivity" [ref=f12e159] [cursor=pointer]: "50"
+            - generic [ref=f12e160]: "50"
+            - switch "Detection" [checked] [ref=f12e161] [cursor=pointer]
+            - generic [ref=f12e165]: armed
+      - generic [ref=f12e166]:
+        - generic [ref=f12e167]:
+          - generic [ref=f12e172]: Live transcript
+          - generic [ref=f12e173]: no model
+        - paragraph [ref=f12e175]: not listening
+      - generic [ref=f12e176]:
+        - generic [ref=f12e177]:
+          - generic [ref=f12e182]: Quick tools
+          - button "Load whole plan" [disabled] [ref=f12e183]
+        - generic [ref=f12e184]:
+          - generic [ref=f12e185]:
+            - generic [ref=f12e186]:
+              - generic [ref=f12e187]: Countdown
+              - generic [ref=f12e188]:
+                - status "What Start would put on the screens. Nothing is counting." [ref=f12e189]: 5:00
+                - generic [ref=f12e190]: not counting
+            - generic [ref=f12e191]:
+              - generic [ref=f12e192]:
+                - spinbutton "Countdown hours" [ref=f12e193]: "0"
+                - generic [ref=f12e194]: ":"
+                - spinbutton "Countdown minutes" [ref=f12e195]: "5"
+                - generic [ref=f12e196]: ":"
+                - spinbutton "Countdown seconds" [ref=f12e197]: "0"
+              - combobox "Countdown format" [ref=f12e198] [cursor=pointer]:
+                - option "auto" [selected]
+                - option "m:ss"
+                - option "h:mm:ss"
+            - group "Countdown transport" [ref=f12e199]:
+              - button "Start" [ref=f12e200] [cursor=pointer]
+              - button "Pause" [disabled] [ref=f12e201]
+              - button "Reset" [disabled] [ref=f12e202]
+              - button "One minute less" [ref=f12e203] [cursor=pointer]: −1
+              - button "One minute more" [ref=f12e204] [cursor=pointer]: "+1"
+              - button "Clear" [ref=f12e205] [cursor=pointer]
+          - generic [ref=f12e206]:
+            - generic [ref=f12e207]:
+              - generic [ref=f12e208]: Name band
+              - combobox "Which lower third" [ref=f12e209] [cursor=pointer]
+            - paragraph [ref=f12e210]: No lower third yet — make one in Templates (New → Lower Third).
+          - generic [ref=f12e211]:
+            - generic [ref=f12e212]: Word to the preacher
+            - textbox "Word to the preacher — stage monitor only" [ref=f12e214]:
+              - /placeholder: Wrap up · Five minutes left · Stand by
+            - generic [ref=f12e215]:
+              - button "Send to stage" [disabled] [ref=f12e216]
+              - button "Take down" [disabled] [ref=f12e217]
+      - generic [ref=f12e218]:
+        - generic [ref=f12e219]: Controls
+        - generic [ref=f12e226]:
+          - button "No service" [disabled] [ref=f12e227]
+          - button "Rehearse" [ref=f12e228] [cursor=pointer]
+          - button "Blackout" [ref=f12e229] [cursor=pointer]
+          - button "Clear screens" [ref=f12e230] [cursor=pointer]
+    - contentinfo "Status" [ref=f12e231]:
+      - generic [ref=f12e232]: Screens clear
+      - generic "How long something has been on the screens, counted by this console. A console restarted mid-service counts from its own start." [ref=f12e235]:
+        - generic [ref=f12e236]: On air
+        - generic [ref=f12e237]: no data
+      - generic "Median time from the audio to a transcript update on this screen (audio_to_partial_transcript). Settings → Diagnostics has the whole report." [ref=f12e238]:
+        - generic [ref=f12e239]: Latency p50
+        - generic [ref=f12e240]: no data
+      - generic "Nothing measured yet." [ref=f12e241]:
+        - generic [ref=f12e242]: Dropped
+        - generic [ref=f12e243]: no data
+      - generic "No speech model is loaded." [ref=f12e244]:
+        - generic [ref=f12e245]: Model
+        - generic [ref=f12e246]: no data
+      - generic "Transcript updates per second, this session." [ref=f12e247]:
+        - generic [ref=f12e248]: Cadence
+        - generic [ref=f12e249]: no data
+      - generic "This build has no GPU acceleration — Speech decoding runs on the processor, which on this platform is roughly three times slower — the transcript will lag the preacher on anything but the smallest model. Nothing you can change here; this is how this copy of Relay was built." [ref=f12e250]:
+        - generic [ref=f12e251]: Reduced
+        - generic [ref=f12e252]: This build has no GPU acceleration
+      - generic "Screens showing the programme, out of the screens Relay knows about." [ref=f12e253]:
+        - generic [ref=f12e254]: Screens
+        - generic [ref=f12e255]: 0 of 0
+      - generic "Whether the console can still reach the Relay engine." [ref=f12e256]:
+        - generic [ref=f12e257]: Engine
+        - generic [ref=f12e258]: attached
+      - generic [ref=f12e259]:
+        - generic [ref=f12e260]: Clock
+        - generic [ref=f12e261]: 02:34:07
