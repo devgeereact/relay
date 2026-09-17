@@ -2908,6 +2908,12 @@ fn start_countdown<R: tauri::Runtime>(
             warn_ms: warn_ms.filter(|n| *n > 0),
             scope: timers::Scope::Both,
             plan_item_id: None,
+            // The mode in force at this instant, stamped once and never rewritten
+            // (RG-150). Leaving a rehearsal happens to clear the screens, which
+            // takes every `Both` timer with it — but that is DECISIONS §27's
+            // guarantee, not this one, and a rule that holds only where something
+            // else already holds it is not a rule.
+            started_in_rehearsal: channels::rehearsing(&app),
         });
         // Cloned out and the lock released before the broadcast below (rule 2).
         reg.get(id).ok_or_else(|| {
@@ -3109,6 +3115,10 @@ fn start_timer<R: tauri::Runtime>(
         warn_ms,
         scope,
         plan_item_id,
+        // The mode in force at this instant — see `start_countdown`, and
+        // `timers::Timer::started_in_rehearsal` for why it is a property of the
+        // timer rather than a question asked at the exit.
+        started_in_rehearsal: channels::rehearsing(&app),
     });
     // THE STAGE TABLET IS TOLD, UNCONDITIONALLY — not "if this one was a stage
     // timer". `publish_timers` sends the whole stage-visible SET, so it is
@@ -4719,6 +4729,52 @@ fn dismiss_detection<R: tauri::Runtime>(
     Ok(t)
 }
 
+/// ENDING A REHEARSAL ENDS THE TIMERS IT STARTED, AND THEN TELLS THE TABLET —
+/// RG-150, the operator decision of 2026-09-17.
+///
+/// A rehearsal is a sandbox in every other respect: nothing it publishes reaches a
+/// screen. A clock it started is not an exception. The alternative considered and
+/// rejected was to republish the set on the way out on the grounds the timers were
+/// real all along — which means an operator who practises a twenty-minute sermon
+/// clock at ten o'clock finds it on the preacher's tablet when the service starts,
+/// counting toward a moment that has passed.
+///
+/// **STOP, THEN PUBLISH, IN THAT ORDER.** The tablet is never shown a set that is
+/// about to change. Publishing first would put the rehearsal's clock on the
+/// preacher's screen for exactly as long as it takes to take it off again, which is
+/// a flicker nobody would ever reproduce on purpose.
+///
+/// The registry decides by the timer's own stamp and is asked nothing else
+/// (`timers::TimerRegistry::stop_started_in_rehearsal`) — a control that has to ask
+/// a question can fail to answer it, which is why the panic controls split by
+/// `Scope` rather than by what a screen is showing. **A timer started BEFORE the
+/// rehearsal began survives**, deliberately and with its own test: it was never a
+/// rehearsal's timer.
+///
+/// `publish_timers` runs unconditionally, not "if anything was taken". It sends the
+/// whole stage-visible SET, so it is idempotent and asks no question — and the
+/// measured defect was precisely an exit that published `clear` and `stage_next`
+/// and no `timer` frame at all, leaving the tablet's set and the registry to
+/// disagree in silence until something unrelated republished
+/// (`audits/DESIGN-2026-09-16-WAVE3.md` §6).
+///
+/// Called only with the rehearsal flag already flipped OFF, so the publish is a real
+/// one rather than a suppression.
+// GENERIC OVER THE RUNTIME (rule 24) — it reaches the screens, and `e2e.rs` drives it.
+fn end_the_rehearsals_timers<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    if let Some(reg) = app.try_state::<timers::TimerRegistry>() {
+        // The registry takes and releases its own lock and returns an owned count,
+        // so nothing is held across the publish below (rule 2).
+        let stopped = reg.stop_started_in_rehearsal();
+        if stopped > 0 {
+            // Content-free: a count, never a label. An operator's timer name is
+            // service data and this line goes to disk.
+            println!("rehearsal: {stopped} timer(s) started in the rehearsal stopped");
+        }
+    }
+    channels::publish_timers(app);
+}
+
 /// Is rehearsal mode on?
 #[tauri::command]
 fn get_rehearsal(rehearsal: tauri::State<'_, channels::Rehearsal>) -> bool {
@@ -4774,6 +4830,9 @@ fn set_rehearsal<R: tauri::Runtime>(
         // backend's actual mode — a worse lie than the one being fixed. The operator
         // is told the clear failed via the panic banner instead.
         clear_or_report(&app);
+        if !on {
+            end_the_rehearsals_timers(&app);
+        }
         log_event(
             &app,
             if on {

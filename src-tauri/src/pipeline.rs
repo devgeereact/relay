@@ -663,6 +663,7 @@ mod tests {
             warn_ms: Some(120_000),
             scope: crate::timers::Scope::Both,
             plan_item_id: None,
+            started_in_rehearsal: false,
         });
         let c = OutputContent {
             kind: Some("countdown".into()),
@@ -709,6 +710,7 @@ mod tests {
             warn_ms: None,
             scope: crate::timers::Scope::Both,
             plan_item_id: None,
+            started_in_rehearsal: false,
         });
         let c = OutputContent {
             kind: Some("countdown".into()),
