@@ -4772,6 +4772,10 @@ fn confirm_detection<R: tauri::Runtime>(
         if let Ok(conn) = db.0.lock() {
             persist_active_thresholds(&conn, t);
         }
+        // AND SAY SO. This is the writer nobody presses: the gate moves on every
+        // confirm and dismiss, so a console that read it once at launch drifted
+        // stale on its own, with the operator touching nothing.
+        thresholds_changed(&app, t);
     }
     Ok(t)
 }
@@ -4846,6 +4850,10 @@ fn dismiss_detection<R: tauri::Runtime>(
         if let Ok(conn) = db.0.lock() {
             persist_active_thresholds(&conn, t);
         }
+        // AND SAY SO. This is the writer nobody presses: the gate moves on every
+        // confirm and dismiss, so a console that read it once at launch drifted
+        // stale on its own, with the operator touching nothing.
+        thresholds_changed(&app, t);
     }
     Ok(t)
 }
@@ -5014,6 +5022,57 @@ fn set_crash_reporting(
     })
 }
 
+/// ── THE GATE MOVED. SAY SO. ─────────────────────────────────────────────────
+///
+/// `detection://thresholds` carries the whole of what every surface showing the
+/// gate needs: the two thresholds and the dial position they map back to, through
+/// `to_sensitivity` — the one inverse mapping, so a listener never re-derives it
+/// and the two directions cannot drift.
+///
+/// WHY THIS EXISTS AT ALL. Until 2026-09-17 nothing in Rust announced a threshold
+/// change, and the frontend had nothing to subscribe to. Live's dial was the one
+/// setting in the shell held in a component-local `let`, read once at `onMount`,
+/// and the dock is mounted OUTSIDE the workspace router — so unlike every view it
+/// is never rebuilt and never re-read. Three things followed, all of them
+/// measured rather than argued:
+///
+///   * Settings moved the gate and Live went on showing the old number, for the
+///     rest of the session.
+///   * Live moved the gate and Settings, holding the number it loaded when the tab
+///     opened, SILENTLY REVERTED IT on the next profile save — `update_voice_profile`
+///     compares the stale figure against an already-updated row, concludes the dial
+///     moved, and re-derives from it.
+///   * nobody had to touch anything at all: the router self-calibrates on every
+///     confirm and dismiss, so the dock drifted stale on its own.
+///
+/// That is rule 35 on the one control governing what the AI may put on a wall
+/// unasked — a reading that cannot tell "the engine says 50" from "nobody has
+/// asked the engine since launch".
+///
+/// FIVE DOORS, ONE ANNOUNCEMENT. `Router::thresholds` is moved by
+/// `apply_thresholds` (the dial and the two sliders), by `apply_profile` (a profile
+/// saved, a profile selected, a room applied) and by `record_feedback` (the
+/// learning, on every confirm and dismiss). A guarantee kept on four of five doors
+/// is not a mitigation, it is the bug — this repository has shipped that shape four
+/// separate times — so `thresholds_changed` is called from all five and
+/// `hardrules.test.js` fails on a sixth writer that does not call it.
+///
+/// RULE 2. The router lock is released before this runs, at every call site. It is
+/// never held across the emit.
+fn thresholds_changed<R: tauri::Runtime>(app: &tauri::AppHandle<R>, t: Thresholds) {
+    // An emit that fails is a console that will be one reading behind until the
+    // next change. It is not worth failing an operator's action over, and there is
+    // no second channel to report it down, so this is deliberately not a Result.
+    let _ = app.emit(
+        "detection://thresholds",
+        serde_json::json!({
+            "auto_fire": t.auto_fire,
+            "suggest": t.suggest,
+            "sensitivity": t.to_sensitivity(),
+        }),
+    );
+}
+
 /// Current gate thresholds — for the Settings sliders.
 #[tauri::command]
 fn get_thresholds(routing: tauri::State<'_, Routing>) -> error::Result<Thresholds> {
@@ -5116,7 +5175,8 @@ fn verse_repeat_count(
 
 /// Manual override of the thresholds (the always-available slider, DECISIONS.md).
 #[tauri::command]
-fn set_thresholds(
+fn set_thresholds<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     routing: tauri::State<'_, Routing>,
     db: tauri::State<'_, Db>,
     thresholds: Thresholds,
@@ -5126,7 +5186,7 @@ fn set_thresholds(
     // explains at length why doing one without the others leaves the profile
     // "describing a state that never existed". The Settings two-slider control is
     // the same act expressed more precisely, so it goes through the same door.
-    apply_thresholds(&routing, &db, thresholds)?;
+    apply_thresholds(&app, &routing, &db, thresholds)?;
     Ok(routing.0.lock()?.thresholds())
 }
 
@@ -5149,7 +5209,8 @@ fn set_thresholds(
 ///
 /// Returns the dial position that actually landed, recovered through
 /// `to_sensitivity` — the one inverse mapping, so the two directions cannot drift.
-fn apply_thresholds(
+fn apply_thresholds<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
     routing: &tauri::State<'_, Routing>,
     db: &tauri::State<'_, Db>,
     t: Thresholds,
@@ -5171,6 +5232,9 @@ fn apply_thresholds(
             );
         }
     }
+    // The gate moved. Every surface that shows it hears about it here, not from
+    // whichever control happened to move it — see `thresholds_changed`.
+    thresholds_changed(app, t);
     Ok(landed)
 }
 
@@ -5199,13 +5263,14 @@ fn apply_thresholds(
 /// The dial is the operator overruling the machine. It is the one input here
 /// that must outlast both the learning and the restart.
 #[tauri::command]
-fn set_sensitivity(
+fn set_sensitivity<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     routing: tauri::State<'_, Routing>,
     db: tauri::State<'_, Db>,
     sensitivity: u8,
 ) -> error::Result<u8> {
     let t = Thresholds::from_sensitivity(sensitivity.min(100));
-    apply_thresholds(&routing, &db, t)
+    apply_thresholds(&app, &routing, &db, t)
 }
 
 /// The current dial position, recovered from the live thresholds.
@@ -5232,7 +5297,12 @@ fn apply_profile_to_stt(engine: &SttEngine, p: &db::VoiceProfile) {
 
 /// Apply a full profile live: STT language + bias prompt, and the profile's
 /// calibrated thresholds to the router.
-fn apply_profile(stt: &Stt, routing: &Routing, p: &db::VoiceProfile) -> error::Result<()> {
+fn apply_profile<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    stt: &Stt,
+    routing: &Routing,
+    p: &db::VoiceProfile,
+) -> error::Result<()> {
     if let Some(e) = stt.0.lock()?.as_ref() {
         apply_profile_to_stt(e, p);
     }
@@ -5249,6 +5319,12 @@ fn apply_profile(stt: &Stt, routing: &Routing, p: &db::VoiceProfile) -> error::R
     router.set_baseline(Thresholds::from_sensitivity(
         p.sensitivity.clamp(0, 100) as u8
     ));
+    let t = router.thresholds();
+    drop(router); // rule 2 — never across an emit
+                  // A profile switch and a room change move the gate as surely as the dial does,
+                  // and until this line no surface displaying it was told. Switching preacher
+                  // changed what may auto-fire unattended, in silence.
+    thresholds_changed(app, t);
     Ok(())
 }
 
@@ -5653,7 +5729,8 @@ fn create_voice_profile(
 /// accumulated (docs/DECISIONS.md) and snapped `auto_fire` back to the baseline
 /// mid-preparation. The operator saw the AI "just stop working", with no error.
 #[tauri::command]
-fn update_voice_profile(
+fn update_voice_profile<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     stt: tauri::State<'_, Stt>,
     routing: tauri::State<'_, Routing>,
     db: tauri::State<'_, Db>,
@@ -5691,7 +5768,7 @@ fn update_voice_profile(
         db::active_voice_profile(&conn).ok().flatten().map(|a| a.id) == Some(profile.id)
     };
     if is_active {
-        apply_profile(&stt, &routing, &profile)?;
+        apply_profile(&app, &stt, &routing, &profile)?;
     }
     // `is_active` comes back from the DATABASE, so say so in what is returned. The
     // field arrived on the payload as whatever the frontend happened to be holding,
@@ -5705,7 +5782,8 @@ fn update_voice_profile(
 /// Switch the active profile — applies its language + bias prompt + thresholds
 /// immediately, before the next transcript window.
 #[tauri::command]
-fn select_voice_profile(
+fn select_voice_profile<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     stt: tauri::State<'_, Stt>,
     routing: tauri::State<'_, Routing>,
     db: tauri::State<'_, Db>,
@@ -5717,14 +5795,15 @@ fn select_voice_profile(
         db::active_voice_profile(&conn)?
             .ok_or_else(|| "no active profile after select".to_string())?
     };
-    apply_profile(&stt, &routing, &profile)?;
+    apply_profile(&app, &stt, &routing, &profile)?;
     Ok(profile)
 }
 
 /// Delete a profile. If it was active, the next remaining profile becomes active
 /// (a Default is re-seeded if it was the last) and is applied live.
 #[tauri::command]
-fn delete_voice_profile(
+fn delete_voice_profile<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     lock: tauri::State<'_, servicelock::ServiceLock>,
     stt: tauri::State<'_, Stt>,
     routing: tauri::State<'_, Routing>,
@@ -5738,7 +5817,7 @@ fn delete_voice_profile(
         db::active_voice_profile(&conn)?
             .ok_or_else(|| "no active profile after delete".to_string())?
     };
-    apply_profile(&stt, &routing, &profile)?;
+    apply_profile(&app, &stt, &routing, &profile)?;
     Ok(profile)
 }
 

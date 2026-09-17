@@ -469,16 +469,39 @@
   // notifies every time, which is the property this relies on.
   onMount(() => meter.subscribe(onReading));
 
-  let sensitivity = 50;
-  let sensRead = false;
-  $: sensReadable = sensRead && $capture.available;
+  // ── THE DIAL IS DERIVED, NEVER HELD ───────────────────────────────────────
+  //
+  // This was `let sensitivity = 50`, read once in `onMount`, and it was the only
+  // setting in the whole shell kept in a component-local variable. Every workspace
+  // view is destroyed and rebuilt on a tab switch, so a stale copy there heals
+  // itself; the dock is mounted OUTSIDE that router and is never rebuilt, so this
+  // one never did. Three failures came out of that, and all three were measured:
+  // Settings moved the gate and this card went on showing the old figure for the
+  // rest of the session; this card moved the gate and Settings, still holding what
+  // IT loaded, silently reverted the change on the next profile save; and the
+  // router self-calibrates on every confirm and dismiss, so the number drifted
+  // stale with the operator touching nothing at all.
+  //
+  // It now derives from the one store, which `detection://thresholds` keeps in
+  // step with the engine. `sensitivityKnown` is a separate fact from the number
+  // and stays that way: 50 is both the shipped default and an ordinary real
+  // setting, so a reading alone cannot tell "the gate is at 50" from "nobody has
+  // asked since launch", and the caveat is a sentence in the card's meta slot
+  // rather than a glyph in an 18px value column.
+  //
+  // `pending` is the thumb the operator is currently dragging, and only that. It
+  // is cleared the moment the engine answers, so the store wins every time except
+  // the few hundred milliseconds where the operator is more current than it is.
+  let pending = null;
+  $: sensitivity = pending ?? $capture.sensitivity;
+  $: sensReadable = $capture.sensitivityKnown && $capture.available;
   onMount(async () => {
     sizeCanvas();
+    // The answer lands in the store, not here — see `getSensitivity`.
     try {
-      sensitivity = await getSensitivity();
-      sensRead = true;
+      await getSensitivity();
     } catch {
-      sensRead = false;
+      /* `sensitivityKnown` stays false, and the card says so in words */
     }
   });
   // ── THE MICROPHONE, ON THE RUN SURFACE (L3, operator instruction) ──────────
@@ -510,18 +533,22 @@
     });
 
   async function onSensitivity(v) {
-    sensitivity = v;
+    pending = v; // the thumb, while the engine is being asked
     err = '';
     try {
-      const landed = await setSensitivity(v);
-      if (Number.isFinite(landed)) sensitivity = landed;
+      await setSensitivity(v);
+      pending = null; // the store now holds what actually landed
     } catch (e) {
+      // A dial that did not take must not leave the thumb where the operator
+      // dragged it. Drop back to the engine's own answer and say what happened —
+      // `setSensitivity` THROWS precisely so this branch can exist.
+      pending = null;
       try {
-        sensitivity = await getSensitivity();
+        await getSensitivity();
       } catch {
         /* the dial is already disabled in this case */
       }
-      err = `Sensitivity stayed at ${sensitivity} — ${humanError(e)}`;
+      err = `Sensitivity stayed at ${$capture.sensitivity} — ${humanError(e)}`;
     }
   }
 

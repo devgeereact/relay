@@ -5667,6 +5667,7 @@ mod r4_audit {
 
         // The operator drags the two Settings sliders.
         crate::set_thresholds(
+            h.clone(),
             h.state::<crate::Routing>(),
             h.state::<crate::Db>(),
             Thresholds {

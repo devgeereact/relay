@@ -297,13 +297,32 @@
       : ($templates.find((t) => t.id === ch.template_id)?.name ?? `template #${ch.template_id}`);
 
   // Threshold sliders push to the router; keep the invariant auto_fire ≥ suggest.
+  //
+  // A SLIDER THAT DID NOT TAKE MUST SAY SO. `setThresholds` throws now (it was the
+  // last swallowing door onto the gate), and a rejection here left the store
+  // unchanged, which left the bound value unchanged, which meant Svelte never
+  // rewrote the DOM property — so the thumb stayed exactly where it was dragged,
+  // over a gate that had not moved, with nothing on the page saying otherwise.
+  let gateErr = '';
+  async function pushThresholds(auto_fire, suggest) {
+    gateErr = '';
+    try {
+      await setThresholds(auto_fire, suggest);
+    } catch (e) {
+      gateErr = humanError(e);
+      // Put the thumbs back where the ENGINE is, not where the drag ended. The
+      // store is the only thing that knows, and reassigning it is what forces the
+      // DOM property back.
+      capture.update((st) => ({ ...st, thresholds: { ...st.thresholds } }));
+    }
+  }
   function onAuto(v) {
     const suggest = Math.min($capture.thresholds.suggest, v);
-    setThresholds(v, suggest);
+    return pushThresholds(v, suggest);
   }
   function onSuggest(v) {
     const suggest = Math.min(v, $capture.thresholds.auto_fire);
-    setThresholds($capture.thresholds.auto_fire, suggest);
+    return pushThresholds($capture.thresholds.auto_fire, suggest);
   }
 
   // --- live audio input (real cpal capture through the Rust engine) ---
@@ -681,7 +700,26 @@
     });
   // Edit a COPY. Binding the row itself would show edits that were never saved —
   // and on this form an unsaved "change" reads as a calibration that is live.
-  const openEditor = (p) => (editing = { ...p });
+  // ── THE EDITOR OPENS ON THE ROW AS IT IS NOW ──────────────────────────────
+  //
+  // `profiles` was loaded on mount and refreshed only inside `profileAction`.
+  // `onAuto`/`onSuggest` move the gate and, through `apply_thresholds`, rewrite
+  // the active profile's row — and they do not refresh. So: drag the slider at the
+  // top of this page, scroll down, press Edit, press Save profile, and
+  // `update_voice_profile` compares the STALE figure against the already-updated
+  // row, concludes the dial moved, and re-derives the gate from it. The operator's
+  // change of thirty seconds earlier, on this same screen, is silently reverted.
+  //
+  // One await closes it. The editor is a working copy of a row, so the only
+  // question is which row — and the answer must be the current one.
+  const openEditor = async (p) => {
+    try {
+      await refreshProfiles();
+    } catch {
+      /* fall back to what is already loaded rather than refusing to open */
+    }
+    editing = { ...(profiles.find((r) => r.id === p.id) ?? p) };
+  };
 
   // ── Recognition language (RG-138) ───────────────────────────────────────────
   //
@@ -1334,6 +1372,13 @@
 
       {:else if section === 'ai'}
         <div class="rw-group">Detection thresholds</div>
+        <!-- A GATE THAT DID NOT MOVE SAYS SO. Until this existed, a rejected
+             `set_thresholds` left the thumb where it was dragged and printed
+             nothing anywhere in this section, on the one control that governs what
+             the AI may put on a wall without asking. -->
+        {#if gateErr}
+          <div class="r-err" role="alert">The gate did not move — {gateErr}</div>
+        {/if}
         <div class="s-prose">
           <div class="s-inline"><span class="s-count">self-calibrating</span></div>
           <div class="s-slider">

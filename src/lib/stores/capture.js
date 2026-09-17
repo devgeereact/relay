@@ -119,6 +119,16 @@ export const capture = writable({
   // router.rs, which IS from_sensitivity(50); it used to say 0.9/0.6, which was
   // the other, contradictory baseline.
   thresholds: { auto_fire: 0.5, suggest: 0.35 },
+  // THE DIAL POSITION, AND WHETHER ANYBODY HAS ACTUALLY ASKED. `sensitivity` is
+  // `to_sensitivity(thresholds)` — the one inverse mapping, computed in Rust so
+  // the two directions cannot drift — and `sensitivityKnown` is the answer to a
+  // different question: has the engine ever told us? 50 is both the shipped
+  // default and a perfectly ordinary real setting, so the number alone cannot
+  // separate "the gate is at 50" from "nobody has asked since launch". A surface
+  // that cannot tell those apart is rule 35 on the one control governing what the
+  // AI may put on a wall unasked.
+  sensitivity: 50,
+  sensitivityKnown: false,
 });
 
 // What is currently ON the output screens (last fired content, null = cleared).
@@ -518,6 +528,38 @@ export async function initAudio() {
       // "internal lock error: poisoned lock: …" inside an assertive live region.
       await listen('output://panic_failed', (e) => panicError.set(humanError(e.payload)));
       await listen('rehearsal://changed', (e) => rehearsing.set(e.payload === true));
+      // THE GATE MOVED, AND EVERY SURFACE SHOWING IT HEARS HERE.
+      //
+      // Five things in Rust move `Router.thresholds` — the dial, the two Settings
+      // sliders, a profile saved, a profile selected or a room applied, and the
+      // learning on every confirm and dismiss — and until 2026-09-17 not one of
+      // them announced it. Live's dial was read once at `onMount` into a plain
+      // `let`, and the dock is mounted OUTSIDE the workspace router, so unlike
+      // every view it is never rebuilt. It therefore showed its launch reading for
+      // the rest of the session while the engine moved underneath it, and Settings
+      // — holding the figure IT loaded when the tab opened — silently reverted the
+      // operator's change on the next profile save.
+      //
+      // One event, one store, every surface derived. A surface that keeps its own
+      // copy of this number is the defect, not the fix.
+      await listen('detection://thresholds', (e) => {
+        const p = e.payload || {};
+        const auto_fire = Number(p.auto_fire);
+        const suggest = Number(p.suggest);
+        const sensitivity = Number(p.sensitivity);
+        capture.update((s) => ({
+          ...s,
+          thresholds: {
+            auto_fire: Number.isFinite(auto_fire) ? auto_fire : s.thresholds.auto_fire,
+            suggest: Number.isFinite(suggest) ? suggest : s.thresholds.suggest,
+          },
+          // A malformed payload leaves the READING alone and does not claim to
+          // know it: answering a broken frame with 50 would put a number on screen
+          // that is nobody's setting.
+          sensitivity: Number.isFinite(sensitivity) ? sensitivity : s.sensitivity,
+          sensitivityKnown: s.sensitivityKnown || Number.isFinite(sensitivity),
+        }));
+      });
       // A device failure (permission denied, unplugged) is non-fatal: surface
       // it and reflect that capture stopped, but never freeze.
       await listen('audio://error', (e) =>
@@ -2795,15 +2837,25 @@ capture.update((s) => ({ ...s, stt: { ...s.stt, language: language ?? null } }))
 return profile ?? null;
 }
 
-/** Manual threshold override (Settings sliders). */
+/** Manual threshold override (Settings sliders).
+ *
+ *  GROUP 1 (THROWS), and it moved here on 2026-09-17. It was the last swallowing
+ *  door onto the gate, and its twin `setSensitivity` had already been repaired for
+ *  exactly this — the two controls are the same act expressed at different
+ *  precision, and they had opposite failure contracts. The consequence was silent
+ *  and specific: on failure the store is unchanged, so `value={$capture.thresholds
+ *  .auto_fire}` is unchanged, so Svelte never rewrites the DOM property and the
+ *  dragged thumb STAYS WHERE THE OPERATOR PUT IT, over a gate that did not move,
+ *  with no error line anywhere in the section.
+ *
+ *  `set_thresholds` really can fail — `routing.0.lock()?` on a poisoned router
+ *  mutex, the same shape as the `stopCapture` bug — and this is the control that
+ *  governs what the AI may put on a wall without asking. */
 export async function setThresholds(auto_fire, suggest) {
-try {
-  const call = await invoke();
-  const thresholds = await call('set_thresholds', { thresholds: { auto_fire, suggest } });
-  capture.update((s) => ({ ...s, thresholds }));
-} catch {
-  /* backend absent */
-}
+const call = await invoke();
+const thresholds = await call('set_thresholds', { thresholds: { auto_fire, suggest } });
+capture.update((s) => ({ ...s, thresholds }));
+return thresholds;
 }
 
 /** The single operator sensitivity dial (0..100), read from the live thresholds.
@@ -2812,8 +2864,23 @@ try {
 export async function getSensitivity() {
 try {
   const call = await invoke();
-  return await call('get_sensitivity');
+  const sensitivity = await call('get_sensitivity');
+  // THE ANSWER GOES IN THE STORE, and the store records that an answer arrived.
+  // This used to return the number to one caller and tell nothing else, which is
+  // how the dock came to hold the only copy of it.
+  if (Number.isFinite(Number(sensitivity))) {
+    capture.update((st) => ({
+      ...st,
+      sensitivity: Number(sensitivity),
+      sensitivityKnown: true,
+    }));
+  }
+  return sensitivity;
 } catch {
+  // 50 is still returned for a caller that wants a number, and `sensitivityKnown`
+  // stays false so nothing can mistake this fallback for a reading. The two facts
+  // are kept apart deliberately: a substitute "unknown" VALUE would put a figure
+  // on screen that is nobody's setting, which is a second lie covering the first.
   return 50;
 }
 }
@@ -2837,7 +2904,16 @@ export async function setSensitivity(sensitivity) {
 const call = await invoke();
 const landed = await call('set_sensitivity', { sensitivity });
 const thresholds = await call('get_thresholds');
-capture.update((s) => ({ ...s, thresholds }));
+// `detection://thresholds` will say the same thing a moment later and this is not
+// redundant with it: the event is how OTHER surfaces find out, and this is how the
+// surface that just acted stops showing a stale figure between the command
+// returning and the event arriving.
+capture.update((s) => ({
+  ...s,
+  thresholds,
+  sensitivity: Number.isFinite(Number(landed)) ? Number(landed) : s.sensitivity,
+  sensitivityKnown: s.sensitivityKnown || Number.isFinite(Number(landed)),
+}));
 return landed;
 }
 
