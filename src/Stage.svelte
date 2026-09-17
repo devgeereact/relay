@@ -159,6 +159,10 @@
     { key: 'countdown', label: 'Countdown' },
     { key: 'clock', label: 'Clock' },
     { key: 'elapsed', label: 'Service elapsed' },
+    // The preacher's bookkeeping. A lobby TV running this page has no business
+    // carrying it, and until this key existed there was no way to take it off —
+    // the rail was the one region on the screen with no switch behind it.
+    { key: 'programme', label: 'Programme' },
   ];
   const DEFAULT_ZONES = {
     reading: true,
@@ -167,6 +171,7 @@
     countdown: true,
     clock: true,
     elapsed: true,
+    programme: true,
   };
   const ZONE_KEY = 'relay.stage.zones';
   let zones = { ...DEFAULT_ZONES };
@@ -311,18 +316,44 @@
   // the preacher's own bookkeeping, shown to one person — and what it is asked past
   // zero is how far over, not what to announce. If that is ever revisited it is a
   // new row, not RG-153.
+  // ── AND A HELD ROW IS FROZEN, AND SAYS SO (wave 4 track A) ────────────────
+  //
+  // `countdownRemainingMs` answers a held timer with its stored figure, which is
+  // always positive, so a held row can never take the over-time branch above. It
+  // is never warned either: a held timer is not running out, it is where the
+  // operator left it, and a frozen figure pulsing red says the opposite of what is
+  // true.
+  //
+  // ── WHY THE OPERATOR'S DONE MESSAGE IS STILL NOT READ HERE ────────────────
+  //
+  // Wave 4 read `countdown_done` onto this rail and wave 3 deliberately did not,
+  // and the two were written without either being able to see the other. The
+  // consolidation settles it on something measurable rather than on which ruling
+  // came second: `progCh` below budgets every column from the widest RENDERED
+  // string, so an operator typing `WRAP UP NOW` sets the budget to eleven
+  // characters and widens every row on the rail — which is precisely the
+  // six-sixty-pixel-columns failure that `MIN_TIMER_PX` further down exists to
+  // prevent. The two fixes fight each other the moment prose is allowed into a
+  // slot sized for digits, and both fixes are correct.
+  //
+  // So the words stay where they were always going: `countdown_done` replaces the
+  // digits on a CONGREGATION countdown and on the mirror above this row, and this
+  // rail answers the only question a preacher asks it past zero, which is how far
+  // over. `+4:37` escalates as the minutes pass. `WRAP UP` does not.
   $: programme = stageTimers
     .map((t) => ({
       t,
       id: t?.id,
       label: (t?.label || '').trim(),
+      held: countdownIsPaused(t),
       ms: countdownRemainingMs(t, nowMs, { past: true }),
     }))
     .filter((r) => r.ms != null)
     .map(({ t, ...r }) => ({
       ...r,
       v: r.ms <= 0 ? `+${formatCountdown(-r.ms)}` : formatCountdown(r.ms),
-      warn: r.ms <= 0 || countdownWarning(r.ms, countdownTotalMs(t), t?.warn_ms),
+      warn:
+        !r.held && (r.ms <= 0 || countdownWarning(r.ms, countdownTotalMs(t), t?.warn_ms)),
     }));
   // THE ROW IS SIZED FROM THE TEXT IT IS ACTUALLY PAINTING.
   //
@@ -344,6 +375,60 @@
   // character short of every one of them; this one is handed the sign because the
   // sign is part of the value.
   $: progCh = programme.reduce((n, r) => Math.max(n, r.v.length), 4);
+
+  // ── THE RAIL'S FLOOR ───────────────────────────────────────────────────────
+  //
+  // `.tmr { flex: 1 1 0 }` divided the row by however many timers were in it, with
+  // no floor: six timers on a phone in portrait is six columns of about sixty
+  // pixels, every clock on the rail illegible, and nothing anywhere saying the rail
+  // had given up. A row that cannot show every timer must SAY SO — the same shape as
+  // rule 35, one rail along.
+  //
+  // 132px is the arithmetic, not a taste: `.tval` is `92cqw / --tmrs / 6 / 0.62`, so
+  // a 132px cell puts `MM:SS` at about 32px, a little above the reading's own 26px
+  // floor. Below that the digits are inside the box and nobody across a platform can
+  // read them. At 1920 that is fourteen cells, at 1280 nine, at 1024 seven, and on a
+  // phone in portrait three.
+  //
+  // The viewport, not a measurement: `.progrow` spans the frame, and measuring the
+  // box would mean a forced layout on the one page whose job is to be still.
+  // ── AN OPEN PANEL YIELDS THE RAIL, NOT THE READING ─────────────────────────
+  //
+  // `Zones` and `Control` are two taps in the header, and both of them put a panel
+  // into the same flex column the reading is in. Measured at 1024×768 with the rail
+  // on and both panels open: `.reading` collapsed to 74.2px, the verse was already
+  // on its 26px floor with nothing left for the fit to shrink, and 38.9px of ink
+  // was cut off the bottom of the passage — on a page that is `overflow: hidden` by
+  // design, so there was nothing to scroll and nothing saying the verse was
+  // incomplete. With the Programme zone switched off the same two panels left the
+  // verse whole (RG-164, `docs/qa/audits/2026-09-17-WAVE4-STAGE-PLANNER.md` §2.3).
+  //
+  // So the rail stands down while a panel is open. The order of precedence is the
+  // only one that can be right here: the rail is bookkeeping and the verse is the
+  // thing this screen exists for, and a preacher reading aloud must not lose the
+  // end of a passage because somebody opened a settings panel. Both panels are
+  // transient and operator-initiated, and closing either brings the rail straight
+  // back — which is why this says nothing in the rail's place: a line of its own
+  // would spend the very room this is reclaiming.
+  //
+  // This is NOT the `programme` zone. A zone is a choice a device keeps; this is a
+  // moment, and `relay.stage.zones` is untouched by it.
+  $: panelOpen = showZones || showCtl;
+
+  const MIN_TIMER_PX = 132;
+  let frameW = 1024;
+  $: capacity = Math.max(1, Math.floor((Number(frameW) || 1024) / MIN_TIMER_PX));
+  // The last slot is spent on the count when there is one, so the count cannot
+  // itself be the thing that gets pushed off the end. At least one clock always
+  // survives — a rail that says "6 more" and shows nothing is a rail that has told
+  // the preacher he cannot have the thing he is looking at.
+  $: progCells =
+    programme.length <= capacity
+      ? programme
+      : (() => {
+          const keep = Math.max(1, capacity - 1);
+          return [...programme.slice(0, keep), { more: programme.length - keep }];
+        })();
 
   // SERVICE ELAPSED — counts up from the epoch the fired content carries. There is
   // no epoch when no service is recording, and an absence is shown as an absence:
@@ -497,12 +582,30 @@
   // — this page draws its own chrome), so a formula would be a guess with a
   // decimal point on it. Steps are a guess that cannot produce a pathological
   // size, and the first one is §5's own figure, unchanged, for §5's own case.
+  //
+  // THE LAST STEP IS THE BACKEND'S CAP, AND IT HAS TO BE. There were four steps and
+  // the fourth fell through only above 150 characters, while `main::send_stage_alert`
+  // takes the first 140 — so `.alert.sm` could not be reached by the one thing that
+  // sets `alert`, and a 166-character message arrived as 140 and rendered `.md`
+  // (RG-165). A branch nothing can reach looks exactly like a branch that works, and
+  // the next person to touch this sizing would have reasoned about four steps when
+  // there were three. 140 is a figure somebody chose on purpose, so the steps are
+  // what moved: the last one now describes the range that exists, and `.alert.sm` is
+  // gone from the stylesheet with it. `stagealert.test.js` reads this constant and
+  // `send_stage_alert`'s `MAX` out of both files at once, so neither can move
+  // without the other.
+  const ALERT_MAX = 140;
   const ALERT_STEPS = [
     { max: 24, size: 'xl' }, // a phrase — §5's 8.5cqw
     { max: 64, size: 'lg' },
-    { max: 150, size: 'md' },
+    { max: ALERT_MAX, size: 'md' },
   ];
-  $: alertSize = ALERT_STEPS.find((s) => alert.length <= s.max)?.size ?? 'sm';
+  // The fallback is the smallest step that EXISTS. Nothing longer than `ALERT_MAX`
+  // can arrive through `send_stage_alert`, so this is unreachable today and is a
+  // floor rather than a fourth step: were the cap ever raised without these steps
+  // following it, a long alert would render at `md` and be readable, not at a size
+  // with no rule behind it.
+  $: alertSize = ALERT_STEPS.find((s) => alert.length <= s.max)?.size ?? 'md';
 
   /**
    * THE CONFIGURED WARNING WINDOW, DELIVERED RATHER THAN READ — RG-149(c).
@@ -715,6 +818,12 @@
   });
 </script>
 
+<!-- THE ONLY THING THIS PAGE ASKS THE WINDOW FOR, and it is asked rather than
+     measured: the programme rail's floor needs to know how many clocks the frame
+     can hold at a legible size, and `getBoundingClientRect` on the row would mean a
+     forced layout on the page whose job is to be still. -->
+<svelte:window bind:innerWidth={frameW} />
+
 <div class="sr">
   <header>
     <span class="brand">Relay · Stage</span>
@@ -803,14 +912,36 @@
        fourth colour this page already uses for exactly this rule and is none of the
        three above. It is a claim about TIME, not about a screen. A timer that has
        run OUT wears the same red and counts upward from zero (RG-153) — being over
-       is the far end of the same claim, and it is not a second colour. -->
-  {#if programme.length}
-    <div class="progrow" style="--tmrs:{programme.length}; --tch:{progCh}" aria-label="Programme">
-      {#each programme as t (t.id)}
-        <div class="tmr" class:warn={t.warn} data-timer-id={t.id}>
-          {#if t.label}<span class="tlabel">{t.label}</span>{/if}
-          <span class="tval">{t.v}</span>
-        </div>
+       is the far end of the same claim, and it is not a second colour. A HELD row
+       wears neither: it is not running out, it is where the operator left it. -->
+  {#if zones.programme && progCells.length && !panelOpen}
+    <div
+      class="progrow"
+      style="--tmrs:{progCells.length}; --tch:{progCh}"
+      aria-label="Programme">
+      {#each progCells as t, i (i)}
+        {#if t.more}
+          <!-- THE RAIL SAYING WHAT IT COULD NOT SHOW. Not a timer, so it carries no
+               `data-timer-id` and nothing counts it as one. -->
+          <div class="tmr tmore">
+            <span class="tval msg">+{t.more} more</span>
+          </div>
+        {:else}
+          <div class="tmr" class:warn={t.warn} class:held={t.held} data-timer-id={t.id}>
+            {#if t.label || t.held}
+              <span class="thead">
+                {#if t.label}<span class="tlabel">{t.label}</span>{/if}
+                {#if t.held}<span class="tstate">Held</span>{/if}
+              </span>
+            {/if}
+            <!-- ALWAYS A FIGURE, NEVER PROSE. `--tch` budgets this column from the
+                 widest rendered string on the rail, so a done message here would
+                 size every column to its own length — the failure `MIN_TIMER_PX`
+                 exists to prevent. The operator's words land on the congregation
+                 countdown and on the mirror above this row instead. -->
+            <span class="tval">{t.v}</span>
+          </div>
+        {/if}
       {/each}
     </div>
   {/if}
@@ -1121,10 +1252,22 @@
      rather than rendered empty, so the row closes up instead of leaving a gap the
      height of a word — wave 5 Track G makes label-less the dock's default and this
      page has to survive it already. */
+  /* The label and the state word share the top line: the label takes what it can
+     and ellipses, the state word is never allowed to be the thing that gets cut. */
+  .thead { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
   .tlabel { font-family: var(--f-mono); font-weight: 700; letter-spacing: .16em;
     text-transform: uppercase; line-height: 1.1; color: var(--v-faint);
     font-size: clamp(var(--v-fs-fig), 1.9vmin, 24px);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  /* HELD IS A REAL THIRD STATE AND IT READS AS ONE — the same answer the dock
+     already gave (`Dock.svelte`'s `.cdstatev.held`). It is not a colour from the
+     law: amber means ON AIR, cyan means a guess, amethyst means rehearsal, and a
+     clock somebody paused is none of those. It is the page's own ink, which is the
+     brightest thing here, because the operator did this deliberately and the
+     preacher is entitled to know a clock has stopped rather than broken. */
+  .tstate { flex: 0 0 auto; font-family: var(--f-mono); font-weight: 700;
+    letter-spacing: .16em; text-transform: uppercase; line-height: 1.1;
+    color: var(--v-txt); font-size: clamp(var(--v-fs-fig), 1.9vmin, 24px); }
   .tval { font-family: var(--f-mono); font-variant-numeric: tabular-nums; font-weight: 700;
     color: var(--v-txt); line-height: 1;
     /* The width a figure may take is its share of the row divided by the characters
@@ -1148,14 +1291,25 @@
        already keeps on this same row. */
     min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     font-size: min(clamp(16px, calc(92cqw / var(--tmrs) / var(--tch, 6) / 0.62), 64px), calc(var(--progmax) * .45)); }
-  /* THE LAST MINUTE, ON THE PREACHER'S OWN PROGRAMME. One rule
-     (`layers.js::countdownWarning`), with the per-timer `warn_ms` the frame already
-     carries. The same red as the countdown figure above it and as the wall: a
-     countdown that reads as two different states depending on which screen you are
-     looking at is worse than one that reads as none. Stated here, unconditionally,
-     so a viewer who asked for no motion still learns the time is nearly gone.
-     One class, two ends of one claim about time: nearly gone, and gone — a row past
-     zero counts up in this same red rather than in a colour of its own (RG-153). */
+  /* THE ONE PROSE CELL ON THIS RAIL, and it is the rail talking about itself.
+     A finished timer no longer renders words here — it counts up, and the
+     operator's message lands on the congregation countdown instead — so the only
+     thing left wearing this is `+N more`. Digits sized for `MM:SS` would set that
+     at the size of a clock and clip it. */
+  .tval.msg { font-family: var(--f-body); font-weight: 700; letter-spacing: 0;
+    line-height: 1.15;
+    font-size: min(clamp(14px, calc(92cqw / var(--tmrs) / 11 / 0.5), 30px), 9cqh);
+    overflow: hidden; }
+  /* WHAT THE RAIL COULD NOT SHOW. Quiet, because it is bookkeeping about
+     bookkeeping — but present, because a rail that silently drops half the
+     programme is a rail nobody can tell from a complete one. */
+  .tmore { flex: 0 1 auto; justify-content: center; }
+  .tmore .tval.msg { color: var(--v-faint); }
+  /* THE LAST MINUTE, ON THE PREACHER'S OWN PROGRAMME. Same red and same rule as
+     the congregation figure beneath the reading — `.fig.warn .figv` is the
+     precedent and this reuses it rather than inventing a second warning.
+     The COLOUR is stated here, unconditionally, outside every motion query: a
+     viewer who asked for no motion must still learn that the clock is running out. */
   .tmr.warn .tval { color: var(--v-red); }
   /* The zone panel — one instrument, no native dialog (rule 41). */
   .zonepanel { flex: 0 0 auto; max-height: 46dvh; overflow-y: auto; padding: 14px 18px;
@@ -1239,15 +1393,20 @@
     background: #c8121c;
     overflow: hidden;
   }
-  /* FOUR STEPS, AND THE FIRST IS §5's FIGURE UNCHANGED. `.alert` is `position:
+  /* THREE STEPS, AND THE FIRST IS §5's FIGURE UNCHANGED. `.alert` is `position:
      fixed` with no query container above it, so `cqw` here resolves against the
      small viewport — which is what is wanted: this panel IS the screen. A message
      the operator typed in a hurry is longer than a phrase, and at 8.5cqw a
-     three-sentence one ran off the bottom of a box that clips. */
+     three-sentence one ran off the bottom of a box that clips.
+
+     THERE WAS A FOURTH, `.alert.sm` at 3cqw, and nothing could render it: its step
+     began above 150 characters and `send_stage_alert` caps the line at 140 (RG-165).
+     A rule no state can reach is a rule that looks like it works. Deleted rather
+     than kept for a cap that might move — `ALERT_STEPS` above holds the two figures
+     together, so if the cap does move the steps move with it. */
   .alert.xl { font-size: 8.5cqw; }
   .alert.lg { font-size: 6cqw; }
   .alert.md { font-size: 4.2cqw; }
-  .alert.sm { font-size: 3cqw; }
   @media (prefers-reduced-motion: no-preference) {
     .alert { animation: stagealert 1.4s ease-in-out infinite; }
   }

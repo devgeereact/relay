@@ -192,15 +192,16 @@
     planItems,
     getSong,
     setStageNext,
+    startTimer,
+    listTimers,
+    stopTimer,
+    countdownWarnMs,
     rehearsing,
     loadRehearsal,
     setRehearsal,
     verseRepeatCount,
     chapterVerses,
     readErrors,
-    startTimer,
-    listTimers,
-    stopTimer,
   } from '../stores/capture.js';
   // The programme timer's two pure questions — which rows belong here, and how
   // long is left on one. `timerRemainingMs` ENDS in `countdownRemainingMs`, which
@@ -712,6 +713,13 @@
     const p = payloadOf(item);
     const s = slidesOf(item)[i];
     if (!s) return;
+    // Was this cue ALREADY the one on air? Read before the fire, because the take
+    // below is what makes it so — see the timer at the bottom of this function.
+    const cueWasOnAir = planOnAir && liveCueId === item.id;
+    // WHICH CUE THIS TAKE RETIRES. Read here, beside `cueWasOnAir` and for the same
+    // reason: the take below is what moves the playhead, so after it there is no
+    // way left to ask which cue the programme has just left. See `retireCueTimer`.
+    const leavingCueId = liveCueId;
     const stageNote = p.stage_note || null;
     // The template the operator set for THIS cue in the Planner. Passed on every
     // fire so a plan item renders with its own chosen look, not just the
@@ -766,6 +774,17 @@
       setLive(item.id, i);
       selId = item.id;
       flash(`Live: ${s.label}`);
+      // INSIDE the try, AFTER the take, so a fire that failed starts no clock: the
+      // cue never reached a screen, and a timer for a cue nobody is looking at is
+      // a clock the operator has to hunt down and stop mid-service. And BEFORE the
+      // "up next" hint below, which is deliberately not awaited: the clock is part
+      // of the take and the hint is a shrug, so the one that carries a guarantee
+      // goes first rather than racing the one that does not.
+      await startCueTimer(item, cueWasOnAir);
+      // AND THE CUE THIS ONE REPLACED STOPS. Second, not first: the clock the
+      // preacher needs is the one for the cue that has just gone on air, so the
+      // start happens even if the retire cannot.
+      if (leavingCueId && leavingCueId !== item.id) await retireCueTimer(leavingCueId);
       const n = nextOf(items, item.id, i);
       // Deliberately shrugged: a missing "Up Next" is an absent hint, and the
       // wall — and this catch — already report anything that matters. Contrast
@@ -773,6 +792,134 @@
       setStageNext(n?.label ?? null, n?.text ?? null).catch(() => {});
     } catch (e) {
       flash(humanError(e));
+    }
+  }
+
+  /**
+   * A CUE THAT CARRIES A CLOCK STARTS IT HERE, AND NOWHERE ELSE.
+   *
+   * `plan_items.timer_minutes` is a request the Planner stores and cannot act on —
+   * that workspace may not reach an output or the preacher's monitor
+   * (`plannerbuildonly.test.js`). So the run surface is what acts on it, and this
+   * is the ONE call site: `fireSlide` is the single door a plan cue goes on air
+   * through, which is rule 36's reasoning applied to a timer. A second call beside
+   * `stepLive` or beside the grid press would be the fifth bug in this repository
+   * with that shape.
+   *
+   * THE CONDITIONS, each for its own reason:
+   *
+   * · `cueWasOnAir` — a clock starts when the cue GOES on air, not on every slide
+   *   of it. A five-section song would otherwise restart the sermon clock five
+   *   times as the operator walked it, and stepping back and forward would do it
+   *   again. The backend keeps one clock per cue as well (`start_timer` stops the
+   *   cue's previous one), so the two agree rather than one covering for the other.
+   * · `$rehearsing` — a rehearsal publishes no timers (`channels::publish_timers`
+   *   suppresses them), so a clock started here would be one the registry holds
+   *   and nobody can see, waiting to appear on the preacher's rail the moment the
+   *   service goes live. A rehearsal changes nothing about the service.
+   *
+   * It reports its own failure rather than riding in the fire's `catch`. The verse
+   * or the notice is already on the wall by this point and the fire SUCCEEDED; a
+   * flash saying otherwise would be the console lying about the congregation's
+   * screen, which is the more expensive of the two mistakes.
+   */
+  async function startCueTimer(item, cueWasOnAir) {
+    const mins = Number(item.timer_minutes) || 0;
+    if (mins <= 0 || cueWasOnAir || $rehearsing) return;
+    try {
+      await startTimer({
+        minutes: mins,
+        label: item.label,
+        // STAGE, never `both`. This is the preacher's bookkeeping; a congregation
+        // countdown is `start_countdown` and is an action an operator takes on
+        // purpose. A cue silently putting a clock on the wall is the one mistake
+        // that cannot be taken back quietly.
+        scope: 'stage',
+        planItemId: item.id,
+        // THE WARNING THRESHOLD TRAVELS ON THE TIMER, because the surface that has
+        // to obey it cannot look it up. `Settings → General → Countdown warning` is
+        // one row in the console's database (`countdown.warn_ms`); the stage page
+        // has no Tauri bridge and never reads it, so `Stage.svelte::programmeWarn`
+        // warns at the figure the FRAME carries or does not warn at all — which is
+        // Track A's rule and is right. Without this the rail could never warn on
+        // any install, because nothing shipped ever put a figure in the frame.
+        //
+        // `countdownWarnMs` is the console's mirror of the row in force, loaded at
+        // launch by `App.svelte` and rewritten by the Settings control. It is the
+        // SAME figure the dock and the programme pane already turn red at, so the
+        // preacher's rail and the operator's screen agree by construction. No
+        // default is invented here: an unreadable setting has already fallen back
+        // to the shipped minute inside `applyCountdownWarn`, once, in one place.
+        warnMs: $countdownWarnMs,
+        // AND NO DONE MESSAGE. The rail's finished state shows the OPERATOR'S own
+        // words at zero, and a cue carries none — there is no field on `plan_items`
+        // for one and no control that writes one. Relay composing a sentence here
+        // would be Relay's words presented as somebody's choice, and it would cost
+        // something measured: a finished row's message renders at 30px against the
+        // digits' 64px (`docs/qa/audits/2026-09-17-WAVE4-STAGE-PLANNER.md` §1.3), so
+        // every bound cue on every install would end less legible than `0:00`, with
+        // nobody having asked for it. That half of RG-162 is left open against the
+        // timer surface that owns message text — wave 3 Track E.
+      });
+    } catch (e) {
+      flash(`On air — but its ${mins}-minute timer did not start: ${humanError(e)}`);
+    }
+  }
+
+  /**
+   * A CUE'S CLOCK ENDS WHEN THE CUE DOES — and this is the only thing that ends one.
+   *
+   * `TimerRegistry` never reaps: a `Stage` timer lives until something stops it or
+   * the process ends. Nothing did. One walk of a three-cue plan left three finished
+   * clocks on the preacher's rail for the rest of the service, and the rail's floor
+   * keeps the OLDEST cells — so on a phone in portrait the one clock shown was a
+   * dead one from the start of the service and the live sermon clock was inside
+   * `+3 more` (RG-163). Live is what starts a cue's clock, so Live is what stops it.
+   *
+   * WHICH DOORS THIS IS, AND WHICH IT DELIBERATELY IS NOT. A plan cue stops being
+   * what the congregation is looking at through several of them, and only one of
+   * them means the PROGRAMME has moved on:
+   *
+   * · ANOTHER CUE GOES ON AIR — `fireSlide`, which is the single door a cue goes on
+   *   air through (the transport, the slide grid, the preview take and TAKE all
+   *   arrive here). The programme has moved on, so the clock for the slot it left
+   *   is over. THIS IS THE ONE.
+   * · A manual fire, an accepted suggestion, a verse off the rail — `leavePlan()`
+   *   clears `onAir` and the cue is off the screens. Its clock must KEEP RUNNING:
+   *   that is the preacher going off-script in the middle of the sermon slot, which
+   *   is the case the clock exists for.
+   * · `Clear screens` and `Blackout` — same, and settled: the panic controls take
+   *   `Both` and leave `Stage` on purpose (wave 3). A panic control may never gain
+   *   a question it can fail to answer (rule 15).
+   * · Closing the plan, or opening another — the cue is gone from the run surface,
+   *   and the preacher is still preaching. Killing the sermon clock because the
+   *   operator went to look at a different plan would take away the one thing this
+   *   rail is for. The end-of-service sweep (`main::end_service`) is what takes
+   *   those, at the point the programme really is over.
+   *
+   * IT ASKS THE BACKEND WHICH TIMER, rather than remembering the id `startTimer`
+   * handed back. Live is unmounted and remounted every time an operator visits
+   * another workspace mid-service (`liveunmount.test.js`), and a remembered id does
+   * not survive that — it would work all through a rehearsal and fail on the one
+   * Sunday somebody checked the Library between cues. `plan_item_id` rides on the
+   * timer precisely so this question has an answer that outlives a view.
+   *
+   * It reports its own failure and never fails the fire. The new cue is already on
+   * the screens and its clock is already running; a flash saying otherwise would be
+   * the console lying about a take that succeeded.
+   */
+  async function retireCueTimer(cueId) {
+    if (!cueId) return;
+    try {
+      const running = await listTimers();
+      for (const t of running) {
+        // `scope` is checked as well as `plan_item_id`, because a congregation
+        // countdown is not the programme and is taken down by a panic control or by
+        // the operator, never by the plan walking past it.
+        if (t.scope === 'stage' && t.plan_item_id === cueId) await stopTimer(t.id);
+      }
+    } catch (e) {
+      flash(`The previous cue's timer is still running: ${humanError(e)}`);
     }
   }
 
@@ -1542,6 +1689,46 @@
   $: fullscreen = !!$session.liveFullscreen;
   const setFullscreen = (v) => setSession({ liveFullscreen: v });
 
+  // ── HOW BIG A SLIDE CELL IS ──────────────────────────────────────────────
+  //
+  // The grid was fixed at `minmax(158px, 1fr)`, and 158px is the width
+  // `runsurface.test.js` names in its own describe title as the size at which a
+  // live cell and a cued cell must be unmistakable. It is not the size at which
+  // the WORDS on a slide are readable, and the words are what an operator is
+  // choosing between — so a cell could be told apart and not read.
+  //
+  // THE STEP MOVES THE GRID TRACK, NEVER THE THUMB. `.sg-thumb` carries
+  // `container-type: inline-size` and is the container query every `cqw` inside a
+  // cell resolves against; changing IT would resize the box the type is measured
+  // in and each cell would render at the wrong scale rather than bigger. The
+  // custom property is set on the pane body instead and the grid's own
+  // `minmax` reads it, so `<div class="sgrid">` keeps its exact spelling for the
+  // tests that locate it by literal string match.
+  //
+  // FOUR STEPS, and the first is the width the grid has always had, so a console
+  // nobody has touched is unchanged. The names are one or two characters because
+  // this rail is narrow and has clipped a label before: the density segment that
+  // used to sit here wanted 135px inside 114px and rendered `Compact` as `Compa`.
+  const SLIDE_SIZES = [
+    { px: 158, name: 'S' },
+    { px: 210, name: 'M' },
+    { px: 280, name: 'L' },
+    { px: 370, name: 'XL' },
+  ];
+  /** A stored index, made safe. Rubbish, a float and an out-of-range step all
+   *  land on a real one — the session is a file on a disk and this is the only
+   *  place that knows how many steps there are. */
+  const clampSlideSize = (v) =>
+    Math.min(SLIDE_SIZES.length - 1, Math.max(0, Math.trunc(Number(v)) || 0));
+  $: slideSizeIdx = clampSlideSize($session.liveSlideSize);
+  $: slideSize = SLIDE_SIZES[slideSizeIdx];
+  /** Step by a DELTA, read off the store rather than off the reactive
+   *  derivation. Two presses in one frame both see the same stale `slideSizeIdx`
+   *  and the second one does nothing — a stepper that loses a press is a control
+   *  that goes quiet, which is the thing the disabled ends exist to avoid. */
+  const stepSlideSize = (d) =>
+    setSession({ liveSlideSize: clampSlideSize(clampSlideSize(get(session).liveSlideSize) + d) });
+
   // §5 INSPECTOR. The claim panel has room for the verdict; the reasoning needs
   // a surface of its own. Opened per-detection, never a tab: an operator does not
   // browse detections, they interrogate the one in front of them.
@@ -2004,13 +2191,29 @@
              left for `qa-inventory` to find and nothing for a future reader to
              mistake for a preference somebody forgot to wire up. -->
         <div class="view-ctl">
+          <!-- THE SLIDE SIZER. Two steppers and a readout, the idiom the template
+               editor's zoom already uses — each end disabled at its end, so the
+               control says where it has run out rather than going quiet. It
+               changes how the console LOOKS and never what reaches a screen,
+               which is why it belongs in this slot beside Full screen. -->
+          <span class="view-size" title="How big the slide cells are">
+            <button class="r-iconbtn view-szbtn" on:click={() => stepSlideSize(-1)}
+              disabled={slideSizeIdx === 0} aria-label="Smaller slide cells">−</button>
+            <span class="view-szval r-mono">{slideSize.name}</span>
+            <button class="r-iconbtn view-szbtn" on:click={() => stepSlideSize(1)}
+              disabled={slideSizeIdx === SLIDE_SIZES.length - 1} aria-label="Bigger slide cells">+</button>
+          </span>
           <button class="view-fs" on:click={() => setFullscreen(!fullscreen)}>
             {fullscreen ? 'Show tabs' : 'Full screen'}
           </button>
         </div>
       </header>
 
-      <div class="pane-body sg-body">
+      <!-- THE GRID TRACK'S FLOOR, carried as a custom property on the BODY rather
+           than on the grid: `<div class="sgrid">` is located by literal string
+           match by `slidegridwiring.test.js`, and an attribute on it would break
+           that test by spelling rather than by meaning. -->
+      <div class="pane-body sg-body" style="--sg-min:{slideSize.px}px">
         {#if grid.cells.length}
           <div class="sgrid">
             {#each grid.cells as c (c.key)}
@@ -2418,6 +2621,14 @@
      collection switch is `.lr-seg`, its own class with its own rules, because
      Svelte scopes a component's styles and this `.seg` never reached it. */
   .view-ctl{ flex:0 0 auto; display:flex; align-items:center; gap:5px; }
+  /* 22px, not the shared 26px: this row is 22px tall and has clipped a label
+     before. The readout is one or two mono characters on a fixed width, so the
+     control cannot widen as the step changes and push `Full screen` out. */
+  .view-size{ display:flex; align-items:center; gap:3px; }
+  .view-szbtn{ width:22px; height:22px; line-height:1; }
+  .view-szbtn:disabled{ opacity:.4; cursor:not-allowed; }
+  .view-szval{ min-width:18px; text-align:center; font-size:var(--v-fs-b3);
+    letter-spacing:.06em; color:var(--v-dim); }
   .view-fs{ height:22px; padding:0 8px; border-radius:var(--v-r-sm); cursor:pointer;
     background:var(--v-surf); border:1px solid var(--v-line2); color:var(--v-faint);
     font-family:var(--f-body); font-size:var(--v-fs-b3); font-weight:600; }
@@ -2803,7 +3014,9 @@
 
   /* ── 2 · slides ───────────────────────────────────────────────── */
   .sg-body{padding:var(--v-sp-sm)}
-  .sgrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(158px,1fr));
+  /* `--sg-min` is set on `.sg-body` by the slide sizer; the fallback is the 158px
+     this grid has always had, so a console with no stored choice is unchanged. */
+  .sgrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(var(--sg-min,158px),1fr));
     gap:var(--v-sp-sm)}
   .sg-cell{display:flex; flex-direction:column; gap:5px; padding:0; text-align:left;
     background:none; border:0; cursor:pointer; min-width:0; font-family:var(--f-body)}

@@ -27,6 +27,93 @@ figure survives the merge, so this is taken on the ASSEMBLED tree rather than ch
 them. Wave 3 is merged at **`6bee145`**; that branch has moved since (see the note under the
 wave 3 block below). `npm run build` ran first, per RG-127.
 
+---
+
+### 2026-09-17 · `feat/wave4-track-e` — kept as history
+
+*The ids in this block are the ones wave 4 filed under. They are RG-161 … RG-165 in
+the register now; see `RELAY_GAP.md` §23a.*
+
+Re-measured **2026-09-17**, on `feat/wave4-track-e` — wave 4 Track E, which closes the four
+findings the browser-driven pass filed as RG-162 to RG-165. Every figure is the runner's own
+summary line. `npm run build` ran first, per RG-127. Several agents were building on this
+machine at the time; both suites were run to completion with nothing else compiling.
+
+| Count | Value | Command |
+|---|---|---|
+| Rust tests | **817 passed / 0 failed / 16 ignored** | `cd src-tauri && cargo test` |
+| Frontend tests | **2351 passed, 152 files** | `npx vitest run` |
+| `e2e.rs` tests | **75 passed / 0 ignored** | `cd src-tauri && cargo test e2e::` |
+| Registered commands | **145** | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
+| qa-inventory | 145/145 addressed, 0 handlerless, 0 unnamed | `node scripts/qa-inventory.mjs` |
+
+`cargo fmt --all`, `clippy --all-targets -- -D warnings` and `npm run build` all clean on the
+same tree.
+
+**The delta is taken from the row immediately below** (816 Rust / 2336 frontend across 151 files
+/ 145 commands, on `feat/wave4-track-d`): **+1 Rust**, **+15 frontend across +1 file**, **+0
+commands**. The Rust one is the end-of-service sweep in `e2e.rs`, which is why `e2e::` is +1 as
+well. Of the fifteen frontend tests, ten are `progtimerjoin.test.js` — a new file, and the
+reason it is a new file is the point of it: RG-162 and RG-163 are joins between two tracks that
+were each individually green, so the test drives Live's real fire path and mounts the REAL stage
+page on the frame that comes out, rather than adding cases to either side. Five are in
+`stagezones.test.js`. **No command was added**, deliberately: the cue-clock lifecycle is closed
+with `list_timers` and `stop_timer`, which were already registered and until now reached no
+rendered control.
+
+**One existing test was corrected rather than added to.** `stagezones.test.js` asserted that a
+240-character stage alert renders at `.alert.sm` — green, and over a defect: `send_stage_alert`
+caps the line at 140, so neither the message nor the step could ever exist (RG-165). The
+instrument carried the same mistake as the code it covered, which is this file's own recurring
+subject.
+
+---
+
+
+Re-measured **2026-09-17**, on `feat/wave4-track-d` — wave 4's three code tracks (A the stage
+rail, B the cue clock and the slide sizer, C the descoped targeting) merged at `89104fd`, plus
+this pass's documents. Every figure is the runner's own summary line. `npm run build` ran first,
+per RG-127. The machine was shared with other agents throughout, so the frontend suite was run
+twice and agreed both times.
+
+| Count | Value | Command |
+|---|---|---|
+| Rust tests | **816 passed / 0 failed / 16 ignored** | `cd src-tauri && cargo test` |
+| Frontend tests | **2336 passed, 151 files** | `npx vitest run` |
+| `e2e.rs` tests | **74 passed / 0 ignored** | `cd src-tauri && cargo test e2e::` |
+| Registered commands | **145** | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
+| qa-inventory | 145/145 addressed, 0 handlerless, 0 unnamed | `node scripts/qa-inventory.mjs` |
+
+`cargo fmt --all`, `clippy --all-targets -- -D warnings` and `npm run build` all clean on the
+same tree.
+
+**The delta is taken from the row immediately below** (784 Rust / 2254 frontend across 145 files
+/ 139 commands, on `feat/wave2-integration`). Since then, across wave 3 and wave 4: **+32 Rust**,
+**+82 frontend across +6 files**, **+6 commands**. The wave 4 tracks account for the last
+part of it — Track A added eight stage tests and a fourth surface to
+`countdownwarnmotion.test.js`'s register, Track B added `cuetimer.test.js` and
+`slidesizer.test.js` (18 between them) plus five `db/plans.rs` tests and one in `timers.rs`. The
+browser-driven pass that produced `audits/2026-09-17-WAVE4-STAGE-PLANNER.md` added **no tests**,
+deliberately: it is a verification pass and its four findings are filed as RG-162 to RG-165
+rather than fixed here. `e2e.rs` is +8 and qa-inventory's handlerless/unnamed counts are
+unchanged; its one orphan component is still `src/lib/__r6probe.svelte`, the deliberate test
+probe.
+
+Neither suite failed. **What the suites cannot see is the point of the audit above them**: both
+of wave 4's surfaces are moving renders, and the two findings that matter most — RG-146 and
+RG-147 — are joins between two tracks that are each individually green.
+
+---
+
+
+Re-measured **2026-09-16**, on `feat/wave2-integration` — the whole of Wave 2 (six tracks,
+fifteen tasks) merged into one tree, plus the final whole-branch fix pass. The block this
+replaces was measured on `feat/wave2-track-d` alone, BEFORE tracks A, B and C merged, and every
+figure in it was wrong at the integration head: it said 774 Rust / 2224 frontend / 141 files /
+138 commands against 784 / 2254 / 145 / 139. The command count disagreed with the block twelve
+lines below it, in the one register this repository keeps counts in. `npm run build` ran first,
+per RG-127.
+
 | Count | Value | Command |
 |---|---|---|
 | Rust tests | **839 passed / 0 failed / 16 ignored** | `cd src-tauri && cargo test` |

@@ -1264,6 +1264,22 @@ const call = await invoke();
 await call('set_plan_duration', { id, seconds });
 }
 
+/**
+ * Bind a cue to a programme timer of `minutes`, or clear it with `null`.
+ *
+ * A REQUEST, STORED — not a clock started. Nothing about this reaches a screen or
+ * a preacher's rail: the Planner may not, and does not (`plannerbuildonly.test.js`).
+ * Live is what reads the binding and starts the timer when the cue goes on air.
+ *
+ * This is NOT `setPlanDuration`. That is the running-time estimate the Planner adds
+ * up; this is a clock somebody will be watching. `db/plans.rs`'s `PlanItem` records
+ * why there are two.
+ */
+export async function setPlanTimer(id, minutes) {
+const call = await invoke();
+await call('set_plan_timer', { id, minutes: minutes ?? null });
+}
+
 /** Override the template a cue renders with. `null` re-inherits the channel's. */
 export async function setPlanTemplate(id, templateId) {
 const call = await invoke();

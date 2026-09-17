@@ -372,6 +372,7 @@ fn main() {
             reorder_plan,
             set_plan_section,
             set_plan_duration,
+            set_plan_timer,
             set_plan_template,
             list_songs,
             search_songs,
@@ -2324,6 +2325,17 @@ fn set_plan_duration(db: tauri::State<'_, Db>, id: i64, seconds: i64) -> error::
     db::set_plan_duration(&conn, id, seconds).map_err(Into::into)
 }
 
+/// Planner: bind a cue to a programme timer of `minutes`, or clear the binding.
+///
+/// It STORES and it starts nothing. The Planner may not reach an output or a
+/// preacher's rail (`plannerbuildonly.test.js`), so the binding is a fact about
+/// the plan and Live is what acts on it when the cue goes on air.
+#[tauri::command]
+fn set_plan_timer(db: tauri::State<'_, Db>, id: i64, minutes: Option<i64>) -> error::Result<()> {
+    let conn = db.0.lock()?;
+    db::set_plan_timer(&conn, id, minutes).map_err(Into::into)
+}
+
 /// Planner: point a cue at a specific template, or back at the channel default.
 #[tauri::command]
 fn set_plan_template(
@@ -3126,6 +3138,19 @@ fn start_timer<R: tauri::Runtime>(
         5.0
     };
     let now_ms = cd_now_ms();
+    // ONE CLOCK PER CUE. A cue that is put on air again — the operator steps back
+    // and forward, or re-takes a slide — asks for its timer to start again, not for
+    // a second one beside it. Without this, walking a plan backwards and forwards
+    // stacks a clock on the preacher's rail per press, and rule 35's floor on that
+    // rail (Track A) would be dividing the width between clocks nobody asked for.
+    // `for_plan_item` is the reader that makes it answerable; an unbound start
+    // (`plan_item_id: None`) is untouched and still makes a new timer every time.
+    if let Some(cue) = plan_item_id {
+        let reg = app.state::<timers::TimerRegistry>();
+        if let Some(previous) = reg.for_plan_item(cue) {
+            reg.stop(previous.id);
+        }
+    }
     let id = app.state::<timers::TimerRegistry>().start(timers::Timer {
         id: 0, // assigned by the registry
         label: label.trim().to_string(),
@@ -6676,6 +6701,27 @@ fn end_service<R: tauri::Runtime>(
     log_event(&app, db::EventKind::ServiceEnded, None);
     *session.0.lock()? = None;
     lock.release();
+    // THE PROGRAMME IS OVER, SO THE PROGRAMME CLOCKS ARE.
+    //
+    // A `Stage` timer lives until something stops it, and until this landed nothing
+    // ever did: a service's cue clocks stayed on the preacher's rail, counting past
+    // zero, for as long as Relay was open (RG-163). `Live::retireCueTimer` ends each
+    // cue's clock as the plan walks past it, which is the half that matters during a
+    // service; this is the sweep behind it, at the one moment the whole programme is
+    // finished. It is the choke point rather than the two controls that call
+    // `end_service` (the dock, and the History list) — a rule kept at call sites is
+    // the shape of four separate bugs in this repository.
+    //
+    // `Both` is untouched. A congregation countdown is on a wall and comes off it
+    // through a panic control or through the operator; emptying it from here would
+    // be a second door onto that screen, which `start_timer` already refuses to be.
+    if let Some(reg) = app.try_state::<timers::TimerRegistry>() {
+        reg.stop_scope(timers::Scope::Stage);
+    }
+    // The registry is read and dropped before this, per rule 2 — `stop_scope` takes
+    // the lock, finishes and returns a count. Publishing is how a rail learns there
+    // are none now: an absent frame cannot say that.
+    channels::publish_timers(&app);
     refresh_wake(&app);
     Ok(())
 }

@@ -755,6 +755,79 @@ a non-negotiable constraint: *"Operator override is a first-class control, never
 fallback UI."* The Planner becomes the place where the **plan** decides, not the
 only place anything can reach a screen.
 
+### Correction — "add it, defaulting to all" is four pieces, and none of them exists
+
+*Written 2026-09-16, verified by reading every line cited here against the working
+tree on `feat/wave4-stage-planner`. The paragraph above is not wrong about what the
+Planner should eventually do. It is wrong about what it costs, and the sentence
+"add it, defaulting to all" reads like a column plus a select.*
+
+**There is no channel dimension on the wire at all.** Per-cue screen targeting is
+not an addition to an existing facility; it is the facility. Four pieces are
+missing, and each one is missing in a place that already has a guarantee attached
+to it.
+
+1. **The content carries no channel.** `OutputContent` (`channels.rs:39-135`) has
+   nineteen fields — `kind`, `reference`, `text`, the two media fields, the two
+   template fields, `template_pinned`, the four monitor-only fields, the five
+   countdown fields and `trace_id` — and not one of them names a screen. Every
+   per-screen decision about CONTENT that exists today is taken by the RECEIVER
+   out of `kind`, against its own template's `shows` set: a standing per-screen
+   preference, not a choice the plan makes cue by cue.
+2. **The publish is unrouted, on both doors.** `broadcast_content`
+   (`channels.rs:1075`) ends in exactly two lines: `channels.rs:1089` emits
+   `output://content` app-wide to every webview, and `channels.rs:1090` hands one
+   string to `publish_kiosk`, which reaches the hub's single broadcast sender
+   (`channels.rs:1513`) and therefore every connected kiosk client. Routing means
+   changing the choke point rule 36 exists to protect, which is the same function
+   `pipeline::preflight` is called from and the same function wave 3's remaining
+   tracks are still editing.
+3. **No receiver compares its own channel.** `src/Output.svelte:293` listens to
+   `output://content` and filters on `kind` alone; the kiosk half does the same at
+   `Output.svelte:190-195`. The page knows which channel it is — `channelId` is
+   parsed from the URL at `Output.svelte:26` — and never asks the question about
+   content. **The precedent that it can is `channel://retemplate`**, emitted
+   app-wide with a `channel` key (`main.rs:6067` and `main.rs:6083`) and filtered
+   client-side at `Output.svelte:330` on the bridge and `Output.svelte:237` on the
+   socket. Addressing is possible, it is already done for the template, and it has
+   never once been done for content.
+4. **Retention is one global slot, and rule 43 lives in it.** `KioskHub` retains
+   the last screen frame (`channels.rs:1393`) and, separately, the last timer frame
+   (`channels.rs:1424`), and replays them to a client on `hello`. Rule 43 says a
+   screen that joins mid-service is shown what is on the screens. **With targeting,
+   "the screens" stops being one answer**: a lobby TV that reconnects must be sent
+   what is on the lobby TV, so the retained frame becomes per-channel, and the
+   struct's own comment already records that one slot per kind is what stops a
+   clock erasing a retained verse. Getting this half wrong is congregation-facing
+   and silent — it is RG-129 again, with more slots to get wrong.
+
+**What must not move.** The panic controls stay global and stay unrouted. A `clear`
+that has to work out which screens it is talking to is a `clear` that can fail to
+answer, and rule 15 and DECISIONS §20 do not allow one of those; `channels.rs`
+states the same thing in its own words at `:1061-1064`, about the timer scope split.
+Whatever shape targeting takes, `clear` and `black` reach every screen, and the
+retained frame a panic control writes reaches every screen that joins after it.
+
+**And one question must be answered before any code is written.** `template_pinned`
+means a cue's deliberate look overrides the screen's own (`main.rs:3325`,
+DECISIONS §29). Nobody has said what it means on a screen the cue does not target.
+The three candidate answers — the screen is untouched and keeps what it had, the
+screen is cleared, the screen shows the cue but in its own template — are three
+different Sunday mornings, and the wire form cannot be designed until one is chosen.
+
+**Descoped by an operator decision on 2026-09-16.** Wave 4 specifies this and
+builds none of it, for two reasons stated plainly: it is a wire change at the one
+choke point wave 3's remaining tracks are still editing, and it makes rule 43's
+retention per-channel, which is congregation-facing. It is filed as **RG-161**.
+
+**Storing the choice without wiring it was considered and refused.** A
+`plan_items` channel column with a Planner select in front of it is one afternoon's
+work and would look like progress. It is precisely the defect the 2026-09-10 design
+pass closed on seven Settings controls — a preference an operator sets, that the
+application never reads, with nothing saying so (RG-132, DECISIONS §69). A column
+nothing routes on is worse than no column, because the operator who fills it in on
+a Tuesday believes the screens will do what they were told on the Sunday.
+
 **Multi-timer cues** bind to the wave-3 registry through `plan_items.duration_sec`,
 which exists (`db/plans.rs:72`) and currently drives no running clock.
 

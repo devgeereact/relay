@@ -474,11 +474,22 @@ describe('§2 · the cue inspector answers the question it is asked', () => {
 
   });
 
-  itMounted('states kind, template and fires as name/value rows', async () => {
+  itMounted('states kind, template, timer and fires as name/value rows', async () => {
+    // TIMER JOINED THIS ROW IN WAVE 4 and the list is asserted exactly, so the
+    // change is deliberate rather than absorbed. It sits BETWEEN Template and
+    // Fires because the two either side of it are read-only facts about the cue
+    // and the two in the middle are the things an operator sets — and it is the
+    // second SET row rather than a third fact, which is what earns it a control
+    // in the value column (REBRAND §11).
+    //
+    // Timer is not Duration. Duration is the running-time estimate this workspace
+    // adds up in its own header; Timer is a clock a preacher watches, started by
+    // Live when the cue goes on air. `db/plans.rs`'s `PlanItem` records why they
+    // are two columns and `cuetimer.test.js` holds the behaviour.
     await mount();
     await until(() => host.querySelector('.sp-kv'), 'the inspector facts');
     const keys = [...host.querySelectorAll('.sp-kv .rw-nvk')].map((e) => e.textContent.trim());
-    expect(keys).toEqual(['Kind', 'Template', 'Fires']);
+    expect(keys).toEqual(['Kind', 'Template', 'Timer', 'Fires']);
     // The first cue is an announcement: it may not claim the auto-detect that
     // only scripture has (`typeOf`, the one door).
     expect(host.querySelector('.sp-kv').textContent).toContain('NOTICE');

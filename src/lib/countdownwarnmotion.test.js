@@ -84,6 +84,17 @@ const SURFACES = [
     glow: /\.fig\.warn \.figv, \.railrow\.warn \{ text-shadow: [^}]*\}/,
   },
   {
+    // WAVE 4 TRACK A. The fourth surface, and the one the other three made it
+    // obvious was missing: the preacher's own programme rail rendered a label and
+    // digits and had no warning state at all, on the one screen in the building
+    // whose whole job is telling somebody how long is left. It reuses `.fig.warn`'s
+    // answer one row up rather than inventing a second — same red, same cut.
+    name: "the preacher's programme rail",
+    file: 'src/Stage.svelte',
+    colour: /\.tmr\.warn \.tval \{ color: var\(--v-red\); \}/,
+    glow: /\.tmr\.warn \.tval \{ text-shadow: [^}]*\}/,
+  },
+  {
     name: 'the dock',
     file: 'src/lib/Dock.svelte',
     colour: /\.tfig\.warn \{ color: var\(--v-red\); \}/,

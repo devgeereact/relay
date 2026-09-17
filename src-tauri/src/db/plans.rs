@@ -32,6 +32,22 @@ pub struct PlanSummary {
 /// `duration_sec` is the planned length used for the running-time estimate. 0
 /// means "not timed" — a scripture cue fires when the preacher reaches it, not
 /// on a clock, and the Planner renders that as an em dash rather than 0:00.
+///
+/// `timer_minutes` is a DIFFERENT fact, and the two are deliberately not one
+/// column. `duration_sec` is an estimate a person types on a Tuesday so the
+/// Planner can add a plan up; nothing reads it but `plan.js`'s `sectionsOf` and
+/// `planRuntime`, and changing it moves a number on a build surface and nothing
+/// else. `timer_minutes` is a REQUEST FOR A RUNNING CLOCK: when this cue goes on
+/// air, Live starts a programme timer of that length on the preacher's rail.
+/// Overloading `duration_sec` with it would mean an operator could not estimate a
+/// twenty-minute sermon without also putting a twenty-minute clock in front of the
+/// preacher, and could not put a five-minute clock on a cue whose length nobody
+/// has estimated.
+///
+/// `None` is UNBOUND and is not the same as `Some(0)`. A cue nobody has bound has
+/// no answer here rather than an answer of zero — the same distinction
+/// `template_id` already keeps, and the reason the column is nullable on a table
+/// whose other additive columns are `NOT NULL DEFAULT`.
 #[derive(Debug, Clone, Serialize)]
 pub struct PlanItem {
     pub id: i64,
@@ -43,6 +59,7 @@ pub struct PlanItem {
     pub template_id: Option<i64>,
     pub section_title: String,
     pub duration_sec: i64,
+    pub timer_minutes: Option<i64>,
 }
 
 /// Create the service-plan tables if missing. Idempotent; forward-fills DBs
@@ -68,7 +85,12 @@ pub fn ensure_service_plans(conn: &Connection) -> rusqlite::Result<()> {
          CREATE INDEX IF NOT EXISTS idx_plan_items ON plan_items(plan_id, position);",
     )?;
     add_plan_item_column(conn, "section_title", "TEXT NOT NULL DEFAULT ''")?;
-    add_plan_item_column(conn, "duration_sec", "INTEGER NOT NULL DEFAULT 0")
+    add_plan_item_column(conn, "duration_sec", "INTEGER NOT NULL DEFAULT 0")?;
+    // NULLABLE, with no default: every cue in an existing plan comes through this
+    // migration UNBOUND, which is a different fact from "bound to zero minutes".
+    // A `NOT NULL DEFAULT 0` here would have silently given every cue in every
+    // church's existing plans an answer nobody typed.
+    add_plan_item_column(conn, "timer_minutes", "INTEGER")
 }
 
 /// Add a column to `plan_items` only if it is absent.
@@ -162,9 +184,9 @@ pub fn duplicate_plan(
     // duplicating instead of starting empty.
     tx.execute(
         "INSERT INTO plan_items (plan_id, position, cue_type, label, payload_json,
-                                 template_id, section_title, duration_sec)
+                                 template_id, section_title, duration_sec, timer_minutes)
          SELECT ?1, position, cue_type, label, payload_json,
-                template_id, section_title, duration_sec
+                template_id, section_title, duration_sec, timer_minutes
            FROM plan_items WHERE plan_id = ?2",
         (new_id, src_id),
     )?;
@@ -185,7 +207,7 @@ pub fn delete_plan(conn: &Connection, id: i64) -> rusqlite::Result<()> {
 pub fn plan_items(conn: &Connection, plan_id: i64) -> rusqlite::Result<Vec<PlanItem>> {
     let mut stmt = conn.prepare(
         "SELECT id, plan_id, position, cue_type, label, payload_json, template_id,
-                section_title, duration_sec
+                section_title, duration_sec, timer_minutes
            FROM plan_items WHERE plan_id = ?1 ORDER BY position, id",
     )?;
     let rows = stmt.query_map([plan_id], |r| {
@@ -199,6 +221,7 @@ pub fn plan_items(conn: &Connection, plan_id: i64) -> rusqlite::Result<Vec<PlanI
             template_id: r.get(6)?,
             section_title: r.get(7)?,
             duration_sec: r.get(8)?,
+            timer_minutes: r.get(9)?,
         })
     })?;
     rows.collect()
@@ -271,6 +294,28 @@ pub fn set_plan_duration(conn: &Connection, item_id: i64, seconds: i64) -> rusql
     conn.execute(
         "UPDATE plan_items SET duration_sec = ?1 WHERE id = ?2",
         (seconds.max(0), item_id),
+    )?;
+    Ok(())
+}
+
+/// Bind a cue to a programme timer of `minutes`, or clear the binding.
+///
+/// `None` clears it, and so does a non-positive figure: "start a zero-minute
+/// clock" is not a request anybody makes, and storing it would put a clock that
+/// reads 0:00 on a preacher's rail the moment the cue went up. The two therefore
+/// mean the same thing here — no clock — and the column can only ever hold a
+/// length somebody actually asked for.
+///
+/// This is NOT `set_plan_duration`. See `PlanItem` for why there are two.
+pub fn set_plan_timer(
+    conn: &Connection,
+    item_id: i64,
+    minutes: Option<i64>,
+) -> rusqlite::Result<()> {
+    let minutes = minutes.filter(|m| *m > 0);
+    conn.execute(
+        "UPDATE plan_items SET timer_minutes = ?1 WHERE id = ?2",
+        (minutes, item_id),
     )?;
     Ok(())
 }
@@ -480,5 +525,167 @@ mod migration_tests {
         add_plan_item_column(&conn, "section_title", "TEXT NOT NULL DEFAULT ''")
             .expect("the migration must not fail when the column already exists");
         assert!(has_column(&conn, "section_title"));
+    }
+}
+
+/// A CUE CAN CARRY A CLOCK — the column, the migration and the two facts that
+/// must never become one.
+///
+/// Every test here was watched to fail against the tree before the column
+/// existed: the first three do not compile without it, and
+/// `an_existing_cue_comes_through_the_migration_unbound` fails with `Some(0)`
+/// against a `NOT NULL DEFAULT 0` declaration, which is the shape of the mistake
+/// it exists to catch.
+#[cfg(test)]
+mod timer_binding_tests {
+    use super::*;
+
+    /// The plan tables as a church that installed Relay before any of the three
+    /// additive columns would have them.
+    fn v0(conn: &Connection) {
+        conn.execute_batch(
+            "CREATE TABLE service_plans (
+                id         INTEGER PRIMARY KEY,
+                title      TEXT NOT NULL,
+                plan_date  TEXT NOT NULL DEFAULT '',
+                notes      TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT ''
+             );
+             CREATE TABLE plan_items (
+                id           INTEGER PRIMARY KEY,
+                plan_id      INTEGER NOT NULL,
+                position     INTEGER NOT NULL,
+                cue_type     TEXT NOT NULL,
+                label        TEXT NOT NULL,
+                payload_json TEXT NOT NULL DEFAULT '{}',
+                template_id  INTEGER
+             );
+             INSERT INTO service_plans (id, title) VALUES (1, 'Last Sunday');
+             INSERT INTO plan_items (plan_id, position, cue_type, label)
+                  VALUES (1, 0, 'announce', 'Welcome');",
+        )
+        .unwrap();
+    }
+
+    /// THE MIGRATION IS RETRYABLE — it runs on every single boot (rule 25).
+    ///
+    /// The forbidden failure is the one `ensure_manual_detection_status` had: a
+    /// second run that errors, before the window is shown, for ever. Three runs
+    /// against the same file, and the last one has to be as quiet as the first.
+    #[test]
+    fn the_migration_runs_again_on_every_boot_and_says_nothing() {
+        let conn = Connection::open_in_memory().unwrap();
+        v0(&conn);
+        for pass in 1..=3 {
+            ensure_service_plans(&conn)
+                .unwrap_or_else(|e| panic!("boot {pass} failed to migrate: {e}"));
+        }
+        let cols: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('plan_items') WHERE name = 'timer_minutes'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            cols, 1,
+            "the column must exist exactly once after three boots"
+        );
+    }
+
+    /// AN EXISTING CUE IS UNBOUND, NOT BOUND TO ZERO.
+    ///
+    /// The cue was written before the column existed and nobody has touched it
+    /// since. `None` is the only honest answer; `Some(0)` would be Relay claiming
+    /// an operator asked for a zero-minute clock, which is what a
+    /// `NOT NULL DEFAULT 0` declaration would have made it say.
+    #[test]
+    fn an_existing_cue_comes_through_the_migration_unbound() {
+        let conn = Connection::open_in_memory().unwrap();
+        v0(&conn);
+        ensure_service_plans(&conn).unwrap();
+        let items = plan_items(&conn, 1).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(
+            items[0].timer_minutes, None,
+            "a cue nobody has bound must read as unbound, never as zero minutes"
+        );
+        assert_eq!(
+            items[0].duration_sec, 0,
+            "and the running-time estimate is untouched — the two are separate columns"
+        );
+    }
+
+    /// THE TWO COLUMNS ARE TWO FACTS. Setting either must not move the other.
+    #[test]
+    fn a_cue_can_be_estimated_without_being_clocked_and_the_other_way_round() {
+        let conn = Connection::open_in_memory().unwrap();
+        v0(&conn);
+        ensure_service_plans(&conn).unwrap();
+        let id = plan_items(&conn, 1).unwrap()[0].id;
+
+        set_plan_duration(&conn, id, 20 * 60).unwrap();
+        let after_estimate = plan_items(&conn, 1).unwrap().remove(0);
+        assert_eq!(after_estimate.duration_sec, 1200);
+        assert_eq!(
+            after_estimate.timer_minutes, None,
+            "estimating a cue's length must not put a clock in front of the preacher"
+        );
+
+        set_plan_timer(&conn, id, Some(5)).unwrap();
+        let after_timer = plan_items(&conn, 1).unwrap().remove(0);
+        assert_eq!(after_timer.timer_minutes, Some(5));
+        assert_eq!(
+            after_timer.duration_sec, 1200,
+            "binding a clock must not overwrite the running-time estimate"
+        );
+    }
+
+    /// NOTHING IS EVER STORED AS A ZERO-MINUTE CLOCK.
+    ///
+    /// `None`, `Some(0)` and a negative all mean the same thing: no clock. Storing
+    /// zero would put 0:00 on a preacher's rail the instant the cue went up.
+    #[test]
+    fn a_non_positive_binding_clears_the_clock_rather_than_storing_one() {
+        let conn = Connection::open_in_memory().unwrap();
+        v0(&conn);
+        ensure_service_plans(&conn).unwrap();
+        let id = plan_items(&conn, 1).unwrap()[0].id;
+        let read = |c: &Connection| plan_items(c, 1).unwrap().remove(0).timer_minutes;
+
+        for asked in [None, Some(0), Some(-7)] {
+            set_plan_timer(&conn, id, Some(9)).unwrap();
+            assert_eq!(
+                read(&conn),
+                Some(9),
+                "precondition: a real binding is stored"
+            );
+            set_plan_timer(&conn, id, asked).unwrap();
+            assert_eq!(
+                read(&conn),
+                None,
+                "asked for {asked:?} and it was not cleared"
+            );
+        }
+    }
+
+    /// DUPLICATING LAST WEEK'S ORDER KEEPS THE CLOCKS.
+    ///
+    /// The same reason `section_title` and `duration_sec` are in that INSERT: the
+    /// operator's whole reason for duplicating instead of starting empty is that
+    /// the work carries over. A column added to the table and not to that list is
+    /// silently dropped on every duplicate, and nothing says so.
+    #[test]
+    fn duplicating_a_plan_carries_the_binding() {
+        let conn = Connection::open_in_memory().unwrap();
+        v0(&conn);
+        ensure_service_plans(&conn).unwrap();
+        let id = plan_items(&conn, 1).unwrap()[0].id;
+        set_plan_timer(&conn, id, Some(12)).unwrap();
+
+        let copy = duplicate_plan(&conn, 1, "This Sunday", "2026-09-20").unwrap();
+        let copied = plan_items(&conn, copy).unwrap();
+        assert_eq!(copied.len(), 1);
+        assert_eq!(copied[0].timer_minutes, Some(12));
     }
 }

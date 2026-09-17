@@ -703,6 +703,14 @@ describe('L2 · the slides head says what it is and what a press does', () => {
   // T2: the pair became ONE. `Normal | Compact` was removed on the operator's
   // instruction, and this test's real subject is the PLACE, so it keeps that and
   // narrows its claim rather than being deleted with the control.
+  //
+  // WAVE 4: a second control joined it, and the list is asserted exactly so the
+  // arrival is deliberate rather than absorbed. The slide sizer belongs in this
+  // slot for the same reason Full screen does — it changes how the console LOOKS
+  // and never what reaches a screen — and it is deliberately NOT the density
+  // segment coming back: that changed spacing and type, this changes the width of
+  // the picture an operator is reading the words off. `slidesizer.test.js` holds
+  // its behaviour, including that it moves the grid track and not `.sg-thumb`.
   it('the full-screen control left the rail and is still reachable', async () => {
     new Live({ target: host, props: {} });
     await settle();
@@ -712,7 +720,10 @@ describe('L2 · the slides head says what it is and what a press does', () => {
     const ctl = host.querySelector('.sg-head .view-ctl');
     expect(ctl).not.toBeNull();
     expect([...ctl.querySelectorAll('button')].map((b) => b.textContent.trim()))
-      .toEqual(['Full screen']);
+      .toEqual(['−', '+', 'Full screen']);
+    // The two glyphs are NAMED — a bare − is punctuation to a screen reader.
+    expect([...ctl.querySelectorAll('button')].map((b) => b.getAttribute('aria-label')))
+      .toEqual(['Smaller slide cells', 'Bigger slide cells', null]);
   });
 
   // ── THE DENSITY CONTROL IS DELETED, NOT HIDDEN (T2) ──────────────────────

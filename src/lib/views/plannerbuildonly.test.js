@@ -70,6 +70,22 @@ const TAKES_A_SCREEN = [
   'send_stage_alert',
   'clear_screens',
   'blackout',
+  // THE FOUR TIMER COMMANDS, added when the Planner gained a timer BINDING (wave
+  // 4, Track B). The binding is stored on the cue and acted on by Live; the
+  // Planner must be able to write it without being able to start, move, stop or
+  // SHOW a clock.
+  //
+  // `show_timer` is the one that matters most here and the one a reviewer would
+  // skip: it is a SECOND DOOR ONTO A CONGREGATION WALL (`main.rs`, which says so
+  // in as many words — `start_countdown` and `show_timer` are the only two). The
+  // other three take the preacher's monitor rather than the wall, which is still
+  // a screen somebody is reading: `start_timer` puts a clock on the stage rail,
+  // `adjust_timer` moves one and repaints the wall when that timer is what the
+  // wall is already showing, and `stop_timer` takes one away mid-sermon.
+  'start_timer',
+  'show_timer',
+  'adjust_timer',
+  'stop_timer',
 ];
 
 /**
@@ -92,6 +108,13 @@ const FIRE_WRAPPERS = [
   'sendStageAlert',
   'clearScreens',
   'blackScreen',
+  // The wrappers for the four above. `setPlanTimer` is deliberately NOT here: it
+  // writes a column and invokes `set_plan_timer`, which takes no screen — that is
+  // the whole point of splitting the binding from the clock.
+  'startTimer',
+  'showTimer',
+  'adjustTimer',
+  'stopTimer',
 ];
 
 const PLANNER = resolve(__dirname, 'ServicePlanner.svelte');

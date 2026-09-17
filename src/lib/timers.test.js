@@ -632,3 +632,215 @@ describe('countdownRemainingMs answers past zero only when asked', () => {
     ).toBe(4 * 60_000);
   });
 });
+
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+
+/** The stage page's own source, for the one assertion that is about a CSS rule
+ *  rather than about a rendered row. jsdom computes no layout, so a claim about
+ *  the colour law is made against the declaration, not against a painted pixel. */
+const SRC = readFileSync(path.resolve(__dirname, '../Stage.svelte'), 'utf8');
+
+// ══ WAVE 4 TRACK A ═══════════════════════════════════════════════════════════
+//
+// The rail above renders a label and digits and nothing else. `warn_ms` rides in
+// the frame (`channels::timer_frame_json`) and was deliberately left unread while
+// the warning rule was being settled on the other three surfaces; `countdown_done`
+// rides there too and was dropped on the floor, so a finished programme timer read
+// `0:00` — a clock that is still running and has just arrived. A held row froze,
+// correctly, and said nothing about being held.
+//
+// This is the one surface in the building whose whole job is to tell a preacher how
+// long is left, and it was the only timer surface with no warning state at all.
+
+/** Every programme row element, in the order the rail paints them. */
+const rowEls = () => [...host.querySelectorAll('[data-timer-id]')];
+/** The ids of the rows wearing a given state class. */
+const wearing = (cls) =>
+  rowEls().filter((el) => el.classList.contains(cls)).map((el) => el.dataset.timerId);
+/** Advance the page's own 1s clock and let Svelte settle. */
+async function advance(ms) {
+  vi.advanceTimersByTime(ms);
+  await tick();
+  await tick();
+}
+/** Mount at a fixed instant with the fake clock running. */
+async function mountAt(at) {
+  vi.useFakeTimers();
+  vi.setSystemTime(at);
+  await mount();
+}
+
+describe('a programme row that is nearly out says so', () => {
+  const at = 1_700_000_000_000;
+
+  it('crosses into the warning state at the threshold the frame carries', async () => {
+    // The figure that decides this is the operator's, and it arrives per row.
+    await mountAt(at);
+    await deliver({
+      kind: 'timer',
+      timers: [entry(1, 'Offering', 5, at, { warn_ms: 120_000 })],
+    });
+    expect(wearing('warn'), 'five minutes left is not a warning').toEqual([]);
+
+    await advance(2 * 60_000);
+    expect(rows()[0][1]).toBe('3:00');
+    expect(wearing('warn'), 'three minutes left is still not a warning').toEqual([]);
+
+    // The boundary itself: `countdownWarning` is `left <= chosen`, so the row is
+    // already warning at exactly the threshold rather than a second after it.
+    await advance(60_000);
+    expect(rows()[0][1]).toBe('2:00');
+    expect(wearing('warn')).toEqual(['1']);
+  });
+
+  it('does not flash a row that is being held', async () => {
+    // A held timer is not running out. It is exactly where the operator left it,
+    // and a frozen figure pulsing red says the opposite of what is true.
+    await mountAt(at);
+    await deliver({
+      kind: 'timer',
+      timers: [entry(1, 'Sermon', 20, at, { countdown_paused_ms: 30_000, warn_ms: 120_000 })],
+    });
+
+    expect(rows()[0][1]).toBe('0:30');
+    expect(wearing('warn'), 'a held clock is not running out').toEqual([]);
+  });
+
+  // THE TREATMENT ITSELF IS PINNED NEXT DOOR, in `countdownwarnmotion.test.js`,
+  // which is the register of which surfaces carry a countdown warning and what each
+  // of them does when a viewer asks for no motion. A second copy of that assertion
+  // here is how two files come to disagree about one rule; the programme rail is a
+  // fourth entry in that list rather than a second home for it.
+});
+
+// ── THREE CASES FROM THIS SIDE ARE DELETED, NOT MERGED ──────────────────────
+//
+// Wave 4 asserted that a finished programme row shows the operator's words, or
+// `0:00`, and that a row whose frame chose no threshold never warns. Wave 3
+// asserted that the row counts up, and that the threshold falls back to the one
+// shared rule. Neither branch could see the other. The consolidation settled both
+// against wave 4, on evidence rather than on which ruling came second:
+//
+//   * `--tch` budgets every column on this rail from the widest RENDERED string, so
+//     prose in that slot sizes every column to its length -- which is the
+//     six-sixty-pixel-columns failure `MIN_TIMER_PX` further down exists to stop.
+//     The two fixes fight the moment words are allowed in. Both fixes are correct.
+//   * the no-fallback rule was argued from "this page has no Tauri bridge and never
+//     reads the configured default". Wave 3's warn chain ships `warn_default_ms` on
+//     the timer frame and `countdown_warn_default_ms` on content frames, and
+//     `applyWarnDefault` reads them. The merge deletes the premise.
+//
+// Deleting rather than loosening is the point: a suite asserting both answers
+// asserts neither. What a finished timer does now is held by
+// `RG-153 -- a programme timer past zero counts up` above.
+describe('a held programme row says it is held', () => {
+  const at = 1_700_000_000_000;
+
+  it('marks a held row and keeps its frozen figure', async () => {
+    await mountAt(at);
+    await deliver({
+      kind: 'timer',
+      timers: [entry(1, 'Sermon', 20, at, { countdown_paused_ms: 90_000 })],
+    });
+
+    expect(rows()[0][1]).toBe('1:30');
+    expect(wearing('held'), 'a held clock looked exactly like a running one').toEqual(['1']);
+    expect(host.querySelector('[data-timer-id] .tstate').textContent.trim()).toBe('Held');
+
+    // …and it is still frozen a minute later, which is what makes the mark worth
+    // having: the digits alone cannot tell a held clock from a stopped page.
+    await advance(60_000);
+    expect(rows()[0][1]).toBe('1:30');
+    expect(wearing('held')).toEqual(['1']);
+  });
+
+  it('takes the mark away when the hold is released', async () => {
+    await mountAt(at);
+    await deliver({
+      kind: 'timer',
+      timers: [entry(1, 'Sermon', 20, at, { countdown_paused_ms: 90_000 })],
+    });
+    expect(wearing('held')).toEqual(['1']);
+
+    // The registry re-aims the countdown on release and publishes the whole set.
+    await deliver({
+      kind: 'timer',
+      timers: [{ ...entry(1, 'Sermon', 0, at), countdown_to: at + 90_000 }],
+    });
+    expect(wearing('held'), 'the mark outlived the hold').toEqual([]);
+    expect(host.querySelector('[data-timer-id] .tstate')).toBeNull();
+    expect(rows()[0][1]).toBe('1:30');
+  });
+
+  it('keeps the held mark off the colour law', () => {
+    // Held is a state the operator caused deliberately, and `Dock.svelte` already
+    // records which treatment that gets: the page's own ink. Amber means ON AIR,
+    // cyan means a guess, amethyst means rehearsal, and none of those is true of a
+    // clock somebody paused.
+    const style = SRC.slice(SRC.indexOf('<style>')).replace(/\/\*[\s\S]*?\*\//g, '');
+    const i = style.indexOf('.tstate {');
+    expect(i, 'no rule for .tstate').toBeGreaterThan(-1);
+    const rule = style.slice(i, style.indexOf('}', i));
+    for (const [token, means] of Object.entries({
+      '--v-amber': 'ON AIR',
+      '--v-cyan': 'a guess',
+      '--v-amethyst': 'rehearsal',
+    })) {
+      expect(rule, `the held mark may not be ${token} — that means ${means}`).not.toContain(token);
+    }
+  });
+});
+
+describe('the programme rail has a floor', () => {
+  const at = 1_700_000_000_000;
+  const many = (n) =>
+    Array.from({ length: n }, (_, i) => entry(i + 1, `Item ${i + 1}`, i + 2, at));
+
+  it('shows every timer while there is room for every timer', async () => {
+    window.innerWidth = 1280;
+    await mountAt(at);
+    await deliver({ kind: 'timer', timers: many(6) });
+
+    expect(rows()).toHaveLength(6);
+    expect(host.querySelector('.tmore'), 'nothing was hidden, so nothing should say so').toBeNull();
+  });
+
+  it('says how many it could not show rather than shrinking them all below reading size', async () => {
+    // `.tmr { flex: 1 1 0 }` divides the row by the number of timers with no floor
+    // at all, so six timers on a phone in portrait is six columns of about sixty
+    // pixels — every clock on the rail illegible, and nothing anywhere saying that
+    // the rail had given up. A row that cannot show every timer must SAY SO.
+    window.innerWidth = 400;
+    await mountAt(at);
+    await deliver({ kind: 'timer', timers: many(6) });
+
+    const shown = rows();
+    expect(shown.length, 'the rail shrank every timer instead of stopping').toBeLessThan(6);
+    expect(shown.length, 'the rail must still show at least one clock').toBeGreaterThan(0);
+    const more = host.querySelector('.tmore');
+    expect(more, 'timers went missing and nothing said so').toBeTruthy();
+    expect(more.textContent).toContain(String(6 - shown.length));
+
+    // The cells the row divides itself by must be the cells it actually paints, or
+    // the figures are sized for a rail nobody is looking at.
+    const cells = host.querySelectorAll('.progrow .tmr').length;
+    expect(host.querySelector('.progrow').style.getPropertyValue('--tmrs').trim()).toBe(
+      String(cells),
+    );
+  });
+
+  it('takes the count away again when the screen has room', async () => {
+    window.innerWidth = 400;
+    await mountAt(at);
+    await deliver({ kind: 'timer', timers: many(6) });
+    expect(host.querySelector('.tmore')).toBeTruthy();
+
+    window.innerWidth = 1600;
+    window.dispatchEvent(new Event('resize'));
+    await tick();
+    await tick();
+    expect(rows()).toHaveLength(6);
+    expect(host.querySelector('.tmore')).toBeNull();
+  });
+});
