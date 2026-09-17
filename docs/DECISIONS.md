@@ -4664,3 +4664,90 @@ and asserts beside it the service clock the same branch keeps — so neither hal
 tidied into the other. Both halves were watched to go red separately: removing `alert = ''` fails
 the two alert cases, which is the defect exactly as it shipped, and resetting `svcStart` beside it
 fails the two clock cases, which is the opposite mistake a reader could make from the same section.
+
+---
+
+## 92. The preacher's programme rail counts up past zero, and prose never enters a slot sized for digits (2026-09-17)
+
+**This decision existed only in a commit message and in
+`docs/superpowers/specs/2026-09-17-consolidation-design.md` §2 for the first day of its life**,
+which is the state CLAUDE.md's *"if the decision isn't there, it hasn't been made"* exists to
+stop. It is written down here because two waves built opposite behaviour into the same
+reactive block, three pairs of assertions in `src/lib/timers.test.js` could not both pass, and
+the losing side's cases were deleted rather than merged. A deletion argued from a commit
+message is a deletion nobody can audit.
+
+### The conflict
+
+`src/Stage.svelte`'s `$: programme` block was rewritten by `feat/wave3-timers` and by
+`feat/wave4-stage-planner` independently. Neither branch contained the other, so neither
+author could see the disagreement.
+
+| behaviour | wave 3 | wave 4 |
+|---|---|---|
+| past zero | counts up, `+4:37` | `0:00`, or the operator's done message |
+| `countdown_done` on the rail | deliberately no reader | read, and sized as prose |
+| warn with no chosen threshold | falls back to the shared rule | never warns |
+| held rows | not modelled | `held`, frozen, never warned |
+| row width | `progCh` → `--tch` from the widest rendered string | absent |
+| rail capacity | absent | `MIN_TIMER_PX = 132`, `capacity`, `+N more` |
+
+### The decision
+
+**Wave 3's past-zero semantics win. Wave 4's `held` state and rail capacity are kept. The
+operator's done message keeps no reader on the rail.**
+
+**It is settled on a measurable conflict rather than on which ruling came second**, which
+matters because both rulings were reasonable and both authors were right about their own
+branch. `progCh` budgets every column from the widest RENDERED string. Wave 4 puts prose into
+that same slot. An operator typing `WRAP UP NOW` sets the budget to eleven characters and
+widens every row on the rail, which is exactly the six-sixty-pixel-columns failure
+`MIN_TIMER_PX` exists to prevent. The two fixes fight each other the moment words are allowed
+into a slot sized for digits, and **neither fix may be lost**: both were filed as RG-147, by
+two different waves, for two different bugs. Wave 3's is a 95-minute clock painting `1:30:1`
+inside an `overflow:hidden` box; wave 4's is six timers collapsing into six 60px columns. The
+merged block carries `progCh`/`--tch` *and* `MIN_TIMER_PX`/`capacity`/`+N more`.
+
+**The product argument agrees with the technical one, and would have been enough on its own.**
+The rail is one preacher's bookkeeping, read mid-sermon by one person, and the only question
+it is asked past zero is *how far over*. `+4:37` escalates as the minutes pass; `WRAP UP` says
+the same thing at four minutes over as at forty. The operator's words are what a
+**congregation** countdown says when it lands, and they still say it there: `countdown_done`
+replaces the digits on the wall and on the countdown mirror above this rail. Nothing was
+taken away from the operator, it was kept where it was already going. If that is ever
+revisited it is a new row, not RG-153.
+
+**A held row is frozen and says so.** `countdownRemainingMs` answers a held timer with its
+stored figure, which is always positive, so a held row can never take the over-time branch. It
+is never warned either: a held timer is not running out, it is where the operator left it, and
+a frozen figure pulsing red says the opposite of what is true.
+
+### The warning threshold falls back to the shared rule, and wave 4's reason was deleted by the merge
+
+Wave 3's shared rule with a fallback wins, and not by preference. Wave 4 argued its
+no-fallback rule from a premise its own comment stated: *"This page has no Tauri bridge and
+does not import that module, so the default in force here is the SHIPPED minute whatever the
+church set."* Wave 3's warn-chain work makes that false — it adds
+`channels::CountdownWarnDefault` and ships `warn_default_ms` on the timer frame and
+`countdown_warn_default_ms` on content frames, which `Stage.svelte` reads through
+`applyWarnDefault`. **The merge deleted wave 4's reason, so the rule it supported could not
+stand**, and the comment stating that premise had to be rewritten rather than left arguing
+from something no longer true. A comment that survives the fact it rests on is how a future
+reader re-derives the wrong answer with confidence.
+
+The mark on an over-time row is the SIGN, not the threshold rule. `countdownWarning` answers
+false at and below zero, correctly — zero is not "nearly gone", it is gone — so a row marked
+only by it would lose its colour at the instant the time ran out. Being over needs no
+threshold to know it, and widening the shared rule to swallow a negative would be a fourth
+reading of *when to worry* on a rule three surfaces share.
+
+### Instrument
+
+`src/lib/timers.test.js` and `src/lib/stageprogrow.test.js` carry both halves: the wave 3
+cases for past-zero and `--tch`, and the wave 4 cases for `held`, `capacity` and `+N more`.
+**The losing side's three pairs were deleted rather than merged** — a "keep both sides" merge
+produces a suite that fails whichever implementation wins, which is a suite that can no longer
+be read as a claim about anything. `src/lib/progtimerjoin.test.js` covers the join itself:
+both waves' surfaces were individually green and the defects were in the seam between them,
+so it drives Live's real fire path and mounts the REAL stage page on the frame that comes out
+rather than adding cases to either side.

@@ -12,8 +12,13 @@ sliced through the middle (rule 42) and a screen that reconnected coming back bl
 problems throughout and was right both times.
 
 This is **frozen evidence and findings only.** Nothing here records a fix. Four findings
-are filed in `docs/qa/RELAY_GAP.md` as RG-146 to RG-149 and are not restated anywhere
-else.
+are filed in `docs/qa/RELAY_GAP.md` as **RG-162 to RG-165**, and the gap this pass filed
+alongside them is **RG-161**; none of it is restated anywhere else. **Those are the
+REGISTER's ids and not this document's** — this sentence sits above the freeze and so has
+to point where a reader can actually look. It said RG-146 to RG-149, which are real rows
+belonging to wave 3, so it resolved and resolved wrongly; it also said four where five
+were filed. Everything from the note below downward keeps the ids of the day, and the
+note says why.
 
 
 > **RENUMBERED, NOT REWRITTEN.** The four findings this pass filed as RG-146 … RG-149
