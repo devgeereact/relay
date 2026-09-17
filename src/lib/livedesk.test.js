@@ -1081,7 +1081,13 @@ describe('L2/2 · the slides head at a booth laptop’s width', () => {
   it('Close plan holds its size in the head', async () => {
     const { sess } = await mountPlan();
     expect(host.querySelector('.sg-head .mini.ghost').textContent.trim()).toBe('Close plan');
-    expect(src).toMatch(/\.sg-head \.mini\{flex:0 0 auto\}/);
+    // `:global(...)`, because `.mini` is now a class on the shared
+    // `ui/Button.svelte` rather than on an element in this file, and Svelte drops
+    // a scoped selector that matches nothing in the component's own markup. The
+    // claim is unchanged: the way OUT of a running plan does not shrink or wrap
+    // when the head gets crowded. The MOUNTED half above is the stronger of the
+    // two assertions and is untouched.
+    expect(src).toMatch(/\.sg-head :global\(\.mini\)\{flex:0 0 auto\}/);
     sess.setSession({ planId: null });
   });
 });

@@ -130,6 +130,9 @@
   // BUILDING a plan is not this screen's job. That is the Planner: a different
   // task, done on a Tuesday, not with a congregation waiting.
   import { onMount, onDestroy } from 'svelte';
+  import Button from '../ui/Button.svelte';
+  import { whyDisabled, ENGINE_OFF, BUSY } from '../ui/whydisabled.js';
+  import IconButton from '../ui/IconButton.svelte';
   import { describeScreen } from '../outputHealth.js';
   import { programmeScreen } from '../channelroles.js';
   import TemplateRender from '../TemplateRender.svelte';
@@ -2175,7 +2178,14 @@
              operator is looking for when they glance here mid-service. -->
         <span class="sg-hint r-mono" title="A single click sends the slide to the programme; a double click only previews it."><b class="cnt">{grid.cells.length}</b><span class="sg-say">{' · single click goes to air · double click previews'}</span></span>
         {#if openPlan}
-          <button class="mini ghost" on:click={leave} title="Stop running {openPlan.title}">Close plan</button>
+          <!-- `.mini` was a button shape with ONE call site, and that call site
+               used `.ghost`, which overrode the whole of it. So its base rule —
+               a solid `--v-amber` fill with amber ink — was a control painted in
+               the tally colour that nothing in the product rendered, sitting in
+               the file where a future reader would reach for it. Deleted rather
+               than kept: this is the shared small ghost, on the ladder. -->
+          <Button variant="ghost" size="sm" class="mini" on:click={leave}
+            title="Stop running {openPlan.title}">Close plan</Button>
         {/if}
         <!-- THE VIEW CONTROL LIVES HERE NOW (L2), not in the browsing rail.
              It changes how the console LOOKS and never what reaches a screen,
@@ -2197,11 +2207,13 @@
                changes how the console LOOKS and never what reaches a screen,
                which is why it belongs in this slot beside Full screen. -->
           <span class="view-size" title="How big the slide cells are">
-            <button class="r-iconbtn view-szbtn" on:click={() => stepSlideSize(-1)}
-              disabled={slideSizeIdx === 0} aria-label="Smaller slide cells">−</button>
+            <IconButton size="sm" class="view-szbtn" on:click={() => stepSlideSize(-1)}
+              disabled={slideSizeIdx === 0} label="Smaller slide cells"
+              disabledReason="Already the smallest slide cell.">−</IconButton>
             <span class="view-szval r-mono">{slideSize.name}</span>
-            <button class="r-iconbtn view-szbtn" on:click={() => stepSlideSize(1)}
-              disabled={slideSizeIdx === SLIDE_SIZES.length - 1} aria-label="Bigger slide cells">+</button>
+            <IconButton size="sm" class="view-szbtn" on:click={() => stepSlideSize(1)}
+              disabled={slideSizeIdx === SLIDE_SIZES.length - 1} label="Bigger slide cells"
+              disabledReason="Already the largest slide cell.">+</IconButton>
           </span>
           <button class="view-fs" on:click={() => setFullscreen(!fullscreen)}>
             {fullscreen ? 'Show tabs' : 'Full screen'}
@@ -2395,11 +2407,16 @@
                Dashboard, which is not a Sunday-morning path. Recorded in the
                review note as a thing that should move to the dock's audio card
                (agent L3's file), beside the ARMED switch it belongs with. -->
-          <button class="ibtn" on:click={toggleListen} title={$capture.capturing ? 'Stop listening' : 'Start listening'}
-            aria-label={$capture.capturing ? 'Stop listening' : 'Start listening'}
-            disabled={!$capture.available || !$capture.stt.loaded || listenBusy}>
+          <IconButton class="ibtn" on:click={toggleListen} title={$capture.capturing ? 'Stop listening' : 'Start listening'}
+            label={$capture.capturing ? 'Stop listening' : 'Start listening'}
+            disabled={!$capture.available || !$capture.stt.loaded || listenBusy}
+            disabledReason={whyDisabled(
+              [!$capture.available, ENGINE_OFF],
+              [!$capture.stt.loaded, 'No speech model is loaded. Download one in Settings → Audio before Relay can listen.'],
+              [listenBusy, BUSY],
+            )}>
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v4"/></svg>
-          </button>
+          </IconButton>
         </header>
 
         <!-- NO SENSITIVITY DIAL HERE either. It lives in the dock, one row below,
@@ -2625,10 +2642,22 @@
      before. The readout is one or two mono characters on a fixed width, so the
      control cannot widen as the step changes and push `Full screen` out. */
   .view-size{ display:flex; align-items:center; gap:3px; }
-  .view-szbtn{ width:22px; height:22px; line-height:1; }
-  .view-szbtn:disabled{ opacity:.4; cursor:not-allowed; }
+  /* THE THIRD INSTANCE of the step `.r-iconbtn.sm` was published for, and the
+     only one a scanner found rather than a person: this pair sits beside a 22px
+     `.view-fs`, so it hand-drew a 22px box over `.r-iconbtn`'s 26px one. That is
+     the override docs/REBRAND.md §1 forbids ("a component may override a shared
+     control's width and padding, never its height"), and it was invisible because
+     the file was internally consistent — the drift only exists in the row where
+     this control meets its neighbour. The ladder owns the box now. */
+  :global(.view-szbtn){ line-height:1; }
+  :global(.view-szbtn:disabled){ opacity:.4; cursor:not-allowed; }
   .view-szval{ min-width:18px; text-align:center; font-size:var(--v-fs-b3);
     letter-spacing:.06em; color:var(--v-dim); }
+  /* A VIEW TOGGLE, not a button. It changes how the console looks and can never
+     reach a screen, so it is deliberately quieter than the shared control: no
+     fill of its own beyond the panel's, faint ink, and the 22px of the row it
+     shares with the slide-size pair rather than the 26px of an action. Naming it
+     is the difference between a choice and a button that lost its class. */
   .view-fs{ height:22px; padding:0 8px; border-radius:var(--v-r-sm); cursor:pointer;
     background:var(--v-surf); border:1px solid var(--v-line2); color:var(--v-faint);
     font-family:var(--f-body); font-size:var(--v-fs-b3); font-weight:600; }
@@ -3006,11 +3035,16 @@
     text-transform:uppercase; color:var(--v-rose); border:1px solid var(--v-rose);
     border-radius:var(--v-r-sm); padding:1px 5px}
 
-  .ibtn{flex:0 0 auto; width:26px; height:26px; border-radius:var(--v-r-sm); display:grid;
-    place-items:center; cursor:pointer; background:var(--v-surf2); border:1px solid var(--v-line2);
-    color:var(--v-dim); transition:.14s}
-  .ibtn:hover:not(:disabled){color:var(--v-amber)}
-  .ibtn:disabled{opacity:.4; cursor:not-allowed}
+  /* POSITION ONLY. `.ibtn` was a HAND-ROLLED COPY of `.r-iconbtn` — the same
+     26px box, the same corner, the same grid centring, the same fill — differing
+     in two places, and both of them were the wrong half to differ in: it drew its
+     edge from `--v-line2` where the shared control draws `--v-line`, and it
+     HOVERED AMBER. Amber means the congregation is looking at something
+     (DESIGN_SYSTEM §1: never "selected", never "active"), so the only icon button
+     on the run surface lit the tally colour whenever a pointer crossed it. One
+     call site, the microphone toggle. It is `ui/IconButton.svelte` now, so the
+     box and the hover both come from the ladder. */
+  :global(.ibtn){flex:0 0 auto}
 
   /* ── 2 · slides ───────────────────────────────────────────────── */
   .sg-body{padding:var(--v-sp-sm)}
@@ -3116,7 +3150,7 @@
      2000px the head carries five things and fits, and the two narrower rungs the
      integrator asked about are answered by the ladder at the foot of this file
      rather than by hoping flexbox picks the right victim. */
-  .sg-head .mini{flex:0 0 auto}
+  .sg-head :global(.mini){flex:0 0 auto}
 
   /* ── 3 · detection ─────────────────────────────────────────────────────── */
   /* THE `Armed` CHIP AND ITS ROW ARE GONE (L4), and so are `.chip` / `.btnchip`
@@ -3219,13 +3253,14 @@
     text-transform:uppercase; color:var(--v-faint)}
   .sub{display:flex; align-items:center; gap:var(--v-sp-sm); margin-top:var(--v-sp-sm);
     padding-top:var(--v-sp-sm); border-top:1px solid var(--v-line)}
-  .mini{padding:4px 10px; border-radius:var(--v-r-sm); border:0; cursor:pointer;
-    font-family:var(--f-body); font-size:var(--v-fs-cap); font-weight:600;
-    background:var(--v-amber); color:var(--v-amber-ink)}
-  .mini.ghost{background:transparent; border:1px solid var(--v-line2); color:var(--v-dim)}
-  .mini:hover{filter:brightness(1.08)}
+  /* `.mini`'s own rule is gone — see the markup note where `Close plan` is
+     rendered. It was a button shape with one call site that overrode all of it. */
   .rel-note{margin:0; font-size:var(--v-fs-b3); color:var(--v-faint)}
   .rel-chips{display:flex; flex-wrap:wrap; gap:6px}
+  /* A CHIP, not a button. One related reference per chip, offered rather than
+     recommended: mono, caption-sized, quiet ink, and a row of them wraps. A row
+     of `.r-btn`s here would read as a row of actions the operator is expected to
+     take, which is the opposite of what an offer is. */
   .rel-chip{font-family:var(--f-mono); font-size:var(--v-fs-cap); color:var(--v-dim);
     background:var(--v-surf2); border:1px solid var(--v-line2); border-radius:var(--v-r-sm);
     padding:5px 11px; cursor:pointer}
@@ -3271,10 +3306,18 @@
      nobody asked for; the removal is documented at the markup site. */
 
   /* ── accessibility ─────────────────────────────────────────────────────── */
+  /* STEEL, NOT AMBER — the same colour-law fix `Stage.svelte` needed, found here
+     by the widened button sweep. Six focus rings on the RUN SURFACE were drawn in
+     the tally colour, so tabbing across the transport during a service lit the
+     one colour that means "the congregation is looking at this" on control after
+     control that was not on air. DESIGN_SYSTEM §5 names the ring explicitly:
+     `outline: 2px solid var(--v-sel)`, which is also §1's colour for "the thing
+     you are working on" — which is exactly what a focused control is.
+     `.mini` and `.ibtn` are gone from the list because both are shared controls
+     now and app.css's focus group already covers them. */
   .take:focus-visible,.rk:focus-visible,.slide:focus-visible,
   .act:focus-visible,
-  .mini:focus-visible,.ibtn:focus-visible,
-  .reh-end:focus-visible{outline:2px solid var(--v-amber); outline-offset:2px}
+  .reh-end:focus-visible{outline:2px solid var(--v-sel); outline-offset:2px}
   @media (prefers-reduced-motion:reduce){
     .reh-dot{animation:none}
   }
