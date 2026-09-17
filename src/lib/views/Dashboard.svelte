@@ -30,7 +30,31 @@
   import CheckList from '../boot/CheckList.svelte';
   import { humanError } from '../errors.js';
   import { setSession } from '../session.js';
+  import { modelLabel } from '../statusbar.js';
   import { safeMode } from '../boot/boot.js';
+  // ── WHAT A SERVICE IS ACTUALLY DECIDED BY (RG-116) ────────────────────────
+  //
+  // This screen said "Ready for a service." and "Engine, scripture, microphone and
+  // speech model all answered." while naming NEITHER the model NOR the recognition
+  // language, and those are the two settings the 2026-09-06 service showed to be
+  // worth more than every threshold in the product put together: five of nine
+  // auto-fires correct on `ggml-base` against three of three on `turbo`, in the same
+  // morning, after the model was changed mid-service. On one 70-second slice,
+  // `ggml-small` on auto-detect produced 17 incoherent transcripts and found no
+  // verse at all, against 161 coherent ones with the language fixed.
+  //
+  // The status bar has carried a `Model` cell since the rebrand. That is the wrong
+  // place for this: the status bar is read DURING a service, and this is the screen
+  // somebody opens BEFORE one, which is the only moment either setting can still be
+  // changed without the service lock in the way.
+  //
+  // Both derive from the same store the rest of the console reads, and both can say
+  // they do not know — `no model` and `auto-detect` are real answers and are not the
+  // same as a blank. `modelLabel` is `statusbar.js`'s, not a second copy: two
+  // shortenings of one path is how they come to disagree.
+  $: readyModel = modelLabel($capture.stt?.model);
+  $: readyLanguage = $capture.stt?.language ?? null;
+
   import {
     capture,
     capturing,
@@ -286,6 +310,34 @@
           Engine, scripture, microphone and speech model all answered.
         {/if}
       </p>
+      <!-- NAMED, NOT COUNTED. "speech model all answered" says a model loaded; it
+           does not say WHICH, and which is the setting that decided the accuracy of
+           two of the three field services on record. An operator who reads this line
+           before the room fills up can still change both; ten minutes later the
+           service lock is in the way and changing the model mid-service is what
+           produced the 44% wrong-verse rate this line exists because of. -->
+      <!-- SHOWN WHATEVER THE VERDICT IS, once the checks have answered. These two
+           are facts about how this machine will listen, and they are equally true
+           when something else is broken -- an operator whose microphone has failed
+           still needs to know they are on `base` and auto-detect before they fix it
+           and start. Hidden only while the checks are still running, because until
+           then the screen is not making any claim yet. -->
+      {#if !checking}
+        <p class="d-hero-set">
+          <span class="d-set">
+            <span class="d-setk">Speech model</span>
+            <span class="d-setv r-mono">{readyModel ?? 'none — nothing will be transcribed'}</span>
+          </span>
+          <span class="d-set">
+            <span class="d-setk">Recognition language</span>
+            <!-- `auto-detect` is a REAL answer and not an absence. It is also the
+                 one this row exists to make visible: a fresh install's seeded
+                 profile carries no language, and automatic election is what
+                 RG-116 measured the cost of. -->
+            <span class="d-setv r-mono">{readyLanguage ?? 'auto-detect'}</span>
+          </span>
+        </p>
+      {/if}
     </div>
     <button class="r-btn ghost sm" on:click={refresh} disabled={checking}>
       {checking ? 'Checking…' : 'Re-check'}
@@ -508,6 +560,21 @@
     font-weight: 600;
     color: var(--v-txt);
   }
+  /* THE TWO SETTINGS, ON THE SCREEN THAT IS READ BEFORE A SERVICE. Quiet, and
+     wearing no law colour: amber, cyan and amethyst each promise something about a
+     screen and none of them promises anything about this. A key/value pair rather
+     than a sentence, because an operator is checking two facts rather than reading
+     prose, and they wrap to their own lines on a narrow window instead of
+     truncating -- a model name cut in half is the failure this row is about. */
+  .d-hero-set {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--v-sp-xs) var(--v-sp-md);
+    margin: var(--v-sp-xs) 0 0;
+  }
+  .d-set { display: inline-flex; align-items: baseline; gap: 6px; min-width: 0; }
+  .d-setk { font-size: var(--v-fs-lbl); color: var(--v-faint); }
+  .d-setv { font-size: var(--v-fs-cap); color: var(--v-txt); }
   .d-hero-p {
     margin: 6px 0 0;
     font-size: var(--v-fs-b1);
