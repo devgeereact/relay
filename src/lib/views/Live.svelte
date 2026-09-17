@@ -192,6 +192,9 @@
     getSong,
     setStageNext,
     startTimer,
+    listTimers,
+    stopTimer,
+    countdownWarnMs,
     rehearsing,
     loadRehearsal,
     setRehearsal,
@@ -583,6 +586,10 @@
     // Was this cue ALREADY the one on air? Read before the fire, because the take
     // below is what makes it so — see the timer at the bottom of this function.
     const cueWasOnAir = planOnAir && liveCueId === item.id;
+    // WHICH CUE THIS TAKE RETIRES. Read here, beside `cueWasOnAir` and for the same
+    // reason: the take below is what moves the playhead, so after it there is no
+    // way left to ask which cue the programme has just left. See `retireCueTimer`.
+    const leavingCueId = liveCueId;
     const stageNote = p.stage_note || null;
     // The template the operator set for THIS cue in the Planner. Passed on every
     // fire so a plan item renders with its own chosen look, not just the
@@ -635,6 +642,10 @@
       // of the take and the hint is a shrug, so the one that carries a guarantee
       // goes first rather than racing the one that does not.
       await startCueTimer(item, cueWasOnAir);
+      // AND THE CUE THIS ONE REPLACED STOPS. Second, not first: the clock the
+      // preacher needs is the one for the cue that has just gone on air, so the
+      // start happens even if the retire cannot.
+      if (leavingCueId && leavingCueId !== item.id) await retireCueTimer(leavingCueId);
       const n = nextOf(items, item.id, i);
       // Deliberately shrugged: a missing "up next" is an absent hint, and the
       // wall — and this catch — already report anything that matters. Contrast
@@ -686,9 +697,90 @@
         // that cannot be taken back quietly.
         scope: 'stage',
         planItemId: item.id,
+        // THE WARNING THRESHOLD TRAVELS ON THE TIMER, because the surface that has
+        // to obey it cannot look it up. `Settings → General → Countdown warning` is
+        // one row in the console's database (`countdown.warn_ms`); the stage page
+        // has no Tauri bridge and never reads it, so `Stage.svelte::programmeWarn`
+        // warns at the figure the FRAME carries or does not warn at all — which is
+        // Track A's rule and is right. Without this the rail could never warn on
+        // any install, because nothing shipped ever put a figure in the frame.
+        //
+        // `countdownWarnMs` is the console's mirror of the row in force, loaded at
+        // launch by `App.svelte` and rewritten by the Settings control. It is the
+        // SAME figure the dock and the programme pane already turn red at, so the
+        // preacher's rail and the operator's screen agree by construction. No
+        // default is invented here: an unreadable setting has already fallen back
+        // to the shipped minute inside `applyCountdownWarn`, once, in one place.
+        warnMs: $countdownWarnMs,
+        // AND NO DONE MESSAGE. The rail's finished state shows the OPERATOR'S own
+        // words at zero, and a cue carries none — there is no field on `plan_items`
+        // for one and no control that writes one. Relay composing a sentence here
+        // would be Relay's words presented as somebody's choice, and it would cost
+        // something measured: a finished row's message renders at 30px against the
+        // digits' 64px (`docs/qa/audits/2026-09-17-WAVE4-STAGE-PLANNER.md` §1.3), so
+        // every bound cue on every install would end less legible than `0:00`, with
+        // nobody having asked for it. That half of RG-146 is left open against the
+        // timer surface that owns message text — wave 3 Track E.
       });
     } catch (e) {
       flash(`On air — but its ${mins}-minute timer did not start: ${humanError(e)}`);
+    }
+  }
+
+  /**
+   * A CUE'S CLOCK ENDS WHEN THE CUE DOES — and this is the only thing that ends one.
+   *
+   * `TimerRegistry` never reaps: a `Stage` timer lives until something stops it or
+   * the process ends. Nothing did. One walk of a three-cue plan left three finished
+   * clocks on the preacher's rail for the rest of the service, and the rail's floor
+   * keeps the OLDEST cells — so on a phone in portrait the one clock shown was a
+   * dead one from the start of the service and the live sermon clock was inside
+   * `+3 more` (RG-147). Live is what starts a cue's clock, so Live is what stops it.
+   *
+   * WHICH DOORS THIS IS, AND WHICH IT DELIBERATELY IS NOT. A plan cue stops being
+   * what the congregation is looking at through several of them, and only one of
+   * them means the PROGRAMME has moved on:
+   *
+   * · ANOTHER CUE GOES ON AIR — `fireSlide`, which is the single door a cue goes on
+   *   air through (the transport, the slide grid, the preview take and TAKE all
+   *   arrive here). The programme has moved on, so the clock for the slot it left
+   *   is over. THIS IS THE ONE.
+   * · A manual fire, an accepted suggestion, a verse off the rail — `leavePlan()`
+   *   clears `onAir` and the cue is off the screens. Its clock must KEEP RUNNING:
+   *   that is the preacher going off-script in the middle of the sermon slot, which
+   *   is the case the clock exists for.
+   * · `Clear screens` and `Blackout` — same, and settled: the panic controls take
+   *   `Both` and leave `Stage` on purpose (wave 3). A panic control may never gain
+   *   a question it can fail to answer (rule 15).
+   * · Closing the plan, or opening another — the cue is gone from the run surface,
+   *   and the preacher is still preaching. Killing the sermon clock because the
+   *   operator went to look at a different plan would take away the one thing this
+   *   rail is for. The end-of-service sweep (`main::end_service`) is what takes
+   *   those, at the point the programme really is over.
+   *
+   * IT ASKS THE BACKEND WHICH TIMER, rather than remembering the id `startTimer`
+   * handed back. Live is unmounted and remounted every time an operator visits
+   * another workspace mid-service (`liveunmount.test.js`), and a remembered id does
+   * not survive that — it would work all through a rehearsal and fail on the one
+   * Sunday somebody checked the Library between cues. `plan_item_id` rides on the
+   * timer precisely so this question has an answer that outlives a view.
+   *
+   * It reports its own failure and never fails the fire. The new cue is already on
+   * the screens and its clock is already running; a flash saying otherwise would be
+   * the console lying about a take that succeeded.
+   */
+  async function retireCueTimer(cueId) {
+    if (!cueId) return;
+    try {
+      const running = await listTimers();
+      for (const t of running) {
+        // `scope` is checked as well as `plan_item_id`, because a congregation
+        // countdown is not the programme and is taken down by a panic control or by
+        // the operator, never by the plan walking past it.
+        if (t.scope === 'stage' && t.plan_item_id === cueId) await stopTimer(t.id);
+      }
+    } catch (e) {
+      flash(`The previous cue's timer is still running: ${humanError(e)}`);
     }
   }
 

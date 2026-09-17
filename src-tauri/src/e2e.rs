@@ -3919,3 +3919,114 @@ fn a_congregation_countdown_never_appears_in_the_programme_rail() {
         );
     }
 }
+
+/// ENDING THE SERVICE TAKES THE PROGRAMME CLOCKS, AND LEAVES THE CONGREGATION'S.
+///
+/// `TimerRegistry` never reaps, and until this landed nothing ever stopped a
+/// `Stage` timer: a service's cue clocks stayed on the preacher's rail, counting
+/// past zero, for as long as Relay was open — and the rail's floor keeps the
+/// OLDEST cells, so by the middle of a morning the clock a preacher was looking
+/// for was the one inside `+N more` (RG-147).
+///
+/// `Live::retireCueTimer` ends each cue's clock as the plan walks past it, which
+/// is the half that matters during a service. This is the sweep behind it, at the
+/// one moment the whole programme really is over — and it is HERE rather than at
+/// the two controls that call `end_service` (the dock, and the History list),
+/// because a rule kept at call sites is the shape of four separate bugs in this
+/// repository.
+///
+/// The `Both` half is the other half of the claim and is not decoration: a
+/// congregation countdown is on a wall, and emptying it from here would be a
+/// second door onto that screen. `Clear screens` is how a wall is taken back.
+#[test]
+fn ending_a_service_takes_the_programme_clocks_off_the_preachers_rail() {
+    let app = app();
+    let h = app.handle().clone();
+
+    start_service(
+        h.clone(),
+        h.state::<Session>(),
+        h.state::<Db>(),
+        h.state::<channels::Rehearsal>(),
+        h.state::<servicelock::ServiceLock>(),
+        "Sunday Service".into(),
+        "2026-09-20".into(),
+    )
+    .expect("start");
+
+    let sermon = start_timer(
+        h.clone(),
+        25.0,
+        "Sermon".into(),
+        String::new(),
+        "stage".into(),
+        Some(120_000),
+        Some(7),
+    )
+    .expect("a programme timer");
+    let notices = start_timer(
+        h.clone(),
+        2.0,
+        "Notices".into(),
+        String::new(),
+        "stage".into(),
+        None,
+        Some(8),
+    )
+    .expect("a second programme timer");
+    let wall_clock = start_timer(
+        h.clone(),
+        5.0,
+        "Service begins in".into(),
+        "Welcome".into(),
+        "both".into(),
+        None,
+        None,
+    )
+    .expect("a congregation countdown");
+    settle();
+    assert_eq!(list_timers(h.clone()).expect("list").len(), 3);
+
+    let mut kiosk = qa::Kiosk::attach(&h);
+    end_service(
+        h.clone(),
+        h.state::<Session>(),
+        h.state::<servicelock::ServiceLock>(),
+    )
+    .expect("end");
+    settle();
+
+    let left: Vec<i64> = list_timers(h.clone())
+        .expect("list")
+        .iter()
+        .map(|t| t.timer.id)
+        .collect();
+    assert!(
+        !left.contains(&sermon) && !left.contains(&notices),
+        "a finished service left its programme clocks running on the preacher's \
+         screen: {left:?}"
+    );
+    assert!(
+        left.contains(&wall_clock),
+        "ending the service reached a congregation countdown, which is a second \
+         door onto a wall"
+    );
+
+    // AND THE TABLET IS TOLD. An absent frame cannot say "there are none now": a
+    // rail that is never sent the empty set goes on painting the clocks it has.
+    let mut frames = Vec::new();
+    while let Some(m) = kiosk.next() {
+        if m.contains(r#""kind":"timer""#) {
+            frames.push(m);
+        }
+    }
+    let last = frames
+        .last()
+        .expect("ending the service told the stage tablet nothing");
+    let v: serde_json::Value = serde_json::from_str(last).expect("valid JSON");
+    assert_eq!(
+        v["timers"].as_array().map(|a| a.len()),
+        Some(0),
+        "the preacher's rail was not told the programme is over: {last}"
+    );
+}

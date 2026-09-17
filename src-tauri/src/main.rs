@@ -6353,6 +6353,27 @@ fn end_service<R: tauri::Runtime>(
     log_event(&app, db::EventKind::ServiceEnded, None);
     *session.0.lock()? = None;
     lock.release();
+    // THE PROGRAMME IS OVER, SO THE PROGRAMME CLOCKS ARE.
+    //
+    // A `Stage` timer lives until something stops it, and until this landed nothing
+    // ever did: a service's cue clocks stayed on the preacher's rail, counting past
+    // zero, for as long as Relay was open (RG-147). `Live::retireCueTimer` ends each
+    // cue's clock as the plan walks past it, which is the half that matters during a
+    // service; this is the sweep behind it, at the one moment the whole programme is
+    // finished. It is the choke point rather than the two controls that call
+    // `end_service` (the dock, and the History list) — a rule kept at call sites is
+    // the shape of four separate bugs in this repository.
+    //
+    // `Both` is untouched. A congregation countdown is on a wall and comes off it
+    // through a panic control or through the operator; emptying it from here would
+    // be a second door onto that screen, which `start_timer` already refuses to be.
+    if let Some(reg) = app.try_state::<timers::TimerRegistry>() {
+        reg.stop_scope(timers::Scope::Stage);
+    }
+    // The registry is read and dropped before this, per rule 2 — `stop_scope` takes
+    // the lock, finishes and returns a count. Publishing is how a rail learns there
+    // are none now: an absent frame cannot say that.
+    channels::publish_timers(&app);
     refresh_wake(&app);
     Ok(())
 }
