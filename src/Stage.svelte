@@ -254,13 +254,41 @@
   // `countdownRemainingMs` answers null when there is no countdown in the entry, and
   // a rail row with no digits in it says nothing a preacher can act on.
   //
-  // `warn_ms` rides in the frame and is deliberately not read here yet: the warning
-  // threshold is wave 3 Track D's, on all three surfaces at once, and a fourth
-  // reading of the rule invented here is exactly what §7 forbids.
+  // AND ONE WARNING RULE. `warn_ms` rides in every timer frame and for a while had
+  // no reader here at all — the comment that used to sit on this line said the
+  // threshold was wave 3 Track D's and that this page did not read it on purpose,
+  // which stopped being true the day Track D landed (RG-148). The surface whose
+  // entire purpose is telling a preacher how long is left was the one with no
+  // signal that the time was nearly gone, while the congregation's screen had one.
+  //
+  // `layers.js::countdownWarning` is still the ONLY reading of when to worry, and
+  // the third argument is the override it already takes: a threshold somebody CHOSE
+  // for this timer beats the shared rule, and absent one the shared rule applies —
+  // the last minute, or the last tenth of a countdown shorter than ten minutes.
+  // That default is the shipped 60 s here rather than whatever the operator set in
+  // Settings, because the setting does not reach this bundle at all (RG-149, which
+  // is a different row and not this page's to fix).
   $: programme = stageTimers
-    .map((t) => ({ id: t?.id, label: (t?.label || '').trim(), ms: countdownRemainingMs(t, nowMs) }))
+    .map((t) => ({ t, id: t?.id, label: (t?.label || '').trim(), ms: countdownRemainingMs(t, nowMs) }))
     .filter((r) => r.ms != null)
-    .map((r) => ({ ...r, v: formatCountdown(r.ms) }));
+    .map(({ t, ...r }) => ({
+      ...r,
+      v: formatCountdown(r.ms),
+      warn: countdownWarning(r.ms, countdownTotalMs(t), t?.warn_ms),
+    }));
+  // THE ROW IS SIZED FROM THE TEXT IT IS ACTUALLY PAINTING.
+  //
+  // `.tval` budgeted a flat SIX characters and `formatCountdown` emits seven once a
+  // timer passes an hour, so a 95-minute clock painted 215.3 px into a 199 px
+  // `overflow: hidden` box at 1280 x 720 and read as `1:30:1`, running into its
+  // neighbour's `0:00` with no gap (RG-147). What is left of a clipped clock reads
+  // as a valid time, which is the part that matters: a preacher glancing down
+  // mid-sermon cannot tell it from a correct one.
+  //
+  // The widest value decides for every row, so the figures stay one size and the
+  // longest of them still cannot be clipped. Same instrument as `figCh` across the
+  // bottom, not a new one. Floored at four, the width of `0:00`.
+  $: progCh = programme.reduce((n, r) => Math.max(n, r.v.length), 4);
 
   // SERVICE ELAPSED — counts up from the epoch the fired content carries. There is
   // no epoch when no service is recording, and an absence is shown as an absence:
@@ -679,11 +707,14 @@
        NOT amber, which means ON AIR and is never allowed to lie; not cyan, which
        means the AI is guessing; not amethyst, which means rehearsal. Slate, the
        page's own neutral — the programme is the operator's bookkeeping shown to one
-       person, and it makes no claim about any screen. -->
+       person, and it makes no claim about any screen.
+       A timer inside its warning window is the countdown's own red, which is the
+       fourth colour this page already uses for exactly this rule and is none of the
+       three above. It is a claim about TIME, not about a screen. -->
   {#if programme.length}
-    <div class="progrow" style="--tmrs:{programme.length}" aria-label="Programme">
+    <div class="progrow" style="--tmrs:{programme.length}; --tch:{progCh}" aria-label="Programme">
       {#each programme as t (t.id)}
-        <div class="tmr" data-timer-id={t.id}>
+        <div class="tmr" class:warn={t.warn} data-timer-id={t.id}>
           {#if t.label}<span class="tlabel">{t.label}</span>{/if}
           <span class="tval">{t.v}</span>
         </div>
@@ -931,6 +962,7 @@
   .fig.warn .figv { color: var(--v-red); }
   @media (prefers-reduced-motion: no-preference) {
     .fig.warn .figv, .railrow.warn { animation: cdwarn 2s ease-in-out infinite; }
+    .tmr.warn .tval { animation: cdwarn 2s ease-in-out infinite; }
   }
   /* `inline-size`, not `size`: the row's WIDTH is definite (it is the frame) and
      its height is what its content asks for under a ceiling. `container-type: size`
@@ -951,8 +983,29 @@
      Its own container, so the digits are a share of THIS row and not of the frame —
      the same rule the rail and the figure row each keep, and the bug that rule
      replaces is a figure that looked right at one width and overflowed at every
-     other. `--tmrs` divides the row by the number of timers actually in it. */
-  .progrow { flex: 0 0 auto; flex-basis: auto; max-height: 20%; overflow: hidden;
+     other. `--tmrs` divides the row by the number of timers actually in it, and
+     `--tch` is how many characters its widest figure has.
+
+     `--progmax` IS THE ROW'S CEILING AND THE DIGITS' CAP, STATED ONCE. It used to
+     be two figures that could not agree: `max-height: 20%` here and `9cqh` on the
+     digits. `container-type: inline-size` establishes an INLINE-axis container
+     only, so `cqh` inside it has no eligible container and falls back, silently, to
+     the small viewport — measured at 1920 x 500 with three timers, 9% of the row
+     would be 6.70 px, 9% of the viewport is 45.00 px, and the digits came out at
+     45.00 px (RG-154). It clipped nothing, because a cap that tracks the viewport
+     shrinks with it; the defect is that the cap was not the cap anybody wrote, so
+     nothing bounded the digits against the row if the row's own height ever
+     changed. `container-type: size` here is not the fix: it would take the content
+     out of the height calculation and collapse the row, which is the same reason
+     `.noterow` above is `inline-size`.
+     So the cap is a share of the CEILING instead, in `dvh` — which resolves, and
+     which is this page's own frame (`.sr` is `100dvh`). 45% of 20dvh is 9dvh: the
+     same number that was being computed by accident, now computed on purpose and
+     tied to the ceiling it is a share of. On a mobile browser with a collapsing
+     toolbar it tracks the frame the row is in rather than the smallest viewport
+     that frame might become. */
+  .progrow { flex: 0 0 auto; flex-basis: auto; --progmax: 20dvh; max-height: var(--progmax);
+    overflow: hidden;
     container-type: inline-size;
     display: flex; gap: 10px; padding: 8px 18px;
     border-top: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.035); }
@@ -970,9 +1023,33 @@
   .tval { font-family: var(--f-mono); font-variant-numeric: tabular-nums; font-weight: 700;
     color: var(--v-txt); line-height: 1;
     /* The width a figure may take is its share of the row divided by the characters
-       it actually has — `0.62` is the mono advance. Capped so one timer on a wide
-       screen does not become the whole page. */
-    font-size: min(clamp(16px, calc(92cqw / var(--tmrs) / 6 / 0.62), 64px), 9cqh); }
+       IT ACTUALLY HAS — `0.62` is the mono advance. That divisor was the constant
+       six for as long as this row existed, and `formatCountdown` emits seven past
+       an hour, so `1:30:13` was 12.9% wider than its box at every width below about
+       `259 x timers` px: 215.3 px into 199 px at 1280 x 720, sliced through the
+       last digit, reading `1:30:1` (RG-147). `--tch` is the row's own longest
+       figure, handed over by `progCh` — the same instrument `--ch` already is for
+       the figure row across the bottom. Capped so one timer on a wide screen does
+       not become the whole page, and against the row's ceiling (see `--progmax`).
+
+       AND IT ELLIPSISES RATHER THAN SLICING. Shrink and show is rule 37's answer
+       and it is this row's answer too, but a fit that cannot report is the defect
+       that rule exists for: `0.62` is an assumed advance against a measured 0.600,
+       and the 16 px floor can still bind on a narrow enough row with enough timers.
+       In either case the digits overflow a box that is `overflow: hidden`, and a
+       sliced clock is a lie the one person reading it cannot detect. An ellipsis is
+       the report — it says the figure did not fit instead of showing a shorter one
+       that looks correct — and it is the discipline `.tlabel` two rules above
+       already keeps on this same row. */
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-size: min(clamp(16px, calc(92cqw / var(--tmrs) / var(--tch, 6) / 0.62), 64px), calc(var(--progmax) * .45)); }
+  /* THE LAST MINUTE, ON THE PREACHER'S OWN PROGRAMME. One rule
+     (`layers.js::countdownWarning`), with the per-timer `warn_ms` the frame already
+     carries. The same red as the countdown figure above it and as the wall: a
+     countdown that reads as two different states depending on which screen you are
+     looking at is worse than one that reads as none. Stated here, unconditionally,
+     so a viewer who asked for no motion still learns the time is nearly gone. */
+  .tmr.warn .tval { color: var(--v-red); }
   /* The zone panel — one instrument, no native dialog (rule 41). */
   .zonepanel { flex: 0 0 auto; max-height: 46dvh; overflow-y: auto; padding: 14px 18px;
     display: flex; flex-direction: column; gap: 10px;
@@ -1031,6 +1108,7 @@
      gets a glow instead of a pulse; the colour is the same either way. */
   @media (prefers-reduced-motion: reduce) {
     .fig.warn .figv, .railrow.warn { text-shadow: 0 0 .25em rgba(244, 81, 91, .85); }
+    .tmr.warn .tval { text-shadow: 0 0 .25em rgba(244, 81, 91, .85); }
   }
   @keyframes cdwarn { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
   /* Operator's cue note — confidence-monitor only, never on the main output. */
