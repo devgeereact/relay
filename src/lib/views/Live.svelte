@@ -2440,8 +2440,33 @@
      sizes to its own content — but a small booth screen reaches the grid's
      scrollbar sooner than it used to. Retuning this to compensate would shrink
      Preview and Program for everybody, so it was left alone deliberately. */
-  .con-top{flex:0 0 auto; height:clamp(268px,33vh,364px);
-    display:grid; grid-template-columns:1fr 118px 1fr; gap:var(--v-sp-sm); min-height:0}
+  /* A FLOOR, NOT A HEIGHT (RG-146). This was `height:clamp(268px,33vh,364px)`
+     — a definite height, so the row was that tall whatever was in it. `.rack`
+     is `align-self:start` and sizes to its own CONTENT, which is about 320px
+     whatever the viewport is (a fixed 118px column, a 64px TAKE, two 26px
+     arrows, a two-line caption and two 22px pickers), so on any window shorter
+     than roughly 970px the rack was taller than the row, the row does not clip,
+     and the transition pickers painted OUTSIDE it, on top of whatever came
+     next. For years that was a slide grid and the overlap was cosmetic; wave 3
+     put the programme timer band there and it became a button that does
+     something else. Measured at 1320x860, the size `tauri.conf.json` opens the
+     window at: `.rack` 320.2px inside a 283.8px row, and `elementFromPoint`
+     over the centre of `Start timer` returned `.xpick.xdur`.
+     `min-height` keeps every small-window promise the clamp made — the row
+     never collapses below 268px, still tracks 33vh, still stops at 364px — and
+     lets a taller rack push the row down instead of painting over the band.
+     CLIPPING WOULD HAVE BEEN THE WRONG FIX: the thing in the overflow is the
+     transition pair, so `overflow:hidden` here makes a control unreachable
+     rather than merely misplaced, which is strictly worse. What it costs is
+     stated honestly: below ~970px tall the row takes the height the rack was
+     already painting over — 36.4px at 1320x860, 52.2px at 1280x800 — off the
+     slide grid, which scrolls. None of it was ever really the grid's.
+     It is also what the narrow steps below have always done (`height:auto` at
+     ≤1180px), so this makes the default agree with them rather than inventing
+     anything. Held by `liverackfit.test.js`; the pixel evidence is a browser
+     pass, because jsdom computes no layout. */
+  .con-top{flex:0 0 auto; min-height:clamp(268px,33vh,364px);
+    display:grid; grid-template-columns:1fr 118px 1fr; gap:var(--v-sp-sm)}
 
   /* ── the desk: rail, stage, inspector ──────────────────────────────────── */
   /* THE SAME TWO TOKENS EVERY OTHER DESK USES. Live builds its own grid rather
