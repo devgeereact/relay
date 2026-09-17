@@ -161,6 +161,11 @@ const REGISTER = [
       // preacher"; the merge is where the one name reached them.
       'src/lib/panic.test.js',
       'src/lib/stagepanic.test.js',
+      // The stage page's own identity, and the address the desk hands out for it.
+      // Both say the name because both are about which screen may be painted one
+      // (DECISIONS §89, and the reversal recorded in `r6-contracts.test.js`).
+      'src/lib/stagepageidentity.test.js',
+      'src/lib/stageremote.test.js',
     ],
     // Wave 5 Track C adds a `stage_message` text binding labelled with this same
     // string. Registered ahead of it so the merge lands green rather than red on

@@ -92,3 +92,39 @@ export function roleOf(roles, channelId) {
   const r = roles[String(id)];
   return typeof r === 'string' && r ? r : null;
 }
+
+/**
+ * THE ADDRESS AN OPERATOR HANDS THE PREACHER.
+ *
+ * `stage.html` used to be a page rather than a screen: it said hello with no
+ * identity and painted any Stage Message that reached it, so the address Outputs
+ * printed was a bare `stage.html` and every copy of that page anywhere on the
+ * network was a stage monitor. The receiving page now refuses a Stage Message
+ * unless its own channel holds the `stage` role, which makes the bare address a
+ * page that will never be handed one — working in every visible respect, and
+ * silently missing the one thing it is set up for.
+ *
+ * So the desk hands out a SCREEN. A URL is produced only when a screen actually
+ * holds the role, and `null` when none does: an address that half works is the
+ * reassuring sentence over a broken thing that rule 35 is about, and the caller
+ * has to say something instead of printing it.
+ *
+ * `others` names the stage screens this address is NOT, because several screens
+ * may be stages (DECISIONS §89) — a confidence monitor and a preacher's tablet.
+ * An operator setting up the second one needs to know the number changes rather
+ * than concluding the link is broken.
+ *
+ * @param {string} host the LAN address of this machine (`local_ip`)
+ * @param {Array} channels rows as `list_output_channels` returns them
+ * @returns {{ url: string|null, channel: object|null, others: string[] }}
+ */
+export function stageRemoteUrl(host, channels) {
+  const stages = (Array.isArray(channels) ? channels : []).filter((c) => c?.role === 'stage');
+  if (!stages.length) return { url: null, channel: null, others: [] };
+  const [first, ...rest] = stages;
+  return {
+    url: `http://${host}:8032/stage.html?channel=${first.id}`,
+    channel: first,
+    others: rest.map((c) => c.name),
+  };
+}

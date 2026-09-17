@@ -62,7 +62,7 @@
   import { DEFAULT_TEMPLATE } from '../templates.js';
   import { CONTENT_KINDS, resolveOutputTemplate, isKeyedTemplate } from '../layers.js';
   import { outputUrl } from '../outputurl.js';
-  import { CHANNEL_ROLES, NO_ROLE_LABEL } from '../channelroles.js';
+  import { CHANNEL_ROLES, NO_ROLE_LABEL, stageRemoteUrl } from '../channelroles.js';
   import {
     capture,
     templates,
@@ -278,7 +278,14 @@
   // `http://localhost:8032/stage.html` and told to open it on a phone, where
   // localhost is the phone. The QR was built on click and so was correct; only
   // the address anyone would actually type was wrong.
-  $: stageUrl = `http://${lanIp}:8032/stage.html`;
+  //
+  // AND IT NAMES A SCREEN, not just the page (`stageRemoteUrl`). `stage.html`
+  // refuses a Stage Message unless its own channel holds the `stage` role, so a
+  // bare address is one that renders the reading perfectly and never receives the
+  // message it was set up for. `url` is null when no screen holds the role, and
+  // the panel says that rather than printing an address that half works.
+  $: stageRemote = stageRemoteUrl(lanIp, channels);
+  $: stageUrl = stageRemote.url;
   let stageQr = '';
   let stageQrOpen = false;
   let copiedStage = false;
@@ -1207,16 +1214,42 @@
     <aside class="rw-pane rw-insp">
       <div class="rw-panehead"><h2 class="rw-panettl">Preacher's stage remote</h2></div>
       <div class="rw-panebody pad">
-        <p class="ch-stage-sub r-dim">
-          The live verse on a phone or iPad, updating in real time. Scan the QR (same
-          Wi-Fi) or open <code class="r-mono">{stageUrl}</code>.
-        </p>
-        <div class="ch-stage-actions">
-          <button class="r-btn primary sm" on:click={showStageQr}>{stageQrOpen ? 'Hide QR' : 'Show QR'}</button>
-          <button class="r-btn ghost sm" on:click={copyStage}>{copyLabel(copiedStage, 'Copy link')}</button>
-        </div>
-        {#if stageQrOpen}
-          <img class="ch-stage-qr" src={stageQr} alt="QR code to open the stage remote" width="150" height="150" />
+        {#if stageUrl}
+          <p class="ch-stage-sub r-dim">
+            The live verse on a phone or iPad, updating in real time. Scan the QR (same
+            Wi-Fi) or open <code class="r-mono">{stageUrl}</code>.
+          </p>
+          <!-- WHICH SCREEN THE LINK IS. The address carries a channel now, so it
+               is an address FOR something and the operator is entitled to know
+               which — and to know that the second stage screen is a different
+               number rather than concluding the link is broken. -->
+          <p class="ch-stage-sub r-dim">
+            This is the link for <b>{stageRemote.channel.name}</b>.
+            {#if stageRemote.others.length}
+              {stageRemote.others.join(', ')} {stageRemote.others.length === 1 ? 'is' : 'are'}
+              also set as a stage display; open {stageRemote.others.length === 1 ? 'it' : 'them'}
+              in <b>Screens</b> for {stageRemote.others.length === 1 ? 'its' : 'their'} own address.
+            {/if}
+          </p>
+          <div class="ch-stage-actions">
+            <button class="r-btn primary sm" on:click={showStageQr}>{stageQrOpen ? 'Hide QR' : 'Show QR'}</button>
+            <button class="r-btn ghost sm" on:click={copyStage}>{copyLabel(copiedStage, 'Copy link')}</button>
+          </div>
+          {#if stageQrOpen}
+            <img class="ch-stage-qr" src={stageQr} alt="QR code to open the stage remote" width="150" height="150" />
+          {/if}
+        {:else}
+          <!-- NO ADDRESS, AND A REASON — rule 35.
+               A bare `stage.html` renders the reading, the countdown and the
+               clock perfectly well, so printing it would hand the operator a link
+               that looks entirely correct and silently never receives a Stage
+               Message. The page itself says the same thing at the other end, so
+               whichever half of the room notices first can act on it. -->
+          <p class="ch-stage-warn">
+            No screen is set as a stage display, so there is no stage link to hand out.
+            A Stage Message is only ever painted on a screen whose <b>Role</b> is
+            <b>Stage display</b> — set one in <b>Screens</b> and the address appears here.
+          </p>
         {/if}
         <p class="rw-foot">
           Anyone on the same Wi-Fi who has the address can open it — Relay does not ask
@@ -1359,6 +1392,14 @@
   .ch-addr-row .ch-addr{ flex:1; min-width:0; }
   .ch-stage-sub{ margin:0 0 10px; font-size:var(--v-fs-b2); line-height:1.45; }
   .ch-stage-actions{ display:flex; gap:6px; flex-wrap:wrap; }
+  /* NO STAGE SCREEN. Amber, not red: nothing has failed, a screen simply has no
+     role — a configuration answer, and red would send an operator looking for a
+     fault. Same reading as the line `stage.html` shows at the other end. */
+  .ch-stage-warn{
+    margin:0; padding:10px 12px; border-radius:var(--r-sm, 6px);
+    background:var(--v-amber-soft); border:1px solid var(--v-amber-line);
+    color:var(--v-amber); font-size:var(--v-fs-b2); line-height:1.45;
+  }
   .ch-stage-qr{ display:block; margin-top:12px; border-radius:var(--v-r-sm); }
 
   /* ── inspector ── */

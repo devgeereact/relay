@@ -140,12 +140,24 @@ afterEach(() => {
   host = null;
 });
 
-/** The preacher's phone, mid-service: a verse, its private note, and the message. */
+/**
+ * The preacher's phone, mid-service: a verse, its private note, and the message.
+ *
+ * ON CHANNEL 2, with the role map delivered first, for the same reason the
+ * `output.html` fixture below carries both: `stage.html` now refuses a Stage
+ * Message unless its own channel holds the `stage` role
+ * (`stagepageidentity.test.js`). The two fixtures in this file therefore differ
+ * only in which page they mount, which is what makes the comparison below —
+ * "the two stage surfaces agree about a panic control" — a real one.
+ */
 async function thePreachersPhone() {
+  window.history.replaceState({}, '', '/stage.html?channel=2');
   host = document.createElement('div');
   document.body.appendChild(host);
   app = new Stage({ target: host });
   await tick();
+  socket.onopen?.();
+  send({ kind: 'channel_roles', roles: { 1: 'main', 2: 'stage' } });
   await tick();
   send({
     kind: 'content',

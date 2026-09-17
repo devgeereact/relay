@@ -4470,6 +4470,44 @@ roles a fresh install names, that the wire form carries ids and roles and no nam
 `OutputContent` has no stage-message field. `src/lib/stagealertpanic.test.js` holds the third decision,
 by driving `Stage.svelte` through `clear` and through `black`.
 
+### Addendum, 2026-09-17 — the second door, which this ruling did not close
+
+The ruling above closed `output.html`. It did not close `stage.html`, and the reasoning that let it
+pass is recorded in `r6-contracts.test.js` as a `false` verdict with a paragraph under it:
+*"stage.html is not an output CHANNEL … it is a stage screen by construction rather than by
+configuration."*
+
+**That was true of the page's intent and false of its behaviour.** Every copy of that page open
+anywhere on the network was a stage screen by construction — the lobby TV a volunteer had pointed
+at the URL, the spare tablet in the back room, a visitor's phone — and each of them was painted the
+Stage Message full-bleed, at `position: fixed; inset: 0`. One of two doors carried the guarantee,
+which is the shape CLAUDE.md names under *"a guarantee is only kept on the doors you checked"*, on
+the surface carrying private words about a service.
+
+**So the reversal.** `Stage.svelte` reads `?channel=` exactly as `Output.svelte` does, handles the
+`channel_roles` frame through the same one-writer function with the same
+stops-being-a-stage guarantee, and refuses a `stage_alert` unless `acceptsStageMessage` says yes.
+`hello` carries the channel, because rule 43's replay is answered inside the hub's `hello` handler
+and a per-screen state can only be replayed to a client that has said which screen it is.
+
+**A page opened with no channel refuses, and says so.** That is a behaviour change to a URL churches
+already have: the bare `http://<host>:8032/stage.html` that Outputs used to print no longer
+receives a Stage Message. Refusing is the only answer consistent with the rest — an unidentified
+page is precisely the page that might be anything — but a silent refusal would read exactly like a
+message nobody sent, on the one screen whose reader cannot glance at the console to find out what
+happened. So the page carries one standing line naming the fix (rule 35), and `Outputs → Sharing`
+hands out a channel-keyed address for the screen that actually holds the role, or says plainly that
+no screen holds it rather than printing a link that half works (`channelroles.js::stageRemoteUrl`).
+
+**It is not a security boundary and is not claimed as one.** The LAN is trusted by decision (§35,
+`docs/SECURITY.md` T4): anybody who can reach `:8032` can type `?channel=2` and be handed the
+message, and can already read the reading, the Stage Note and the programme off the same page. What
+this closes is the accident, by the same mechanic, in the same frame, as the page beside it.
+
+`src/lib/stagepageidentity.test.js` drives the real page through the real socket and asserts what it
+paints — the surface `r6-contracts.test.js`, which reads source text, cannot reach.
+`src/lib/stageremote.test.js` holds the sending desk.
+
 ---
 
 ## 90. A fresh install ships starter content, and the tripwire stops asserting zero (2026-09-16)
