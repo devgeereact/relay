@@ -20,6 +20,42 @@ every edit: `.claude/hooks/relay-fast-gate.mjs`, path-filtered and report-only (
 
 ## 0. Current inventory
 
+Re-measured **2026-09-17**, on `feat/wave4-track-d` — wave 4's three code tracks (A the stage
+rail, B the cue clock and the slide sizer, C the descoped targeting) merged at `89104fd`, plus
+this pass's documents. Every figure is the runner's own summary line. `npm run build` ran first,
+per RG-127. The machine was shared with other agents throughout, so the frontend suite was run
+twice and agreed both times.
+
+| Count | Value | Command |
+|---|---|---|
+| Rust tests | **816 passed / 0 failed / 16 ignored** | `cd src-tauri && cargo test` |
+| Frontend tests | **2336 passed, 151 files** | `npx vitest run` |
+| `e2e.rs` tests | **74 passed / 0 ignored** | `cd src-tauri && cargo test e2e::` |
+| Registered commands | **145** | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
+| qa-inventory | 145/145 addressed, 0 handlerless, 0 unnamed | `node scripts/qa-inventory.mjs` |
+
+`cargo fmt --all`, `clippy --all-targets -- -D warnings` and `npm run build` all clean on the
+same tree.
+
+**The delta is taken from the row immediately below** (784 Rust / 2254 frontend across 145 files
+/ 139 commands, on `feat/wave2-integration`). Since then, across wave 3 and wave 4: **+32 Rust**,
+**+82 frontend across +6 files**, **+6 commands**. The wave 4 tracks account for the last
+part of it — Track A added eight stage tests and a fourth surface to
+`countdownwarnmotion.test.js`'s register, Track B added `cuetimer.test.js` and
+`slidesizer.test.js` (18 between them) plus five `db/plans.rs` tests and one in `timers.rs`. The
+browser-driven pass that produced `audits/2026-09-17-WAVE4-STAGE-PLANNER.md` added **no tests**,
+deliberately: it is a verification pass and its four findings are filed as RG-146 to RG-149
+rather than fixed here. `e2e.rs` is +8 and qa-inventory's handlerless/unnamed counts are
+unchanged; its one orphan component is still `src/lib/__r6probe.svelte`, the deliberate test
+probe.
+
+Neither suite failed. **What the suites cannot see is the point of the audit above them**: both
+of wave 4's surfaces are moving renders, and the two findings that matter most — RG-146 and
+RG-147 — are joins between two tracks that are each individually green.
+
+---
+
+
 Re-measured **2026-09-16**, on `feat/wave2-integration` — the whole of Wave 2 (six tracks,
 fifteen tasks) merged into one tree, plus the final whole-branch fix pass. The block this
 replaces was measured on `feat/wave2-track-d` alone, BEFORE tracks A, B and C merged, and every
