@@ -944,7 +944,14 @@ impl Rehearsal {
 /// the state has not been registered (tests, early boot) — failing OPEN to a real
 /// broadcast. That is the correct default: the dangerous mistake is silently
 /// swallowing content the operator believes is live, not the reverse.
-fn rehearsing<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> bool {
+///
+/// **Public for ONE reason beyond this module**: a timer records the mode it was
+/// started in (`timers::Timer::started_in_rehearsal`, RG-150), and the two creators
+/// live in `main.rs`. It is the same question the publishers here ask, read from the
+/// same state, so a timer's stamp and a broadcast's suppression can never disagree
+/// about the same instant. It is NOT a licence for a publisher outside this module:
+/// `REHEARSAL_VERDICTS` can only see the ones in here.
+pub fn rehearsing<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> bool {
     app.try_state::<Rehearsal>()
         .map(|r| r.on())
         .unwrap_or(false)
@@ -4346,6 +4353,7 @@ mod tests {
             warn_ms: None,
             scope: crate::timers::Scope::Stage,
             plan_item_id: None,
+            started_in_rehearsal: false,
         }
     }
 

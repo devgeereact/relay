@@ -80,6 +80,24 @@ pub struct Timer {
     pub warn_ms: Option<i64>,
     pub scope: Scope,
     pub plan_item_id: Option<i64>,
+    /// WAS THIS TIMER STARTED INSIDE A REHEARSAL? — RG-150.
+    ///
+    /// Stamped once, by the creator, from the mode in force at that instant, and
+    /// never written again. It is what `stop_started_in_rehearsal` reads at the
+    /// rehearsal exit.
+    ///
+    /// **A property of the timer, never a question asked of a screen** — the same
+    /// discipline `Scope` already carries for the panic controls
+    /// (`channels::stop_congregation_timers`) and for the same reason: a control
+    /// that has to ask a question can fail to answer it. Asking "is anything on
+    /// the tablet that should not be" at the exit would be that control.
+    ///
+    /// `serde(default)` so an older payload, or a hand-built one, reads as a real
+    /// service's timer. That is the safe absence: a timer wrongly kept is visible
+    /// on a screen and can be stopped, and a timer wrongly taken is a clock that
+    /// vanishes from the preacher's tablet mid-sermon with nothing to say why.
+    #[serde(default)]
+    pub started_in_rehearsal: bool,
 }
 
 /// Why an adjustment was refused. Both are refusals an operator can act on, not
@@ -208,6 +226,47 @@ impl TimerRegistry {
         doomed.len()
     }
 
+    /// TAKE EVERY TIMER THAT WAS STARTED INSIDE A REHEARSAL, reporting how many —
+    /// RG-150.
+    ///
+    /// A rehearsal is a sandbox in every other respect: nothing it publishes
+    /// reaches a screen. A clock it started is not an exception to that, so ending
+    /// the rehearsal ends them. The operator decision of 2026-09-17 records what
+    /// the alternative cost: an operator who practises a twenty-minute sermon clock
+    /// at ten o'clock would otherwise find it on the preacher's tablet when the
+    /// service starts, counting toward a moment that has passed.
+    ///
+    /// **It reads the stamp and asks nothing else.** Not the scope, not what a
+    /// screen is currently showing, not the clock — the same shape as `stop_scope`,
+    /// which is why both can be stated in five lines and neither can be wrong about
+    /// a timer it cannot see.
+    ///
+    /// ## What it deliberately leaves
+    ///
+    /// **A timer started BEFORE the rehearsal began survives it.** It was never a
+    /// rehearsal's timer, so on the stated rule it is not one of these, and this
+    /// takes only the stamped ones. The alternative reading — that a rehearsal exit
+    /// clears everything — is a quiet widening, and it would take a real service's
+    /// sermon clock off the preacher's tablet because somebody opened the rehearsal
+    /// switch for ten seconds. Pinned by
+    /// `e2e::a_timer_that_predates_a_rehearsal_survives_the_end_of_it`, on
+    /// `Scope::Stage`, because leaving a rehearsal also clears the screens and a
+    /// clear takes every congregation timer with it (DECISIONS §27) — an older
+    /// guarantee, and not this one.
+    pub fn stop_started_in_rehearsal(&self) -> usize {
+        let mut g = self.inner();
+        let doomed: Vec<TimerId> = g
+            .timers
+            .values()
+            .filter(|t| t.started_in_rehearsal)
+            .map(|t| t.id)
+            .collect();
+        for id in &doomed {
+            g.timers.remove(id);
+        }
+        doomed.len()
+    }
+
     /// RE-AIM OR HOLD A TIMER THAT IS ALREADY THERE. It can never create one.
     ///
     /// `remaining_ms` is how long should be left; `paused` whether it should be
@@ -276,6 +335,7 @@ mod tests {
             warn_ms: None,
             scope,
             plan_item_id: None,
+            started_in_rehearsal: false,
         }
     }
 
@@ -567,6 +627,55 @@ mod tests {
         assert_eq!(
             reg.snapshot_scope(Scope::Both).last().map(|t| t.id),
             ids.last().copied()
+        );
+    }
+
+    /// ENDING A REHEARSAL TAKES THE TIMERS IT STARTED AND NO OTHERS — RG-150.
+    ///
+    /// The registry half of the operator decision of 2026-09-17, where it can be
+    /// stated without a window: the stamp decides, and nothing else is consulted.
+    /// Both directions are asserted, because the two ways to be wrong here have
+    /// very different costs — a rehearsal's clock left counting on a preacher's
+    /// tablet, and a real service's clock taken off it.
+    #[test]
+    fn ending_a_rehearsal_takes_the_timers_it_started_and_no_others() {
+        let now = 1_000_000;
+        let reg = TimerRegistry::default();
+
+        let real = reg.start(five(now, Scope::Stage));
+        let rehearsed = [
+            reg.start(Timer {
+                started_in_rehearsal: true,
+                ..five(now, Scope::Stage)
+            }),
+            // A congregation timer started in a rehearsal is one of these too. The
+            // exit happens to clear the screens as well, which takes every `Both`
+            // timer — but that is DECISIONS §27's guarantee and this one may not
+            // lean on it, or the rule would hold only where something else already
+            // held it.
+            reg.start(Timer {
+                started_in_rehearsal: true,
+                ..five(now, Scope::Both)
+            }),
+        ];
+
+        assert_eq!(
+            reg.stop_started_in_rehearsal(),
+            2,
+            "it must report what it took"
+        );
+        for id in rehearsed {
+            assert!(reg.get(id).is_none(), "a rehearsal's timer outlived it");
+        }
+        assert!(
+            reg.get(real).is_some(),
+            "the rehearsal exit took a timer that predates it — the widening this \
+             decision deliberately does not make"
+        );
+        assert_eq!(
+            reg.stop_started_in_rehearsal(),
+            0,
+            "a second exit takes nothing"
         );
     }
 
