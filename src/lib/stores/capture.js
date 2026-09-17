@@ -2368,6 +2368,46 @@ const call = await invoke();
 await call('set_channel_role', { id, role: role || null });
 }
 
+/**
+ * TAKE ONE SCREEN OUT OF THE WALL, OR PUT IT BACK.
+ *
+ * Three wrappers, and they are NOT panic controls. `clearScreens` and `blackout`
+ * are — first, largest, one action, every screen, and they never ask which (rule
+ * 15, DECISIONS §20). These are the ordinary control beside them: "take the lobby
+ * TV down but leave the wall live". Nothing here is bound to a key, and nothing
+ * here goes near `panicError`.
+ *
+ * GROUP 1 (throws), all three. Every one of them is an operator action with a
+ * visible result, and a failure that is swallowed leaves the Outputs desk saying
+ * a screen is down while a congregation is looking at it — the worse half of the
+ * two ways this can go wrong. The backend refuses during a rehearsal, by name,
+ * and the caller renders that through `src/lib/errors.js` like every other
+ * refusal on that desk. Never a raw Rust string.
+ */
+export async function clearScreen(channelId) {
+  const call = await invoke();
+  await call('clear_screen', { channelId });
+}
+
+/** Blackout ONE screen (opaque), leaving every other screen as it is. */
+export async function blackoutScreen(channelId) {
+  const call = await invoke();
+  await call('blackout_screen', { channelId });
+}
+
+/**
+ * Put one screen back into the wall: it shows whatever the wall is showing.
+ *
+ * The way back is a CONTROL and not a side effect of the next fire. A screen
+ * taken down stays down across every fire in between — a one-shot would be undone
+ * within a minute of being used — so there has to be something that undoes it,
+ * and it has to be as easy to find as the control that did it.
+ */
+export async function restoreScreen(channelId) {
+  const call = await invoke();
+  await call('restore_screen', { channelId });
+}
+
 /** Assign a physical display (monitor index string, or null) to a channel. */
 export async function setChannelDisplay(id, display) {
 const call = await invoke();

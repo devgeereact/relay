@@ -85,6 +85,9 @@
     screenBlack,
     startChannelHealth,
     setChannelDisplay,
+    clearScreen,
+    blackoutScreen,
+    restoreScreen,
     addChannel,
     deleteChannel,
     localIp,
@@ -346,6 +349,32 @@
   const assignTemplate = (c, e) =>
     act(() => setChannelTemplate(c.id, e.target.value === '' ? null : parseInt(e.target.value, 10)));
   const assignDisplay = (c, e) => act(() => setChannelDisplay(c.id, e.target.value === '' ? null : e.target.value));
+
+  // ── TAKE ONE SCREEN OUT OF THE WALL, OR PUT IT BACK ────────────────────────
+  //
+  // BESIDE the panic controls, never instead of them. `Clear screens` and
+  // `Blackout` live in the dock, are reachable in one action from anywhere,
+  // address every screen and ask nothing about which (rule 15, DECISIONS §20).
+  // These three live here, on the desk, on the screen they are about — because
+  // "take the lobby TV down but leave the wall live" is a decision about one
+  // screen and is made while looking at that screen's card.
+  //
+  // `act` hands a refusal to `src/lib/errors.js` like every other mutation on this
+  // desk: the backend refuses during a rehearsal, by name, and an operator must
+  // read that sentence rather than a raw Rust string.
+  //
+  // No two-step arm/confirm, deliberately. This is reversible in one click by the
+  // control sitting next to it, and the arming pattern is for things that are not
+  // (`TemplateGallery`'s delete). A confirmation step in front of a reversible
+  // control is a step an operator learns to click through.
+  const takeDown = (c) => act(() => clearScreen(c.id));
+  const blackDown = (c) => act(() => blackoutScreen(c.id));
+  const putBack = (c) => act(() => restoreScreen(c.id));
+  // WHAT THIS SCREEN HAS BEEN TOLD, off the same liveness row every badge on this
+  // desk is derived from — never a second copy of the state kept here. A local
+  // copy would disagree with the badge the moment a second console, a reconnect
+  // or a refused call moved one of them.
+  const downOf = (c) => $channelHealth?.[c.id]?.down ?? null;
   // WHAT THIS SCREEN IS FOR. '' is "no special role", which is the right answer
   // for a streaming feed and a lobby TV and is a value rather than an empty
   // field — the same distinction as Follow the content look above it.
@@ -1056,6 +1085,44 @@
             </p>
           {/if}
 
+          <!-- ══ THIS SCREEN, RIGHT NOW ══ BESIDE THE PANIC CONTROLS, NEVER
+               INSTEAD OF THEM. `Clear screens` and `Blackout` are in the dock,
+               address every screen and ask nothing about which (rule 15,
+               DECISIONS §20). These address THIS screen and leave the wall
+               alone, which is the request that was impossible until now: take
+               the lobby TV down for the sermon and leave the congregation's
+               screen live.
+
+               A screen stays down until it is put back, across every fire in
+               between. That is what makes it worth having and it is also how an
+               operator forgets, so the state is said out loud here and on every
+               card's badge, and the way back is the button beside it. -->
+          <div class="r-lbl ch-flbl">This screen</div>
+          {#if downOf(sel)}
+            <p class="ch-downnow">
+              You took this screen down{downOf(sel) === 'black' ? ' (black)' : ''}. It shows
+              nothing until you put it back, and firing a verse will not bring it up.
+            </p>
+            <div class="ch-downrow">
+              <button class="r-btn primary sm" on:click={() => putBack(sel)} disabled={!$capture.available}>
+                Put back in the wall
+              </button>
+            </div>
+          {:else}
+            <div class="ch-downrow">
+              <button class="r-btn ghost sm" on:click={() => takeDown(sel)} disabled={!$capture.available}>
+                Take this screen down
+              </button>
+              <button class="r-btn ghost sm" on:click={() => blackDown(sel)} disabled={!$capture.available}>
+                Black this screen out
+              </button>
+            </div>
+            <p class="ch-finhint">
+              Only this screen. Every other screen keeps showing whatever is on the
+              programme, and the panic controls are unchanged.
+            </p>
+          {/if}
+
           {#if isNative(sel)}
             <div class="r-lbl ch-flbl">Display</div>
             <select class="r-select ch-fin" value={sel.display_target ?? ''} on:change={(e) => assignDisplay(sel, e)} disabled={!$capture.available}>
@@ -1392,6 +1459,16 @@
   .ch-addr-row .ch-addr{ flex:1; min-width:0; }
   .ch-stage-sub{ margin:0 0 10px; font-size:var(--v-fs-b2); line-height:1.45; }
   .ch-stage-actions{ display:flex; gap:6px; flex-wrap:wrap; }
+  .ch-downrow{ display:flex; gap:6px; flex-wrap:wrap; margin-bottom:6px; }
+  /* A SCREEN THE OPERATOR TOOK DOWN. Amber, not rose: nothing has failed and
+     nothing needs repairing — this is a decision somebody made, and rose here
+     would send a volunteer hunting for a broken projector. Same reading as the
+     badge `describeScreen` gives it. */
+  .ch-downnow{
+    margin:0 0 8px; padding:8px 10px; border-radius:var(--r-sm, 6px);
+    background:var(--v-amber-soft); border:1px solid var(--v-amber-line);
+    color:var(--v-amber); font-size:var(--v-fs-b2); line-height:1.45;
+  }
   /* NO STAGE SCREEN. Amber, not red: nothing has failed, a screen simply has no
      role — a configuration answer, and red would send an operator looking for a
      fault. Same reading as the line `stage.html` shows at the other end. */

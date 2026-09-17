@@ -122,6 +122,11 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       // and reaches this page as ordinary `content` with the four `countdown_*`
       // fields on it, which is why nothing is lost by refusing this one.
       timer: false,
+      // WHICH SCREENS THE OPERATOR TOOK OUT OF THE WALL. This page IS a screen, so
+      // it is the party that has to act on it — the hub broadcasts to everybody and
+      // records nothing about who connected (DECISIONS §35), which is the same
+      // argument as `channel_template` two rows up and `stage_alert` above it.
+      screen_state: true,
     },
     'src/Stage.svelte': {
       content: true,
@@ -167,6 +172,13 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       // why it survives a verse — so this frame is its only way onto any screen,
       // and the screen it is for is this one.
       timer: true,
+      // AND THE PER-SCREEN CONTROL REACHES BOTH DOORS. A confidence monitor in a
+      // foyer is a screen an operator may reasonably want down while the
+      // platform's own stays up, and this page is the door this repository has
+      // now missed four times — most recently for `black`, which left the verse
+      // on the one screen the preacher reads from while the console correctly
+      // reported success (DECISIONS §91).
+      screen_state: true,
     },
   };
 

@@ -71,6 +71,26 @@
    * deleting the check would break no test, and the message would still be
    * ASSIGNED for an instant before the reactive pass took it away.
    */
+  // THE OPERATOR TOOK THIS SCREEN OUT OF THE WALL — 'clear', 'black' or null.
+  //
+  // A separate fact from `visible`, deliberately, and not a second writer of it.
+  // Writing `visible` here would be indistinguishable from a whole-wall clear one
+  // line later, so putting the screen back would have nothing to put back: the
+  // page keeps tracking what the wall is showing while it is down, and shows it
+  // again the moment it is restored. That is the RG-129 failure — a screen that
+  // rejoined mid-service and stayed blank until the next fire — reached through a
+  // control instead of through a reconnect.
+  let down = null;
+  $: shown = visible && !down;
+  // WHAT A TAKEN-DOWN SCREEN WITHHOLDS, and where the line is drawn.
+  //
+  // The reading, the Stage Note, the Up Next and the Stage Message — everything
+  // an operator PUT on this screen. The clock, the countdown mirror and the
+  // programme rail stay, which is DECISIONS §91's line applied unchanged: a
+  // control takes back every sentence somebody put on a screen and stops none of
+  // the clocks. Drawing it anywhere else here would give a stage monitor a third
+  // answer to a question §91 has already settled.
+
   function applyRoles(map) {
     // Named `map`, not `next`: `next` is the Up Next panel on this page, and a
     // parameter that shadows it reads as though the role map were the preview.
@@ -767,6 +787,21 @@
       // WHAT EVERY SCREEN IS FOR. The frame this page used to ignore, and the
       // omission is what made the branch below a filter with no filter in it.
       applyRoles(m.roles);
+    } else if (m.kind === 'screen_state') {
+      // THE OPERATOR TOOK THIS SCREEN OUT OF THE WALL — the per-screen twin of
+      // `clear` and `black` above, and it is handled HERE for the reason that
+      // branch's own comment gives: this page is a door, and a guarantee kept on
+      // one of two doors is the mistake this repository has made four times. A
+      // confidence monitor in the foyer is a screen an operator may reasonably
+      // want down while the platform's own stays up.
+      //
+      // The WHOLE SET arrives every time, keyed by channel id as a string. A page
+      // with no channel is never named: ids start at 1.
+      const mine =
+        channelId && m.screens && typeof m.screens === 'object'
+          ? m.screens[String(channelId)]
+          : null;
+      down = mine === 'clear' || mine === 'black' ? mine : null;
     } else if (m.kind === 'stage_alert') {
       // ONLY A STAGE. The hub publishes this to every client because it cannot
       // address one (DECISIONS §35), so the refusal belongs at the receiver —
@@ -924,7 +959,7 @@
     </p>
   {/if}
 
-  {#if alert}
+  {#if alert && !down}
     <!-- THE WHOLE SCREEN. A preacher reads this from a platform, mid-sentence,
          without looking for it. Outside the zone layout on purpose: an
          instruction that a switched-off zone could hide is not an instruction. -->
@@ -946,7 +981,7 @@
   {#if zones.reading}
   <main class="stage" class:beside>
     <section class="reading" aria-label="Reading">
-      {#if visible && content}
+      {#if shown && content}
         {#if content.reference}<div class="ref">{content.reference}{content.translation ? ' · ' + content.translation : ''}</div>{/if}
         {#if content.text}<div class="verse" style="--vn:{verseChars}; --vcpl:{verseCpl}">{#if content.reference}“{content.text}”{:else}{content.text}{/if}</div>{/if}
       {:else}
@@ -1034,7 +1069,7 @@
     </div>
   {/if}
 
-  {#if zones.note && note}
+  {#if zones.note && note && !down}
     <div class="noterow"><span class="note-lbl">Stage Note</span><span class="notetxt">{note}</span></div>
   {/if}
 
@@ -1095,7 +1130,7 @@
       {/if}
     </section>
   {/if}
-  {#if zones.next && next}
+  {#if zones.next && next && !down}
     <footer class="next">
       <span class="next-lbl">Up Next</span>
       <div class="next-body">

@@ -153,6 +153,7 @@ fn main() {
         .manage(channels::LiveContent::default())
         .manage(timers::TimerRegistry::default())
         .manage(channels::OutputHealth::default())
+        .manage(channels::ScreensDown::default())
         .manage(servicelock::ServiceLock::default())
         .manage(Session::default())
         .manage(models::DownloadState::default())
@@ -222,6 +223,7 @@ fn main() {
             let kiosk_last = kiosk.last_screen_handle();
             let kiosk_last_x = kiosk.last_transition_handle();
             let kiosk_last_t = kiosk.last_timers_handle();
+            let kiosk_down = kiosk.screens_down_handle();
             // The configured default, warmed before any client can connect — a
             // screen that joins during launch must not be told the default is
             // `null` and then corrected.
@@ -296,6 +298,7 @@ fn main() {
                 kiosk_last,
                 kiosk_last_x,
                 kiosk_last_t,
+                kiosk_down,
                 app.state::<channels::OutputHealth>().inner().clone(),
                 8031,
             ));
@@ -461,6 +464,9 @@ fn main() {
             service_lock,
             set_service_lock,
             set_channel_template,
+            clear_screen,
+            blackout_screen,
+            restore_screen,
             set_default_template,
             send_stage_alert,
             list_monitors,
@@ -6022,6 +6028,25 @@ struct ChannelLiveness {
     /// What that beat said the screen was showing — `content` / `clear` / `black`.
     /// Parsed against a closed enum at the door; never free text off the LAN.
     paint_state: Option<&'static str>,
+    /// THE OPERATOR TOOK THIS SCREEN OUT OF THE WALL — `clear` or `black`, and
+    /// `None` when it is following the wall like every other screen.
+    ///
+    /// It is here rather than in a command of its own because every surface that
+    /// describes a screen has to know it, and there is exactly one helper allowed
+    /// to turn a row into words (`outputHealth.js::describeScreen`, rule 35).
+    /// Without it that helper would compare Relay's belief — content is on the
+    /// wall — against the screen's own beat, which says `clear`, and report
+    /// `Not confirmed` for the rest of the service: a standing alarm about a
+    /// screen doing exactly what it was told.
+    down: Option<&'static str>,
+}
+
+/// Whether the operator has taken this screen out of the wall, flattened for
+/// `ChannelLiveness`. `None` is a screen following the wall — the ordinary case,
+/// and the one that must be an absence rather than the word "live", so nothing
+/// downstream can read "down" off a row that says it is up.
+fn down_of(down: &channels::ScreensDown, id: i64) -> Option<&'static str> {
+    down.get(id).map(|s| s.as_str())
 }
 
 /// The beat for one channel, flattened for `ChannelLiveness`.
@@ -6119,6 +6144,7 @@ fn channel_status(
     db: tauri::State<'_, Db>,
     kiosk: tauri::State<'_, channels::KioskHub>,
     health: tauri::State<'_, channels::OutputHealth>,
+    down: tauri::State<'_, channels::ScreensDown>,
 ) -> error::Result<Vec<ChannelLiveness>> {
     let list = {
         let conn = db.0.lock()?;
@@ -6177,6 +6203,7 @@ fn channel_status(
                     painting,
                     last_beat_ms: age,
                     paint_state: state,
+                    down: down_of(&down, c.id),
                 }
             }
             "network_client" => {
@@ -6223,6 +6250,7 @@ fn channel_status(
                     painting,
                     last_beat_ms: age,
                     paint_state: state,
+                    down: down_of(&down, c.id),
                 }
             }
             // NDI is parked, not broken — `open_ndi_output` says so too.
@@ -6236,6 +6264,7 @@ fn channel_status(
                 painting: false,
                 last_beat_ms: None,
                 paint_state: None,
+                down: down_of(&down, c.id),
             },
             other => ChannelLiveness {
                 id: c.id,
@@ -6247,6 +6276,7 @@ fn channel_status(
                 painting: false,
                 last_beat_ms: None,
                 paint_state: None,
+                down: down_of(&down, c.id),
             },
         })
         .collect())
@@ -6641,6 +6671,59 @@ fn blackout<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> error::Result<()> {
     forget_debounce(&app);
     persist_cue(&app, "blackout", None);
     Ok(())
+}
+
+/// ── ONE SCREEN, NOT THE WALL ───────────────────────────────────────────────
+///
+/// "Take the lobby TV down but leave the wall live" is an ordinary request. The
+/// three commands below are the whole of it, and every one of them is a thin call
+/// into `channels::set_screen_state` — the choke point (rule 36), so a fourth way
+/// of taking a screen down cannot arrive with its own idea of what that means.
+///
+/// **`clear_screens` and `blackout` above are untouched.** They are the panic
+/// controls: first, largest, reachable in one action, addressing every screen and
+/// asking nothing (rule 15, DECISIONS §20). The split is in the CALL and never
+/// inside them, because a panic control that has to work out which screen it is
+/// addressing is a panic control that can fail to answer. Nothing here is bound
+/// to `Esc` or to `B`, and `pipeline::preflight` gains no new power: these publish
+/// no content, so there is nothing for a validator to refuse.
+///
+/// **They do not touch the wall's own state.** Not `LiveContent`, not the
+/// debounce, not the congregation timers, not `WallState`. The verse is still in
+/// front of the congregation on every other screen, and a control that forgot it
+/// would make the next spoken "next verse" answer `NoPassage` — which is the
+/// class of bug rule 40 and `NavResult` exist to prevent, arriving through a
+/// side door.
+#[tauri::command]
+fn clear_screen<R: tauri::Runtime>(app: tauri::AppHandle<R>, channel_id: i64) -> error::Result<()> {
+    channels::set_screen_state(&app, channel_id, channels::ScreenState::Clear)
+        .map_err(error::Error::refused)
+}
+
+/// Blackout ONE screen (opaque black), leaving every other screen as it is.
+#[tauri::command]
+fn blackout_screen<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    channel_id: i64,
+) -> error::Result<()> {
+    channels::set_screen_state(&app, channel_id, channels::ScreenState::Black)
+        .map_err(error::Error::refused)
+}
+
+/// Put one screen back into the wall: it shows whatever the wall is showing.
+///
+/// THE WAY BACK IS A CONTROL, not a side effect of the next fire. A screen taken
+/// down stays down across every fire in between — a one-shot would be undone
+/// within a minute of being used, which is to say useless for the thing it is for
+/// — so there has to be something that undoes it, and it has to be as easy to
+/// find as the control that did it.
+#[tauri::command]
+fn restore_screen<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    channel_id: i64,
+) -> error::Result<()> {
+    channels::set_screen_state(&app, channel_id, channels::ScreenState::Live)
+        .map_err(error::Error::refused)
 }
 
 /// Clear the wall from a path that has nobody to return an error to — the STT

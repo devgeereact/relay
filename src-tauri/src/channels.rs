@@ -1027,6 +1027,20 @@ fn is_screen_frame(msg: &str) -> bool {
         || msg.contains(r#""kind":"black""#)
 }
 
+/// The frame a hub sends when every screen is following the wall.
+pub(crate) const SCREENS_ALL_UP: &str = r#"{"kind":"screen_state","screens":{}}"#;
+
+/// Does this frame say which screens the OPERATOR has taken out of the wall?
+///
+/// Disjoint from `is_screen_frame` and `is_timer_frame` by construction: a frame
+/// is `content`/`clear`/`black`, or `timer`, or this, and no frame this module
+/// builds is two of them. `contains`, not `starts_with`, for the reason recorded
+/// on `is_screen_frame` — `serde_json` orders map keys alphabetically and a prefix
+/// check there silently matched nothing while looking exactly right.
+fn is_screen_state_frame(msg: &str) -> bool {
+    msg.contains(r#""kind":"screen_state""#)
+}
+
 /// Push content to every output channel. One broadcast, N independently-styled
 /// renders — native windows (Tauri event) AND networked kiosk clients (WS).
 ///
@@ -1213,6 +1227,152 @@ pub fn black<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String>
     app.emit("output://black", ()).map_err(|e| e.to_string())?;
     publish_kiosk(app, r#"{"kind":"black"}"#.to_string());
     note_wall(app, false, true);
+    Ok(())
+}
+
+/// ── PER-SCREEN CLEAR AND BLACKOUT ──────────────────────────────────────────
+///
+/// "Take the lobby TV down but leave the wall live" is an ordinary request and
+/// was impossible: `clear` and `black` take no channel and never will.
+///
+/// **THE SPLIT IS IN THE CALL, NEVER INSIDE THE PANIC CONTROL.** `clear` and
+/// `black` above are untouched, byte for byte. A panic control that has to work
+/// out which screen it is addressing is a panic control that can fail to answer,
+/// and rule 15 does not allow one of those — the same sentence
+/// `stop_congregation_timers` already carries, for the same reason. What follows
+/// is a SEPARATE control, reached from the Outputs desk, never from `Esc` or `B`.
+///
+/// **It is durable, not a one-shot frame.** A screen taken down stays down until
+/// it is brought back, across every fire in between. A one-shot would be undone
+/// by the next verse, which during a service is within a minute, which is to say
+/// useless for the thing it is for. That durability is the risk as well: an
+/// operator can forget. So the state is in MEMORY and not in the database — a
+/// relaunch brings every screen back, because a screen nobody can see is a worse
+/// thing to persist than a preference nobody set — and every surface that
+/// describes a screen says which screens are down, through the one helper that is
+/// allowed to turn a screen into words (`outputHealth.js::describeScreen`, rule
+/// 35).
+///
+/// **The whole set, every frame.** Like the programme timers, and for the same
+/// reason: a client that missed one delta would be wrong about itself for the
+/// rest of the service with no way to find out. An empty map is how the last
+/// screen comes back up.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum ScreenState {
+    /// Nothing of Relay's on this screen; the template background shows through,
+    /// so a keyed channel still keys out for OBS.
+    Clear,
+    /// Opaque black on this screen alone.
+    Black,
+    /// The screen follows the wall again. Never stored — it is the absence.
+    Live,
+}
+
+impl ScreenState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ScreenState::Clear => "clear",
+            ScreenState::Black => "black",
+            ScreenState::Live => "live",
+        }
+    }
+    // NO `parse`, deliberately. Nothing on any door hands this a string: the three
+    // commands each name one variant, so free text never becomes a state a screen
+    // renders and there is nothing to parse it from. A parser nothing calls is a
+    // parser nobody is checking.
+}
+
+/// The screens the operator has taken down on their own, and what they were told
+/// to do. A channel that is live is ABSENT rather than present-and-`Live`: one
+/// representation of one fact, so nothing can read "down" off an entry that says
+/// it is up.
+#[derive(Default)]
+pub struct ScreensDown(pub std::sync::Mutex<HashMap<i64, ScreenState>>);
+
+impl ScreensDown {
+    /// What this screen has been told, or `None` when it follows the wall.
+    pub fn get(&self, channel_id: i64) -> Option<ScreenState> {
+        self.0.lock().ok().and_then(|m| m.get(&channel_id).copied())
+    }
+
+    /// The whole set as the wire form: `{"4":"clear"}`, and `{}` when every
+    /// screen is following the wall.
+    pub fn as_json(&self) -> String {
+        let Ok(m) = self.0.lock() else {
+            return "{}".into();
+        };
+        let map: serde_json::Map<String, serde_json::Value> = m
+            .iter()
+            .map(|(id, st)| (id.to_string(), serde_json::Value::from(st.as_str())))
+            .collect();
+        serde_json::Value::Object(map).to_string()
+    }
+}
+
+/// TAKE ONE SCREEN DOWN, OR BRING IT BACK. The one place this is decided.
+///
+/// Rule 36: the choke point is where the check goes. Three commands call this and
+/// none of them publishes anything itself, so a fourth way of taking a screen
+/// down cannot arrive with its own idea of what that means.
+///
+/// **It does not touch anything the wall is made of.** Not `LiveContent`, not the
+/// debounce, not the congregation timers, not `WallState`. Taking the lobby TV
+/// down does not mean the verse has gone — it is still in front of the
+/// congregation on every other screen — and a control that forgot the live
+/// content would make the next spoken "next verse" answer `NoPassage` over a
+/// verse people can see.
+///
+/// Returns Err when the Tauri door refuses, for the same reason `clear` does: a
+/// control that cannot reach a screen must not report that it did.
+pub fn set_screen_state<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    channel_id: i64,
+    state: ScreenState,
+) -> Result<(), String> {
+    // ── REFUSED IN A REHEARSAL, AND THAT IS A DECISION ─────────────────────
+    //
+    // The gate is HERE rather than in the three commands, per rule 36: a fourth
+    // way of taking a screen down must not be able to arrive with its own answer.
+    //
+    // Every other publisher in this module SUPPRESSES during a rehearsal and
+    // returns success, because what it is suppressing is content and the
+    // rehearsal's promise is that no content leaves. This one is refused instead.
+    // Suppressing it would leave the operator's own belief and the screens
+    // disagreeing with nothing to say so — the desk would show the lobby TV down
+    // while the lobby TV showed the last thing it was sent — and that is rule 35's
+    // shape on a control the operator pressed deliberately. It is not a panic
+    // control, so it is allowed to refuse; `clear` and `black` are and are not,
+    // which is why the split is in the call.
+    if rehearsing(app) {
+        return Err(
+            "Relay is rehearsing, so no screen was changed. Leave rehearsal to take a screen down."
+                .into(),
+        );
+    }
+    let Some(down) = app.try_state::<ScreensDown>() else {
+        // A headless Relay manages no registry. Saying so beats pretending a
+        // screen was changed.
+        return Err("this build has no screen registry".into());
+    };
+    {
+        // Taken and released before any emit — rule 2, and this one is on the path
+        // of a control an operator presses during a service.
+        let Ok(mut m) = down.0.lock() else {
+            return Err("the screen registry is unavailable".into());
+        };
+        match state {
+            ScreenState::Live => m.remove(&channel_id),
+            other => m.insert(channel_id, other),
+        };
+    }
+    let blob = down.as_json();
+    let json = format!(r#"{{"kind":"screen_state","screens":{blob}}}"#);
+    app.emit(
+        "output://screen_state",
+        serde_json::json!({ "channel": channel_id, "state": state.as_str() }),
+    )
+    .map_err(|e| e.to_string())?;
+    publish_kiosk(app, json);
     Ok(())
 }
 
@@ -1529,6 +1689,22 @@ pub struct KioskHub {
     /// A rehearsal publishes nothing to this hub at all — the gate is at
     /// `publish_timers` — so there is nothing of a rehearsal to replay here either.
     last_timers: Arc<Mutex<Option<String>>>,
+    /// THE SCREENS THE OPERATOR HAS TAKEN OUT OF THE WALL — `{"4":"clear"}`.
+    ///
+    /// ITS OWN SLOT, NOT `last_screen`, and this is the fifth time that sentence
+    /// has had to be written in this struct. One slot means the newest frame wins,
+    /// so retaining this beside `content` would erase the verse a late-joining
+    /// screen is owed (rule 43).
+    ///
+    /// Retained because it is a STATE and not a moment: a lobby TV the operator
+    /// took down at the start of the sermon is still meant to be down when its
+    /// browser source restarts twenty minutes later. Replayed LAST on hello,
+    /// AFTER the retained screen frame, because it OVERRIDES what is on the
+    /// screens — sent before it, the verse would paint over the operator's
+    /// decision and the screen would bring itself back up.
+    ///
+    /// Ids and states only. Nothing a client chose, and nothing a preacher said.
+    screens_down: Arc<Mutex<String>>,
 }
 
 impl Default for KioskHub {
@@ -1543,6 +1719,11 @@ impl Default for KioskHub {
             last_transition: Arc::new(Mutex::new(None)),
             channel_roles: Arc::new(Mutex::new("{}".to_string())),
             last_timers: Arc::new(Mutex::new(None)),
+            // THE EMPTY FRAME, not an empty map. This slot holds a frame ready to
+            // send, so seeding it with `{}` would put a bare object on the wire on
+            // every hello before anything was ever taken down — a message with no
+            // `kind`, which every client drops in silence.
+            screens_down: Arc::new(Mutex::new(SCREENS_ALL_UP.to_string())),
         }
     }
 }
@@ -1618,6 +1799,16 @@ impl KioskHub {
                 *last = Some(msg.clone());
             }
         }
+        // A THIRD SLOT, and the same disjointness argument. A `screen_state` frame
+        // is neither a screen frame nor a timer — it says which screens the
+        // operator has taken OUT of the wall, which is a fact about screens rather
+        // than a thing to paint on one. The whole set rides every time, so the
+        // newest frame winning is correct here rather than lossy.
+        if is_screen_state_frame(&msg) {
+            if let Ok(mut last) = self.screens_down.lock() {
+                *last = msg.clone();
+            }
+        }
         let _ = self.tx.send(msg); // Err only means no subscribers — fine.
     }
     /// Shared handle to the retained screen frame, for the WS task to send on hello.
@@ -1627,6 +1818,11 @@ impl KioskHub {
     /// Shared handle to the retained programme timers, for the WS task's hello.
     pub fn last_timers_handle(&self) -> Arc<Mutex<Option<String>>> {
         self.last_timers.clone()
+    }
+    /// Shared handle to the screens the operator has taken down, for the WS task's
+    /// hello.
+    pub fn screens_down_handle(&self) -> Arc<Mutex<String>> {
+        self.screens_down.clone()
     }
     /// Shared handle to the retained transition override, for the WS task's hello.
     pub fn last_transition_handle(&self) -> TransitionSlot {
@@ -1859,6 +2055,7 @@ pub async fn run_kiosk_server(
     last_screen: Arc<Mutex<Option<String>>>,
     last_transition: TransitionSlot,
     last_timers: Arc<Mutex<Option<String>>>,
+    screens_down: Arc<Mutex<String>>,
     health: OutputHealth,
     port: u16,
 ) {
@@ -1896,6 +2093,7 @@ pub async fn run_kiosk_server(
         let last_screen = last_screen.clone();
         let last_transition = last_transition.clone();
         let last_timers = last_timers.clone();
+        let screens_down = screens_down.clone();
         let health = health.clone();
         tokio::spawn(async move {
             let _permit = permit;
@@ -2130,6 +2328,30 @@ pub async fn run_kiosk_server(
                                             .send(tokio_tungstenite::tungstenite::Message::Text(frame))
                                             .await;
                                     }
+                                    // AND WHICH SCREENS THE OPERATOR HAS TAKEN OUT
+                                    // OF THE WALL.
+                                    //
+                                    // LAST, and the order is the whole of it. This
+                                    // frame OVERRIDES what is on the screens for
+                                    // the screens it names, so sent before the
+                                    // retained verse the verse would paint over the
+                                    // operator's decision and a lobby TV whose
+                                    // browser source restarted would bring itself
+                                    // back up mid-sermon — rule 43's own mechanism
+                                    // undoing an operator's own control.
+                                    //
+                                    // Sent on EVERY hello, including when nothing
+                                    // is down, because `{}` is an answer: it is how
+                                    // a page learns it is NOT down, and a page that
+                                    // cannot tell "nobody has told me" from "I am
+                                    // up" is the distinction rule 35 is about.
+                                    let sd = screens_down
+                                        .lock()
+                                        .map(|d| d.clone())
+                                        .unwrap_or_else(|_| SCREENS_ALL_UP.into());
+                                    let _ = write
+                                        .send(tokio_tungstenite::tungstenite::Message::Text(sd))
+                                        .await;
                                 }
                             }
                         }
@@ -3453,6 +3675,7 @@ mod tests {
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
+            hub.screens_down_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -3515,6 +3738,7 @@ mod tests {
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
+            hub.screens_down_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -3600,6 +3824,7 @@ mod tests {
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
+            hub.screens_down_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -3652,6 +3877,7 @@ mod tests {
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
+            hub.screens_down_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -3718,6 +3944,7 @@ mod tests {
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
+            hub.screens_down_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -3919,6 +4146,15 @@ mod tests {
         // retained — in its own slot (`last_timers`), replayed on hello from there,
         // and sent BEFORE the screen frame so the reading is painted last.
         ("timer", false),
+        // WHICH SCREENS THE OPERATOR HAS TAKEN OUT OF THE WALL. Not retained HERE,
+        // for the fifth time for the fifth identical reason: `last_screen` holds
+        // one frame and the newest wins, so retaining this would replace the verse
+        // and the next screen to join would be sent a map of what is down over a
+        // blank wall. It IS retained — in its own slot (`screens_down`), replayed
+        // on hello from there, and sent AFTER the screen frame rather than before
+        // it, because it overrides what is on the screens rather than being what
+        // is on them.
+        ("screen_state", false),
     ];
 
     /// THE ENUMERATION MUST GROW WITH THE MODULE, OR IT IS NOT AN ENUMERATION.
@@ -4066,6 +4302,18 @@ mod tests {
              Gating it would leave a screen already following the content look \
              wearing the pre-rehearsal default once the operator went live, the \
              same reasoning as `set_template` and `set_channel_template`",
+        ),
+        (
+            "set_screen_state",
+            true,
+            "it takes a real screen out of a real wall. Every other gated publisher \
+             here SUPPRESSES and returns success, because what it is suppressing is \
+             content; this one REFUSES, because suppressing it would leave the \
+             Outputs desk showing the lobby TV down while the lobby TV showed the \
+             last thing it was sent, with nothing to say so — rule 35's shape on a \
+             control the operator pressed deliberately. It is not a panic control, \
+             so it is allowed to refuse; `clear` and `black` are and are not, which \
+             is why the split is in the call",
         ),
         (
             "set_channel_roles",
@@ -4371,6 +4619,7 @@ mod tests {
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
+            hub.screens_down_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -4436,6 +4685,7 @@ mod tests {
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
+            hub.screens_down_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -4790,6 +5040,7 @@ mod tests {
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
+            hub.screens_down_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -4844,6 +5095,17 @@ mod tests {
     /// omission. This assertion is the only instrument that noticed, and it
     /// noticed by failing rather than by being right — which is what it is for.
     /// A new slot goes in the middle of this list, never after `content`.
+    ///
+    /// **`screen_state` IS THE ONE EXCEPTION, AND IT IS AFTER `content`.** It went
+    /// red in exactly the way the paragraph above describes and the answer was the
+    /// other one: it is not configuration and it is not something to paint — it
+    /// says which screens the operator has taken OUT of the wall, which overrides
+    /// what is on them. Sent before the retained verse, the verse would paint over
+    /// the operator's decision and a lobby TV whose browser source restarted would
+    /// bring itself back up mid-sermon: rule 43's own mechanism undoing an
+    /// operator's own control. So the rule is not "content is last" but "the thing
+    /// that decides what shows is last", and content was last for as long as
+    /// nothing could override it.
     #[tokio::test]
     async fn the_hello_order_puts_the_screen_frame_last() {
         let port = free_port();
@@ -4858,6 +5120,7 @@ mod tests {
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
+            hub.screens_down_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -4912,10 +5175,125 @@ mod tests {
                 "channel_roles",
                 "transition",
                 "timer",
-                "content"
+                "content",
+                "screen_state"
             ],
             "the hello reply reached this tablet in the wrong order — the reading \
-             must be painted last, after the clock that accompanies it"
+             must be painted last, after the clock that accompanies it, and the \
+             screens the operator took down must be named after the reading or they \
+             would be painted over by it"
+        );
+    }
+
+    /// A SCREEN THE OPERATOR TOOK DOWN COMES BACK DOWN.
+    ///
+    /// Rule 43 in the other direction, and the reason the per-screen state is
+    /// retained at all. The operator takes the lobby TV down for the sermon; its
+    /// browser source restarts twenty minutes later, says hello, and is handed the
+    /// retained verse. Without this frame it would paint that verse and bring
+    /// itself back up — rule 43's own mechanism undoing an operator's own control,
+    /// in front of the room the control was used to spare.
+    ///
+    /// Two claims, and the second is the one that is easy to get wrong: the frame
+    /// must ARRIVE, and it must arrive AFTER the content. Sent before it, the verse
+    /// paints over it and the screen is up again with nothing to say why.
+    ///
+    /// Both watched to fail: deleting the send (the first assertion), and moving it
+    /// above the retained screen frame (the second, which reported the real order).
+    #[tokio::test]
+    async fn a_screen_the_operator_took_down_rejoins_still_down() {
+        let port = free_port();
+        let hub = KioskHub::default();
+        tokio::spawn(run_kiosk_server(
+            log_only(),
+            hub.sender(),
+            hub.templates_handle(),
+            hub.clients_handle(),
+            hub.default_template_handle(),
+            hub.channel_roles_handle(),
+            hub.last_screen_handle(),
+            hub.last_transition_handle(),
+            hub.last_timers_handle(),
+            hub.screens_down_handle(),
+            OutputHealth::default(),
+            port,
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        // A verse on the wall, and one screen taken out of it.
+        hub.publish(
+            r#"{"kind":"content","reference":"Psalms 23:1","text":"The LORD is my shepherd"}"#
+                .to_string(),
+        );
+        hub.publish(r#"{"kind":"screen_state","screens":{"4":"clear"}}"#.to_string());
+
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
+            .await
+            .expect("connect");
+        let (mut write, mut read) = ws.split();
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"kind":"hello","channel":4,"template_id":null}"#.to_string(),
+            ))
+            .await
+            .expect("send hello");
+
+        let mut order: Vec<String> = Vec::new();
+        for _ in 0..8 {
+            let Ok(Some(Ok(msg))) =
+                tokio::time::timeout(std::time::Duration::from_millis(600), read.next()).await
+            else {
+                break;
+            };
+            order.push(msg.into_text().unwrap_or_default());
+        }
+        let down = order
+            .iter()
+            .position(|m| m.contains(r#""kind":"screen_state""#));
+        assert!(
+            down.is_some_and(|i| order[i].contains(r#""4":"clear""#)),
+            "a lobby TV whose browser source restarted came back UP mid-sermon: {order:?}"
+        );
+        let content = order
+            .iter()
+            .position(|m| m.contains(r#""kind":"content""#))
+            .expect("the retained verse should still be replayed");
+        assert!(
+            down.expect("checked above") > content,
+            "the operator's decision was sent BEFORE the verse, so the verse painted \
+             over it: {order:?}"
+        );
+    }
+
+    /// A WHOLE-WALL CLEAR DOES NOT PUT A SCREEN BACK UP.
+    ///
+    /// The tempting simplification, written down so nobody reaches for it: "a panic
+    /// control takes everything, so it should reset the per-screen states too". It
+    /// must not. A panic control is about what is ON the screens; which screens are
+    /// IN the wall is a separate decision the operator took deliberately, and an
+    /// `Esc` that silently re-armed the lobby TV would put the next verse in front
+    /// of exactly the room the operator had taken it out of. The way back is a
+    /// control (`restore_screen`), which is findable, and the Outputs desk says
+    /// which screens are down.
+    #[test]
+    fn a_whole_wall_clear_leaves_the_per_screen_states_alone() {
+        let hub = KioskHub::default();
+        hub.publish(r#"{"kind":"screen_state","screens":{"4":"black"}}"#.to_string());
+        hub.publish(r#"{"kind":"clear"}"#.to_string());
+
+        let retained = hub.screens_down.lock().expect("slot").clone();
+        assert!(
+            retained.contains(r#""4":"black""#),
+            "a whole-wall clear wiped the operator's per-screen decision: {retained}"
+        );
+        // And the reverse, which is the half that would break rule 43: taking one
+        // screen down must never become the frame a late-joining screen is shown
+        // INSTEAD of the wall.
+        let screen = hub.last_screen.lock().expect("slot").clone();
+        assert_eq!(
+            screen.as_deref(),
+            Some(r#"{"kind":"clear"}"#),
+            "a per-screen state became the retained screen frame"
         );
     }
 
@@ -4946,6 +5324,7 @@ mod tests {
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
+            hub.screens_down_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -5008,6 +5387,7 @@ mod tests {
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
+            hub.screens_down_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -5081,6 +5461,7 @@ mod tests {
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
+            hub.screens_down_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -5140,6 +5521,7 @@ mod tests {
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
+            hub.screens_down_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -5398,6 +5780,7 @@ mod tests {
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
+            hub.screens_down_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -5454,6 +5837,7 @@ mod tests {
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
+            hub.screens_down_handle(),
             health.clone(),
             port,
         ));

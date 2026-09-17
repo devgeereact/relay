@@ -90,6 +90,11 @@ pub(crate) fn bare_app() -> tauri::App<tauri::test::MockRuntime> {
         // church could ever be in, and a command that reads either would panic
         // rather than fail a test with a readable message.
         .manage(channels::OutputHealth::default())
+        // AND WHICH SCREENS THE OPERATOR HAS TAKEN OUT OF THE WALL. Same argument
+        // as the two above and the same shape of failure: a fresh install manages
+        // it, so a fixture without it is an app in a state no church could be in,
+        // and `clear_screen` would refuse on a machine where it must work.
+        .manage(channels::ScreensDown::default())
         .manage(servicelock::ServiceLock::default())
         .manage(Semantic(SemanticIndex::build(&corpus)))
         .manage(Context(Mutex::new(ContextMemory::default())))
