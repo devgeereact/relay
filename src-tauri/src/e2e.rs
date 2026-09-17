@@ -3162,6 +3162,7 @@ fn start_five(h: &tauri::AppHandle<tauri::test::MockRuntime>) {
         "Service begins in".into(),
         "Welcome".into(),
         None,
+        None,
     )
     .expect("start a countdown");
 }
@@ -3451,6 +3452,7 @@ fn r7_a_re_aim_does_not_rename_or_re_skin_the_countdown() {
         "Doors open in".into(),
         "Please come in".into(),
         None,
+        None,
     )
     .expect("start");
     settle();
@@ -3504,6 +3506,7 @@ fn r7_a_countdown_says_how_long_it_was_aimed_for() {
         2.0,
         "Service begins in".into(),
         "Welcome".into(),
+        None,
         None,
     )
     .expect("start");

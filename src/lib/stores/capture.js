@@ -1430,19 +1430,30 @@ if (!keepPlan) leavePlan();
 /** Start a pre-service countdown on every output. Outputs tick MM:SS locally
  *  from the broadcast target; `label` shows above, `doneMsg` replaces it at 0.
  *  Guarded: refuses to start a second countdown while one is still running —
- *  clear the screen (or let it finish) first. */
+ *  clear the screen (or let it finish) first.
+ *
+ *  `warnMs` is a threshold chosen for THIS countdown — how long before zero the
+ *  figure turns red — and null means "nobody chose one", which falls to the
+ *  configured default and then to the tenth-of-span rule. That ranking is
+ *  `layers.js::countdownWarning`'s and is not restated anywhere. The engine used to
+ *  hard-code `None` here, so a `Both` timer started from the transport could not
+ *  express one at all (RG-149(b)); `startTimer` has taken the same figure since
+ *  wave 3. **No control chooses one yet** — a per-cue field in the planner is what
+ *  would, and that is recorded as still open in RG-149's row rather than implied by
+ *  this parameter. */
 export async function startCountdown(
 minutes,
 label = 'Service begins in',
 doneMsg = 'Welcome',
 templateId = null,
 keepPlan = false,
+warnMs = null,
 ) {
 if (countdownRunning()) {
   throw new Error('A countdown is already running — clear the screen to start a new one.');
 }
 const call = await invoke();
-await call('start_countdown', { minutes, label, doneMsg, templateId });
+await call('start_countdown', { minutes, label, doneMsg, templateId, warnMs });
 if (!keepPlan) leavePlan();
 }
 

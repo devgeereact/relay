@@ -1,5 +1,10 @@
 <script>
-  import { formatCountdown, countdownWarning, formatElapsed } from './lib/layers.js';
+  import {
+    formatCountdown,
+    countdownWarning,
+    formatElapsed,
+    setCountdownWarnDefault,
+  } from './lib/layers.js';
   import { countdownRemainingMs, countdownIsPaused, countdownTotalMs } from './lib/countdown.js';
   // Mobile stage-display remote — the preacher opens this on a phone/iPad (via
   // QR or the LAN URL) to see the live verse + reference in real time. No Tauri
@@ -203,21 +208,32 @@
   let cdFrom = null;
   let cdPaused = null;
   let cdDone = '';
+  let cdWarnMs = null; // the threshold chosen for THIS countdown, when one was
   let svcStart = null; // service-start epoch, for the elapsed zone
   let nowMs = 0;
   // ONE READER, shared with the wall and the console (docs/REBRAND.md §7). This was
   // its own subtraction, which was fine while the answer was a subtraction — and is
   // not, now that it has an exception. A preacher's own screen counting down through
   // a countdown the operator has HELD is the surface it matters most on.
-  $: cdContent = { countdown_to: cdTo, countdown_from: cdFrom, countdown_paused_ms: cdPaused };
+  $: cdContent = {
+    countdown_to: cdTo,
+    countdown_from: cdFrom,
+    countdown_paused_ms: cdPaused,
+    countdown_warn_ms: cdWarnMs,
+  };
   $: cdRemain = countdownRemainingMs(cdContent, nowMs);
   $: cdFinished = cdRemain === 0 && !countdownIsPaused(cdContent);
   // ONE FORMATTER, shared with the wall (docs/REBRAND.md §7) — this page used to
   // carry its own copy of the same arithmetic.
   $: cdText = cdRemain == null ? '' : formatCountdown(cdRemain);
   // The span now genuinely rides with the content (`countdown_from`), so the
-  // short-countdown half of the warning rule finally has an answer here too.
-  $: cdWarn = cdRemain != null && countdownWarning(cdRemain, countdownTotalMs(cdContent));
+  // short-countdown half of the warning rule finally has an answer here too — and
+  // so does the third argument, the threshold chosen for this countdown, which this
+  // reader dropped for as long as the argument existed (RG-149(a)). The same rule,
+  // the same three arguments, as the programme rows below and as the wall.
+  $: cdWarn =
+    cdRemain != null &&
+    countdownWarning(cdRemain, countdownTotalMs(cdContent), cdContent.countdown_warn_ms);
   // THREE STACKED PAIRS, and no second piece of arithmetic. `hms` is the one
   // formatter's own `H:MM:SS`, split into its fields and the hours padded — so the
   // rail cannot drift from the figure beneath the reading, or from the wall.
@@ -265,9 +281,11 @@
   // the third argument is the override it already takes: a threshold somebody CHOSE
   // for this timer beats the shared rule, and absent one the shared rule applies —
   // the last minute, or the last tenth of a countdown shorter than ten minutes.
-  // That default is the shipped 60 s here rather than whatever the operator set in
-  // Settings, because the setting does not reach this bundle at all (RG-149, which
-  // is a different row and not this page's to fix).
+  // That default is now the operator's own, not the shipped 60 s: the figure is
+  // DELIVERED to this page on the frames it already receives and applied through
+  // `setCountdownWarnDefault` (see `applyWarnDefault` below). It used to be
+  // unreachable here, because its only writer is `stores/capture.js` and this
+  // bundle has no Tauri bridge to import it with (RG-149(c)).
   $: programme = stageTimers
     .map((t) => ({ t, id: t?.id, label: (t?.label || '').trim(), ms: countdownRemainingMs(t, nowMs) }))
     .filter((r) => r.ms != null)
@@ -449,6 +467,31 @@
   ];
   $: alertSize = ALERT_STEPS.find((s) => alert.length <= s.max)?.size ?? 'sm';
 
+  /**
+   * THE CONFIGURED WARNING WINDOW, DELIVERED RATHER THAN READ — RG-149(c).
+   *
+   * `Settings → General → Countdown warning` lives in `layers.js` module state whose
+   * one writer is `stores/capture.js`, and this page has no Tauri bridge, so it
+   * could not import the writer and could not ask the backend either. The figure is
+   * therefore carried to it on frames it already receives — `warn_default_ms` on the
+   * programme frame (which arrives before any content does, because a timer can be
+   * running before anything is fired) and `countdown_warn_default_ms` on a content
+   * frame. Both are the same figure from the same machine; whichever lands first is
+   * correct, and a later one that disagrees is the operator having changed it.
+   *
+   * An absent figure resets to the shipped minute, deliberately: that is what the
+   * setting reads when it has been cleared, and leaving the last delivered value
+   * standing would be a page warning at a threshold nothing on the machine holds.
+   * `setCountdownWarnDefault` makes the same judgement about zero and about junk.
+   */
+  function applyWarnDefault(ms) {
+    setCountdownWarnDefault(ms);
+    // Nudge the reactive statements that read the rule: `countdownWarning` is a
+    // pure function over module state, so Svelte has no way to know the answer
+    // moved. `nowMs` is the tick every figure on this page already depends on.
+    nowMs = Date.now();
+  }
+
   function apply(m) {
     if (m.kind === 'content') {
       content = { reference: m.reference, text: m.text, translation: m.translation };
@@ -457,6 +500,8 @@
       cdFrom = m.countdown_from || null;
       cdPaused = m.countdown_paused_ms ?? null;
       cdDone = m.countdown_done || '';
+      cdWarnMs = m.countdown_warn_ms ?? null;
+      applyWarnDefault(m.countdown_warn_default_ms);
       svcStart = m.service_started_at ?? null;
       nowMs = Date.now();
       visible = true;
@@ -490,6 +535,10 @@
       // enough. The same trap as `black` above, one field along.
       cdFrom = null;
       cdPaused = null;
+      // The threshold belonged to the countdown that has just been taken down. It
+      // goes with it, or the next countdown started from a plan cue inherits a
+      // figure nobody chose for it.
+      cdWarnMs = null;
       next = null;
       // A WORD TO THE PREACHER COMES DOWN WITH THE SCREENS — DECISIONS §89.
       //
@@ -540,6 +589,11 @@
       // rows are rendered outside the `visible` gate rather than because anything
       // remembered to re-send them.
       stageTimers = Array.isArray(m.timers) ? m.timers : [];
+      // AND THE CONFIGURED WARNING WINDOW RIDES WITH THE SET. This is the frame
+      // that reaches this page first — a programme timer can be running before
+      // anything has been fired — so reading it here is what stops the surface
+      // whose whole job is the clock sitting on the shipped minute (RG-149(c)).
+      applyWarnDefault(m.warn_default_ms);
     }
   }
 

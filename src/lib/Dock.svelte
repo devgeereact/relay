@@ -586,7 +586,12 @@
   // engine now carries the real span, so the warning is read from there and the
   // figure in the dock and the figure on the wall turn red together.
   $: cdTotal = countdownTotalMs($live) ?? $countdownSet;
-  $: cdWarn = cdLive && countdownWarning(cdRunning, cdTotal);
+  // AND THE THRESHOLD THE COUNTDOWN ITSELF CARRIES. `countdown_warn_ms` is a figure
+  // chosen for this countdown and it beats both the configured default and the
+  // tenth-of-span rule — the ranking is `countdownWarning`'s own, stated once there.
+  // Read off `$live` for the same reason `cdTotal` is: the figure in the dock and
+  // the figure on the wall must turn red together, and the wall reads the content.
+  $: cdWarn = cdLive && countdownWarning(cdRunning, cdTotal, $live?.countdown_warn_ms);
 
   /** Type into hh : mm : ss. Only ever changes the tool, never a screen. */
   function setField(which, value) {

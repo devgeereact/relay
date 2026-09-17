@@ -660,7 +660,7 @@ mod tests {
             target_ms: 1_700_000_300_000,
             from_ms: 1_700_000_000_000,
             paused_ms: None,
-            warn_ms: None,
+            warn_ms: Some(120_000),
             scope: crate::timers::Scope::Both,
             plan_item_id: None,
         });
@@ -671,6 +671,11 @@ mod tests {
             countdown_from: Some(shown.countdown_from),
             countdown_paused_ms: shown.countdown_paused_ms,
             countdown_done: Some(shown.countdown_done).filter(|s| !s.is_empty()),
+            // The wire form MOVED for RG-149 and this is the test that is supposed
+            // to notice. It carries the whole projection, so a field added to it
+            // and not carried here fails in the same commit — which is the whole of
+            // what the content-kind sweep asks of this site.
+            countdown_warn_ms: shown.countdown_warn_ms,
             ..Default::default()
         };
         assert!(
@@ -711,10 +716,38 @@ mod tests {
             countdown_to: Some(shown.countdown_to),
             countdown_from: Some(shown.countdown_from),
             countdown_paused_ms: shown.countdown_paused_ms,
+            countdown_warn_ms: shown.countdown_warn_ms,
             ..Default::default()
         };
         assert_eq!(shown.countdown_paused_ms, Some(90_000));
         assert_eq!(preflight(&c), Ok(()));
+    }
+
+    /// A WARNING THRESHOLD IS NOT A COUNTDOWN — THE OTHER HALF OF SITE 2.
+    ///
+    /// RG-149 put two new `countdown_*` fields on the wire form, and the danger in
+    /// that is the mirror of the one the sweep was written for. `is_countdown`
+    /// exists so a payload with no words in it is not refused as `Unsafe::Nothing`;
+    /// widening it to recognise a warning field would do the opposite — it would
+    /// wave through a payload that has a colour rule and no deadline, no text and no
+    /// reference, and paint an empty screen while every log said the fire succeeded.
+    ///
+    /// So the recognition arms were deliberately NOT touched, and this is that
+    /// decision written down where it can fail. `countdown_warn_ms` says WHEN to
+    /// worry about a clock; it is not a clock.
+    #[test]
+    fn a_warning_threshold_with_no_deadline_is_still_an_empty_screen() {
+        let c = OutputContent {
+            countdown_warn_ms: Some(120_000),
+            countdown_warn_default_ms: Some(150_000),
+            ..Default::default()
+        };
+        assert_eq!(
+            preflight(&c),
+            Err(Unsafe::Nothing),
+            "a warning window with nothing to warn about was taken for a countdown, \
+             so the validator let a blank screen through"
+        );
     }
 
     /// A TEMPLATE THE OUTPUT PAGE CANNOT READ IS REFUSED HERE, WHERE SOMEBODY IS
