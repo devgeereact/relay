@@ -30,6 +30,20 @@ import { readFileSync, writeFileSync } from 'node:fs';
 const TAURI = 'src-tauri/tauri.conf.json';
 const NPM = 'package.json';
 const CARGO = 'src-tauri/Cargo.toml';
+// RG-144. THE LOCKFILE IS THE FOURTH COPY, and it carries the version TWICE — at
+// the top level and again at `packages[""]`. Rule 19 names three files and this
+// script was the one place any of them was read or written, so the lockfile drifted
+// silently: `npm install` rewrites it from `package.json`, and a `--set` followed by
+// a commit without an install left a lockfile advertising the previous version.
+//
+// What that costs is small and confusing rather than dangerous — `npm ci` fails on a
+// lockfile that disagrees with its manifest, which is a red CI run naming neither the
+// cause nor this script. Cheaper to move it here, with the other three.
+//
+// It is NOT added to the rule-19 trio in the error messages: those three are the ones
+// the UPDATER compares, and conflating "must agree or nothing ever updates" with
+// "must agree or `npm ci` complains" would flatten the more serious of the two.
+const LOCK = 'package-lock.json';
 /** Both configs carry the updater endpoint, and both are PINNED AT A TAG. */
 const UPDATER_CONFS = [TAURI, 'src-tauri/tauri.updater.conf.json'];
 
@@ -45,6 +59,17 @@ function current() {
     [NPM]: JSON.parse(read(NPM)).version,
     [CARGO]: read(CARGO).match(CARGO_VERSION)?.[1],
   };
+}
+
+/** The lockfile's two copies, or null when there is no lockfile to check. */
+function lockVersions() {
+  let lock;
+  try {
+    lock = JSON.parse(read(LOCK));
+  } catch {
+    return null; // a checkout with no lockfile is not this script's problem
+  }
+  return { top: lock.version, pkg: lock.packages?.['']?.version, lock };
 }
 
 // Semver, with an optional pre-release tail — and the tail must be NUMERIC.
@@ -178,6 +203,14 @@ function check(expected) {
     );
   }
 
+  // The lockfile, reported separately and never fatal on its own — see LOCK.
+  const lv = lockVersions();
+  if (lv && (lv.top !== values[0] || lv.pkg !== values[0])) {
+    console.log(
+      `  ! ${LOCK} says ${lv.top ?? '?'}/${lv.pkg ?? '?'}, not ${values[0]} — ` +
+        `run \`npm install\` and commit it, or \`npm ci\` will fail in CI`,
+    );
+  }
   console.log(`  ✓ version ${values[0]} — consistent across all three files`);
   console.log(`  ✓ updater endpoint is the channel, in ${eps.length} config(s)`);
 }
@@ -197,7 +230,18 @@ function set(v) {
   if (!CARGO_VERSION.test(cargo)) fail(`Could not find a [package] version in ${CARGO}.`);
   writeFileSync(CARGO, cargo.replace(CARGO_VERSION, `version = "${v}"`));
 
-  console.log(`  ✓ set version ${v} in all three files`);
+  // Keep the lockfile's two copies in step, so `--set` does not leave behind the
+  // exact disagreement this script exists to prevent. Only these two fields are
+  // touched: rewriting a lockfile by hand is how a dependency tree gets corrupted,
+  // and `npm install` remains the thing that owns the rest of the file.
+  const lv = lockVersions();
+  if (lv) {
+    lv.lock.version = v;
+    if (lv.lock.packages?.['']) lv.lock.packages[''].version = v;
+    writeFileSync(LOCK, JSON.stringify(lv.lock, null, 2) + '\n');
+  }
+
+  console.log(`  ✓ set version ${v} in all three files${lv ? `, and in ${LOCK}` : ''}`);
   console.log('    Commit this before you tag — the release gate compares the tag to the repo.');
   console.log('    The updater endpoint is a constant and does NOT move with the version:');
   console.log('    publishing the release is what repoints the channel at it.');
