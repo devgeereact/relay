@@ -1142,7 +1142,15 @@
   // colour is an inline style, and an inline style beats a stylesheet rule, so a
   // `.warn` class alone would have changed nothing on the wall.
   const CD_WARN = '#f4515b';
-  $: countdownWarn = remainingMs != null && countdownWarning(remainingMs, countdownTotalMs(content));
+  // THE THIRD ARGUMENT IS A THRESHOLD SOMEBODY CHOSE FOR THIS COUNTDOWN, and it
+  // rides on the content (`countdown_warn_ms`, projected from the timer registry in
+  // `timers::project_both`). It was added to the rule in wave 3 and passed by none
+  // of the three readers, so a figure anybody chose changed nothing anywhere
+  // (RG-149(a)). The RANKING is still the rule's own and is not restated here:
+  // chosen, else the configured default, else the tenth-of-span rule.
+  $: countdownWarn =
+    remainingMs != null &&
+    countdownWarning(remainingMs, countdownTotalMs(content), content?.countdown_warn_ms);
 
   // Re-key on the actual content so a new slide crossfades but identical content
   // (a re-broadcast of the same verse) does not re-animate. Countdown ticks are

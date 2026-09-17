@@ -121,6 +121,32 @@ pub struct OutputContent {
     pub countdown_paused_ms: Option<i64>,
     /// Message shown in place of the timer when the countdown reaches zero.
     pub countdown_done: Option<String>,
+    /// **THE THRESHOLD SOMEBODY CHOSE FOR THIS COUNTDOWN**, in ms before zero, or
+    /// None when nobody chose one. Projected from `timers::Timer::warn_ms` in
+    /// exactly one place (`timers::project_both`).
+    ///
+    /// It is not a second reading of when to worry. There is one rule and it is
+    /// `layers.js::countdownWarning`; this is the figure it ranks FIRST, ahead of
+    /// the configured default below and ahead of the tenth-of-span rule behind
+    /// that. None is an absent figure, never a window of zero — which would be a
+    /// warning colour that never comes on.
+    pub countdown_warn_ms: Option<i64>,
+    /// **THE CONFIGURED DEFAULT, DELIVERED RATHER THAN READ** — `Settings → General
+    /// → Countdown warning`, in ms.
+    ///
+    /// It rides with the content because the two screens that need it cannot ask
+    /// for it. `output.html` and `stage.html` are served to a browser source and a
+    /// tablet with no Tauri bridge and no console state, so the setting reached the
+    /// console alone and every congregation screen kept the shipped minute (RG-149).
+    /// Stamped at the one door content leaves by (`main::broadcast_with_clock`,
+    /// rule 36), so a content path added later carries it by construction; the same
+    /// figure reaches the stage on the programme frame, which arrives before any
+    /// content does.
+    ///
+    /// It is NOT resolved against `countdown_warn_ms` here. Ranking the two is the
+    /// far side's job, once, or there would be two authorities on when a screen
+    /// turns red and a way for them to disagree.
+    pub countdown_warn_default_ms: Option<i64>,
     /// The decode pass that produced this content (`latency::Trace`), when it came
     /// from speech. Rides to every output — the native window and every kiosk
     /// browser source — purely so the page can report back the instant it painted,
@@ -865,6 +891,46 @@ const CONSOLE: &str = "main";
 #[derive(Default)]
 pub struct Rehearsal(pub AtomicBool);
 
+/// **THE CONFIGURED COUNTDOWN WARNING WINDOW, AS MACHINE STATE** — `Settings →
+/// General → Countdown warning`, in ms, with `0` meaning "never set, use the
+/// shipped minute".
+///
+/// It is a mirror of one settings row, held here because the two publishers that
+/// have to stamp it run on the path between a press and a projector, and a SQLite
+/// lock is not a thing to take there for a number that changes twice a year. The
+/// row in `app_settings` remains the truth; this is warmed from it at launch and
+/// kept in step by `set_setting`, which is the one writer of that row (rule 36 —
+/// the choke point is where the check goes).
+///
+/// Lock-free on purpose, for the same reason `Rehearsal` is: it is read inside
+/// `publish_timers` and inside the one content door, and neither may ever block.
+#[derive(Default)]
+pub struct CountdownWarnDefault(pub std::sync::atomic::AtomicI64);
+
+impl CountdownWarnDefault {
+    /// The figure in force, or None when nothing is configured. Zero and anything
+    /// negative read as ABSENT rather than as a window of zero — a warning colour
+    /// that never comes on is the failure this whole chain exists to prevent, and
+    /// the far side makes the identical judgement in `setCountdownWarnDefault`.
+    pub fn get(&self) -> Option<i64> {
+        let n = self.0.load(Ordering::Relaxed);
+        (n > 0).then_some(n)
+    }
+    pub fn set(&self, ms: Option<i64>) {
+        self.0
+            .store(ms.filter(|n| *n > 0).unwrap_or(0), Ordering::Relaxed);
+    }
+}
+
+/// The configured warning window, for a publisher that has an app handle. None
+/// when nothing is configured OR when the state is not managed (headless tests,
+/// early boot) — an absence, which the far side reads as "keep the shipped minute"
+/// rather than as a figure.
+pub fn countdown_warn_default<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Option<i64> {
+    app.try_state::<CountdownWarnDefault>()
+        .and_then(|s| s.get())
+}
+
 impl Rehearsal {
     pub fn on(&self) -> bool {
         self.0.load(Ordering::Relaxed)
@@ -919,6 +985,13 @@ fn kiosk_content_json(content: &OutputContent) -> String {
         "countdown_from": content.countdown_from,
         "countdown_paused_ms": content.countdown_paused_ms,
         "countdown_done": content.countdown_done,
+        // WHEN TO WORRY, both facts, for the same reason the two above are here: a
+        // kiosk screen missing one of them turns red at a different moment from the
+        // native window beside it. `countdown_warn_ms` is the threshold chosen for
+        // this countdown; `countdown_warn_default_ms` is the configured one, which
+        // a page with no bridge has no other way of learning (RG-149).
+        "countdown_warn_ms": content.countdown_warn_ms,
+        "countdown_warn_default_ms": content.countdown_warn_default_ms,
         // Rides to every kiosk client purely so it can report back when it painted
         // — the last leg of the latency chain, over the real church network. See
         // `OutputContent::trace_id` and the `rendered` message the hub accepts.
@@ -1209,7 +1282,7 @@ pub fn stage_alert<R: tauri::Runtime>(app: &tauri::AppHandle<R>, text: Option<St
 ///
 /// Pure, so the frame can be asserted against without a Tauri app handle — the same
 /// reason `kiosk_content_json` and `transition_json` are pure.
-fn timer_frame_json(timers: &[crate::timers::Timer]) -> String {
+fn timer_frame_json(timers: &[crate::timers::Timer], warn_default_ms: Option<i64>) -> String {
     let rows: Vec<serde_json::Value> = timers
         .iter()
         .map(|t| {
@@ -1224,7 +1297,13 @@ fn timer_frame_json(timers: &[crate::timers::Timer]) -> String {
             })
         })
         .collect();
-    serde_json::json!({ "kind": "timer", "timers": rows }).to_string()
+    // `warn_default_ms` sits BESIDE the rows, not on them. It is a fact about the
+    // machine — `Settings → General → Countdown warning` — and this page cannot read
+    // a setting, so it has to be delivered (RG-149). A copy per row would be a copy
+    // that can disagree with itself inside one frame. A row's own `warn_ms` is the
+    // separate fact: the threshold somebody chose for that timer, which beats this.
+    serde_json::json!({ "kind": "timer", "timers": rows, "warn_default_ms": warn_default_ms })
+        .to_string()
 }
 
 /// Is this the frame that decides what PROGRAMME TIMERS a stage tablet is showing?
@@ -1274,7 +1353,12 @@ pub fn publish_timers<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
         return;
     };
     let stage = reg.snapshot_scope(crate::timers::Scope::Stage);
-    publish_kiosk(app, timer_frame_json(&stage));
+    // The configured warning window rides with the set. This is the frame that
+    // reaches a stage tablet FIRST — a programme timer can be running before
+    // anything has been fired — so it is the only delivery that does not leave the
+    // preacher's page on the shipped minute for the start of a service (RG-149(c)).
+    let warn_default = countdown_warn_default(app);
+    publish_kiosk(app, timer_frame_json(&stage, warn_default));
 }
 
 /// WHAT AN OVERRIDE IS, once: a mode and an optional duration, or nothing at all.
@@ -4283,7 +4367,7 @@ mod tests {
     /// about a string this module never emits.
     #[test]
     fn a_timer_frame_is_never_retained_as_a_screen_frame() {
-        let frame = timer_frame_json(&[stage_timer(1, "Offering")]);
+        let frame = timer_frame_json(&[stage_timer(1, "Offering")], None);
         assert!(
             !is_screen_frame(&frame),
             "the real timer frame this module publishes matched the screen-frame \
@@ -4329,7 +4413,7 @@ mod tests {
     #[test]
     fn a_label_cannot_smuggle_a_screen_frame_into_a_timer() {
         let forged = r#"","kind":"content","text":"x"#;
-        let frame = timer_frame_json(&[stage_timer(1, forged)]);
+        let frame = timer_frame_json(&[stage_timer(1, forged)], None);
         assert!(
             !is_screen_frame(&frame),
             "an operator's label was read as a content frame and would become what \
@@ -4352,7 +4436,7 @@ mod tests {
         let mut held = stage_timer(4, "Sermon");
         held.paused_ms = Some(90_000);
         held.warn_ms = Some(120_000);
-        let frame = timer_frame_json(&[stage_timer(3, "Offering"), held]);
+        let frame = timer_frame_json(&[stage_timer(3, "Offering"), held], None);
         let v: serde_json::Value = serde_json::from_str(&frame).expect("valid JSON");
 
         assert_eq!(v["kind"], "timer");
@@ -4378,6 +4462,44 @@ mod tests {
         assert_eq!(v["timers"][1]["id"], 4);
     }
 
+    /// THE CONFIGURED WARNING WINDOW RIDES WITH THE PROGRAMME — RG-149(c), the
+    /// stage half.
+    ///
+    /// `Settings → General → Countdown warning` is console state: its only writer is
+    /// `stores/capture.js`, and `stage.html` does not and cannot import that module
+    /// — it has no Tauri bridge. So the figure has to be DELIVERED, and this frame
+    /// is the one that reaches the preacher's page first: a programme timer can be
+    /// running before anything at all has been fired, and waiting for a content
+    /// frame would leave the surface whose whole purpose is the clock on the shipped
+    /// minute for that entire time.
+    ///
+    /// It sits beside `timers` rather than on each row on purpose. It is a fact
+    /// about the MACHINE, not about a timer; a copy per row is a copy that can
+    /// disagree with itself in one frame.
+    #[test]
+    fn the_programme_frame_carries_the_configured_warning_window() {
+        let frame = timer_frame_json(&[stage_timer(3, "Offering")], Some(150_000));
+        let v: serde_json::Value = serde_json::from_str(&frame).expect("valid JSON");
+        assert_eq!(
+            v["warn_default_ms"], 150_000,
+            "the stage page has no way to learn the configured window"
+        );
+        // An empty set still carries it: that frame is how the last clock comes OFF
+        // the screen, and it is also the first frame a tablet may ever receive.
+        let none = timer_frame_json(&[], Some(150_000));
+        let v: serde_json::Value = serde_json::from_str(&none).expect("valid JSON");
+        assert_eq!(v["warn_default_ms"], 150_000);
+        assert_eq!(v["timers"].as_array().map(|a| a.len()), Some(0));
+        // Unset is an explicit null, never a zero — the page then keeps the shipped
+        // minute rather than a window that never opens.
+        let bare = timer_frame_json(&[], None);
+        let v: serde_json::Value = serde_json::from_str(&bare).expect("valid JSON");
+        assert_eq!(v["warn_default_ms"], serde_json::Value::Null);
+        // And the frame is still recognised as the programme frame, so it is still
+        // the one retained and replayed to a tablet that joins late (rule 43).
+        assert!(is_timer_frame(&bare));
+    }
+
     /// AN EMPTY SET IS A FRAME, NOT A SILENCE.
     ///
     /// Stopping the last programme timer has to reach the tablet, or the clock stays
@@ -4385,7 +4507,7 @@ mod tests {
     /// say "there are none now".
     #[test]
     fn stopping_the_last_timer_publishes_an_empty_set_rather_than_nothing() {
-        let frame = timer_frame_json(&[]);
+        let frame = timer_frame_json(&[], None);
         let v: serde_json::Value = serde_json::from_str(&frame).expect("valid JSON");
         assert_eq!(v["kind"], "timer");
         assert_eq!(
@@ -4421,7 +4543,7 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
 
         // The programme timer started BEFORE this tablet existed.
-        hub.publish(timer_frame_json(&[stage_timer(1, "Offering")]));
+        hub.publish(timer_frame_json(&[stage_timer(1, "Offering")], None));
 
         let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
             .await
@@ -4483,7 +4605,7 @@ mod tests {
         hub.cache_template(7, r#"{"name":"Stage"}"#);
         hub.cache_default_template(r#"{"name":"House"}"#);
         hub.set_transition(Some("crossfade".into()), Some(320));
-        hub.publish(timer_frame_json(&[stage_timer(1, "Offering")]));
+        hub.publish(timer_frame_json(&[stage_timer(1, "Offering")], None));
         hub.publish(
             r#"{"kind":"content","reference":"Romans 8:28","text":"And we know"}"#.to_string(),
         );
@@ -4927,6 +5049,59 @@ mod tests {
         assert_eq!(v["countdown_from"], 1_700_000_000_000_i64);
         assert_eq!(v["countdown_paused_ms"], 240_000);
         assert_eq!(v["countdown_done"], "Welcome");
+    }
+
+    /// WHEN TO WORRY CROSSES THE WIRE TOO — RG-149, the kiosk half.
+    ///
+    /// Two separate facts and they are deliberately two fields. `countdown_warn_ms`
+    /// is a threshold somebody CHOSE for this countdown; `countdown_warn_default_ms`
+    /// is the figure in `Settings → General → Countdown warning`, which a browser
+    /// source cannot read because it has no bridge and no console state. Ranking
+    /// them stays `layers.js::countdownWarning`'s job on the far side — chosen, else
+    /// configured, else the tenth-of-span rule — so neither of these is a second
+    /// reading of when to worry.
+    ///
+    /// Same reasoning as `next_*` and `countdown_from` above: a field dropped from
+    /// THIS json and present on the Tauri struct means the browser source in OBS and
+    /// the projector on HDMI turn red at different moments, in the same room.
+    #[test]
+    fn the_warning_window_reaches_a_kiosk_screen_as_well_as_a_native_one() {
+        let c = OutputContent {
+            kind: Some("countdown".into()),
+            reference: "Service begins in".into(),
+            countdown_to: Some(1_700_000_300_000),
+            countdown_from: Some(1_700_000_000_000),
+            countdown_warn_ms: Some(120_000),
+            countdown_warn_default_ms: Some(150_000),
+            ..Default::default()
+        };
+        let v: serde_json::Value = serde_json::from_str(&kiosk_content_json(&c)).unwrap();
+        assert_eq!(
+            v["countdown_warn_ms"], 120_000,
+            "a threshold chosen for this countdown never left the machine"
+        );
+        assert_eq!(
+            v["countdown_warn_default_ms"], 150_000,
+            "the configured default never left the machine, so every screen \
+             without a bridge keeps the shipped minute"
+        );
+
+        // AND IT IS THE RETAINED FRAME, so a screen that joins mid-service is sent
+        // the figure with the content rather than warning at the wrong moment until
+        // the next fire (rule 43). The replay itself is held by
+        // `a_client_that_connects_mid_service_is_sent_what_is_on_the_screens`; what
+        // this asserts is that the carrier is the frame that replay retains.
+        assert!(is_screen_frame(&kiosk_content_json(&c)));
+
+        // Absent is absent. A zero would be a warning window that never opens.
+        let bare = OutputContent {
+            kind: Some("countdown".into()),
+            countdown_to: Some(1_700_000_300_000),
+            ..Default::default()
+        };
+        let v: serde_json::Value = serde_json::from_str(&kiosk_content_json(&bare)).unwrap();
+        assert_eq!(v["countdown_warn_ms"], serde_json::Value::Null);
+        assert_eq!(v["countdown_warn_default_ms"], serde_json::Value::Null);
     }
 
     #[test]

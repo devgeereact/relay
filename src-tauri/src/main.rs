@@ -148,6 +148,7 @@ fn main() {
         .manage(Routing::default())
         .manage(Detecting(AtomicBool::new(true)))
         .manage(channels::Rehearsal::default())
+        .manage(channels::CountdownWarnDefault::default())
         .manage(channels::WallState::default())
         .manage(channels::LiveContent::default())
         .manage(timers::TimerRegistry::default())
@@ -238,6 +239,22 @@ fn main() {
                         .and_then(|t| serde_json::to_string(&t).ok())
                         .unwrap_or_else(|| "null".into());
                 kiosk.cache_default_template(&dj);
+            }
+            // WARM THE CONFIGURED COUNTDOWN WARNING WINDOW, for the same reason
+            // the default template is warmed one block up: the first screen to
+            // connect must not be told the shipped minute by a machine that has
+            // been set to something else for a year (RG-149(c)). An unreadable or
+            // absent row leaves the mirror at zero, which reads as ABSENT and puts
+            // every screen on the shipped minute — the behaviour before this
+            // existed, which is the right answer when nobody has chosen one.
+            {
+                let db = app.state::<Db>();
+                let warn =
+                    db.0.lock()
+                        .ok()
+                        .and_then(|conn| db::get_setting(&conn, "countdown.warn_ms").ok().flatten())
+                        .and_then(|s| s.trim().parse::<i64>().ok());
+                app.state::<channels::CountdownWarnDefault>().set(warn);
             }
             // Warm the template cache so a browser client (OBS/kiosk) gets the
             // REAL saved template immediately on connect (matches the editor).
@@ -668,6 +685,25 @@ fn broadcast_with_clock<R: tauri::Runtime>(
             }
         }
     }
+
+    // THE CONFIGURED WARNING WINDOW, STAMPED AT THE ONE DOOR CONTENT LEAVES BY.
+    //
+    // `Settings → General → Countdown warning` is console state and the screens
+    // that need it cannot read it: a browser source in OBS and a kiosk page on a
+    // Pi have no Tauri bridge, so the setting moved the console and left every
+    // congregation screen on the shipped minute (RG-149(c)). It is DELIVERED
+    // instead, and delivered here rather than at `countdown_content`'s three
+    // callers, for rule 36's reason: a content path added next year carries it by
+    // construction, and there is no sixth call site to forget.
+    //
+    // Unconditional, like the service clock below it. Asking "is this a countdown?"
+    // here would be a fourth reading of that question, and the one reading of it
+    // lives in `pipeline::preflight`.
+    //
+    // It is never resolved against `countdown_warn_ms`. Ranking the chosen figure
+    // against the configured one is `layers.js::countdownWarning`'s job, once — two
+    // authorities on when a screen turns red is how they come to disagree.
+    content.countdown_warn_default_ms = channels::countdown_warn_default(handle);
 
     if let Some(session) = handle.try_state::<Session>() {
         if let Ok(g) = session.0.lock() {
@@ -2829,6 +2865,7 @@ fn start_countdown<R: tauri::Runtime>(
     label: String,
     done_msg: String,
     template_id: Option<i64>,
+    warn_ms: Option<i64>,
 ) -> error::Result<()> {
     let mins = if minutes.is_finite() && minutes > 0.0 {
         minutes
@@ -2862,9 +2899,13 @@ fn start_countdown<R: tauri::Runtime>(
             // A countdown that has just been STARTED is running, always. Pausing is
             // `adjust_countdown`, which is about a countdown already on a screen.
             paused_ms: None,
-            // A later track is this field's reader and writer; carrying it now keeps
-            // that track a change of behaviour rather than a change of shape.
-            warn_ms: None,
+            // The threshold chosen for THIS countdown, if the caller chose one.
+            // It was hard-coded to `None` here, so the transport's own Start was
+            // the one door into a `Both` timer that could not express a threshold
+            // at all (RG-149(b)). `start_timer` has taken one since wave 3; this
+            // is the same field on the same registry, reached from the other door.
+            // None is absent, never zero — see `BothProjection::countdown_warn_ms`.
+            warn_ms: warn_ms.filter(|n| *n > 0),
             scope: timers::Scope::Both,
             plan_item_id: None,
         });
@@ -3218,6 +3259,12 @@ fn countdown_content(
         countdown_from: Some(shown.countdown_from),
         countdown_paused_ms: shown.countdown_paused_ms,
         countdown_done: Some(shown.countdown_done).filter(|s| !s.is_empty()),
+        // The threshold chosen for THIS timer, straight off the one projection.
+        // The configured default is not resolved against it here: that ranking is
+        // `layers.js::countdownWarning`'s, once, and it is stamped at the one
+        // content door (`broadcast_with_clock`) rather than at the three callers of
+        // this function.
+        countdown_warn_ms: shown.countdown_warn_ms,
         template_id,
         template_json,
         template_pinned,
@@ -3476,10 +3523,37 @@ fn get_setting(db: tauri::State<'_, Db>, key: String) -> error::Result<Option<St
 }
 
 /// Write a raw app setting (upsert). Counterpart to `get_setting`.
+///
+/// ## Why this one generic command knows about one key
+///
+/// `countdown.warn_ms` is not only a preference the console reads back: it is a
+/// figure two publishers stamp onto frames bound for screens that cannot read a
+/// setting at all (RG-149(c)). The mirror those publishers read
+/// (`channels::CountdownWarnDefault`) has to be kept in step with the row, and this
+/// is the ONE writer of the row — which is where the check goes, per rule 36. A
+/// second, dedicated command would be a second door, and the door somebody forgets
+/// is the shape of four separate bugs in this repository.
+///
+/// The write happens FIRST and the mirror follows, so a failed write cannot leave
+/// the screens warning at a figure the next launch has never heard of.
+// GENERIC OVER THE RUNTIME (rule 24) — it now reaches state that reaches a screen.
 #[tauri::command]
-fn set_setting(db: tauri::State<'_, Db>, key: String, value: String) -> error::Result<()> {
-    let conn = db.0.lock()?;
-    db::set_setting(&conn, &key, &value).map_err(Into::into)
+fn set_setting<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    db: tauri::State<'_, Db>,
+    key: String,
+    value: String,
+) -> error::Result<()> {
+    {
+        let conn = db.0.lock()?;
+        db::set_setting(&conn, &key, &value)?;
+    }
+    if key == "countdown.warn_ms" {
+        if let Some(s) = app.try_state::<channels::CountdownWarnDefault>() {
+            s.set(value.trim().parse::<i64>().ok());
+        }
+    }
+    Ok(())
 }
 
 /// THE OPERATOR'S TRANSITION OVERRIDE — how the next thing appears, on every

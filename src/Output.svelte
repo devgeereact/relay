@@ -3,7 +3,12 @@
   import { DEFAULT_TEMPLATE, builtinById } from './lib/templates.js';
   import TemplateRender from './lib/TemplateRender.svelte';
   import { parseTemplateOverride } from './lib/templates.js';
-  import { isKeyedTemplate, resolveOutputTemplate, templateShows } from './lib/layers.js';
+  import {
+    isKeyedTemplate,
+    resolveOutputTemplate,
+    templateShows,
+    setCountdownWarnDefault,
+  } from './lib/layers.js';
   import { resolveTokens } from './lib/styletokens.js';
   import { markOutput } from './lib/latency.js';
   import { startBeat, paintState } from './lib/outputHealth.js';
@@ -186,6 +191,26 @@
     }
   }
 
+  /**
+   * THE CONFIGURED WARNING WINDOW, DELIVERED RATHER THAN READ — RG-149(c).
+   *
+   * `Settings → General → Countdown warning` is applied through
+   * `layers.js::setCountdownWarnDefault`, whose only writer is `stores/capture.js`
+   * — a module a browser source cannot import, because it has no Tauri bridge. So
+   * the figure rides with the content instead, on both doors, and this is where it
+   * is applied. The RULE does not move: `countdownWarning` still ranks a threshold
+   * chosen for one countdown ahead of this, and this ahead of the tenth-of-span
+   * rule behind it.
+   *
+   * An absent figure resets to the shipped minute rather than leaving the last
+   * delivered one standing — that is what the setting means when it is cleared, and
+   * a screen warning at a figure nothing on the machine holds is the shape of
+   * defect this whole chain exists to close.
+   */
+  function applyWarnDefault(ms) {
+    setCountdownWarnDefault(ms);
+  }
+
   function applyMessage(m) {
     if (m.kind === 'content') {
       // PER-SCREEN VISIBILITY. If THIS screen's template doesn't show this content
@@ -204,7 +229,14 @@
       // The override takes effect WITH the content, never before it — see the
       // snapshot comment at the top of this file.
       appliedTransition = pendingTransition;
-      content = { kind: m.content_kind, reference: m.reference, text: m.text, translation: m.translation, media_url: m.media_url, media_kind: m.media_kind, template_json: m.template_json, template_pinned: m.template_pinned, countdown_to: m.countdown_to, countdown_from: m.countdown_from, countdown_paused_ms: m.countdown_paused_ms, countdown_done: m.countdown_done, stage_note: m.stage_note, next_reference: m.next_reference, next_text: m.next_text, service_started_at: m.service_started_at, service_target_ms: m.service_target_ms };
+      // `countdown_warn_ms` is copied across like every other field this door
+      // rebuilds by hand: it is the threshold chosen for THIS countdown, and
+      // `TemplateRender` reads it off the content. The list is the reason this door
+      // has dropped fields before (`next_reference`), so a field added to the wire
+      // and not added here is a kiosk screen disagreeing with the wall beside it.
+      content = { kind: m.content_kind, reference: m.reference, text: m.text, translation: m.translation, media_url: m.media_url, media_kind: m.media_kind, template_json: m.template_json, template_pinned: m.template_pinned, countdown_to: m.countdown_to, countdown_from: m.countdown_from, countdown_paused_ms: m.countdown_paused_ms, countdown_done: m.countdown_done, countdown_warn_ms: m.countdown_warn_ms, stage_note: m.stage_note, next_reference: m.next_reference, next_text: m.next_text, service_started_at: m.service_started_at, service_target_ms: m.service_target_ms };
+      // THE CONFIGURED DEFAULT, which this page cannot read for itself.
+      applyWarnDefault(m.countdown_warn_default_ms);
       visible = true;
       black = false;
       // Report the paint back over the SAME socket the content came in on. This is
@@ -307,6 +339,14 @@
         if (e.payload?.kind && !templateShows(t, e.payload.kind)) return;
         appliedTransition = pendingTransition;
         content = e.payload;
+        // BOTH DOORS. The struct emit carries every field, so the chosen threshold
+        // arrives here for free — the configured DEFAULT does not, because it is
+        // module state rather than content, and applying it on one door only is the
+        // mistake this file's own comments count four times. A projector on HDMI
+        // and a browser source in OBS are usually in the same room, and a warning
+        // colour that comes on at different moments on the two is worse than one
+        // that comes on late on both.
+        applyWarnDefault(e.payload?.countdown_warn_default_ms);
         visible = true;
         black = false;
         // The native output window has the bridge, not the kiosk socket.
