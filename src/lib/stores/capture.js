@@ -30,6 +30,10 @@
 //   native window. It changes the LOOK every screen following the content look is
 //   wearing, live, so a failure an operator is not told about is a gallery that
 //   says one thing and a wall that says another.
+//   `showBackground` is the most literal member there is: it puts a picture on every
+//   congregation screen and takes it off again. A swallowed failure on the take-down
+//   is the worse half — the operator believes the church's backdrop has gone and it
+//   is still up behind the next thing they fire.
 //   `setSttLanguage` joined this group with RG-138, when it stopped being a setting on
 //   a live engine and became a WRITE to the active voice profile. It changes what the
 //   AI hears, and it is the control RG-116 names as the mitigation for a service lost
@@ -139,6 +143,18 @@ export const live = writable(null);
 // True when the operator has blacked out the screens (opaque, not a transparent
 // clear). Reset by the next fire/clear. Mirrors the output://black broadcast.
 export const screenBlack = writable(false);
+
+// THE STANDING BACKGROUND — `{ media_url, media_kind }`, or null.
+//
+// A SECOND payload beside `live`, not a field on it, and the separation is the
+// whole feature: `live` is what the screens are showing and this is what they are
+// showing it ON, so a verse arriving replaces one and leaves the other. Until it
+// existed a church could have scripture or its own backdrop and never both.
+//
+// Mirrors `output://background`, and — the line that matters — is set to null by
+// the `output://clear` and `output://black` listeners below, because a panic
+// control takes everything.
+export const background = writable(null);
 
 // The last SPOKEN next/back that did nothing, and why (a NavResult). The console
 // consumes it, shows it, and clears it. Null when there is nothing to say.
@@ -514,8 +530,22 @@ export async function initAudio() {
       // looking at — while the topbar, reading `$live`, simultaneously said the
       // screens were clear. Two indicators in one window, disagreeing, and amber
       // is never allowed to be the wrong one (CLAUDE.md §18).
-      await listen('output://clear', () => { live.set(null); screenBlack.set(false); leavePlan(); noteOperatorAction('clear'); });
-      await listen('output://black', () => { screenBlack.set(true); leavePlan(); noteOperatorAction('black'); });
+      // THE STANDING BACKGROUND, and the two controls that take it away.
+      //
+      // `background.set(null)` sits on both panic listeners for the same reason
+      // `leavePlan()` does: these events are the console's ONLY report of a clear
+      // that did not originate here — the preacher's phone, the spoken "clear the
+      // screen", the exit from a rehearsal — and the program pane renders through
+      // the same `TemplateRender` the wall does. A backdrop left in this store
+      // would paint the church's picture in the pane over a wall that had none,
+      // which is the console disagreeing with the room about what a congregation
+      // is looking at.
+      await listen('output://background', (e) => {
+        const p = e.payload;
+        background.set(p?.media_url ? { media_url: p.media_url, media_kind: p.media_kind || 'image' } : null);
+      });
+      await listen('output://clear', () => { live.set(null); screenBlack.set(false); background.set(null); leavePlan(); noteOperatorAction('clear'); });
+      await listen('output://black', () => { screenBlack.set(true); background.set(null); leavePlan(); noteOperatorAction('black'); });
       // A SPOKEN "next"/"back" that did nothing. The STT thread has no caller to
       // return a NavResult to, so it pushes it here — the preacher says "next", the
       // wall does not move, and the console explains why instead of staying silent.
@@ -1844,6 +1874,26 @@ export async function fireMedia(id, templateId = null, keepPlan = false) {
 const call = await invoke();
 await call('fire_media', { id, templateId });
 if (!keepPlan) leavePlan();
+}
+
+/**
+ * PUT A PICTURE BEHIND THE WORDS — or take it away (`id: null`).
+ *
+ * GROUP 1: it throws. It changes what every congregation screen is showing, and
+ * the take-down is the half a swallowed failure hurts most — the operator believes
+ * the backdrop has gone and it is still there behind the next thing they fire.
+ *
+ * ONE wrapper for both directions, mirroring the one command: a separate
+ * `clearBackground` would be a second door onto one piece of state, and this
+ * repository's register of that mistake runs to four entries.
+ *
+ * It does NOT call `leavePlan()`. A backdrop does not replace the cue on the wall,
+ * so the plan is exactly where it was — the same reasoning that keeps the passage
+ * armed on the Rust side.
+ */
+export async function showBackground(id = null) {
+const call = await invoke();
+await call('show_background', { id });
 }
 
 /** Parse a lyric file into songs WITHOUT saving — for the pre-save review. */

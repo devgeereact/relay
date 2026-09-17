@@ -1811,6 +1811,29 @@ impl KioskHub {
     pub fn last_background_handle(&self) -> Arc<Mutex<Option<String>>> {
         self.last_background.clone()
     }
+    /// WHAT PICTURE IS BEHIND EVERYTHING RIGHT NOW, for a screen with no socket.
+    ///
+    /// The same argument `current_transition` makes: the kiosk hub replays the
+    /// retained frame on `hello`, and a NATIVE output window has the Tauri bridge
+    /// and no socket. Without a read-back, a projector opened mid-service through
+    /// `open_channel_output` would be the one screen in the building with no
+    /// backdrop, until the operator happened to change it.
+    ///
+    /// Parsed rather than kept as a second field, deliberately: one slot is one
+    /// truth, and a struct beside the frame is a second copy that can disagree
+    /// with what the LAN screens were actually sent. The parse is off the fire
+    /// path — it runs once, when an output window mounts.
+    pub fn current_background(&self) -> Option<(String, String)> {
+        let frame = self.last_background.lock().ok()?.clone()?;
+        let v: serde_json::Value = serde_json::from_str(&frame).ok()?;
+        let url = v.get("media_url")?.as_str()?.to_string();
+        let kind = v
+            .get("media_kind")
+            .and_then(|k| k.as_str())
+            .unwrap_or("image")
+            .to_string();
+        Some((url, kind))
+    }
     /// Shared handle to the retained transition override, for the WS task's hello.
     pub fn last_transition_handle(&self) -> TransitionSlot {
         self.last_transition.clone()

@@ -34,8 +34,15 @@
   import Loading from '../../ui/Loading.svelte';
   import { humanError } from '../../errors.js';
   import { safeMode } from '../../boot/boot.js';
-  import { live, screenBlack, rehearsing } from '../../stores/capture.js';
-  import { listMedia, deleteMedia, fireMedia, localIp, readErrors } from '../../stores/capture.js';
+  import { live, screenBlack, rehearsing, background } from '../../stores/capture.js';
+  import {
+    listMedia,
+    deleteMedia,
+    fireMedia,
+    showBackground,
+    localIp,
+    readErrors,
+  } from '../../stores/capture.js';
   import VerseDeck from './VerseDeck.svelte';
   // The card's second line, and the reason there is no caption column, both
   // live in the register beside `countWords` — pure, so they can be asserted
@@ -168,6 +175,46 @@
     firing = 0;
   }
 
+  /**
+   * PUT THIS PICTURE BEHIND EVERYTHING — the standing background.
+   *
+   * The difference from `fire()` above is the whole of it, and it is a difference
+   * of LIFETIME rather than of look. Firing a picture makes it the slide: the next
+   * verse replaces it. Setting it as the background paints it UNDER everything
+   * that follows, so a reading and the church's own backdrop can be on a wall at
+   * the same time — which until now could not be expressed at all.
+   *
+   * A screen only shows it if its template has a Backdrop layer (Templates → add a
+   * layer). That is the opt-in, and the message says so rather than leaving an
+   * operator watching a wall that did not change.
+   */
+  let settingBg = 0;
+  async function setAsBackground(m) {
+    if (m.kind === 'document' || missing[m.id] || $safeMode) return;
+    settingBg = m.id;
+    error = '';
+    msg = '';
+    try {
+      await showBackground(m.id);
+      msg = `${m.filename} is behind everything on screens with a Backdrop layer`;
+    } catch (e) {
+      error = humanError(e);
+    }
+    settingBg = 0;
+  }
+
+  /** TAKE IT OFF. One control, both directions — see `showBackground`. */
+  async function clearBackgroundNow() {
+    error = '';
+    msg = '';
+    try {
+      await showBackground(null);
+      msg = 'Background cleared';
+    } catch (e) {
+      error = humanError(e);
+    }
+  }
+
   async function remove(m) {
     if (armed !== m.id) {
       armed = m.id;
@@ -229,6 +276,13 @@
       onQueueChange([...queue, { reference: item.reference, text: '', mediaId: item.id, kind: 'media' }]);
     }
   }
+  // THE SELECTED ROW, and only when it can actually become a background. A
+  // document has no frame to paint and `show_background` refuses one, and a row
+  // whose bytes did not load would hand every screen a URL that 404s — so the
+  // control is plainly disabled rather than armed and erroring on click, which is
+  // the same judgement the fire path already makes one function above.
+  $: selectedPicture =
+    rows.find((r) => r.filename === selectedRef && r.kind !== 'document' && !missing[r.id]) ?? null;
   const fireCard = (d) => fire(rows.find((r) => r.id === d.id) ?? {});
   const removeCard = (d) => remove(rows.find((r) => r.id === d.id) ?? {});
 </script>
@@ -246,7 +300,42 @@
           </button>
         {/each}
       </div>
+      <!-- ── THE STANDING BACKGROUND ────────────────────────────────────────
+           A picture that outlives the words painted on it. It lives HERE, beside
+           the pictures, rather than on the run surface: choosing which picture is
+           behind everything is a Library act, and Live is already the most
+           crowded surface in the product.
+
+           Two controls, and the take-down is always reachable — never conditional
+           on a selection, never hidden behind a menu. A background an operator
+           cannot get off a congregation screen in one press is the shape of the
+           thing the panic controls exist to prevent, and `Esc` (Clear screens)
+           takes it too. -->
       <div class="ml-panelfoot">
+        <p class="r-lbl">Background</p>
+        <p class="ml-hint">
+          {#if $background}
+            A picture is behind everything on screens whose template has a
+            Backdrop layer. Clear screens takes it off too.
+          {:else}
+            Put a picture behind the words. It stays there while verses, songs
+            and notices are fired over it, on screens whose template has a
+            Backdrop layer.
+          {/if}
+        </p>
+        <div class="ml-bgrow">
+          <button
+            class="r-btn sm"
+            disabled={!selectedPicture || settingBg === selectedPicture?.id || $safeMode}
+            title={selectedPicture
+              ? `Put ${selectedPicture.filename} behind everything`
+              : 'Pick a picture in the grid first'}
+            on:click={() => setAsBackground(selectedPicture)}>Use as background</button>
+          <button
+            class="r-btn sm ghost"
+            disabled={!$background}
+            on:click={clearBackgroundNow}>Clear background</button>
+        </div>
         <p class="ml-hint">
           Import handles pictures, video and documents. A document can be stored
           and found here, but cannot be put on a screen yet.
@@ -386,6 +475,18 @@
   .ml-panelfoot {
     padding: 12px 14px;
     border-top: 1px solid var(--v-line);
+  }
+  /* The two background controls. They WRAP rather than shrink: the rail is 180px
+     and a button squeezed to fit prints a label nobody can read, which is the
+     seven-pixel-wide screen name the 2026-09-10 pass found on the run surface. */
+  .ml-bgrow {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 8px 0 10px;
+  }
+  .ml-bgrow :global(.r-btn) {
+    flex: 1 1 auto;
   }
   .ml-hint {
     margin: 0;

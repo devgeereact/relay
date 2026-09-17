@@ -414,6 +414,7 @@ fn main() {
             set_setting,
             set_live_transition,
             live_transition,
+            live_background,
             data_health,
             list_books,
             chapter_verses,
@@ -3824,6 +3825,19 @@ fn set_live_transition<R: tauri::Runtime>(
 #[tauri::command]
 fn live_transition(kiosk: tauri::State<'_, channels::KioskHub>) -> channels::TransitionOverride {
     kiosk.current_transition()
+}
+
+/// What picture is behind everything right now, for a screen that just opened.
+///
+/// The `live_transition` argument, on the second payload kind: the hub replays the
+/// retained background on `hello`, and a native output window has the bridge and
+/// no socket. Without this read, a projector opened mid-service is the one screen
+/// in the building painting the words on black.
+///
+/// `[url, kind]` or null.
+#[tauri::command]
+fn live_background(kiosk: tauri::State<'_, channels::KioskHub>) -> Option<(String, String)> {
+    kiosk.current_background()
 }
 
 /// Books available to browse, in canonical order — Library (§7).

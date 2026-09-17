@@ -167,6 +167,7 @@
     MAX_RESOLVED,
     live,
     screenBlack,
+    background,
     liveCue,
     templates,
     loadTemplates,
@@ -2008,6 +2009,15 @@
           <span class="tag off">Blackout</span>
         {:else if $live}
           <span class="tag onair">Program · On Air</span>
+        {:else if $background}
+          <!-- A THIRD STATE, BECAUSE THERE IS A THIRD STATE. A standing background
+               with nothing fired over it is not a clear wall — the church's picture
+               is up and the congregation can see it. Saying `Clear` here would be a
+               status line that reads the same when something is on the screens as
+               when nothing is (rule 35), on the one pane an operator watches during
+               a service. Not amber: amber means ON AIR and a backdrop is not
+               content. -->
+          <span class="tag off">Program · Background</span>
         {:else}
           <span class="tag off">Program · Clear</span>
         {/if}
@@ -2048,11 +2058,25 @@
       </header>
       <div class="screen">
         {#if $live && progTpl}
+          <!-- THE STANDING BACKGROUND RIDES WITH THE CONTENT, because the wall
+               paints both and this pane must not disagree with the wall. It is a
+               prop and not a field on the content on purpose: a verse replaces
+               `$liveContent` and leaves `$background` exactly where it is, which
+               is the whole of the feature. -->
           <TemplateRender
             template={progTpl}
             content={$liveContent}
+            backdrop={$background}
             onFit={noteFit}
           />
+        {:else if $background && progTpl}
+          <!-- BACKDROP, NOTHING FIRED. The wall is painting the church's picture,
+               so this pane paints it too. Without this branch the pane would print
+               "Screens clear" over a screen that demonstrably is not. `content` is
+               explicitly null: `TemplateRender` draws the backdrop layer alone and
+               nothing else, so no empty band or shape appears here that is not on
+               the wall. -->
+          <TemplateRender template={progTpl} content={null} backdrop={$background} />
         {:else if $live}
           <!-- CONTENT, AND NOTHING TO RENDER IT WITH. Measured on 2026-09-14: with
                no template resolved this pane drew an amber ON AIR frame over a
