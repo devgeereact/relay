@@ -57,7 +57,7 @@ checked and what checking found. `docs/qa/audits/` is frozen evidence — dated,
 after the fact. **`docs/superpowers/` is the wave work: `specs/` the design a wave was built to
 and `plans/` the work orders it was built from.** It is neither specification nor evidence — it
 is what was intended at the time, which is why a ruling that lives only there has not been made
-yet and belongs in `DECISIONS.md` (§92 is one that had to be moved). `CHANGELOG.md` stays at the
+yet and belongs in `DECISIONS.md` (§92, §93, §94 and §95 all landed on 2026-09-17, and three of the four had to be renumbered: four branches wrote a §92 at the same insertion point on the same day). `CHANGELOG.md` stays at the
 repository root, where the convention and GitHub both expect it.
 
 **Two rows below sit under the `docs/qa/` heading and are not in `docs/qa/`** — `REBRAND.md` and
@@ -96,7 +96,7 @@ above says the directory is the classifier.
 | [qa/audits/](qa/audits/) | **Frozen.** **Eleven** dated audits (`ls qa/audits | wc -l`): three field services, two performance runs, one six-agent QA sweep, **four browser-driven passes** (waves 2, 3 and 5 on 2026-09-16, wave 4 on 2026-09-17) and the retired product audit. Closures go in a fix log at the top, never into the findings |
 
 **On ADRs:** [DECISIONS.md](DECISIONS.md) *is* the architecture-decision record — a single
-narrative log with reasoning and explicit non-goals, **75** numbered decisions (§18–§92) deep — `grep -cE '^## [0-9]+\. ' DECISIONS.md` —
+narrative log with reasoning and explicit non-goals, **78** numbered decisions (§18–§95) deep — `grep -cE '^## [0-9]+\. ' DECISIONS.md` —
 plus 28 earlier ones carried as table rows (`sed -n '1,59p' DECISIONS.md | grep -cE '^\|'`,
 less the three header-and-separator pairs). **This line said 46 and §18–§63**, which had been
 wrong for twenty-nine decisions, in a paragraph four screens below this page's own rule that

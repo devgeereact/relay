@@ -20,6 +20,40 @@ every edit: `.claude/hooks/relay-fast-gate.mjs`, path-filtered and report-only (
 
 ## 0. Current inventory
 
+Re-measured **2026-09-17**, on `feat/consolidation` — **the assembled tree**, with all
+three wave roots and all four agent branches merged and nothing in flight. This is the
+first block in this file that is a claim about a whole branch rather than about one
+pass over it, and it is the tree the packaged bundle was built from.
+
+| Count | Value | Command |
+|---|---|---|
+| Rust tests | **886 passed / 0 failed / 16 ignored** | `cd src-tauri && cargo test` |
+| Frontend tests | **2692 passed, 180 files** | `npx vitest run` |
+| `e2e.rs` tests | **90 passed / 0 ignored** | `cd src-tauri && cargo test e2e::` |
+| Registered commands | **152** | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
+| Commands the frontend addresses | **152** | `node scripts/qa-inventory.mjs` |
+| Svelte components | **58** (57 reachable) | `node scripts/qa-inventory.mjs` |
+| Controls | **469** (0 in components nothing renders) | `node scripts/qa-inventory.mjs` |
+| Tauri events | **25** | `grep -rhoE '"[a-z_]+://[a-z_]+"' src-tauri/src/*.rs \| sort -u`, minus `tauri://localhost` |
+| Numbered decisions | **78** (§18–§95) | `grep -cE '^## [0-9]+\. ' docs/DECISIONS.md` |
+| Dated audits | **11** | `ls docs/qa/audits \| wc -l` |
+
+`cargo fmt --all -- --check`, `clippy --all-targets -- -D warnings`, `npm run build`,
+`npm run version:check` and `npm run updater:check` all clean on the same tree.
+`npm run tauri build` produced `Relay.app` and `Relay_0.2.0-3_aarch64.dmg`, and
+`scripts/sign-local.sh` reproduced rule 17's conditions against that bundle: hardened
+runtime ON, microphone entitlement present, usage string present.
+
+**`npm run build` ran before `cargo test`** (RG-127 — two `channels` tests serve the
+real built frontend and `dist/` is gitignored).
+
+**What this block is not.** No browser-driven pass was run against this tree. jsdom
+computes no layout, so no figure here is a claim about a painted pixel — and every
+defect that has reached a congregation in this project was invisible to every static
+instrument while `qa-inventory` reported zero problems and was right.
+
+---
+
 Re-measured **2026-09-17**, on `feat/cons-docs` at `cd8322a` — the documentation pass over
 `feat/consolidation`. **Read the branch before the numbers.** Three other branches were in
 flight on this machine at the time, changing code this pass deliberately did not touch, so

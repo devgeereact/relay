@@ -221,6 +221,32 @@ the table it counts is the easiest possible thing to check automatically.*
 | ✅ **RG-98 · RG-101** | **Both closed 2026-09-05, and the second one's own diagnosis was wrong.** `cargo audit` now reports **0 vulnerabilities**: `h2` went by lockfile update, and the two 7.5-HIGH `quick-xml` advisories — recorded here as needing an upstream Tauri bump — went the same way, because `plist` 1.10.0 already depends on the fixed `quick-xml` and a dependency arriving *through* Tauri is not necessarily pinned *by* it. The npm advisories were answered by moving the lever that existed: the dev server is loopback unless `RELAY_DEV_LAN=1` (DECISIONS §65). Both tools now run in CI |
 | ❓ **§19b** | **Two open questions, neither a commit.** The translation one above, and — added 2026-08-31 — whether a detection should carry the audio quality it was heard in. The measurement exists (`dsp::AudioQuality`); this report previously said it did not, and that error is corrected in place |
 
+### What the 2026-09-17 consolidation added, and what it deliberately did not
+
+Four branches ran in parallel off one green commit and were merged one at a time,
+each verified before the next. **None of them moves the release decision**, and none
+touches detection, the router, or any threshold: rules 10, 28, 30 and 34 are not in
+this diff at all.
+
+| | |
+|---|---|
+| **A background is a payload** (DECISIONS §94) | The entire layer stack sat inside `{#if content}` and `media_url` was written at one site in the whole binary, so a verse and a picture were mutually exclusive: scripture over the church's own background was impossible. It has its own retained slot, its own hello replay and its own rehearsal verdict, and **`clear` and `black` still take everything** — the invariant was written first and proved by reverting it, which replayed the picture onto a screen that joined after the operator had cleared the wall |
+| **The stage page has an identity** | `stage.html` sent `hello` with no channel and accepted `stage_alert` unconditionally, so a word meant for the preacher was shown to anyone on the LAN who opened the URL. Not claimed as a security boundary — §35 and T4 say the LAN is trusted and anyone can type `?channel=2`. It closes the accident |
+| **Per-screen clear and blackout** | The whole-wall controls are byte-for-byte untouched and `preflight` gained nothing: the split is in the call, never inside a panic function |
+| **A projector that stops guessing** (DECISIONS §95) | `open_channel_output` let a stale monitor index fall through the placement block, so unplugging the projector and pressing Open put **the congregation's output over the operator's console**, silently. Stable display identity is deliberately not built and §95 records the reading: no native id exists on either platform that survives a replug |
+| **A shared control layer** (DECISIONS §93) | `.r-iconbtn.sm` did not exist, which is the literal cause of the 26-in-a-row-of-22 misalignment: earlier waves correctly stripped the local overrides, which made the step permanent. Plus a row painted in two different ambers, and amber spent on *selected*, *pressed* and a *focus ring* on the preacher's own screen |
+| **The rail ruling** (DECISIONS §92) | Two waves built opposite behaviour into twelve lines and the merge settled it on evidence rather than recency — prose in a slot `--tch` sizes from digits re-creates the failure `MIN_TIMER_PX` exists to prevent |
+
+**Carried forward, in the agent's own words rather than smoothed away:** `paintState`
+still reports `clear` for a backdrop-only screen. It is a closed enum parsed on the
+Rust side, and widening it touches the health contract on both sides plus
+`describeScreen`. Arguably rule 35's shape, left rather than half-widened.
+
+**What none of this has:** a browser-driven pass against a real backend. jsdom
+computes no layout, so nothing here verifies a painted pixel, and every defect that
+has reached a congregation was invisible to every static instrument in this repository
+while `qa-inventory` reported zero problems and was right.
+
 ### The 2026-09-17 sweep, and what it says about this register
 
 **Eight rows were open against code that had already been fixed.** RG-117, RG-118,
