@@ -339,10 +339,24 @@ describe('acceptance 1 · no setting writes a preference nothing reads', () => {
     it('an ACTION is still a button — the two grammars are not merged the other way', () => {
       // The opposite failure: everything becoming a switch. Resetting the
       // measurement performs something once and has no state to show, so it
-      // stays an `r-btn`, beside the switch rather than instead of it.
-      expect(MARKUP_ONLY).toMatch(
-        /<button class="r-btn" on:click=\{resetLatency\}[^>]*>Start a fresh measurement</,
+      // stays a BUTTON, beside the switch rather than instead of it.
+      //
+      // WIDENED, and it is worth saying why rather than just doing it. The
+      // assertion used to read the literal string `<button class="r-btn"`, and
+      // that is not the claim in its own title: the claim is that this control is
+      // an action and not a state. When the control moved to `ui/Button.svelte` --
+      // which renders exactly `.r-btn` and adds the reason a disabled control owes
+      // the operator -- this went red over a change that made it strictly better,
+      // which is a scanner measuring the spelling instead of the thing. Both
+      // spellings are accepted and the NEGATIVE half is stated explicitly, because
+      // that is the half the title is about: it may not become a switch.
+      const control = MARKUP_ONLY.slice(
+        Math.max(0, MARKUP_ONLY.indexOf('Start a fresh measurement') - 400),
+        MARKUP_ONLY.indexOf('Start a fresh measurement'),
       );
+      expect(control).toMatch(/<(?:button class="r-btn"|Button)\b/);
+      expect(control).toMatch(/on:click=\{resetLatency\}/);
+      expect(control, 'the action became a state').not.toMatch(/r-switch|role="switch"/);
     });
   });
 

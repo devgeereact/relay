@@ -36,6 +36,7 @@
   // that concerns OUTPUT, and it no longer also concerns listening, transcribing
   // or what the AI thinks it heard.
   import { humanError } from '../../errors.js';
+  import { whyDisabled, SAFE_MODE, BUSY } from '../../ui/whydisabled.js';
   import { safeMode } from '../../boot/boot.js';
   import { move, dequeue, take, clear as clearAll } from '../../queue.js';
 
@@ -129,6 +130,11 @@
     <button
       class="r-btn amber lo-golive"
       disabled={$safeMode || !queue.length || taking}
+      title={whyDisabled(
+        [$safeMode, SAFE_MODE],
+        [taking, BUSY],
+        [!queue.length, 'Nothing is queued. Add a verse to the queue first.'],
+      ) || undefined}
       on:click={goLive}>
       {taking ? 'Sending…' : queue.length ? `Go Live — ${queue[0].reference}` : 'Go Live'}
     </button>

@@ -854,6 +854,13 @@
   // through `run()`: their failure is already on the shell's panic banner.
   const doClear = () => clearScreens();
   const doBlack = () => blackScreen();
+
+  // The one sentence both panic controls show when the bridge is not attached.
+  // Written once because two controls saying two different things about one fact
+  // is the beginning of the drift this pass exists to stop.
+  const PANIC_OFF =
+    'Relay’s engine is not answering, so this cannot reach your screens from here. ' +
+    'Anything already on a screen is still there. Restart Relay if this does not clear.';
 </script>
 
 <svelte:window on:resize={sizeCanvas} />
@@ -1338,10 +1345,32 @@
           on:click={() => run(() => setRehearsal(!$rehearsing))}
           disabled={busy || !$capture.available}
         >{$rehearsing ? 'Rehearsing' : 'Rehearse'}</button>
-        <button class="r-cbtn black" data-on={$screenBlack ? '1' : '0'} on:click={doBlack} disabled={!$capture.available}>
+        <!-- A DISABLED PANIC CONTROL OWES A REASON, and these two were the worst
+             case of the sixteen that gave none. A volunteer mid-service sees the
+             one control this whole product is arranged around sitting at 45%
+             opacity with nothing saying why, and the reasonable conclusion from
+             that is that Relay has crashed. It has not: `capture.available` is
+             only "is the Tauri bridge attached", so the honest sentence is that
+             the engine is not answering and the screens cannot be reached FROM
+             HERE, which is a different and much less alarming fact.
+
+             The reason goes to both channels for the reason `ui/Button.svelte`
+             gives at length: `title` is invisible to a keyboard or screen-reader
+             operator and `aria-describedby` is invisible to a mouse.
+
+             THESE TWO ARE DELIBERATELY NOT `ui/Button.svelte`. `panic.test.js`
+             asserts this exact markup, by string, because these are the controls
+             rule 15 and DECISIONS section 20 are about, and a shared component
+             between the operator and the wall is one more thing that can be got
+             wrong in a file nobody opens during a service. The reason is added in
+             place; the control is untouched. -->
+        <button class="r-cbtn black" data-on={$screenBlack ? '1' : '0'} on:click={doBlack} disabled={!$capture.available}
+          title={$capture.available ? undefined : PANIC_OFF} aria-describedby={$capture.available ? undefined : 'dock-panic-why'}>
           {$screenBlack ? 'Black — restore' : 'Blackout'}
         </button>
-        <button class="r-cbtn danger wide" on:click={doClear} disabled={!$capture.available}>Clear screens</button>
+        <button class="r-cbtn danger wide" on:click={doClear} disabled={!$capture.available}
+          title={$capture.available ? undefined : PANIC_OFF} aria-describedby={$capture.available ? undefined : 'dock-panic-why'}>Clear screens</button>
+        {#if !$capture.available}<span class="sr-only" id="dock-panic-why">{PANIC_OFF}</span>{/if}
       </div>
     </div>
   </div>

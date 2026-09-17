@@ -1,5 +1,7 @@
 <script>
   import { humanError } from '../../errors.js';
+  import Button from '../../ui/Button.svelte';
+  import { whyDisabled, ENGINE_OFF, BUSY } from '../../ui/whydisabled.js';
   import { onMount } from 'svelte';
   import { showsConfidence } from '../../detect.js';
   import { sundayReport, replayAt, weekOnWeek, describeTrend } from '../../report.js';
@@ -594,14 +596,16 @@
     <div class="lib-actionbar">
       <p class="r-lead">Every processed service is recorded locally to SQLite — transcript, fired detections, and operator overrides — and read back here.</p>
       <div class="lib-actions">
-        <button class="r-btn ghost" on:click={refresh} disabled={!$capture.available}>
+        <Button variant="ghost" on:click={refresh} disabled={!$capture.available}
+          disabledReason={whyDisabled([!$capture.available, ENGINE_OFF])}>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
           Refresh
-        </button>
-        <button class="r-btn danger" on:click={stopRecording} disabled={!$capture.available || ending}>
+        </Button>
+        <Button variant="danger" on:click={stopRecording} disabled={!$capture.available || ending}
+          disabledReason={whyDisabled([!$capture.available, ENGINE_OFF], [ending, BUSY])}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
           {ending ? 'Ending…' : 'End current service'}
-        </button>
+        </Button>
       </div>
       {#if endErr}
         <p class="lib-enderr" role="alert">The service was not ended — {endErr}</p>

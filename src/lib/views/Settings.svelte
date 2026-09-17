@@ -1,5 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
+  import Button from '../ui/Button.svelte';
+  import { whyDisabled, ENGINE_OFF, SERVICE_LOCKED, MIC_LIVE, BUSY } from '../ui/whydisabled.js';
   import { rangeFill } from '../rangefill.js';
   import { get } from 'svelte/store';
   import ModelSetup from '../ModelSetup.svelte';
@@ -1257,7 +1259,8 @@
           </div>
 
           <div class="s-listen">
-            <button class="r-btn primary" on:click={toggleCapture} disabled={!$capture.available}>
+            <Button variant="primary" on:click={toggleCapture} disabled={!$capture.available}
+              disabledReason={whyDisabled([!$capture.available, ENGINE_OFF])}>
               {#if $capture.capturing}
                 <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
                 Stop listening
@@ -1265,7 +1268,7 @@
                 <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><path d="M7 5.5v13l11-6.5-11-6.5z"/></svg>
                 Start Listening
               {/if}
-            </button>
+            </Button>
             {#if $capture.capturing}
               <span class="s-rms" class:voice={$meter.isVoice}>
                 <span class="s-dot" class:on={$meter.isVoice}></span>
@@ -1731,7 +1734,11 @@
           <button
             class="r-btn ghost sm"
             on:click={restartSetup}
-            disabled={$serviceLock.engaged || $serviceLock.recording || $capture.capturing}>Run the setup walk-through</button>
+            disabled={$serviceLock.engaged || $serviceLock.recording || $capture.capturing}
+            title={whyDisabled(
+              [$capture.capturing, MIC_LIVE],
+              [$serviceLock.engaged || $serviceLock.recording, SERVICE_LOCKED],
+            ) || undefined}>Run the setup walk-through</button>
           {#if $serviceLock.engaged || $serviceLock.recording || $capture.capturing}
             <p class="rw-foot s-netwarn">Not while the microphone is live, or while a service is being recorded — including one you have unlocked, because unlocking does not end it. The walk-through stops the microphone and puts a verse on your screens. Stop listening and end the service first.</p>
           {/if}
@@ -2045,7 +2052,8 @@
             </p>
           {/if}
           <div class="s-addrow">
-            <button class="r-btn" on:click={resetLatency} disabled={!$capture.available}>Start a fresh measurement</button>
+            <Button on:click={resetLatency} disabled={!$capture.available}
+              disabledReason={whyDisabled([!$capture.available, ENGINE_OFF])}>Start a fresh measurement</Button>
           </div>
           <p class="rw-foot">Start listening and speak for a few seconds to fill the table.</p>
         </div>
@@ -2182,9 +2190,15 @@
                leaves this machine does not become live by accident. -->
           <div class="s-addrow">
             <input id="crash-dsn" class="r-input s-dsn" type="text" placeholder="https://…@…ingest.sentry.io/…" bind:value={crash.dsn} disabled={!$capture.available || !!crashReadFailed} />
-            <button class="r-btn ghost sm" on:click={saveDsn} disabled={!$capture.available || dsnBusy || !dsnDirty || !!crashReadFailed}>
+            <Button variant="ghost" size="sm" on:click={saveDsn} disabled={!$capture.available || dsnBusy || !dsnDirty || !!crashReadFailed}
+              disabledReason={whyDisabled(
+                [!$capture.available, ENGINE_OFF],
+                [dsnBusy, BUSY],
+                [!!crashReadFailed, 'The crash-reporting settings could not be read, so a new address cannot be saved over them.'],
+                [!dsnDirty, 'Nothing has changed since the last save.'],
+              )}>
               {dsnBusy ? 'Saving…' : 'Save address'}
-            </button>
+            </Button>
           </div>
           {#if crashReadFailed}
             <!-- ASKED AND FAILED, not "there is no address". The safe default this
