@@ -155,6 +155,12 @@ const REGISTER = [
       'src/lib/stagealertpanic.test.js',
       'src/lib/stagemessage.test.js',
       'src/lib/views/Channels.svelte',
+      // Wave 3 — the two files that hold what a PANIC CONTROL does to a Stage
+      // Message (DECISIONS §91) and to the console's mirror of it. They were
+      // written on a branch that had not met this register and said "word to the
+      // preacher"; the merge is where the one name reached them.
+      'src/lib/panic.test.js',
+      'src/lib/stagepanic.test.js',
     ],
     // Wave 5 Track C adds a `stage_message` text binding labelled with this same
     // string. Registered ahead of it so the merge lands green rather than red on

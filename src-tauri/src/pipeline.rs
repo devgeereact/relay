@@ -244,6 +244,30 @@ pub fn preflight(content: &OutputContent) -> Result<(), Unsafe> {
     // instant rather than instead of it: a paused countdown carries both today, and
     // a validator that could refuse a paused timer would blank a wall at the one
     // moment the operator deliberately froze it.
+    //
+    // ── SITE 2 OF THE CONTENT-KIND SWEEP. NOTHING CHANGED HERE, AND WHY ────────
+    //
+    // The timer registry adds no wire form. A congregation-scoped (`Both`) timer is
+    // still broadcast as `kind: "countdown"` with the same four `countdown_*`
+    // fields, projected in exactly one place (`timers::project_both`), so all three
+    // arms below match it and this guard needs no new clause. A programme-scoped
+    // (`Stage`) timer never becomes an `OutputContent` at all — it has no
+    // congregation wire form by construction, `show_timer` refuses to give it one,
+    // and nothing it publishes passes through here.
+    //
+    // **This is the site that would have bitten.** A timer given field names of its
+    // own and no words would fall through to `Unsafe::Nothing` below: a screen that
+    // stays blank while every log says the fire succeeded, at the top of a service,
+    // which is when timers are used. If the `Both` wire form ever moves, this guard
+    // moves in the same commit.
+    //
+    // Two tests hold the coupling to the REAL projector rather than to a copy of it
+    // (`a_label_less_timer_from_the_registry_is_not_an_empty_screen` and its held
+    // twin), and here is the honest limit of what they catch: the three arms are
+    // individually REDUNDANT for a projected timer, so removing any one of them
+    // leaves all three tests green. Verified by removing each, and then by disabling
+    // the whole guard, which is what turns them red. They catch the wire form moving
+    // and the guard disappearing; they do not catch one arm being pruned as dead.
     let is_countdown = content.countdown_to.is_some()
         || content.countdown_paused_ms.is_some()
         || content.kind.as_deref() == Some("countdown");
@@ -604,6 +628,93 @@ mod tests {
         c.text = None;
         c.countdown_to = Some(1_700_000_000_000);
         assert!(preflight(&c).is_ok());
+    }
+
+    /// WHAT THE REGISTRY ACTUALLY PROJECTS SURVIVES THE VALIDATOR — SITE 2 OF THE
+    /// CONTENT-KIND SWEEP, HELD TO THE REAL PROJECTION RATHER THAN TO A COPY OF IT.
+    ///
+    /// The test above states the rule using a hand-built payload, which is the right
+    /// shape for the rule and the wrong shape for the hazard. The hazard is that
+    /// `timers::project_both` and `is_countdown` are two halves of one agreement —
+    /// the registry owns the facts, the four `countdown_*` fields are its
+    /// projection, and `is_countdown` is what stops a projection with no words in it
+    /// being refused as `Unsafe::Nothing`. A timer given field names of its own
+    /// would be refused here: a screen that stays blank while every log says the
+    /// fire succeeded, at the top of a service, which is when timers are used.
+    ///
+    /// So this calls the real projector. Change the wire form and this fails in the
+    /// same commit, which is the whole of what the sweep asks for.
+    ///
+    /// **A timer with NO LABEL is the case that matters**, and it is deliberately
+    /// what is tested. A labelled timer projects its label into `reference` and
+    /// would pass on `has_reference` alone, with `is_countdown` never consulted — a
+    /// test that used one would be green against a broken guard. A label-less timer
+    /// has no words anywhere, so `is_countdown` is the only thing standing between
+    /// it and a blank wall. It is also the shape a later track makes the default.
+    #[test]
+    fn a_label_less_timer_from_the_registry_is_not_an_empty_screen() {
+        let shown = crate::timers::project_both(&crate::timers::Timer {
+            id: 1,
+            label: String::new(),
+            done_msg: String::new(),
+            target_ms: 1_700_000_300_000,
+            from_ms: 1_700_000_000_000,
+            paused_ms: None,
+            warn_ms: None,
+            scope: crate::timers::Scope::Both,
+            plan_item_id: None,
+        });
+        let c = OutputContent {
+            kind: Some("countdown".into()),
+            reference: shown.reference,
+            countdown_to: Some(shown.countdown_to),
+            countdown_from: Some(shown.countdown_from),
+            countdown_paused_ms: shown.countdown_paused_ms,
+            countdown_done: Some(shown.countdown_done).filter(|s| !s.is_empty()),
+            ..Default::default()
+        };
+        assert!(
+            c.reference.trim().is_empty() && c.text.is_none(),
+            "precondition: this projection carries no words at all, so `is_countdown` \
+             is the only thing that can save it"
+        );
+        assert_eq!(
+            preflight(&c),
+            Ok(()),
+            "the pre-air validator refused what the timer registry actually projects \
+             — a blank screen at the top of a service, with every log saying the fire \
+             succeeded"
+        );
+    }
+
+    /// A HELD TIMER IS NOT AN EMPTY SCREEN EITHER.
+    ///
+    /// The one an operator deliberately froze is the one a validator must never
+    /// blank. `countdown_paused_ms` is checked alongside the instant rather than
+    /// instead of it, and a held projection still carries both.
+    #[test]
+    fn a_held_label_less_timer_is_not_an_empty_screen() {
+        let shown = crate::timers::project_both(&crate::timers::Timer {
+            id: 1,
+            label: String::new(),
+            done_msg: String::new(),
+            target_ms: 1_700_000_090_000,
+            from_ms: 1_700_000_000_000,
+            paused_ms: Some(90_000),
+            warn_ms: None,
+            scope: crate::timers::Scope::Both,
+            plan_item_id: None,
+        });
+        let c = OutputContent {
+            kind: Some("countdown".into()),
+            reference: shown.reference,
+            countdown_to: Some(shown.countdown_to),
+            countdown_from: Some(shown.countdown_from),
+            countdown_paused_ms: shown.countdown_paused_ms,
+            ..Default::default()
+        };
+        assert_eq!(shown.countdown_paused_ms, Some(90_000));
+        assert_eq!(preflight(&c), Ok(()));
     }
 
     /// A TEMPLATE THE OUTPUT PAGE CANNOT READ IS REFUSED HERE, WHERE SOMEBODY IS

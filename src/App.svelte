@@ -3,7 +3,7 @@
   import { get } from 'svelte/store';
   import { trapFocus } from './lib/focus.js';
   import { t } from './lib/i18n.js';
-  import { capture, capturing, live, screenBlack, rehearsing, initAudio, autoOpenOutputs, applySafeMode, safeModeError, dismissSafeModeError, clearScreens, blackScreen, panicError, dismissPanicError, dismissAudioError, loadServiceLock, channelHealth, channelWaiting, startChannelHealth, latencyReport, ping, onOperatorAction, noteOperatorAction, loadLiveTransition } from './lib/stores/capture.js';
+  import { capture, capturing, live, screenBlack, rehearsing, initAudio, autoOpenOutputs, applySafeMode, safeModeError, dismissSafeModeError, clearScreens, blackScreen, panicError, dismissPanicError, dismissAudioError, loadServiceLock, channelHealth, channelWaiting, startChannelHealth, latencyReport, ping, onOperatorAction, noteOperatorAction, loadLiveTransition, loadCountdownWarnMs } from './lib/stores/capture.js';
   import * as training from './lib/training.js';
   import { practice, stopPractice } from './lib/practice.js';
   import { degradations, worstLevel, summarise } from './lib/degraded.js';
@@ -431,6 +431,11 @@
     // and a picker reading "Follow template" over screens that are crossfading is
     // a control that says the same thing whether or not it is in force (rule 35).
     loadLiveTransition();
+    // …nor a countdown that turns red at a figure the operator did not choose.
+    // The window is a setting (`Settings → General → Countdown warning`), and the
+    // dock and the programme pane ask the rule long before anybody opens that
+    // page — so it is loaded HERE, at the shell, not on the page that writes it.
+    loadCountdownWarnMs();
     // One poller for the whole app: Live, the Outputs table and the degraded
     // banner all read the same store (see `startChannelHealth`).
     startChannelHealth();

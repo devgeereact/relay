@@ -21,7 +21,8 @@
 //   allowed to do, or whether the microphone is live. `manualFire`, `confirmDetection`,
 //   `setDetection`, `setRehearsal`, `navVerse`, `startCapture`, `stopCapture`,
 //   `fireContent`, `startCountdown`, `adjustCountdown`, `endService`, `setSttLanguage`,
-//   `setDefaultTemplate`.
+//   `setDefaultTemplate`, and the five timer wrappers — `startTimer`, `adjustTimer`,
+//   `stopTimer`, `listTimers`, `showTimer` (held there by `timerwrappers.test.js`).
 //   The caller MUST handle it and tell the operator.
 //   `setDefaultTemplate` was missed when it stopped being a bare `set_setting` and
 //   became the `set_default_template` COMMAND — which writes the row, pushes the
@@ -67,6 +68,10 @@ import { markTranscript } from '../latency.js';
 // (docs/REBRAND.md §7). The console reads it through the same function the wall and
 // the stage page do, so a held countdown cannot go on ticking on one of the three.
 import { countdownRemainingMs, countdownIsPaused } from '../countdown.js';
+// The warning WINDOW, as distinct from how long is left. `layers.js` holds the
+// one number the wall, the stage page and the dock all measure against; this file
+// is its one writer, because this file is the only one that can read the row.
+import { COUNTDOWN_WARN_MS, setCountdownWarnDefault } from '../layers.js';
 // X1 · the transition override's store lives beside its register — see the block
 // further down for why it is not declared in this file.
 import { liveTransition } from '../transitions.js';
@@ -1450,6 +1455,103 @@ await call('start_countdown', { minutes, label, doneMsg, templateId });
 if (!keepPlan) leavePlan();
 }
 
+// ── TIMERS ────────────────────────────────────────────────────────────────────
+//
+// A timer has an identity and a lifetime of its own (`src-tauri/src/timers.rs`).
+// `startCountdown` above is still the dock's one-press congregation countdown and
+// still creates one; these five address timers by id, which is what lets a console
+// show several and move the one the operator is pointing at.
+//
+// **All five are GROUP 1 — THROWS.** They change what is on a screen, what a
+// preacher is being told, or what an operator believes about either, and a failure
+// the caller cannot see is a control that lies about what it did. `timerwrappers.
+// test.js` is what holds them in this group; a comment on its own does not.
+
+/**
+ * START A TIMER AND HAND BACK ITS IDENTITY. It puts nothing in front of anybody.
+ *
+ * `scope` is `'both'` (a congregation countdown) or `'stage'` (a programme timer
+ * for the preacher's monitor). Putting a `'both'` timer on the screens is
+ * `showTimer`; there are exactly two doors onto a congregation wall and this is
+ * deliberately not one of them.
+ *
+ * THROWS (contract group 1).
+ */
+export async function startTimer({
+minutes,
+label = '',
+doneMsg = '',
+scope = 'both',
+warnMs = null,
+planItemId = null,
+}) {
+const call = await invoke();
+return call('start_timer', { minutes, label, doneMsg, scope, warnMs, planItemId });
+}
+
+/**
+ * RE-AIM OR HOLD ONE TIMER, BY ITS IDENTITY.
+ *
+ * `adjustCountdown` is this same action aimed at "whichever congregation countdown
+ * is running", which is what the dock's transport means. This one names the timer.
+ *
+ * It repaints a wall only when that timer is what the screens are already showing.
+ * Changing a number on a timer that is not up must not put it up — the way back is
+ * `showTimer`, an action that says what it does.
+ *
+ * THROWS (contract group 1).
+ */
+export async function adjustTimer(timerId, { remainingMs = null, paused = null } = {}) {
+const call = await invoke();
+await call('adjust_timer', { timerId, remainingMs, paused });
+}
+
+/**
+ * TAKE A TIMER OFF THE REGISTRY. It does not touch a screen — `Clear screens` is
+ * how a wall is taken back, and it is one key away at every moment (rule 15).
+ *
+ * THROWS (contract group 1).
+ */
+export async function stopTimer(timerId) {
+const call = await invoke();
+await call('stop_timer', { timerId });
+}
+
+/**
+ * EVERY TIMER, OLDEST FIRST, WITH HOW LONG IS LEFT ON EACH.
+ *
+ * THROWS (contract group 1) — and this one is worth saying out loud, because the
+ * obvious swallow returns `[]`, which is exactly what a console with no timers
+ * renders. A broken bridge would look like a quiet Sunday on the one surface an
+ * operator would use to find a clock counting down to the wrong thing.
+ *
+ * `remaining_ms` on each row is the engine's own figure. The frontend still ticks
+ * through `countdown.js::countdownRemainingMs`, which stays the only arithmetic on
+ * this side of the bridge.
+ */
+export async function listTimers() {
+const call = await invoke();
+return call('list_timers');
+}
+
+/**
+ * PUT A CONGREGATION TIMER BACK IN FRONT OF PEOPLE — the explicit way back.
+ *
+ * A timer outlives the content that replaced it now, so after a reading there is
+ * something to return to. This is how an operator returns to it, on purpose. It
+ * carries whatever the timer says NOW, so what goes back up is the figure in the
+ * list rather than the length it started as. A `'stage'` timer is refused by the
+ * engine, in words: it has no congregation wire form.
+ *
+ * THROWS (contract group 1) — it is one of two doors onto a congregation wall, so
+ * a failure nobody is told about is an operator believing in a countdown that is
+ * not there.
+ */
+export async function showTimer(timerId, templateId = null) {
+const call = await invoke();
+await call('show_timer', { timerId, templateId });
+}
+
 /** Fire arbitrary content to the screens. `kind` ('song'|'announce') selects the
  *  content-type default template (per-content-type templates). `stageNote` is an
  *  optional Stage Note for this cue, monitors only. `templateId`, when set, is the
@@ -1949,6 +2051,77 @@ export async function setServiceTarget(minutes) {
   const call = await invoke();
   await call('set_setting', { key: 'service.target_minutes', value: String(n) });
   serviceTargetMinutes.set(n);
+}
+
+// ── THE COUNTDOWN WARNING WINDOW ───────────────────────────────────────────────
+//
+// How long before zero a countdown turns red. Shipped as the last minute; an
+// operator can move it in Settings → General. Persisted in the settings KV under
+// `countdown.warn_ms` and READ, which is the whole point of it: seven controls
+// were removed from that page on 2026-09-10 for saving a preference nothing
+// opened (DECISIONS §69), and a threshold nobody reads is that defect with a
+// congregation-facing colour attached.
+//
+// The reader is `layers.js::countdownWarning`, through `setCountdownWarnDefault`,
+// which is the one rule the wall, the preacher's page and the dock all ask. A
+// figure carried by one timer still beats this default — that ranking lives in
+// `countdownWarning` and is not restated here.
+const COUNTDOWN_WARN_MIN_MS = 5_000;
+const COUNTDOWN_WARN_MAX_MS = 60 * 60_000;
+
+/** The warning window in force, in ms. Mirrors what `layers.js` is using. */
+export const countdownWarnMs = writable(COUNTDOWN_WARN_MS);
+
+/** A readable window, or the shipped minute. Never zero — a window of zero is a
+ *  warning colour that never comes on, on the one surface whose job is to. */
+function clampCountdownWarn(ms) {
+  const n = Number(ms);
+  return Number.isFinite(n) && n > 0
+    ? Math.max(COUNTDOWN_WARN_MIN_MS, Math.min(COUNTDOWN_WARN_MAX_MS, Math.round(n)))
+    : COUNTDOWN_WARN_MS;
+}
+
+/** Apply a figure to the store AND to the rule, so the two cannot come apart. */
+function applyCountdownWarn(ms) {
+  const ok = clampCountdownWarn(ms);
+  setCountdownWarnDefault(ok);
+  countdownWarnMs.set(ok);
+  return ok;
+}
+
+/**
+ * Load the configured warning window. GROUP 2 — SWALLOWS: a console that could not
+ * ask falls back to the shipped minute, which is what it had before.
+ *
+ * The fallback is applied OUT HERE rather than through a fourth argument to
+ * `guardedRead`, which takes three: `loadDefaultTemplate` and `loadServiceTarget`
+ * each pass a reset closure that is silently dropped, so on a failed read their
+ * stores keep the last good value while a comment beside them says otherwise.
+ * Not fixed here — that is three other surfaces' behaviour — but not copied either.
+ */
+export async function loadCountdownWarnMs() {
+  const raw = await guardedRead(
+    'countdownWarnMs',
+    (call) => call('get_setting', { key: 'countdown.warn_ms' }),
+    null,
+  );
+  return applyCountdownWarn(parseInt(raw, 10));
+}
+
+/**
+ * Set the warning window (ms). Persisted in the KV and applied at once, so the
+ * dock and the programme pane turn red at the new figure without a relaunch.
+ *
+ * THE ROW IS WRITTEN FIRST, and only then is the figure applied. The other order
+ * moves what the wall does while leaving the row at the old value, so a write that
+ * failed would show an operator a setting that is in force this session and gone
+ * at the next launch — a control saying one thing and the machine another.
+ */
+export async function setCountdownWarnMs(ms) {
+  const n = clampCountdownWarn(ms);
+  const call = await invoke();
+  await call('set_setting', { key: 'countdown.warn_ms', value: String(n) });
+  return applyCountdownWarn(n);
 }
 
 
@@ -2454,13 +2627,23 @@ export async function applySafeMode(on) {
 export const readErrors = writable({});
 
 /** Run a GROUP 2 read, remembering why it failed instead of discarding it. */
-async function guardedRead(key, run, fallback) {
+async function guardedRead(key, run, fallback, onFail) {
 try {
   const value = await run(await invoke());
   readErrors.update((m) => (m[key] ? { ...m, [key]: null } : m));
   return value;
 } catch (e) {
   readErrors.update((m) => ({ ...m, [key]: e }));
+  // THE FOURTH ARGUMENT WAS BEING DROPPED ON THE FLOOR, AND TWO CALL SITES WERE
+  // ALREADY PASSING IT. A fallback VALUE cannot carry a side effect: a read that
+  // populates a store has nothing to hand back, so letting go of the stale value
+  // is something the catch has to DO. Without this, `loadDefaultTemplate` left
+  // `defaultTemplateId` holding an id the backend could no longer confirm and
+  // `loadServiceTarget` left the stopwatch counting against a length nobody had
+  // answered for — each under a comment saying the reset was explicit. Pinned by
+  // `readstates.test.js`, "a failed read resets the store its call site asked to
+  // reset". Optional: most reads degrade to a value and want nothing here.
+  if (typeof onFail === 'function') onFail();
   return fallback;
 }
 }
@@ -2486,6 +2669,16 @@ try {
   const call = await invoke();
   await call(cmd);
   panicError.set(null);
+  // AND THE CONSOLE'S MIRROR OF THE STAGE MESSAGE GOES WITH IT (RG-145).
+  // DECISIONS §91: a panic control takes back every sentence anybody put on a
+  // screen, so `Stage.svelte` clears the alert on both controls. This store is what
+  // Quick tools paints its "on stage" badge and its Take down button from, so
+  // leaving it set offered the operator a control for a word that was already down,
+  // under a comment claiming the badge says what the monitor is painting right now.
+  // After the call resolves and never before — the same discipline `sendStageAlert`
+  // keeps — because a panic that FAILED has taken nothing off any screen, and a
+  // console that said otherwise is rule 15 one surface along.
+  stageAlert.set(null);
   return true;
 } catch (e) {
   // In a plain browser there is no backend AND no output screen, so there is

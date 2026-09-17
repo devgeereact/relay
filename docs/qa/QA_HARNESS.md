@@ -20,6 +20,63 @@ every edit: `.claude/hooks/relay-fast-gate.mjs`, path-filtered and report-only (
 
 ## 0. Current inventory
 
+Re-measured **2026-09-17**, on `feat/waves-3-5-merge` — wave 3 (timers) merged into wave 5
+(the shelf, the names and the seal), which is the first time the two have met. Both waves fork
+from `140a2cb`, both re-measured this section against their own integration branch, and neither
+figure survives the merge, so this is taken on the ASSEMBLED tree rather than chosen between
+them. Wave 3 is merged at **`6bee145`**; that branch has moved since (see the note under the
+wave 3 block below). `npm run build` ran first, per RG-127.
+
+| Count | Value | Command |
+|---|---|---|
+| Rust tests | **839 passed / 0 failed / 16 ignored** | `cd src-tauri && cargo test` |
+| Frontend tests | **2492 passed, 163 files** | `npx vitest run` |
+| `e2e.rs` tests | **77 passed / 0 ignored** | `cd src-tauri && cargo test e2e::` |
+| Registered commands | **145** | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
+| qa-inventory | 145/145 addressed, 0 handlerless, 0 unnamed, 1 orphan | `node scripts/qa-inventory.mjs` |
+
+`cargo fmt --all`, `clippy --all-targets -- -D warnings` and `npm run build` all clean on the
+same tree.
+
+**Every figure is the sum of the two waves, and that was checked rather than assumed** — a merge
+is exactly where a count can quietly double-count or lose a file. The two parents' own deltas are
++30 / +73 / +10 / +5 (wave 3) and +25 / +163 / +1 / +1 (wave 5), against a base of 784 Rust, 2254
+frontend, 66 `e2e.rs` and 139 commands. Rust 784 + 30 + 25 = **839**; `e2e.rs` 66 + 10 + 1 =
+**77**; commands 139 + 5 + 1 = **145**. All three land on the measured figure exactly.
+
+**Two of those base numbers were read off the tree here and three were inherited, and the
+difference is worth stating** because the two waves do not agree about where they forked from.
+`git merge-base` puts both at **`140a2cb`**; wave 5's block below names `2ec8000`, one commit
+earlier, and the two differ by one test file (144 against 145). The command count (**139**) and
+the test-file count (**145**) were read directly off `140a2cb`. The Rust, `e2e.rs` and frontend
+base figures are the recorded wave 2 ones at `2ec8000` and were NOT re-measured here; they
+reconcile anyway, which is evidence and not proof.
+
+Test files: 145 + 6 (wave 3 at `6bee145`) + 12 (wave 5) = **163**, with no file added by both
+waves and none removed by either — checked as a set, not as a sum. The frontend TEST count is
+the one figure that is not purely additive: 2254 + 73 + 163 = 2490, and the merge itself added
+**+2**. Those two are in `src/lib/stagealertpanic.test.js`, which had to be rewritten because
+wave 5 wrote it to assert the opposite of the ruling that now stands (DECISIONS §91), and which
+now also drives `output.html` — four cases became six.
+
+**Three counts that the merge had to fix rather than add up**, all three found by a runner and not
+by a reader:
+`channels::tests::the_hello_order_puts_the_screen_frame_last` enumerates the hello reply in order
+and each wave added one slot to it — `timer` and `channel_roles` — so the assertion was short by
+one on a tree where the ORDER was right; `countdownwarnmotion.test.js` read `--v-red` out of
+`src/app.css` and wave 5 lifted the palette into `src/tokens.css`, so a correct claim failed on a
+file rather than on a colour; and `names.test.js`'s one-name register caught five wave 3 files
+still saying *"word to the preacher"* and one saying *"up-next"*, which is exactly the surface that
+register exists for. None of the three was a broken behaviour and all three were a green branch
+each.
+
+qa-inventory's one orphan component, `src/lib/__r6probe.svelte`, is the pre-existing, deliberate
+test probe `docs/RELAY_V1_AUDIT.md` already names — unchanged by either wave.
+
+Neither suite failed. The counts above are what each runner's own summary line reported.
+
+### The wave 5 measurement this replaces
+
 Re-measured **2026-09-16**, on `feat/wave5-track-j` — the wave 5 integration branch with all
 seven code tracks merged (A the forty seeded looks, B/F/H the editor, C channel roles, D the
 names, E the seal, G the bare timer, I starter content), taken during the browser-driven pass
@@ -39,9 +96,12 @@ first, per RG-127.
 `cargo fmt --all`, `clippy --all-targets -- -D warnings` and `npm run build` all clean on the
 same tree.
 
-**The delta is taken from the row immediately below** (784 / 0 / 16 Rust; 2254 passing; 139
-commands; 66 `e2e.rs`), measured on `feat/wave2-integration` at `2ec8000`, which is the point
-this wave forks from. Since then: **+25 Rust**, **+163 frontend**, **+1 `e2e.rs`** and **+1
+**The delta is taken from the wave 2 block** (784 / 0 / 16 Rust; 2254 passing; 139
+commands; 66 `e2e.rs`), measured on `feat/wave2-integration` at `2ec8000`, which this block
+called the point the wave forks from. *(It is one commit short: `git merge-base` puts both
+wave 3 and wave 5 at `140a2cb`. The sentence below about which row is wrong about the file
+count is about that same one-commit gap — kept as written, because it is the frozen reasoning
+of the measurement it belongs to.)* Since then: **+25 Rust**, **+163 frontend**, **+1 `e2e.rs`** and **+1
 registered command**.
 
 **The command delta was derived rather than assumed**, because a net figure hides a swap —
@@ -68,28 +128,57 @@ already excluded by name from `r6-contracts.test.js`'s own walk of `src/`.
 Neither suite failed. The counts above are what each runner's own summary line reported.
 `docs/qa/audits/DESIGN-2026-09-16-WAVE5.md` §9 is the same table, taken in the same run.
 
----
+### The wave 3 measurement this replaces
 
-Re-measured **2026-09-16**, on `feat/wave2-integration` — the whole of Wave 2 (six tracks,
-fifteen tasks) merged into one tree, plus the final whole-branch fix pass. The block this
-replaces was measured on `feat/wave2-track-d` alone, BEFORE tracks A, B and C merged, and every
-figure in it was wrong at the integration head: it said 774 Rust / 2224 frontend / 141 files /
-138 commands against 784 / 2254 / 145 / 139. The command count disagreed with the block twelve
-lines below it, in the one register this repository keeps counts in. `npm run build` ran first,
-per RG-127.
+**Merged at `6bee145`, and `feat/wave3-timers` has advanced past it since.** Seven commits landed
+on that branch while this merge was being resolved — the fix pass closing RG-146, RG-147, RG-148
+and RG-154, and a decisions note. They are NOT in this tree and the figures below do not include
+them. Whoever merges that branch again should expect the same three documents to conflict, and
+should know that wave 3's `DECISIONS §89` is `§91` here.
+
+Re-measured **2026-09-16**, on `feat/wave3-track-f` at `1a242d8` — the whole of Wave 3 (five
+code tracks) merged into `feat/wave3-timers`, plus Track C's own follow-up fix, with the Track F
+browser pass branched off it. `npm run build` ran first, per RG-127, and the temporary audit
+scaffolding that pass installed was removed before either runner was started.
 
 | Count | Value | Command |
 |---|---|---|
-| Rust tests | **784 passed / 0 failed / 16 ignored** | `cd src-tauri && cargo test` |
-| Frontend tests | **2254 passed, 145 files** | `npx vitest run` |
-| `e2e.rs` tests | **66 passed / 0 ignored** | `cd src-tauri && cargo test e2e::` |
-| Registered commands | **139** | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
-| qa-inventory | 139/139 addressed, 0 handlerless, 0 unnamed | `node scripts/qa-inventory.mjs` |
+| Rust tests | **814 passed / 0 failed / 16 ignored** | `cd src-tauri && cargo test` |
+| Frontend tests | **2327 passed, 151 files** | `npx vitest run` |
+| `e2e.rs` tests | **76 passed / 0 ignored** | `cd src-tauri && cargo test e2e::` |
+| Registered commands | **144** | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
+| qa-inventory | 144/144 addressed, 0 handlerless, 0 unnamed, 1 orphan | `node scripts/qa-inventory.mjs` |
 
-`cargo fmt --all`, `clippy --all-targets -- -D warnings` and `npm run build` all clean on the
-same tree.
+**The delta from the block below is Wave 3**: **+30 Rust** (the pure registry in `timers.rs`,
+the hub's timer frame and retained slot, the panic-control scope split, and the five new
+commands' own coverage), **+73 frontend across +6 files**, **+10 `e2e.rs`** and **+5 registered
+commands** (`start_timer`, `adjust_timer`, `stop_timer`, `list_timers`, `show_timer`).
 
-**The delta is taken from the row immediately below** (754 passed / 0 failed / 16 ignored Rust;
+**The qa-inventory line is the one to read sceptically, and the Track F pass says why.** It
+reports every command addressed because it traces to a WRAPPER; two of the five new commands
+(`show_timer`, `adjust_timer`) have no rendered control at all, which is the stricter test
+CLAUDE.md states and RG-152 records. It also reported 0 handlerless buttons throughout a pass
+that found a button whose centre hit-tests to a different control (RG-146). Both readings are
+correct for what the instrument measures. The one orphan component is still
+`src/lib/__r6probe.svelte`, the deliberate pre-existing test probe.
+
+### The Wave 2 measurement this replaces
+
+Measured **2026-09-16** on `feat/wave2-integration`. Kept because the note attached to it is the
+point: the block IT replaced had been measured on `feat/wave2-track-d` alone, BEFORE tracks A, B
+and C merged, and every figure in it was wrong at the integration head — 774 Rust / 2224
+frontend / 141 files / 138 commands against the real 784 / 2254 / 145 / 139, with the command
+count disagreeing with a block twelve lines below it in the one register this repository keeps
+counts in.
+
+| Count | Value |
+|---|---|
+| Rust tests | 784 passed / 0 failed / 16 ignored |
+| Frontend tests | 2254 passed, 145 files |
+| `e2e.rs` tests | 66 passed / 0 ignored |
+| Registered commands | 139 |
+
+**Its own delta, kept with it, was taken from the row immediately below** (754 passed / 0 failed / 16 ignored Rust;
 2265 passing, 144 files frontend; 139 commands) — the last measurement in this file that was
 taken on a merged tree, and still reproducible at `be3f01c`. Since then: **+30 Rust** (the family
 seed, the retirement migration and the theme inlining each carry their own suite in
@@ -105,7 +194,9 @@ qa-inventory's one orphan component, `src/lib/__r6probe.svelte`, is the pre-exis
 test probe `docs/RELAY_V1_AUDIT.md` already names — not something this wave introduced, and
 already excluded by name from `r6-contracts.test.js`'s own walk of `src/`.
 
-Neither suite failed. The counts above are what each runner's own summary line reported.
+Neither suite failed on either tree. Every count above is what that runner's own summary line
+reported, and `cargo fmt --all`, `clippy --all-targets -- -D warnings` and `npm run build` were
+clean on both.
 
 ---
 

@@ -114,6 +114,14 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       // A congregation screen with no template of its own and no content look either
       // must still end its chain somewhere other than the bundled Classic Serif.
       default_template: true,
+      // THE PROGRAMME TIMERS — `false`, and this is the same guarantee as
+      // `stage_next` and `stage_alert` above rather than a new one. A programme
+      // timer is the operator's bookkeeping for one person on a platform: "Sermon ·
+      // 4:12 left" behind a preacher is the running order in front of the whole
+      // building. The congregation's own countdown is a different thing entirely
+      // and reaches this page as ordinary `content` with the four `countdown_*`
+      // fields on it, which is why nothing is lost by refusing this one.
+      timer: false,
     },
     'src/Stage.svelte': {
       content: true,
@@ -142,6 +150,11 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       // `output.html` has to ask because several different kinds of screen render
       // through it; this page is only ever the one kind.
       channel_roles: false,
+      // THE PROGRAMME TIMERS, and this page is the only client that may have them.
+      // A `Stage`-scoped timer publishes no content frame at all — which is exactly
+      // why it survives a verse — so this frame is its only way onto any screen,
+      // and the screen it is for is this one.
+      timer: true,
     },
   };
 

@@ -1,0 +1,146 @@
+- generic [ref=f7e6]:
+  - banner [ref=f7e7]:
+    - button "Back to Templates" [ref=f7e8] [cursor=pointer]
+    - generic [ref=f7e11]: Probe
+    - generic [ref=f7e12]: 3 layers · 1920×1080
+    - generic [ref=f7e13]:
+      - button "Undo" [disabled] [ref=f7e14]
+      - button "Redo" [disabled] [ref=f7e18]
+    - generic [ref=f7e22]:
+      - button "Zoom out" [ref=f7e23] [cursor=pointer]: −
+      - generic [ref=f7e24]: 100%
+      - button "Zoom in" [disabled] [ref=f7e25]: +
+    - button "Preview" [ref=f7e26] [cursor=pointer]
+    - button "Fullscreen" [ref=f7e27] [cursor=pointer]
+    - button "Test on screens" [ref=f7e28] [cursor=pointer]
+    - button "History" [ref=f7e30] [cursor=pointer]
+    - button "Save Template" [ref=f7e31] [cursor=pointer]
+  - generic [ref=f7e32]:
+    - complementary [ref=f7e33]:
+      - generic [ref=f7e34]:
+        - generic [ref=f7e35]: Layers
+        - button "Add layer" [ref=f7e37] [cursor=pointer]: ＋
+      - generic [ref=f7e38]:
+        - button "Object number 3 Hide Object number 3 Lock Object number 3 Text Bring Object number 3 forward Send Object number 3 back Delete Object number 3" [ref=f7e39] [cursor=pointer]:
+          - generic [aria-hidden] [ref=f7e40]: ⠿
+          - generic "Object number 3" [ref=f7e45]
+          - generic [ref=f7e46]:
+            - button "Hide Object number 3" [ref=f7e47]: ●
+            - button "Lock Object number 3" [ref=f7e48]: 🔓
+          - generic [ref=f7e49]:
+            - generic [aria-hidden] [ref=f7e50]: T
+            - generic [ref=f7e51]: Text
+          - generic [ref=f7e52]:
+            - button "Bring Object number 3 forward" [ref=f7e53]: ↑
+            - button "Send Object number 3 back" [ref=f7e54]: ↓
+            - button "Delete Object number 3" [ref=f7e55]: ✕
+        - button "Object number 2 Hide Object number 2 Lock Object number 2 Text Bring Object number 2 forward Send Object number 2 back Delete Object number 2" [ref=f7e56] [cursor=pointer]:
+          - generic [aria-hidden] [ref=f7e57]: ⠿
+          - generic "Object number 2" [ref=f7e62]
+          - generic [ref=f7e63]:
+            - button "Hide Object number 2" [ref=f7e64]: ●
+            - button "Lock Object number 2" [ref=f7e65]: 🔓
+          - generic [ref=f7e66]:
+            - generic [aria-hidden] [ref=f7e67]: T
+            - generic [ref=f7e68]: Text
+          - generic [ref=f7e69]:
+            - button "Bring Object number 2 forward" [ref=f7e70]: ↑
+            - button "Send Object number 2 back" [ref=f7e71]: ↓
+            - button "Delete Object number 2" [ref=f7e72]: ✕
+        - button "Object number 1 Hide Object number 1 Lock Object number 1 Background Bring Object number 1 forward Send Object number 1 back Delete Object number 1" [ref=f7e73] [cursor=pointer]:
+          - generic [aria-hidden] [ref=f7e74]: ⠿
+          - generic "Object number 1" [ref=f7e77]
+          - generic [ref=f7e78]:
+            - button "Hide Object number 1" [ref=f7e79]: ●
+            - button "Lock Object number 1" [ref=f7e80]: 🔓
+          - generic [ref=f7e81]:
+            - generic [aria-hidden] [ref=f7e82]: ▦
+            - generic [ref=f7e83]: Background
+          - generic [ref=f7e84]:
+            - button "Bring Object number 1 forward" [ref=f7e85]: ↑
+            - button "Send Object number 1 back" [ref=f7e86]: ↓
+            - button "Delete Object number 1" [ref=f7e87]: ✕
+      - paragraph [ref=f7e88]: Top of the list is the front. Drag a row by its grip to reorder, or use ↑ ↓. An indented row is a word inside the band above it — the band decides where it sits, so it moves within the band and not out of it. A locked row will not move, here or on the canvas.
+      - button "Readability 3 it cannot check" [ref=f7e89] [cursor=pointer]:
+        - generic [ref=f7e90]: Readability
+        - generic [ref=f7e91]: 3 it cannot check
+        - generic [aria-hidden] [ref=f7e92]: ▾
+    - generic [ref=f7e93]:
+      - toolbar "Align the selected object" [ref=f7e94]:
+        - generic [ref=f7e95]: Align
+        - button "Align left" [disabled] [ref=f7e96]
+        - button "Align centre" [disabled] [ref=f7e99]
+        - button "Align right" [disabled] [ref=f7e102]
+        - button "Align top" [disabled] [ref=f7e105]
+        - button "Align middle" [disabled] [ref=f7e108]
+        - button "Align bottom" [disabled] [ref=f7e111]
+        - button "Space across" [disabled] [ref=f7e115]
+        - button "Space down" [disabled] [ref=f7e116]
+      - generic [ref=f7e118]:
+        - generic:
+          - generic: "0"
+          - generic: "10"
+          - generic: "20"
+          - generic: "30"
+          - generic: "40"
+          - generic: "50"
+          - generic: "60"
+          - generic: "70"
+          - generic: "80"
+          - generic: "90"
+          - generic: "100"
+        - generic:
+          - generic: "0"
+          - generic: "10"
+          - generic: "20"
+          - generic: "30"
+          - generic: "40"
+          - generic: "50"
+          - generic: "60"
+          - generic: "70"
+          - generic: "80"
+          - generic: "90"
+          - generic: "100"
+        - generic [ref=f7e119]:
+          - generic [ref=f7e121]:
+            - generic [ref=f7e123]: And God called the firmament Heaven. And the evening and the morning were the second day.
+            - generic [ref=f7e125]: Genesis 1:8 · KJV
+          - generic [ref=f7e127]:
+            - button "Object number 2" [ref=f7e128]
+            - button "Object number 3" [ref=f7e129]
+      - generic [ref=f7e130]:
+        - generic [ref=f7e131]: Canvas
+        - generic [ref=f7e132]: Opaque background
+    - complementary [ref=f7e133]:
+      - generic [ref=f7e134]: Design
+      - tablist "Objects on this slide" [ref=f7e136]:
+        - tab "Object number 1" [ref=f7e137] [cursor=pointer]
+        - tab "Object number 2" [ref=f7e138] [cursor=pointer]
+        - tab "Object number 3" [ref=f7e139] [cursor=pointer]
+      - generic [ref=f7e140]:
+        - paragraph [ref=f7e141]: Select a layer to edit it, or add one with ＋.
+        - heading "Template" [level=3] [ref=f7e142]
+        - generic [ref=f7e143]:
+          - generic [ref=f7e144]: Name
+          - textbox "Name" [ref=f7e145]: Probe
+        - generic [ref=f7e146]: Used for
+        - generic [ref=f7e147]:
+          - button "Scripture" [ref=f7e148] [cursor=pointer]
+          - button "Songs / Lyrics" [ref=f7e149] [cursor=pointer]
+          - button "Media" [ref=f7e150] [cursor=pointer]
+          - button "Announcements" [ref=f7e151] [cursor=pointer]
+          - button "Timer / Countdown" [ref=f7e152] [cursor=pointer]
+        - paragraph [ref=f7e153]: A kind ticked here wears this template on every screen set to Follow the content look. A screen with a look of its own keeps it.
+        - heading "Content this template renders" [level=3] [ref=f7e154]
+        - paragraph [ref=f7e155]: An unticked kind is not blanked — a screen wearing this template holds what it already had.
+        - generic [ref=f7e156]:
+          - switch "Scripture" [checked] [ref=f7e157] [cursor=pointer]:
+            - generic [aria-hidden] [ref=f7e159]: Shows
+          - switch "Songs / Lyrics" [checked] [ref=f7e160] [cursor=pointer]:
+            - generic [aria-hidden] [ref=f7e162]: Shows
+          - switch "Media" [checked] [ref=f7e163] [cursor=pointer]:
+            - generic [aria-hidden] [ref=f7e165]: Shows
+          - switch "Announcements" [checked] [ref=f7e166] [cursor=pointer]:
+            - generic [aria-hidden] [ref=f7e168]: Shows
+          - switch "Timer / Countdown" [checked] [ref=f7e169] [cursor=pointer]:
+            - generic [aria-hidden] [ref=f7e171]: Shows

@@ -214,6 +214,15 @@ mod tests {
         "fire_media",
         "start_countdown",
         "adjust_countdown",
+        // A timer control is a live control: it changes a number a congregation or a
+        // preacher is looking at, and `show_timer` puts one on a wall. The lock may
+        // never reach any of them — an operator mid-service who cannot stop a clock
+        // that is counting down to the wrong thing has no way out of it.
+        "start_timer",
+        "adjust_timer",
+        "stop_timer",
+        "list_timers",
+        "show_timer",
         "set_detection_enabled",
         "set_sensitivity",
         "set_thresholds",

@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import TemplateRender from './TemplateRender.svelte';
-import { formatCountdown, countdownWarning, makeLayer, isLayered, isKeyedTemplate, boundValue, regionsToLayers, STARTERS, formatElapsed, formatRemaining } from './layers.js';
+import { formatCountdown, countdownWarning, COUNTDOWN_WARN_MS, makeLayer, isLayered, isKeyedTemplate, boundValue, regionsToLayers, STARTERS, formatElapsed, formatRemaining } from './layers.js';
+import { countdownTotalMs } from './countdown.js';
 
 describe('layer model', () => {
   it('makes typed layers with sane defaults and unique ids', () => {
@@ -334,5 +335,65 @@ describe('countdownWarning', () => {
   it('falls back to the last minute when the total is unknown', () => {
     expect(countdownWarning(30_000)).toBe(true);
     expect(countdownWarning(120_000)).toBe(false);
+  });
+
+  // ── THE THRESHOLD IS NOW A SETTING (wave 3, track D) ──────────────────────
+  // Until this wave the window was a rule with nowhere to set it. It is now an
+  // explicit third argument: the figure a timer or a cue carries. Absent, the
+  // rule below it is exactly what it always was, which is what lets the three
+  // existing call sites stay unedited.
+
+  it('an explicit threshold wins over the sixty-second default', () => {
+    // Two minutes' warning on a fifteen-minute countdown: today's rule says no
+    // at 90s left, the operator's own figure says yes.
+    expect(countdownWarning(90_000, 15 * 60_000)).toBe(false);
+    expect(countdownWarning(90_000, 15 * 60_000, 120_000)).toBe(true);
+    // And it wins downwards too, which is the half a "take the larger of the
+    // two" implementation would pass the first assertion without.
+    expect(countdownWarning(30_000, 15 * 60_000)).toBe(true);
+    expect(countdownWarning(30_000, 15 * 60_000, 10_000)).toBe(false);
+  });
+
+  it('an explicit threshold is not scaled down by the short-countdown rule', () => {
+    // The tenth rule exists because nobody CHOSE the minute. Somebody has now
+    // chosen this, so it is used as asked rather than quietly reduced to 12s.
+    expect(countdownWarning(30_000, 2 * 60_000)).toBe(false);
+    expect(countdownWarning(30_000, 2 * 60_000, 60_000)).toBe(true);
+  });
+
+  it('null and undefined both fall back to today\u2019s rule exactly', () => {
+    // The three call sites pass two arguments, so `undefined` is the ordinary
+    // case and must not be read as "warn at zero" or as "warn always".
+    expect(countdownWarning(59_000, 15 * 60_000, null)).toBe(true);
+    expect(countdownWarning(61_000, 15 * 60_000, undefined)).toBe(false);
+    expect(countdownWarning(13_000, 2 * 60_000, null)).toBe(false);
+    expect(countdownWarning(11_000, 2 * 60_000, undefined)).toBe(true);
+    expect(countdownWarning(30_000, null, null)).toBe(true);
+  });
+
+  it('a threshold that is not a positive number is not a threshold', () => {
+    // A blank field, a cleared setting or a NaN out of a parse must land on the
+    // rule, never on a window of zero — which would be a warning colour that
+    // never comes on, on the one surface whose whole job is to come on.
+    for (const bad of [0, -5_000, NaN, '', 'soon', {}]) {
+      expect(countdownWarning(30_000, 15 * 60_000, bad)).toBe(true);
+      expect(countdownWarning(90_000, 15 * 60_000, bad)).toBe(false);
+    }
+    expect(COUNTDOWN_WARN_MS).toBe(60_000);
+  });
+
+  it('a null total from countdownTotalMs is a flat window, never a guessed span', () => {
+    // `countdown.js::countdownTotalMs` refuses to invent a span when either end
+    // is missing, because a made-up span puts the colour on at the wrong moment.
+    // The warning rule has to honour that refusal rather than fill it in.
+    const noSpan = { countdown_to: Date.now() + 30_000 };
+    expect(countdownTotalMs(noSpan)).toBe(null);
+    // The default rule: the flat last minute, not a fraction of anything.
+    expect(countdownWarning(30_000, countdownTotalMs(noSpan))).toBe(true);
+    expect(countdownWarning(90_000, countdownTotalMs(noSpan))).toBe(false);
+    // And an explicit figure is used flat as well: a tenth of an unknown span
+    // is the guess this refuses to make.
+    expect(countdownWarning(90_000, countdownTotalMs(noSpan), 120_000)).toBe(true);
+    expect(countdownWarning(11_000, countdownTotalMs(noSpan), 120_000)).toBe(true);
   });
 });

@@ -4423,32 +4423,37 @@ way; a message addressed to a PERSON is not in that class. `FRAME_VERDICTS` keep
 `("stage_alert", false)`, so it is never retained and a tablet rejoining ten minutes later is not
 handed a message meant for a moment that has passed (rule 43). The rehearsal gate is unchanged.
 
-**Three — the word to the preacher SURVIVES a panic control on the stage page, deliberately.** This
-ratifies the behaviour that was already there and records the reason, which is the part that was
-missing.
+**Three — the word to the preacher COMES DOWN with the screens, on both panic controls.**
 
-An alert is an instruction to a person, not a state of the wall. Every other field that branch
-clears rides WITH the content and describes the slide — the note, the next verse, the countdown —
-and clearing the content is what makes them wrong. An alert arrives on its own frame, is cleared by
-its own empty frame, and is most likely to be needed at exactly the moment the operator blanks the
-screens: if `Esc` also wiped the sentence telling the preacher why the room had just gone dark, the
-panic control would be deleting its own explanation. The same argument `svcStart` already makes one
-field along.
+**This paragraph previously ruled the opposite, and the reversal is recorded rather than tidied
+away.** The ruling written here first was that the alert SURVIVES `Esc` and `B`, on the ground that
+an instruction to a person is not a state of the wall and is most wanted at the moment the room goes
+dark. The operator has ruled against it. §91 carries the decision and the full reasoning; the short
+form is that `.alert` is `position: fixed; inset: 0` — on `Stage.svelte` it IS the screen rather
+than a figure on it, so a survivor left a full-bleed pulsing red panel as the brightest thing in
+the room under a control the console had just reported succeeding. Clearing it is also what makes
+the live path agree with the reconnect path, since `stage_alert` is never retained (rule 43,
+`FRAME_VERDICTS`) and a tablet that reloaded came back with no alert while the one beside it kept
+the panel.
 
-The operator keeps a one-action way to remove it — send a blank Stage Message — so this is not a
-message that cannot be taken back, which is the condition on which "it survives" is defensible at
-all.
+What survives a panic control is what COUNTS rather than what SAYS something: `svcStart` and a
+`Stage`-scoped programme timer. That line is §91's, and this decision defers to it.
 
 **The half this does NOT make true, stated rather than glossed.** A stage display served through
-`output.html` behaves differently: `TemplateRender`'s whole layer stack is inside `{#if content}`,
-so a cleared wall blanks everything on that page including a `stage_message` layer, and the message
-reappears when content returns because it lives in renderer state rather than on the frame. So the
-two stage surfaces disagree across a panic control. That is a real divergence, it is filed as
-RG-143 rather than described as a design, and changing it means changing what `TemplateRender`
+`output.html` still does not behave like `Stage.svelte` across a panic control, and the ruling
+narrows the divergence rather than closing it. `TemplateRender`'s whole layer stack is inside
+`{#if content}` and `Output.svelte` passes `content={visible ? content : null}`, so a cleared or
+blacked wall takes the `stage_message` layer away with everything else — which is now the same
+visible outcome the ruling gives `Stage.svelte`. But `stageMessage` is renderer state and not a
+field on the frame, so it is never reset: the moment the next verse is fired the message paints
+again, unbidden, after a control the operator used to take every sentence back. `Stage.svelte`
+needs a new Stage Message to say it again; `output.html` says it again on its own. That is filed as
+RG-156 rather than described as a design, and changing it means changing what `TemplateRender`
 renders with no content — which is rule 37 and rule 42 territory and is not this wave's to move.
-The second known limit is that a `stage_alert` has no Tauri emit at all, so a stage display wired as
-a NATIVE window receives nothing; that is deliberate (`e2e::r5_a_word_to_the_preacher_reaches_no_
-congregation_channel` asserts the Tauri door stays shut) and is filed in the same row.
+The second known limit is untouched by the ruling: a `stage_alert` has no Tauri emit at all, so a
+stage display wired as a NATIVE window receives nothing; that is deliberate
+(`e2e::r5_a_word_to_the_preacher_reaches_no_congregation_channel` asserts the Tauri door stays shut)
+and is filed in the same row.
 
 ### Instrument
 
@@ -4534,7 +4539,7 @@ out of the bundle rather than re-deriving them, so there is one rule and not two
 old hashed `/assets/…` URL now points at a path the bundle no longer holds, and that picture will
 not paint. No seeded template does this (a seeded row could never have carried a build hash), so it
 can only affect a template somebody edited by hand, and re-picking the background in the editor is
-the whole repair. It is filed as RG-144 rather than left as a surprise.
+the whole repair. It is filed as RG-157 rather than left as a surprise (filed as RG-144; renumbered when wave 3 and wave 5 met, both having filed from RG-143 upward).
 
 **What this does not change.** It does not move the release decision. It does not touch detection,
 the router or any threshold. It writes nothing to the service record — a starter plan is something
@@ -4563,3 +4568,99 @@ ships into.
 asked whether tables were empty or read the only media row, which was exact while a fresh install
 had nothing in it. They measure the demo dataset as a delta and scope every row to the ledger now,
 which is the claim they were always making.
+
+---
+
+## 91. A panic control silences a room; it does not stop the clocks (2026-09-16)
+
+**This supersedes the refusal in §27**, and it is worth being precise about which sentence moves,
+because the guarantee everybody actually depends on does not.
+
+§27 wrote: *"The panic 'Clear all screens' stays TOTAL — a monitor is not exempt. A persistent
+service timer that survives the clear was considered and REFUSED: it would mean adding an 'except
+monitors' branch to a life-critical control."* It then closed with the reason this section exists:
+*"Whether a stage monitor should ignore the congregation clear is a real product decision, left
+open rather than resolved by a quiet special-case."* The operator has taken that decision. §27 is
+being answered, not overruled.
+
+**The decision.** A `Stage`-scoped timer survives `Clear screens` and `Blackout`. A `Both`-scoped
+timer does not. Everything a congregation can see still goes, totally, on both controls.
+
+### Why this is safe to reverse, in three parts
+
+**One: §27 left the question open and said so.** It refused a specific implementation — an "except
+monitors" branch inside the control — and named the product question as unanswered. That refusal
+was right about the implementation and this decision keeps it: see "the split is a property of the
+timer" below.
+
+**Two: §27's "no exceptions" was already not literally true in shipped code, in two places.** The
+stage page's own clear/black branch (`src/Stage.svelte`) resets what the page is showing and then
+deliberately keeps the service elapsed clock, on a stated ground: *"A cleared or blacked wall is
+not the end of a service, and the elapsed zone is the preacher's own clock — taking it away when
+the operator hits Esc would answer a question nobody asked."* That is this decision already taken,
+locally, for one figure, eighteen months before anybody wrote it down. The second place was the
+stage `alert`, and that one was undecided rather than decided — the `alert` part below settles it.
+
+**Three: the congregation guarantee is exactly as strong as it was.** `clear` and `black` take back
+every congregation screen totally. Nothing about what reaches a congregation changes, in either
+direction, and a `Both` timer — the countdown a congregation actually sees — is stopped by both
+controls exactly as it was before this wave.
+
+### The split is a property of the timer, never a question inside the control
+
+This is the half of §27's refusal that is kept, and it is the load-bearing half. `channels::clear`
+and `channels::black` both call `stop_congregation_timers`, which is `registry.stop_scope(Scope::Both)`
+and nothing else. **No branch anywhere asks which screen it is talking to.** A panic control that
+has to work out which screen it is addressing is a panic control that can fail to answer, and rule
+15 does not allow one of those. §27 was right that an "except monitors" branch inside a life-critical
+control would be a bad way to get this, and it is not how this is got: the scope is decided once,
+when the timer is started, by the person starting it.
+
+### `alert` — the silent third answer, settled
+
+The clear/black branch reset `visible`, `note`, `cdTo`, `cdFrom`, `cdPaused` and `next`, and did not
+reset `alert`. Nothing in the tree recorded why, which made it a third answer to the very question
+this section exists to answer, given by nobody.
+
+**The decision: a word to the preacher comes down with the screens.** `alert` is cleared by both
+controls, and the code now says so where it says the same about the other five.
+
+Three things decided it, and the third is evidence rather than taste.
+
+- **A stage alert is the whole screen, not a figure on it.** `.alert` is `position: fixed; inset: 0;
+  z-index: 50`, a full-bleed pulsing red panel with the page's own comment saying *"this panel IS
+  the screen"*. So an operator pressing `B` — whose entire meaning is *every output goes opaque
+  black* — left one screen in the room as the brightest thing in it. The same branch already
+  refuses that shape in as many words: *"the harsher control must never do less than the milder
+  one… an operator who has just hit the emergency key cannot be asked to remember that it reaches
+  three screens out of four."*
+- **A timer counts; an alert says something.** That is the line this whole section draws. A panic
+  control takes back everything somebody PUT on a screen — a verse, a note, an up-next, a
+  congregation countdown, a sentence typed to the preacher. What survives is what was already
+  running and measures time rather than speaking: the service clock and a programme timer. A
+  programme timer keeps answering *how long have I got*, which is true whether or not anything is
+  on any screen. "Wrap up — five minutes" is a sentence, and the operator who hit the panic key has
+  just taken every other sentence back.
+- **The two halves of the room disagreed with each other.** `stage_alert` is not a retained frame
+  (`FRAME_VERDICTS` holds it at `false`, deliberately, so a private word cannot arrive again later
+  — rule 43). So a stage tablet that reloaded, locked its screen or dropped off the wifi came back
+  with **no** alert, while the tablet beside it that stayed connected kept the red panel through the
+  clear. Two devices, one service, two different screens, and nothing anywhere saying which was
+  right. Clearing `alert` on a panic is what makes the live path agree with the reconnect path that
+  already existed.
+
+**What this costs, stated plainly.** An operator who hits `Esc` for an unrelated reason — a wrong
+verse on the wall — also takes down an instruction the preacher may not have read. That is the
+trade, it is the same trade `clear` already makes for the cue note, and the way back is one action
+on a control that is already there.
+
+### Instrument
+
+`e2e::{a_clear_takes_the_congregation_timer_and_leaves_the_programme_timer,
+a_blackout_answers_the_same_way_as_a_clear}` — both controls, named separately, because the
+guarantee for the harsher one was being carried by the tail of a test named after the milder one.
+`src/lib/stagepanic.test.js` pins the `alert` decision against the mounted page, for both controls,
+and asserts beside it the service clock the same branch keeps — so neither half of the line can be
+tidied into the other. Both halves were watched to go red separately: removing `alert = ''` fails
+the two alert cases, which is the defect exactly as it shipped, and resetting `svcStart` beside it
+fails the two clock cases, which is the opposite mistake a reader could make from the same section.

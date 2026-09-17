@@ -225,13 +225,24 @@ service lock · update safety · diagnostics · models.
 | `template://updated` | A template changed; every surface re-renders from one engine |
 | `model://progress` · `done` · `error` · `cancelled` | The in-app STT model download. **`done` has no listener on purpose** — `download_model` resolves when the file is installed and verified, so the command's own return *is* the completion signal; a listener as well would handle it twice |
 | `output://channel_roles` | What each screen is FOR — channel ids against `main`/`stage` (DECISIONS §89). Configuration, so it paints nothing; what it decides is whether the NEXT Stage Message is accepted, which is filtered at the receiving page because the kiosk hub records nothing about who connected (§35). Emitted for native output windows because the hub frame reaches only browser sources, and a projector and an OBS source disagreeing about which of them is the stage is the "guarantee kept on one door" mistake |
+| `output://default_template` | The operator's configured fallback template changed. Native windows get this event; kiosk and OBS clients get the hub frame of the same name, which is cached and replayed on hello, because a browser source has no database to read the setting from. Landed in wave 2 and reached neither this table nor CLAUDE.md's count until RG-155 |
 | `channel://retemplate` | A screen's template was reassigned. The native output filters it by its own `channel` id, which is why a template swap is live and needs no new URL (DECISIONS §29) |
 | `rehearsal://changed` | Rehearsal was turned on or off. Pushed rather than polled, because every surface must agree about it at the same instant |
 
 Networked clients get the content events as JSON frames over the WS hub
-(`{kind:"content"|"clear"|"black"|"stage_next"|"stage_alert"|"channel_template"|"channel_roles", …}`), and send
-exactly three kinds back — `hello`, `beat`, `rendered` — none of which can carry content
-([SECURITY.md](SECURITY.md) T4).
+(`{kind:"content"|"clear"|"black"|"stage_next"|"stage_alert"|"template"|"transition"|"channel_template"|"default_template"|"channel_roles"|"timer", …}`),
+and send exactly three kinds back — `hello`, `beat`, `rendered` — none of which can carry
+content ([SECURITY.md](SECURITY.md) T4).
+
+**Reproduce that list rather than trusting it**, from `channels.rs`'s own `FRAME_VERDICTS`
+rather than from either side of a merge. It named six of the eleven for a while —
+`template`, `transition` and `default_template` were each published, answered for in
+`FRAME_VERDICTS` and in `r6-contracts.test.js`, and missing from this sentence, so the
+prose was short by three before `timer` and `channel_roles` arrived in two separate waves
+and made it five. The two tests are the register; this line is a summary of it, and a
+summary that drifts is how the enumeration stopped being one.
+`channels::tests::every_kind_this_module_publishes_has_an_explicit_verdict` reads the
+module's own source and fails on any published kind with no verdict.
 
 **A client that says `hello` is answered with two things that decide what it shows: its
 template, and WHAT IS ON THE SCREENS RIGHT NOW.** It was three — the operator's custom
@@ -250,6 +261,23 @@ a monitor-only extra and must not stand in for the content it accompanies. Neith
 moment, and a tablet rejoining ten minutes later must not be handed it. Because
 `clear` and `black` are published through the same door, joining late can never undo
 a panic control.
+
+**The programme timers are replayed too, and in their own slot.** A `Stage`-scoped
+timer publishes no content frame at all — which is exactly why it survives a verse,
+a song or a notice — so it reaches a stage tablet as a `timer` frame carrying the
+whole stage-visible set, and `KioskHub` keeps the last one in `last_timers`. It is a
+STATE and not a moment, which is the difference from `stage_alert`: it is still
+running when the tablet comes back, and a phone that locked its screen mid-sermon
+would otherwise get no clock until the operator next touched a timer. **It is never
+retained as the screen frame**, for the same reason as `transition` and the two
+template frames: `last_screen` holds one frame and the newest wins, so a clock there
+would replace the verse and the next screen to join would be sent the programme over
+a blank wall. **The full hello order is template, `default_template`, `channel_roles`, `transition`,
+`timer`, then the retained screen frame last** — every configuration frame first, the
+reading last, so a late-joining tablet never flashes a clock or a role map over it. Two
+waves added a slot to that sequence independently and neither displaced the rule: the
+screen frame is still sent last, and nothing but `content`, `clear` and `black` is ever
+retained as one.
 
 **Every kind needs a verdict per client, and two of them are `false` on purpose.** `stage_next`
 and `stage_alert` are for the platform, not the room: the first is the verse coming up, the

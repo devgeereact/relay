@@ -1493,6 +1493,77 @@ fn r2_a_passage_must_not_stay_armed_under_unrelated_content() {
     );
 }
 
+/// A PAYLOAD THAT FORGOT TO NAME ITS KIND STILL DISARMS THE PASSAGE.
+///
+/// Rule 38's guard read `kind.as_deref().is_some_and(|k| k != "scripture")`, and
+/// `is_some_and` is **false for `None`** — so content built the way
+/// `..Default::default()` invites, with every field the caller cared about and
+/// `kind` left unset, walked straight past the one place a passage is disarmed.
+/// Every caller in the tree happens to set it; nothing said so, and the test above
+/// cannot see the gap because it fires a song, which names itself.
+///
+/// The failure is reached by FORGETTING A FIELD rather than by adding a content
+/// kind, which is why it survived the sweep that produced rule 38: the choke point
+/// exists precisely so a kind added next year is disarmed by construction (rule
+/// 36), and an ABSENT kind was the one shape that choke point did not cover.
+///
+/// Unspecified is treated as NOT scripture, which is the fail-safe direction and
+/// deliberately not a refusal. A passage wrongly disarmed makes `nav` answer
+/// `NoPassage` — a correct boundary the operator is told about (rule 38b). A
+/// passage wrongly left armed walks a reading the congregation stopped looking at
+/// twenty minutes ago and answers `Fired`, which is true of the wall and false of
+/// the sermon. Only one of those two reaches a congregation. Refusing the
+/// broadcast instead would blank a screen over content that renders perfectly
+/// well, which is not what `preflight` is for (rule 36).
+#[test]
+fn r2_a_payload_that_forgot_its_kind_still_disarms_the_passage() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    // Sermon scripture, and the passage armed behind it.
+    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).unwrap();
+    settle();
+    assert!(
+        matches!(
+            nav(h.clone(), "next".into()).unwrap(),
+            NavResult::Fired { .. }
+        ),
+        "precondition: the passage is armed, so this test can tell the two answers apart"
+    );
+    settle();
+
+    // …then a notice takes the wall, built by a caller that filled in what it
+    // cared about and left `kind` at its default.
+    broadcast_with_clock(
+        &h,
+        channels::OutputContent {
+            reference: "Notice".into(),
+            text: Some("The hall is open after the service".into()),
+            ..Default::default()
+        },
+    )
+    .expect("a payload with a reference and text is not an empty screen");
+    settle();
+    assert!(
+        wall.last().unwrap()["text"]
+            .as_str()
+            .unwrap_or("")
+            .contains("The hall is open"),
+        "precondition: the notice is what is on the wall"
+    );
+
+    let r = nav(h.clone(), "next".into()).unwrap();
+    settle();
+    assert!(
+        matches!(r, NavResult::NoPassage),
+        "`next` walked a passage under content that named no kind: {} — the wall now \
+         shows {:?}",
+        r.kind(),
+        wall.last().unwrap()["reference"]
+    );
+}
+
 // ── THE AUTO-FIRE PATH ──────────────────────────────────────────────────────
 //
 // Everything above drives a HUMAN path: `manual_fire`, `nav`, `clear_screens`.
@@ -3344,19 +3415,105 @@ fn r7_the_transport_can_never_start_a_countdown() {
     settle();
     assert_eq!(wall.count(), 0, "a refusal reached a screen");
 
-    // And once a verse has replaced the countdown, the transport is about a countdown
-    // that is no longer there — so it refuses rather than re-aiming the verse.
+    // AND ONCE A VERSE HAS REPLACED THE COUNTDOWN, THE TRANSPORT TOUCHES NO SCREEN.
+    //
+    // This half used to assert that the transport REFUSED here, and that refusal was
+    // a consequence of where the state lived rather than a decision anybody took:
+    // the countdown WAS the live content, so a verse forgot it. The timer registry
+    // gives it a lifetime of its own, so the press now succeeds — and the two
+    // assertions that follow are the ones that were always the point, kept verbatim:
+    // **a transport press may never take a congregation screen.** Putting a timer
+    // back in front of people is `show_timer`, an explicit action that says what it
+    // does; it is never a side effect of `+1`.
     start_five(&h);
     manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).expect("fire");
     settle();
     let before = wall.count();
-    adjust_countdown(h.clone(), Some(60_000), None).expect_err("the countdown is gone");
+    adjust_countdown(h.clone(), Some(60_000), None).expect("the countdown is still there");
     settle();
-    assert_eq!(wall.count(), before, "a refusal reached a screen");
+    assert_eq!(
+        wall.count(),
+        before,
+        "a re-aim repainted a countdown over a sermon"
+    );
     assert_eq!(
         wall.last().expect("the wall")["reference"],
         "John 3:16",
         "the verse must still be up"
+    );
+}
+
+/// **THE ONE THE WAVE EXISTS TO PASS: A COUNTDOWN SURVIVES A VERSE, AND THE WAY BACK
+/// IS AN EXPLICIT ACTION.**
+///
+/// The reported defect. The countdown was four fields riding on the one live
+/// `OutputContent`, held in a single slot, so firing anything else forgot it and
+/// `adjust_countdown` answered "Nothing is counting down." with no way back at all —
+/// the operator had to start a second countdown and guess how long was left on the
+/// first.
+///
+/// Two halves, and both matter:
+///
+/// * the re-aim **succeeds**, because a timer has a lifetime of its own now;
+/// * the re-aim **paints nothing**, because a transport press may never take a
+///   congregation screen back from a sermon.
+#[test]
+fn r7_a_countdown_survives_a_verse_and_can_still_be_re_aimed_without_taking_the_wall() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    start_five(&h);
+    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).expect("fire");
+    settle();
+    let before = wall.count();
+
+    adjust_countdown(h.clone(), Some(90_000), None).expect("a verse did not end the countdown");
+    settle();
+    assert_eq!(
+        wall.count(),
+        before,
+        "a re-aim repainted a countdown over a sermon"
+    );
+    assert_eq!(
+        wall.last().expect("the wall")["reference"],
+        "John 3:16",
+        "the verse must still be up"
+    );
+
+    // The timer is still there, and it is holding the ADJUSTED figure — not the five
+    // minutes it was started with. A re-aim that silently did nothing would leave the
+    // registry at 5:00 and look exactly like this from the wall's side.
+    let listed = list_timers(h.clone()).expect("list the timers");
+    assert_eq!(
+        listed.len(),
+        1,
+        "one countdown was started, so there is one timer"
+    );
+    assert!(
+        (60_000..=90_000).contains(&listed[0].remaining_ms),
+        "the re-aim did not reach the registry: {}ms left",
+        listed[0].remaining_ms
+    );
+
+    // THE WAY BACK. It is one action, it says what it does, and it carries the
+    // adjusted figure rather than the original one.
+    show_timer(h.clone(), h.state::<Db>(), listed[0].timer.id, None).expect("put it back up");
+    settle();
+    let back = wall.last().expect("the wall");
+    assert_eq!(
+        back["kind"], "countdown",
+        "show_timer put up something else"
+    );
+    assert_eq!(
+        back["reference"], "Service begins in",
+        "the label did not survive the round trip"
+    );
+    let to = back["countdown_to"].as_i64().expect("an instant");
+    let left = to - cd_now_ms();
+    assert!(
+        (60_000..=90_000).contains(&left),
+        "the wall got the ORIGINAL five minutes back, not the 90s it was re-aimed to: {left}ms"
     );
 }
 
@@ -3591,5 +3748,436 @@ fn r0_a_picture_reaches_the_wall_and_disarms_the_passage() {
         matches!(r, NavResult::NoPassage),
         "a picture replaced the reading, so `next` must not walk it: {}",
         r.kind()
+    );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  THE THREE DOORS STOP FORGETTING — Wave 3, Track A, Task 3
+//
+//  `note_countdown` kept the countdown only while the LIVE CONTENT was a countdown,
+//  which is why a verse forgot it. The two tests below are that lifetime stated at
+//  the doors rather than at the registry: one says a verse must not take a timer,
+//  the other says a panic control must.
+//
+//  They live here rather than in `channels.rs`'s own `mod tests` on purpose. The
+//  claim is about what the real commands do to the real doors, and driving it from
+//  here means no `OutputContent` is built by hand to make the point — which is the
+//  thing five hand-rolled copies drifted apart doing.
+// ════════════════════════════════════════════════════════════════════════════
+
+/// FIRING A VERSE DOES NOT FORGET THE CONGREGATION TIMER.
+///
+/// The door-level half of the reported defect. `broadcast_content` used to forget
+/// the countdown for any content that was not one, so the lifetime of a timer was
+/// decided by whatever happened to be on the screens.
+#[test]
+fn firing_a_verse_does_not_forget_the_congregation_timer() {
+    let app = app();
+    let h = app.handle().clone();
+
+    start_five(&h);
+    assert_eq!(list_timers(h.clone()).expect("list").len(), 1);
+
+    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).expect("fire");
+    settle();
+    assert_eq!(
+        list_timers(h.clone()).expect("list").len(),
+        1,
+        "a verse took the congregation timer with it"
+    );
+
+    // …and so does everything else a service puts on a screen.
+    fire_content(
+        h.clone(),
+        h.state::<Db>(),
+        "Notices".into(),
+        "Tea afterwards".into(),
+        "announcement".into(),
+        None,
+        None,
+    )
+    .expect("a notice");
+    settle();
+    assert_eq!(
+        list_timers(h.clone()).expect("list").len(),
+        1,
+        "a notice took the congregation timer with it"
+    );
+}
+
+/// STARTING A COUNTDOWN REPLACES THE ONE BEFORE IT RATHER THAN STACKING.
+///
+/// The old single slot kept this by construction — there was one countdown because
+/// there was one slot. A registry is a map, so the rule has to be said out loud, and
+/// this is what says it. Without it every press of Start leaves a dead clock behind:
+/// `list_timers` is the surface an operator would use to find the timer counting
+/// down to the wrong thing, and a list that fills with abandoned ones is how they
+/// stop reading it.
+#[test]
+fn starting_a_second_countdown_replaces_the_first_rather_than_stacking() {
+    let app = app();
+    let h = app.handle().clone();
+
+    start_five(&h);
+    let first = list_timers(h.clone()).expect("list")[0].timer.id;
+    start_five(&h);
+    settle();
+
+    let after = list_timers(h.clone()).expect("list");
+    assert_eq!(
+        after.len(),
+        1,
+        "a second countdown stacked on the first instead of replacing it"
+    );
+    assert_ne!(
+        after[0].timer.id, first,
+        "the new countdown must be a new timer, not the old one re-aimed in place"
+    );
+
+    // A programme timer is a different question and Start must not take one.
+    let programme = start_timer(
+        h.clone(),
+        20.0,
+        "Sermon".into(),
+        "Wrap up".into(),
+        "stage".into(),
+        None,
+        None,
+    )
+    .expect("a programme timer");
+    start_five(&h);
+    settle();
+    assert!(
+        list_timers(h.clone())
+            .expect("list")
+            .iter()
+            .any(|t| t.timer.id == programme),
+        "starting a congregation countdown took the preacher's clock with it"
+    );
+}
+
+/// THE PREACHER'S OWN CLOCK NEVER REACHES THE CONGREGATION'S WALL.
+///
+/// A `Stage` timer is the programme, and the programme is not something a
+/// congregation is shown: "Sermon · 4:12 left" on the wall behind a preacher is the
+/// operator's bookkeeping in front of the whole building. `show_timer` refuses one
+/// in words rather than projecting it into the four `countdown_*` fields, which it
+/// would otherwise fit perfectly — and fitting perfectly is exactly why this needs a
+/// test rather than a comment.
+#[test]
+fn a_programme_timer_cannot_be_put_on_a_congregation_screen() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    let programme = start_timer(
+        h.clone(),
+        20.0,
+        "Sermon".into(),
+        "Wrap up".into(),
+        "stage".into(),
+        None,
+        None,
+    )
+    .expect("a programme timer");
+    settle();
+    assert_eq!(
+        wall.count(),
+        0,
+        "starting a timer painted a screen by itself"
+    );
+
+    let err = show_timer(h.clone(), h.state::<Db>(), programme, None)
+        .expect_err("a stage timer has no congregation wire form");
+    assert!(
+        err.to_string().contains("stage monitor"),
+        "the refusal has to be readable in a booth: {err}"
+    );
+    settle();
+    assert_eq!(wall.count(), 0, "a refused put-back reached a screen");
+
+    // And an unknown scope is refused rather than guessed at — guessing `both` puts
+    // a programme timer in front of a congregation, which is the one mistake here
+    // that cannot be taken back quietly.
+    start_timer(
+        h.clone(),
+        5.0,
+        "".into(),
+        "".into(),
+        "monitor".into(),
+        None,
+        None,
+    )
+    .expect_err("there are two scopes and that is not one of them");
+}
+
+/// A CLEAR TAKES THE CONGREGATION TIMER AND LEAVES THE PROGRAMME TIMER.
+///
+/// The congregation guarantee does not move: what `clear` and `black` take off a
+/// congregation screen stays off it, and
+/// `r7_a_cleared_countdown_cannot_be_brought_back_by_the_transport` still pins that
+/// from the transport's side.
+///
+/// A `Stage`-scoped timer is a different question, and the answer is a property of
+/// the TIMER rather than a branch inside the panic control — a control that has to
+/// ask which screen it is talking to can fail to answer. Track C is where the stage
+/// tablet learns to show one; this is where its lifetime is decided.
+#[test]
+fn a_clear_takes_the_congregation_timer_and_leaves_the_programme_timer() {
+    let app = app();
+    let h = app.handle().clone();
+
+    start_five(&h);
+    let programme = start_timer(
+        h.clone(),
+        20.0,
+        "Sermon".into(),
+        "Wrap up".into(),
+        "stage".into(),
+        None,
+        None,
+    )
+    .expect("a programme timer");
+    settle();
+    assert_eq!(list_timers(h.clone()).expect("list").len(), 2);
+
+    clear_screens(h.clone()).expect("clear");
+    settle();
+    assert_eq!(
+        list_timers(h.clone())
+            .expect("list")
+            .iter()
+            .map(|t| t.timer.id)
+            .collect::<Vec<_>>(),
+        vec![programme],
+        "a clear must take the congregation timer and leave the programme one"
+    );
+
+    // Blackout is the harsher of the two and must do exactly as much, and no more.
+    start_five(&h);
+    blackout(h.clone()).expect("black");
+    settle();
+    assert_eq!(
+        list_timers(h.clone())
+            .expect("list")
+            .iter()
+            .map(|t| t.timer.id)
+            .collect::<Vec<_>>(),
+        vec![programme],
+        "a blackout must take the congregation timer and leave the programme one"
+    );
+}
+
+/// A REHEARSAL REACHES NO STAGE TABLET, AND THIS TEST WATCHES THE DOOR IT LEAVES BY.
+///
+/// **The assertion surface is the claim.** `Wall` listens for Tauri events, and
+/// `publish_timers` emits none — it publishes to the kiosk hub and nothing else,
+/// which is exactly the shape that let `stage_next` ship gated in name only and leak
+/// "up next" to a live stage tablet mid-rehearsal while the e2e rehearsal test
+/// stayed green. So this watches `qa::Kiosk`, the hub itself.
+///
+/// The live case is asserted FIRST, so this cannot pass by the publish path being
+/// broken outright — the failure mode of every "assert nothing happened" test.
+#[test]
+fn a_programme_timer_published_during_a_rehearsal_reaches_no_stage_tablet() {
+    let app = app();
+    let h = app.handle().clone();
+    let mut kiosk = qa::Kiosk::attach(&h);
+
+    // A real service: the programme timer must reach the tablet.
+    start_timer(
+        h.clone(),
+        20.0,
+        "Sermon".into(),
+        "Wrap up".into(),
+        "stage".into(),
+        None,
+        None,
+    )
+    .expect("a programme timer");
+    settle();
+    let live = kiosk
+        .next()
+        .expect("a real service must reach the stage tablet");
+    assert!(
+        live.contains(r#""kind":"timer""#) && live.contains("Sermon"),
+        "the stage tablet got something other than the programme timer: {live}"
+    );
+
+    set_rehearsal(
+        h.clone(),
+        h.state::<Session>(),
+        h.state::<channels::Rehearsal>(),
+        true,
+    )
+    .expect("enter rehearsal");
+
+    // Every door into the registry that publishes, not only the one that creates.
+    let rehearsed = start_timer(
+        h.clone(),
+        10.0,
+        "Offering".into(),
+        String::new(),
+        "stage".into(),
+        None,
+        None,
+    )
+    .expect("a second programme timer");
+    adjust_timer(h.clone(), rehearsed, Some(5 * 60_000), None).expect("re-aim it");
+    stop_timer(h.clone(), rehearsed).expect("stop it");
+    settle();
+    assert!(
+        kiosk.silent(),
+        "a rehearsal's programme clock escaped to a live stage tablet — the same \
+         leak as `stage_next`, on the same screen"
+    );
+}
+
+/// STOPPING THE LAST PROGRAMME TIMER TAKES IT OFF THE PREACHER'S SCREEN.
+///
+/// An absent frame cannot say "there are none now". Publishing nothing on a stop
+/// would leave the clock on the tablet, counting, for the rest of the service — and
+/// nothing on that screen could tell the preacher it was stale. So the whole
+/// stage-visible SET is published every time, and the empty set is a real frame.
+#[test]
+fn stopping_the_last_programme_timer_publishes_an_empty_set_to_the_stage() {
+    let app = app();
+    let h = app.handle().clone();
+    let mut kiosk = qa::Kiosk::attach(&h);
+
+    let programme = start_timer(
+        h.clone(),
+        20.0,
+        "Sermon".into(),
+        "Wrap up".into(),
+        "stage".into(),
+        None,
+        None,
+    )
+    .expect("a programme timer");
+    settle();
+    kiosk.next().expect("the start reached the tablet");
+
+    stop_timer(h.clone(), programme).expect("stop");
+    settle();
+    let frame = kiosk
+        .next()
+        .expect("stopping the last programme timer told the tablet nothing");
+    let v: serde_json::Value = serde_json::from_str(&frame).expect("valid JSON");
+    assert_eq!(v["kind"], "timer");
+    assert_eq!(
+        v["timers"].as_array().map(|a| a.len()),
+        Some(0),
+        "the stage tablet was not told the programme clock is gone: {frame}"
+    );
+}
+
+/// A CONGREGATION TIMER IS NOT THE PROGRAMME, AND THE STAGE FRAME SAYS SO.
+///
+/// The two scopes share a registry and a wire vocabulary, which is precisely why
+/// this needs asserting: projecting a `Both` timer into the stage frame would put
+/// the pre-service countdown in the preacher's programme rail, and it would look
+/// entirely plausible there.
+#[test]
+fn a_congregation_countdown_never_appears_in_the_programme_rail() {
+    let app = app();
+    let h = app.handle().clone();
+    let mut kiosk = qa::Kiosk::attach(&h);
+
+    start_timer(
+        h.clone(),
+        5.0,
+        "Service begins in".into(),
+        "Welcome".into(),
+        "both".into(),
+        None,
+        None,
+    )
+    .expect("a congregation timer");
+    settle();
+
+    // The frame is still published — the set simply has nothing in it — because the
+    // publisher asks no question about what changed. See `start_timer`.
+    let mut seen = Vec::new();
+    while let Some(m) = kiosk.next() {
+        seen.push(m);
+    }
+    let timer_frames: Vec<&String> = seen
+        .iter()
+        .filter(|m| m.contains(r#""kind":"timer""#))
+        .collect();
+    assert!(
+        !timer_frames.is_empty(),
+        "no timer frame reached the hub at all: {seen:?}"
+    );
+    for frame in timer_frames {
+        let v: serde_json::Value = serde_json::from_str(frame).expect("valid JSON");
+        assert_eq!(
+            v["timers"].as_array().map(|a| a.len()),
+            Some(0),
+            "a congregation countdown was published into the preacher's programme \
+             rail: {frame}"
+        );
+    }
+}
+
+/// A BLACKOUT ANSWERS THE SAME WAY AS A CLEAR.
+///
+/// `a_clear_takes_the_congregation_timer_and_leaves_the_programme_timer` already
+/// presses `blackout` in its second half, and that half does catch a `black` that
+/// forgets to stop the congregation timer. It catches it on an app where a CLEAR
+/// HAS ALREADY RUN, and under a name that claims the clear. Two things follow from
+/// that, and both are the reason this test exists beside it rather than inside it.
+///
+/// The first is ordering. `stop_congregation_timers` had already been called once
+/// down the clear path before the blackout half started, so the blackout was only
+/// ever asked the question second. A control that behaves correctly on a registry
+/// something else has already touched, and wrongly on a fresh one, is not a shape
+/// anybody would predict — which is exactly why it should not be left untested.
+/// Here the app has never seen a panic control before `blackout` is pressed.
+///
+/// The second is the name. `Stage.svelte`'s clear/black branch says in as many
+/// words that if Relay ever lets the stage survive a panic, it must survive BOTH
+/// controls, deliberately, in both branches, "not by one of them being forgotten"
+/// — and the guarantee for the harsher of the two was carried by the tail of a
+/// test named after the milder one. A guarantee is only kept on the doors you
+/// checked, and a door nobody named is the one that gets tidied away.
+///
+/// DECISIONS §91.
+#[test]
+fn a_blackout_answers_the_same_way_as_a_clear() {
+    let app = app();
+    let h = app.handle().clone();
+
+    let programme = start_timer(
+        h.clone(),
+        20.0,
+        "Sermon".into(),
+        "Wrap up".into(),
+        "stage".into(),
+        None,
+        None,
+    )
+    .expect("a programme timer");
+    start_five(&h);
+    settle();
+    assert_eq!(
+        list_timers(h.clone()).expect("list").len(),
+        2,
+        "the fixture needs one timer of each scope for the question to mean anything"
+    );
+
+    // The FIRST panic control this app has seen, and it is the harsher one.
+    blackout(h.clone()).expect("black");
+    settle();
+    assert_eq!(
+        list_timers(h.clone())
+            .expect("list")
+            .iter()
+            .map(|t| t.timer.id)
+            .collect::<Vec<_>>(),
+        vec![programme],
+        "a blackout must take the congregation timer and leave the programme one, \
+         on a registry no other panic control has touched first"
     );
 }

@@ -1,0 +1,284 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - button "Back to Templates" [ref=e5] [cursor=pointer]
+    - generic [ref=e8]: Probe
+    - generic [ref=e9]: 12 layers · 1920×1080
+    - generic [ref=e10]:
+      - button "Undo" [disabled] [ref=e11]
+      - button "Redo" [disabled] [ref=e15]
+    - generic [ref=e19]:
+      - button "Zoom out" [ref=e20] [cursor=pointer]: −
+      - generic [ref=e21]: 100%
+      - button "Zoom in" [disabled] [ref=e22]: +
+    - button "Preview" [ref=e23] [cursor=pointer]
+    - button "Fullscreen" [ref=e24] [cursor=pointer]
+    - button "Test on screens" [ref=e25] [cursor=pointer]
+    - button "History" [ref=e27] [cursor=pointer]
+    - button "Save Template" [ref=e28] [cursor=pointer]
+  - generic [ref=e29]:
+    - complementary [ref=e30]:
+      - generic [ref=e31]:
+        - generic [ref=e32]: Layers
+        - button "Add layer" [ref=e34] [cursor=pointer]: ＋
+      - generic [ref=e35]:
+        - button "Object number 12 Hide Object number 12 Lock Object number 12 Text Bring Object number 12 forward Send Object number 12 back Delete Object number 12" [ref=e36] [cursor=pointer]:
+          - generic [aria-hidden] [ref=e37]: ⠿
+          - generic "Object number 12" [ref=e42]
+          - generic [ref=e43]:
+            - button "Hide Object number 12" [ref=e44]: ●
+            - button "Lock Object number 12" [ref=e45]: 🔓
+          - generic [ref=e46]:
+            - generic [aria-hidden] [ref=e47]: T
+            - generic [ref=e48]: Text
+          - generic [ref=e49]:
+            - button "Bring Object number 12 forward" [ref=e50]: ↑
+            - button "Send Object number 12 back" [ref=e51]: ↓
+            - button "Delete Object number 12" [ref=e52]: ✕
+        - button "Object number 11 Hide Object number 11 Lock Object number 11 Text Bring Object number 11 forward Send Object number 11 back Delete Object number 11" [ref=e53] [cursor=pointer]:
+          - generic [aria-hidden] [ref=e54]: ⠿
+          - generic "Object number 11" [ref=e59]
+          - generic [ref=e60]:
+            - button "Hide Object number 11" [ref=e61]: ●
+            - button "Lock Object number 11" [ref=e62]: 🔓
+          - generic [ref=e63]:
+            - generic [aria-hidden] [ref=e64]: T
+            - generic [ref=e65]: Text
+          - generic [ref=e66]:
+            - button "Bring Object number 11 forward" [ref=e67]: ↑
+            - button "Send Object number 11 back" [ref=e68]: ↓
+            - button "Delete Object number 11" [ref=e69]: ✕
+        - button "Object number 10 Hide Object number 10 Lock Object number 10 Background Bring Object number 10 forward Send Object number 10 back Delete Object number 10" [ref=e70] [cursor=pointer]:
+          - generic [aria-hidden] [ref=e71]: ⠿
+          - generic "Object number 10" [ref=e74]
+          - generic [ref=e75]:
+            - button "Hide Object number 10" [ref=e76]: ●
+            - button "Lock Object number 10" [ref=e77]: 🔓
+          - generic [ref=e78]:
+            - generic [aria-hidden] [ref=e79]: ▦
+            - generic [ref=e80]: Background
+          - generic [ref=e81]:
+            - button "Bring Object number 10 forward" [ref=e82]: ↑
+            - button "Send Object number 10 back" [ref=e83]: ↓
+            - button "Delete Object number 10" [ref=e84]: ✕
+        - button "Object number 9 Hide Object number 9 Lock Object number 9 Text Bring Object number 9 forward Send Object number 9 back Delete Object number 9" [ref=e85] [cursor=pointer]:
+          - generic [aria-hidden] [ref=e86]: ⠿
+          - generic "Object number 9" [ref=e91]
+          - generic [ref=e92]:
+            - button "Hide Object number 9" [ref=e93]: ●
+            - button "Lock Object number 9" [ref=e94]: 🔓
+          - generic [ref=e95]:
+            - generic [aria-hidden] [ref=e96]: T
+            - generic [ref=e97]: Text
+          - generic [ref=e98]:
+            - button "Bring Object number 9 forward" [ref=e99]: ↑
+            - button "Send Object number 9 back" [ref=e100]: ↓
+            - button "Delete Object number 9" [ref=e101]: ✕
+        - button "Object number 8 Hide Object number 8 Lock Object number 8 Text Bring Object number 8 forward Send Object number 8 back Delete Object number 8" [ref=e102] [cursor=pointer]:
+          - generic [aria-hidden] [ref=e103]: ⠿
+          - generic "Object number 8" [ref=e108]
+          - generic [ref=e109]:
+            - button "Hide Object number 8" [ref=e110]: ●
+            - button "Lock Object number 8" [ref=e111]: 🔓
+          - generic [ref=e112]:
+            - generic [aria-hidden] [ref=e113]: T
+            - generic [ref=e114]: Text
+          - generic [ref=e115]:
+            - button "Bring Object number 8 forward" [ref=e116]: ↑
+            - button "Send Object number 8 back" [ref=e117]: ↓
+            - button "Delete Object number 8" [ref=e118]: ✕
+        - button "Object number 7 Hide Object number 7 Lock Object number 7 Background Bring Object number 7 forward Send Object number 7 back Delete Object number 7" [ref=e119] [cursor=pointer]:
+          - generic [aria-hidden] [ref=e120]: ⠿
+          - generic "Object number 7" [ref=e123]
+          - generic [ref=e124]:
+            - button "Hide Object number 7" [ref=e125]: ●
+            - button "Lock Object number 7" [ref=e126]: 🔓
+          - generic [ref=e127]:
+            - generic [aria-hidden] [ref=e128]: ▦
+            - generic [ref=e129]: Background
+          - generic [ref=e130]:
+            - button "Bring Object number 7 forward" [ref=e131]: ↑
+            - button "Send Object number 7 back" [ref=e132]: ↓
+            - button "Delete Object number 7" [ref=e133]: ✕
+        - button "Object number 6 Hide Object number 6 Lock Object number 6 Text Bring Object number 6 forward Send Object number 6 back Delete Object number 6" [ref=e134] [cursor=pointer]:
+          - generic [aria-hidden] [ref=e135]: ⠿
+          - generic "Object number 6" [ref=e140]
+          - generic [ref=e141]:
+            - button "Hide Object number 6" [ref=e142]: ●
+            - button "Lock Object number 6" [ref=e143]: 🔓
+          - generic [ref=e144]:
+            - generic [aria-hidden] [ref=e145]: T
+            - generic [ref=e146]: Text
+          - generic [ref=e147]:
+            - button "Bring Object number 6 forward" [ref=e148]: ↑
+            - button "Send Object number 6 back" [ref=e149]: ↓
+            - button "Delete Object number 6" [ref=e150]: ✕
+        - button "Object number 5 Hide Object number 5 Lock Object number 5 Text Bring Object number 5 forward Send Object number 5 back Delete Object number 5" [ref=e151] [cursor=pointer]:
+          - generic [aria-hidden] [ref=e152]: ⠿
+          - generic "Object number 5" [ref=e157]
+          - generic [ref=e158]:
+            - button "Hide Object number 5" [ref=e159]: ●
+            - button "Lock Object number 5" [ref=e160]: 🔓
+          - generic [ref=e161]:
+            - generic [aria-hidden] [ref=e162]: T
+            - generic [ref=e163]: Text
+          - generic [ref=e164]:
+            - button "Bring Object number 5 forward" [ref=e165]: ↑
+            - button "Send Object number 5 back" [ref=e166]: ↓
+            - button "Delete Object number 5" [ref=e167]: ✕
+        - button "Object number 4 Hide Object number 4 Lock Object number 4 Background Bring Object number 4 forward Send Object number 4 back Delete Object number 4" [ref=e168] [cursor=pointer]:
+          - generic [aria-hidden] [ref=e169]: ⠿
+          - generic "Object number 4" [ref=e172]
+          - generic [ref=e173]:
+            - button "Hide Object number 4" [ref=e174]: ●
+            - button "Lock Object number 4" [ref=e175]: 🔓
+          - generic [ref=e176]:
+            - generic [aria-hidden] [ref=e177]: ▦
+            - generic [ref=e178]: Background
+          - generic [ref=e179]:
+            - button "Bring Object number 4 forward" [ref=e180]: ↑
+            - button "Send Object number 4 back" [ref=e181]: ↓
+            - button "Delete Object number 4" [ref=e182]: ✕
+        - button "Object number 3 Hide Object number 3 Lock Object number 3 Text Bring Object number 3 forward Send Object number 3 back Delete Object number 3" [ref=e183] [cursor=pointer]:
+          - generic [aria-hidden] [ref=e184]: ⠿
+          - generic "Object number 3" [ref=e189]
+          - generic [ref=e190]:
+            - button "Hide Object number 3" [ref=e191]: ●
+            - button "Lock Object number 3" [ref=e192]: 🔓
+          - generic [ref=e193]:
+            - generic [aria-hidden] [ref=e194]: T
+            - generic [ref=e195]: Text
+          - generic [ref=e196]:
+            - button "Bring Object number 3 forward" [ref=e197]: ↑
+            - button "Send Object number 3 back" [ref=e198]: ↓
+            - button "Delete Object number 3" [ref=e199]: ✕
+        - button "Object number 2 Hide Object number 2 Lock Object number 2 Text Bring Object number 2 forward Send Object number 2 back Delete Object number 2" [ref=e200] [cursor=pointer]:
+          - generic [aria-hidden] [ref=e201]: ⠿
+          - generic "Object number 2" [ref=e206]
+          - generic [ref=e207]:
+            - button "Hide Object number 2" [ref=e208]: ●
+            - button "Lock Object number 2" [ref=e209]: 🔓
+          - generic [ref=e210]:
+            - generic [aria-hidden] [ref=e211]: T
+            - generic [ref=e212]: Text
+          - generic [ref=e213]:
+            - button "Bring Object number 2 forward" [ref=e214]: ↑
+            - button "Send Object number 2 back" [ref=e215]: ↓
+            - button "Delete Object number 2" [ref=e216]: ✕
+        - button "Object number 1 Hide Object number 1 Lock Object number 1 Background Bring Object number 1 forward Send Object number 1 back Delete Object number 1" [ref=e217] [cursor=pointer]:
+          - generic [aria-hidden] [ref=e218]: ⠿
+          - generic "Object number 1" [ref=e221]
+          - generic [ref=e222]:
+            - button "Hide Object number 1" [ref=e223]: ●
+            - button "Lock Object number 1" [ref=e224]: 🔓
+          - generic [ref=e225]:
+            - generic [aria-hidden] [ref=e226]: ▦
+            - generic [ref=e227]: Background
+          - generic [ref=e228]:
+            - button "Bring Object number 1 forward" [ref=e229]: ↑
+            - button "Send Object number 1 back" [ref=e230]: ↓
+            - button "Delete Object number 1" [ref=e231]: ✕
+      - paragraph [ref=e232]: Top of the list is the front. Drag a row by its grip to reorder, or use ↑ ↓. An indented row is a word inside the band above it — the band decides where it sits, so it moves within the band and not out of it. A locked row will not move, here or on the canvas.
+      - button "Readability 3 it cannot check" [ref=e233] [cursor=pointer]:
+        - generic [ref=e234]: Readability
+        - generic [ref=e235]: 3 it cannot check
+        - generic [aria-hidden] [ref=e236]: ▾
+    - generic [ref=e237]:
+      - toolbar "Align the selected object" [ref=e238]:
+        - generic [ref=e239]: Align
+        - button "Align left" [disabled] [ref=e240]
+        - button "Align centre" [disabled] [ref=e243]
+        - button "Align right" [disabled] [ref=e246]
+        - button "Align top" [disabled] [ref=e249]
+        - button "Align middle" [disabled] [ref=e252]
+        - button "Align bottom" [disabled] [ref=e255]
+        - button "Space across" [ref=e259] [cursor=pointer]
+        - button "Space down" [ref=e260] [cursor=pointer]
+      - generic [ref=e262]:
+        - generic:
+          - generic: "0"
+          - generic: "10"
+          - generic: "20"
+          - generic: "30"
+          - generic: "40"
+          - generic: "50"
+          - generic: "60"
+          - generic: "70"
+          - generic: "80"
+          - generic: "90"
+          - generic: "100"
+        - generic:
+          - generic: "0"
+          - generic: "10"
+          - generic: "20"
+          - generic: "30"
+          - generic: "40"
+          - generic: "50"
+          - generic: "60"
+          - generic: "70"
+          - generic: "80"
+          - generic: "90"
+          - generic: "100"
+        - generic [ref=e263]:
+          - generic [ref=e265]:
+            - generic [ref=e267]: And God called the firmament Heaven. And the evening and the morning were the second day.
+            - generic [ref=e269]: Genesis 1:8 · KJV
+            - generic [ref=e272]: And God called the firmament Heaven. And the evening and the morning were the second day.
+            - generic [ref=e274]: Genesis 1:8 · KJV
+            - generic [ref=e277]: And God called the firmament Heaven. And the evening and the morning were the second day.
+            - generic [ref=e279]: Genesis 1:8 · KJV
+            - generic [ref=e282]: And God called the firmament Heaven. And the evening and the morning were the second day.
+            - generic [ref=e284]: Genesis 1:8 · KJV
+          - generic [ref=e286]:
+            - button "Object number 2" [ref=e287]
+            - button "Object number 3" [ref=e288]
+            - button "Object number 5" [ref=e289]
+            - button "Object number 6" [ref=e290]
+            - button "Object number 8" [ref=e291]
+            - button "Object number 9" [ref=e292]
+            - button "Object number 11" [ref=e293]
+            - button "Object number 12" [ref=e294]
+      - generic [ref=e295]:
+        - generic [ref=e296]: Canvas
+        - generic [ref=e297]: Opaque background
+    - complementary [ref=e298]:
+      - generic [ref=e299]: Design
+      - tablist "Objects on this slide" [ref=e301]:
+        - tab "Object number 1" [ref=e302] [cursor=pointer]
+        - tab "Object number 2" [ref=e303] [cursor=pointer]
+        - tab "Object number 3" [ref=e304] [cursor=pointer]
+        - tab "Object number 4" [ref=e305] [cursor=pointer]
+        - tab "Object number 5" [ref=e306] [cursor=pointer]
+        - tab "Object number 6" [ref=e307] [cursor=pointer]
+        - tab "Object number 7" [ref=e308] [cursor=pointer]
+        - tab "Object number 8" [ref=e309] [cursor=pointer]
+        - tab "Object number 9" [ref=e310] [cursor=pointer]
+        - tab "Object number 10" [ref=e311] [cursor=pointer]
+        - tab "Object number 11" [ref=e312] [cursor=pointer]
+        - tab "Object number 12" [ref=e313] [cursor=pointer]
+      - generic [ref=e314]:
+        - paragraph [ref=e315]: Select a layer to edit it, or add one with ＋.
+        - heading "Template" [level=3] [ref=e316]
+        - generic [ref=e317]:
+          - generic [ref=e318]: Name
+          - textbox "Name" [ref=e319]: Probe
+        - generic [ref=e320]: Used for
+        - generic [ref=e321]:
+          - button "Scripture" [ref=e322] [cursor=pointer]
+          - button "Songs / Lyrics" [ref=e323] [cursor=pointer]
+          - button "Media" [ref=e324] [cursor=pointer]
+          - button "Announcements" [ref=e325] [cursor=pointer]
+          - button "Timer / Countdown" [ref=e326] [cursor=pointer]
+        - paragraph [ref=e327]: A kind ticked here wears this template on every screen set to Follow the content look. A screen with a look of its own keeps it.
+        - heading "Content this template renders" [level=3] [ref=e328]
+        - paragraph [ref=e329]: An unticked kind is not blanked — a screen wearing this template holds what it already had.
+        - generic [ref=e330]:
+          - switch "Scripture" [checked] [ref=e331] [cursor=pointer]:
+            - generic [aria-hidden] [ref=e333]: Shows
+          - switch "Songs / Lyrics" [checked] [ref=e334] [cursor=pointer]:
+            - generic [aria-hidden] [ref=e336]: Shows
+          - switch "Media" [checked] [ref=e337] [cursor=pointer]:
+            - generic [aria-hidden] [ref=e339]: Shows
+          - switch "Announcements" [checked] [ref=e340] [cursor=pointer]:
+            - generic [aria-hidden] [ref=e342]: Shows
+          - switch "Timer / Countdown" [checked] [ref=e343] [cursor=pointer]:
+            - generic [aria-hidden] [ref=e345]: Shows

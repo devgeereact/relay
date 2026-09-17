@@ -11,7 +11,7 @@ and `qa-inventory` reported zero problems throughout and was right both times. I
 zero again on this tree, and is right again.
 
 This is **frozen evidence and findings only.** Nothing here records a fix. Three findings are
-filed in `docs/qa/RELAY_GAP.md` as RG-145, RG-146 and RG-147, and the measured reach of RG-139
+filed in `docs/qa/RELAY_GAP.md` as RG-158, RG-159 and RG-160, and the measured reach of RG-139
 is written into that row. None of it is restated anywhere else.
 
 **A fourth was written, then withdrawn before it was filed, and §8a is why.** The brief this
@@ -19,6 +19,15 @@ pass was given owed two findings; one of them was already caught, catalogued and
 test in the very wave this pass is auditing. Withdrawing it is the point of reading §4 of the
 harness before filing anything, and leaving the withdrawal visible is the point of a frozen
 audit.
+
+> **RENUMBERED AT THE WAVE 3 / WAVE 5 MERGE, 2026-09-17.** This pass filed its rows as
+> RG-143 to RG-147. Wave 3 branched from the same base and filed RG-143 to RG-155 for
+> entirely different findings, so wave 5's five moved up in order and the ids in the body
+> below were rewritten to match: **RG-143 → RG-156, RG-144 → RG-157, RG-145 → RG-158,
+> RG-146 → RG-159, RG-147 → RG-160.** The ids are the only thing that changed. No finding
+> was edited, withdrawn or closed here — closures still go in a fix log, never in a frozen
+> audit — and **RG-156 is the one to re-read**: the operator's ruling in DECISIONS §91
+> settled half of what it filed, and the register row says which half.
 
 ---
 
@@ -234,7 +243,7 @@ A 31-character notice fits in every one of the five and is unaffected. The bound
 gets a fit, `data-fitted` is absent on every one of the ten runs, and `onFit` never fires.
 Rule 37's whole argument is that a fit loop with no notion of failure always succeeds; here
 there is no loop at all, and the surface that reports fit problems to Live has nothing to
-report. Filed as **RG-146**.
+report. Filed as **RG-159**.
 
 ---
 
@@ -254,10 +263,10 @@ each of the four seeded channels in turn:
 
 No role is not a stage, which is the refusing default a filter needs. **PASS.**
 
-**The two stage surfaces still disagree about a panic control, and that is RG-143, confirmed
+**The two stage surfaces still disagree about a panic control, and that is RG-156, confirmed
 not re-filed.** With a message standing on channel 2, a `clear` frame removes the verse, the
 reference and the message together; a `black` frame does the same and paints the blackout.
-`Stage.svelte` deliberately keeps its `alert` through both (DECISIONS §89). Wave 5 makes
+`Stage.svelte` deliberately keeps its `alert` through both (DECISIONS §89). *[Measured 2026-09-16 and true then. The operator has since ruled the other way — DECISIONS §91 — and the stage page now clears `alert` on both controls, so the two surfaces agree about the panic itself. RG-156 carries what is left of the divergence.]* Wave 5 makes
 `output.html` the supported route for a Stage Message, so the disagreement is now between two
 paths a church can plausibly use for the same screen rather than between a used one and a
 theoretical one. The row already carries it.
@@ -374,7 +383,7 @@ Stage 5 · Media 5 · Timer / Countdown 5`, with **no Announcements row at all**
 `kindsPresent` lists only kinds something derives. Before wave 5 the seeded
 `Classic · Announcement` did derive it. The split is deliberate and argued in `shelf.test.js`;
 what that argument does not address is an operator who cannot filter to the notices they were
-handed. **RG-147.**
+handed. **RG-160.**
 
 **Two things are called Up Next, and the name register now ratifies it.** The Library's
 staging queue is headed `Up Next` and its own empty state says *"Cue in Live on a selected
@@ -388,7 +397,7 @@ This is not an uncatalogued collision, which is what makes it worth a row. Track
 `src/lib/views/library/Inspector.svelte` and `src/lib/views/library/LiveOutputRail.svelte`
 among the files allowed to carry it. The track unified the CASING of six labels and, in doing
 so, ratified a name that covers two different behaviours — the shape it exists to remove,
-kept by the instrument built to remove it. **RG-145.**
+kept by the instrument built to remove it. **RG-158.**
 
 ### 8a. The fourth content-look writer — WITHDRAWN, because the wave already caught it
 
@@ -451,7 +460,7 @@ Neither suite failed. The counts are each runner's own summary line, and they ar
 ## 11. Verdict
 
 **Nothing found here blocks wave 5.** The three filed rows are one P1, one P2 and one P3. The
-P1 (RG-146) is a pre-existing gap in a fallback that was specified and not built, and wave 5
+P1 (RG-159) is a pre-existing gap in a fallback that was specified and not built, and wave 5
 enlarged its surface from one seeded crawl to five; it hurts only under a setting a church
 turns on deliberately, and it is silent, which is why it is a P1 rather than a P2. RG-139's
 measured reach is worse than the row's prose in one respect (every non-ticking layer reverts,
