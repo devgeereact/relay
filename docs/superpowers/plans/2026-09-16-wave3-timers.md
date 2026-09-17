@@ -362,3 +362,68 @@ Static instruments in this repository reported zero problems throughout the two 
 - It does not change the `Both` timer's wire form, so nothing downstream of `countdown_*` is re-tested by this wave rather than trusted.
 - It does not close RG-139, RG-140 or RG-141 — the region-model rendering rows are wave 5's, and a timer rendered through a region-model template is still the same defect afterwards.
 - It does not pre-empt wave 5 Track G: `label` stays a field, and whether the dock supplies one is that track's decision.
+
+---
+
+# Operator decisions taken on 2026-09-17, after the browser pass
+
+The browser-driven pass (Track F) filed ten findings. Three of them the audit
+refused to answer, correctly, because each is a product decision rather than a
+bug: what a rehearsal's timers are, what a timer past zero says, and where the
+way back onto a congregation screen lives. They were put to the operator and
+answered. They are written here so the answer outlives the conversation that
+produced it, and each names the row it closes.
+
+## RG-150 — a rehearsal's timers belong to the rehearsal
+
+**Ending a rehearsal stops every timer started inside it.** The registry is
+emptied of them at the exit and the stage tablet is published the real set, which
+is what it should have been seeing all along.
+
+The alternative was to republish at the exit on the grounds that the timers were
+real all along. That is the smaller change and it is the wrong product: it means
+an operator who practises a twenty-minute sermon clock at ten o'clock finds it on
+the preacher's tablet when the service starts, twenty minutes in, counting down
+to a moment that has passed. A rehearsal is a sandbox in every other respect —
+nothing it publishes reaches a screen — and a clock it started is not an
+exception to that.
+
+**Implementation note, not a licence to redesign:** the stop belongs at the
+rehearsal exit and must be a property of the timer (when it was started), never a
+question asked of a screen. `set_rehearsal(false)` stops them and publishes, in
+that order, so the tablet is never shown a set that is about to change.
+
+## RG-153 — a timer past zero counts up, in the warning colour
+
+**A programme timer that reaches zero keeps counting, upward, wearing the warning
+colour.** `+4:37` means the preacher is four and a half minutes over, which is
+the question a stage monitor is actually asked. `formatRemaining`'s negative
+branch already exists for this.
+
+`done_msg` keeps having no reader on the stage rail, and that is now a decision
+rather than an oversight: the words an operator typed are what a CONGREGATION
+countdown says when it lands, and a programme timer is a different instrument. If
+that is ever revisited it is a new row, not this one.
+
+Not to be built while implementing this: a second arithmetic. `countdownRemainingMs`
+stays the one reader of how long is left on every surface, and the upward figure
+is its negative, formatted — not a new subtraction.
+
+## RG-152 — the way back lives in the dock's Countdown block
+
+**`show_timer` gets its control in the dock's Countdown block**, beside Start,
+Pause, Reset, ±1 and Clear. When a `Both` timer exists and is not what is on the
+screens, the block says so and offers to put it back.
+
+Quick tools staying at three blocks is upheld. Track E tried a fourth and
+`quicktools.test.js` refused it on a pinned operator instruction; that pin stands,
+and this is the reason it did not need overturning. Live's programme band was the
+other candidate and loses for one reason: it exists only on the Live workspace,
+and the way back onto a congregation screen must be reachable from anywhere the
+dock is, which is everywhere.
+
+**What the control may not do.** It may not lie about what is on the screens —
+the block's own state has to come from the same fact `adjust_countdown` uses to
+decide whether to repaint, never from a second answer (rule 35). It may not
+create a timer: Start is the one control that puts a countdown in front of people
+for the first time, and `show_timer` refuses a `Stage`-scoped timer in words.
