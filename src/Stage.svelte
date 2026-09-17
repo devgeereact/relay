@@ -1,5 +1,10 @@
 <script>
-  import { formatCountdown, countdownWarning, formatElapsed } from './lib/layers.js';
+  import {
+    formatCountdown,
+    countdownWarning,
+    formatElapsed,
+    setCountdownWarnDefault,
+  } from './lib/layers.js';
   import { countdownRemainingMs, countdownIsPaused, countdownTotalMs } from './lib/countdown.js';
   // Mobile stage-display remote — the preacher opens this on a phone/iPad (via
   // QR or the LAN URL) to see the live verse + reference in real time. No Tauri
@@ -203,21 +208,32 @@
   let cdFrom = null;
   let cdPaused = null;
   let cdDone = '';
+  let cdWarnMs = null; // the threshold chosen for THIS countdown, when one was
   let svcStart = null; // service-start epoch, for the elapsed zone
   let nowMs = 0;
   // ONE READER, shared with the wall and the console (docs/REBRAND.md §7). This was
   // its own subtraction, which was fine while the answer was a subtraction — and is
   // not, now that it has an exception. A preacher's own screen counting down through
   // a countdown the operator has HELD is the surface it matters most on.
-  $: cdContent = { countdown_to: cdTo, countdown_from: cdFrom, countdown_paused_ms: cdPaused };
+  $: cdContent = {
+    countdown_to: cdTo,
+    countdown_from: cdFrom,
+    countdown_paused_ms: cdPaused,
+    countdown_warn_ms: cdWarnMs,
+  };
   $: cdRemain = countdownRemainingMs(cdContent, nowMs);
   $: cdFinished = cdRemain === 0 && !countdownIsPaused(cdContent);
   // ONE FORMATTER, shared with the wall (docs/REBRAND.md §7) — this page used to
   // carry its own copy of the same arithmetic.
   $: cdText = cdRemain == null ? '' : formatCountdown(cdRemain);
   // The span now genuinely rides with the content (`countdown_from`), so the
-  // short-countdown half of the warning rule finally has an answer here too.
-  $: cdWarn = cdRemain != null && countdownWarning(cdRemain, countdownTotalMs(cdContent));
+  // short-countdown half of the warning rule finally has an answer here too — and
+  // so does the third argument, the threshold chosen for this countdown, which this
+  // reader dropped for as long as the argument existed (RG-149(a)). The same rule,
+  // the same three arguments, as the programme rows below and as the wall.
+  $: cdWarn =
+    cdRemain != null &&
+    countdownWarning(cdRemain, countdownTotalMs(cdContent), cdContent.countdown_warn_ms);
   // THREE STACKED PAIRS, and no second piece of arithmetic. `hms` is the one
   // formatter's own `H:MM:SS`, split into its fields and the hours padded — so the
   // rail cannot drift from the figure beneath the reading, or from the wall.
@@ -265,16 +281,48 @@
   // the third argument is the override it already takes: a threshold somebody CHOSE
   // for this timer beats the shared rule, and absent one the shared rule applies —
   // the last minute, or the last tenth of a countdown shorter than ten minutes.
-  // That default is the shipped 60 s here rather than whatever the operator set in
-  // Settings, because the setting does not reach this bundle at all (RG-149, which
-  // is a different row and not this page's to fix).
+  // That default is now the operator's own, not the shipped 60 s: the figure is
+  // DELIVERED to this page on the frames it already receives and applied through
+  // `setCountdownWarnDefault` (see `applyWarnDefault` below). It used to be
+  // unreachable here, because its only writer is `stores/capture.js` and this
+  // bundle has no Tauri bridge to import it with (RG-149(c)).
+  //
+  // AND PAST ZERO IT COUNTS UP. An expired row used to sit at `0:00` for the rest
+  // of the service, which cannot be told from a row that has just been started at
+  // zero and answers neither of the two questions a stage monitor is asked
+  // (RG-153). `+4:37` says the preacher is four and a half minutes over, which is
+  // the one it is actually asked. The operator's decision, 2026-09-17.
+  //
+  // STILL ONE SUBTRACTION. `past: true` lifts the reader's floor; it does not add a
+  // reader. The upward figure is that answer NEGATED and handed to the same
+  // formatter, so a row counting up cannot drift from a row counting down.
+  //
+  // The mark on an over-time row is the SIGN, not the threshold rule.
+  // `countdownWarning` answers false at and below zero — correctly: zero is not
+  // "nearly gone", it is gone — so a row marked only by it would lose its colour at
+  // the instant the time ran out. Being over needs no threshold to know it, and
+  // widening the shared rule to swallow a negative would be a fourth reading of
+  // when to worry on a rule three surfaces share.
+  //
+  // `done_msg` KEEPS HAVING NO READER HERE, and that is a decision rather than an
+  // oversight. The words an operator typed are what a CONGREGATION countdown says
+  // when it lands: `countdown_done` replaces the digits on the wall and on the
+  // countdown mirror above this row. A programme timer is a different instrument —
+  // the preacher's own bookkeeping, shown to one person — and what it is asked past
+  // zero is how far over, not what to announce. If that is ever revisited it is a
+  // new row, not RG-153.
   $: programme = stageTimers
-    .map((t) => ({ t, id: t?.id, label: (t?.label || '').trim(), ms: countdownRemainingMs(t, nowMs) }))
+    .map((t) => ({
+      t,
+      id: t?.id,
+      label: (t?.label || '').trim(),
+      ms: countdownRemainingMs(t, nowMs, { past: true }),
+    }))
     .filter((r) => r.ms != null)
     .map(({ t, ...r }) => ({
       ...r,
-      v: formatCountdown(r.ms),
-      warn: countdownWarning(r.ms, countdownTotalMs(t), t?.warn_ms),
+      v: r.ms <= 0 ? `+${formatCountdown(-r.ms)}` : formatCountdown(r.ms),
+      warn: r.ms <= 0 || countdownWarning(r.ms, countdownTotalMs(t), t?.warn_ms),
     }));
   // THE ROW IS SIZED FROM THE TEXT IT IS ACTUALLY PAINTING.
   //
@@ -288,6 +336,13 @@
   // The widest value decides for every row, so the figures stay one size and the
   // longest of them still cannot be clipped. Same instrument as `figCh` across the
   // bottom, not a new one. Floored at four, the width of `0:00`.
+  //
+  // IT MEASURES THE RENDERED STRING, WHICH IS WHY THE `+` IS FREE. An over-time
+  // figure is one character wider than the one it replaces (`+4:37` for `0:00`,
+  // `+1:00:01` for `1:00:01`), and this row was slicing a seven-character time
+  // three days ago. A budget derived from the remaining milliseconds would be a
+  // character short of every one of them; this one is handed the sign because the
+  // sign is part of the value.
   $: progCh = programme.reduce((n, r) => Math.max(n, r.v.length), 4);
 
   // SERVICE ELAPSED — counts up from the epoch the fired content carries. There is
@@ -449,6 +504,31 @@
   ];
   $: alertSize = ALERT_STEPS.find((s) => alert.length <= s.max)?.size ?? 'sm';
 
+  /**
+   * THE CONFIGURED WARNING WINDOW, DELIVERED RATHER THAN READ — RG-149(c).
+   *
+   * `Settings → General → Countdown warning` lives in `layers.js` module state whose
+   * one writer is `stores/capture.js`, and this page has no Tauri bridge, so it
+   * could not import the writer and could not ask the backend either. The figure is
+   * therefore carried to it on frames it already receives — `warn_default_ms` on the
+   * programme frame (which arrives before any content does, because a timer can be
+   * running before anything is fired) and `countdown_warn_default_ms` on a content
+   * frame. Both are the same figure from the same machine; whichever lands first is
+   * correct, and a later one that disagrees is the operator having changed it.
+   *
+   * An absent figure resets to the shipped minute, deliberately: that is what the
+   * setting reads when it has been cleared, and leaving the last delivered value
+   * standing would be a page warning at a threshold nothing on the machine holds.
+   * `setCountdownWarnDefault` makes the same judgement about zero and about junk.
+   */
+  function applyWarnDefault(ms) {
+    setCountdownWarnDefault(ms);
+    // Nudge the reactive statements that read the rule: `countdownWarning` is a
+    // pure function over module state, so Svelte has no way to know the answer
+    // moved. `nowMs` is the tick every figure on this page already depends on.
+    nowMs = Date.now();
+  }
+
   function apply(m) {
     if (m.kind === 'content') {
       content = { reference: m.reference, text: m.text, translation: m.translation };
@@ -457,6 +537,8 @@
       cdFrom = m.countdown_from || null;
       cdPaused = m.countdown_paused_ms ?? null;
       cdDone = m.countdown_done || '';
+      cdWarnMs = m.countdown_warn_ms ?? null;
+      applyWarnDefault(m.countdown_warn_default_ms);
       svcStart = m.service_started_at ?? null;
       nowMs = Date.now();
       visible = true;
@@ -490,6 +572,10 @@
       // enough. The same trap as `black` above, one field along.
       cdFrom = null;
       cdPaused = null;
+      // The threshold belonged to the countdown that has just been taken down. It
+      // goes with it, or the next countdown started from a plan cue inherits a
+      // figure nobody chose for it.
+      cdWarnMs = null;
       next = null;
       // A STAGE MESSAGE COMES DOWN WITH THE SCREENS — DECISIONS §91.
       //
@@ -540,6 +626,11 @@
       // rows are rendered outside the `visible` gate rather than because anything
       // remembered to re-send them.
       stageTimers = Array.isArray(m.timers) ? m.timers : [];
+      // AND THE CONFIGURED WARNING WINDOW RIDES WITH THE SET. This is the frame
+      // that reaches this page first — a programme timer can be running before
+      // anything has been fired — so reading it here is what stops the surface
+      // whose whole job is the clock sitting on the shipped minute (RG-149(c)).
+      applyWarnDefault(m.warn_default_ms);
     }
   }
 
@@ -710,7 +801,9 @@
        person, and it makes no claim about any screen.
        A timer inside its warning window is the countdown's own red, which is the
        fourth colour this page already uses for exactly this rule and is none of the
-       three above. It is a claim about TIME, not about a screen. -->
+       three above. It is a claim about TIME, not about a screen. A timer that has
+       run OUT wears the same red and counts upward from zero (RG-153) — being over
+       is the far end of the same claim, and it is not a second colour. -->
   {#if programme.length}
     <div class="progrow" style="--tmrs:{programme.length}; --tch:{progCh}" aria-label="Programme">
       {#each programme as t (t.id)}
@@ -1060,7 +1153,9 @@
      carries. The same red as the countdown figure above it and as the wall: a
      countdown that reads as two different states depending on which screen you are
      looking at is worse than one that reads as none. Stated here, unconditionally,
-     so a viewer who asked for no motion still learns the time is nearly gone. */
+     so a viewer who asked for no motion still learns the time is nearly gone.
+     One class, two ends of one claim about time: nearly gone, and gone — a row past
+     zero counts up in this same red rather than in a colour of its own (RG-153). */
   .tmr.warn .tval { color: var(--v-red); }
   /* The zone panel — one instrument, no native dialog (rule 41). */
   .zonepanel { flex: 0 0 auto; max-height: 46dvh; overflow-y: auto; padding: 14px 18px;

@@ -1439,19 +1439,30 @@ if (!keepPlan) leavePlan();
  *  payload, not template: they ride in `content.reference` and a template's
  *  `reference`-bound layer draws them, so a caller that has nothing to say says
  *  nothing and the screens show the digits alone. The Planner is the surface
- *  that does have something to say, and it passes it here. */
+ *  that does have something to say, and it passes it here.
+ *
+ *  `warnMs` is a threshold chosen for THIS countdown — how long before zero the
+ *  figure turns red — and null means "nobody chose one", which falls to the
+ *  configured default and then to the tenth-of-span rule. That ranking is
+ *  `layers.js::countdownWarning`'s and is not restated anywhere. The engine used to
+ *  hard-code `None` here, so a `Both` timer started from the transport could not
+ *  express one at all (RG-149(b)); `startTimer` has taken the same figure since
+ *  wave 3. **No control chooses one yet** — a per-cue field in the planner is what
+ *  would, and that is recorded as still open in RG-149's row rather than implied by
+ *  this parameter. */
 export async function startCountdown(
 minutes,
 label = '',
 doneMsg = '',
 templateId = null,
 keepPlan = false,
+warnMs = null,
 ) {
 if (countdownRunning()) {
   throw new Error('A countdown is already running — clear the screen to start a new one.');
 }
 const call = await invoke();
-await call('start_countdown', { minutes, label, doneMsg, templateId });
+await call('start_countdown', { minutes, label, doneMsg, templateId, warnMs });
 if (!keepPlan) leavePlan();
 }
 

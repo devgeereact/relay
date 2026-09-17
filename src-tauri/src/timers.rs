@@ -14,10 +14,12 @@
 //! consequence of where the state was kept, so the state moved here.
 //!
 //! A timer has an id, a scope and a lifetime of its own. Nothing about a `Both`
-//! timer's wire form changes: it is still projected into the four `countdown_*`
-//! fields, which is what keeps the `is_countdown` guard in `pipeline.rs` from
-//! refusing it as `Unsafe::Nothing`. The registry becomes the source of truth and
-//! those fields become its projection.
+//! timer's wire form changed when the registry arrived: it is still projected into
+//! the `countdown_*` fields, which is what keeps the `is_countdown` guard in
+//! `pipeline.rs` from refusing it as `Unsafe::Nothing`. The registry becomes the
+//! source of truth and those fields become its projection. RG-149 added one field
+//! to that projection and deliberately did not touch the guard — see
+//! `BothProjection`, where the reasoning and its test are named.
 //!
 //! ## Lock discipline
 //!
@@ -41,8 +43,8 @@ pub type TimerId = i64;
 
 /// Which screens a timer is about.
 ///
-/// `Both` reaches every screen, through the content frame and the four
-/// `countdown_*` fields it projects into. `Stage` reaches the stage tablet only and
+/// `Both` reaches every screen, through the content frame and the `countdown_*`
+/// fields it projects into. `Stage` reaches the stage tablet only and
 /// publishes no content frame at all — which is exactly why it survives a verse:
 /// nothing about it rides on the live content, so replacing the live content cannot
 /// forget it.
@@ -60,9 +62,13 @@ pub enum Scope {
 /// `target_ms - from_ms` is the length it was aimed for and the warning rule has a
 /// span to work from — it is never re-stamped by a re-aim.
 ///
-/// `warn_ms` is carried but not read here. It is the per-timer warning threshold, a
-/// later track's reader and writer; carrying the field now means that track is a
-/// change of behaviour rather than a change of shape.
+/// `warn_ms` is the per-timer warning threshold — the figure somebody CHOSE for
+/// this timer, in ms before zero. It is not read here (the rule is
+/// `layers.js::countdownWarning`, one reading, on the far side of the bridge); it is
+/// PROJECTED, by `project_both` for a congregation screen and by
+/// `channels::timer_frame_json` for the stage. It had a carrier and no projection
+/// for the whole of wave 3, which is RG-149(b): a `Both` timer could hold a chosen
+/// threshold and no screen could be told about it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Timer {
     pub id: TimerId,
@@ -74,6 +80,24 @@ pub struct Timer {
     pub warn_ms: Option<i64>,
     pub scope: Scope,
     pub plan_item_id: Option<i64>,
+    /// WAS THIS TIMER STARTED INSIDE A REHEARSAL? — RG-150.
+    ///
+    /// Stamped once, by the creator, from the mode in force at that instant, and
+    /// never written again. It is what `stop_started_in_rehearsal` reads at the
+    /// rehearsal exit.
+    ///
+    /// **A property of the timer, never a question asked of a screen** — the same
+    /// discipline `Scope` already carries for the panic controls
+    /// (`channels::stop_congregation_timers`) and for the same reason: a control
+    /// that has to ask a question can fail to answer it. Asking "is anything on
+    /// the tablet that should not be" at the exit would be that control.
+    ///
+    /// `serde(default)` so an older payload, or a hand-built one, reads as a real
+    /// service's timer. That is the safe absence: a timer wrongly kept is visible
+    /// on a screen and can be stopped, and a timer wrongly taken is a clock that
+    /// vanishes from the preacher's tablet mid-sermon with nothing to say why.
+    #[serde(default)]
+    pub started_in_rehearsal: bool,
 }
 
 /// Why an adjustment was refused. Both are refusals an operator can act on, not
@@ -100,24 +124,35 @@ pub fn remaining_ms(t: &Timer, now_ms: i64) -> i64 {
     t.paused_ms.unwrap_or(t.target_ms - now_ms).max(0)
 }
 
-/// What a `Both` timer looks like on the wire: the four `countdown_*` fields and
-/// the label that rides above them.
+/// What a `Both` timer looks like on the wire: the `countdown_*` fields and the
+/// label that rides above them.
 ///
-/// **The wire form does not change in this wave, and that is load-bearing.** The
+/// **THE FORM MOVED ONCE, FOR RG-149, AND THE RULE ABOVE IT DID NOT.** The
 /// `is_countdown` guard in `pipeline.rs` recognises a countdown by
 /// `countdown_to`/`countdown_paused_ms`/`kind == "countdown"`, and a timer with its
 /// own field names and no text would be refused by the pre-air validator as
 /// `Unsafe::Nothing` — a screen that stays blank while every log says the fire
-/// succeeded. If this form ever moves, `is_countdown` moves in the same commit.
+/// succeeded. `countdown_warn_ms` is deliberately NOT a fourth recognition arm:
+/// it says when to worry about a clock, it is not a clock, and widening the guard
+/// to admit it would wave through a payload with a colour rule and nothing to
+/// paint. That decision is pinned from the other side by
+/// `pipeline::tests::a_warning_threshold_with_no_deadline_is_still_an_empty_screen`.
+/// If this form moves again, `is_countdown` is re-read in the same commit.
 pub struct BothProjection {
     pub reference: String,
     pub countdown_to: i64,
     pub countdown_from: i64,
     pub countdown_paused_ms: Option<i64>,
     pub countdown_done: String,
+    /// The threshold somebody chose for THIS countdown, or None when nobody did.
+    /// None is an absent figure and never a zero: a window of zero is a warning
+    /// colour that never comes on, and the far side ranks it as absent
+    /// (`layers.js::countdownWarning` — chosen, else configured, else the
+    /// tenth-of-span rule).
+    pub countdown_warn_ms: Option<i64>,
 }
 
-/// THE ONE PLACE THE FOUR FIELDS ARE FILLED IN.
+/// THE ONE PLACE THE CONGREGATION WIRE FIELDS ARE FILLED IN.
 ///
 /// The registry owns the facts; these fields are its projection, not a second copy
 /// that can drift from it. Two projectors is how five hand-rolled `OutputContent`
@@ -129,6 +164,7 @@ pub fn project_both(t: &Timer) -> BothProjection {
         countdown_from: t.from_ms,
         countdown_paused_ms: t.paused_ms,
         countdown_done: t.done_msg.clone(),
+        countdown_warn_ms: t.warn_ms,
     }
 }
 
@@ -182,6 +218,47 @@ impl TimerRegistry {
             .timers
             .values()
             .filter(|t| t.scope == scope)
+            .map(|t| t.id)
+            .collect();
+        for id in &doomed {
+            g.timers.remove(id);
+        }
+        doomed.len()
+    }
+
+    /// TAKE EVERY TIMER THAT WAS STARTED INSIDE A REHEARSAL, reporting how many —
+    /// RG-150.
+    ///
+    /// A rehearsal is a sandbox in every other respect: nothing it publishes
+    /// reaches a screen. A clock it started is not an exception to that, so ending
+    /// the rehearsal ends them. The operator decision of 2026-09-17 records what
+    /// the alternative cost: an operator who practises a twenty-minute sermon clock
+    /// at ten o'clock would otherwise find it on the preacher's tablet when the
+    /// service starts, counting toward a moment that has passed.
+    ///
+    /// **It reads the stamp and asks nothing else.** Not the scope, not what a
+    /// screen is currently showing, not the clock — the same shape as `stop_scope`,
+    /// which is why both can be stated in five lines and neither can be wrong about
+    /// a timer it cannot see.
+    ///
+    /// ## What it deliberately leaves
+    ///
+    /// **A timer started BEFORE the rehearsal began survives it.** It was never a
+    /// rehearsal's timer, so on the stated rule it is not one of these, and this
+    /// takes only the stamped ones. The alternative reading — that a rehearsal exit
+    /// clears everything — is a quiet widening, and it would take a real service's
+    /// sermon clock off the preacher's tablet because somebody opened the rehearsal
+    /// switch for ten seconds. Pinned by
+    /// `e2e::a_timer_that_predates_a_rehearsal_survives_the_end_of_it`, on
+    /// `Scope::Stage`, because leaving a rehearsal also clears the screens and a
+    /// clear takes every congregation timer with it (DECISIONS §27) — an older
+    /// guarantee, and not this one.
+    pub fn stop_started_in_rehearsal(&self) -> usize {
+        let mut g = self.inner();
+        let doomed: Vec<TimerId> = g
+            .timers
+            .values()
+            .filter(|t| t.started_in_rehearsal)
             .map(|t| t.id)
             .collect();
         for id in &doomed {
@@ -258,6 +335,7 @@ mod tests {
             warn_ms: None,
             scope,
             plan_item_id: None,
+            started_in_rehearsal: false,
         }
     }
 
@@ -549,6 +627,82 @@ mod tests {
         assert_eq!(
             reg.snapshot_scope(Scope::Both).last().map(|t| t.id),
             ids.last().copied()
+        );
+    }
+
+    /// ENDING A REHEARSAL TAKES THE TIMERS IT STARTED AND NO OTHERS — RG-150.
+    ///
+    /// The registry half of the operator decision of 2026-09-17, where it can be
+    /// stated without a window: the stamp decides, and nothing else is consulted.
+    /// Both directions are asserted, because the two ways to be wrong here have
+    /// very different costs — a rehearsal's clock left counting on a preacher's
+    /// tablet, and a real service's clock taken off it.
+    #[test]
+    fn ending_a_rehearsal_takes_the_timers_it_started_and_no_others() {
+        let now = 1_000_000;
+        let reg = TimerRegistry::default();
+
+        let real = reg.start(five(now, Scope::Stage));
+        let rehearsed = [
+            reg.start(Timer {
+                started_in_rehearsal: true,
+                ..five(now, Scope::Stage)
+            }),
+            // A congregation timer started in a rehearsal is one of these too. The
+            // exit happens to clear the screens as well, which takes every `Both`
+            // timer — but that is DECISIONS §27's guarantee and this one may not
+            // lean on it, or the rule would hold only where something else already
+            // held it.
+            reg.start(Timer {
+                started_in_rehearsal: true,
+                ..five(now, Scope::Both)
+            }),
+        ];
+
+        assert_eq!(
+            reg.stop_started_in_rehearsal(),
+            2,
+            "it must report what it took"
+        );
+        for id in rehearsed {
+            assert!(reg.get(id).is_none(), "a rehearsal's timer outlived it");
+        }
+        assert!(
+            reg.get(real).is_some(),
+            "the rehearsal exit took a timer that predates it — the widening this \
+             decision deliberately does not make"
+        );
+        assert_eq!(
+            reg.stop_started_in_rehearsal(),
+            0,
+            "a second exit takes nothing"
+        );
+    }
+
+    /// A THRESHOLD CHOSEN FOR ONE TIMER SURVIVES THE ONE PROJECTION — RG-149(b).
+    ///
+    /// `warn_ms` was carried on the timer and dropped at the wire, so a `Both`
+    /// timer could hold a chosen threshold and a congregation's screen could not be
+    /// told about it: `project_both` had no warn field at all. That is the half of
+    /// RG-149 no frontend test could see, because there was nothing on the wire for
+    /// a frontend to read. The projection is the ONE place the congregation wire
+    /// form is filled in (rule 36), so it is the one place the field can be lost.
+    #[test]
+    fn a_chosen_threshold_survives_the_one_projection() {
+        let now = 1_000_000;
+        let mut t = five(now, Scope::Both);
+        t.warn_ms = Some(120_000);
+        assert_eq!(
+            project_both(&t).countdown_warn_ms,
+            Some(120_000),
+            "the congregation wire form cannot express a threshold anybody chose"
+        );
+        // An ABSENT threshold stays absent. A zero here would be a warning window
+        // that never opens — a colour that never comes on, which is the same
+        // reasoning `layers.js::setCountdownWarnDefault` keeps on its own side.
+        assert_eq!(
+            project_both(&five(now, Scope::Both)).countdown_warn_ms,
+            None
         );
     }
 }

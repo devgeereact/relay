@@ -67,7 +67,18 @@ describe('the store invents no words for a caller that supplies none', () => {
 
   it('an omitted label and done message reach the engine as nothing at all', async () => {
     await cap.startCountdown(5);
-    expect(startArgs()).toEqual({ minutes: 5, label: '', doneMsg: '', templateId: null });
+    // `warnMs` joined this payload when wave 3's warning chain met wave 5's words
+    // in the consolidation merge. It belongs in the assertion rather than outside
+    // it: this test's claim is that the store INVENTS nothing, and `null` is what
+    // "nobody chose a warning threshold" looks like. Loosening the equality to
+    // let an unexamined field through would retire the claim to save the test.
+    expect(startArgs()).toEqual({
+      minutes: 5,
+      label: '',
+      doneMsg: '',
+      templateId: null,
+      warnMs: null,
+    });
   });
 
   // The other half, and the reason the defaults are emptied rather than the
@@ -80,6 +91,7 @@ describe('the store invents no words for a caller that supplies none', () => {
       label: 'Doors open in',
       doneMsg: 'Please come in',
       templateId: 7,
+      warnMs: null,
     });
   });
 });

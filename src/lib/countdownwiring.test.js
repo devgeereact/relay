@@ -355,7 +355,12 @@ describe('the transport can hold the countdown', () => {
     // an operator types in the fields while one is running. The engine carries
     // the real span now, so the dock and the wall turn red together.
     expect(src).toMatch(/cdTotal = countdownTotalMs\(\$live\) \?\? \$countdownSet/);
-    expect(src).toMatch(/cdWarn = cdLive && countdownWarning\(cdRunning, cdTotal\)/);
+    // The third argument is RG-149(a): a threshold chosen for this countdown beats
+    // the span-scaled rule, and it is read off the same `$live` the span is, so the
+    // dock and the wall cannot rank the two differently.
+    expect(src).toMatch(
+      /cdWarn = cdLive && countdownWarning\(cdRunning, cdTotal, \$live\?\.countdown_warn_ms\)/,
+    );
   });
 
   it('the held state is read from the wall, never remembered by this panel', () => {

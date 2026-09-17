@@ -3292,6 +3292,7 @@ fn start_five(h: &tauri::AppHandle<tauri::test::MockRuntime>) {
         "Service begins in".into(),
         "Welcome".into(),
         None,
+        None,
     )
     .expect("start a countdown");
 }
@@ -3581,6 +3582,7 @@ fn r7_a_re_aim_does_not_rename_or_re_skin_the_countdown() {
         "Doors open in".into(),
         "Please come in".into(),
         None,
+        None,
     )
     .expect("start");
     settle();
@@ -3634,6 +3636,7 @@ fn r7_a_countdown_says_how_long_it_was_aimed_for() {
         2.0,
         "Service begins in".into(),
         "Welcome".into(),
+        None,
         None,
     )
     .expect("start");
@@ -4030,6 +4033,174 @@ fn a_programme_timer_published_during_a_rehearsal_reaches_no_stage_tablet() {
         kiosk.silent(),
         "a rehearsal's programme clock escaped to a live stage tablet — the same \
          leak as `stage_next`, on the same screen"
+    );
+}
+/// A TIMER STARTED INSIDE A REHEARSAL DOES NOT OUTLIVE IT — RG-150.
+///
+/// The operator decision of 2026-09-17: a rehearsal is a sandbox in every other
+/// respect, and a clock it started is not an exception. The alternative was to
+/// republish the set on the way out on the grounds the timers were real all along,
+/// which means an operator who practises a twenty-minute sermon clock at ten
+/// o'clock finds it on the preacher's tablet when the service starts, counting
+/// toward a moment that has passed.
+///
+/// **The assertion surface is the claim**, for the same reason as the rehearsal
+/// test above: `publish_timers` emits no Tauri event, so `qa::Wall` cannot see
+/// this at all and a test written against it would pass over the defect. The
+/// measured defect (`audits/DESIGN-2026-09-16-WAVE3.md` §6) is two separate
+/// failures and both are asserted here — the registry kept `Rehearsal only`, and
+/// the exit published `clear` and `stage_next` and NO `timer` frame, so the
+/// tablet's set and the registry disagreed silently until something unrelated
+/// republished.
+#[test]
+fn a_timer_started_inside_a_rehearsal_does_not_outlive_it() {
+    let app = app();
+    let h = app.handle().clone();
+    let mut kiosk = qa::Kiosk::attach(&h);
+
+    // A real programme timer, before anybody rehearses anything.
+    start_timer(
+        h.clone(),
+        20.0,
+        "Sermon".into(),
+        "Wrap up".into(),
+        "stage".into(),
+        None,
+        None,
+    )
+    .expect("a programme timer");
+    settle();
+    assert!(
+        kiosk.next().is_some_and(|f| f.contains("Sermon")),
+        "the live case must work first, or this test passes by the publish path \
+         being broken outright"
+    );
+
+    set_rehearsal(
+        h.clone(),
+        h.state::<Session>(),
+        h.state::<channels::Rehearsal>(),
+        true,
+    )
+    .expect("enter rehearsal");
+
+    start_timer(
+        h.clone(),
+        10.0,
+        "Rehearsal only".into(),
+        String::new(),
+        "stage".into(),
+        None,
+        None,
+    )
+    .expect("a timer started inside the rehearsal");
+
+    set_rehearsal(
+        h.clone(),
+        h.state::<Session>(),
+        h.state::<channels::Rehearsal>(),
+        false,
+    )
+    .expect("leave rehearsal");
+    settle();
+
+    // HALF ONE: the registry. `list_timers` is the surface an operator would use
+    // to find out what is counting, and it returned `Rehearsal only` alongside the
+    // real ones.
+    let labels: Vec<String> = list_timers(h.clone())
+        .expect("list the timers")
+        .into_iter()
+        .map(|v| v.timer.label)
+        .collect();
+    assert!(
+        !labels.iter().any(|l| l == "Rehearsal only"),
+        "a rehearsal's timer is still in the registry after the rehearsal ended: \
+         {labels:?}"
+    );
+    assert!(
+        labels.iter().any(|l| l == "Sermon"),
+        "the rehearsal exit took a timer that predates it: {labels:?}"
+    );
+
+    // HALF TWO: the wire. The exit must publish the real set, and the tablet must
+    // never be shown one that is about to change — so the LAST timer frame to
+    // leave is what it is holding, and it must be the real set.
+    let mut last_timer_frame = None;
+    while let Some(frame) = kiosk.next() {
+        if frame.contains(r#""kind":"timer""#) {
+            last_timer_frame = Some(frame);
+        }
+    }
+    let frame = last_timer_frame.expect(
+        "ending a rehearsal told the stage tablet nothing about its programme \
+         timers, so its set and the registry disagree in silence",
+    );
+    let v: serde_json::Value = serde_json::from_str(&frame).expect("valid JSON");
+    let on_the_tablet: Vec<&str> = v["timers"]
+        .as_array()
+        .expect("a timer frame carries a set")
+        .iter()
+        .filter_map(|t| t["label"].as_str())
+        .collect();
+    assert_eq!(
+        on_the_tablet,
+        vec!["Sermon"],
+        "the stage tablet was left holding the wrong set after a rehearsal: {frame}"
+    );
+}
+
+/// A TIMER THAT PREDATES A REHEARSAL SURVIVES THE END OF IT — the half RG-150's
+/// decision does not settle, decided here and pinned rather than left to a reading.
+///
+/// The stated rule is that ending a rehearsal stops every timer STARTED INSIDE IT.
+/// A timer started before the rehearsal began was never a rehearsal's timer, so on
+/// that rule it survives, and `TimerRegistry::stop_started_in_rehearsal` is written
+/// to take exactly the ones that were stamped and no others. The alternative
+/// reading — that a rehearsal exit clears everything — is the quiet widening this
+/// repository keeps finding, and it would take a real service's sermon clock off
+/// the preacher's tablet because somebody opened the rehearsal switch for ten
+/// seconds.
+///
+/// `Scope::Stage` deliberately: leaving a rehearsal clears the screens, and a
+/// clear takes every congregation timer with it (DECISIONS §27,
+/// `channels::stop_congregation_timers`). That is an older guarantee and not this
+/// one, so the survival is asserted on the scope where it is actually visible.
+#[test]
+fn a_timer_that_predates_a_rehearsal_survives_the_end_of_it() {
+    let app = app();
+    let h = app.handle().clone();
+
+    let before = start_timer(
+        h.clone(),
+        20.0,
+        "Sermon".into(),
+        "Wrap up".into(),
+        "stage".into(),
+        None,
+        None,
+    )
+    .expect("a programme timer");
+
+    for on in [true, false] {
+        set_rehearsal(
+            h.clone(),
+            h.state::<Session>(),
+            h.state::<channels::Rehearsal>(),
+            on,
+        )
+        .expect("flip rehearsal");
+    }
+    settle();
+
+    let listed = list_timers(h.clone()).expect("list the timers");
+    let still = listed
+        .iter()
+        .find(|v| v.timer.id == before)
+        .expect("a timer nobody started in a rehearsal was taken by the end of one");
+    assert_eq!(still.timer.label, "Sermon");
+    assert!(
+        still.remaining_ms > 19 * 60_000,
+        "it survived and was re-aimed, which is a different kind of wrong"
     );
 }
 
