@@ -1027,6 +1027,111 @@ fn is_screen_frame(msg: &str) -> bool {
         || msg.contains(r#""kind":"black""#)
 }
 
+/// Is this frame a panic control — the two that take a congregation screen back
+/// TOTALLY rather than replacing what is on it?
+///
+/// Pulled out of `is_screen_frame` rather than spelled again, because the
+/// background layer needs the same two names and a second copy of them is a
+/// second list that can drift from the first. Same `contains` discipline and for
+/// the same reason (`serde_json`'s map is a BTreeMap, so no key is first).
+fn is_wipe_frame(msg: &str) -> bool {
+    msg.contains(r#""kind":"clear""#) || msg.contains(r#""kind":"black""#)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE BACKGROUND — a picture that outlives the words painted on top of it
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A PICTURE BEHIND EVERYTHING, WITH A LIFETIME OF ITS OWN.
+///
+/// Until this existed a verse and a picture were mutually exclusive payloads:
+/// the entire layer stack renders inside `{#if content}` and `media_url` is a
+/// field on `OutputContent`, so firing the church's backdrop REPLACED the
+/// reading and firing the reading replaced the backdrop. Scripture over a
+/// church's own background could not be expressed at all.
+///
+/// So it is a second payload kind rather than a field, and the difference is the
+/// whole point: it is not what a screen is SHOWING, it is what the screen is
+/// showing it ON. It survives every content change, it is retained in its own
+/// hub slot and replayed to a screen that joins late (rule 43), and it is taken
+/// down by the two controls that take everything down.
+///
+/// Deliberately NOT a template, a fit or an opacity. Where the picture sits, how
+/// it is cropped and what is dimmed over it are the TEMPLATE's business — a
+/// `backdrop` layer decides all three, per screen, which is what makes this
+/// opt-in by template design and byte-identical on a template without one. A
+/// second authority on how a background is drawn is the defect DECISIONS §69 and
+/// §71 are the scars from.
+#[derive(Clone, Debug, Serialize)]
+pub struct Background {
+    /// Where every screen loads it from — the app's own HTTP server on :8032, so
+    /// a native window and a browser source in OBS fetch the identical bytes.
+    pub media_url: String,
+    /// `image` or `video`. The renderer needs to know which element to paint it
+    /// with, and guessing from the extension is a second rule about a fact the
+    /// database already holds.
+    pub media_kind: String,
+}
+
+/// The wire form of the background, for every kiosk client.
+///
+/// `None` is how a background is TAKEN DOWN, and it is sent as an explicit null
+/// rather than as an absent frame for the same reason `transition_json` does it:
+/// an absent frame cannot say "there is none now", and a screen that missed the
+/// take-down would carry the picture for the rest of the service.
+///
+/// Pure, like `kiosk_content_json`, `timer_frame_json` and `transition_json`, so
+/// the frame can be asserted against without a Tauri app handle.
+fn background_json(bg: Option<&Background>) -> String {
+    serde_json::json!({
+        "kind": "background",
+        "media_url": bg.map(|b| b.media_url.as_str()),
+        "media_kind": bg.map(|b| b.media_kind.as_str()),
+    })
+    .to_string()
+}
+
+/// Is this frame about the background at all?
+///
+/// True for BOTH the frame that puts one up and the frame that takes it down —
+/// they are one message kind, because a screen has to act on both and a
+/// take-down expressed as silence is not a message.
+fn is_background_frame(msg: &str) -> bool {
+    msg.contains(r#""kind":"background""#)
+}
+
+/// WHAT A PUBLISHED FRAME DOES TO THE RETAINED BACKGROUND.
+///
+/// Three answers, and the three-state return is the honest shape:
+///
+/// * `None` — this frame is not about the background. A verse, a clock, a
+///   template, an alert: the backdrop stays exactly where it is, which is the
+///   entire reason this payload exists.
+/// * `Some(None)` — take it down. A panic control does this, and so does a
+///   background frame that names no picture.
+/// * `Some(Some(frame))` — this frame IS the background now.
+///
+/// **The panic arm is why this is decided here.** `publish` is the one door every
+/// frame in this module goes through, so a `clear` or a `black` drops the
+/// backdrop by construction — no publisher has to remember, and no SECOND frame
+/// has to be sent to finish the job. A panic control that needed two frames is a
+/// panic control that can half succeed, and rule 15 does not allow one.
+///
+/// The `"media_url":null` test is a substring match on a frame this module builds
+/// itself, exactly like `is_screen_frame` and `is_timer_frame`, and it is pinned
+/// against the real `background_json` output by
+/// `the_background_retention_rule_agrees_with_what_is_published` — because a
+/// matcher that quietly stops matching looks precisely like the bug it fixes.
+fn background_retention(msg: &str) -> Option<Option<String>> {
+    if is_wipe_frame(msg) {
+        return Some(None);
+    }
+    if !is_background_frame(msg) {
+        return None;
+    }
+    Some((!msg.contains(r#""media_url":null"#)).then(|| msg.to_string()))
+}
+
 /// Push content to every output channel. One broadcast, N independently-styled
 /// renders — native windows (Tauri event) AND networked kiosk clients (WS).
 ///
@@ -1214,6 +1319,46 @@ pub fn black<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String>
     publish_kiosk(app, r#"{"kind":"black"}"#.to_string());
     note_wall(app, false, true);
     Ok(())
+}
+
+/// PUT A PICTURE BEHIND EVERYTHING — or take it away (`None`).
+///
+/// Both doors, because the wall is two kinds of screen: a native output window
+/// with the Tauri bridge and no socket, and a kiosk/OBS browser source with the
+/// socket and no bridge. A background wired to one of the two is the "guarantee
+/// kept on one door" mistake this repository has now made four times, on the two
+/// screens most often in the same room.
+///
+/// REHEARSAL-GATED, and not on a technicality: this is the one publisher here
+/// besides `broadcast_content` that puts an IMAGE in front of a congregation.
+/// The suppression mirrors `broadcast_content`'s exactly — the console still
+/// receives it, so an operator rehearsing sees their own backdrop in the program
+/// pane, and nothing leaves the machine. `stage_next` is the standing reminder of
+/// what a publisher that shipped gated in name only costs.
+///
+/// **It deliberately does NOT touch `WallState`, `LiveContent` or the passage.**
+/// Each of those answers a question about the CONTENT a congregation is reading,
+/// and a backdrop is not content: it carries no reference and no words, so
+/// `/api/live` naming it would be naming a verse that is not there, and disarming
+/// the passage (rule 38) would make `next` answer `NoPassage` in the middle of a
+/// reading the preacher is still in. A background does not REPLACE the reading,
+/// which is the entire reason the payload exists.
+///
+/// Retention, and its removal by a panic control, both happen inside
+/// `KioskHub::publish` — see `background_retention` for why that is the door and
+/// not this function.
+// GENERIC OVER THE RUNTIME (rule 24) — `e2e.rs` has to be able to drive it.
+pub fn set_background<R: tauri::Runtime>(app: &tauri::AppHandle<R>, bg: Option<Background>) {
+    if rehearsing(app) {
+        // Content-free, like every other line on this path: what an operator (or a
+        // bug report) needs to know is that nothing left the machine.
+        println!("rehearsal: background SUPPRESSED — nothing left the machine");
+        let _ = app.emit_to(CONSOLE, "output://background", bg);
+        return;
+    }
+    let json = background_json(bg.as_ref());
+    let _ = app.emit("output://background", bg);
+    publish_kiosk(app, json);
 }
 
 /// Push the "up next" preview to the stage/confidence monitor(s). Distinct from
@@ -1529,6 +1674,27 @@ pub struct KioskHub {
     /// A rehearsal publishes nothing to this hub at all — the gate is at
     /// `publish_timers` — so there is nothing of a rehearsal to replay here either.
     last_timers: Arc<Mutex<Option<String>>>,
+    /// THE PICTURE EVERY SCREEN IS PAINTING ON — the last `background` frame.
+    ///
+    /// ITS OWN SLOT, NOT `last_screen`, and this is the FIFTH time that sentence
+    /// has had to be written in this struct. One slot means the newest frame wins,
+    /// so retaining a backdrop beside `content` would ERASE the retained verse:
+    /// the next screen to join mid-reading would be handed wallpaper and no words
+    /// — rule 43's own failure, delivered by rule 43's own mechanism.
+    ///
+    /// Retained, because a background is the most STATE-like thing this hub
+    /// carries: it is put up once at the top of a service and is still up an hour
+    /// later. A screen that reconnected without it comes back with the words
+    /// floating on black while every other screen in the building carries the
+    /// church's picture, and nothing anywhere says so.
+    ///
+    /// **Emptied by a panic control, at `publish`.** `clear` and `black` go
+    /// through the same door, so the drop is by construction rather than by a
+    /// publisher remembering — and the replay can no more resurrect a background
+    /// than it can resurrect a verse. A rehearsal publishes nothing to this hub at
+    /// all (the gate is at `set_background`), so there is nothing of a rehearsal
+    /// to replay here either.
+    last_background: Arc<Mutex<Option<String>>>,
 }
 
 impl Default for KioskHub {
@@ -1543,6 +1709,7 @@ impl Default for KioskHub {
             last_transition: Arc::new(Mutex::new(None)),
             channel_roles: Arc::new(Mutex::new("{}".to_string())),
             last_timers: Arc::new(Mutex::new(None)),
+            last_background: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -1618,6 +1785,18 @@ impl KioskHub {
                 *last = Some(msg.clone());
             }
         }
+        // A THIRD SLOT, AND THE ONLY ONE A PANIC CONTROL REACHES INTO.
+        //
+        // `background_retention` answers for every frame in the module at once:
+        // leave it alone, take it down, or become it. The take-down arm is why the
+        // decision is here rather than at `set_background` — `clear` and `black`
+        // are published through this same door, so the church's backdrop goes with
+        // the verse by construction, and nothing new had to be sent to achieve it.
+        if let Some(next) = background_retention(&msg) {
+            if let Ok(mut last) = self.last_background.lock() {
+                *last = next;
+            }
+        }
         let _ = self.tx.send(msg); // Err only means no subscribers — fine.
     }
     /// Shared handle to the retained screen frame, for the WS task to send on hello.
@@ -1627,6 +1806,33 @@ impl KioskHub {
     /// Shared handle to the retained programme timers, for the WS task's hello.
     pub fn last_timers_handle(&self) -> Arc<Mutex<Option<String>>> {
         self.last_timers.clone()
+    }
+    /// Shared handle to the retained background, for the WS task's hello.
+    pub fn last_background_handle(&self) -> Arc<Mutex<Option<String>>> {
+        self.last_background.clone()
+    }
+    /// WHAT PICTURE IS BEHIND EVERYTHING RIGHT NOW, for a screen with no socket.
+    ///
+    /// The same argument `current_transition` makes: the kiosk hub replays the
+    /// retained frame on `hello`, and a NATIVE output window has the Tauri bridge
+    /// and no socket. Without a read-back, a projector opened mid-service through
+    /// `open_channel_output` would be the one screen in the building with no
+    /// backdrop, until the operator happened to change it.
+    ///
+    /// Parsed rather than kept as a second field, deliberately: one slot is one
+    /// truth, and a struct beside the frame is a second copy that can disagree
+    /// with what the LAN screens were actually sent. The parse is off the fire
+    /// path — it runs once, when an output window mounts.
+    pub fn current_background(&self) -> Option<(String, String)> {
+        let frame = self.last_background.lock().ok()?.clone()?;
+        let v: serde_json::Value = serde_json::from_str(&frame).ok()?;
+        let url = v.get("media_url")?.as_str()?.to_string();
+        let kind = v
+            .get("media_kind")
+            .and_then(|k| k.as_str())
+            .unwrap_or("image")
+            .to_string();
+        Some((url, kind))
     }
     /// Shared handle to the retained transition override, for the WS task's hello.
     pub fn last_transition_handle(&self) -> TransitionSlot {
@@ -1859,6 +2065,7 @@ pub async fn run_kiosk_server(
     last_screen: Arc<Mutex<Option<String>>>,
     last_transition: TransitionSlot,
     last_timers: Arc<Mutex<Option<String>>>,
+    last_background: Arc<Mutex<Option<String>>>,
     health: OutputHealth,
     port: u16,
 ) {
@@ -1896,6 +2103,7 @@ pub async fn run_kiosk_server(
         let last_screen = last_screen.clone();
         let last_transition = last_transition.clone();
         let last_timers = last_timers.clone();
+        let last_background = last_background.clone();
         let health = health.clone();
         tokio::spawn(async move {
             let _permit = permit;
@@ -2115,6 +2323,24 @@ pub async fn run_kiosk_server(
                                     let timers =
                                         last_timers.lock().ok().and_then(|t| t.clone());
                                     if let Some(frame) = timers {
+                                        let _ = write
+                                            .send(tokio_tungstenite::tungstenite::Message::Text(frame))
+                                            .await;
+                                    }
+                                    // THE PICTURE EVERYTHING IS PAINTED ON.
+                                    // Before the reading and after the
+                                    // configuration, on the same ordering rule as
+                                    // the timers above: a screen sent the backdrop
+                                    // AFTER the verse paints the verse and then
+                                    // slides a picture in behind it, which on a
+                                    // congregation wall reads as a fault. Its own
+                                    // slot, so it cannot have replaced the verse
+                                    // below; emptied by `clear` and `black` at the
+                                    // retention door, so there is nothing here to
+                                    // replay after a panic control.
+                                    let backdrop =
+                                        last_background.lock().ok().and_then(|b| b.clone());
+                                    if let Some(frame) = backdrop {
                                         let _ = write
                                             .send(tokio_tungstenite::tungstenite::Message::Text(frame))
                                             .await;
@@ -3453,6 +3679,7 @@ mod tests {
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
+            hub.last_background_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -3515,6 +3742,7 @@ mod tests {
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
+            hub.last_background_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -3600,6 +3828,7 @@ mod tests {
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
+            hub.last_background_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -3652,6 +3881,7 @@ mod tests {
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
+            hub.last_background_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -3718,6 +3948,7 @@ mod tests {
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
+            hub.last_background_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -3919,6 +4150,16 @@ mod tests {
         // retained — in its own slot (`last_timers`), replayed on hello from there,
         // and sent BEFORE the screen frame so the reading is painted last.
         ("timer", false),
+        // THE PICTURE EVERYTHING IS PAINTED ON. Not retained HERE, for the fifth
+        // time for the fifth identical reason: `last_screen` holds one frame and
+        // the newest wins, so a backdrop retained beside the verse would replace
+        // it and the next screen to join mid-reading would be handed wallpaper and
+        // no words. It IS retained — in its own slot (`last_background`), replayed
+        // on hello from there, and sent BEFORE the screen frame so the reading is
+        // painted last. **It is the one slot a panic control reaches into**: a
+        // `clear` or a `black` empties it at this same door, so the replay can no
+        // more resurrect a background than it can resurrect a verse.
+        ("background", false),
     ];
 
     /// THE ENUMERATION MUST GROW WITH THE MODULE, OR IT IS NOT AN ENUMERATION.
@@ -4035,6 +4276,15 @@ mod tests {
              shape of leak as `stage_next` and on the same screen — it publishes to \
              the hub and emits nothing, so the e2e wall test could not see it, and \
              its rehearsal case watches `qa::Kiosk` instead",
+        ),
+        (
+            "set_background",
+            true,
+            "it puts an IMAGE in front of a congregation, which is the same claim \
+             `broadcast_content` makes and gets the same answer. A rehearsing \
+             operator's backdrop reaches their own console preview and nothing \
+             else — and because it publishes to the hub as well as emitting, its \
+             rehearsal case watches `qa::Kiosk`, not `qa::Wall`",
         ),
         (
             "set_transition",
@@ -4371,6 +4621,7 @@ mod tests {
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
+            hub.last_background_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -4436,6 +4687,7 @@ mod tests {
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
+            hub.last_background_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -4770,6 +5022,263 @@ mod tests {
         assert!(is_timer_frame(&frame));
     }
 
+    // ════════════════════════════════════════════════════════════════════════
+    //  THE BACKGROUND LAYER — a picture that outlives the words painted on it
+    //
+    //  Relay had no persistent background. The whole layer stack sits inside
+    //  `{#if content}` and `media_url` was written at exactly one site in the
+    //  binary, so a verse and a picture were MUTUALLY EXCLUSIVE payloads:
+    //  scripture over the church's own background could not be expressed at all.
+    //  A background is therefore a second payload kind with a lifetime of its
+    //  own, and the first thing that had to be true of it is the thing that can
+    //  hurt a congregation — a clear must still remove EVERYTHING.
+    //
+    //  These four were written BEFORE any of the rendering work, watched to fail,
+    //  and each was watched to fail again with its guard reverted.
+    // ════════════════════════════════════════════════════════════════════════
+
+    /// A PANIC CONTROL TAKES THE BACKGROUND WITH IT.
+    ///
+    /// The invariant the whole layer was built against, at the retention door
+    /// rather than at a publisher: a `clear` and a `black` are published through
+    /// the same `publish` every other frame goes through, so the drop happens by
+    /// construction and a content kind added next year cannot forget it. Nothing
+    /// new is sent to do this — a panic control that needed a SECOND frame to
+    /// finish its job is a panic control that can half succeed, and rule 15 does
+    /// not allow one of those.
+    #[test]
+    fn a_panic_control_takes_the_retained_background_with_it() {
+        for wipe in [r#"{"kind":"clear"}"#, r#"{"kind":"black"}"#] {
+            let hub = KioskHub::default();
+            hub.publish(background_json(Some(&Background {
+                media_url: "http://10.0.0.5:8032/media/3".into(),
+                media_kind: "image".into(),
+            })));
+            assert!(
+                retained_background(&hub).is_some(),
+                "the hub did not retain a background it was handed"
+            );
+            hub.publish(wipe.to_string());
+            assert!(
+                retained_background(&hub).is_none(),
+                "{wipe} left a picture retained, so the next screen to join would \
+                 have been painted a background over a wall the operator took down"
+            );
+        }
+    }
+
+    /// AND A BACKGROUND CAN NEVER BECOME WHAT A SCREEN IS SHOWING.
+    ///
+    /// Its own slot, for the fifth time in this module: `last_screen` holds ONE
+    /// frame and the newest wins, so retaining a picture beside the verse would
+    /// ERASE the verse and the next screen to join mid-reading would be handed
+    /// wallpaper and no words — rule 43's own failure delivered by rule 43's own
+    /// mechanism.
+    #[test]
+    fn a_background_is_not_what_a_screen_is_showing() {
+        let hub = KioskHub::default();
+        hub.publish(
+            r#"{"kind":"content","reference":"Romans 8:28","text":"And we know"}"#.to_string(),
+        );
+        hub.publish(background_json(Some(&Background {
+            media_url: "http://10.0.0.5:8032/media/3".into(),
+            media_kind: "image".into(),
+        })));
+        let screen = hub.last_screen_handle().lock().unwrap().clone();
+        assert!(
+            screen.as_deref().unwrap_or("").contains("Romans 8:28"),
+            "a background replaced the retained verse: {screen:?}"
+        );
+        assert!(retained_background(&hub).is_some());
+    }
+
+    /// THE RETENTION RULE AGREES WITH WHAT IS PUBLISHED.
+    ///
+    /// The other half of every matcher in this module, and the half that caught
+    /// `is_screen_frame` matching nothing while looking exactly like the bug it
+    /// fixed. `background_json(None)` is how a background is TAKEN DOWN, and a
+    /// hub that retained that frame would hold a message whose only effect is to
+    /// say "nothing" — two spellings of an absence, which is how two spellings of
+    /// an absence come to disagree.
+    #[test]
+    fn the_background_retention_rule_agrees_with_what_is_published() {
+        let up = background_json(Some(&Background {
+            media_url: "http://10.0.0.5:8032/media/3".into(),
+            media_kind: "image".into(),
+        }));
+        let down = background_json(None);
+        assert!(is_background_frame(&up), "a real background frame: {up}");
+        assert!(is_background_frame(&down), "so is the one that clears it");
+        assert_eq!(
+            background_retention(&up),
+            Some(Some(up.clone())),
+            "a frame naming a picture IS the background now"
+        );
+        assert_eq!(
+            background_retention(&down),
+            Some(None),
+            "a frame naming no picture takes it down: {down}"
+        );
+        assert_eq!(
+            background_retention(r#"{"kind":"clear"}"#),
+            Some(None),
+            "a panic control takes it down"
+        );
+        assert_eq!(
+            background_retention(r#"{"kind":"black"}"#),
+            Some(None),
+            "and so does the other one"
+        );
+        // Everything else leaves it exactly as it is. A verse must not take the
+        // church's backdrop down, which is the entire point of the payload.
+        for other in [
+            r#"{"kind":"content","reference":"Romans 8:28"}"#,
+            r#"{"kind":"timer","timers":[]}"#,
+            r#"{"kind":"stage_alert","text":"two minutes"}"#,
+            r#"{"kind":"transition","mode":"cut"}"#,
+        ] {
+            assert_eq!(
+                background_retention(other),
+                None,
+                "{other} moved the background, and it is not about the background"
+            );
+        }
+        // And it is never a screen frame — the assertion that keeps the two slots
+        // disjoint by construction.
+        assert!(!is_screen_frame(&up));
+        assert!(!is_screen_frame(&down));
+    }
+
+    /// A SCREEN THAT JOINS MID-SERVICE IS PAINTED THE BACKGROUND TOO.
+    ///
+    /// Rule 43 for the second payload kind. Without this an OBS source that
+    /// restarted came back with the verse and no backdrop — the words floating on
+    /// black while every other screen in the building carried the church's own
+    /// picture, and nothing anywhere saying so.
+    #[tokio::test]
+    async fn a_screen_that_joins_mid_service_is_sent_the_background() {
+        let port = free_port();
+        let hub = KioskHub::default();
+        tokio::spawn(run_kiosk_server(
+            log_only(),
+            hub.sender(),
+            hub.templates_handle(),
+            hub.clients_handle(),
+            hub.default_template_handle(),
+            hub.channel_roles_handle(),
+            hub.last_screen_handle(),
+            hub.last_transition_handle(),
+            hub.last_timers_handle(),
+            hub.last_background_handle(),
+            OutputHealth::default(),
+            port,
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        // The background went up before this screen existed.
+        hub.publish(background_json(Some(&Background {
+            media_url: "http://10.0.0.5:8032/media/3".into(),
+            media_kind: "image".into(),
+        })));
+
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
+            .await
+            .expect("connect");
+        let (mut write, mut read) = ws.split();
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"kind":"hello","template_id":7}"#.to_string(),
+            ))
+            .await
+            .expect("send hello");
+
+        let mut got = None;
+        for _ in 0..8 {
+            let Ok(Some(Ok(msg))) =
+                tokio::time::timeout(std::time::Duration::from_secs(2), read.next()).await
+            else {
+                break;
+            };
+            let text = msg.into_text().unwrap_or_default();
+            if is_background_frame(&text) {
+                got = Some(text);
+                break;
+            }
+        }
+        assert!(
+            got.as_deref().unwrap_or("").contains("/media/3"),
+            "a screen that joined mid-service was sent no background: {got:?}"
+        );
+    }
+
+    /// …AND A SCREEN THAT JOINS AFTER A CLEAR IS SENT NOTHING AT ALL.
+    ///
+    /// The panic half of the test above, and the one that matters. The retained
+    /// slot is emptied by the clear itself, so there is nothing left to replay —
+    /// the replay can no more resurrect a background than it can resurrect a
+    /// verse.
+    #[tokio::test]
+    async fn a_screen_that_joins_after_a_clear_is_sent_no_background() {
+        let port = free_port();
+        let hub = KioskHub::default();
+        tokio::spawn(run_kiosk_server(
+            log_only(),
+            hub.sender(),
+            hub.templates_handle(),
+            hub.clients_handle(),
+            hub.default_template_handle(),
+            hub.channel_roles_handle(),
+            hub.last_screen_handle(),
+            hub.last_transition_handle(),
+            hub.last_timers_handle(),
+            hub.last_background_handle(),
+            OutputHealth::default(),
+            port,
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        hub.publish(background_json(Some(&Background {
+            media_url: "http://10.0.0.5:8032/media/3".into(),
+            media_kind: "image".into(),
+        })));
+        hub.publish(r#"{"kind":"clear"}"#.to_string());
+
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
+            .await
+            .expect("connect");
+        let (mut write, mut read) = ws.split();
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"kind":"hello","template_id":7}"#.to_string(),
+            ))
+            .await
+            .expect("send hello");
+
+        let mut frames: Vec<String> = Vec::new();
+        for _ in 0..8 {
+            let Ok(Some(Ok(msg))) =
+                tokio::time::timeout(std::time::Duration::from_millis(600), read.next()).await
+            else {
+                break;
+            };
+            frames.push(msg.into_text().unwrap_or_default());
+        }
+        assert!(
+            !frames.iter().any(|f| is_background_frame(f)),
+            "a screen that joined after a clear was painted the background back: \
+             {frames:?}"
+        );
+        assert!(
+            frames.iter().any(|f| f.contains(r#""kind":"clear""#)),
+            "and it must still have been told the wall is clear: {frames:?}"
+        );
+    }
+
+    /// The retained background, read the way the WS task reads it.
+    fn retained_background(hub: &KioskHub) -> Option<String> {
+        hub.last_background_handle().lock().unwrap().clone()
+    }
+
     /// A STAGE TABLET THAT JOINS MID-SERVICE IS SENT THE PROGRAMME TIMERS.
     ///
     /// The same failure as rule 43's, on the screen most likely to produce it: a
@@ -4790,6 +5299,7 @@ mod tests {
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
+            hub.last_background_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -4858,6 +5368,7 @@ mod tests {
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
+            hub.last_background_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -4868,6 +5379,10 @@ mod tests {
         hub.cache_default_template(r#"{"name":"House"}"#);
         hub.set_transition(Some("crossfade".into()), Some(320));
         hub.publish(timer_frame_json(&[stage_timer(1, "Offering")], None));
+        hub.publish(background_json(Some(&Background {
+            media_url: "http://10.0.0.5:8032/media/3".into(),
+            media_kind: "image".into(),
+        })));
         hub.publish(
             r#"{"kind":"content","reference":"Romans 8:28","text":"And we know"}"#.to_string(),
         );
@@ -4912,10 +5427,11 @@ mod tests {
                 "channel_roles",
                 "transition",
                 "timer",
+                "background",
                 "content"
             ],
             "the hello reply reached this tablet in the wrong order — the reading \
-             must be painted last, after the clock that accompanies it"
+             must be painted last, after the clock and the backdrop that accompany it"
         );
     }
 
@@ -4946,6 +5462,7 @@ mod tests {
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
+            hub.last_background_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -5008,6 +5525,7 @@ mod tests {
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
+            hub.last_background_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -5081,6 +5599,7 @@ mod tests {
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
+            hub.last_background_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -5140,6 +5659,7 @@ mod tests {
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
+            hub.last_background_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -5398,6 +5918,7 @@ mod tests {
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
+            hub.last_background_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -5454,6 +5975,7 @@ mod tests {
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
+            hub.last_background_handle(),
             health.clone(),
             port,
         ));

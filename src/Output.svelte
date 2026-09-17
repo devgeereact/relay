@@ -35,6 +35,32 @@
   let content = null;
   let visible = false;
   let black = false; // opaque blackout overlay
+  // ── THE STANDING BACKGROUND (the second payload) ───────────────────────────
+  //
+  // `{ media_url, media_kind }`, or null. It is NOT a field on the content and
+  // that is the whole point: the content is what the screen is showing, this is
+  // what it is showing it ON, and a verse arriving must leave it exactly where it
+  // is. Until it existed the two were one field, so a church could have scripture
+  // or its own backdrop and never both.
+  //
+  // **A PANIC CONTROL TAKES IT.** `clear` and `black` set this to null on both
+  // doors below, beside the `visible`/`black` they already set — the single most
+  // important line in this file's half of the feature, because a clear that left
+  // the church's picture on the wall is the worst class of bug in this product.
+  // The hub empties its retained slot at the same instant, so a screen that
+  // reconnects a second later is not painted it back either.
+  let backdrop = null;
+  /**
+   * ONE WRITER, called from both doors, for the reason `applyRoles` above it
+   * gives: a native output window has the Tauri bridge and no socket, a kiosk
+   * page has the socket and no bridge, and a rule kept on one of the two is the
+   * mistake this file's own comments count four times — here on the two screens
+   * most often in the same room. An absent or blank URL is a take-down, never a
+   * background with nothing in it.
+   */
+  function applyBackdrop(url, kind) {
+    backdrop = url ? { media_url: url, media_kind: kind || 'image' } : null;
+  }
   // THE OPERATOR'S CONFIGURED DEFAULT (`default_template_id`) — the LAST link in
   // the resolver's chain, applied only when nothing above it answered. Pushed by
   // the kiosk hub on connect and whenever the operator changes it, and mirrored
@@ -184,6 +210,24 @@
       noteTransition(null, null);
     }
   }
+  // Desktop only — the picture already behind everything when this window opened,
+  // on exactly the argument `loadLiveTransition` above makes. The kiosk hub
+  // replays the retained background on `hello`; a native output window has no
+  // socket, so without this read a projector opened mid-service is the one screen
+  // in the building painting the words on black. Guarded the same way: a missing
+  // command or a backend that says nothing leaves this screen with no backdrop,
+  // which is the plain answer and the safe one, and never throws on a live output
+  // page.
+  async function loadLiveBackground() {
+    try {
+      const call = await invoke();
+      const cur = await call('live_background');
+      // Rust hands back `[url, kind]` or null.
+      applyBackdrop(Array.isArray(cur) ? cur[0] : null, Array.isArray(cur) ? cur[1] : null);
+    } catch {
+      applyBackdrop(null, null);
+    }
+  }
   // Desktop only — the configured default already in force when this window
   // opened, on exactly the same argument as `loadLiveTransition` above and for
   // exactly the same reason. The kiosk hub seeds `defaultTpl` on `hello`; a
@@ -318,6 +362,12 @@
       // next content and repaints nothing. `mode: null` clears the override and
       // this screen goes back to following its template (DECISIONS §71 unchanged).
       noteTransition(m.mode, m.ms);
+    } else if (m.kind === 'background') {
+      // THE STANDING BACKGROUND, up or down. `media_url: null` is the take-down
+      // and arrives as an explicit null rather than as silence, because an absent
+      // frame cannot say "there is none now" and a screen that missed it would
+      // carry the picture for the rest of the service.
+      applyBackdrop(m.media_url, m.media_kind);
     } else if (m.kind === 'clear') {
       // A PANIC CONTROL NEVER TRANSITIONS. `clear` and `black` do not touch
       // `appliedTransition`, and `TemplateRender` has no `out:` transition at all
@@ -325,11 +375,19 @@
       // offers. A blackout that could fade is a blackout that can be late.
       visible = false;
       black = false;
+      // AND IT TAKES THE BACKGROUND. `Clear screens` means everything, and the
+      // background is part of everything.
+      backdrop = null;
     } else if (m.kind === 'black') {
       black = true;
       // On a band channel, blacking out means the band goes away — the camera
       // must not be covered.
       if (isBand) visible = false;
+      // On EVERY channel the backdrop goes, band or not. The opaque overlay hides
+      // it on an ordinary screen, but a keyed channel paints no overlay at all —
+      // so leaving it here would put the church's picture over the live camera at
+      // the one moment the operator asked for the camera alone.
+      backdrop = null;
     } else if (m.kind === 'channel_roles') {
       // WHAT EVERY SCREEN IS FOR. Sent on every hello and whenever it changes, so
       // this page can answer the only question it asks of it: am I the stage?
@@ -402,6 +460,7 @@
     try {
       await loadTemplate();
       await loadLiveTransition();
+      await loadLiveBackground();
       await loadDefaultTemplate();
       await loadChannelRoles();
       const { listen } = await import('@tauri-apps/api/event');
@@ -433,11 +492,23 @@
       // differently — the "guarantee kept on one door" mistake, on the two screens
       // that are most often in the same room.
       unlisten.push(await listen('output://transition', (e) => noteTransition(e.payload?.mode, e.payload?.ms)));
-      unlisten.push(await listen('output://clear', () => { visible = false; black = false; }));
+      // THE STANDING BACKGROUND, on the door a native window has. Its twin is the
+      // `background` branch in `applyMessage`; a projector on HDMI and a browser
+      // source in OBS are usually in the same room, and a backdrop that reached
+      // one of the two is this file's own recurring mistake.
+      unlisten.push(
+        await listen('output://background', (e) =>
+          applyBackdrop(e.payload?.media_url, e.payload?.media_kind),
+        ),
+      );
+      // …AND THE PANIC CONTROLS TAKE IT, on this door too. The line that matters:
+      // a clear means everything.
+      unlisten.push(await listen('output://clear', () => { visible = false; black = false; backdrop = null; }));
       unlisten.push(
         await listen('output://black', () => {
           black = true;
           if (isBand) visible = false;
+          backdrop = null;
         }),
       );
       unlisten.push(
@@ -506,6 +577,7 @@
 <TemplateRender
   template={renderedTemplate}
   content={visible ? content : null}
+  {backdrop}
   audio={isDesktop}
   stageMessage={stageMessage}
   transitionOverride={appliedTransition} />

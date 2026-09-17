@@ -62,6 +62,13 @@ const GROUP_1 = {
   // kiosk client and every native output window, so a swallowed failure leaves the
   // gallery showing one default and the wall wearing another.
   setDefaultTemplate: () => store.setDefaultTemplate(9),
+  // Added to the header 2026-09-17 with the background layer. The most literal
+  // member there is — it puts a picture on every congregation screen. Both
+  // directions go through it, and the TAKE-DOWN is the half a swallowed failure
+  // hurts most: the operator believes the church's backdrop has gone and it is
+  // still up behind the next thing they fire.
+  showBackground: () => store.showBackground(3),
+  clearBackground: () => store.showBackground(null),
   // `pushAnnouncement` WAS the most literal member of this group — it painted over
   // live scripture on every screen at once. The control was removed from Quick
   // tools on 2026-09-14 on the operator's instruction, and the command and its

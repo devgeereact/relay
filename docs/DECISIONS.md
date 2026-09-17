@@ -4844,3 +4844,104 @@ The `rgba()` blind spot that hid half of this is closed in the same pass:
 `workspacegrammar.test.js` says in its own header that "`rgba()` is not scanned at all", and that
 is exactly where the retired amethyst `rgba(139,92,246,…)` and the retired amber `rgba(255,176,0,…)`
 survived five waves of hex sweeps.
+
+## 94. A background is a payload of its own, and a clear still takes everything (2026-09-17)
+
+Relay had no persistent background. The entire layer stack in `TemplateRender` renders inside
+`{#if content}`, and `media_url` is a FIELD ON `OutputContent`, written at exactly one site in the
+whole binary (`fire_media`). A verse and a picture were therefore mutually exclusive payloads:
+firing the church's backdrop REPLACED the reading, firing the reading replaced the backdrop, and
+scripture over a church's own background could not be expressed at all.
+
+That is the largest structural gap between Relay and the presentation software churches compare it
+with, and it is the prerequisite for two other things that are not in this decision: clear groups,
+and an announcement that does not destroy the reading underneath it.
+
+**The decision.** A background is a second payload kind with a lifetime of its own — not what a
+screen is SHOWING, but what it is showing it ON. It survives every content change and is taken down
+by the operator or by a panic control, and by nothing else.
+
+### The invariant the design came from
+
+**`clear` and `black` must still remove EVERYTHING.** The rule is stated at the top of the layer
+stack and it is load-bearing: a clear that leaves something on a congregation screen is the worst
+class of bug in this product, because the operator has pressed the control that means *all of it*
+and stopped looking at the wall.
+
+So the take-down lives in `background_retention`, consulted by `KioskHub::publish` — the one door
+every frame in `channels.rs` goes through — and the two panic frames empty the retained slot on
+their way past. **Nothing new is sent to achieve it.** A panic control that needed a SECOND frame
+to finish its job is one that can half succeed, and rule 15 does not allow one of those. The output
+pages drop their own copy on `output://clear` and `output://black`, on BOTH doors, for the same
+reason `leavePlan()` sits on those listeners: those events are the only report a screen gets of a
+clear that did not originate on the console.
+
+Both invariant tests were written before any of the rendering work and each was watched to
+reproduce the defect with its guard reverted — a retained picture replayed onto the next screen to
+join, over a wall the operator had taken down, and the same picture left painted on an OBS source
+by a `clear` frame.
+
+### Its own retained slot, for the fifth time
+
+`KioskHub` now holds five: the screen frame, the transition override, the role map, the programme
+timers and the background. The argument has not changed since rule 43 — one slot holds ONE frame
+and the newest wins, so a backdrop retained beside `content` would ERASE the verse and a screen
+joining mid-reading would be handed wallpaper and no words. It is replayed on `hello` BEFORE the
+screen frame, so the reading is still painted last.
+
+### Opt-in by TEMPLATE, and there is no flag
+
+A screen shows the backdrop only where its template carries a `backdrop` layer, at that layer's own
+z-order. A template without one renders byte for byte what it rendered before this existed.
+
+**There is deliberately no setting and no feature flag.** A stored-but-unread preference is the
+defect the 2026-09-10 rendered pass closed seven Settings controls of, and a flag nobody reads is
+the same defect wearing a switch. Template design is already how a screen opts into media, a
+countdown, a stage note and a region; this is the same door.
+
+The layer is not pinned to the bottom of the stack. Every built-in ships an opaque `background`
+fill, so a backdrop forced beneath one would never be seen — the feature would look broken rather
+than absent.
+
+### Four things it deliberately does not touch
+
+Each because the question is about CONTENT and a backdrop is furniture.
+
+* **`WallState`.** A backdrop carries no reference and no words, so `/api/live` naming it would be
+  claiming the congregation is reading something.
+* **`LiveContent`.** Same fact from the console's side.
+* **The passage.** Rule 38 disarms the passage for any content that is not scripture, because
+  content REPLACES the reading. A backdrop does not, so putting a picture up behind a preacher
+  mid-reading must not make the next `next` answer `NoPassage`.
+* **Persistence.** A background belongs to the morning it went up in, like the transition override
+  and unlike a template. A church that reopened Relay on Tuesday to a Sunday backdrop would have to
+  go looking for the control that takes it off. The retained hub slot carries it across the case
+  that actually happens — a screen reconnecting.
+
+### The gate and the check are at the choke point, not at the call sites
+
+`channels::set_background` is the one publisher and it checks `rehearsing` — it puts an IMAGE in
+front of a congregation, which is the same claim `broadcast_content` makes and gets the same
+answer. `REHEARSAL_VERDICTS` names it, and the scanner requires the gate to be in the body rather
+than in this paragraph.
+
+`main::publish_background` is the one door and holds `pipeline::preflight_background`, which
+refuses the single failure that is silent: a background naming no picture, which every screen would
+fetch nothing for, paint nothing for and log nothing about, while the console said the church's
+backdrop was up. Taking the background down is `None` and is never validated — a check that could
+refuse a removal is a removal that can fail, which is §20 in a second costume.
+
+### What the stage monitor does with it: nothing, and that is recorded
+
+`stage.html` has one fixed look and does not render through `TemplateRender`, so there is no layer
+stack for a backdrop to take a place in and painting one there would mean a second, hand-rolled way
+of drawing a picture. It is also the right answer on its own terms: a backdrop is decoration chosen
+for a congregation, and this is the screen a preacher reads from mid-sermon, where a photograph
+behind the words is precisely how scripture becomes unreadable. `r6-contracts.test.js` carries the
+verdict for both clients, so the next kind cannot be forgotten quietly.
+
+### What this does NOT build
+
+Per-screen backgrounds (that reverses "one AI decision fanned out"), background transitions, a
+Planner cue type, a background that survives a restart, and masks or blend modes over it — a mask
+is precisely the object that can make a verse invisible in a way no test here would catch.

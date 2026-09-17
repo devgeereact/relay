@@ -69,6 +69,7 @@ export const LAYER_TYPES = [
   { type: 'band', label: 'Band (lower third)', icon: '▬' },
   { type: 'region', label: 'Slide region (composite)', icon: '▣' },
   { type: 'media', label: 'Media (image / video)', icon: '▷' },
+  { type: 'backdrop', label: 'Backdrop (the standing background)', icon: '▨' },
   { type: 'shape', label: 'Shape', icon: '▢' },
   { type: 'background', label: 'Background', icon: '▦' },
   { type: 'timer', label: 'Timer / Countdown', icon: '⏱' },
@@ -126,6 +127,39 @@ export function makeLayer(type, over = {}) {
         fit: 'cover', // cover | contain
         opacity: 1,
         radius: 0,
+      };
+      break;
+    case 'backdrop':
+      // THE STANDING BACKGROUND — the church's own picture, which OUTLIVES the
+      // words painted on it.
+      //
+      // The difference from `media` above is the whole of it, and it is a
+      // difference of LIFETIME rather than of appearance. A `media` layer binds to
+      // the fired content: a picture IS the slide, and firing a verse replaces it.
+      // A `backdrop` binds to a second payload that nothing on the content can
+      // touch — put up once, painted under every verse, song and notice that
+      // follows, and taken down only by the operator or by a panic control.
+      //
+      // **A template WITHOUT one behaves exactly as it did before this existed.**
+      // That is the opt-in, and it is why there is no setting: a stored preference
+      // nothing reads is the defect the 2026-09-10 pass closed seven controls of.
+      //
+      // Its z-order is its own, like every other layer. It is NOT forced to the
+      // bottom of the stack, because every built-in ships an opaque `background`
+      // layer and a backdrop pinned beneath one would never be seen — the feature
+      // would look broken rather than absent. Put it above the fill it should
+      // replace.
+      spec = {
+        name: 'Backdrop',
+        x: 0, y: 0, w: 100, h: 100,
+        fit: 'cover', // cover | contain
+        opacity: 1,
+        radius: 0,
+        // A WASH OVER THE PICTURE, not over the words. A photograph behind a
+        // verse is the classic way to make scripture unreadable, and the dim is
+        // how a designer buys the contrast back without editing the file. Zero by
+        // default: nothing is changed unless somebody asks for it.
+        dim: 0,
       };
       break;
     case 'shape':
@@ -499,6 +533,7 @@ export function layerLabel(layer) {
   }
   if (layer.type === 'background') return 'Background';
   if (layer.type === 'media') return 'Media';
+  if (layer.type === 'backdrop') return 'Backdrop';
   if (layer.type === 'band') return 'Band';
   if (layer.type === 'region') return 'Slide region';
   return 'Shape';

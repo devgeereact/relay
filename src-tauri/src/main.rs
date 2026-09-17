@@ -222,6 +222,7 @@ fn main() {
             let kiosk_last = kiosk.last_screen_handle();
             let kiosk_last_x = kiosk.last_transition_handle();
             let kiosk_last_t = kiosk.last_timers_handle();
+            let kiosk_last_bg = kiosk.last_background_handle();
             // The configured default, warmed before any client can connect — a
             // screen that joins during launch must not be told the default is
             // `null` and then corrected.
@@ -296,6 +297,7 @@ fn main() {
                 kiosk_last,
                 kiosk_last_x,
                 kiosk_last_t,
+                kiosk_last_bg,
                 app.state::<channels::OutputHealth>().inner().clone(),
                 8031,
             ));
@@ -405,12 +407,14 @@ fn main() {
             remove_demo_content,
             fire_content,
             fire_media,
+            show_background,
             get_content_templates,
             set_content_template,
             get_setting,
             set_setting,
             set_live_transition,
             live_transition,
+            live_background,
             data_health,
             list_books,
             chapter_verses,
@@ -3491,6 +3495,108 @@ fn fire_media<R: tauri::Runtime>(
     Ok(())
 }
 
+/// THE ONE DOOR A BACKGROUND LEAVES BY — `broadcast_with_clock` for the second
+/// payload kind.
+///
+/// It exists for exactly the reason that one does: the pre-air check goes at the
+/// choke point and not at the call sites (rule 36). There is one caller today and
+/// that is the point at which to build the door — a validator added to the second
+/// caller, next year, is a validator the first one never had. Four separate bugs
+/// in this repository have that shape, and `pipeline::preflight` was written
+/// after the fourth.
+///
+/// `None` takes the background down and is NOT validated, deliberately: a check
+/// that could refuse a removal is a removal that can fail, and a backdrop nobody
+/// can take off a congregation screen is the failure `clear` exists to prevent
+/// (DECISIONS §20). The rehearsal gate, both doors and the retained slot are all
+/// `channels::set_background`'s; this function owns the check and nothing else.
+///
+/// It does NOT touch the passage, `LiveContent` or `WallState`. See
+/// `channels::set_background` for why each of those is the wrong question to ask
+/// about furniture.
+// GENERIC OVER THE RUNTIME (rule 24) — `e2e.rs` has to be able to drive it.
+fn publish_background<R: tauri::Runtime>(
+    handle: &tauri::AppHandle<R>,
+    bg: Option<channels::Background>,
+) -> error::Result<()> {
+    if let Some(b) = bg.as_ref() {
+        if let Err(bad) = pipeline::preflight_background(b) {
+            // Said in the same three places a refused broadcast is said in, and for
+            // the same reason: doing nothing quietly is the failure being fixed.
+            eprintln!("preflight refused a background: {bad:?}");
+            let _ = handle.emit("output://panic_failed", bad.message());
+            return Err(error::Error::refused(bad.message()));
+        }
+    }
+    channels::set_background(handle, bg);
+    Ok(())
+}
+
+/// PUT A PICTURE BEHIND THE WORDS — or take it away (`id: None`).
+///
+/// The control that closes the largest gap between Relay and the software
+/// churches compare it with: until this existed a verse and a picture were
+/// mutually exclusive payloads, because the whole layer stack renders inside
+/// `{#if content}` and `media_url` is a field ON the content. Firing the church's
+/// backdrop REPLACED the reading; firing the reading replaced the backdrop.
+///
+/// **One command for both directions, on purpose.** A separate `clear_background`
+/// would be a second door onto one piece of state, and this repository's own
+/// register of that mistake runs to four entries. `None` is an answer here, not a
+/// missing argument.
+///
+/// Documents are refused with the same sentence `fire_media` uses, because it is
+/// the same fact about the same table: a PDF has no frame to paint.
+///
+/// **Nothing is persisted.** A background is service state, like the transition
+/// override and unlike a template: it belongs to the morning it was put up in,
+/// and a church that reopened Relay on Tuesday to a Sunday backdrop would have to
+/// find the control that took it off. The retained hub slot is what carries it
+/// across a screen reconnecting, which is the case that actually happens.
+#[tauri::command]
+fn show_background<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    db: tauri::State<'_, Db>,
+    id: Option<i64>,
+) -> error::Result<()> {
+    let Some(id) = id else {
+        // TAKE IT DOWN. No lookup, no validation, no database — the way off a
+        // congregation screen may never depend on a row still being there.
+        return publish_background(&app, None);
+    };
+    let (kind, path) = {
+        let conn = db.0.lock()?;
+        conn.query_row(
+            "SELECT kind, path FROM media_assets WHERE id = ?1",
+            [id],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+        )
+        .map_err(|_| "media not found".to_string())?
+    };
+    let media_kind = match kind.as_str() {
+        "image" => "image",
+        "video" => "video",
+        _ => {
+            return Err(error::Error::refused(
+                "documents can't be shown as an output background yet",
+            ))
+        }
+    };
+    let ip = local_ip().unwrap_or_else(|| "127.0.0.1".to_string());
+    publish_background(
+        &app,
+        Some(channels::Background {
+            // THE SAME BUILDER THE FIRED PICTURE USES. A picture Relay ships has no
+            // file under `/media/<id>` at all (DECISIONS §90), so a second rule here
+            // would hand every screen a URL that 404s — a black wall with nothing in
+            // any log, which is precisely the failure `media_url`'s own doc comment
+            // records.
+            media_url: media_url(&ip, id, &path),
+            media_kind: media_kind.to_string(),
+        }),
+    )
+}
+
 /// Where an output page loads a media asset from.
 ///
 /// Two kinds of row live in `media_assets` and they are served from two
@@ -3767,6 +3873,19 @@ fn set_live_transition<R: tauri::Runtime>(
 #[tauri::command]
 fn live_transition(kiosk: tauri::State<'_, channels::KioskHub>) -> channels::TransitionOverride {
     kiosk.current_transition()
+}
+
+/// What picture is behind everything right now, for a screen that just opened.
+///
+/// The `live_transition` argument, on the second payload kind: the hub replays the
+/// retained background on `hello`, and a native output window has the bridge and
+/// no socket. Without this read, a projector opened mid-service is the one screen
+/// in the building painting the words on black.
+///
+/// `[url, kind]` or null.
+#[tauri::command]
+fn live_background(kiosk: tauri::State<'_, channels::KioskHub>) -> Option<(String, String)> {
+    kiosk.current_background()
 }
 
 /// Books available to browse, in canonical order — Library (§7).

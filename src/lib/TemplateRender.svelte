@@ -138,6 +138,32 @@
   // Media with no placement layer → it fills the frame (drawn on top).
   $: showFullMedia = !!content?.media_url && allowMedia && !hasMediaLayer;
 
+  // ── THE STANDING BACKGROUND ────────────────────────────────────────────────
+  //
+  // A SECOND PAYLOAD, not a field on the content, and the difference is lifetime.
+  // `content.media_url` is the fired picture: it IS the slide, and the next verse
+  // replaces it. `backdrop` is what the church put up behind everything at the top
+  // of the service, and a verse painted over it must leave it exactly where it is.
+  // Until this prop existed the two were the same field, so scripture over a
+  // church's own background could not be expressed at all.
+  //
+  // `{ media_url, media_kind }` or null. Null is the answer a cleared wall gives,
+  // and the panic controls are what produce it — see `Output.svelte`, which drops
+  // this on `clear` and `black` at both doors.
+  export let backdrop = null;
+  // OPT-IN BY TEMPLATE DESIGN, WHICH IS THE WHOLE OF THE OPT-IN. There is no
+  // setting and no flag: a template with no `backdrop` layer renders byte for byte
+  // what it rendered before this prop existed, because `backdropUp` is false and
+  // every expression below collapses to its old form. A stored preference nothing
+  // reads is the defect the 2026-09-10 pass closed seven Settings controls of.
+  $: hasBackdropLayer = layered && layers.some((L) => L.type === 'backdrop' && L.visible !== false);
+  $: backdropUp = !!backdrop?.media_url && hasBackdropLayer;
+  // DELIBERATELY NOT GATED ON `allowMedia`. That answers "does this SCREEN show
+  // fired media" — a lower third keeping a camera clean while a picture fills the
+  // main wall — and a backdrop is not fired media. Having the layer at all is the
+  // consent, per screen, which is the same answer `templateShows` gives by a
+  // longer route and one authority instead of two.
+
   // ── Countdown policy ─────────────────────────────────────────────────────────
   // Same idea as media: a fired countdown shows its MM:SS BY DEFAULT — the wall
   // needs no timer layer. A layered template's scripture text layers can't render
@@ -1305,6 +1331,20 @@
     return out;
   })();
 
+  // WHAT ACTUALLY DRAWS — the whole stack, or the backdrop alone.
+  //
+  // With content on screen this IS `layerViews`, the same array by identity, so
+  // the keyed `{#each}` below sees no change at all and a template with no
+  // backdrop layer renders byte for byte what it rendered before this existed.
+  //
+  // With no content and a backdrop up, everything else is filtered OUT, and that
+  // is not tidiness. The `{#if}` above states the rule this file has always kept:
+  // a cleared wall shows NOTHING, because a band left over a live camera or a
+  // shape left standing with no words in it is furniture on a congregation's
+  // screen. A backdrop earns its place there because a church puts one up
+  // deliberately and minutes before the first fire; an empty band does not.
+  $: stackLayers = content ? layerViews : layerViews.filter(({ L }) => L.type === 'backdrop');
+
   // Per-text-layer auto-fit. Each layer's text is sized to BEST FIT its own box —
   // it scales DOWN when there is a lot of text and UP when there is little, and it
   // is NEVER allowed to push outside the box (both dimensions are checked). A
@@ -1431,8 +1471,26 @@
        a live camera after a blackout, is furniture on the congregation's wall (or
        the stream) with nothing to say. This persists across a content→content
        CROSSFADE (content stays non-null throughout); it only leaves on a real
-       clear, or a blackout of a keyed channel. -->
-  {#if content}
+       clear, or a blackout of a keyed channel.
+
+       THE STANDING BACKGROUND IS THE ONE EXCEPTION, AND IT DOES NOT WEAKEN THE
+       RULE — it restates it. A backdrop that only painted while something was
+       fired would be a background you could not put up: a church sets one at the
+       top of a service and the words arrive minutes later. So `backdropUp` opens
+       this block too. What is NOT relaxed is the clear: `Output.svelte` drops
+       `backdrop` on `output://clear` and `output://black` at BOTH doors, and the
+       hub empties its retained slot at the same instant, so both halves of this
+       condition go to nothing together and a cleared screen is as empty as it
+       ever was. Pinned from the Rust side by
+       `channels::tests::a_panic_control_takes_the_retained_background_with_it`
+       and from here by `backdrop.test.js`.
+
+       WITH NO CONTENT, ONLY THE BACKDROP DRAWS. `stackLayers` filters the rest
+       out, and that is the half of this that would otherwise be a new bug of the
+       exact kind the paragraph above is about: rendering the whole stack over a
+       cleared wall would paint an empty band and an empty shape — furniture on a
+       congregation's screen with nothing to say. -->
+  {#if content || backdropUp}
   {#if layered}
     <!-- ══ LAYER MODE ══ free-form stack, drawn back-to-front. Media shows ONLY
          where a template includes a MEDIA layer (below), at that layer's z-order —
@@ -1454,10 +1512,13 @@
          key and animates only `.slide` — the words and the band they sit in. This
          is that same division:
 
-           · `background` and `media` are FURNITURE and stay out. A wrapper around
-             the whole `{#each}` would rebuild them on every fire, and rebuilding a
-             `media` layer tears down its <video> and restarts the loop, mid-fire,
-             on a congregation screen.
+           · `background`, `media` and `backdrop` are FURNITURE and stay out. A
+             wrapper around the whole `{#each}` would rebuild them on every fire,
+             and rebuilding a `media` layer tears down its <video> and restarts the
+             loop, mid-fire, on a congregation screen. `backdrop` is the strongest
+             case of the three: it is meant to be the ONE thing on the wall that a
+             fire does not touch, so a re-key on it would refetch the church's
+             picture and flash it behind every verse of the service.
            · `region` stays out because it does not need help: the composite is a
              nested `<svelte:self>` with the same content and its own style, so it
              resolves and runs its own transition. Keying it here would remount a
@@ -1476,16 +1537,46 @@
          anywhere in this file — `transitionoverride.test.js` asserts exactly that —
          so a clear and a blackout are instant at every duration the picker offers
          (rule 15, DECISIONS §20). An intro cannot delay a removal. -->
-    {#each layerViews as { L, text, box } (L.id)}
+    {#each stackLayers as { L, text, box } (L.id)}
       {#if L.visible !== false}
         {#if L.type === 'background'}
           <div class="lbg" style="{boxStyle(L)} background:{bgPaint(L)}; opacity:{L.opacity == null ? 1 : L.opacity};"></div>
           {#if L.dim > 0}<div class="lbg ldim" style="{boxStyle(L)} opacity:{L.dim};"></div>{/if}
+        {:else if L.type === 'backdrop'}
+          <!-- THE STANDING BACKGROUND. The same elements a `media` layer paints
+               with, deliberately, so a picture looks identical whichever of the two
+               put it there — one set of CSS, one `object-fit` rule, one <video>
+               configuration. What differs is the SOURCE and therefore the lifetime:
+               this reads `backdrop`, which no content can touch, so it survives
+               every fire until the operator or a panic control takes it away.
+
+               At its own z-order, like every other layer: it is not pinned to the
+               bottom, because every built-in ships an opaque `background` fill and
+               a backdrop underneath one would never be seen. -->
+          {#if backdrop?.media_url}
+            <div class="lmediabox" style="{boxStyle(L)} border-radius:{L.radius || 0}cqw; opacity:{L.opacity == null ? 1 : L.opacity};">
+              {#if backdrop.media_kind === 'video'}
+                <!-- MUTED ALWAYS, unlike a fired video. A backdrop runs for the
+                     whole service under everything else; sound from it would play
+                     under the sermon, and `routeAudio` exists to give the ONE
+                     fired video the house speakers. -->
+                <!-- svelte-ignore a11y-media-has-caption -->
+                <video class="lmediafill" src={backdrop.media_url} style="object-fit:{L.fit === 'contain' ? 'contain' : 'cover'};" autoplay loop muted playsinline></video>
+              {:else}
+                <img class="lmediafill" src={backdrop.media_url} style="object-fit:{L.fit === 'contain' ? 'contain' : 'cover'};" alt="" />
+              {/if}
+            </div>
+            <!-- A WASH OVER THE PICTURE, and only over the picture: it is emitted
+                 here, at this layer's box and this layer's place in the stack, so
+                 everything drawn ABOVE the backdrop is unaffected. Same shape as
+                 the `background` layer's dim above. -->
+            {#if L.dim > 0}<div class="lbg ldim" style="{boxStyle(L)} opacity:{L.dim};"></div>{/if}
+          {/if}
         {:else if L.type === 'media'}
           <!-- Paints only when a picture/video is on screen and this screen shows
                media; empty otherwise, so the layer is invisible on a text-only
                cue (or when the screen opts out of media). -->
-          {#if content.media_url && allowMedia}
+          {#if content?.media_url && allowMedia}
             <div class="lmediabox" style="{boxStyle(L)} border-radius:{L.radius || 0}cqw; opacity:{L.opacity == null ? 1 : L.opacity};">
               {#if content.media_kind === 'video'}
                 <!-- svelte-ignore a11y-media-has-caption -->

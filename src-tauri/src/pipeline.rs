@@ -192,6 +192,10 @@ pub enum Unsafe {
     /// A template was chosen for this cue and it is not valid JSON, so the output
     /// page would silently fall back to a different look.
     BrokenTemplate,
+    /// A background was published that names no picture, so every screen would
+    /// paint nothing behind the words while the operator believes the church's
+    /// own backdrop is up.
+    NoPicture,
 }
 
 impl Unsafe {
@@ -208,8 +212,46 @@ impl Unsafe {
                  were. Re-pick its template in the Planner, or clear the cue's own template \
                  to use the screen's."
             }
+            Unsafe::NoPicture => {
+                "Nothing was put behind the words — that background has no picture to \
+                 show, so the screens were left as they were. Pick the picture again \
+                 in the Library, or clear the background."
+            }
         }
     }
+}
+
+/// THE SAME LAST CHECK, FOR THE SECOND PAYLOAD KIND.
+///
+/// A background is not an `OutputContent` and must not become one: it carries no
+/// words, no reference and no template, it does not replace the reading, and
+/// routing it through `preflight` would mean answering four questions that are
+/// not about it. So it gets its own check, and the check asks the ONE question
+/// `preflight` exists for — would this put something in front of a congregation
+/// that fails silently?
+///
+/// For a backdrop there is exactly one such failure: a frame that names no
+/// picture at all. Every screen would fetch nothing, paint nothing, and report
+/// nothing, while the operator's console says the church's background is up. The
+/// URL is built from a real `media_assets` row by one function today, so this
+/// cannot happen yet — which is the moment to write the guard, not the reason not
+/// to.
+///
+/// **It deliberately does NOT check that the file exists.** That is a question
+/// about a disk and a LAN, answerable only by the screen that fetches it, and
+/// refusing here would take the operator's control away over a file that a
+/// moment's reconnect would have served. It is REPORTED — the Library marks a
+/// row whose bytes did not load — never enforced, the same division `preflight`
+/// already makes about whether a screen is attached.
+///
+/// And like `preflight` it can never refuse a CLEAR. Taking the background down
+/// is `None`, which never reaches here: a validator that could refuse a removal
+/// is a removal that can fail, which is DECISIONS §20 in a second costume.
+pub fn preflight_background(bg: &crate::channels::Background) -> Result<(), Unsafe> {
+    if bg.media_url.trim().is_empty() {
+        return Err(Unsafe::NoPicture);
+    }
+    Ok(())
 }
 
 /// THE LAST CHECK BEFORE A CONGREGATION SEES ANYTHING.
@@ -633,6 +675,32 @@ mod tests {
             preflight(&c).is_ok(),
             "a media slide has no text and that is normal"
         );
+    }
+
+    /// THE SECOND PAYLOAD KIND IS CHECKED TOO, AND IT IS CHECKED FOR THE ONE
+    /// THING THAT FAILS SILENTLY.
+    ///
+    /// A background naming no picture reaches every screen, fetches nothing, paints
+    /// nothing and logs nothing, while the console says the church's backdrop is
+    /// up — the exact shape `preflight` exists for, on the payload `preflight`
+    /// cannot see. A real one passes, so the guard cannot be satisfied by refusing
+    /// everything.
+    #[test]
+    fn a_background_with_no_picture_is_not_a_background() {
+        assert_eq!(
+            preflight_background(&crate::channels::Background {
+                media_url: "   ".into(),
+                media_kind: "image".into(),
+            }),
+            Err(Unsafe::NoPicture)
+        );
+        assert!(preflight_background(&crate::channels::Background {
+            media_url: "http://192.168.1.9:8032/media/12".into(),
+            media_kind: "image".into(),
+        })
+        .is_ok());
+        // Every refusal is a sentence an operator can act on, never a Rust error.
+        assert!(Unsafe::NoPicture.message().contains("background"));
     }
 
     /// A COUNTDOWN HAS NO TEXT, AND THAT IS THE NORMAL CASE.

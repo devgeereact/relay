@@ -122,6 +122,15 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       // and reaches this page as ordinary `content` with the four `countdown_*`
       // fields on it, which is why nothing is lost by refusing this one.
       timer: false,
+      // THE STANDING BACKGROUND — the church's own picture, behind everything.
+      // This is a congregation screen and the backdrop is congregation furniture,
+      // so of course it is handled here. What the branch does on `clear` and
+      // `black` is the part worth naming: it drops the backdrop, on both doors,
+      // because a panic control means everything and the picture is part of
+      // everything. `src/lib/backdroppage.test.js` drives the real page and
+      // asserts on what it PAINTS, which is the claim; this row only says a
+      // branch exists.
+      background: true,
     },
     'src/Stage.svelte': {
       content: true,
@@ -155,6 +164,21 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       // why it survives a verse — so this frame is its only way onto any screen,
       // and the screen it is for is this one.
       timer: true,
+      // THE STANDING BACKGROUND — DELIBERATELY NOT, and for the same two reasons
+      // `template`, `channel_template`, `default_template` and `transition` above
+      // are not. This page has one fixed look and does not render through
+      // `TemplateRender`, so there is no layer stack for a backdrop to take its
+      // place in; a picture painted here would have to be a second, hand-rolled
+      // way of drawing one, which is the WYSIWYG guarantee failing one level above
+      // the renderer.
+      //
+      // And it is the right answer anyway. A backdrop is decoration chosen for a
+      // CONGREGATION, and this is the screen a preacher reads from mid-sermon:
+      // a photograph behind the words is precisely how scripture becomes
+      // unreadable, and the one reader of this page cannot fix it from where they
+      // are standing. Nothing is lost — the congregation's screens carry the
+      // picture, this one carries the words.
+      background: false,
     },
   };
 

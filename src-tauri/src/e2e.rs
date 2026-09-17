@@ -3755,6 +3755,208 @@ fn r0_a_picture_reaches_the_wall_and_disarms_the_passage() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+//  THE BACKGROUND LAYER, DRIVEN THROUGH THE REAL COMMANDS
+//
+//  `channels.rs`'s own tests hold the wire form and the retention rule. These
+//  four ask the questions only the real commands can answer: does a verse
+//  survive the backdrop, does the backdrop survive the verse, and does a panic
+//  control take both.
+//
+//  They watch the HUB rather than the wall wherever the claim is about a LAN
+//  device, for the reason `nothing_reaches_the_stage_monitor_during_a_rehearsal`
+//  records: a test's assertion surface is part of its claim, and `Wall` counts
+//  Tauri events.
+// ════════════════════════════════════════════════════════════════════════════
+
+/// A picture in the library, the way the import command would leave one.
+fn seed_picture(h: &tauri::AppHandle<tauri::test::MockRuntime>) -> i64 {
+    let db = h.state::<Db>();
+    let conn = db.0.lock().expect("db");
+    db::insert_media(&conn, "image", "sanctuary.jpg", "2026-09-17").expect("seed a picture")
+}
+
+/// The picture the hub would replay to a screen that joined just now.
+fn retained_backdrop(h: &tauri::AppHandle<tauri::test::MockRuntime>) -> Option<String> {
+    h.state::<channels::KioskHub>()
+        .last_background_handle()
+        .lock()
+        .ok()
+        .and_then(|b| b.clone())
+}
+
+/// A BACKGROUND OUTLIVES THE WORDS PAINTED ON IT.
+///
+/// The defect this whole change exists to close, stated as the behaviour rather
+/// than as the mechanism: a verse and a picture used to be mutually exclusive
+/// payloads, so scripture over a church's own background could not be expressed.
+/// Firing the verse must now leave the backdrop exactly where it is.
+///
+/// It also asserts the half that is easy to lose the other way — the passage
+/// stays ARMED. A backdrop is furniture and does not replace the reading, so
+/// rule 38's disarm must not reach it; if it did, putting a picture up behind a
+/// preacher mid-reading would make the next `next` answer `NoPassage`.
+#[test]
+fn r0_a_background_survives_the_verse_painted_on_it() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+    let mut kiosk = qa::Kiosk::attach(&h);
+    let pic = seed_picture(&h);
+
+    show_background(h.clone(), h.state::<Db>(), Some(pic)).expect("put the backdrop up");
+    settle();
+    let frame = kiosk.next().expect("the backdrop must reach a LAN screen");
+    assert!(
+        frame.contains(r#""kind":"background""#) && frame.contains("/media/"),
+        "the backdrop reached the hub as something else: {frame}"
+    );
+
+    // Now the reading, over the top of it.
+    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).expect("fire");
+    settle();
+    assert_eq!(
+        wall.last().expect("the wall")["reference"],
+        "John 3:16",
+        "the verse did not reach the screens"
+    );
+    assert!(
+        retained_backdrop(&h)
+            .unwrap_or_default()
+            .contains("/media/"),
+        "the verse took the church's backdrop down with it — which is the defect, \
+         not the fix"
+    );
+
+    // And the reading is still a reading: furniture may not disarm a passage.
+    let r = nav(h.clone(), "next".into()).expect("nav answers");
+    assert!(
+        matches!(r, NavResult::Fired { .. }),
+        "a background disarmed the passage under a live reading: {}",
+        r.kind()
+    );
+}
+
+/// AND A PANIC CONTROL TAKES IT OFF EVERY SCREEN.
+///
+/// The invariant, at the level a congregation experiences it: `Clear screens`
+/// and `Blackout` remove EVERYTHING, and the background is part of everything. A
+/// clear that left the church's picture on the wall would be the worst class of
+/// bug in this product — the operator has pressed the control that means "take it
+/// all down" and something is still up there.
+///
+/// Asserted on the retained slot rather than on a frame, because the retained
+/// slot is what a screen joining a second later would be painted. No new frame is
+/// sent to achieve this and none should be: a panic control that needed two
+/// frames is one that can half succeed.
+#[test]
+fn r0_a_panic_control_takes_the_background_off_every_screen() {
+    for (name, wipe) in [("clear_screens", 0), ("blackout", 1)] {
+        let app = app();
+        let h = app.handle().clone();
+        let _kiosk = qa::Kiosk::attach(&h);
+        let pic = seed_picture(&h);
+
+        show_background(h.clone(), h.state::<Db>(), Some(pic)).expect("backdrop up");
+        manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).expect("fire");
+        settle();
+        assert!(
+            retained_backdrop(&h).is_some(),
+            "{name}: nothing to take down — the test would pass for the wrong reason"
+        );
+
+        if wipe == 0 {
+            clear_screens(h.clone()).expect("clear");
+        } else {
+            blackout(h.clone()).expect("blackout");
+        }
+        settle();
+        assert!(
+            retained_backdrop(&h).is_none(),
+            "{name} left the church's picture on the wall"
+        );
+    }
+}
+
+/// NOTHING OF A BACKGROUND REACHES A LAN SCREEN DURING A REHEARSAL.
+///
+/// `set_background` publishes to the hub and emits a Tauri event, so `Wall` would
+/// see half of it and a hub leak would be invisible — the shape of failure
+/// `stage_next` shipped with. This watches the hub, and it asserts the live case
+/// FIRST so it cannot pass by the publish path being broken outright.
+#[test]
+fn nothing_of_a_background_reaches_a_screen_during_a_rehearsal() {
+    let app = app();
+    let h = app.handle().clone();
+    let mut kiosk = qa::Kiosk::attach(&h);
+    let pic = seed_picture(&h);
+
+    show_background(h.clone(), h.state::<Db>(), Some(pic)).expect("backdrop up");
+    settle();
+    assert!(
+        kiosk
+            .next()
+            .unwrap_or_default()
+            .contains(r#""kind":"background""#),
+        "a real service must reach the screens"
+    );
+
+    set_rehearsal(
+        h.clone(),
+        h.state::<Session>(),
+        h.state::<channels::Rehearsal>(),
+        true,
+    )
+    .expect("enter rehearsal");
+
+    show_background(h.clone(), h.state::<Db>(), Some(pic)).expect("backdrop up");
+    show_background(h.clone(), h.state::<Db>(), None).expect("backdrop down");
+    settle();
+    assert!(
+        kiosk.silent(),
+        "a rehearsal put a picture on a live congregation screen"
+    );
+    // AND IT MOVED NOTHING IN EITHER DIRECTION. The retained slot still holds the
+    // picture the LIVE service put up — the rehearsal neither replaced it nor took
+    // it down. The take-down is the half worth spelling out: a rehearsing operator
+    // pressing "clear background" must no more strip a real congregation screen
+    // than a rehearsing `clear` may take a real wall down, which is the verdict
+    // `clear`'s own rehearsal branch already carries.
+    assert!(
+        retained_backdrop(&h)
+            .unwrap_or_default()
+            .contains("/media/"),
+        "a rehearsal changed what the next screen to join would be painted"
+    );
+}
+
+/// A DOCUMENT CAN NEVER BECOME A BACKGROUND.
+///
+/// The same fact about the same table `fire_media` already refuses on, said in
+/// the same sentence: a PDF has no frame to paint. A refusal here is a refusal
+/// the operator can read, rather than every screen fetching a file no browser
+/// will render and painting black.
+#[test]
+fn a_document_can_never_become_a_background() {
+    let app = app();
+    let h = app.handle().clone();
+    let _kiosk = qa::Kiosk::attach(&h);
+    let doc = {
+        let db = h.state::<Db>();
+        let conn = db.0.lock().expect("db");
+        db::insert_media(&conn, "document", "notices.pdf", "2026-09-17").expect("seed")
+    };
+
+    assert!(
+        show_background(h.clone(), h.state::<Db>(), Some(doc)).is_err(),
+        "a PDF was accepted as a congregation background"
+    );
+    assert!(
+        retained_backdrop(&h).is_none(),
+        "a refused background was retained anyway"
+    );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 //  THE THREE DOORS STOP FORGETTING — Wave 3, Track A, Task 3
 //
 //  `note_countdown` kept the countdown only while the LIVE CONTENT was a countdown,

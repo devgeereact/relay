@@ -212,6 +212,7 @@ mod tests {
         "set_stage_next",
         "fire_content",
         "fire_media",
+        "show_background",
         "start_countdown",
         "adjust_countdown",
         // A timer control is a live control: it changes a number a congregation or a
