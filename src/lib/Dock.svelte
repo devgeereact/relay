@@ -143,6 +143,8 @@
     countdownRemaining,
     countdownHeld,
     pauseCountdown,
+    listTimers,
+    showTimer,
     sendStageAlert,
     stageAlert,
     templates,
@@ -165,7 +167,12 @@
     countdownTotalMs,
     msFromFields,
     fieldsFromMs,
+    wayBack,
   } from './countdown.js';
+  // The one projection from a REGISTRY row into the shape the one countdown
+  // reader takes. Imported rather than repeated: a second bridging of those two
+  // shapes is a second answer to "how long is left" (see `timers.js`).
+  import { timerRemainingMs } from './timers.js';
   // The dock lives in the SHELL, on every workspace, so its Detection switch was
   // the one door out of safe mode that nothing asked about. See the switch itself.
   import { safeMode } from './boot/boot.js';
@@ -632,6 +639,94 @@
     );
   }
 
+  // ── THE WAY BACK ONTO A CONGREGATION SCREEN (RG-152) ──────────────────────
+  //
+  // A timer outlives the content that replaced it — that is what the registry is
+  // for — so after a reading the countdown is still counting and nothing is
+  // showing it. `show_timer` is the explicit way back to it, and until now
+  // nothing rendered could ask: it had a wrapper, and a wrapper is not a control
+  // (RG-21's distinction, and the one CLAUDE.md states).
+  //
+  // WHY IT IS HERE and not on Live's programme band, which is where the rest of
+  // the registry is rendered: the band exists on ONE workspace, the dock exists
+  // on all of them, and a way back onto a congregation screen that an operator
+  // has to change workspace to reach is a way back they will not find during a
+  // service. Operator's decision, 2026-09-17. Quick tools stays at three blocks
+  // (`quicktools.test.js`, pinned on an earlier operator instruction), so this
+  // lives INSIDE the Countdown block rather than beside it.
+  //
+  // ── WHAT IT READS, AND WHY IT CANNOT DRIFT (rule 35) ──────────────────────
+  //
+  // Two facts and no third:
+  //
+  //   the registry   `list_timers`, polled. It says a timer EXISTS and what it
+  //                  says now. It says nothing about any screen, and this panel
+  //                  claims nothing about any screen on its behalf.
+  //   the screens    `$live` — the mirror of `channels::live_content`, the one
+  //                  slot `main::adjust_countdown` reads before it decides
+  //                  whether to repaint — through `isCountdownContent`, the same
+  //                  three-armed question it asks. Not `cdRunning`: that reader
+  //                  calls a countdown that has RUN OUT null, and a countdown at
+  //                  0:00 is still on the wall. Offering to put that one "back"
+  //                  is the drift this note exists to prevent.
+  //
+  // `wayBack` is where those two become one word, in `countdown.js`, pure and
+  // tested, so this half only renders it.
+  //
+  // THREE THINGS IT CAN SAY, and silence is only one of them. A read that FAILED
+  // is not an empty registry: `listTimers` throws for exactly that reason, and a
+  // panel that fell silent on a failure would say the same thing over a quiet
+  // Sunday and over a broken bridge. The reason is printed, and the last good
+  // list is kept, which is the same discipline as Live's programme band.
+  /** `null` = never read. `[]` = read, and there are none. The two differ. */
+  let cdTimers = null;
+  let cdTimersErr = '';
+  async function loadCongregationTimers() {
+    try {
+      cdTimers = await listTimers();
+      cdTimersErr = '';
+    } catch (e) {
+      // NOT emptied. What was last known to be running is better information than
+      // a blank, and the reason sits with it.
+      cdTimersErr = humanError(e);
+    }
+  }
+  // Read every two seconds, the same cadence as Live's band and for the same
+  // reason: there is no `timer://` event to subscribe to, and the figure itself
+  // is arithmetic this side already owns, so the poll is about EXISTENCE rather
+  // than about the clock. When an event arrives this becomes a listener.
+  onMount(loadCongregationTimers);
+  const cdTimersPoll = setInterval(loadCongregationTimers, 2000);
+  onDestroy(() => clearInterval(cdTimersPoll));
+  $: cdBack = wayBack(cdTimers, $live);
+  // Through the one projection and the one reader (`timers.js` → `countdown.js`),
+  // ticked by the same `nowTick` as the figure above it, so the two numbers in
+  // this block cannot disagree about "now".
+  $: cdBackLeft = cdBack.timer ? timerRemainingMs(cdBack.timer, nowTick) : null;
+  $: cdBackText = formatCountdown(cdBackLeft, $countdownFormat);
+
+  /**
+   * Put the congregation timer back in front of people.
+   *
+   * It carries nothing of its own: `show_timer` sends whatever the timer says NOW,
+   * so what goes up is the figure in the line above this button. It cannot create
+   * a timer — Start is the one control that puts a countdown in front of people
+   * for the first time — and it is offered only for a `Both` timer, which is the
+   * scope `show_timer` accepts.
+   *
+   * `run` reports its own failure into the card's error line. It claims nothing on
+   * success: what says the countdown is back is `$live` changing, which is the
+   * screens answering rather than this panel asserting.
+   */
+  function putBack() {
+    const t = cdBack.timer;
+    if (!t) return;
+    run(async () => {
+      await showTimer(t.id);
+      await loadCongregationTimers();
+    });
+  }
+
   // ── QUICK TOOLS · THE NAME BAND (docs/REBRAND.md §2 and §4) ────────────────
   //
   // Who is speaking changes more often than anything else in a service, and until
@@ -1054,6 +1149,34 @@
           <button class="r-btn sm ghost" on:click={() => press('clear')}
             title="Reset this tool to five minutes. It does not clear the screens.">Clear</button>
         </div>
+        <!-- ── THE WAY BACK (RG-152) ────────────────────────────────────────
+             Only when there IS a congregation timer and it is not what the
+             screens are showing. Two facts, and the second one is read from the
+             same slot the engine reads before it decides whether to repaint — see
+             the block above `putBack` for why it is not `cdRunning`.
+
+             NO COLOUR. Amber is ON AIR and may never lie, cyan is a guess and
+             amethyst is rehearsal; a timer that exists and is off the screens is
+             none of the three. It is a dim line and a ghost button, which is what
+             "there is something here you may want" looks like when it is not
+             claiming anything. -->
+        {#if cdBack.state === 'offered'}
+          <div class="cdback">
+            <span class="cdbackline"
+              ><span class="r-mono cdbackfig">{cdBackText}</span> · counting, off the screens</span>
+            <button
+              class="r-btn sm ghost"
+              on:click={putBack}
+              title="Put this countdown back on the screens. It goes up carrying what it says now, not the length it started as."
+              disabled={busy || !$capture.available}>Put back on screens</button>
+          </div>
+        {/if}
+        <!-- A FAILED READ IS NOT AN EMPTY REGISTRY (rule 35). Silence would say
+             the same thing in both cases, over the one control that puts a
+             countdown back in front of a congregation. -->
+        {#if cdTimersErr}
+          <p class="derr cdbackerr">Cannot tell whether a countdown is waiting — {cdTimersErr}</p>
+        {/if}
       </div>
       <!-- ── THE NAME BAND (docs/REBRAND.md §2 · §4) ──────────────────────────
            Set once, fired from here. `To programme` goes through `fireContent`
@@ -1550,6 +1673,35 @@
      the honest shape is two rows that are each even. `grid-auto-flow` goes back
      to `row` because `.qbtns` sets it to `column` for the two-button rows. */
   .cdtrans { grid-auto-flow: row; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  /* ── THE WAY BACK (RG-152) ────────────────────────────────────────────────
+     A line and a full-width button, and it exists only while there is a
+     congregation timer off the screens — so the block's resting height is
+     exactly what it was before this landed.
+
+     STACKED, NOT BESIDE. The transport above already learned this arithmetic the
+     hard way: Quick tools is `1.1fr` of the dock's four columns, so the card is
+     ~250px at 1320 and this row has ~210px inside the body's and the block's
+     padding. `Put back on screens` is 19 characters, which does not share a row
+     with a figure at that width without clipping one of the two.
+
+     WHAT IT COSTS, in declared height: a 13px caption line (`--v-lh-cap`) + the
+     block's own 5px gap + a 22px `.r-btn.sm` = 40px, and only while it is
+     offered — the block's resting height does not move. It is spent inside
+     `.tools`, which is `overflow-y:auto` by design, so it lengthens a scroll
+     rather than painting past an edge. The Controls card is `overflow:hidden`
+     and never scrolls, and nothing here is in it: that is the property
+     `Clear screens` depends on (rule 15), and it is why this is not RG-146 one
+     card along. NOT measured in a layout engine — jsdom computes none. */
+  .cdback { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+  .cdbackline {
+    font-size: var(--v-fs-cap); line-height: var(--v-lh-cap); color: var(--v-faint);
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  /* The figure, in the same mono as the one above it so the two read as the same
+     kind of number. Not `.tfig`: this one is not on a screen, and the big figure
+     in this block means "what the screens are counting". */
+  .cdbackfig { color: var(--v-dim); font-variant-numeric: tabular-nums; }
+  .cdbackerr { white-space: normal; }
   .tin { width: 62px; flex: 0 0 auto; }
   .tin.wide { flex: 1 1 auto; width: auto; min-width: 0; }
   .derr { margin: 0; font-size: var(--v-fs-cap); color: var(--v-red); }
