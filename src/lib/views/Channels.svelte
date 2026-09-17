@@ -180,6 +180,37 @@
     const i = parseInt(c.display_target ?? '', 10);
     return Number.isFinite(i) ? monitors.find((m) => m.index === i) || null : null;
   };
+  /**
+   * THE DISPLAY THIS SCREEN IS CONFIGURED FOR, WHEN IT IS NOT CONNECTED — as the
+   * 1-based number every OS display panel and this picker use, or null.
+   *
+   * `display_target` is an INDEX into the OS monitor list, so unplugging a dock
+   * renumbers it. A `<select>` whose value matches no `<option>` shows its FIRST
+   * option, which here reads **Primary display** — so a screen configured for the
+   * projector rendered identically to a screen configured for nothing, on the one
+   * control that decides which physical screen a congregation sees. That is rule
+   * 35: one reassuring sentence over two situations.
+   *
+   * A STABLE IDENTITY WOULD BE THE REAL FIX AND IS NOT AVAILABLE. Tauri 2.11
+   * exposes `Monitor { name, size, position, work_area, scale_factor }` and no
+   * native display id; `tao` names a Windows monitor by the `\\.\DISPLAY1`
+   * device path the OS renumbers, and a macOS one by its EDID MODEL number, which
+   * two identical projectors share. `main.rs::resolve_display` carries the full
+   * reasoning, and `open_channel_output` now REFUSES rather than opening a
+   * fullscreen output on a guessed monitor. This is the half that says so before
+   * the operator presses Open.
+   *
+   * An empty list is deliberately NOT a missing display: `list_monitors` returns
+   * `[]` rather than erroring, so a probe that failed looks exactly like a machine
+   * with no screens, and claiming "not connected" from an ambiguity would be the
+   * same defect pointing the other way. Same judgement as `resolve_display`.
+   */
+  const missingDisplay = (c) => {
+    if (!isNative(c) || !monitors.length) return null;
+    const i = parseInt(c.display_target ?? '', 10);
+    if (!Number.isFinite(i)) return null;
+    return monitors.some((m) => m.index === i) ? null : i + 1;
+  };
   /** The kind label shown in the TYPE column. One definition, shared with Live's
       Output Status pane — see `outputHealth.js::screenKind`. */
   const kindOf = (c) => screenKind(c.render_target);
@@ -654,7 +685,20 @@
   // native screen names its display; a networked one names the ports it is served
   // on. Neither is a picker for a networked screen on purpose — see the markup.
   const outputOf = (c, mon) => {
-    if (c.render_target === 'native_window') return mon ? `${mon.name} · ${mon.width}×${mon.height}` : 'Primary display';
+    if (c.render_target === 'native_window') {
+      if (mon) return `${mon.name} · ${mon.width}×${mon.height}`;
+      // A MISSING DISPLAY AND NO DISPLAY ARE DIFFERENT THINGS, and this line said
+      // "Primary display" for both. `display_target` is an INDEX into the OS
+      // monitor list, so unplugging a dock renumbers it and a screen configured
+      // for the projector reads exactly like a screen configured for nothing —
+      // one reassuring sentence over two situations, which is rule 35, on the
+      // control that decides which physical screen a congregation sees. Pressing
+      // Open in that state is now refused by the backend, by name; this is the
+      // half that says so before the operator presses it.
+      const want = parseInt(c.display_target ?? '', 10);
+      if (Number.isFinite(want)) return `Display ${want + 1} — not connected`;
+      return 'Primary display';
+    }
     // NDI IS PARKED, AND THE CARD SHOULD SAY SO WHERE IT IS READ, not only in a
     // `title` nobody hovers. This was an em dash, which reads as "not set yet" —
     // a thing an operator would go looking for a way to configure. There is none
@@ -871,6 +915,15 @@
                       {#each monitors as m (m.index)}
                         <option value={String(m.index)}>{m.name} · {m.width}×{m.height}{m.primary ? ' (primary)' : ''}</option>
                       {/each}
+                      <!-- THE DISPLAY THIS SCREEN NAMES, WHEN IT IS NOT THERE.
+                           Without this option the select falls back to showing
+                           its first — "Primary display" — and a screen set to the
+                           projector reads exactly like a screen set to nothing.
+                           It is a real option so the operator can leave it alone
+                           (plug the projector back in) as easily as change it. -->
+                      {#if missingDisplay(k.c)}
+                        <option value={k.c.display_target}>Display {missingDisplay(k.c)} — not connected</option>
+                      {/if}
                     </select>
                     <!-- `screenSwitch`, not a ternary on `online`. Before the
                          first poll `k.st` is null and `!online` was true, so this
@@ -1185,7 +1238,17 @@
               {#each monitors as m (m.index)}
                 <option value={String(m.index)}>{m.name} · {m.width}×{m.height}{m.primary ? ' (primary)' : ''}</option>
               {/each}
+              {#if missingDisplay(sel)}
+                <option value={sel.display_target}>Display {missingDisplay(sel)} — not connected</option>
+              {/if}
             </select>
+            {#if missingDisplay(sel)}
+              <p class="ch-downnow">
+                This screen is set to open on a display that is not plugged in. Relay
+                will not open it on a different one — plug that display back in, or
+                choose another here.
+              </p>
+            {/if}
           {/if}
 
           <!-- Type · Transport · Output · URL · Reporting (docs/REBRAND.md §5),

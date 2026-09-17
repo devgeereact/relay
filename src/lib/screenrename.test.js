@@ -147,3 +147,62 @@ describe('Outputs → Screens · the name is a control', () => {
     ).toBe(false);
   });
 });
+
+// ── A REMEMBERED DISPLAY THAT IS GONE ───────────────────────────────────────
+//
+// `display_target` is an INDEX into the OS monitor list, so unplugging a dock
+// renumbers it and a screen configured for the projector becomes a screen
+// configured for whatever is now in that slot — or for nothing.
+//
+// A STABLE IDENTITY IS NOT AVAILABLE and is deliberately not faked: Tauri 2.11
+// hands out `Monitor { name, size, position, work_area, scale_factor }` and no
+// native id, `tao` names a Windows monitor by the `\\.\DISPLAY1` device path the
+// OS renumbers, and a macOS one by its EDID MODEL number, which two identical
+// projectors share. The reasoning is in `docs/DECISIONS.md` and in
+// `main.rs::resolve_display`.
+//
+// What IS fixed is the fallback. The desk said **Primary display** for a screen
+// whose assigned display is missing AND for a screen with none assigned — one
+// reassuring sentence over two situations (rule 35), on the control that decides
+// which physical screen a congregation sees.
+describe('a screen configured for a display that is not connected says so', () => {
+  itMounted('does not read the same as a screen with no display assigned', async () => {
+    const Channels = (await import('./views/Channels.svelte')).default;
+    invoke.mockImplementation((cmd) => {
+      switch (cmd) {
+        case 'list_output_channels':
+          return Promise.resolve([
+            { id: 1, name: 'Projector', render_target: 'native_window', template_id: 7, display_target: '2', status: 'offline', role: 'main' },
+            { id: 2, name: 'Spare', render_target: 'native_window', template_id: 7, display_target: null, status: 'offline', role: null },
+          ]);
+        case 'list_templates':
+          return Promise.resolve([{ id: 7, name: 'Classic Serif', layout: { layers: [] }, style: {} }]);
+        case 'list_monitors':
+          // Only the built-in screen is here. The projector was unplugged with
+          // the dock, which is the whole scenario.
+          return Promise.resolve([
+            { index: 0, name: 'Built-in display', width: 1512, height: 982, primary: true },
+          ]);
+        case 'local_ip':
+          return Promise.resolve('192.168.1.42');
+        case 'channel_status':
+          return Promise.resolve([]);
+        default:
+          return Promise.resolve(null);
+      }
+    });
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    app = new Channels({ target: host });
+    for (let i = 0; i < 60; i += 1) await settle();
+
+    const card = (name) =>
+      [...host.querySelectorAll('.ch-card')].find((c) => c.textContent.includes(name));
+    expect(card('Projector').textContent).toContain('Display 3 — not connected');
+    // And the control case, which is what stops this passing by the label being
+    // wrong in both directions: a screen that never named a display still reads
+    // as the primary, because that is genuinely what it will open on.
+    expect(card('Spare').textContent).toContain('Primary display');
+    expect(card('Spare').textContent).not.toContain('not connected');
+  });
+});

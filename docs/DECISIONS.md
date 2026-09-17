@@ -4702,3 +4702,78 @@ and asserts beside it the service clock the same branch keeps — so neither hal
 tidied into the other. Both halves were watched to go red separately: removing `alert = ''` fails
 the two alert cases, which is the defect exactly as it shipped, and resetting `svcStart` beside it
 fails the two clock cases, which is the opposite mistake a reader could make from the same section.
+
+---
+
+## 92. A screen's display is an OS index, and there is nothing stabler to store (2026-09-17)
+
+### Context
+
+`output_channels.display_target` holds a monitor INDEX — the position of a display in the list the
+OS hands out. Unplug a dock and the list renumbers, so the projector a church configured months ago
+becomes whatever is now in that slot, or nothing at all. The obvious repair is to store a stable
+identity for the display instead of its position.
+
+**It is not available, and this section exists so nobody spends a day rediscovering that.** Measured
+against the pinned versions, `tauri 2.11.5` / `tauri-runtime 2.11.3` / `tao 0.35.3`:
+
+- `tauri_runtime::Monitor` is `{ name: Option<String>, size, position, work_area, scale_factor }`.
+  There is no native display id on it. `tao`'s own `MonitorHandle::native_identifier()` exists and
+  Tauri does not surface it — `available_monitors()` returns the flattened struct.
+- On **Windows**, `tao` names a monitor from `MONITORINFOEX.szDevice`: `\\.\DISPLAY1`. That is an
+  OS-assigned device path, and the OS renumbers it when displays are attached or detached. It is
+  exactly as unstable as the index it would be replacing.
+- On **macOS**, `tao` names a monitor `Monitor #<CGDisplay::model_number()>` — an EDID **model**
+  number, shared by every unit of the same model, so two identical projectors are indistinguishable.
+  Relay already reaches past that for a readable name (`channels::collect_macos_display_names` maps
+  `NSScreen.localizedName` by position), and `localizedName` is per-model too.
+
+A per-unit identity is reachable on macOS through new FFI (`CGDisplaySerialNumber`) and on Windows
+only through `EnumDisplayDevices` plus EDID out of the registry. **A scheme that worked on one
+platform and fell back to the index on the other would make the control that decides which physical
+screen a congregation sees behave differently on Windows and macOS**, which is worse than one honest
+index: CLAUDE.md's stack line says both platforms from day one, and the failure this would introduce
+is silent and congregation-facing.
+
+### Decision
+
+**The index stays, and the FALLBACK is what changes — because the fallback was the dangerous half.**
+
+`auto_open_outputs` was always careful: it skips a channel whose index is not connected, and skips
+the primary display too, because auto-opening a borderless fullscreen output over the console covers
+the UI the operator is running the service from. `open_channel_output` — the **Open** button, the
+path an operator presses deliberately — did neither. A stale index fell straight through
+`open_native_window`'s placement block, the window was built at its default position and then
+fullscreened, and the OS put it on the primary. Unplug the projector, press Open, and the
+congregation's output covers the console. Nothing reported anything.
+
+`main::resolve_display` is now the one place either path decides, and it answers three ways:
+`On(index)` when the named display is connected, `Missing(n)` when the operator named one and it is
+not here, and `Anywhere` for everything else. `open_channel_output` refuses a `Missing` by name
+("… is set to open on Display 3, which is not connected"), which reaches the operator through
+`src/lib/errors.js` like every other refusal on that desk; `auto_open_outputs` skips it, unchanged.
+
+**Two things are deliberately NOT `Missing`.** An unreadable `display_target` is not a claim about a
+screen, so it means the same as none. And an empty monitor list is ambiguous — `list_monitors`
+returns `[]` rather than erroring, so a probe that failed looks exactly like a machine with no
+displays — and refusing on an ambiguity would turn a transient failure into an output that cannot be
+opened at all, mid-service, under a sentence the operator cannot act on.
+
+**And the desk stops saying the wrong thing before the button is pressed.** The Display picker is a
+`<select>`, and a value matching no option shows the FIRST option, which reads **Primary display** —
+so a screen configured for the projector rendered identically to a screen configured for nothing.
+One reassuring sentence over two situations is rule 35, on this control of all controls. A screen
+whose display is missing now carries a real option saying so, selected, plus a line in the inspector
+naming what will happen if Open is pressed.
+
+### Instrument
+
+`main.rs::display_target_tests` — the three answers, both the 0-based and the 1-based spellings of a
+missing display reported by the number an operator reads off their own OS, and the two ambiguities
+that must not become refusals. `src/lib/screenrename.test.js` holds the desk, with a control case in
+the same assertion so it cannot pass by the label being wrong in both directions.
+
+**What this does not do, stated plainly:** it does not make a display target survive a replug. A
+church that unplugs a dock and plugs it back into a different port still has to re-pick the display.
+The change is that Relay now says so instead of opening the congregation's screen on the operator's
+monitor.
