@@ -67,3 +67,9 @@ backgrounds-originals/
 # Design-tool caches (local only)
 .impeccable/
 .gstack/
+
+# Browser-driven audit passes write here. The harness is temporary and belongs
+# in no commit; 38 of these artefacts were tracked before 2026-09-17.
+.playwright-mcp/
+stage-before.json
+stage-after.json

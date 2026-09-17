@@ -1,6 +1,0 @@
-[     128ms] Error: {#each} only works with iterable values.
-    at ensure_array_like_dev (http://localhost:5241/node_modules/.vite/deps/chunk-LBLMGS3B.js?v=dedb8475:2552:11)
-    at Object.update [as p] (http://localhost:5241/src/lib/Dock.svelte:2282:20)
-    at update (http://localhost:5241/node_modules/.vite/deps/chunk-LBLMGS3B.js?v=dedb8475:1323:32)
-    at flush (http://localhost:5241/node_modules/.vite/deps/chunk-LBLMGS3B.js?v=dedb8475:1290:9)
-[     290ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:5241/favicon.ico:0
