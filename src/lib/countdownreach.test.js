@@ -230,10 +230,10 @@ async function mountAndRead() {
   // Bounded, so a line that never resolves still fails the test rather than
   // hanging it, and the assertion that follows is then about the answer rather
   // than about the scheduler.
-  for (let i = 0; i < 60; i += 1) {
+  for (let i = 0; i < 200; i += 1) {
     const t = host.querySelector('.cdreach')?.textContent ?? '';
     if (t && !/^\s*Cannot tell/.test(t)) break;
-    await new Promise((r) => setTimeout(r, 5));
+    await new Promise((r) => setTimeout(r, 10));
     await tick();
   }
   return host;
@@ -241,9 +241,22 @@ async function mountAndRead() {
 
 const line = () => host.querySelector('.cdreach');
 
-beforeEach(() => {
+// WARM THE BRIDGE BEFORE ANY MOUNT.
+//
+// `capture.js` reaches Tauri through a lazy `await import('@tauri-apps/api/core')`,
+// so the FIRST caller in a file pays the module resolution and every later one is
+// handed the settled namespace. That cost is invisible on Node 22 and 24 and is
+// not on Node 20, where it outran this suite's settle: the first mounting test
+// read `Cannot tell which screens would show it` — the rule 35 fallback answering
+// CORRECTLY about a read that had not landed — while every test after it passed.
+//
+// One awaited call here resolves the import once, before any component mounts, so
+// no test is the one that pays for it. `ping` is the right one to spend: it is
+// GROUP 2, it swallows, and it asserts nothing.
+beforeEach(async () => {
   invoke.mockReset();
   bridge();
+  await cap.ping().catch(() => {});
   cap.live.set(null);
   cap.templates.set([]);
   cap.readErrors.set({});
