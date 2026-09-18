@@ -21,6 +21,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as svelteRuntime from 'svelte';
 import { tick } from 'svelte';
+import { get } from 'svelte/store';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -99,8 +100,17 @@ beforeEach(() => {
         return Promise.resolve([{ id: 1, name: 'Classic Serif' }]);
       case 'list_output_channels':
         return Promise.resolve([]);
-      case 'rehearsal':
-        return Promise.resolve(false);
+      // `get_rehearsal`, NOT `rehearsal`. The command has always been the former;
+      // this case never matched, so the read fell through to the default, answered
+      // falsey, and `loadRehearsal` overwrote whatever the test had armed. It went
+      // unnoticed because that read was failing outright for an unrelated reason
+      // (RG-170), so the `set` never ran and the armed value survived by accident.
+      //
+      // Answering from the store makes the fixture say what it means: the backend
+      // is the source of truth for rehearsal, and a test that arms rehearsal is
+      // declaring the backend's state, not decorating the console's.
+      case 'get_rehearsal':
+        return Promise.resolve(get(cap.rehearsing) === true);
       case 'get_sensitivity':
         return Promise.resolve(50);
       case 'start_timer':

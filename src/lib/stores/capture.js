@@ -488,8 +488,35 @@ let unlistenStt = null;
 let unlistenDetect = null;
 let outputListenersUp = false; // always-on output mirror (set once)
 
+/**
+ * THE BRIDGE, RESOLVED ONCE — and the reason is a measured CI failure, not tidiness.
+ *
+ * This did `await import('@tauri-apps/api/core')` on every call. In a browser and in
+ * the packaged app that is free: the module registry caches it, so N callers cost one
+ * load. It is not free when several callers race a COLD registry under vitest, where
+ * the mocked-module resolution hands the SECOND concurrent importer `undefined` and
+ * `core.invoke` then throws `Cannot read properties of undefined (reading 'invoke')`.
+ * `readstates.test.js` recorded that symptom in prose long before anything failed on
+ * it; it took three CI rounds to connect the two, because every read here is GROUP 2
+ * and SWALLOWS, so the failure surfaced as a screen politely saying it could not tell.
+ *
+ * A mounting view is exactly that race: the dock fires its channel read, its template
+ * read and its default-template read in one go.
+ *
+ * ONE in-flight promise, memoised on the PROMISE rather than on its result, so N
+ * concurrent callers await the same import instead of starting N of them. A rejection
+ * is deliberately NOT cached: a plain browser has no bridge at all and must stay
+ * askable, and caching the failure would turn a transient into a permanent one.
+ */
+let corePromise = null;
 async function invoke() {
-  const core = await import('@tauri-apps/api/core'); // throws in a plain browser
+  if (!corePromise) {
+    corePromise = import('@tauri-apps/api/core').catch((e) => {
+      corePromise = null; // throws in a plain browser — stay askable
+      throw e;
+    });
+  }
+  const core = await corePromise;
   return core.invoke;
 }
 
@@ -2038,7 +2065,24 @@ return guardedRead('loadTemplates', async (call) => {
     // two homes for one property (docs/REBRAND.md §3.1). Migrating only at the
     // renderer would keep the WALL correct while the legacy key sat in the
     // database for ever, waiting for the next reader that does not resolve.
-    const migrated = Array.isArray(list) ? list.map(migrateTemplate) : list;
+    // AN ANSWER THAT IS NOT A LIST IS A FAILED READ, not an empty gallery.
+    //
+    // This passed a non-array STRAIGHT THROUGH into a store declared
+    // `writable([])`, so a backend answering `null` set `$templates = null` and
+    // every `$templates.find(...)` in the app threw — `Dock.svelte`'s
+    // `cdFallbackTpl` among them, which takes the whole Live audio card down with
+    // it. It never fired in anger because the reads it needed were failing
+    // earlier for an unrelated reason, and it surfaced the moment they started
+    // working (RG-170).
+    //
+    // Throwing hands it to `guardedRead`, which records `readErrors.loadTemplates`
+    // and leaves the store holding what it already had. That is the right pair:
+    // the surfaces say the list could not be READ rather than that there is
+    // nothing in it, and good data is not replaced by a bad answer.
+    if (!Array.isArray(list)) {
+      throw new Error(`list_templates answered ${list === null ? 'null' : typeof list}, not a list`);
+    }
+    const migrated = list.map(migrateTemplate);
     templates.set(migrated);
     return migrated;
 }, []);
