@@ -717,12 +717,34 @@
   // caught by twice.
   $: selOwn =
     sel && sel.template_id != null ? ($templates.find((t) => t.id === sel.template_id) ?? null) : null;
+  // ── THE DESK RESOLVES RUNG 3 TOO, OR IT IS THE SURFACE THAT LIES ────────────
+  //
+  // DECISIONS §97. The paragraph above `scriptureLook` records what happens when
+  // this desk resolves one rung differently from the wall: the tile showed a
+  // content look working while idle over a wall wearing the configured default,
+  // so the panel an operator opens to CHECK the setup was the one surface that
+  // made a broken setup look right. A preview that stopped at rung 4 would
+  // reproduce that exactly, one column along.
+  //
+  // THE KIND IS THE KIND THE PREVIEW IS SHOWING. Idle the stand-in is a verse, so
+  // the look that applies is the scripture one; live it is whatever is on air. A
+  // preview that always asked about scripture would be wrong on precisely the
+  // screens this feature exists for.
+  //
+  // `$channelLooks`, `$templates` and `$liveContent` are all NAMED here, for the
+  // reason this file states three times: Svelte tracks the identifiers it can see
+  // in a reactive expression, not the ones a called function happens to read.
+  $: previewKind = $live ? ($liveContent?.kind ?? 'scripture') : 'scripture';
+  $: previewKindLook = sel
+    ? templateById($templates, lookIdFor($channelLooks, sel.id, previewKind))
+    : null;
   $: previewTemplate =
     resolveOutputTemplate(
       sel ? selOwn : null,
       previewOverride,
       $live ? $liveTemplatePinned : false,
       $templates.find((t) => t.id === $defaultTemplateId) || null,
+      previewKindLook,
     ) || DEFAULT_TEMPLATE;
   // What the preview is a preview OF. "Sample" said the same thing for a screen
   // with its own look and for one following a look it never showed — rule 35 in
@@ -783,12 +805,18 @@
   $: cards = shown.map((c) => {
     const st = status[c.id] ?? null;
     const own = c.template_id == null ? null : ($templates.find((t) => t.id === c.template_id) ?? null);
+    // THE CARD'S OWN RUNG 3, per card. `previewKindLook` above answers for the
+    // SELECTED screen; every card is a different screen, so each resolves its own
+    // — and a card that borrowed the inspector's would paint the selected
+    // screen's look on every tile, which is a worse lie than not resolving it.
+    const kindLook = templateById($templates, lookIdFor($channelLooks, c.id, previewKind));
     const tpl =
       resolveOutputTemplate(
         own,
         previewOverride,
         $live ? $liveTemplatePinned : false,
         $templates.find((t) => t.id === $defaultTemplateId) || null,
+        kindLook,
       ) || DEFAULT_TEMPLATE;
     const i = parseInt(c.display_target ?? '', 10);
     const mon = Number.isFinite(i) ? (monitors.find((m) => m.index === i) ?? null) : null;

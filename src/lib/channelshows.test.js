@@ -23,6 +23,8 @@
 //   npx vitest run src/lib/channelshows.test.js
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { tick } from 'svelte';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { channelShowsKind, templateShows } from './layers.js';
 
 describe('the pure rule', () => {
@@ -61,6 +63,45 @@ describe('the pure rule', () => {
     // …and the screen narrows a template that would show everything.
     expect(and({}, { 1: ['scripture'] }, 1, 'countdown')).toBe(false);
     expect(and({}, {}, 1, 'countdown')).toBe(true);
+  });
+});
+
+// ── RUNG 0 STILL ASKS THE SCREEN'S OWN TEMPLATE, NEVER THE RESOLVED LOOK ─────
+//
+// DECISIONS §97 puts this first in the chain on purpose. `templateShows` is
+// consulted on the SCREEN'S own template (`t`), and if it were consulted on the
+// RESOLVED one instead, choosing a per-kind look for a kind could turn that kind
+// off — a look picker that silently doubles as a visibility control, which is the
+// exact confusion §97 and §98 exist to keep apart. It would also be circular: the
+// look is resolved FROM the kind, so asking the resolved look whether it shows
+// that kind is asking a question that has already been answered.
+//
+// Asserted on the source, because the two templates only differ on a page with a
+// per-kind look set AND a `shows` list that disagrees with it, and building that
+// in jsdom asserts the arrangement rather than the rule.
+describe('rung 0 is asked of the screen, not of the look', () => {
+  const page = readFileSync(path.resolve(__dirname, '..', 'Output.svelte'), 'utf8');
+
+  it('the one helper reads `t`, the screen\u2019s own template', () => {
+    expect(page).toMatch(/function paintsKind\(kind\)[\s\S]{0,200}templateShows\(t, kind\)/);
+  });
+
+  it('and nothing asks the RESOLVED template whether it shows a kind', () => {
+    // `activeTemplate` and `renderedTemplate` are the resolution's OUTPUT. Either
+    // of them here makes a per-kind look able to hide the kind it was chosen for.
+    expect(
+      page,
+      'a visibility check was moved onto the resolved template, so choosing a ' +
+        'look for a kind can now turn that kind off',
+    ).not.toMatch(/templateShows\(\s*(activeTemplate|renderedTemplate)/);
+  });
+
+  it('both doors go through that one helper', () => {
+    // The kiosk door reads `content_kind` off a differently-shaped message and
+    // the Tauri door reads `kind` off the struct emit, so only the RULE is
+    // shared — which is why it has to be a function and not two expressions.
+    const calls = page.match(/!paintsKind\(/g) ?? [];
+    expect(calls.length, 'a door stopped asking, or a third one appeared').toBe(2);
   });
 });
 
