@@ -145,6 +145,10 @@
     pauseCountdown,
     listTimers,
     showTimer,
+    listOutputChannels,
+    defaultTemplateId,
+    loadDefaultTemplate,
+    readErrors,
     sendStageAlert,
     stageAlert,
     templates,
@@ -159,7 +163,11 @@
   import TemplateRender from './TemplateRender.svelte';
   import { humanError } from './errors.js';
   import { rangeFill } from './rangefill.js';
-  import { formatCountdown, countdownWarning } from './layers.js';
+  import { formatCountdown, countdownWarning, resolveOutputTemplate } from './layers.js';
+  // WHICH SCREENS WOULD SHOW IT — the one place that answers it, shared with
+  // Live's Stage Timer line so the dock and the run surface cannot disagree
+  // about the same screens.
+  import { describeCountdownReach } from './channelroles.js';
   import {
     countdownSet,
     countdownPress,
@@ -733,6 +741,58 @@
   onMount(loadCongregationTimers);
   const cdTimersPoll = setInterval(loadCongregationTimers, 2000);
   onDestroy(() => clearInterval(cdTimersPoll));
+  // ── RG-167 · WHERE A SCREEN COUNTDOWN WOULD ACTUALLY GO ───────────────────
+  //
+  // `on the screens` was true of the store and, on two kinds of screen, false of
+  // the room. A template with an explicit `shows` allow-list that omits
+  // `countdown` drops the fire before any renderer sees it and holds what it had;
+  // and a KEYED template now refuses it outright (RG-166), because painting a
+  // clock over a live camera takes the preacher off the stream. Both are silent,
+  // both are properties of the template that screen resolves, and the transport
+  // said the same word over all of it.
+  //
+  // It needs no screen to answer anything, which is why it can sit under the
+  // transport rather than waiting for a fire: the question is about templates.
+  //
+  // POLLED, at the same two seconds and for the same reason as the timer list
+  // above. The dock is in the SHELL and renders on every workspace — including
+  // Templates and Outputs, which are exactly where an operator changes a screen's
+  // template — so a value read once at mount would be stale in the one place the
+  // operator was most likely to have just made it wrong.
+  /** `false` until `list_output_channels` has answered once. `[]` is not an answer. */
+  let cdChannels = [];
+  let cdChannelsRead = false;
+  async function loadCountdownScreens() {
+    // GROUP 2: swallows and answers `[]`, so a `catch` here could never fire and
+    // an empty list means both "no screens" and "the read failed". `readErrors`
+    // carries the reason; `cdChannelsRead` separates the third case.
+    cdChannels = await listOutputChannels();
+    cdChannelsRead = true;
+  }
+  onMount(() => {
+    loadCountdownScreens();
+    // The content-look fallback, so this resolves a screen's template exactly the
+    // way the wall does rather than approximately.
+    loadDefaultTemplate().catch(() => {});
+  });
+  const cdScreensPoll = setInterval(loadCountdownScreens, 2000);
+  onDestroy(() => clearInterval(cdScreensPoll));
+  $: cdFallbackTpl = $templates.find((t) => t.id === $defaultTemplateId) ?? null;
+  $: cdReach = describeCountdownReach(
+    cdChannels,
+    (c) =>
+      resolveOutputTemplate(
+        $templates.find((t) => t.id === c?.template_id) ?? null,
+        null,
+        false,
+        cdFallbackTpl,
+      ),
+    {
+      read: cdChannelsRead,
+      error: $readErrors.listOutputChannels ? humanError($readErrors.listOutputChannels) : '',
+    },
+  );
+
   $: cdBack = wayBack(cdTimers, $live);
   // Through the one projection and the one reader (`timers.js` → `countdown.js`),
   // ticked by the same `nowTick` as the figure above it, so the two numbers in
@@ -1102,7 +1162,7 @@
            genuinely that tool's: the countdown's figure, the alert's red. -->
       <div class="qblock tmr">
         <div class="qhead">
-          <span class="r-lbl">Countdown</span>
+          <span class="r-lbl">Screen Countdown</span>
           <!-- WHAT IS LOADED, while the figure beside it shows what is LEFT. -->
           {#if cdLive}<span class="cdset r-mono">· {cdSetLabel}</span>{/if}
           <span class="qspring"></span>
@@ -1191,6 +1251,19 @@
           <button class="r-btn sm ghost" on:click={() => press('clear')}
             title="Reset this tool to five minutes. It does not clear the screens.">Clear</button>
         </div>
+        <!-- ── WHERE IT WOULD GO (RG-167) ───────────────────────────────────
+             One line, under the transport, in the same voice as the `cdstatev`
+             caption above it: caption size, dim, and no law colour. `on the
+             screens` was true of the store and, on two kinds of screen, false of
+             the room — one whose `shows` allow-list omits the kind and drops the
+             fire in silence, and one that is KEYED and now refuses the clock
+             rather than painting it over a live camera (RG-166). Neither says
+             anything, and the transport said the same word over all of it.
+
+             IT ASKS NO SCREEN ANYTHING. Both exclusions are properties of the
+             template each screen resolves, which is why this can stand here
+             before a countdown has ever been fired — the moment it is useful. -->
+        <p class="cdreach" class:warn={cdReach.kind === 'none' || cdReach.kind === 'unknown'}>{cdReach.text}</p>
         <!-- ── THE WAY BACK (RG-152) ────────────────────────────────────────
              Only when there IS a congregation timer and it is not what the
              screens are showing. Two facts, and the second one is read from the
@@ -1756,6 +1829,17 @@
      and never scrolls, and nothing here is in it: that is the property
      `Clear screens` depends on (rule 15), and it is why this is not RG-146 one
      card along. NOT measured in a layout engine — jsdom computes none. */
+  /* WHERE A SCREEN COUNTDOWN WOULD GO (RG-167). The caption voice — the same
+     size, family and colour as `.cdstatev` above the transport — and it WRAPS
+     rather than clipping, because this sentence names screens and half a list of
+     names is worse than no list. `.warn` is DIM, never red: a church whose
+     screens all hide the kind has made a choice and nothing has failed, and an
+     alarm that is on for every such church is one an operator learns to skip.
+     It sits inside `.tools`, which is `overflow-y:auto` by design; the Controls
+     card, which never scrolls because `Clear screens` lives in it, is untouched. */
+  .cdreach { margin: 2px 0 0; font-size: var(--v-fs-cap); line-height: 1.35;
+    color: var(--v-faint); overflow-wrap: anywhere; }
+  .cdreach.warn { color: var(--v-dim); }
   .cdback { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
   .cdbackline {
     font-size: var(--v-fs-cap); line-height: var(--v-lh-cap); color: var(--v-faint);

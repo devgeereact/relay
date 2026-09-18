@@ -1406,7 +1406,7 @@ await call('set_plan_duration', { id, seconds });
 }
 
 /**
- * Bind a cue to a programme timer of `minutes`, or clear it with `null`.
+ * Bind a cue to a Stage Timer of `minutes`, or clear it with `null`.
  *
  * A REQUEST, STORED — not a clock started. Nothing about this reaches a screen or
  * a preacher's rail: the Planner may not, and does not (`plannerbuildonly.test.js`).
@@ -1638,7 +1638,7 @@ if (!keepPlan) leavePlan();
 /**
  * START A TIMER AND HAND BACK ITS IDENTITY. It puts nothing in front of anybody.
  *
- * `scope` is `'both'` (a congregation countdown) or `'stage'` (a programme timer
+ * `scope` is `'both'` (a congregation countdown) or `'stage'` (a Stage Timer
  * for the preacher's monitor). Putting a `'both'` timer on the screens is
  * `showTimer`; there are exactly two doors onto a congregation wall and this is
  * deliberately not one of them.

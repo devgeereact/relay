@@ -154,7 +154,7 @@ export const KIND_META = {
   stage: { one: 'Stage Monitor', many: 'Stage', tag: 'STAGE MONITOR' },
   announcement: { one: 'Announcement', many: 'Announcements', tag: 'ANNOUNCEMENT' },
   media: { one: 'Media', many: 'Media', tag: 'MEDIA' },
-  timer: { one: 'Timer', many: 'Timer / Countdown', tag: 'TIMER' },
+  timer: { one: 'Screen Countdown', many: 'Screen Countdown', tag: 'TIMER' },
   custom: { one: 'Custom', many: 'Custom', tag: 'CUSTOM' },
 };
 

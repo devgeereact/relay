@@ -41,7 +41,7 @@ export const BINDINGS = [
   { key: 'verse', label: 'Verse text' },
   { key: 'reference', label: 'Reference' },
   { key: 'translation', label: 'Translation' },
-  { key: 'countdown', label: 'Countdown timer' },
+  { key: 'countdown', label: 'Screen Countdown' },
   { key: 'clock', label: 'Clock' },
   // ROLE-MONITOR fields. These carry data that reaches OUTPUT content but is not
   // for the congregation: the verse coming up and the Stage Note.
@@ -73,7 +73,7 @@ export const LAYER_TYPES = [
   { type: 'backdrop', label: 'Backdrop (the standing background)', icon: '▨' },
   { type: 'shape', label: 'Shape', icon: '▢' },
   { type: 'background', label: 'Background', icon: '▦' },
-  { type: 'timer', label: 'Timer / Countdown', icon: '⏱' },
+  { type: 'timer', label: 'Screen Countdown', icon: '⏱' },
 ];
 
 /** Create a layer of `type` with sensible defaults, placed at a default box. */
@@ -288,7 +288,8 @@ export function isKeyedTemplate(template) {
  *
  * The timer registry adds no kind to this list. A congregation timer is still
  * broadcast as `countdown`, which is already the fifth row and is why the row is
- * labelled "Timer / Countdown" rather than "Countdown". A programme timer never
+ * labelled "Screen Countdown" — the room's clock, said the way the register says
+ * it (`names.test.js`). A Stage Timer never
  * becomes content: it is published to the stage tablet on its own frame, so there
  * is no per-screen visibility question to answer about it — a congregation screen
  * cannot show one whether or not it is ticked here, which is a stronger guarantee
@@ -299,7 +300,7 @@ export const CONTENT_KINDS = [
   { key: 'song', label: 'Songs / Lyrics' },
   { key: 'media', label: 'Media' },
   { key: 'announce', label: 'Announcements' },
-  { key: 'countdown', label: 'Timer / Countdown' },
+  { key: 'countdown', label: 'Screen Countdown' },
 ];
 
 /**
@@ -319,7 +320,7 @@ export const CONTENT_KINDS = [
  * `resolveOutputTemplate` is ever consulted, and the screen simply holds what it
  * had. Nothing anywhere reports that. The timer registry adds no kind — a
  * congregation timer is `countdown`, which every list already names, and a
- * programme timer never arrives here at all — so no list needs touching.
+ * Stage Timer never arrives here at all — so no list needs touching.
  *
  * **WHAT THE SEED ACTUALLY LOOKS LIKE, checked rather than assumed**, because the
  * reassuring version of this ("every seeded template writes `shows` explicitly,
@@ -897,7 +898,7 @@ function preacherView() {
   };
 }
 
-/** Countdown timer: a full-screen pre-service clock — a label, huge MM:SS, and
+/** The Screen Countdown: a full-screen clock — a label, huge MM:SS, and
  *  the wall clock. The MM:SS is a timer layer bound to the fired countdown, so it
  *  ticks and shows the "begins in" label from the fired content's reference. */
 function timerScreen() {
@@ -937,7 +938,7 @@ export const STARTERS = [
   { key: 'stage', label: 'Stage Display', make: stageDisplay, hint: 'Platform monitor: current verse, reference and clock. Theme-aware.' },
   { key: 'confidence', label: 'Confidence Monitor', make: confidenceMonitor, hint: 'Booth-facing "what\'s on screen now" view with clock. Theme-aware.' },
   { key: 'preacher', label: 'Preacher View', make: preacherView, hint: 'Big centred verse, the verse coming up, the service timer and your Stage Note.' },
-  { key: 'timer', label: 'Countdown Timer', make: timerScreen, hint: 'Huge MM:SS for a pre-service countdown, with a label and clock.' },
+  { key: 'timer', label: 'Screen Countdown', make: timerScreen, hint: 'Huge MM:SS for a pre-service countdown, with a label and clock.' },
   { key: 'supersource', label: 'SuperSource', make: superSource, hint: 'Camera on one side, a rendered slide on the other. Keyed — the switcher supplies the camera.' },
   { key: 'freestyle', label: 'Freestyle', make: freestyle, hint: 'A blank canvas — add layers yourself.' },
 ];

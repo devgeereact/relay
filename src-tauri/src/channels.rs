@@ -5366,6 +5366,52 @@ mod tests {
     /// `starts_with` that matched nothing while looking exactly like the bug it
     /// fixed. A hand-written literal here would reproduce that: it would assert
     /// about a string this module never emits.
+    /// RG-167 — THE WIRE KIND IS `"timer"`, AND A RENAME MUST NOT REACH IT.
+    ///
+    /// The two clocks were renamed on 2026-09-18: the congregation's is a
+    /// **Screen Countdown** and the preacher's is a **Stage Timer**, because six
+    /// labels between two concepts told an operator nothing about which of them
+    /// reached a room and which reached one person (DECISIONS §92 addendum).
+    ///
+    /// **A label is what a person reads; a frame kind is what two programs agree
+    /// on.** `stage.html` is served over the LAN and a church may have it open on
+    /// a tablet that has not been reloaded since the last release, or pinned in a
+    /// kiosk that reloads on a schedule of its own. Renaming this string to match
+    /// the label would leave every such page matching nothing in its `apply`
+    /// branch — no error, no console anybody can read, and the preacher's rail
+    /// simply gone for the service.
+    ///
+    /// Asserted against the SERIALISED frame rather than a literal, for the same
+    /// reason the test below it is: `serde_json`'s map is a BTreeMap, so the only
+    /// honest question is what this module actually emits. Watched to fail by
+    /// renaming the kind to `stage_timer` in `timer_frame_json`.
+    #[test]
+    fn the_wire_kind_stays_timer_however_the_control_is_labelled() {
+        let frame = timer_frame_json(&[stage_timer(1, "Sermon")], None);
+        let parsed: serde_json::Value =
+            serde_json::from_str(&frame).expect("a timer frame is JSON");
+        assert_eq!(
+            parsed["kind"], "timer",
+            "the programme rail's wire kind moved. `Stage.svelte` matches              `m.kind === 'timer'` and so does `is_timer_frame`; a church running an              older `stage.html` would lose its rail with nothing said: {frame}"
+        );
+        assert!(
+            is_timer_frame(&frame),
+            "the matcher and the producer disagree about the wire kind: {frame}"
+        );
+        // And the other direction: nothing has started publishing the LABEL as a
+        // kind. A grep is the right shape here — this is about a string, and the
+        // string is the contract. The module's own tests are excluded, because
+        // this test names the forbidden spellings out loud.
+        let src = include_str!("channels.rs");
+        let body = src.split("mod tests").next().unwrap_or(src);
+        for forbidden in ["\"stage_timer\"", "\"screen_countdown\""] {
+            assert!(
+                !body.contains(forbidden),
+                "a renamed wire kind {forbidden} has been published. The LABEL moved,                  the protocol did not — DECISIONS §92 addendum"
+            );
+        }
+    }
+
     #[test]
     fn a_timer_frame_is_never_retained_as_a_screen_frame() {
         let frame = timer_frame_json(&[stage_timer(1, "Offering")], None);

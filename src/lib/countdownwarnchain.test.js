@@ -92,10 +92,19 @@ afterEach(() => {
   setCountdownWarnDefault(COUNTDOWN_WARN_MS);
 });
 
+  // RG-166 — `type: 'bg'` IS NOT A LAYER TYPE. `TemplateRender` draws
+  // `background`, `backdrop`, `media`, `shape`, `band`, `region`, `text` and
+  // `timer`, and nothing else, so this template declared a black background that
+  // the renderer has never painted: it was a fully TRANSPARENT screen the whole
+  // time, and `layers.js::isKeyedTemplate` says so. That did not matter while the
+  // countdown refusal read `layout.lowerThird`; it does now that both render
+  // paths ask the keyed question, and a countdown may not paint over a camera.
+  // Corrected rather than exempted — the fixture now IS the opaque screen it
+  // always claimed to be, which is what these assertions are about.
 const TIMER_TEMPLATE = {
   id: 1,
   name: 'Timer',
-  layout: { layers: [{ id: 'bg', type: 'bg', fill: '#000' }] },
+  layout: { layers: [{ id: 'bg', type: 'background', visible: true, fill: '#000', opacity: 1 }] },
   style: { verseSize: '6' },
 };
 
@@ -292,7 +301,7 @@ describe('(c) the configured default is delivered to the wall', () => {
 
 describe("(c) and to the preacher's page", () => {
   it('the timer frame carries it, which is the frame that reaches this page first', async () => {
-    // The stage's own carrier. A programme timer can be running before anything
+    // The stage's own carrier. A Stage Timer can be running before anything
     // has been fired, so waiting for a content frame would leave the one surface
     // whose entire purpose is the clock on the shipped minute for that whole time.
     expect(countdownWarning(NINETY_SECONDS)).toBe(false);
