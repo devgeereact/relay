@@ -1897,6 +1897,7 @@
           <div
             class="content"
             class:panel={panelOn}
+            class:cdbox={countdownTo && countdownAllowed}
             style="text-align:{layout.align || 'center'}; font-family:{fontFamily}; background:{panelBg}; border-radius:{panelRadius}cqw;{bandMode && bandHeight ? ` min-height:${bandHeight}cqh;` : ''}"
           >
             {#if countdownTo && !countdownAllowed}
@@ -2105,6 +2106,48 @@
     max-width: 90%;
     max-height: 92%;
     overflow: hidden;
+  }
+  /* ── THE BOX A COUNTDOWN IS FITTED AGAINST MAY NOT BE SIZED BY THE COUNTDOWN ──
+     RG-141. `.content` above declares no width and no height: it is a flex item
+     with caps, so it is shrink-to-fit and its box IS its text. That is right for
+     a verse — prose wraps, so a long passage grows to the 90%/92% caps and then
+     genuinely overflows them, which is a real signal the fitter can act on — and
+     it is wrong for a countdown, which is one `nowrap` line with `line-height:
+     1.05`, a leading deliberately TIGHTER than the face's own line box. The glyph
+     box is therefore a fixed FRACTION taller than the box measured around it, at
+     every size, and `fitOne`'s stop condition is an absolute one pixel.
+
+     A loop whose overflow scales with the thing it is adjusting, against a
+     tolerance that does not, can only terminate by shrinking until the residue
+     rounds under a pixel. Measured at 1920x1080 on a legacy region row declaring
+     `verseSize 5` — so a countdown designed at 10cqw, 192px — the residue went
+     12px, 10, 8, 5, 3, 2 as the scale went 1, 0.8, 0.6, 0.4, 0.3, 0.2, and the
+     loop stopped at 0.135: a 59x35px blob in the middle of an otherwise empty
+     1920x1080 screen, the digits at 26px and the label at 6px. `onFit` correctly
+     reported `legible: false`, which the audit could not confirm and which is the
+     one part of this that was already working.
+
+     It is rule 37 in its purest form — the loop had no notion of failure because
+     it had no notion of the BOX — and the repair is the box, not the tolerance.
+     Giving the countdown a definite rectangle makes `clientHeight` independent of
+     the type, so the search terminates on the true fit: at 1920x1080 the declared
+     192px now fits at scale 1 and paints at 192px. A template whose designer
+     genuinely asked for more than the frame still shrinks, still shows, and still
+     reports, exactly as rule 37 requires.
+
+     90%/92% are `.content`'s own caps, restated as sizes rather than limits, so
+     the countdown occupies the same budget every other kind already had and
+     nothing about the layout moves. This is also what the LAYER branch has always
+     had for free: `.ltext` and `.cd-default`'s lines are percentage boxes, which
+     is why a layered countdown never showed this. Same guarantee, reached the same
+     way, on the second door. */
+  .content.cdbox {
+    width: 90%;
+    height: 92%;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
   }
   /* Text contrast panel — a plate behind the words for a bright background. The
      padding gives the plate room around the text; it collapses to nothing when
