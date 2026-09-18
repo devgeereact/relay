@@ -493,6 +493,7 @@ mod cold_start {
 
         // --- output_channels: Channels → Add screen
         let ch = add_channel(
+            h.clone(),
             h.state::<Db>(),
             "Crèche TV".into(),
             Some("network_client".into()),
@@ -1139,7 +1140,7 @@ mod cold_start {
         // GAP, deliberately recorded: a CHANNEL may be created with a blank name.
         // It then appears in Channels and in every screen picker as an unnamed
         // row. Nothing else refuses this.
-        let blank = add_channel(h.state::<Db>(), "   ".into(), None, None)
+        let blank = add_channel(h.clone(), h.state::<Db>(), "   ".into(), None, None)
             .expect("today a blank channel name is accepted");
         let db = h.state::<Db>();
         let conn = db.0.lock().unwrap();

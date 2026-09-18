@@ -220,6 +220,8 @@ fn main() {
             let kiosk_clients = kiosk.clients_handle();
             let kiosk_default_tpl = kiosk.default_template_handle();
             let kiosk_roles = kiosk.channel_roles_handle();
+            let kiosk_kind_looks = kiosk.channel_looks_handle();
+            let kiosk_screen_tpls = kiosk.channel_templates_handle();
             let kiosk_last = kiosk.last_screen_handle();
             let kiosk_last_x = kiosk.last_transition_handle();
             let kiosk_last_t = kiosk.last_timers_handle();
@@ -258,6 +260,66 @@ fn main() {
                         .unwrap_or_else(|| "{}".into());
                 kiosk.cache_channel_roles(&rj);
             }
+            // …AND WHAT EACH SCREEN WEARS FOR EACH KIND (DECISIONS §97), on the
+            // identical argument. A browser source that connects during launch
+            // must not be told it has no per-kind look and then corrected: between
+            // the two it would resolve the next fire against its blanket template,
+            // and the next fire during launch is the countdown a congregation is
+            // already watching.
+            //
+            // An unreadable database leaves `{}`, which is "no screen has a
+            // per-kind look" — every kind falls through to the screen's own
+            // template, which is the behaviour before this existed and the right
+            // answer when nothing can be read.
+            {
+                let db = app.state::<Db>();
+                let lj =
+                    db.0.lock()
+                        .ok()
+                        .and_then(|conn| db::channel_looks_json(&conn).ok())
+                        .unwrap_or_else(|| "{}".into());
+                kiosk.cache_channel_looks(&lj);
+            }
+            // …AND WHAT EACH SCREEN WEARS FOR EVERYTHING ELSE — its own template.
+            //
+            // The most consequential of the four warms, and the one that was
+            // missing entirely. A browser source opened from `Copy URL` is
+            // CHANNEL-keyed and sends `template_id: null`, so until this existed
+            // the hub had nothing to answer it with and every such screen resolved
+            // against a null template: the content look, or the configured
+            // default, on every screen in the building, whatever the operator had
+            // assigned. It looked correct in testing because a screen that happens
+            // to be connected when the operator reassigns a template does receive
+            // the broadcast; it was wrong on every reconnect and every cold start.
+            //
+            // `null` is stored for a screen that follows the content look, rather
+            // than the row being skipped: that is an ANSWER, and a page that cannot
+            // tell it from silence keeps whatever its URL gave it.
+            {
+                let db = app.state::<Db>();
+                let rows = db
+                    .0
+                    .lock()
+                    .ok()
+                    .and_then(|conn| {
+                        db::list_output_channels(&conn).ok().map(|cs| {
+                            cs.into_iter()
+                                .map(|c| {
+                                    let j = c
+                                        .template_id
+                                        .and_then(|id| db::get_template(&conn, id).ok().flatten())
+                                        .and_then(|t| serde_json::to_string(&t).ok())
+                                        .unwrap_or_else(|| "null".into());
+                                    (c.id, j)
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                    })
+                    .unwrap_or_default();
+                for (id, j) in rows {
+                    kiosk.cache_channel_template(id, &j);
+                }
+            }
             // WARM THE CONFIGURED COUNTDOWN WARNING WINDOW, for the same reason
             // the default template is warmed one block up: the first screen to
             // connect must not be told the shipped minute by a machine that has
@@ -286,7 +348,7 @@ fn main() {
                 let ids =
                     db.0.lock()
                         .ok()
-                        .map(|conn| content_look_ids(&conn))
+                        .map(|conn| resolvable_look_ids(&conn))
                         .unwrap_or_default();
                 kiosk.cache_look_ids(&ids);
             }
@@ -313,6 +375,8 @@ fn main() {
                 kiosk_clients,
                 kiosk_default_tpl,
                 kiosk_roles,
+                kiosk_kind_looks,
+                kiosk_screen_tpls,
                 kiosk_last,
                 kiosk_last_x,
                 kiosk_last_t,
@@ -485,6 +549,8 @@ fn main() {
             service_lock,
             set_service_lock,
             set_channel_template,
+            list_channel_looks,
+            set_channel_look,
             rename_channel,
             clear_screen,
             blackout_screen,
@@ -3731,6 +3797,38 @@ fn content_look_ids(conn: &rusqlite::Connection) -> Vec<i64> {
         .collect()
 }
 
+/// EVERY TEMPLATE ID A SCREEN CAN BE ASKED TO WEAR WITHOUT SHIPPING ITS BYTES.
+///
+/// Two sources, one list, and it has to be one list because the hub holds one
+/// bound (`channels::MAX_LOOK_IDS`) and a client gets one hello reply:
+///
+///   * the FIVE global content looks (`content_look_ids`), §70;
+///   * every per-kind look a screen carries (`db::channel_look_ids`), §97.
+///
+/// Both cross the wire as an ID and nothing else, for the same recorded reason
+/// (`cue_or_content_tpl`, in megabytes), which means the bytes have to be at the
+/// receiver before the id arrives — and a browser source has no database to look
+/// them up in. This is what the hub is told to send.
+///
+/// The configured default is deliberately still absent, exactly as
+/// `content_look_ids` records: it reaches every client in its own
+/// `default_template` frame carrying its own JSON, so naming it here would put
+/// the same bytes on the wire twice for no change in what is painted.
+///
+/// A failed read of the per-kind looks yields the content looks alone rather than
+/// nothing. That is the honest degradation: the screens that follow the global
+/// map still resolve, and a screen with a per-kind look falls back to its own
+/// template — which is where it was before this feature existed.
+fn resolvable_look_ids(conn: &rusqlite::Connection) -> Vec<i64> {
+    let mut ids = content_look_ids(conn);
+    for id in db::channel_look_ids(conn).unwrap_or_default() {
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    ids
+}
+
 #[cfg(test)]
 mod media_url_tests {
     use super::*;
@@ -3778,14 +3876,13 @@ mod content_look_kinds_tests {
     ///
     /// `CONTENT_LOOK_KINDS` is what `content_look_ids` iterates to tell the hub
     /// which templates a following screen may be asked to wear.
-    /// `ContentTemplates` is the map an operator edits. `MAX_CONTENT_LOOKS` is
-    /// the bound on how many of them a hello reply may carry. A sixth kind added
+    /// `ContentTemplates` is the map an operator edits. A sixth kind added
     /// to the map alone is a look an operator can set, save, and never see: the
     /// fire path would resolve its id and the hub would never send the bytes, so
     /// the screen falls back to the configured default in silence — which is the
     /// defect this whole path was built to close, reintroduced one kind at a time.
     #[test]
-    fn the_content_look_kinds_agree_with_the_map_and_the_bound() {
+    fn the_content_look_kinds_agree_with_the_map() {
         let map = serde_json::to_value(ContentTemplates {
             scripture: None,
             song: None,
@@ -3810,10 +3907,10 @@ mod content_look_kinds_tests {
                 "`{kind}` is iterated but is not a field of the map an operator edits"
             );
         }
-        assert_eq!(
-            CONTENT_LOOK_KINDS.len(),
-            channels::MAX_CONTENT_LOOKS,
-            "the hub would truncate a look this install can legitimately set"
+        assert!(
+            CONTENT_LOOK_KINDS.len() < channels::MAX_LOOK_IDS,
+            "the five global content looks alone would fill a hello reply, so a \
+             per-kind look could never be sent at all"
         );
     }
 }
@@ -3901,7 +3998,7 @@ fn set_content_template<R: tauri::Runtime>(
         let fresh = template_id
             .and_then(|id| db::get_template(&conn, id).ok().flatten())
             .and_then(|t| serde_json::to_string(&t).ok().map(|j| (t.id, j)));
-        (content_look_ids(&conn), fresh)
+        (resolvable_look_ids(&conn), fresh)
     };
     // A LOOK CHANGED MID-SESSION IS NEWS, AND A SCREEN ALREADY OPEN HAS TO GET IT.
     //
@@ -6836,7 +6933,8 @@ fn publish_channel_roles<R: tauri::Runtime>(app: &tauri::AppHandle<R>, roles_jso
 
 /// Add an output channel. Returns its id.
 #[tauri::command]
-fn add_channel(
+fn add_channel<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     db: tauri::State<'_, Db>,
     name: String,
     render_target: Option<String>,
@@ -6851,8 +6949,32 @@ fn add_channel(
             "invalid render target: {target}"
         )));
     }
-    let conn = db.0.lock()?;
-    db::add_channel(&conn, name.trim(), &target, template_id.unwrap_or(1)).map_err(Into::into)
+    // WRITE AND READ UNDER ONE LOCK, RELEASE, THEN TELL THE HUB (rule 2).
+    let (id, tjson) = {
+        let conn = db.0.lock()?;
+        let id = db::add_channel(&conn, name.trim(), &target, template_id.unwrap_or(1))?;
+        let j = db::get_template(&conn, template_id.unwrap_or(1))?
+            .and_then(|t| serde_json::to_string(&t).ok())
+            .unwrap_or_else(|| "null".into());
+        (id, j)
+    };
+    // THE NEW SCREEN'S LOOK, RETAINED BEFORE ANYTHING CAN OPEN IT. A screen added
+    // during a service is opened seconds later, and the hub answers a hello out of
+    // this map — so a screen created and never reassigned would have been the one
+    // shape with no entry at all, which is the defect this map exists to close,
+    // reintroduced through the create path. There is no publish: nothing is showing
+    // this channel yet, and a broadcast about a screen nobody has opened is a frame
+    // every other screen drops.
+    //
+    // `try_state`, not a `State` parameter, for the reason `publish_channel_roles`
+    // records: a headless Relay manages no hub — the "no LAN" case `qa::bare_app`
+    // deliberately reproduces — and a `State` argument panics there instead of
+    // quietly doing nothing. This command IS driven headless, by
+    // `qa::cold_start`, which is how that was found rather than reasoned.
+    if let Some(hub) = app.try_state::<channels::KioskHub>() {
+        hub.cache_channel_template(id, &tjson);
+    }
+    Ok(id)
 }
 
 /// RENAME A SCREEN. There was no way to do this at all.
@@ -6916,12 +7038,31 @@ fn delete_channel<R: tauri::Runtime>(
     // is still open would otherwise keep the role of a channel that no longer
     // exists — which on a stage display means it keeps accepting stage messages
     // after the operator has deleted it.
-    let roles = {
+    let (roles, looks, ids) = {
         let conn = db.0.lock()?;
         db::delete_channel(&conn, id)?;
-        db::channel_roles_json(&conn)?
+        (
+            db::channel_roles_json(&conn)?,
+            db::channel_looks_json(&conn)?,
+            resolvable_look_ids(&conn),
+        )
     };
     publish_channel_roles(&app, &roles);
+    // …AND THE PER-KIND LOOKS THE DELETED SCREEN HELD. `channel_looks` cascades
+    // on the foreign key, so the rows are already gone from the database — but a
+    // page that is still open would go on holding a map naming a channel nobody
+    // can be, and the console would go on listing per-kind looks for a screen that
+    // is not there. The same argument as the role map one line up, on the map that
+    // decides what a screen paints rather than what it accepts.
+    publish_channel_looks(&app, &looks);
+    if let Some(hub) = app.try_state::<channels::KioskHub>() {
+        hub.cache_look_ids(&ids);
+        // …AND WHAT THE DELETED SCREEN WORE. Nothing can be that channel any more,
+        // so an entry left here is the hub answering for a screen that is not
+        // there — harmless on its own, and exactly the stale row that makes a later
+        // reader trust the map further than it should.
+        hub.forget_channel_template(id);
+    }
     Ok(())
 }
 
@@ -7019,9 +7160,12 @@ fn set_channel_template<R: tauri::Runtime>(
                     serde_json::json!({ "channel": id, "template": tpl }),
                 );
             }
-            kiosk.publish(format!(
-                r#"{{"kind":"channel_template","channel":{id},"template":{j}}}"#
-            ));
+            // THROUGH THE HUB, WHICH RETAINS IT. This used to be a bare
+            // `kiosk.publish`, and that IS the defect the retained slot exists to
+            // close: the frame reached whoever was connected at that instant and
+            // nothing answered for the screen that connected a minute later, so a
+            // reassignment survived exactly as long as nothing reloaded.
+            kiosk.set_channel_template(id, &j);
             // Keep the hub's per-template cache current so a fresh kiosk connect on
             // this template id renders the up-to-date template too.
             kiosk.cache_template(tid, &j);
@@ -7034,15 +7178,121 @@ fn set_channel_template<R: tauri::Runtime>(
                 "channel://retemplate",
                 serde_json::json!({ "channel": id, "template": serde_json::Value::Null }),
             );
-            kiosk.publish(format!(
-                r#"{{"kind":"channel_template","channel":{id},"template":null}}"#
-            ));
+            // Retained as an explicit `null`, on the same argument: a screen that
+            // reconnects has to be able to learn it is a FOLLOWER, and silence
+            // cannot say that.
+            kiosk.set_channel_template(id, "null");
         }
         // A template id that resolves to nothing: the row is written, and no screen
         // is told to paint something that could not be read.
         (Some(_), None) => {}
     }
     Ok(())
+}
+
+/// WHAT EVERY SCREEN WEARS FOR EVERY KIND — `{"1":{"scripture":9,"song":12}}`.
+///
+/// The console reads this once at boot and keeps it in a store; the output pages
+/// get it from the hub (a browser source) or from this same command (a native
+/// window, which has the bridge and no socket). One command, both readers, so
+/// there is no second notion of what a screen is wearing.
+#[tauri::command]
+fn list_channel_looks(db: tauri::State<'_, Db>) -> error::Result<serde_json::Value> {
+    let conn = db.0.lock()?;
+    let raw = db::channel_looks_json(&conn)?;
+    serde_json::from_str(&raw).map_err(|_| {
+        // The map is built by `serde_json` two lines earlier, so this branch is
+        // unreachable in a working build — and it is a REFUSAL rather than a
+        // silent `{}` because the alternative is the console showing "no screen
+        // has a per-kind look" over four screens that do, which is rule 35 on the
+        // one surface an operator opens to check the setup.
+        error::Error::refused("Relay could not read what the screens are wearing.")
+    })
+}
+
+/// SET (or CLEAR, with `None`) WHAT ONE SCREEN WEARS FOR ONE KIND OF CONTENT.
+///
+/// `None` deletes the row, because no row is the only spelling of "this kind
+/// inherits" (`db::ensure_channel_looks`). There is no second spelling, and a
+/// look of NONE is NOT "this screen skips this kind" — that question is
+/// `layout.shows`, it lives on the template, and answering it here would be
+/// RG-161's per-cue targeting arriving through the back door with none of its
+/// pieces. **A per-kind look changes what a screen WEARS, never whether it
+/// PAINTS.**
+///
+/// **NOT HELD BY THE SERVICE LOCK, and that is a decision rather than an
+/// oversight** — the same one `rename_channel` states, for the same two reasons.
+/// `servicelock.rs` protects the irreversible and anything that takes the engine
+/// away mid-sermon; this is neither. It is reversible by doing it again, and the
+/// moment an operator most wants it is the moment a look turns out to be wrong,
+/// which is during a service. Over-blocking is the more dangerous failure there.
+///
+/// BOTH DOORS, like every other piece of screen configuration in this file. A
+/// native output window hears `output://channel_looks`; a kiosk/OBS browser
+/// source gets the hub frame and picks out its own channel. A control wired to
+/// one of the two is the mistake this repository has now made four times — and
+/// here it would mean a projector on HDMI and the OBS source beside it wearing
+/// different templates for the same verse, which is the whole failure this
+/// feature exists to make impossible.
+///
+/// AND THE BYTES GO WITH THE ID. A look reaches a screen as a template id and no
+/// JSON, so a screen can only wear one it already holds: `cache_look_ids` warms
+/// what the NEXT client will be sent, and `set_template` / `template://updated`
+/// hand the bytes to the ones already connected — neither of them a new message,
+/// both of them things every open screen already answers. Without this, an
+/// operator setting a look mid-service would watch the id arrive at a screen that
+/// has never heard of it and silently paint the blanket template.
+///
+/// Rule 2: the writes and the reads happen under the lock, which is released
+/// before anything is emitted or published.
+#[tauri::command]
+fn set_channel_look<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    db: tauri::State<'_, Db>,
+    kiosk: tauri::State<'_, channels::KioskHub>,
+    channel_id: i64,
+    kind: String,
+    template_id: Option<i64>,
+) -> error::Result<()> {
+    if !CONTENT_LOOK_KINDS.contains(&kind.as_str()) {
+        return Err(error::Error::refused(format!(
+            "Relay has no kind of content called \"{kind}\"."
+        )));
+    }
+    let (looks, ids, fresh) = {
+        let conn = db.0.lock()?;
+        db::set_channel_look(&conn, channel_id, &kind, template_id)?;
+        let fresh = template_id
+            .and_then(|id| db::get_template(&conn, id).ok().flatten())
+            .and_then(|t| serde_json::to_string(&t).ok().map(|j| (t.id, j)));
+        (
+            db::channel_looks_json(&conn)?,
+            resolvable_look_ids(&conn),
+            fresh,
+        )
+    };
+    kiosk.cache_look_ids(&ids);
+    if let Some((id, j)) = fresh {
+        kiosk.set_template(id, &j);
+        let _ = app.emit("template://updated", id);
+    }
+    publish_channel_looks(&app, &looks);
+    Ok(())
+}
+
+/// The two doors, once. Called by every command that can change the look map.
+///
+/// The hub is reached through `try_state`, not taken as a `State` parameter, for
+/// the reason `publish_channel_roles` records: a headless Relay manages no hub —
+/// the "no LAN" case `qa::bare_app` deliberately reproduces — and a `State`
+/// argument panics there instead of quietly doing nothing.
+fn publish_channel_looks<R: tauri::Runtime>(app: &tauri::AppHandle<R>, looks_json: &str) {
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(looks_json) {
+        let _ = app.emit("output://channel_looks", serde_json::json!({ "looks": v }));
+    }
+    if let Some(hub) = app.try_state::<channels::KioskHub>() {
+        hub.set_channel_looks(looks_json);
+    }
 }
 
 /// Set (or clear, with `None`) the DEFAULT template — the last link in every
