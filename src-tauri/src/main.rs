@@ -3240,6 +3240,7 @@ fn newest_congregation_timer<R: tauri::Runtime>(
 
 /// A registry refusal in words an operator can act on. Both are `Refused`, not
 /// faults: nothing is broken in either case.
+///
 /// ONE REFUSAL, TWO INSTRUMENTS, AND THE SENTENCE HAS TO KNOW WHICH (DECISIONS §99).
 ///
 /// `TooShort` used to read *"A countdown needs a second or more left. Clear the
