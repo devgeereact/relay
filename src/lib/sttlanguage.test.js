@@ -150,7 +150,7 @@ describe('Settings → the profile editor follows a language pinned on another t
       //    FIRST `onMount` read. Under jsdom that read races the module mock and
       //    comes back empty through `guardedRead` — the list would then be empty
       //    for a reason with nothing to do with this test. `Add` refreshes it.
-      await press(host, 'AI & Detection');
+      await press(host, 'Preachers');
       const name = host.querySelector('input[aria-label="New voice profile name"]');
       expect(name, 'the add-a-profile field was not rendered').toBeTruthy();
       name.value = ADE.name;
@@ -166,7 +166,7 @@ describe('Settings → the profile editor follows a language pinned on another t
 
       // 3. Walk to Scripture & Languages and pin Yoruba. The editor is still open
       //    behind this branch, holding `language: 'en'`.
-      await press(host, 'Scripture & Languages');
+      await press(host, 'Before the service');
       const select = host.querySelector('select[aria-label="Recognition language"]');
       expect(select, 'the recognition language select was not rendered').toBeTruthy();
       select.value = 'yo';
@@ -175,7 +175,7 @@ describe('Settings → the profile editor follows a language pinned on another t
       expect(get(capture).stt.language).toBe('yo');
 
       // 4. Back to the editor, and save the calibration.
-      await press(host, 'AI & Detection');
+      await press(host, 'Preachers');
       await press(host, 'Save profile');
 
       expect(saved, 'Save profile never reached update_voice_profile').toHaveLength(1);
@@ -246,7 +246,7 @@ describe('Settings → the profile editor follows a language pinned on another t
     await settle();
 
     try {
-      await press(host, 'AI & Detection');
+      await press(host, 'Preachers');
       const name = host.querySelector('input[aria-label="New voice profile name"]');
       name.value = ADE.name;
       name.dispatchEvent(new Event('input'));
@@ -262,7 +262,7 @@ describe('Settings → the profile editor follows a language pinned on another t
       await press(host, 'Save profile');
 
       expect(get(capture).stt.language).toBe('ha');
-      await press(host, 'Scripture & Languages');
+      await press(host, 'Before the service');
       expect(host.querySelector('select[aria-label="Recognition language"]').value).toBe('ha');
     } finally {
       try {

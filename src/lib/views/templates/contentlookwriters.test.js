@@ -73,14 +73,21 @@ describe('the content look has one writer and a known set of callers', () => {
     // Usage tab that could only signpost the control it was describing. It
     // writes through the same one writer, so it cannot disagree with anything.
     //
-    // Settings is the FOURTH caller, which the plan for this wave did not know
-    // about when it counted three. It is a select per kind rather than a chip
-    // grid, on a page with no lookalike beside it, and changing it is outside
-    // this track — it is recorded here so the next reader starts from four.
+    // SETTINGS WAS THE FOURTH CALLER AND IS NOT A CALLER AT ALL NOW. It carried
+    // one select per kind, in a `Screens & looks` section whose every row was a
+    // copy of the Outputs matrix — the same five kinds, plus a read-only list of
+    // the screens that follow them, which is the `followers` that matrix computes
+    // beside the selects. The section is deleted (see the SECTION NAV block in
+    // `views/Settings.svelte`): a second surface onto one store is how two
+    // surfaces come to disagree, and this one was the weaker by construction,
+    // because the map and the screens it reaches were in different places on the
+    // page. The writer never lived there, so nothing about the engine moves.
+    //
+    // The list may only shrink this way — by a caller going, not by one being
+    // dropped to make a build green.
     const callers = sources().filter((p) => callsTheWriter(read(p))).sort();
     expect(callers).toEqual([
       'src/lib/views/Channels.svelte',        // the authoritative matrix
-      'src/lib/views/Settings.svelte',        // one select per kind
       'src/lib/views/templates/TemplateGallery.svelte', // the inspector's chips
     ]);
     // The scanner can still see a real instance — this repository has twice

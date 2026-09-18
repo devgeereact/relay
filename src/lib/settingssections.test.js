@@ -1,9 +1,11 @@
-// W6 — SETTINGS: the eleven sections, and the three things §11 asks of them.
+// W6 — SETTINGS: the eight sections, and the three things §11 asks of them.
 //
 // docs/REBRAND.md §11 is four sentences long and every one of them is a claim
 // that can be checked against the file rather than admired in a spec:
 //
-//   · eleven sections, merged from sixteen (this repository had eighteen);
+//   · the sections are merged rather than multiplied (sixteen in the spec,
+//     eighteen in this repository, eleven after the merge, EIGHT now that they
+//     are ordered by how often an operator needs them rather than by taxonomy);
 //   · one type scale, three roles — page title / standfirst / row;
 //   · a footnote behind a hairline;
 //   · a list row is a name and a VALUE, never an em dash standing in for one.
@@ -65,21 +67,83 @@ const sections = [...SECTIONS_SRC.matchAll(/\{ key: '([a-z]+)',\s+label: '([^']+
 /** Every branch of the one `{#if section === …}` chain. */
 const branches = [...MARKUP_ONLY.matchAll(/section === '([a-z]+)'/g)].map((m) => m[1]);
 
-describe('§11 · eleven sections, merged from eighteen', () => {
-  it('there are exactly eleven, and they are the eleven the spec names', () => {
+describe('§11 · eight sections, in the order an operator needs them', () => {
+  it('there are exactly eight, and they are in frequency order', () => {
+    // THE ORDER IS THE ASSERTION, not just the membership. The eleven-section
+    // rail was organised by taxonomy — General, Screens, Audio, AI, Scripture,
+    // Network, History, Shortcuts, Updates, Diagnostics, Privacy — which is a
+    // filing system rather than a sequence, and it ran in almost exactly the
+    // wrong order: the readiness screen and the path check, the only surfaces
+    // anybody opens every Sunday, were at the bottom of the tenth section, while
+    // ten setup-only controls sat in the first two.
+    //
+    // So this list is sorted by how often the section is needed, and a rail that
+    // is re-sorted alphabetically or back into categories fails here. Section one
+    // is the only one an operator sees weekly; section eight is the one they see
+    // in their first week and never again.
     expect(sections.map((s) => s.label)).toEqual([
-      'General',
-      'Screens & looks',
-      'Audio',
-      'AI & Detection',
-      'Scripture & Languages',
-      'Network & Integrations',
-      'History & Backup',
-      'Shortcuts',
-      'Updates',
-      'Diagnostics',
-      'Privacy & Advanced',
+      'Before the service', // every Sunday
+      'This room', //          a new hall, a new microphone
+      'Preachers', //          a new voice to calibrate for
+      'Scripture', //          rarely
+      'This machine', //       rarely, and mostly when something is wrong
+      'Updates', //            rarely
+      'Privacy', //            rarely, and read rather than changed
+      'Getting started', //    once, in the first week
     ]);
+  });
+
+  it('the readiness surface is section ONE, which is the whole point of the order', () => {
+    // `Dashboard.svelte` is the only every-Sunday surface in the workspace and it
+    // was the last thing in the tenth of eleven sections. If it is ever not first
+    // again, the rail has gone back to being a filing system.
+    expect(sections[0].key).toBe('ready');
+    const first = MARKUP_ONLY.slice(
+      MARKUP_ONLY.indexOf("section === 'ready'"),
+      MARKUP_ONLY.indexOf("section === 'room'"),
+    );
+    expect(first).toMatch(/<Dashboard \/>/);
+    // …and the two settings RG-116 measured are on it, editable, rather than
+    // named read-only on the hero with their controls five sections away.
+    expect(first, 'the speech model picker is not beside the readiness screen').toMatch(
+      /<ModelSetup \/>/,
+    );
+    expect(first, 'the recognition language is not beside the readiness screen').toMatch(
+      /Recognition language/,
+    );
+    expect(first).toMatch(/pickLanguage\(/);
+  });
+
+  it('the three sections that went took no control with them', () => {
+    // `screens` was a copy of the Outputs matrix (one writer, `setContentTemplate`,
+    // and it never lived here); `history` is a route of its own; `general` held one
+    // switch and a paragraph once safe mode and service length had moved. A section
+    // may only be deleted if every control on it has a home, so this asserts the
+    // homes rather than the absences.
+    for (const gone of ['screens', 'history', 'general'])
+      expect(sections.map((s) => s.key), `${gone} is back`).not.toContain(gone);
+    const sectionOf = (key) => {
+      const i = MARKUP_ONLY.indexOf(`section === '${key}'`);
+      const after = [...MARKUP_ONLY.matchAll(/section === '([a-z]+)'/g)]
+        .map((m) => m.index)
+        .filter((x) => x > i);
+      return MARKUP_ONLY.slice(i, after.length ? after[0] : MARKUP_ONLY.length);
+    };
+    // General's five rows.
+    expect(sectionOf('ready'), 'safe mode').toMatch(/aria-label="Safe mode"/);
+    expect(sectionOf('ready'), 'screens at launch').toMatch(/Screens at launch/);
+    expect(sectionOf('room'), 'service length').toMatch(/aria-label="Service length in minutes"/);
+    expect(sectionOf('start'), 'application language').toMatch(/aria-label="Application language"/);
+    expect(sectionOf('start'), 'countdown warning').toMatch(
+      /aria-label="Countdown warning in seconds"/,
+    );
+    // History & Backup's three, minus History itself.
+    expect(sectionOf('start'), 'the walk-through').toMatch(/on:click=\{restartSetup\}/);
+    expect(sectionOf('start'), 'demo content').toMatch(/doLoadDemo/);
+    expect(sectionOf('ready'), 'the service lock').toMatch(/unlockService/);
+    // And the whole of the old Diagnostics section, split by frequency.
+    expect(sectionOf('machine'), 'the diagnostic file').toMatch(/doExportDiagnostics/);
+    expect(sectionOf('machine'), 'live latency').toMatch(/Live latency/);
   });
 
   it('every section in the rail has a panel, and every panel has a rail entry', () => {
@@ -96,7 +160,7 @@ describe('§11 · eleven sections, merged from eighteen', () => {
     const descs = [
       ...SECTIONS_SRC.matchAll(/\{ key: '([a-z]+)',\s+label: '([^']+)',\s+desc: '([^']+)'/g),
     ];
-    expect(descs.length).toBe(11);
+    expect(descs.length).toBe(8);
     for (const [, key, label, desc] of descs) {
       expect(desc.length, `${key} has no standfirst`).toBeGreaterThan(20);
       expect(desc, `${key} repeats its own label as its standfirst`).not.toBe(label);
@@ -377,12 +441,15 @@ describe('acceptance 1 · no setting writes a preference nothing reads', () => {
     // on, and there is no persisted preference and no reader for one — so building
     // the switch would be §69 again. The behaviour is a row with a real value
     // instead, read from the one thing that changes it.
-    const general = MARKUP_ONLY.slice(
-      MARKUP_ONLY.indexOf("section === 'general'"),
-      MARKUP_ONLY.indexOf("section === 'screens'"),
+    // It sits beside safe mode, on Before the service, because safe mode is the
+    // one thing that stops it — a statement of behaviour read from the live value
+    // of the control immediately above it.
+    const ready = MARKUP_ONLY.slice(
+      MARKUP_ONLY.indexOf("section === 'ready'"),
+      MARKUP_ONLY.indexOf("section === 'room'"),
     );
-    expect(general).toMatch(/Screens at launch/);
-    expect(general).toMatch(/\$safeMode \? 'held back by safe mode' : 'reopened automatically'/);
+    expect(ready).toMatch(/Screens at launch/);
+    expect(ready).toMatch(/\$safeMode \? 'held back by safe mode' : 'reopened automatically'/);
   });
 
   it('“Confirm before going live” does not come back because a prototype shows one', () => {
@@ -456,13 +523,34 @@ describe('acceptance 3 · no duplicated control, and no class that styles nothin
 });
 
 describe('the readiness surface is extended, never forked', () => {
-  it('Dashboard is rendered from Diagnostics — the section that asks its question', () => {
-    const diag = MARKUP_ONLY.slice(
-      MARKUP_ONLY.indexOf("section === 'diagnostics'"),
-      MARKUP_ONLY.indexOf("section === 'privacy'"),
+  it('Dashboard IS the first section — one instance, never a second panel', () => {
+    // It was an embedded card grid at the bottom of Diagnostics; it is the section
+    // now. The count is the part that matters either way: two independently
+    // written health panels would eventually disagree, and then the app is arguing
+    // with itself about whether it works.
+    const ready = MARKUP_ONLY.slice(
+      MARKUP_ONLY.indexOf("section === 'ready'"),
+      MARKUP_ONLY.indexOf("section === 'room'"),
     );
-    expect(diag).toMatch(/<Dashboard \/>/);
+    expect(ready).toMatch(/<Dashboard \/>/);
     expect(MARKUP_ONLY.match(/<Dashboard \/>/g)).toHaveLength(1);
+  });
+
+  it('and it no longer offers four controls that belong to something else', () => {
+    // The quick actions opened an output window, armed the microphone, toggled
+    // rehearsal and jumped to Live. Two of the four were the dock's, which is in
+    // the SHELL and therefore three inches below them on this very screen, and
+    // they had already drifted from it: the dock reads `$safeMode` on the
+    // detection switch beside those buttons (DECISIONS §86) and these read a local
+    // `busy` string. Two controls for one action is the shape four separate bugs
+    // in this repository have had.
+    const dash = read('src/lib/views/Dashboard.svelte');
+    const dashMarkup = strip(dash).slice(strip(dash).indexOf('</script>'));
+    for (const gone of ['d-acts', 'd-act', 'openMain', 'toggleMic', 'toggleRehearsal'])
+      expect(dashMarkup, `${gone} is back on the readiness screen`).not.toContain(gone);
+    // …and the two it kept are POINTERS, which is what this screen is allowed to be.
+    expect(dashMarkup).toMatch(/activeTab: 'history'/);
+    expect(dashMarkup).toMatch(/go\('planner'\)/);
   });
 
   it('and Settings still never mentions `greet` (rule 26 — it is a counter)', () => {
@@ -471,30 +559,42 @@ describe('the readiness surface is extended, never forked', () => {
   });
 });
 
-describe('Screens & looks says whether the setting above it reaches anything', () => {
-  it('lists the screens and the look each one is actually wearing', () => {
-    // DECISIONS §70: a screen's own template wins over a content look (§29), so
-    // the content-look map only reaches screens that have none. For most of this
-    // product's life every screen always had one and the map changed nothing in
-    // the building, with no way to tell from this page.
-    const screens = MARKUP_ONLY.slice(
-      MARKUP_ONLY.indexOf("section === 'screens'"),
-      MARKUP_ONLY.indexOf("section === 'audio'"),
-    );
-    expect(screens).toMatch(/screenLook\(ch\)/);
-    expect(screens).toMatch(/<div class="rw-group">Screens<\/div>/);
-    // …and it is a READOUT. The screens themselves are configured in Outputs.
-    expect(screens).not.toMatch(/setChannelTemplate|setChannelDisplay/);
+describe('Screens & looks is deleted, and Outputs owns every row it had', () => {
+  // THE WHOLE SECTION WAS A SECOND SURFACE ONTO ONE STORE. It held five
+  // content-look selects and a read-only list of which screens follow them.
+  // `Channels.svelte` has the same five selects in an EDITABLE matrix, beside the
+  // screens they affect, and computes `followers` from the same
+  // `list_output_channels` this copy re-read on mount. The writer never lived
+  // here: `setContentTemplate` is the ONE writer (DECISIONS §25 · §70).
+  //
+  // This block used to assert that the section told the truth about whether the
+  // map reached anything (DECISIONS §70 — for most of this product's life every
+  // screen had its own template and the map could change nothing in the building).
+  // That claim is unchanged and it is Outputs' to keep now; what is asserted here
+  // is that the copy is gone and took no capability with it.
+  it('nothing in Settings writes or reads the content-look map any more', () => {
+    for (const gone of [
+      'contentTypes',
+      'pickCt',
+      'screenLook',
+      'screensState',
+      'loadScreens',
+      'setContentTemplate',
+      'loadContentTemplates',
+      'CONTENT_KINDS',
+    ])
+      expect(CODE, `${gone} survived the deletion of the section that used it`).not.toContain(gone);
+    expect(sections.map((s) => s.key)).not.toContain('screens');
   });
 
-  it('the look resolver reads the model’s own answer for "no template"', () => {
-    expect(SCRIPT).toMatch(/ch\.template_id == null/);
-    expect(SCRIPT).toMatch(/follows the content look/);
-  });
-
-  it('and a screen list that has not loaded says which kind of nothing it has', () => {
-    expect(MARKUP_ONLY).toMatch(/screensState === 'loading'/);
-    expect(MARKUP_ONLY).toMatch(/screensState === 'failed'/);
+  it('and the surface that kept it still has all of it', () => {
+    // The test that matters about a deletion: the capability is somewhere. Both
+    // halves — the editable map and the answer to "will any of that do anything?"
+    // — are on one grid in Outputs, which is the arrangement the split copy could
+    // not manage.
+    const ch = read('src/lib/views/Channels.svelte');
+    expect(ch).toMatch(/setContentTemplate/);
+    expect(ch).toMatch(/followers/);
   });
 });
 
@@ -549,7 +649,7 @@ describe('§11 · two columns, and the third one is not coming back', () => {
     };
     expect(sectionOf('updates')).toMatch(/Installed version/);
     expect(sectionOf('updates')).toMatch(/>Environment</);
-    expect(sectionOf('diagnostics')).toMatch(/Uptime \(this run\)/);
+    expect(sectionOf('machine')).toMatch(/Uptime \(this run\)/);
     expect(sectionOf('privacy')).toMatch(/>Licence</);
     // …and the one thing that is now offered once instead of twice.
     expect(MARKUP_ONLY.match(/Check for Updates/gi)).toHaveLength(1);
@@ -640,10 +740,11 @@ describe('the Shortcuts section reads the canonical table', () => {
     // handler and survive a crashed view (rule 15, DECISIONS §20); the rest work
     // only where the surface registered the action. A list that ran the two
     // together would tell an operator that `A` is as reliable as `Esc`.
-    const sc = MARKUP_ONLY.slice(
-      MARKUP_ONLY.indexOf("section === 'shortcuts'"),
-      MARKUP_ONLY.indexOf("section === 'updates'"),
-    );
+    // Shortcuts was a section of its own and is a GROUP on Getting started: the
+    // key table is something an operator reads while learning the desk, not a
+    // rail entry they return to. `Open Help & Shortcuts` is still one press away
+    // from it, and `shortcuts.js` is still the one table.
+    const sc = MARKUP_ONLY.slice(MARKUP_ONLY.indexOf("section === 'start'"));
     expect(sc).toMatch(/SHORTCUTS\.filter\(\(s\) => s\.always\)/);
     expect(sc).toMatch(/SHORTCUTS\.filter\(\(s\) => !s\.always\)/);
   });
@@ -676,10 +777,10 @@ describe('the Shortcuts section reads the canonical table', () => {
 // half.
 // ─────────────────────────────────────────────────────────────────────────────
 describe('the setup walk-through is held back while a service is recording', () => {
-  const history = MARKUP_ONLY.slice(
-    MARKUP_ONLY.indexOf("section === 'history'"),
-    MARKUP_ONLY.indexOf("section === 'shortcuts'"),
-  );
+  // On Getting started now. The section it used to share with History is gone —
+  // History is a route — and the walk-through went to the section for an operator
+  // in their first week, which is the only week anybody runs it.
+  const history = MARKUP_ONLY.slice(MARKUP_ONLY.indexOf("section === 'start'"));
 
   it('the button is disabled by a live fact that AGREES with the unlock control below it', () => {
     const btn = history.match(
@@ -837,10 +938,14 @@ describe('a Settings control says which of its outcomes happened', () => {
   });
 
   it('F-9 · the demo edited count wears the caution class instead', () => {
-    const demoBlock = MARKUP_ONLY.slice(
-      MARKUP_ONLY.indexOf('<div class="rw-group">Demo content</div>'),
-      MARKUP_ONLY.indexOf('<div class="rw-group">Service lock</div>'),
-    );
+    // Bounded by the NEXT group header rather than by a named one: Demo content
+    // and Service lock used to be neighbours and are in different sections now
+    // (Getting started and Before the service), so a slice between those two
+    // literals runs backwards and matches nothing — silently, which is the kind
+    // of green this file exists to refuse.
+    const demoAt = MARKUP_ONLY.indexOf('<div class="rw-group">Demo content</div>');
+    const nextGroup = MARKUP_ONLY.indexOf('<div class="rw-group">', demoAt + 1);
+    const demoBlock = MARKUP_ONLY.slice(demoAt, nextGroup === -1 ? undefined : nextGroup);
     expect(demoBlock).toMatch(/been changed since/);
     expect(demoBlock).toMatch(/class="s-netwarn"/);
   });
@@ -929,36 +1034,41 @@ describe('a Settings control says which of its outcomes happened', () => {
 });
 
 describe('Settings keeps no private copy of a thing that has a store', () => {
-  it('reads the canonical content kinds rather than a list of its own', () => {
-    // A four-entry private list that predated the timer: the Countdown look could
-    // be set in the Templates gallery and was invisible here.
-    expect(SCRIPT_ONLY).toMatch(/contentTypes = CONTENT_KINDS/);
-    expect(
-      SCRIPT_ONLY,
-      'Settings has grown its own content-kind list again.',
-      // The SECTION list at the top of the file legitimately has a `scripture`
-      // key — it is a Settings section, not a content kind. Anchor on the pairing
-      // that only a content-look list has.
-    ).not.toMatch(/key: 'song',\s*label:/);
+  // THIS BLOCK USED TO HOLD THE CONTENT-LOOK MAP TO ITS ONE STORE, and the
+  // controls it was about have been deleted with the `Screens & looks` section —
+  // see the block above for why. The rule it states is the reason the section
+  // could go at all, so it is restated against what is left rather than deleted
+  // with the rows: Settings may render a store, and it may not keep a copy.
+  it('has no private list or map where a store already answers', () => {
+    // The two that were real: a four-entry `contentTypes` list that predated the
+    // timer (so the Countdown look was invisible here) and a `ctMap` refilled on
+    // mount over the top of `$contentTemplates`. Neither can come back, because
+    // neither the store nor the kinds are imported any more.
+    expect(SCRIPT_ONLY, 'Settings has grown its own content-kind list again.').not.toMatch(
+      /key: 'song',\s*label:/,
+    );
+    expect(SCRIPT_ONLY, 'a private ctMap is back').not.toMatch(/\bctMap\b/);
+    // The shortcut table is the same rule on the surface it was actually broken
+    // on: Settings rendered a hand-maintained copy of six rows that had already
+    // drifted from the bindings, and it imports the canonical array now.
+    expect(SCRIPT).not.toMatch(/const SHORTCUTS\s*=/);
+    expect(SCRIPT).toMatch(/import \{ SHORTCUTS \} from '\.\.\/shortcuts\.js'/);
   });
 
-  it('and Settings, the gallery and the editor all agree about every kind', () => {
+  it('and the kinds still have exactly one list, wherever it is rendered', () => {
+    // `CONTENT_KINDS` is the canonical list. Settings is no longer one of its
+    // readers — it renders no content-look control — so the agreement is between
+    // the two surfaces that do, and it is still an agreement rather than three
+    // private copies.
     const gallery = read('src/lib/views/templates/TemplateGallery.svelte');
     const editor = read('src/lib/views/templates/TemplateEditor.svelte');
     expect(CONTENT_KINDS.map((k) => k.key)).toContain('countdown');
-    for (const src of [SRC, gallery, editor]) {
-      expect(src).toMatch(/CONTENT_KINDS/);
-    }
-  });
-
-  it('subscribes to the one store instead of refilling a local map', () => {
-    expect(MARKUP_ONLY).toMatch(/\$contentTemplates\[ct\.key\]/);
-    expect(
-      SCRIPT_ONLY,
-      'Settings holds a private ctMap again. `contentTemplates` is the one store ' +
-        'and three surfaces used to keep private copies that silently disagreed.',
-    ).not.toMatch(/\bctMap\b/);
-    expect(SCRIPT_ONLY).toMatch(/loadContentTemplates\(\)/);
+    for (const src of [gallery, editor]) expect(src).toMatch(/CONTENT_KINDS/);
+    // `CODE`, not `SRC`: the comment beside the deletion NAMES the import it
+    // removed, and a scanner that read it would fail on a correct file — whose
+    // cheapest repair is deleting the explanation.
+    expect(CODE, 'Settings reads the content kinds again with nothing to render them in')
+      .not.toMatch(/CONTENT_KINDS/);
   });
 });
 

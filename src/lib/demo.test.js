@@ -28,16 +28,18 @@ const mainRs = read('src-tauri/src/main.rs');
 
 describe('demo content', () => {
   it('is loaded and removed from the same rendered surface', () => {
-    // Both controls, in the section the decision put them in.
-    const history = settings.slice(
-      settings.indexOf("{:else if section === 'history'}"),
-      settings.indexOf("{:else if section === 'shortcuts'}"),
-    );
-    expect(history.length).toBeGreaterThan(0);
-    expect(history).toContain('Load demo content');
-    expect(history).toContain('Remove demo content');
-    expect(history).toContain('doLoadDemo');
-    expect(history).toContain('doRemoveDemo');
+    // Both controls, in the section the decision put them in. That section was
+    // `history` — the argument being that it owned the DATABASE as a thing an
+    // operator manages — and it is `start` (Getting started) now: History is a
+    // route of its own, and a section is a MOMENT rather than a table. Loading a
+    // sample Sunday is something an operator does in their first week and never
+    // again, which is the whole of that section.
+    const start = settings.slice(settings.indexOf("{:else if section === 'start'}"));
+    expect(start.length).toBeGreaterThan(0);
+    expect(start).toContain('Load demo content');
+    expect(start).toContain('Remove demo content');
+    expect(start).toContain('doLoadDemo');
+    expect(start).toContain('doRemoveDemo');
   });
 
   it('guards the removal with an in-app two-step, never a native confirm', () => {

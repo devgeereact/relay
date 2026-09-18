@@ -250,19 +250,23 @@ describe('what the operator is told', () => {
 describe('where it lives', () => {
   const settings = read('src/lib/views/Settings.svelte');
 
-  it('sits with the audio setup, where a room is configured', () => {
-    // It is a GROUP inside the Audio section, headed by the frame's `.rw-group`
-    // (docs/REBRAND.md §11's one type scale). It used to be a `.r-lbl` under a
-    // heading that said the same word, which is what this line matched.
-    // What is asserted is unchanged: the rooms panel is in Settings, in Audio.
+  it('sits with the microphone and the speakers, where a room is configured', () => {
+    // It is a GROUP inside the section that describes the ROOM, headed by the
+    // frame's `.rw-group` (docs/REBRAND.md §11's one type scale). That section was
+    // called Audio and is called This room: a saved room puts back the microphone,
+    // the recognition language, the planned length and which display each screen
+    // goes to, so naming it for one of the five was always the narrower word.
+    // What is asserted is unchanged: the rooms panel is in Settings, beside the
+    // microphone that is one of the things a room remembers.
     expect(settings).toMatch(/<div class="rw-group">Rooms<\/div>/);
-    const audio = settings.slice(
-      settings.indexOf("section === 'audio'"),
-      settings.indexOf("section === 'ai'"),
+    const room = settings.slice(
+      settings.indexOf("section === 'room'"),
+      settings.indexOf("section === 'preachers'"),
     );
-    expect(audio).toMatch(/<div class="rw-group">Rooms<\/div>/);
-    expect(audio).toMatch(/doSaveRoom/);
-    expect(audio).toMatch(/doUseRoom/);
+    expect(room).toMatch(/<div class="rw-group">Rooms<\/div>/);
+    expect(room).toMatch(/<div class="rw-group">Microphone<\/div>/);
+    expect(room).toMatch(/doSaveRoom/);
+    expect(room).toMatch(/doUseRoom/);
   });
 
   it('tells the operator, in the UI, that levels are NOT saved and why', () => {
