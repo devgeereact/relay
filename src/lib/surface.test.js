@@ -65,7 +65,7 @@ const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a) => invoke(...a) }));
 
 const { installShortcuts, registerContext, cheatsheet } = await import('./shortcuts.js');
-const { live, screenBlack, rehearsing, panicError, capture, templates, readErrors } =
+const { live, screenBlack, rehearsing, panicError, capture, templates, readErrors, ping } =
   await import('./stores/capture.js');
 const { setSafeMode } = await import('./boot/boot.js');
 
@@ -120,9 +120,28 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
-beforeEach(() => {
+// WARM THE BRIDGE BEFORE ANY MOUNT.
+//
+// `capture.js` reaches Tauri through a lazy `await import('@tauri-apps/api/core')`,
+// so the FIRST caller in a file pays the module resolution and every later one is
+// handed the settled namespace. A mounting view fires two or three reads at once
+// and races that resolution; when it loses, the read never starts at all.
+//
+// This cost a CI failure that read as something else entirely: `TemplateGallery
+// says Loading` timed out, and the test is built so that it CANNOT fail for the
+// obvious reason -- its read never resolves until `release()`, so `Loading` is the
+// only state it can settle on. `Loading` never appeared because the read never
+// began. One awaited call here resolves the import once, before any component
+// mounts, so no test is the one that pays for it.
+//
+// The general fix is to memoise that import in `capture.js` so N concurrent callers
+// await one promise. That is a real improvement and it is NOT made here: it changes
+// the verdict of tests that currently encode the race, which is a finding of its own
+// and wants its own change. Filed as RG-170.
+beforeEach(async () => {
   invoke.mockReset();
   invoke.mockResolvedValue([]);
+  await ping().catch(() => {});
   live.set(null);
   screenBlack.set(false);
   rehearsing.set(false);
