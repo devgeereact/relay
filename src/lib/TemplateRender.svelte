@@ -1276,7 +1276,7 @@
   // on every action that changes what the clock says: a start, a re-aim, a hold
   // and a release all re-stamp `target_ms`. So putting a timer back after a
   // reading re-keys on both `reference` and `countdownTo`, and a ±1 re-keys on
-  // `countdownTo` alone. A programme timer never reaches this component at all.
+  // `countdownTo` alone. A Stage Timer never reaches this component at all.
   //
   // `countdown_paused_ms` is deliberately NOT keyed, and that is a decision rather
   // than an omission: holding a countdown changes whether the digits move, not

@@ -10,7 +10,7 @@
 // transition pickers — paints OUTSIDE the row, on top of whatever comes next.
 //
 // For most of this project's life nothing came next but a slide grid, and the
-// overlap was cosmetic. Wave 3 put the programme timer band there, and a
+// overlap was cosmetic. Wave 3 put the Stage Timer band there, and a
 // cosmetic overflow became a button that does something other than what it says:
 //
 //   at 1320 x 860 — the size `tauri.conf.json` opens the window at —
@@ -149,7 +149,7 @@ describe('RG-146 · the run surface may not paint a control outside its own row'
     it('has the transition pickers INSIDE the row, and Start timer in the band after it', async () => {
       // Read off the mounted tree rather than off the source. The stylesheet
       // contract above is about `.con-top`; this is what says `.con-top` is the
-      // row that holds the overflowing control, and that the programme timer
+      // row that holds the overflowing control, and that the Stage Timer
       // band really is the thing directly under it. Without this the rules
       // above could go on passing while the markup moved beneath them.
       const app = new Live({ target: host, props: {} });
@@ -163,7 +163,7 @@ describe('RG-146 · the run surface may not paint a control outside its own row'
       for (const p of pickers) expect(row.contains(p)).toBe(true);
 
       const band = host.querySelector('.pt-band');
-      expect(band, 'the programme timer band').toBeTruthy();
+      expect(band, 'the Stage Timer band').toBeTruthy();
       expect(row.nextElementSibling, 'the band sits immediately after the row').toBe(band);
 
       const start = [...band.querySelectorAll('button')].find(

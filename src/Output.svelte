@@ -391,7 +391,7 @@
       //
       // SITE 8 OF THE CONTENT-KIND SWEEP, THE KIOSK DOOR. Nothing changed: a
       // congregation timer arrives as `countdown`, which every `shows` list names,
-      // and a programme timer is never published as content so it cannot reach this
+      // and a Stage Timer is never published as content so it cannot reach this
       // page by any route. The TWIN of this line is the `output://content` listener
       // in `onMount` — the native window has the Tauri bridge and no socket, so a
       // filter written here and not there is the "guarantee kept on one door"

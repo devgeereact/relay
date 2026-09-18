@@ -1,5 +1,5 @@
 /**
- * The programme timer, on the operator's side: which ones to show, and how long
+ * The Stage Timer, on the operator's side: which ones to show, and how long
  * is left on one. Pure — no store, no bridge, no clock of its own.
  *
  * ## Why this is three small functions and not one component method
@@ -19,7 +19,7 @@
 import { countdownRemainingMs } from './countdown.js';
 
 /**
- * The PROGRAMME timers — the preacher's monitor — and nothing else.
+ * The STAGE TIMERS — the preacher's monitor — and nothing else.
  *
  * A congregation (`both`) timer belongs to the dock's Countdown block, which has
  * its own transport and its own figure. Listing it here as well would put two

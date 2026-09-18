@@ -207,7 +207,7 @@
     chapterVerses,
     readErrors,
   } from '../stores/capture.js';
-  // The programme timer's two pure questions — which rows belong here, and how
+  // The Stage Timer's two pure questions — which rows belong here, and how
   // long is left on one. `timerRemainingMs` ENDS in `countdownRemainingMs`, which
   // stays the only countdown arithmetic on this side of the bridge.
   import { stageTimers, timerRemainingMs } from '../timers.js';
@@ -421,7 +421,7 @@
     wasDown = nowDown;
   }
 
-  // ── THE PROGRAMME TIMER ────────────────────────────────────────────────────
+  // ── THE STAGE TIMER ────────────────────────────────────────────────────
   //
   // A clock for the PREACHER, with a life of its own: it survives a verse, a song
   // and a notice, because it is never the live content the way the congregation
@@ -472,7 +472,7 @@
   //
   // What it does distinguish is the three things the list can mean, because a
   // failed read answering `[]` renders exactly like a quiet Sunday:
-  //   not asked yet → "Reading…"   ·   asked, none → "No programme timer."
+  //   not asked yet → "Reading…"   ·   asked, none → "No Stage Timer."
   //   asked, refused → the reason, and the LAST GOOD LIST is kept on screen
   // `listTimers` throws for that reason (contract group 1) and this band must not
   // undo it by catching into an empty array.
@@ -2114,14 +2114,14 @@
        would eat the surface an operator picks from most often, so the running
        timers are inline chips on the same row as the control that starts them. -->
   <div class="pt-band">
-    <span class="pt-lbl">Programme timer</span>
+    <span class="pt-lbl">Stage Timer</span>
     <input
       class="r-input pt-min"
       type="number"
       min="1"
       max="240"
       bind:value={ptMins}
-      aria-label="Programme timer minutes" />
+      aria-label="Stage Timer minutes" />
     <span class="pt-unit">min</span>
     <input
       class="r-input pt-name-in"
@@ -2129,7 +2129,7 @@
       bind:value={ptName}
       placeholder="Sermon · Notices"
       autocomplete="off"
-      aria-label="Programme timer name"
+      aria-label="Stage Timer name"
       on:keydown={(e) => e.key === 'Enter' && startProgrammeTimer()} />
     <button
       class="r-btn sm primary"
@@ -2164,7 +2164,7 @@
         </span>
       {/each}
     {:else if !ptErr}
-      <span class="pt-cap">No programme timer.</span>
+      <span class="pt-cap">No Stage Timer.</span>
     {/if}
   </div>
 
@@ -2770,7 +2770,7 @@
      than roughly 970px the rack was taller than the row, the row does not clip,
      and the transition pickers painted OUTSIDE it, on top of whatever came
      next. For years that was a slide grid and the overlap was cosmetic; wave 3
-     put the programme timer band there and it became a button that does
+     put the Stage Timer band there and it became a button that does
      something else. Measured at 1320x860, the size `tauri.conf.json` opens the
      window at: `.rack` 320.2px inside a 283.8px row, and `elementFromPoint`
      over the centre of `Start timer` returned `.xpick.xdur`.
@@ -2809,7 +2809,7 @@
      column with nothing under it. One child, one rule. */
   .insp-col{display:flex; flex-direction:column; gap:var(--v-sp-sm); min-height:0; min-width:0}
   .insp-col > .pane{flex:1 1 auto; min-height:0}
-  /* ── THE PROGRAMME TIMER ───────────────────────────────────────────────────
+  /* ── THE STAGE TIMER ───────────────────────────────────────────────────
      ONE ROW THAT WRAPS, never a list that scrolls. The slide grid under it keeps
      `flex: 1 1 0` and takes everything left, so this costs the surface an
      operator picks from most often one row of height and nothing more.

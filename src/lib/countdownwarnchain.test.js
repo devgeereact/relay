@@ -301,7 +301,7 @@ describe('(c) the configured default is delivered to the wall', () => {
 
 describe("(c) and to the preacher's page", () => {
   it('the timer frame carries it, which is the frame that reaches this page first', async () => {
-    // The stage's own carrier. A programme timer can be running before anything
+    // The stage's own carrier. A Stage Timer can be running before anything
     // has been fired, so waiting for a content frame would leave the one surface
     // whose entire purpose is the clock on the shipped minute for that whole time.
     expect(countdownWarning(NINETY_SECONDS)).toBe(false);

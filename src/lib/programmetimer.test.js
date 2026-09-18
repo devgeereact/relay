@@ -10,7 +10,7 @@ const cap = await import('./stores/capture.js');
 const { setSession } = await import('./session.js');
 const Live = (await import('./views/Live.svelte')).default;
 
-// ── THE PROGRAMME TIMER, ON THE OPERATOR'S SIDE ─────────────────────────────
+// ── THE STAGE TIMER, ON THE OPERATOR'S SIDE ─────────────────────────────
 //
 // `list_timers` hands back the registry's own shape — `target_ms`, `paused_ms`,
 // `scope` — and the one arithmetic this side of the bridge is allowed to do is
@@ -59,7 +59,7 @@ describe('which timers the programme list may show', () => {
   });
 });
 
-describe('how long is left on a programme timer', () => {
+describe('how long is left on a Stage Timer', () => {
   it('projects a registry timer into the shape the one arithmetic reads', () => {
     expect(timerAsContent(timer())).toEqual({
       countdown_to: 1_700_000_300_000,
@@ -203,14 +203,14 @@ afterEach(() => {
   cap.resolvedDetections.set([]);
 });
 
-describe('starting a programme timer', () => {
+describe('starting a Stage Timer', () => {
   it('is reachable from a rendered control, and asks for the STAGE scope', async () => {
     mount();
     await settle();
     expect(block()).not.toBeNull();
 
-    const mins = host.querySelector('[aria-label="Programme timer minutes"]');
-    const name = host.querySelector('[aria-label="Programme timer name"]');
+    const mins = host.querySelector('[aria-label="Stage Timer minutes"]');
+    const name = host.querySelector('[aria-label="Stage Timer name"]');
     expect(mins).not.toBeNull();
     expect(name).not.toBeNull();
     mins.value = '25';
@@ -228,12 +228,12 @@ describe('starting a programme timer', () => {
 
   it('puts nothing in front of a congregation', async () => {
     // `start_timer` creates and publishes nothing, and this control must never
-    // reach for the two doors that DO paint a wall. A programme timer appearing
+    // reach for the two doors that DO paint a wall. A Stage Timer appearing
     // on the congregation screens is the one mistake here that cannot be taken
     // back quietly.
     mount();
     await settle();
-    const mins = host.querySelector('[aria-label="Programme timer minutes"]');
+    const mins = host.querySelector('[aria-label="Stage Timer minutes"]');
     mins.value = '25';
     mins.dispatchEvent(new Event('input'));
     await settle();
@@ -248,7 +248,7 @@ describe('starting a programme timer', () => {
 });
 
 describe('seeing and stopping one', () => {
-  it('lists a running programme timer with the time left on it', async () => {
+  it('lists a running Stage Timer with the time left on it', async () => {
     bridge({ timers: [T({ id: 7, label: 'Sermon', target_ms: Date.now() + 300_000 })] });
     mount();
     await settle(40);
@@ -310,7 +310,7 @@ describe('what the block says when the thing behind it is broken (rule 35)', () 
     bridge({ fail: { kind: 'internal', message: 'the engine is not answering' } });
     mount();
     await settle(40);
-    expect(block().textContent).not.toContain('No programme timer');
+    expect(block().textContent).not.toContain('No Stage Timer');
     expect(block().textContent).toContain('the engine is not answering');
   });
 
@@ -318,10 +318,10 @@ describe('what the block says when the thing behind it is broken (rule 35)', () 
     bridge({ timers: [] });
     mount();
     await settle(40);
-    expect(block().textContent).toContain('No programme timer');
+    expect(block().textContent).toContain('No Stage Timer');
   });
 
-  it('never claims a programme timer is on a screen', async () => {
+  it('never claims a Stage Timer is on a screen', async () => {
     // Nothing on this side can verify that a stage tablet is painting one. Amber
     // means ON AIR and is never allowed to lie; the stage red on the alert badge
     // means the preacher's monitor is showing that alert. A row here carries

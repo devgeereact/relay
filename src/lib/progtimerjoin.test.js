@@ -1,4 +1,4 @@
-// W4·E · THE JOIN — the console that starts a programme clock, and the rail that
+// W4·E · THE JOIN — the console that starts a Stage Timer, and the rail that
 // has to show it. RG-162 and RG-163.
 //
 // WHY THIS FILE EXISTS RATHER THAN MORE CASES IN THE TWO BESIDE IT.
@@ -6,7 +6,7 @@
 // Wave 4 Track A built three states on the preacher's programme rail — a warning,
 // a finished message, a held row — and tested every one of them against a frame it
 // wrote by hand (`timers.test.js`). Wave 4 Track B built the only thing in the
-// product that starts a programme clock, and tested that it starts exactly one,
+// product that starts a Stage Timer, and tested that it starts exactly one,
 // for the right cue, never in a rehearsal (`cuetimer.test.js`). Both suites were
 // green. Neither could see that the clock Track B starts carries no threshold and
 // no message, so on a shipped copy of Relay the rail could never turn red and could
@@ -325,7 +325,7 @@ describe('walking a plan leaves only the clock that is still running', () => {
 
     expect(
       calls('stop_timer').map((a) => a.timerId),
-      'nothing in the product could take a programme clock off the rail',
+      'nothing in the product could take a Stage Timer off the rail',
     ).toEqual([first.id]);
     expect(registry.filter((t) => t.scope === 'stage').map((t) => t.plan_item_id)).toEqual([22]);
   });

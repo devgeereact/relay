@@ -1102,7 +1102,7 @@
            genuinely that tool's: the countdown's figure, the alert's red. -->
       <div class="qblock tmr">
         <div class="qhead">
-          <span class="r-lbl">Countdown</span>
+          <span class="r-lbl">Screen Countdown</span>
           <!-- WHAT IS LOADED, while the figure beside it shows what is LEFT. -->
           {#if cdLive}<span class="cdset r-mono">· {cdSetLabel}</span>{/if}
           <span class="qspring"></span>

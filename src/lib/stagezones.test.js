@@ -220,7 +220,7 @@ describe('zones — everything the operator sent, and nothing they did not', () 
     ).toBeTruthy();
 
     await click('Zones');
-    await click('Programme');
+    await click('Stage Timer');
     await tick();
 
     // Not hidden — GONE. `.progrow` is a `flex-basis: auto` row, so a switched-off
@@ -273,7 +273,7 @@ describe('zones — everything the operator sent, and nothing they did not', () 
     expect(pressed('Stage Note'), 'a stored choice was reset, or the zone was renamed').toBe(
       'false',
     );
-    expect(pressed('Programme')).toBe('true');
+    expect(pressed('Stage Timer')).toBe('true');
     expect(pressed('Figures beside the reading')).toBe('true');
   });
 });
@@ -562,7 +562,7 @@ describe('the Stage Message', () => {
     const { container } = await mount(verse);
 
     await click('Zones');
-    for (const z of ['Reading', 'Countdown', 'Clock']) await click(z);
+    for (const z of ['Reading', 'Screen Countdown', 'Clock']) await click(z);
     await tick();
     expect(container.querySelector('.reading')).toBeNull();
 
@@ -888,7 +888,7 @@ describe('an open panel yields the programme rail', () => {
     const container = await reading();
     await click('Zones');
     const pressed = [...container.querySelectorAll('.zonebtn')]
-      .find((b) => b.textContent.trim() === 'Programme')
+      .find((b) => b.textContent.trim() === 'Stage Timer')
       ?.getAttribute('aria-pressed');
     expect(pressed, 'the panel turned the zone off behind the operator').toBe('true');
     const stored = localStorage.getItem(ZONE_KEY);

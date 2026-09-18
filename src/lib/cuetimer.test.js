@@ -155,7 +155,7 @@ describe('the Planner binds a cue to a clock', () => {
     // A REAL, NAMED CONTROL. A placeholder is not an accessible name, and the two
     // editable fields in this inspector were once the only unnamed controls in
     // the product.
-    expect(sel.getAttribute('aria-label')).toBe('Programme timer for this cue');
+    expect(sel.getAttribute('aria-label')).toBe('Stage Timer for this cue');
     // Unbound reads as "no timer", not as a length somebody chose.
     expect(sel.value).toBe('');
 
@@ -213,7 +213,7 @@ describe('Live starts a bound cue’s clock when the cue goes on air', () => {
     await tick();
   }
 
-  itMounted('a bound cue starts a STAGE timer, named for the cue', async () => {
+  itMounted('a bound cue starts a Stage Timer, named for the cue', async () => {
     cues = [notice({ timer_minutes: 25 })];
     await runPlanAndTakeFirstCell();
 

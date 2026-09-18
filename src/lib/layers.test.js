@@ -70,7 +70,7 @@ describe('layer model', () => {
     }
   });
 
-  it('ships a preacher view with verse, next, timer and note; and a countdown timer', () => {
+  it('ships a preacher view with verse, next, timer and note; and a Screen Countdown', () => {
     const preacher = STARTERS.find((s) => s.key === 'preacher').make().layout.layers;
     for (const bind of ['verse', 'reference', 'next', 'elapsed', 'clock', 'note']) {
       expect(preacher.some((L) => L.bind === bind), `preacher has a ${bind} layer`).toBe(true);

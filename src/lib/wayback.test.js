@@ -236,7 +236,7 @@ describe('the control in the dock’s Countdown block', () => {
 
   // `show_timer` refuses a `Stage` timer in words, and a control that has to be
   // refused is a control that should not have been offered.
-  it('is never offered for a programme timer', async () => {
+  it('is never offered for a Stage Timer', async () => {
     registry([timer({ id: 77, scope: 'stage' })]);
     cap.live.set(A_VERSE);
     await mountAndRead();
@@ -293,7 +293,7 @@ describe('the control in the dock’s Countdown block', () => {
 });
 
 describe('where it lives', () => {
-  it('is inside the Countdown block, not a fourth thing in Quick tools', () => {
+  it('is inside the Screen Countdown block, not a fourth thing in Quick tools', () => {
     const card = src.slice(src.indexOf('<span class="dk">Quick tools</span>'));
     const block = card.slice(
       card.indexOf('<div class="qblock tmr">'),
