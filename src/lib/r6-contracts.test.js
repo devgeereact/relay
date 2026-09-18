@@ -114,7 +114,7 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       // A congregation screen with no template of its own and no content look either
       // must still end its chain somewhere other than the bundled Classic Serif.
       default_template: true,
-      // THE PROGRAMME TIMERS — `false`, and this is the same guarantee as
+      // THE STAGE TIMERS — `false`, and this is the same guarantee as
       // `stage_next` and `stage_alert` above rather than a new one. A programme
       // timer is the operator's bookkeeping for one person on a platform: "Sermon ·
       // 4:12 left" behind a preacher is the running order in front of the whole
@@ -176,7 +176,7 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       // `stagepageidentity.test.js` drives the real page and asserts what it
       // paints, which this file — which reads source text — cannot reach.
       channel_roles: true,
-      // THE PROGRAMME TIMERS, and this page is the only client that may have them.
+      // THE STAGE TIMERS, and this page is the only client that may have them.
       // A `Stage`-scoped timer publishes no content frame at all — which is exactly
       // why it survives a verse — so this frame is its only way onto any screen,
       // and the screen it is for is this one.

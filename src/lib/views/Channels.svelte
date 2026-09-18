@@ -61,7 +61,7 @@
   // something legible. Imported here so the preview and the wall reach the same
   // answer rather than two different kinds of nothing.
   import { DEFAULT_TEMPLATE } from '../templates.js';
-  import { CONTENT_KINDS, resolveOutputTemplate, isKeyedTemplate } from '../layers.js';
+  import { CONTENT_KINDS, resolveOutputTemplate, isKeyedTemplate, templateById } from '../layers.js';
   import { outputUrl } from '../outputurl.js';
   import { CHANNEL_ROLES, NO_ROLE_LABEL, stageRemoteUrl } from '../channelroles.js';
   import {
@@ -575,7 +575,18 @@
   // the expression — so the preview would be correct once, by luck of ordering,
   // and never update when the look changed. This file has already been caught by
   // exactly that (`stageUrl()`, a few lines up), twice.
-  $: scriptureLook = $templates.find((t) => t.id === $contentTemplates.scripture) ?? null;
+  //
+  // THROUGH THE SAME LOOKUP THE WALL USES, and that is not a tidy-up. This tile
+  // used to be the ONE surface that rendered a content look correctly: idle it
+  // resolved `scriptureLook` out of `$templates` by hand, while an output page
+  // read no content look at all — so the panel an operator opens to CHECK the
+  // setup showed the look working over a wall that was wearing the configured
+  // default, and going live made the two agree again by both being wrong. A
+  // preview that is right when nothing is on air and wrong when something is has
+  // it exactly backwards. `templateById` is the lookup `Output.svelte` resolves
+  // `content.template_id` through; `$liveTemplateOverride` now reads the id form
+  // as well as the JSON form, so the live branch cannot disagree with it either.
+  $: scriptureLook = templateById($templates, $contentTemplates.scripture);
   $: previewOverride = $live ? $liveTemplateOverride : scriptureLook;
   // `$templates` is NAMED here, not reached through `templateOf`. It used to be
   // `sel ? templateOf(sel) : null`, and `templateOf` reads the store inside a

@@ -321,10 +321,10 @@ describe('the card is the three things §2 names, in one place', () => {
   // the card carried a fourth — the one control in it that paints over live
   // scripture on every screen at once. It was removed on 2026-09-14 (L3) and the
   // card is now what the spec says it is.
-  it('holds the countdown, the name band and the Stage Message', () => {
+  it('holds the Screen Countdown, the name band and the Stage Message', () => {
     const card = src.slice(src.indexOf('<span class="dk">Quick tools</span>'));
     const body = card.slice(0, card.indexOf('<span class="dk">Controls</span>'));
-    expect(body).toContain('Countdown');
+    expect(body).toContain('Screen Countdown');
     expect(body).toContain('Name band');
     expect(body).toContain('Stage Message');
     expect(body).toContain('Load whole plan');
@@ -463,7 +463,7 @@ describe('L3 · the three tools are one card, three times', () => {
       expect(h.firstElementChild.classList.contains('r-lbl')).toBe(true);
     }
     expect(heads.map((h) => h.querySelector('.r-lbl').textContent.trim()))
-      .toEqual(['Countdown', 'Name band', 'Stage Message']);
+      .toEqual(['Screen Countdown', 'Name band', 'Stage Message']);
   });
 
   // ── C2 · THE COUNTDOWN BLOCK, CLEANED (operator instruction 2026-09-14) ──

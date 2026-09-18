@@ -230,8 +230,6 @@ export function restartSetup() {
 //                              was absorbed into real backend channels.
 //   dashboard     → Settings — became a Settings section (records/overview, not
 //                              a run surface).
-//   history       → Settings — same: a record of past services is config, not a
-//                              tab an operator runs a service from.
 //   themes        → Templates — the style layer beneath templates became a DESK
 //                              inside the Templates workspace (docs/REBRAND.md
 //                              §2). One pipeline, one workspace: a theme never
@@ -246,10 +244,19 @@ export function restartSetup() {
 // route (App.svelte's `routes`), reached from Settings → Support & guide and from
 // the cheatsheet: an operator whose session remembers Help should land on Help,
 // not be redirected somewhere it went to, because it did not go anywhere.
+//
+// `history` USED TO BE HERE and has been taken out, which is the only direction
+// an entry may be removed in: the key it named is a real route again. History
+// spent a while as a Settings section, and the redirect was correct for exactly
+// as long as that was true. It is a record browser, not a setting — nothing on
+// it configures anything — so it is off the strip and routable, the same shape
+// as Help. An operator whose session still says `history` now lands on History,
+// which is what they asked for both times. Leaving the entry in would have sent
+// them to Settings, where it no longer is: a redirect that outlives the move it
+// describes is worse than no redirect, because it looks deliberate.
 export const MOVED_TABS = {
   stagedisplays: 'channels',
   dashboard: 'settings',
-  history: 'settings',
   themes: 'templates',
 };
 

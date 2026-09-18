@@ -5,6 +5,7 @@
   import { parseTemplateOverride } from './lib/templates.js';
   import {
     isKeyedTemplate,
+    resolveContentOverride,
     resolveOutputTemplate,
     templateShows,
     setCountdownWarnDefault,
@@ -66,6 +67,38 @@
   // the kiosk hub on connect and whenever the operator changes it, and mirrored
   // to a native output window over `output://default_template`.
   let defaultTpl = null;
+
+  // ── THE LOOKS THIS SCREEN CAN BE ASKED TO WEAR, BY ID ───────────────────────
+  //
+  // A per-kind CONTENT LOOK reaches this page as `content.template_id` and as
+  // NOTHING ELSE. That is deliberate and it is a hard performance rule recorded
+  // at `main::cue_or_content_tpl`: one content look carrying an embedded `data:`
+  // image was 13 MB, and serialising it onto every fire made verses take seconds
+  // to leave the machine. The id costs a settings lookup; the JSON costs the
+  // service. So the id rides and the bytes do not.
+  //
+  // Which means the bytes have to be HERE ALREADY when the id arrives, and this
+  // is where they are kept: `{ [id]: template }`, filled once per connect and
+  // never per fire. Until it existed nothing on this page read `template_id` at
+  // all, so a screen set to follow the content look wore the configured default
+  // for the life of the product — the id crossed the wire on both doors and died
+  // at both receivers.
+  //
+  // FILLED ON BOTH DOORS, and that is the whole shape of it. A native output
+  // window has the Tauri bridge and no socket, so it READS the looks (below); a
+  // browser source has the socket and no bridge, so the hub SENDS them, in the
+  // hello reply's configuration block — before the retained frame they dress, per
+  // rule 43. A projector on HDMI and an OBS source in the same room wearing
+  // different templates is the "guarantee kept on one door" mistake this file's
+  // own comments already count five times.
+  //
+  // REPLACED, never mutated: Svelte reacts to the assignment, and a mutated
+  // object would leave `override` reading a cache it cannot see has changed.
+  let lookCache = {};
+  function cacheTemplate(id, tpl) {
+    if (id == null || !tpl) return;
+    lookCache = { ...lookCache, [id]: tpl };
+  }
 
   // ── THE STAGE MESSAGE, AND WHY THIS PAGE MAY REFUSE IT ─────────────────────
   //
@@ -200,7 +233,16 @@
   // Per-content-type template: when the fired content carries a template override
   // (its content type's default / a cue's choice), render THAT; else the channel's
   // own template `t`.
-  $: override = parseTemplateOverride(content?.template_json);
+  //
+  // TWO FORMS, ONE ANSWER. A cue's pinned choice arrives as JSON; a content look
+  // arrives as an id against `lookCache` above. This used to be
+  // `parseTemplateOverride(content?.template_json)` alone, which is null BY
+  // CONSTRUCTION for a content look — so the second form resolved to nothing and
+  // "Follow the content look" was a setting with no screen that could read it.
+  // `resolveContentOverride` is the ONE place the two forms are reconciled, and
+  // the console's program pane and the Outputs tile call the same function, so no
+  // surface can reach a different conclusion about the same screen.
+  $: override = resolveContentOverride(content, lookCache);
   // THE TRANSPARENCY LAW WINS OVER THE OVERRIDE. A keyed channel must NEVER render
   // opaque — an opaque content-type override (e.g. a full-screen scripture look)
   // would blot out the very camera the lower third exists to caption. So on a
@@ -318,6 +360,38 @@
       defaultTpl = null;
     }
   }
+  // Desktop only — THE CONTENT LOOKS, read when this window opens, on exactly the
+  // argument `loadDefaultTemplate` above makes and for exactly the same defect.
+  //
+  // A content look reaches this page as an id alone (the 13 MB reason is at
+  // `lookCache`), so the id is only useful to a screen that already holds the
+  // bytes. The kiosk hub sends them in its hello reply; a native output window has
+  // no socket and was sent NOTHING, so a projector opened through
+  // `open_channel_output` on a channel that follows the content look would resolve
+  // every fire against an empty cache and paint the configured default — the exact
+  // failure on the exact screen the whole feature exists for, and invisible in the
+  // same way, because the OBS source in the same room would be correct.
+  //
+  // Five ids at most, read once, at mount — never on a fire. `get_content_templates`
+  // is the same command the console reads the matrix from, so there is no second
+  // notion of what the looks are.
+  //
+  // Guarded the same way as every read above it: a missing command or a backend
+  // that says nothing leaves this screen resolving against an empty cache, which
+  // is the behaviour before this existed and the safe one, and never throws on a
+  // live output page.
+  async function loadContentLooks() {
+    try {
+      const call = await invoke();
+      const map = await call('get_content_templates');
+      const ids = [...new Set(Object.values(map ?? {}).filter((v) => v != null))];
+      for (const id of ids) {
+        cacheTemplate(id, (await call('get_template', { id })) ?? null);
+      }
+    } catch {
+      /* no looks in hand; the resolver falls through exactly as it did before */
+    }
+  }
   // Desktop only — what each screen is for, read when this window opens. Exactly
   // the argument `loadDefaultTemplate` above makes: the hub replays the role map
   // on `hello`, a native output window has no socket, and the event only fires
@@ -355,6 +429,12 @@
   // edit re-render live scripture the instant it's saved.
   function applyTemplateUpdate(id, fresh) {
     if (!fresh) return;
+    // THE THIRD PLACE THIS TEMPLATE CAN BE IN USE, and the one that is not a
+    // snapshot: a content look is held by ID, so an edit to it has to land in the
+    // cache or this screen goes on painting the version it was handed on connect.
+    // Unconditional, because the hub sends every template edit to every client and
+    // the cache is the only thing that knows whether this screen cares.
+    cacheTemplate(id, fresh);
     if (id === templateId) t = fresh;
     if (content) {
       const ov = parseTemplateOverride(content.template_json);
@@ -365,7 +445,7 @@
   /**
    * THE CONFIGURED WARNING WINDOW, DELIVERED RATHER THAN READ — RG-149(c).
    *
-   * `Settings → General → Countdown warning` is applied through
+   * `Settings → Getting started → Countdown warning` is applied through
    * `layers.js::setCountdownWarnDefault`, whose only writer is `stores/capture.js`
    * — a module a browser source cannot import, because it has no Tauri bridge. So
    * the figure rides with the content instead, on both doors, and this is where it
@@ -391,7 +471,7 @@
       //
       // SITE 8 OF THE CONTENT-KIND SWEEP, THE KIOSK DOOR. Nothing changed: a
       // congregation timer arrives as `countdown`, which every `shows` list names,
-      // and a programme timer is never published as content so it cannot reach this
+      // and a Stage Timer is never published as content so it cannot reach this
       // page by any route. The TWIN of this line is the `output://content` listener
       // in `onMount` — the native window has the Tauri bridge and no socket, so a
       // filter written here and not there is the "guarantee kept on one door"
@@ -405,7 +485,7 @@
       // `TemplateRender` reads it off the content. The list is the reason this door
       // has dropped fields before (`next_reference`), so a field added to the wire
       // and not added here is a kiosk screen disagreeing with the wall beside it.
-      content = { kind: m.content_kind, reference: m.reference, text: m.text, translation: m.translation, media_url: m.media_url, media_kind: m.media_kind, template_json: m.template_json, template_pinned: m.template_pinned, countdown_to: m.countdown_to, countdown_from: m.countdown_from, countdown_paused_ms: m.countdown_paused_ms, countdown_done: m.countdown_done, countdown_warn_ms: m.countdown_warn_ms, stage_note: m.stage_note, next_reference: m.next_reference, next_text: m.next_text, service_started_at: m.service_started_at, service_target_ms: m.service_target_ms };
+      content = { kind: m.content_kind, reference: m.reference, text: m.text, translation: m.translation, media_url: m.media_url, media_kind: m.media_kind, template_id: m.template_id, template_json: m.template_json, template_pinned: m.template_pinned, countdown_to: m.countdown_to, countdown_from: m.countdown_from, countdown_paused_ms: m.countdown_paused_ms, countdown_done: m.countdown_done, countdown_warn_ms: m.countdown_warn_ms, stage_note: m.stage_note, next_reference: m.next_reference, next_text: m.next_text, service_started_at: m.service_started_at, service_target_ms: m.service_target_ms };
       // THE CONFIGURED DEFAULT, which this page cannot read for itself.
       applyWarnDefault(m.countdown_warn_default_ms);
       visible = true;
@@ -539,6 +619,7 @@
       await loadLiveTransition();
       await loadLiveBackground();
       await loadDefaultTemplate();
+      await loadContentLooks();
       await loadChannelRoles();
       const { listen } = await import('@tauri-apps/api/event');
       unlisten.push(await listen('output://content', (e) => {

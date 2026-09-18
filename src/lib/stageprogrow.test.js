@@ -100,7 +100,7 @@ const PROGROW = ruleOf(CSS, '.progrow');
 const SIZE =
   /font-size:\s*min\(\s*clamp\(\s*([\d.]+)px\s*,\s*calc\(\s*([\d.]+)cqw\s*\/\s*var\(\s*--tmrs[^)]*\)\s*\/\s*var\(\s*--tch[^)]*\)\s*\/\s*([\d.]+)\s*\)\s*,\s*([\d.]+)px\s*\)\s*,\s*([^;]+)\)\s*;/;
 
-describe('RG-147 — a programme timer past an hour is not silently clipped', () => {
+describe('RG-147 — a Stage Timer past an hour is not silently clipped', () => {
   it('budgets the characters the row is actually painting, never a constant six', () => {
     // Watched to fail against the tree at 91abb59, where the declaration reads
     // `calc(92cqw / var(--tmrs) / 6 / 0.62)`: `formatCountdown` emits SEVEN
@@ -108,7 +108,7 @@ describe('RG-147 — a programme timer past an hour is not silently clipped', ()
     // 215.3 px into a 199 px `overflow: hidden` box and read as `1:30:1`.
     expect(
       SIZE.test(TVAL ?? ''),
-      'the stage timer digits are not sized from the string they are rendering — ' +
+      'the Stage Timer digits are not sized from the string they are rendering — ' +
         'a fixed character budget is RG-147, and what is left of a clipped clock ' +
         'reads as a valid time',
     ).toBe(true);
@@ -193,7 +193,7 @@ describe('RG-147 — the arithmetic of the shipped declaration, against the audi
       const { box, textPx, fontPx } = model(vw, 6, chars);
       expect(
         textPx,
-        `six programme timers at ${vw} px: a ${chars}-character value is ${textPx.toFixed(1)} px ` +
+        `six Stage Timers at ${vw} px: a ${chars}-character value is ${textPx.toFixed(1)} px ` +
           `of text at ${fontPx.toFixed(1)} px in a ${box.toFixed(1)} px box`,
       ).toBeLessThanOrEqual(box);
     }

@@ -234,12 +234,24 @@ describe('B2 · the scanner can still see what it scans for', () => {
     // A path typo would make a file vanish from the census while the array went on
     // looking exhaustive, which is `ipc.test.js`'s failure exactly.
     expect(FILES.length).toBeGreaterThan(25);
-    // `Templates.svelte` is the one entry with no `<button>` of its own: it is a
-    // router shell that mounts the gallery and the editor. It was in the original
-    // sixteen and it stays, named, because a file with nothing to judge is not the
-    // same as a file that has quietly left the census.
+    // TWO ENTRIES HAVE NO `<button>` OF THEIR OWN, for opposite reasons, and both
+    // are named because a file with nothing to judge is not the same as a file
+    // that has quietly left the census.
+    //
+    //   · `Templates.svelte` never had one: it is a router shell that mounts the
+    //     gallery and the editor.
+    //   · `ModelSetup.svelte` had six and converted all six to `ui/Button`, which
+    //     is the direction this whole file is pushing. That is the outcome a
+    //     button census is FOR, so it reads here as a pass rather than as an
+    //     absence — the shape claims are the component's now, and `Button.svelte`
+    //     is itself in this list. Its conversion was not cosmetic: only the
+    //     component carries `disabledReason`, and three of those six buttons are
+    //     refused by the service lock in Rust with nothing on the card saying so.
+    //
+    // A THIRD entry appearing here is the finding this assertion exists for: a
+    // path typo, or a file whose controls were deleted rather than converted.
     const empty = FILES.filter((f) => buttons(read(f)).length === 0);
-    expect(empty).toEqual(['src/lib/views/Templates.svelte']);
+    expect(empty).toEqual(['src/lib/views/Templates.svelte', 'src/lib/ModelSetup.svelte']);
     expect(new Set(FILES).size, 'a file is listed twice').toBe(FILES.length);
     // The shell and the run surface are the two that were outside BOTH this file
     // and `workspacegrammar.test.js`, and they are the two an operator looks at

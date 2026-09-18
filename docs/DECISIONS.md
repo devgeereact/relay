@@ -456,6 +456,11 @@ complete but short of the reference on four capabilities. All four are being bui
    philosophy ("operator override is first-class") put it on the run surface. A compact
    slider in the Live AI-detection panel writes the SAME `set_thresholds` the Settings
    slider does — one baseline, no second source (router.rs invariant preserved).
+   *(Superseded in part by §96, 2026-09-18: one baseline held, one CONTROL did not. The
+   Settings slider became two sliders pointing the opposite way over a range the dial
+   cannot express, so they and `set_thresholds` were deleted and the dial is now the only
+   gate control. The decision recorded here — sensitivity belongs on the run surface — is
+   unchanged.)*
 
 4. **Per-cue output routing + conditions (Planner).** A plan cue may target a SUBSET of
    screens and carry its own fire behaviour. This is the one change that touches the
@@ -4790,6 +4795,32 @@ both waves' surfaces were individually green and the defects were in the seam be
 so it drives Live's real fire path and mounts the REAL stage page on the frame that comes out
 rather than adding cases to either side.
 
+### Addendum, 2026-09-18 — the two clocks are named after their audience (RG-167)
+
+**The ruling above is unchanged and is not reopened.** This records only what the two timers are now
+CALLED, because §27, §91 and the section above all discuss them under words the interface no longer
+uses.
+
+They had six labels between them and not one of them said which of the two it was. The
+congregation's clock was `Countdown` (the dock), `Countdown timer` (the binding list),
+`Timer / Countdown` (the layer type, the content-kind row and the template kind) and
+`Countdown Timer` (the starter); the preacher's was `Programme timer` (Live), `Programme` (the stage
+zone) and `programme clock` (a test). **Audience is carried by the first word: `Screen Countdown`
+reaches the room, `Stage Timer` reaches one person** — which is the family `Stage Message` and
+`Stage Note` already teach. Both are two words because the register's matcher is a case-insensitive
+substring: a one-word `Countdown` entry matches inside `countdownRemainingMs`, and a one-word
+`Timer` inside `stageTimerRows`. `src/lib/names.test.js` holds both entries and asserts that
+shortening either would detonate.
+
+**The wire kind stays `"timer"`.** It is protocol — `channels.rs` publishes it, `Stage.svelte` reads
+it — and a church running an older copy of `stage.html` would silently lose its rail. A label is
+what a person reads; a frame kind is what two programs agree on, and renaming the second to match
+the first is how a rename reaches a congregation.
+
+**The prose in §91 and §92 above is deliberately left as written**, in the words their authors used
+on the day the decisions were taken. A frozen ruling that follows a later rename is a ruling nobody
+can date.
+
 ## 93. Amethyst promises "nothing here reaches a congregation", and the caution gap is named rather than closed (2026-09-17)
 
 **A human may overrule this. It restates a law rather than moving one, and it deliberately leaves
@@ -5056,3 +5087,113 @@ the same assertion so it cannot pass by the label being wrong in both directions
 church that unplugs a dock and plugs it back into a different port still has to re-pick the display.
 The change is that Relay now says so instead of opening the congregation's screen on the operator's
 monitor.
+
+## 96. The sensitivity dial is the only gate control, and it says when the gate is no longer on its curve (2026-09-18)
+
+**Decision.** Detection sensitivity is set in exactly one way: the 0-100 dial. The two
+threshold sliders in Settings → AI & Detection are deleted, and the `set_thresholds`
+command with them. Settings now renders the same dial the dock on Live renders, over the
+same store and the same command, with the two thresholds shown beneath it as read-only
+consequences.
+
+### Two controls over one fact, fighting in four ways
+
+The dial (`src/lib/Dock.svelte`) maps through `Thresholds::from_sensitivity`: dial 0 gives
+an auto-fire bar of 0.90 and dial 100 gives 0.30, so **right is more eager**. The two
+sliders wrote the bars directly, labelled LAX → STRICT, so **right was more strict**. One
+fact, two controls, opposite directions.
+
+They did not even describe the same set of states. The dial can express an auto-fire bar
+between 0.30 and 0.90; the `Auto-fire above` slider ran to **0.99**, which no dial position
+can produce. A real install was screenshotted at auto-fire 99% and suggest 69%.
+
+The inverse is lossy. `to_sensitivity` recovers the dial position from `auto_fire` **alone**
+— which is the right answer for placing a thumb and the only one available, because
+`suggest` is not independent on the curve. So an operator who set the two bars separately
+had their `suggest` value silently rewritten the first time anybody nudged the dial: 99/69
+maps to dial 0, and one step off 0 rewrites the pair to 0.90/0.70.
+
+And one label was backwards. A **higher** `Suggest above` threshold means **fewer**
+suggestions get through, which is more passive; the slider's right-hand end said
+**HYPER-AWARE**.
+
+### Why the dial, and why not a sync
+
+Syncing was the obvious repair and it is not available. The two controls disagree about
+direction, about range and about how many numbers there are, so every sync silently
+rewrites something the operator just set — which is the same class of defect as the gate
+that did not move, one level up.
+
+The dial wins because it is already the anchor everything else is defined against.
+DECISIONS §26 names it as the operator's control; §32.2 records `sensitivity` as the
+baseline the self-calibration **decays back toward**, persisted on the voice profile and
+re-applied by `apply_profile` at every launch. The two sliders sat under a chip reading
+`self-calibrating`, over values the learner walks away from within a service — the dial is
+the number it walks back to. A hand-set pair of bars was never a thing the rest of the
+system could hold on to.
+
+Deleting the control means deleting the command. `set_thresholds` would otherwise be a
+registered Tauri command with nothing rendering a path to it, and every registered command
+is invokable from the webview: a command nobody calls is attack surface nobody is watching.
+This is the same precedent as the ten commands deleted before it. `apply_thresholds` — the
+doorway where "move the gate, the baseline and the stored profile row, together, always"
+lives — **stays**, because `set_sensitivity` and `apply_profile` both need it, and because
+the next control to want those three facts must find the rule in a doorway rather than
+rebuild it. That rule was itself the fix for the last time these two doors disagreed
+(RG-35).
+
+### A nearest dial position is not an explanation of the gate
+
+Removing the second control leaves a second problem, and it is the one that would have
+outlived the tidy-up. Three things move `Router.thresholds` without anybody touching the
+dial: `apply_profile` restoring what a voice profile has **learned**, a room being applied,
+and `record_feedback` on every confirm and dismiss. After any of them the gate need not sit
+on `from_sensitivity`'s curve at all — but it still has a nearest dial position, the dial is
+still drawn at it, and drawn without a word that position reads as somebody's deliberate
+setting.
+
+That is rule 35 on the one control governing what the AI may put on a wall unasked: a
+read-out that cannot tell "the dial says 40" from "the dial said 40 three weeks ago and the
+gate has moved since" is not a read-out.
+
+`Thresholds::follows_dial` (router.rs) answers it, beside the mapping it is a question
+about. It compares **both** thresholds against what the reported dial position would
+produce, and the second comparison is the load-bearing one: `record_feedback` corrects
+`auto_fire` and leaves `suggest` where it was, so the reported dial position tracks
+`auto_fire` while `suggest` stays behind — asking only about `auto_fire` is tautological on
+precisely the drift that happens. The tolerance is half a percentage point rather than zero,
+because the read-out is printed in whole percentage points and a caveat that is permanently
+on is one nobody reads.
+
+The answer rides on `detection://thresholds` and on `get_thresholds` as `on_dial` —
+**both**, because `setup` applies the profile's learned gate before the window exists, so a
+console that only listened would open in exactly the state this is meant to report.
+`src/lib/gate.js::describeGate` is the one place that turns it into words, and it keeps
+three things apart that one number cannot: no engine, an engine nobody has asked yet, and a
+gate that has moved off the dial. Drift is never claimed over a gate nobody read — that
+would be inventing the worse of the two facts.
+
+### What this deliberately does not do
+
+**No threshold value and no mapping moves.** `from_sensitivity`, `to_sensitivity`,
+`Thresholds::default()`, the auto-fire cap on semantic matches and the corroboration rule
+are all untouched. This changes **who may set the gate and what they are told about it**,
+never where the gate sits. Rules 10, 28, 30 and 34 are not in the diff.
+
+It also does not make the gate a better gate. `docs/qa/audits/FIELD-2026-09-06.md` §2
+measured that the sensitivity dial is **not** the lever for a wrong verse — its most
+cautious setting still kept a wrong verse at 0.95 and discarded a correct one. Removing a
+second, contradictory way to set it is an honesty fix, not an accuracy one.
+
+### Instruments
+
+`router::tests::a_gate_on_the_curve_is_explained_by_its_dial_and_a_learned_one_is_not`
+(every dial position is on its own curve; the screenshotted 99/69; the 0.832 live-service
+row from §32.2; and the suggest-only drift `to_sensitivity` is structurally blind to —
+verified to fail when reduced to an `auto_fire` comparison). `src/lib/gate.test.js` holds
+the words, including that drift can never be claimed over an unread gate.
+`detection::r4_audit::r4_10_the_gate_control_leaves_the_profile_in_a_state_the_router_was_in`
+is the old R4-10 re-pointed at `set_sensitivity`: the guarantee was never about which
+control was dragged, only that a hand-set gate goes through `apply_thresholds`, and it was
+verified to reproduce the original defect (a 0.296-wide gap between the stored dial and the
+stored bars) when `set_sensitivity` is made to bypass that doorway.

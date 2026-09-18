@@ -232,13 +232,13 @@
     { key: 'reading', label: 'Reading' },
     { key: 'next', label: 'Next' },
     { key: 'note', label: 'Stage Note' },
-    { key: 'countdown', label: 'Countdown' },
+    { key: 'countdown', label: 'Screen Countdown' },
     { key: 'clock', label: 'Clock' },
     { key: 'elapsed', label: 'Service elapsed' },
     // The preacher's bookkeeping. A lobby TV running this page has no business
     // carrying it, and until this key existed there was no way to take it off —
     // the rail was the one region on the screen with no switch behind it.
-    { key: 'programme', label: 'Programme' },
+    { key: 'programme', label: 'Stage Timer' },
   ];
   const DEFAULT_ZONES = {
     reading: true,
@@ -388,7 +388,7 @@
   // `done_msg` KEEPS HAVING NO READER HERE, and that is a decision rather than an
   // oversight. The words an operator typed are what a CONGREGATION countdown says
   // when it lands: `countdown_done` replaces the digits on the wall and on the
-  // countdown mirror above this row. A programme timer is a different instrument —
+  // countdown mirror above this row. A Stage Timer is a different instrument —
   // the preacher's own bookkeeping, shown to one person — and what it is asked past
   // zero is how far over, not what to announce. If that is ever revisited it is a
   // new row, not RG-153.
@@ -686,7 +686,7 @@
   /**
    * THE CONFIGURED WARNING WINDOW, DELIVERED RATHER THAN READ — RG-149(c).
    *
-   * `Settings → General → Countdown warning` lives in `layers.js` module state whose
+   * `Settings → Getting started → Countdown warning` lives in `layers.js` module state whose
    * one writer is `stores/capture.js`, and this page has no Tauri bridge, so it
    * could not import the writer and could not ask the backend either. The figure is
    * therefore carried to it on frames it already receives — `warn_default_ms` on the
@@ -776,7 +776,7 @@
       // no alert while the one beside it that stayed connected kept the panel.
       // Clearing here is what makes the live path agree with the reconnect path.
       //
-      // `svcStart` deliberately SURVIVES, and so does a programme timer (§91). A
+      // `svcStart` deliberately SURVIVES, and so does a Stage Timer (§91). A
       // cleared or blacked wall is not the end of a service, and the elapsed zone
       // is the preacher's own clock — taking it away when the operator hits Esc
       // would answer a question nobody asked. The line §91 draws is between a
@@ -832,7 +832,7 @@
       // remembered to re-send them.
       stageTimers = Array.isArray(m.timers) ? m.timers : [];
       // AND THE CONFIGURED WARNING WINDOW RIDES WITH THE SET. This is the frame
-      // that reaches this page first — a programme timer can be running before
+      // that reaches this page first — a Stage Timer can be running before
       // anything has been fired — so reading it here is what stops the surface
       // whose whole job is the clock sitting on the shipped minute (RG-149(c)).
       applyWarnDefault(m.warn_default_ms);
@@ -1021,11 +1021,11 @@
     </div>
   {/if}
 
-  <!-- ══ THE PROGRAMME ══ One row per stage timer, and no row at all when there are
+  <!-- ══ THE STAGE TIMERS ══ One row per Stage Timer, and no row at all when there are
        none — the same rule as the Stage Note row and the Up Next above it: nothing sent,
        nothing rendered, no room taken (docs/REBRAND.md §5).
        Deliberately OUTSIDE `{#if zones.reading}` and outside the `visible` gate: a
-       programme timer outlives the content that replaced it, and it outlives a
+       Stage Timer outlives the content that replaced it, and it outlives a
        panic control aimed at the congregation's screens.
        NOT amber, which means ON AIR and is never allowed to lie; not cyan, which
        means the AI is guessing; not amethyst, which means rehearsal. Slate, the

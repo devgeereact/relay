@@ -281,6 +281,59 @@ describe('RG-76 · the mechanically checkable hard-way rules', () => {
     ).toMatch(/fn broadcast_with_clock/);
   });
 
+  // ── RG-166, the predicate this repository corrected once and half applied ──
+  it('RG-166 — no countdown is gated on `layout.lowerThird`', () => {
+    // NOT a numbered CLAUDE.md rule, and deliberately named after the finding so
+    // the counting instructions in that file keep answering what they claim to.
+    //
+    // `layers.js::isKeyedTemplate` exists because `layout.lowerThird` is FALSE for
+    // a layer-model lower third — its band is a shape layer, not that flag. Its own
+    // doc comment records what that cost: *"blackout blacked out the camera and
+    // clear left the band sitting on it."* Blackout and the transparency law were
+    // migrated to the helper. The countdown refusal was left on the flag, and ten
+    // of the forty shelf looks then painted a full-frame clock over a live camera.
+    //
+    // So: any line that reads the flag AND mentions a countdown in the same breath
+    // is the defect coming back. `bandMode` itself is untouched — it is about band
+    // LAYOUT, and it is allowed to keep reading the flag for that.
+    const offenders = [];
+    for (const [file, raw] of [...SVELTE, ...tree('src', '.js')]) {
+      // `stripComments` blanks block and HTML comments; a `//` line comment is
+      // taken here as well, because this check is two loose words on one line and
+      // a sentence EXPLAINING the rule reads exactly like a breach of it. (The
+      // first run of this test reported its own documentation.) `//` after a `:`
+      // is a URL, not a comment — the same carve-out `names.test.js` makes.
+      const src = stripComments(raw).replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+      src.split('\n').forEach((line, i) => {
+        if (!/lowerThird/.test(line)) return;
+        if (!/countdown/i.test(line)) return;
+        offenders.push(`${file}:${i + 1}  ${line.trim()}`);
+      });
+    }
+    expect(
+      offenders,
+      'a countdown is being refused (or allowed) from `layout.lowerThird`, which is ' +
+        'false for every layer-model lower third — ask `isKeyedTemplate` instead:\n  ' +
+        offenders.join('\n  '),
+    ).toEqual([]);
+
+    // AND THE RENDERER ACTUALLY ASKS THE SHARED QUESTION. An absence proves only
+    // that nobody wrote the bad line; it cannot tell a correct predicate from no
+    // predicate at all, which is how `showDefaultCountdown` shipped asking nothing.
+    const render = stripComments(read('src/lib/TemplateRender.svelte'));
+    expect(render, 'TemplateRender no longer imports isKeyedTemplate').toMatch(
+      /import \{[^}]*isKeyedTemplate[^}]*\} from '\.\/layers\.js'/,
+    );
+    expect(
+      /\$: countdownAllowed = [^\n]*keyedOut/.test(render),
+      'countdownAllowed stopped deriving from the keyed question',
+    ).toBe(true);
+    expect(
+      /\$:\s*showDefaultCountdown =[\s\S]{0,200}?countdownAllowed/.test(render),
+      'the LAYER model stopped consulting countdownAllowed — that is the bug verbatim',
+    ).toBe(true);
+  });
+
   // ── Rule 33, the two hops it did not cover ────────────────────────────────
   it('rule 33 — no unbounded queue anywhere on the audio path', () => {
     // RG-84. Rule 33 describes the queue into detection as bounded, shedding

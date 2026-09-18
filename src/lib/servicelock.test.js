@@ -160,12 +160,17 @@ describe('the contract with the Rust half', () => {
   });
 
   it('the unlock is reachable from the sentence the refusal prints', () => {
-    // Rust's refusal says "unlock in Settings → History & Backup". If the control
-    // is not there, the refusal is a dead end and the lock becomes a wall.
+    // Rust's refusal names a section by name. If the control is not in THAT
+    // section, the refusal is a dead end and the lock becomes a wall — which is
+    // why this asserts the two halves against each other rather than against a
+    // remembered string. The section was History & Backup and is Before the
+    // service: the lock decides whether the speech model beside it can still be
+    // changed, which is the one thing it holds back that an operator might
+    // legitimately need at 10:50.
     const rs = read('src-tauri/src/servicelock.rs');
-    expect(rs).toMatch(/Settings → History & Backup/);
+    expect(rs).toMatch(/Settings → Before the \\?\s*service/);
     const settings = read('src/lib/views/Settings.svelte');
-    expect(settings).toMatch(/section === 'history'/);
+    expect(settings).toMatch(/section === 'ready'/);
     expect(settings).toMatch(/setServiceLock\(false\)|unlockService/);
   });
 });

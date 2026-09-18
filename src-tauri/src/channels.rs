@@ -1871,6 +1871,28 @@ pub struct KioskHub {
     ///
     /// Ids and states only. Nothing a client chose, and nothing a preacher said.
     screens_down: Arc<Mutex<String>>,
+    /// THE TEMPLATE IDS THIS INSTALL'S CONTENT LOOKS NAME — at most one per
+    /// content kind, so five.
+    ///
+    /// NOT a cache of templates: `templates` above already holds every template's
+    /// JSON. This is the far smaller question of WHICH of them a screen that has
+    /// no look of its own can be asked to wear, and it exists because the answer
+    /// has to be BOUNDED. A content look crosses the wire to an output as an id
+    /// and no JSON (the 13 MB reason is at `main::cue_or_content_tpl`), so the
+    /// receiver can only resolve an id it already holds the bytes for — and a
+    /// browser source has no database to look them up in. The hub therefore sends
+    /// them, in the hello reply, once per connect and never per fire.
+    ///
+    /// Sending `templates` wholesale instead would have been one line shorter and
+    /// wrong in the way this product cannot afford: an install with a dozen
+    /// templates, one of them carrying an embedded `data:` image, would push
+    /// megabytes at every OBS source that reconnected — which is the very cost
+    /// `cue_or_content_tpl` refuses to pay on the fire path, moved onto the
+    /// connect path and paid every time the wifi blips.
+    ///
+    /// Warmed at startup and re-warmed whenever the operator changes the map, both
+    /// from `main.rs`, which is the only place that knows what a content look is.
+    look_ids: Arc<Mutex<Vec<i64>>>,
 }
 
 impl Default for KioskHub {
@@ -1891,6 +1913,7 @@ impl Default for KioskHub {
             // every hello before anything was ever taken down — a message with no
             // `kind`, which every client drops in silence.
             screens_down: Arc::new(Mutex::new(SCREENS_ALL_UP.to_string())),
+            look_ids: Arc::new(Mutex::new(Vec::new())),
         }
     }
 }
@@ -2159,6 +2182,40 @@ impl KioskHub {
         let blob = self.channel_roles_json();
         self.publish(format!(r#"{{"kind":"channel_roles","roles":{blob}}}"#));
     }
+    /// Shared handle to the content-look id list, for the WS task's `hello`.
+    pub fn look_ids_handle(&self) -> Arc<Mutex<Vec<i64>>> {
+        self.look_ids.clone()
+    }
+    /// Record which template ids this install's content looks name.
+    ///
+    /// Deduplicated and CAPPED. The cap is not defensiveness about a caller that
+    /// cannot currently misbehave: it is the property the whole design rests on.
+    /// Every id here becomes a `template` frame in every hello reply, so an
+    /// unbounded list turns a reconnect into a bulk template download over a
+    /// church's wifi — the cost `cue_or_content_tpl` refuses on the fire path,
+    /// moved somewhere less visible. There are five content kinds; anything longer
+    /// than that is a bug upstream and is truncated rather than sent.
+    pub fn cache_look_ids(&self, ids: &[i64]) {
+        let mut seen: Vec<i64> = Vec::new();
+        for id in ids {
+            if !seen.contains(id) {
+                seen.push(*id);
+            }
+        }
+        seen.truncate(MAX_CONTENT_LOOKS);
+        if let Ok(mut l) = self.look_ids.lock() {
+            *l = seen;
+        }
+    }
+    /// The content-look ids currently cached.
+    ///
+    /// Test-only: production reads the list through `look_ids_handle`, inside the
+    /// WS task, because the hello reply is the only thing that needs it. A public
+    /// getter nothing calls is a getter nobody is watching.
+    #[cfg(test)]
+    pub fn look_ids(&self) -> Vec<i64> {
+        self.look_ids.lock().map(|l| l.clone()).unwrap_or_default()
+    }
     /// Cache a template's JSON (no push). Used to warm the cache at startup.
     pub fn cache_template(&self, id: i64, template_json: &str) {
         if let Ok(mut m) = self.templates.lock() {
@@ -2263,6 +2320,7 @@ pub async fn run_kiosk_server(
     last_timers: Arc<Mutex<Option<String>>>,
     last_background: Arc<Mutex<Option<String>>>,
     screens_down: Arc<Mutex<String>>,
+    look_ids: Arc<Mutex<Vec<i64>>>,
     health: OutputHealth,
     port: u16,
 ) {
@@ -2302,6 +2360,7 @@ pub async fn run_kiosk_server(
         let last_timers = last_timers.clone();
         let last_background = last_background.clone();
         let screens_down = screens_down.clone();
+        let look_ids = look_ids.clone();
         let health = health.clone();
         tokio::spawn(async move {
             let _permit = permit;
@@ -2450,6 +2509,55 @@ pub async fn run_kiosk_server(
                                         if let Some(tpl) = cached {
                                             let out = format!(
                                                 r#"{{"kind":"template","id":{id},"template":{tpl}}}"#
+                                            );
+                                            let _ = write
+                                                .send(tokio_tungstenite::tungstenite::Message::Text(out))
+                                                .await;
+                                        }
+                                    }
+                                    // THE CONTENT LOOKS, BY VALUE, BECAUSE THE
+                                    // FIRE PATH ONLY EVER SENDS THE NUMBER.
+                                    //
+                                    // A per-kind content look reaches a screen as
+                                    // `content.template_id` and as nothing else —
+                                    // deliberately, and it is a hard performance
+                                    // rule recorded at `cue_or_content_tpl`: one
+                                    // look carrying an embedded `data:` image was
+                                    // 13 MB, and serialising that onto every fire
+                                    // made verses take seconds to leave the
+                                    // machine. So the id rides and the bytes do
+                                    // not, which means the bytes have to already
+                                    // be at the receiver when the id arrives.
+                                    //
+                                    // A native output window fetches them over the
+                                    // Tauri bridge; a browser source has no bridge
+                                    // and no database, so this is the only way it
+                                    // can ever learn what template 9 IS. Without
+                                    // it the id crossed the wire and died at the
+                                    // receiver, and a screen set to follow the
+                                    // content look wore the configured default for
+                                    // the life of the product.
+                                    //
+                                    // HERE, in the configuration block, and not
+                                    // after the retained frame: rule 43 replays
+                                    // what is on the screens LAST precisely so the
+                                    // look it needs has already arrived, and a
+                                    // template sent afterwards would repaint a
+                                    // verse a congregation is already reading.
+                                    //
+                                    // Bounded at `MAX_CONTENT_LOOKS` where the
+                                    // list is written, so a reconnect can never
+                                    // become a bulk template download.
+                                    let looks = look_ids
+                                        .lock()
+                                        .map(|l| l.clone())
+                                        .unwrap_or_default();
+                                    for lid in looks {
+                                        let cached =
+                                            templates.lock().ok().and_then(|m| m.get(&lid).cloned());
+                                        if let Some(tpl) = cached {
+                                            let out = format!(
+                                                r#"{{"kind":"template","id":{lid},"template":{tpl}}}"#
                                             );
                                             let _ = write
                                                 .send(tokio_tungstenite::tungstenite::Message::Text(out))
@@ -3159,6 +3267,18 @@ pub(crate) const DEV_CONSOLE_PORT: u16 = 5032;
 /// is an order of magnitude above that and far below the point where the laptop
 /// running the sermon notices.
 pub(crate) const MAX_KIOSK_CLIENTS: usize = 32;
+
+/// How many content-look templates the hub will hand a client on connect.
+///
+/// There are five content kinds (`scripture`, `song`, `media`, `announce`,
+/// `countdown`) and a look is one template per kind, so five is the whole of it
+/// rather than a comfortable margin. It is a bound and not a guess: every id in
+/// `KioskHub::look_ids` becomes a `template` frame in every hello reply, and a
+/// template can carry an embedded `data:` image — one in the field was 13 MB. A
+/// list that grew would turn every OBS reconnect into a bulk download over a
+/// church's wifi, which is exactly the cost `main::cue_or_content_tpl` refuses to
+/// pay on the fire path.
+pub(crate) const MAX_CONTENT_LOOKS: usize = 5;
 
 /// Read the request head — everything up to the blank line — under ONE deadline.
 ///
@@ -3903,6 +4023,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.screens_down_handle(),
+            hub.look_ids_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -3967,6 +4088,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.screens_down_handle(),
+            hub.look_ids_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -4054,6 +4176,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.screens_down_handle(),
+            hub.look_ids_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -4108,6 +4231,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.screens_down_handle(),
+            hub.look_ids_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -4147,6 +4271,126 @@ mod tests {
         );
     }
 
+    /// THE CONTENT LOOKS ARE IN HAND BEFORE THE FRAME THEY DRESS.
+    ///
+    /// A content look reaches an output as `content.template_id` and NO JSON —
+    /// deliberately, and it is a hard performance rule (`cue_or_content_tpl`: one
+    /// look was 13 MB and serialising it per fire made verses take seconds). So
+    /// the receiver can only resolve the number if it already holds the bytes,
+    /// and a browser source has no database to find them in. Until this frame
+    /// existed the id crossed the wire on both doors and died at both receivers:
+    /// a screen set to "follow the content look" wore the configured default for
+    /// the life of the product.
+    ///
+    /// TWO claims, and the second is the one a unit test on `cache_look_ids`
+    /// could not make. The look must arrive, AND it must arrive BEFORE the
+    /// retained screen frame — rule 43 sends what is on the screens last for
+    /// exactly this reason, and a look sent after it would repaint a verse a
+    /// congregation is already reading. So this opens a real socket, with a real
+    /// retained verse behind it, and asserts on the ORDER the frames arrive in.
+    #[tokio::test]
+    async fn a_joining_screen_is_sent_the_content_looks_before_what_is_on_the_screens() {
+        let port = free_port();
+        let hub = KioskHub::default();
+        hub.cache_template(9, r#"{"id":9,"name":"Scripture Look"}"#);
+        hub.cache_template(11, r#"{"id":11,"name":"Lyric Look"}"#);
+        hub.cache_look_ids(&[9, 11]);
+        // A verse already on the wall, retained exactly as a real fire retains it.
+        hub.publish(kiosk_content_json(&OutputContent {
+            kind: Some("scripture".into()),
+            reference: "Romans 8:28".into(),
+            text: Some("And we know".into()),
+            template_id: Some(9),
+            ..Default::default()
+        }));
+        tokio::spawn(run_kiosk_server(
+            log_only(),
+            hub.sender(),
+            hub.templates_handle(),
+            hub.clients_handle(),
+            hub.default_template_handle(),
+            hub.channel_roles_handle(),
+            hub.last_screen_handle(),
+            hub.last_transition_handle(),
+            hub.last_timers_handle(),
+            hub.last_background_handle(),
+            hub.screens_down_handle(),
+            hub.look_ids_handle(),
+            OutputHealth::default(),
+            port,
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
+            .await
+            .expect("connect");
+        let (mut write, mut read) = ws.split();
+        // A FOLLOWER's hello: channel-keyed, no `template_id`, which is the URL
+        // `Copy URL` produces for a screen with no look of its own (§70) and the
+        // only configuration in which a content look applies to anything.
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"kind":"hello","channel":1,"template_id":null}"#.to_string(),
+            ))
+            .await
+            .expect("send hello");
+
+        let mut order: Vec<String> = Vec::new();
+        for _ in 0..8 {
+            let Ok(Some(Ok(msg))) =
+                tokio::time::timeout(std::time::Duration::from_millis(600), read.next()).await
+            else {
+                break;
+            };
+            order.push(msg.into_text().unwrap());
+        }
+        let look_at = order
+            .iter()
+            .position(|m| m.contains(r#""kind":"template""#) && m.contains("Scripture Look"));
+        let verse_at = order.iter().position(|m| m.contains(r#""kind":"content""#));
+        assert!(
+            look_at.is_some(),
+            "a screen that follows the content look was never sent the look: {order:?}"
+        );
+        assert!(
+            order
+                .iter()
+                .any(|m| m.contains(r#""kind":"template""#) && m.contains("Lyric Look")),
+            "only one of the two looks arrived: {order:?}"
+        );
+        assert!(
+            verse_at.is_some(),
+            "the retained verse never arrived, so the ordering claim below would be vacuous: {order:?}"
+        );
+        assert!(
+            look_at < verse_at,
+            "the look arrived AFTER the verse it dresses — a screen joining \
+             mid-reading paints the wrong template and then repaints: {order:?}"
+        );
+    }
+
+    /// THE LIST IS A BOUND, NOT A CACHE.
+    ///
+    /// Every id here becomes a `template` frame in every hello reply, and a
+    /// template can carry an embedded `data:` image. An unbounded list turns each
+    /// reconnect — an OBS source restarting, a lobby TV losing the wifi — into a
+    /// bulk download over a church's network, which is the cost the fire path
+    /// refuses to pay, moved somewhere nobody is watching.
+    #[test]
+    fn the_content_look_list_is_deduplicated_and_capped() {
+        let hub = KioskHub::default();
+        // Two kinds pointing at one template is ordinary configuration, not a bug:
+        // scripture and announcements often wear the same look.
+        hub.cache_look_ids(&[9, 11, 9]);
+        assert_eq!(hub.look_ids(), vec![9, 11]);
+        hub.cache_look_ids(&[1, 2, 3, 4, 5, 6, 7]);
+        assert_eq!(
+            hub.look_ids().len(),
+            MAX_CONTENT_LOOKS,
+            "a list longer than the number of content kinds was sent whole"
+        );
+    }
+
     /// WHAT THIS SCREEN IS FOR, ON EVERY HELLO — including when the answer is
     /// "nothing".
     ///
@@ -4176,6 +4420,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.screens_down_handle(),
+            hub.look_ids_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -4871,6 +5116,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.screens_down_handle(),
+            hub.look_ids_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -4938,6 +5184,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.screens_down_handle(),
+            hub.look_ids_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -5119,6 +5366,52 @@ mod tests {
     /// `starts_with` that matched nothing while looking exactly like the bug it
     /// fixed. A hand-written literal here would reproduce that: it would assert
     /// about a string this module never emits.
+    /// RG-167 — THE WIRE KIND IS `"timer"`, AND A RENAME MUST NOT REACH IT.
+    ///
+    /// The two clocks were renamed on 2026-09-18: the congregation's is a
+    /// **Screen Countdown** and the preacher's is a **Stage Timer**, because six
+    /// labels between two concepts told an operator nothing about which of them
+    /// reached a room and which reached one person (DECISIONS §92 addendum).
+    ///
+    /// **A label is what a person reads; a frame kind is what two programs agree
+    /// on.** `stage.html` is served over the LAN and a church may have it open on
+    /// a tablet that has not been reloaded since the last release, or pinned in a
+    /// kiosk that reloads on a schedule of its own. Renaming this string to match
+    /// the label would leave every such page matching nothing in its `apply`
+    /// branch — no error, no console anybody can read, and the preacher's rail
+    /// simply gone for the service.
+    ///
+    /// Asserted against the SERIALISED frame rather than a literal, for the same
+    /// reason the test below it is: `serde_json`'s map is a BTreeMap, so the only
+    /// honest question is what this module actually emits. Watched to fail by
+    /// renaming the kind to `stage_timer` in `timer_frame_json`.
+    #[test]
+    fn the_wire_kind_stays_timer_however_the_control_is_labelled() {
+        let frame = timer_frame_json(&[stage_timer(1, "Sermon")], None);
+        let parsed: serde_json::Value =
+            serde_json::from_str(&frame).expect("a timer frame is JSON");
+        assert_eq!(
+            parsed["kind"], "timer",
+            "the programme rail's wire kind moved. `Stage.svelte` matches              `m.kind === 'timer'` and so does `is_timer_frame`; a church running an              older `stage.html` would lose its rail with nothing said: {frame}"
+        );
+        assert!(
+            is_timer_frame(&frame),
+            "the matcher and the producer disagree about the wire kind: {frame}"
+        );
+        // And the other direction: nothing has started publishing the LABEL as a
+        // kind. A grep is the right shape here — this is about a string, and the
+        // string is the contract. The module's own tests are excluded, because
+        // this test names the forbidden spellings out loud.
+        let src = include_str!("channels.rs");
+        let body = src.split("mod tests").next().unwrap_or(src);
+        for forbidden in ["\"stage_timer\"", "\"screen_countdown\""] {
+            assert!(
+                !body.contains(forbidden),
+                "a renamed wire kind {forbidden} has been published. The LABEL moved,                  the protocol did not — DECISIONS §92 addendum"
+            );
+        }
+    }
+
     #[test]
     fn a_timer_frame_is_never_retained_as_a_screen_frame() {
         let frame = timer_frame_json(&[stage_timer(1, "Offering")], None);
@@ -5421,6 +5714,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.screens_down_handle(),
+            hub.look_ids_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -5484,6 +5778,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.screens_down_handle(),
+            hub.look_ids_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -5553,6 +5848,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.screens_down_handle(),
+            hub.look_ids_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -5634,6 +5930,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.screens_down_handle(),
+            hub.look_ids_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -5734,6 +6031,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.screens_down_handle(),
+            hub.look_ids_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -5845,6 +6143,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.screens_down_handle(),
+            hub.look_ids_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -5909,6 +6208,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.screens_down_handle(),
+            hub.look_ids_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -5984,6 +6284,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.screens_down_handle(),
+            hub.look_ids_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -6045,6 +6346,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.screens_down_handle(),
+            hub.look_ids_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -6305,6 +6607,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.screens_down_handle(),
+            hub.look_ids_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -6363,6 +6666,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.screens_down_handle(),
+            hub.look_ids_handle(),
             health.clone(),
             port,
         ));

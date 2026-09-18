@@ -216,7 +216,7 @@ describe('Settings → Bible translations', () => {
   // only thing this row could say.
   const settings = async () => {
     const el = await mount('./views/Settings.svelte');
-    await press(el, 'Scripture & Languages');
+    await press(el, 'Scripture');
     return el;
   };
 
@@ -265,7 +265,7 @@ describe('Settings → the Sentry DSN', () => {
       return Promise.resolve([]);
     });
     const el = await mount('./views/Settings.svelte');
-    await press(el, 'Privacy & Advanced');
+    await press(el, 'Privacy');
     return el;
   };
 
@@ -356,7 +356,7 @@ describe('Settings → the Sentry DSN', () => {
         : Promise.resolve([]),
     );
     const el = await mount('./views/Settings.svelte');
-    await press(el, 'Privacy & Advanced');
+    await press(el, 'Privacy');
 
     expect(get(readErrors).getCrashReporting, 'the reason was thrown away').toBeTruthy();
     // Humanised through errors.js (the ONE humaniser), and announced.

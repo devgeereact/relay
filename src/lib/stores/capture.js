@@ -75,7 +75,7 @@ import { countdownRemainingMs, countdownIsPaused } from '../countdown.js';
 // The warning WINDOW, as distinct from how long is left. `layers.js` holds the
 // one number the wall, the stage page and the dock all measure against; this file
 // is its one writer, because this file is the only one that can read the row.
-import { COUNTDOWN_WARN_MS, setCountdownWarnDefault } from '../layers.js';
+import { COUNTDOWN_WARN_MS, resolveContentOverride, setCountdownWarnDefault } from '../layers.js';
 // X1 · the transition override's store lives beside its register — see the block
 // further down for why it is not declared in this file.
 import { liveTransition } from '../transitions.js';
@@ -110,7 +110,7 @@ export const capture = writable({
   // Whisper re-elects a language every window from ~99 candidates, and on accented
   // speech it wanders (one real service: en·yo·pt·sw·sv·ms). The label IS the decode,
   // so a wandering label degrades the transcript — and that looks exactly like the AI
-  // being bad. The operator has the control that fixes it (Settings → Scripture
+  // being bad. The operator has the control that fixes it (Settings → Before the
   // & Languages → Recognition language) and no reason to suspect they should
   // touch it. See stt.rs.
   langUnstable: null,
@@ -133,6 +133,21 @@ export const capture = writable({
   // AI may put on a wall unasked.
   sensitivity: 50,
   sensitivityKnown: false,
+  // DOES THAT DIAL POSITION ACTUALLY PRODUCE THAT GATE?
+  //
+  // A third fact again, and for the same reason the second one exists.
+  // `to_sensitivity` reports the dial position NEAREST the gate, and three things
+  // move the gate without anybody touching the dial — a voice profile restoring
+  // what it learned, a room being applied, and the self-calibration on every
+  // confirm and dismiss. So the dial can be drawn at 38 over a gate that 38 would
+  // never produce, and the number reads as the operator's own setting.
+  //
+  // `Thresholds::follows_dial` answers it in Rust, beside the one curve it is a
+  // question about; `gate.js::describeGate` is the only place that turns the
+  // answer into words. Meaningful only when `sensitivityKnown` — an unread gate
+  // has not drifted, it is simply unread, and claiming otherwise would be
+  // inventing the worse of the two facts.
+  gateOnDial: true,
 });
 
 // What is currently ON the output screens (last fired content, null = cleared).
@@ -413,9 +428,30 @@ export const liveContent = derived(live, ($l) =>
  * render as lyrics, scripture as scripture), or null to use the channel's own
  * template. Malformed JSON falls back to the channel template rather than
  * throwing — a bad template must never take the screens down mid-service.
+ *
+ * ── IT DEPENDS ON `templates` NOW, AND THAT IS THE FIX ──────────────────────
+ *
+ * An override arrives in two shapes and this used to read only one of them.
+ * A Planner cue's PINNED choice ships its own JSON; a per-kind CONTENT LOOK
+ * ships an id and nothing else, deliberately, because a look carrying an
+ * embedded `data:` image has been 13 MB and serialising it onto every fire made
+ * verses take seconds (`main::cue_or_content_tpl`). `parseTemplateOverride` is
+ * null BY CONSTRUCTION for the second shape — so the console's program pane and
+ * the Outputs tile both resolved a content look to nothing, and both of them
+ * are the surfaces an operator uses to CHECK that a look is working.
+ *
+ * Two surfaces, one store, so they cannot reach different conclusions about the
+ * same screen. `Channels.svelte` records being caught by that class of drift
+ * three times; the program pane's claim is stronger still, because it is what an
+ * operator looks at instead of the wall.
+ *
+ * `templates` is the console's own list and is loaded by the dock at launch, so
+ * it is populated on every workspace rather than only where a view happens to
+ * fetch it. An empty list resolves to null — the old behaviour, which paints the
+ * screen's own template — rather than to anything invented.
  */
-export const liveTemplateOverride = derived(live, ($l) =>
-  parseTemplateOverride($l?.template_json),
+export const liveTemplateOverride = derived([live, templates], ([$l, $tpls]) =>
+  resolveContentOverride($l, $tpls),
 );
 
 /** Whether the live override is a PINNED cue choice (overrides the screen) vs a
@@ -452,8 +488,35 @@ let unlistenStt = null;
 let unlistenDetect = null;
 let outputListenersUp = false; // always-on output mirror (set once)
 
+/**
+ * THE BRIDGE, RESOLVED ONCE — and the reason is a measured CI failure, not tidiness.
+ *
+ * This did `await import('@tauri-apps/api/core')` on every call. In a browser and in
+ * the packaged app that is free: the module registry caches it, so N callers cost one
+ * load. It is not free when several callers race a COLD registry under vitest, where
+ * the mocked-module resolution hands the SECOND concurrent importer `undefined` and
+ * `core.invoke` then throws `Cannot read properties of undefined (reading 'invoke')`.
+ * `readstates.test.js` recorded that symptom in prose long before anything failed on
+ * it; it took three CI rounds to connect the two, because every read here is GROUP 2
+ * and SWALLOWS, so the failure surfaced as a screen politely saying it could not tell.
+ *
+ * A mounting view is exactly that race: the dock fires its channel read, its template
+ * read and its default-template read in one go.
+ *
+ * ONE in-flight promise, memoised on the PROMISE rather than on its result, so N
+ * concurrent callers await the same import instead of starting N of them. A rejection
+ * is deliberately NOT cached: a plain browser has no bridge at all and must stay
+ * askable, and caching the failure would turn a transient into a permanent one.
+ */
+let corePromise = null;
 async function invoke() {
-  const core = await import('@tauri-apps/api/core'); // throws in a plain browser
+  if (!corePromise) {
+    corePromise = import('@tauri-apps/api/core').catch((e) => {
+      corePromise = null; // throws in a plain browser — stay askable
+      throw e;
+    });
+  }
+  const core = await corePromise;
   return core.invoke;
 }
 
@@ -487,22 +550,38 @@ export async function initAudio() {
     return;
   }
   // Backend is attached. Load status pieces independently.
-  const [devices, stt, thresholds, detectionOn, storedDevice] = await Promise.all([
+  const [devices, stt, gate, detectionOn, storedDevice] = await Promise.all([
     call('list_audio_devices').catch(() => []),
     call('stt_status').catch(() => ({ loaded: false, model: null, language: null })),
-    call('get_thresholds').catch(() => ({ auto_fire: 0.5, suggest: 0.35 })),
+    // THE WHOLE READ-OUT, NOT ONLY THE TWO NUMBERS, and it has to be read here
+    // rather than waited for. `setup` applies the active profile's LEARNED gate
+    // before the window exists, so the emit that would have announced it has
+    // nobody to reach (the named exception in `hardrules.test.js`). A console that
+    // only listened would open showing the learned gate, drawn at whatever dial
+    // position is nearest it, with no caveat anywhere.
+    // `null` on failure, never a fabricated pair: the store's placeholder stays,
+    // and `sensitivityKnown` stays false so nothing mistakes it for a reading.
+    call('get_thresholds').catch(() => null),
     call('get_detection_enabled').catch(() => true),
     // RG-121. Every launch used to start on the system default, whatever was
     // selected last time, and nothing said so.
     call('get_setting', { key: INPUT_DEVICE_KEY }).catch(() => null),
   ]);
   const chosen = chooseInputDevice({ stored: storedDevice, devices });
+  // `get_thresholds` returns the same four facts `detection://thresholds` carries,
+  // deliberately: the event is how a surface hears about a change and this is how
+  // it starts out, and a surface that learned two different things from the two
+  // would be the drift the pair exists to prevent.
+  const gateRead = Number.isFinite(Number(gate?.sensitivity));
   capture.update((s) => ({
     ...s,
     available: true,
     devices,
     stt,
-    thresholds,
+    thresholds: gate ? { auto_fire: gate.auto_fire, suggest: gate.suggest } : s.thresholds,
+    sensitivity: gateRead ? Number(gate.sensitivity) : s.sensitivity,
+    sensitivityKnown: s.sensitivityKnown || gateRead,
+    gateOnDial: gateRead ? gate.on_dial !== false : s.gateOnDial,
     detectionOn,
     inputDevice: chosen.device,
     inputDeviceMissing: chosen.missing,
@@ -572,10 +651,11 @@ export async function initAudio() {
       await listen('rehearsal://changed', (e) => rehearsing.set(e.payload === true));
       // THE GATE MOVED, AND EVERY SURFACE SHOWING IT HEARS HERE.
       //
-      // Five things in Rust move `Router.thresholds` — the dial, the two Settings
-      // sliders, a profile saved, a profile selected or a room applied, and the
-      // learning on every confirm and dismiss — and until 2026-09-17 not one of
-      // them announced it. Live's dial was read once at `onMount` into a plain
+      // Four things in Rust move `Router.thresholds` — the dial, a profile saved,
+      // a profile selected or a room applied, and the learning on every confirm
+      // and dismiss — and until 2026-09-17 not one of them announced it. (It was
+      // five until the two Settings sliders were deleted: a second control over
+      // one fact, pointing the opposite way, DECISIONS §96.) Live's dial was read once at `onMount` into a plain
       // `let`, and the dock is mounted OUTSIDE the workspace router, so unlike
       // every view it is never rebuilt. It therefore showed its launch reading for
       // the rest of the session while the engine moved underneath it, and Settings
@@ -600,6 +680,10 @@ export async function initAudio() {
           // that is nobody's setting.
           sensitivity: Number.isFinite(sensitivity) ? sensitivity : s.sensitivity,
           sensitivityKnown: s.sensitivityKnown || Number.isFinite(sensitivity),
+          // The gate having MOVED is exactly when this can change, so it rides on
+          // the announcement that it moved. A missing field leaves the last answer
+          // alone rather than defaulting to "on the dial" — the reassuring one.
+          gateOnDial: typeof p.on_dial === 'boolean' ? p.on_dial : s.gateOnDial,
         }));
       });
       // A device failure (permission denied, unplugged) is non-fatal: surface
@@ -1349,7 +1433,7 @@ await call('set_plan_duration', { id, seconds });
 }
 
 /**
- * Bind a cue to a programme timer of `minutes`, or clear it with `null`.
+ * Bind a cue to a Stage Timer of `minutes`, or clear it with `null`.
  *
  * A REQUEST, STORED — not a clock started. Nothing about this reaches a screen or
  * a preacher's rail: the Planner may not, and does not (`plannerbuildonly.test.js`).
@@ -1581,7 +1665,7 @@ if (!keepPlan) leavePlan();
 /**
  * START A TIMER AND HAND BACK ITS IDENTITY. It puts nothing in front of anybody.
  *
- * `scope` is `'both'` (a congregation countdown) or `'stage'` (a programme timer
+ * `scope` is `'both'` (a congregation countdown) or `'stage'` (a Stage Timer
  * for the preacher's monitor). Putting a `'both'` timer on the screens is
  * `showTimer`; there are exactly two doors onto a congregation wall and this is
  * deliberately not one of them.
@@ -1781,7 +1865,7 @@ return guardedRead('verseRepeatCount', async (call) => {
 }, 0);
 }
 
-// ── Voice profiles (Settings → AI & Detection) ───────────────────────────────
+// ── Voice profiles (Settings → Preachers) ────────────────────────────────────
 //
 // Per-preacher accent + gate calibration: the STT language hint, the decoder-bias
 // vocabulary, the operator's sensitivity dial, and the thresholds the router has
@@ -1816,7 +1900,7 @@ return await call('create_voice_profile', { name, language });
 // ── ONE FACT, ONE STORE (RG-138) ─────────────────────────────────────────────
 //
 // `voice_profiles.language` is the ONLY place the recognition language lives, and
-// `capture.stt.language` is the console's copy of it — what Settings → Scripture &
+// `capture.stt.language` is the console's copy of it — what Settings → Before the
 // Languages renders, and what the Privacy overview reads. `setSttLanguage` keeps
 // them in step; these two did not, and both of them change that column and apply
 // it to the live engine:
@@ -1981,7 +2065,24 @@ return guardedRead('loadTemplates', async (call) => {
     // two homes for one property (docs/REBRAND.md §3.1). Migrating only at the
     // renderer would keep the WALL correct while the legacy key sat in the
     // database for ever, waiting for the next reader that does not resolve.
-    const migrated = Array.isArray(list) ? list.map(migrateTemplate) : list;
+    // AN ANSWER THAT IS NOT A LIST IS A FAILED READ, not an empty gallery.
+    //
+    // This passed a non-array STRAIGHT THROUGH into a store declared
+    // `writable([])`, so a backend answering `null` set `$templates = null` and
+    // every `$templates.find(...)` in the app threw — `Dock.svelte`'s
+    // `cdFallbackTpl` among them, which takes the whole Live audio card down with
+    // it. It never fired in anger because the reads it needed were failing
+    // earlier for an unrelated reason, and it surfaced the moment they started
+    // working (RG-170).
+    //
+    // Throwing hands it to `guardedRead`, which records `readErrors.loadTemplates`
+    // and leaves the store holding what it already had. That is the right pair:
+    // the surfaces say the list could not be READ rather than that there is
+    // nothing in it, and good data is not replaced by a bad answer.
+    if (!Array.isArray(list)) {
+      throw new Error(`list_templates answered ${list === null ? 'null' : typeof list}, not a list`);
+    }
+    const migrated = list.map(migrateTemplate);
     templates.set(migrated);
     return migrated;
 }, []);
@@ -2187,7 +2288,7 @@ export async function setServiceTarget(minutes) {
 // ── THE COUNTDOWN WARNING WINDOW ───────────────────────────────────────────────
 //
 // How long before zero a countdown turns red. Shipped as the last minute; an
-// operator can move it in Settings → General. Persisted in the settings KV under
+// operator can move it in Settings → Getting started. Persisted in the settings KV under
 // `countdown.warn_ms` and READ, which is the whole point of it: seven controls
 // were removed from that page on 2026-09-10 for saving a preference nothing
 // opened (DECISIONS §69), and a threshold nobody reads is that defect with a
@@ -2389,7 +2490,7 @@ export async function openChannelOutput(channelId) {
 if (get(safeMode)) {
   const msg =
     'Safe mode is on, so Relay will not open an output screen. ' +
-    'Turn it off in Settings → General if you want screens back.';
+    'Turn it off in Settings → Before the service if you want screens back.';
   throw Object.assign(new Error(msg), { kind: 'refused', message: msg });
 }
 const call = await invoke(); // throws in browser
@@ -2954,27 +3055,6 @@ capture.update((s) => ({ ...s, stt: { ...s.stt, language: language ?? null } }))
 return profile ?? null;
 }
 
-/** Manual threshold override (Settings sliders).
- *
- *  GROUP 1 (THROWS), and it moved here on 2026-09-17. It was the last swallowing
- *  door onto the gate, and its twin `setSensitivity` had already been repaired for
- *  exactly this — the two controls are the same act expressed at different
- *  precision, and they had opposite failure contracts. The consequence was silent
- *  and specific: on failure the store is unchanged, so `value={$capture.thresholds
- *  .auto_fire}` is unchanged, so Svelte never rewrites the DOM property and the
- *  dragged thumb STAYS WHERE THE OPERATOR PUT IT, over a gate that did not move,
- *  with no error line anywhere in the section.
- *
- *  `set_thresholds` really can fail — `routing.0.lock()?` on a poisoned router
- *  mutex, the same shape as the `stopCapture` bug — and this is the control that
- *  governs what the AI may put on a wall without asking. */
-export async function setThresholds(auto_fire, suggest) {
-const call = await invoke();
-const thresholds = await call('set_thresholds', { thresholds: { auto_fire, suggest } });
-capture.update((s) => ({ ...s, thresholds }));
-return thresholds;
-}
-
 /** The single operator sensitivity dial (0..100), read from the live thresholds.
  *  One forward mapping (`from_sensitivity`) and its inverse both live in Rust —
  *  the frontend never duplicates the curve. */
@@ -3001,8 +3081,13 @@ try {
   return 50;
 }
 }
-/** Set sensitivity (0..100). Applies the same thresholds Settings would and keeps
- *  the local `thresholds` mirror in step. Returns the LANDED dial position.
+/** Set sensitivity (0..100) — THE one way the gate is set by hand, reached from
+ *  the dock's card on Live and from Settings → AI & Detection. Two doors onto one
+ *  control: the pair of Settings sliders that used to be the other way of doing
+ *  this were a second control over the same fact, pointing the opposite way, and
+ *  were deleted with their command (DECISIONS §96).
+ *
+ *  Keeps the local `thresholds` mirror in step. Returns the LANDED dial position.
  *
  *  GROUP 1 (THROWS). It used to be GROUP 2 with `catch { return sensitivity; }` —
  *  returning the value the caller ASKED for, as if it had landed, under a doc
@@ -3020,16 +3105,22 @@ try {
 export async function setSensitivity(sensitivity) {
 const call = await invoke();
 const landed = await call('set_sensitivity', { sensitivity });
-const thresholds = await call('get_thresholds');
+const gate = await call('get_thresholds');
 // `detection://thresholds` will say the same thing a moment later and this is not
 // redundant with it: the event is how OTHER surfaces find out, and this is how the
 // surface that just acted stops showing a stale figure between the command
 // returning and the event arriving.
+//
+// `on_dial` comes back true here by construction — the dial is the one control
+// that puts the gate ON its own curve — and it is read from the answer rather
+// than assumed, because assuming it is how a surface comes to report the
+// reassuring case over a state nobody checked.
 capture.update((s) => ({
   ...s,
-  thresholds,
+  thresholds: { auto_fire: gate.auto_fire, suggest: gate.suggest },
   sensitivity: Number.isFinite(Number(landed)) ? Number(landed) : s.sensitivity,
   sensitivityKnown: s.sensitivityKnown || Number.isFinite(Number(landed)),
+  gateOnDial: gate.on_dial !== false,
 }));
 return landed;
 }

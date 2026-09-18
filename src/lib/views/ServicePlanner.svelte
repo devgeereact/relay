@@ -1064,7 +1064,7 @@
             <div class="rw-nv">
               <span class="rw-nvk">Timer</span>
               <span class="rw-nvctl">
-                <select class="r-select sp-tmrsel" aria-label="Programme timer for this cue"
+                <select class="r-select sp-tmrsel" aria-label="Stage Timer for this cue"
                   value={selCue.timer_minutes ?? ''} on:change={saveTimer}>
                   <option value="">No timer</option>
                   {#each TIMER_CHOICES as m (m)}

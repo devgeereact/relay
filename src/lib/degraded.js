@@ -118,15 +118,15 @@ export function degradations(s = {}) {
           ? 'Outputs will not open, but detection is armed — so Relay can still fire a verse to a screen that kept its connection, such as an OBS source or a kiosk page.'
           : 'Outputs will not open and detection is disarmed — nothing Relay does can reach a screen.',
       fix: notEnforced
-        ? 'Press Esc to clear the screens, then check each one by hand. Settings → General says what failed.'
+        ? 'Press Esc to clear the screens, then check each one by hand. Settings → Before the service says what failed.'
         : rearmed
           ? // NOT "turn detection off in the Live audio card": that switch is
             // disabled under safe mode, deliberately, and telling an operator to
             // press a control that cannot be pressed is the shape of thing this
             // register exists to remove. Turning safe mode off is what actually
             // works, and it hands the detection switch back in the same movement.
-            'Settings → General → Turn off safe mode, which gives you the detection switch back — then turn detection off if that is what you wanted.'
-          : 'Settings → General → Turn off safe mode.',
+            'Settings → Before the service → Turn off safe mode, which gives you the detection switch back — then turn detection off if that is what you wanted.'
+          : 'Settings → Before the service → Turn off safe mode.',
     });
   }
 
@@ -139,7 +139,7 @@ export function degradations(s = {}) {
       level: 'blocked',
       title: 'No speech model — Relay is not listening for verses',
       what: 'Nothing will be transcribed or detected. Firing verses by hand works exactly as normal.',
-      fix: 'Settings → Network & Integrations → download a speech model.',
+      fix: 'Settings → Before the service → download a speech model.',
     });
   }
 
@@ -205,7 +205,7 @@ export function degradations(s = {}) {
       level: 'reduced',
       title: `${s.droppedPartials} transcript ${s.droppedPartials === 1 ? 'update' : 'updates'} skipped`,
       what: 'Relay fell behind and dropped some in-progress updates to catch up. Nothing final was lost, and no verse was missed because of it.',
-      fix: 'If it keeps climbing, a smaller speech model will keep up better — Settings → Diagnostics shows the speed.',
+      fix: 'If it keeps climbing, a smaller speech model will keep up better — Settings → This machine shows the speed.',
     });
   }
 

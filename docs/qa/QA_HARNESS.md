@@ -947,7 +947,7 @@ count. This is the audit's starting line.
 | **C — Static contract** | Yes, one exemplar | `src/lib/ipc.test.js` — command names both directions, event listeners, and a `greet`-has-one-caller assertion |
 | **D — Live app** | Exists as a surface, is not exercised by any test | `channels.rs` serves `:8032`; `main.rs::remote_api` handles `search / fire / next / prev / clear / black / live`. Kiosk hub on `:8031` |
 | **E — Human** | The bench harness is built and pointed at nothing | `bench/README.md` says what to record; `bench/.gitignore` refuses to let sermon audio into the repo |
-| **F — Real-time latency** | Built 2026-08-24. Nine stamps per decode pass, mic → projector, readable in the shipped app | `src-tauri/src/latency.rs`; the rig is `stt::realtime::live_transcript_latency`; the surface is Settings → Diagnostics |
+| **F — Real-time latency** | Built 2026-08-24. Nine stamps per decode pass, mic → projector, readable in the shipped app | `src-tauri/src/latency.rs`; the rig is `stt::realtime::live_transcript_latency`; the surface is Settings → This machine |
 
 **Layer F is new and it is the only layer that measures TIME.** Every other instrument here
 answers "is the answer right"; none of them could answer "how long did it take", and for two

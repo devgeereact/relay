@@ -1,4 +1,4 @@
-// THE PROGRAMME TIMERS, ON THE SCREEN THE PREACHER IS HOLDING.
+// THE STAGE TIMERS, ON THE SCREEN THE PREACHER IS HOLDING.
 //
 // A `Stage`-scoped timer publishes no content frame at all — that is exactly why it
 // survives a verse, a song and a notice. It reaches the stage tablet as its own hub
@@ -91,8 +91,8 @@ const rows = () =>
     el.querySelector('.tval')?.textContent?.trim() ?? '',
   ]);
 
-describe('the stage page shows the programme timers', () => {
-  it('paints one row per stage timer, in the order the hub sent them', async () => {
+describe('the stage page shows the Stage Timers', () => {
+  it('paints one row per Stage Timer, in the order the hub sent them', async () => {
     const at = 1_700_000_000_000;
     vi.useFakeTimers();
     vi.setSystemTime(at);
@@ -180,7 +180,7 @@ describe('the stage page shows the programme timers', () => {
   });
 
   it('takes the rows away when the hub sends an empty set', async () => {
-    // Stopping the last programme timer publishes `timers: []`, and that is how a
+    // Stopping the last Stage Timer publishes `timers: []`, and that is how a
     // clock comes OFF a preacher's screen. A page that ignored the empty set would
     // leave it there, counting, for the rest of the service.
     const at = 1_700_000_000_000;
@@ -407,7 +407,7 @@ describe('the programme row warns, on the one rule', () => {
   });
 });
 
-// ── RG-153 — A PROGRAMME TIMER PAST ZERO ──────────────────────────────
+// ── RG-153 — A STAGE TIMER PAST ZERO ──────────────────────────────
 //
 // The browser pass watched a 45-second `Offering` timer read `0:00` for the next
 // twelve minutes, and two of the six rows in the §8 screenshot were in that state
@@ -415,10 +415,10 @@ describe('the programme row warns, on the one rule', () => {
 // from one that has just been started at zero, and neither of them answers the
 // question a stage monitor is actually asked.
 //
-// The operator's decision, taken 2026-09-17: a programme timer that reaches zero
+// The operator's decision, taken 2026-09-17: a Stage Timer that reaches zero
 // KEEPS COUNTING, UPWARD, wearing the warning colour. `+4:37` means the preacher is
 // four and a half minutes over.
-describe('RG-153 — a programme timer past zero counts up', () => {
+describe('RG-153 — a Stage Timer past zero counts up', () => {
   const warned = () =>
     [...host.querySelectorAll('[data-timer-id]')]
       .filter((el) => el.classList.contains('warn'))
@@ -544,7 +544,7 @@ describe('RG-153 — a programme timer past zero counts up', () => {
     // A DECISION, written as a test so it is not read later as an oversight. The
     // words an operator typed are what a CONGREGATION countdown says when it lands
     // — `countdown_done` replaces the digits on the wall, and the stage mirror was
-    // seen showing `Welcome` in the same screenshot — and a programme timer is a
+    // seen showing `Welcome` in the same screenshot — and a Stage Timer is a
     // different instrument: it is the preacher's own bookkeeping, and what it is
     // asked past zero is HOW FAR OVER. `done_msg` therefore keeps having no reader
     // on this rail. If that is ever revisited it is a new row, not RG-153.
@@ -646,7 +646,7 @@ const SRC = readFileSync(path.resolve(__dirname, '../Stage.svelte'), 'utf8');
 // The rail above renders a label and digits and nothing else. `warn_ms` rides in
 // the frame (`channels::timer_frame_json`) and was deliberately left unread while
 // the warning rule was being settled on the other three surfaces; `countdown_done`
-// rides there too and was dropped on the floor, so a finished programme timer read
+// rides there too and was dropped on the floor, so a finished Stage Timer read
 // `0:00` — a clock that is still running and has just arrived. A held row froze,
 // correctly, and said nothing about being held.
 //
@@ -733,7 +733,7 @@ describe('a programme row that is nearly out says so', () => {
 //
 // Deleting rather than loosening is the point: a suite asserting both answers
 // asserts neither. What a finished timer does now is held by
-// `RG-153 -- a programme timer past zero counts up` above.
+// `RG-153 -- a Stage Timer past zero counts up` above.
 describe('a held programme row says it is held', () => {
   const at = 1_700_000_000_000;
 

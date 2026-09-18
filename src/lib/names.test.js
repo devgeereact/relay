@@ -50,6 +50,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, it, expect } from 'vitest';
+import { codeOnly } from './codeonly.js';
 
 const root = resolve(__dirname, '../..');
 
@@ -98,21 +99,6 @@ function hits(text, needle) {
   return found;
 }
 
-/**
- * The same text with its comment CONTENT removed — `//` to end of line, `/* … *\/`
- * and `<!-- … -->` — so the casing and register tests read what an operator can
- * see rather than what a maintainer wrote beside it.
- *
- * `//` is only treated as a comment when it does not follow a `:`, so a `http://`
- * inside a string keeps the rest of its line. The retired-label test does NOT use
- * this: a stale comment reviving an old name is exactly what it is for.
- */
-function codeOnly(text) {
-  return text
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/<!--[\s\S]*?-->/g, ' ')
-    .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
-}
 
 /** The files in which `needle` is named, in any casing. */
 function filesWith(files, needle) {
@@ -219,6 +205,76 @@ const REGISTER = [
       'src/lib/shelf.test.js',
     ],
     forbidden: ['Up-next', 'Next up', 'Coming next', 'Next verse text', 'Next reference'],
+  },
+  {
+    // ── RG-167 · THE TWO CLOCKS, WHICH HAD SIX LABELS BETWEEN THEM ──────────
+    //
+    // Relay runs two timers and they are nothing like each other. One goes to the
+    // ROOM — `countdown` content, broadcast to every screen, the digits a
+    // congregation watches before a service. The other goes to the PREACHER — a
+    // `Scope::Stage` registry row, published on its own frame to a stage tablet,
+    // which no congregation screen can ever show and which survives a panic
+    // control for that reason (DECISIONS §91).
+    //
+    // They were called: `Countdown` (the dock), `Countdown timer` (the binding
+    // list), `Timer / Countdown` (the layer type, the content-kind row and the
+    // template kind), `Countdown Timer` (the starter) — and `Programme timer`
+    // (Live), `Programme` (the stage zone), `programme clock` (a test). Six
+    // labels, two concepts, and not one of the labels says which of the two it
+    // is. An operator reading `Countdown` in Quick tools and `Programme` on the
+    // preacher's own page has no way to know that the first reaches the whole
+    // room and the second reaches one person.
+    //
+    // AUDIENCE IS CARRIED BY THE FIRST WORD. **Screen** = the room. **Stage** =
+    // the preacher. `Stage Timer` joins the family this register already teaches,
+    // beside `Stage Message` and `Stage Note`.
+    //
+    // TWO WORDS ARE FORCED BY THE INSTRUMENT, NOT CHOSEN. The matcher below is a
+    // case-insensitive substring over raw text, so a one-word `Countdown` entry
+    // would match inside `countdownRemainingMs`, `startCountdown` and
+    // `formatCountdown` and report every lowercase use as a second label.
+    concept: 'the countdown a CONGREGATION watches — `countdown` content, every screen',
+    name: 'Screen Countdown',
+    allowed: [
+      'src/Stage.svelte',
+      'src/lib/Dock.svelte',
+      'src/lib/countdownreach.test.js',
+      'src/lib/layers.js',
+      'src/lib/layers.test.js',
+      'src/lib/quicktools.test.js',
+      'src/lib/stagezones.test.js',
+      'src/lib/templateKind.js',
+      'src/lib/wayback.test.js',
+    ],
+    // `'Pre-service countdown'` is deliberately NOT here, for the same reason
+    // `'Congregation timer'` is not on the entry below: it appears fourteen times
+    // in accurate prose across nine files, describing WHEN the thing is typically
+    // used rather than naming the control, and it is not even synonymous — a
+    // Screen Countdown is fired mid-service too. The register is for labels. If a
+    // LABEL ever reads "Pre-service countdown", this is the line to change.
+    forbidden: ['Countdown timer', 'Timer / Countdown'],
+  },
+  {
+    concept: 'the clock a PREACHER watches — a `Scope::Stage` registry row, his screen only',
+    name: 'Stage Timer',
+    allowed: [
+      'src/Stage.svelte',
+      'src/lib/channelroles.js',
+      'src/lib/cuetimer.test.js',
+      'src/lib/liverackfit.test.js',
+      'src/lib/programmetimer.test.js',
+      'src/lib/progtimerjoin.test.js',
+      'src/lib/stageprogrow.test.js',
+      'src/lib/stagetimerreach.test.js',
+      'src/lib/stagezones.test.js',
+      'src/lib/timers.test.js',
+      'src/lib/views/Live.svelte',
+      'src/lib/views/ServicePlanner.svelte',
+      'src/lib/wayback.test.js',
+    ],
+    // `'Congregation timer'` stays permitted: it is accurate prose in `timers.rs`
+    // and `main.rs` describing a SCOPE, not a control anybody reads a label on.
+    forbidden: ['Programme timer', 'Programme clock', 'Preacher timer', 'Sermon timer'],
   },
   {
     // RG-158. The Library's staging area held N items, reached no output, and was
@@ -407,12 +463,57 @@ describe('the scanner itself', () => {
     expect(hits('// Word to the preacher', 'Word to the preacher').length).toBe(1);
   });
 
+  it('a `/*` inside a `//` line does not blank the code after it', () => {
+    // RG-167, and the reason this function was rewritten. `Stage.svelte` carries
+    // the line comment *"…on :8031's sibling port (:8032/api/*)…"*. The old
+    // three-regex stripper ran its block-comment pass first and over the whole
+    // file, so that `/*` opened a block comment that ran to the next real `*/`
+    // SEVEN THOUSAND characters later — blanking the whole `ZONES` table, which is
+    // where the labels the preacher's screen renders are declared. The casing and
+    // register tests read a page with its zone labels missing and reported a clean
+    // tree. Reproduced here in miniature, and against the real file.
+    const line = `  // Hits the LAN HTTP API on :8032/api/*, which runs the same path\n  const ZONES = [{ label: 'Screen Countdown' }];\n  /* a real block */\n`;
+    expect(hits(codeOnly(line), 'Screen Countdown')).toEqual(['Screen Countdown']);
+
+    const stage = files.find(([rel]) => rel === 'src/Stage.svelte');
+    expect(stage, 'the scanner cannot see the stage page').toBeTruthy();
+    expect(
+      hits(codeOnly(stage[1]), 'Screen Countdown').length,
+      "the stage page's own zone labels are invisible to this scanner again",
+    ).toBeGreaterThan(0);
+    expect(hits(codeOnly(stage[1]), 'Stage Timer').length).toBeGreaterThan(0);
+  });
+
+  it('a one-word rename would detonate, which is why both new names are two words', () => {
+    // The register's matcher is a case-insensitive SUBSTRING over raw text. An
+    // entry called `Countdown` would match inside `countdownRemainingMs`,
+    // `startCountdown` and `formatCountdown`, and the casing test would then
+    // report every lowercase use in the repository as a second label. Same for a
+    // bare `Timer` against `stageTimerRows` or `timerRemainingMs`.
+    //
+    // Asserted rather than left in a comment, so that somebody shortening either
+    // name finds out here instead of in four hundred failures.
+    const identifiers = 'startScreenCountdown stageTimerRows countdownRemainingMs formatCountdown timerRemainingMs';
+    for (const entry of REGISTER) {
+      expect(
+        hits(identifiers, entry.name),
+        `"${entry.name}" matches inside an ordinary identifier — it is too short to be a register entry`,
+      ).toEqual([]);
+    }
+    // And the guard on the guard: the matcher IS capable of finding these if the
+    // names were shortened, so the emptiness above is a real absence.
+    expect(hits(identifiers, 'Countdown').length).toBeGreaterThan(2);
+    expect(hits(identifiers, 'Timer').length).toBeGreaterThan(1);
+  });
+
   it('can still see a known instance of each name', () => {
     // If the matcher stopped matching, every test above would report a clean
     // tree. These are real strings in real shipped files.
     expect(filesWith(files, 'Stage Message')).toContain('src/lib/Dock.svelte');
     expect(filesWith(files, 'Stage Note')).toContain('src/lib/views/ServicePlanner.svelte');
     expect(filesWith(files, 'Up Next')).toContain('src/Stage.svelte');
+    expect(filesWith(files, 'Screen Countdown')).toContain('src/lib/Dock.svelte');
+    expect(filesWith(files, 'Stage Timer')).toContain('src/lib/views/Live.svelte');
   });
 
   it('finds a retired label when one is planted in front of it', () => {

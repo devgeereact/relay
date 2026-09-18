@@ -19,9 +19,13 @@
 // failed is left with a console that goes on refusing, for a reason that has
 // scrolled out of view. That is GROUP 1: the caller must handle it and say so.
 //
-// Both of its rendered callers already can. `Dock.svelte::run` wraps every dock
-// action in `catch (e) { err = humanError(e) }`, and `History.svelte` now does
-// the same beside its own button.
+// There is ONE rendered caller now and it already can: `Dock.svelte::run` wraps
+// every dock action in `catch (e) { err = humanError(e) }` and renders it in a
+// live region. `History.svelte` used to carry a second copy of the button with a
+// second copy of that handling; two controls for one action is the shape four
+// bugs in this repository have had, so the copy went and its surface test went
+// with it, to `shellchrome.test.js` — "a refused End service says so on the
+// surface that offers it".
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { get } from 'svelte/store';
 

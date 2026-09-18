@@ -98,8 +98,8 @@ impl ServiceLock {
         };
         Err(error::Error::refused(format!(
             "A service is being recorded, so Relay is holding this back: {what}. \
-             It can wait until the service ends — or unlock in Settings → History & Backup \
-             if you need to do it now."
+             It can wait until the service ends — or unlock in Settings → Before the \
+             service if you need to do it now."
         )))
     }
 }
@@ -226,7 +226,6 @@ mod tests {
         "show_timer",
         "set_detection_enabled",
         "set_sensitivity",
-        "set_thresholds",
         "open_channel_output",
         "close_channel_output",
         "set_channel_template",

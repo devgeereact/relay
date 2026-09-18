@@ -305,11 +305,26 @@ function controlsIn(file, rawSrc, wrappers) {
 
   const out = [];
   for (const m of src.matchAll(CONTROL_OPEN)) {
-    const tag = m[1].toLowerCase();
+    // `spelling` is the tag AS WRITTEN and `tag` is the normalised kind. Both are
+    // needed and conflating them was a real bug: `CONTROL_OPEN` is case-insensitive,
+    // so the shared `ui/Button.svelte` component matches as a `button` — correctly,
+    // it renders one — but its closing tag is `</Button>`, and looking for
+    // `</button>` in a file whose native buttons have all been converted finds
+    // nothing at all. The inner text is then empty, and every one of them is
+    // reported as a control with no accessible name.
+    //
+    // It did not surface until `ModelSetup.svelte` converted its LAST native
+    // button: while one remained, the lowercase search ran past the component and
+    // landed on that one's close tag, so the component borrowed a label from
+    // somewhere further down the file. A scanner that is wrong and looks right
+    // because of an unrelated neighbour is the shape this file's own comments
+    // warn about twice.
+    const spelling = m[1];
+    const tag = spelling.toLowerCase();
     const { attrs, end } = attrsAt(src, m.index + m[0].length);
     if (tag === 'a' && !/href=|on:click/i.test(attrs)) continue;
     const after = src.slice(end);
-    const close = after.indexOf(`</${tag}`);
+    const close = after.search(new RegExp(`</${spelling}\\b`));
     const inner = close === -1 ? '' : after.slice(0, close);
 
     const before = src.slice(0, m.index);

@@ -27,6 +27,7 @@
 // TEMPLATE's own style (DECISIONS §87), not against the app's.
 
 import { migrateStyle, STYLE_DEFAULTS, bandLayout, faceOf } from './templatemodel.js';
+import { parseTemplateOverride } from './templates.js';
 
 let _seq = 0;
 /** A stable-ish unique id. Not crypto — just needs to be unique within a template. */
@@ -40,7 +41,7 @@ export const BINDINGS = [
   { key: 'verse', label: 'Verse text' },
   { key: 'reference', label: 'Reference' },
   { key: 'translation', label: 'Translation' },
-  { key: 'countdown', label: 'Countdown timer' },
+  { key: 'countdown', label: 'Screen Countdown' },
   { key: 'clock', label: 'Clock' },
   // ROLE-MONITOR fields. These carry data that reaches OUTPUT content but is not
   // for the congregation: the verse coming up and the Stage Note.
@@ -72,7 +73,7 @@ export const LAYER_TYPES = [
   { type: 'backdrop', label: 'Backdrop (the standing background)', icon: '▨' },
   { type: 'shape', label: 'Shape', icon: '▢' },
   { type: 'background', label: 'Background', icon: '▦' },
-  { type: 'timer', label: 'Timer / Countdown', icon: '⏱' },
+  { type: 'timer', label: 'Screen Countdown', icon: '⏱' },
 ];
 
 /** Create a layer of `type` with sensible defaults, placed at a default box. */
@@ -287,7 +288,8 @@ export function isKeyedTemplate(template) {
  *
  * The timer registry adds no kind to this list. A congregation timer is still
  * broadcast as `countdown`, which is already the fifth row and is why the row is
- * labelled "Timer / Countdown" rather than "Countdown". A programme timer never
+ * labelled "Screen Countdown" — the room's clock, said the way the register says
+ * it (`names.test.js`). A Stage Timer never
  * becomes content: it is published to the stage tablet on its own frame, so there
  * is no per-screen visibility question to answer about it — a congregation screen
  * cannot show one whether or not it is ticked here, which is a stronger guarantee
@@ -298,7 +300,7 @@ export const CONTENT_KINDS = [
   { key: 'song', label: 'Songs / Lyrics' },
   { key: 'media', label: 'Media' },
   { key: 'announce', label: 'Announcements' },
-  { key: 'countdown', label: 'Timer / Countdown' },
+  { key: 'countdown', label: 'Screen Countdown' },
 ];
 
 /**
@@ -318,7 +320,7 @@ export const CONTENT_KINDS = [
  * `resolveOutputTemplate` is ever consulted, and the screen simply holds what it
  * had. Nothing anywhere reports that. The timer registry adds no kind — a
  * congregation timer is `countdown`, which every list already names, and a
- * programme timer never arrives here at all — so no list needs touching.
+ * Stage Timer never arrives here at all — so no list needs touching.
  *
  * **WHAT THE SEED ACTUALLY LOOKS LIKE, checked rather than assumed**, because the
  * reassuring version of this ("every seeded template writes `shows` explicitly,
@@ -364,6 +366,50 @@ export function templateShows(template, kind) {
  * the ranking §29 and §70 describe — those decide between authorities that each
  * chose a look for this screen, and the default is what remains when none did.
  */
+/**
+ * THE LOOK A FIRE IS ASKING FOR — from the TWO forms it can arrive in.
+ *
+ * `resolveOutputTemplate` decides between a screen's own look and an override.
+ * This decides what that override IS, and it exists because an override crosses
+ * the wire in two shapes that no surface may be allowed to handle separately:
+ *
+ *  - **as JSON** (`template_json`) — a Planner cue's DELIBERATE per-cue choice.
+ *    It ships its own bytes because nothing on the receiving side could look it
+ *    up: a cue's template is a decision about one item, not a standing setting.
+ *  - **as an ID and nothing else** (`template_id`) — a per-kind CONTENT LOOK.
+ *    It ships no JSON on purpose, and the reason is recorded at
+ *    `main::cue_or_content_tpl`: a look carrying an embedded `data:` image has
+ *    been 13 MB in the field, and serialising that onto every fire made verses
+ *    take seconds. The id costs a settings lookup; the JSON costs the service.
+ *
+ * Nothing read the second form. Every surface derived its override from
+ * `parseTemplateOverride(template_json)` alone, which is null BY CONSTRUCTION for
+ * a content look — so "Follow the content look" resolved to nothing on the wall,
+ * on the console, and on the panel built to check it. DECISIONS §70 gave a screen
+ * the ability to have no look of its own; this is the other half, the look it was
+ * then supposed to follow actually arriving.
+ *
+ * `templates` is whatever that surface already holds — the `$templates` array on
+ * the console, the frames the kiosk hub sent on an output page. Passed as DATA
+ * rather than as a lookup function deliberately: Svelte tracks the identifiers
+ * written in a reactive expression, not the ones a called function happens to
+ * read, and `Channels.svelte` has been caught by exactly that twice.
+ *
+ * JSON WINS when both are present. A cue that pinned a template said so about
+ * this item; the id beside it is only what the console reads back.
+ */
+export function templateById(templates, id) {
+  if (id == null || !templates) return null;
+  const want = Number(id);
+  if (Array.isArray(templates)) return templates.find((t) => t && Number(t.id) === want) ?? null;
+  return templates[want] ?? templates[String(want)] ?? null;
+}
+
+/** @see templateById — the two forms an override arrives in, resolved to one. */
+export function resolveContentOverride(content, templates) {
+  return parseTemplateOverride(content?.template_json) ?? templateById(templates, content?.template_id);
+}
+
 export function resolveOutputTemplate(channelTpl, override, pinned = false, fallback = null) {
   // NO TEMPLATE OF ITS OWN = this screen follows the content look (DECISIONS §70).
   // It has to be answered before the transparency law below, because
@@ -425,7 +471,7 @@ export const COUNTDOWN_WARN_MS = 60_000;
 
 /**
  * The DEFAULT warning window in force on this machine — the shipped minute until
- * an operator sets `Settings → General → Countdown warning`, which is persisted in
+ * an operator sets `Settings → Getting started → Countdown warning`, which is persisted in
  * the settings KV under `countdown.warn_ms`.
  *
  * It lives here, as one number behind one setter, because the three surfaces that
@@ -464,7 +510,7 @@ export function setCountdownWarnDefault(ms) {
  * This USED to say the threshold was a rule rather than a setting, deliberately,
  * because the control belonged in the Settings pass and a setting with nowhere to
  * set it is worse than a sensible default. That pass has happened. The MINUTE in
- * the rule below is now `warnDefaultMs`, which is `Settings → General → Countdown
+ * the rule below is now `warnDefaultMs`, which is `Settings → Getting started → Countdown
  * warning`, persisted under `countdown.warn_ms` and applied through
  * `setCountdownWarnDefault`; `warnMs` is a figure chosen for one timer, which
  * beats both. Two authorities, ranked once, here.
@@ -852,7 +898,7 @@ function preacherView() {
   };
 }
 
-/** Countdown timer: a full-screen pre-service clock — a label, huge MM:SS, and
+/** The Screen Countdown: a full-screen clock — a label, huge MM:SS, and
  *  the wall clock. The MM:SS is a timer layer bound to the fired countdown, so it
  *  ticks and shows the "begins in" label from the fired content's reference. */
 function timerScreen() {
@@ -892,7 +938,7 @@ export const STARTERS = [
   { key: 'stage', label: 'Stage Display', make: stageDisplay, hint: 'Platform monitor: current verse, reference and clock. Theme-aware.' },
   { key: 'confidence', label: 'Confidence Monitor', make: confidenceMonitor, hint: 'Booth-facing "what\'s on screen now" view with clock. Theme-aware.' },
   { key: 'preacher', label: 'Preacher View', make: preacherView, hint: 'Big centred verse, the verse coming up, the service timer and your Stage Note.' },
-  { key: 'timer', label: 'Countdown Timer', make: timerScreen, hint: 'Huge MM:SS for a pre-service countdown, with a label and clock.' },
+  { key: 'timer', label: 'Screen Countdown', make: timerScreen, hint: 'Huge MM:SS for a pre-service countdown, with a label and clock.' },
   { key: 'supersource', label: 'SuperSource', make: superSource, hint: 'Camera on one side, a rendered slide on the other. Keyed — the switcher supplies the camera.' },
   { key: 'freestyle', label: 'Freestyle', make: freestyle, hint: 'A blank canvas — add layers yourself.' },
 ];

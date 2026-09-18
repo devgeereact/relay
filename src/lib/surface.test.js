@@ -65,7 +65,7 @@ const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a) => invoke(...a) }));
 
 const { installShortcuts, registerContext, cheatsheet } = await import('./shortcuts.js');
-const { live, screenBlack, rehearsing, panicError, capture, templates, readErrors } =
+const { live, screenBlack, rehearsing, panicError, capture, templates, readErrors, ping } =
   await import('./stores/capture.js');
 const { setSafeMode } = await import('./boot/boot.js');
 
@@ -120,9 +120,28 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
-beforeEach(() => {
+// WARM THE BRIDGE BEFORE ANY MOUNT.
+//
+// `capture.js` reaches Tauri through a lazy `await import('@tauri-apps/api/core')`,
+// so the FIRST caller in a file pays the module resolution and every later one is
+// handed the settled namespace. A mounting view fires two or three reads at once
+// and races that resolution; when it loses, the read never starts at all.
+//
+// This cost a CI failure that read as something else entirely: `TemplateGallery
+// says Loading` timed out, and the test is built so that it CANNOT fail for the
+// obvious reason -- its read never resolves until `release()`, so `Loading` is the
+// only state it can settle on. `Loading` never appeared because the read never
+// began. One awaited call here resolves the import once, before any component
+// mounts, so no test is the one that pays for it.
+//
+// The general fix is to memoise that import in `capture.js` so N concurrent callers
+// await one promise. That is a real improvement and it is NOT made here: it changes
+// the verdict of tests that currently encode the race, which is a finding of its own
+// and wants its own change. Filed as RG-170.
+beforeEach(async () => {
   invoke.mockReset();
   invoke.mockResolvedValue([]);
+  await ping().catch(() => {});
   live.set(null);
   screenBlack.set(false);
   rehearsing.set(false);
@@ -540,91 +559,20 @@ describe('R3-04 · CLOSED — a list does not say Empty before it knows', () => 
     expect(el.textContent).toMatch(/disk I\/O error|didn't work|try/i);
   });
 
-  // ── A REFUSED END, ON THE SURFACE AND NOT ONLY IN THE WRAPPER ─────────────
+  // ── A REFUSED END WAS TESTED HERE AND IS TESTED ON THE DOCK NOW ──────────
   //
-  // `endservice.test.js` and `qa-r5-groups.test.js` both hold that `endService`
-  // throws. Neither can see what History does with the throw — and the original
-  // defect was entirely on this side of the call: `await endService(); refresh();`
-  // repainted an identical list under an identical button, which is as close to a
-  // claim of success as a screen gets without words.
+  // Four tests stood here, pressing History's own `End current service` button and
+  // holding that a refusal says so and does NOT repaint the list. The button is
+  // gone: it was a second copy of the dock's control, and the dock's is the one in
+  // the shell, on every workspace, ordered first when the card stacks.
   //
-  // So this is the door, not the wrapper. A later tidy-up that moved `refresh()`
-  // out of the `try` "so the list is always current" would leave both wrapper
-  // tests green and put the defect straight back. CLAUDE.md: a guarantee is only
-  // kept on the doors you checked.
-  itMounted('a refused End current service says so, and does NOT repaint the list', async () => {
-    invoke.mockImplementation((cmd) =>
-      cmd === 'end_service'
-        ? Promise.reject({ kind: 'refused', message: 'A service is being recorded.' })
-        : Promise.resolve([]),
-    );
-    const History = (await import('./views/library/History.svelte')).default;
-    const el = mountInto(History);
-    // Wait for the MOUNT'S OWN read to land before counting. Sampling before it
-    // does makes the count move for a reason that has nothing to do with the
-    // press, which is how the first version of this test failed.
-    await until(
-      () => invoke.mock.calls.some(([c]) => c === 'list_services'),
-      'History to finish its first read',
-    );
-    await settle();
-
-    const before = invoke.mock.calls.filter(([c]) => c === 'list_services').length;
-    [...el.querySelectorAll('button')].find((b) => /End current service/.test(b.textContent)).click();
-    await until(() => el.querySelector('[role="alert"]'), 'the refusal to be reported');
-
-    expect(el.querySelector('[role="alert"]').textContent).toMatch(/A service is being recorded/);
-    const after = invoke.mock.calls.filter(([c]) => c === 'list_services').length;
-    expect(
-      after,
-      'the list was re-read over a refusal. Repainting an unchanged surface is how ' +
-        'the original defect read as success.',
-    ).toBe(before);
-  });
-
-  itMounted('and the refusal belongs to the press — Refresh clears it', async () => {
-    // `endErr` was cleared only by pressing the same button again, so a failure
-    // line could sit under the buttons after the service had been ended from the
-    // dock: a stale accusation on a screen that is now right.
-    invoke.mockImplementation((cmd) =>
-      cmd === 'end_service'
-        ? Promise.reject({ kind: 'refused', message: 'A service is being recorded.' })
-        : Promise.resolve([]),
-    );
-    const History = (await import('./views/library/History.svelte')).default;
-    const el = mountInto(History);
-    await until(() => invoke.mock.calls.some(([c]) => c === 'list_services'), 'the first read');
-    await settle();
-
-    [...el.querySelectorAll('button')].find((b) => /End current service/.test(b.textContent)).click();
-    await until(() => el.querySelector('[role="alert"]'), 'the refusal to be reported');
-
-    [...el.querySelectorAll('button')].find((b) => /Refresh/.test(b.textContent)).click();
-    await until(() => !el.querySelector('[role="alert"]'), 'the stale refusal to be cleared');
-    expect(el.querySelector('[role="alert"]')).toBe(null);
-  });
-
-  itMounted('…and an end that WORKED re-reads the list and says nothing', async () => {
-    // The paired control. A test that only ever saw the failure would stay green
-    // if the fix stopped refreshing on success too.
-    invoke.mockImplementation((cmd) => (cmd === 'end_service' ? Promise.resolve(null) : Promise.resolve([])));
-    const History = (await import('./views/library/History.svelte')).default;
-    const el = mountInto(History);
-    await until(
-      () => invoke.mock.calls.some(([c]) => c === 'list_services'),
-      'History to finish its first read',
-    );
-    await settle();
-
-    const before = invoke.mock.calls.filter(([c]) => c === 'list_services').length;
-    [...el.querySelectorAll('button')].find((b) => /End current service/.test(b.textContent)).click();
-    await until(
-      () => invoke.mock.calls.filter(([c]) => c === 'list_services').length > before,
-      'the list to be re-read after a successful end',
-    );
-
-    expect(el.querySelector('[role="alert"]')).toBe(null);
-  });
+  // The tests went WITH the control rather than being deleted — `shellchrome.test.js`,
+  // "a refused End service says so on the surface that offers it" — because the
+  // guarantee was never about History. It is about the door: `await endService();
+  // refresh();` repainting an identical surface is as close to a claim of success
+  // as a screen gets without words, and that door is now `Dock.svelte::run`.
+  // Deleting a test because the control it pressed moved is how a guarantee ends
+  // up kept on one door and skipped on its twin.
 });
 
 

@@ -42,7 +42,7 @@ export const WALL_STATES = Object.freeze(['safe', 'rehearsal', 'blackout', 'onai
  *               This used to say safe mode "cannot be changed without
  *               restarting", and DECISIONS §86 made that false in the same wave
  *               it was written: `applySafeMode` is a live transition, and
- *               Settings → General turns it off without a relaunch. That was the
+ *               Settings → Before the service turns it off without a relaunch. That was the
  *               defect §86 fixed — a label that had stopped describing the thing
  *               behind it — so the comment describing it had to stop saying so
  *               too.

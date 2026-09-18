@@ -40,6 +40,12 @@
   // not re-derive that rule; a second copy is a second thing to get wrong.
   import { heard, methodKey, showsConfidence } from './detect.js';
   import { capture, transcript } from './stores/capture.js';
+  import { describeGate } from './gate.js';
+
+  // One reading, derived from the store the engine writes through
+  // `detection://thresholds`. Never a local copy: a second copy of the gate is the
+  // defect the dial itself was just repaired for.
+  $: gate = describeGate($capture);
 
   /** The detection being inspected. */
   export let detection = null;
@@ -166,15 +172,38 @@
 
           <hr />
 
+          <!-- THE GATE, THROUGH THE ONE DESCRIBER. This panel printed the two
+               figures straight off the store, which reads identically in three
+               situations that are not the same fact: the engine answered and the
+               gate is where the dial put it; the engine answered and Relay has
+               MOVED the gate since, from what was confirmed and dismissed during
+               services or from a profile or room being applied; and the engine has
+               not answered at all, where `?? 0` painted a confident `0%` over a
+               question nobody had asked. That is rule 35 on the panel an operator
+               opens precisely to ask why a verse did or did not fire.
+               `describeGate` is the one place this is turned into words, and it is
+               the same one Settings reads, so the two cannot disagree. -->
           <p class="klbl">Gate</p>
+          <!-- THE PARAPHRASE RULE IS NOT A READING, so it is outside the branch.
+               A cosine can never auto-fire at any score and at any threshold
+               (rule 10, DECISIONS §21), which is true whether or not the engine
+               has answered with the gate. `inspector.test.js` caught this being
+               hidden behind readability, and it was right to: the one sentence in
+               this panel that is unconditionally true is the one that must not
+               depend on a socket. -->
           <dl class="ins-dl">
-            <dt>Auto-fire above</dt>
-            <dd class="r-mono">{Math.round(($capture.thresholds?.auto_fire ?? 0) * 100)}%</dd>
-            <dt>Suggest above</dt>
-            <dd class="r-mono">{Math.round(($capture.thresholds?.suggest ?? 0) * 100)}%</dd>
+            {#if gate.readable}
+              <dt>Auto-fire above</dt>
+              <dd class="r-mono">{gate.autoPct}%</dd>
+              <dt>Suggest above</dt>
+              <dd class="r-mono">{gate.suggestPct}%</dd>
+            {/if}
             <dt>Paraphrases</dt>
             <dd>Suggestions only — never auto-fire</dd>
           </dl>
+          {#if !gate.readable || gate.drifted}
+            <p class="ins-gatenote">{gate.note}</p>
+          {/if}
           <button class="ins-link" on:click={onTuning}>Change sensitivity in Settings</button>
         </aside>
 
@@ -413,6 +442,15 @@
     border: 0;
     border-top: 1px solid var(--v-line);
     margin: 18px 0 14px;
+  }
+  /* The gate's caveat, and the quietest thing in the panel. No law colour: none of
+     amber, cyan or amethyst promises anything about a threshold, and this is a
+     footnote about a number rather than a claim about a screen. */
+  .ins-gatenote {
+    margin: 0 0 var(--v-sp-xs);
+    font-size: var(--v-fs-cap);
+    line-height: 1.5;
+    color: var(--v-faint);
   }
   .ins-dl {
     margin: 0 0 12px;

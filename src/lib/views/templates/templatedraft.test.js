@@ -1,9 +1,9 @@
 // A NEW TEMPLATE IS A DRAFT UNTIL SOMEBODY SAVES IT.
 //
 // `newFrom` used to INSERT the starter and then open the editor on the row it
-// had just written. So the only way to look at what "Countdown Timer" is was to
+// had just written. So the only way to look at what "Screen Countdown" is was to
 // create one, and the only way to change your mind was to go back and delete it
-// — if you noticed. A gallery accumulates several `Countdown Timer` rows a
+// — if you noticed. A gallery accumulates several `Screen Countdown` rows a
 // church never asked for, and because the shelf seeds by name, they sit beside
 // the built-in of the same name.
 //

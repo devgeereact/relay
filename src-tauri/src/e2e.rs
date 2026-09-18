@@ -2375,12 +2375,32 @@ fn a_rehearsed_decision_is_not_counted_as_one() {
     );
 }
 
-/// W4 acceptance — a screen set to FOLLOW renders scripture, lyrics and
-/// announcements through three different templates, with nobody touching it.
+/// W4 acceptance — scripture, lyrics and announcements leave the machine naming
+/// three different templates, with nobody touching anything.
+///
+/// ── WHAT THIS TEST DOES NOT SAY, CORRECTED ──────────────────────────────────
+///
+/// It said "a screen set to FOLLOW **renders** … through three different
+/// templates", and it has never been able to see a renderer. `qa::Wall` watches
+/// the Tauri events, so the whole of its evidence is what is ON THE WIRE: the id
+/// rides, and the JSON does not. Both were true, both are still true, and neither
+/// is a claim about what a congregation sees.
+///
+/// It passed, green, for the entire period in which "Follow the content look"
+/// put NOTHING on any screen. Nothing read `template_id` at either receiver:
+/// `Output.svelte` derived its override from `template_json` alone, which is null
+/// by construction here, and the kiosk door did not copy the field off the frame
+/// at all. A test's assertion surface is part of its claim, and this one could
+/// not have failed on the defect its own summary line described.
+///
+/// The rendering claim is made where a renderer exists — `src/lib/contentlook.test.js`
+/// mounts the output page on BOTH doors and reads the painted DOM — and the
+/// hub's half in `channels::tests::a_joining_screen_is_sent_the_content_looks_before_what_is_on_the_screens`.
+/// This test keeps the wire claim, which is the half those two cannot make.
 ///
 /// `r4_a_screen_may_follow_the_content_look` proves the setting can be made and
 /// is published. It does not fire anything, so it cannot see whether the map is
-/// then READ — which is precisely the defect that phase closed one level down:
+/// then read — which is precisely the defect that phase closed one level down:
 /// the content-look map could be filled in, saved, and change nothing. A test
 /// that only checks the control passed throughout that too.
 ///

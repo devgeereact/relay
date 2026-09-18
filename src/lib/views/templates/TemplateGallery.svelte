@@ -324,7 +324,7 @@
   // it AS A DRAFT. Nothing is written here.
   //
   // It used to `saveTemplate` first and open the editor on the row it had just
-  // inserted, which made "what does Countdown Timer look like?" an act of
+  // inserted, which made "what does Screen Countdown look like?" an act of
   // creation: the only way to see a starter was to own one, and the only way to
   // change your mind was to notice and go back and delete it. Because the shelf
   // seeds BY NAME, the rows that accumulated sat beside the built-in of the same
