@@ -686,7 +686,7 @@
   /**
    * THE CONFIGURED WARNING WINDOW, DELIVERED RATHER THAN READ — RG-149(c).
    *
-   * `Settings → General → Countdown warning` lives in `layers.js` module state whose
+   * `Settings → Getting started → Countdown warning` lives in `layers.js` module state whose
    * one writer is `stores/capture.js`, and this page has no Tauri bridge, so it
    * could not import the writer and could not ask the backend either. The figure is
    * therefore carried to it on frames it already receives — `warn_default_ms` on the

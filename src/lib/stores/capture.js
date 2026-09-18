@@ -110,7 +110,7 @@ export const capture = writable({
   // Whisper re-elects a language every window from ~99 candidates, and on accented
   // speech it wanders (one real service: en·yo·pt·sw·sv·ms). The label IS the decode,
   // so a wandering label degrades the transcript — and that looks exactly like the AI
-  // being bad. The operator has the control that fixes it (Settings → Scripture
+  // being bad. The operator has the control that fixes it (Settings → Before the
   // & Languages → Recognition language) and no reason to suspect they should
   // touch it. See stt.rs.
   langUnstable: null,
@@ -1838,7 +1838,7 @@ return guardedRead('verseRepeatCount', async (call) => {
 }, 0);
 }
 
-// ── Voice profiles (Settings → AI & Detection) ───────────────────────────────
+// ── Voice profiles (Settings → Preachers) ────────────────────────────────────
 //
 // Per-preacher accent + gate calibration: the STT language hint, the decoder-bias
 // vocabulary, the operator's sensitivity dial, and the thresholds the router has
@@ -1873,7 +1873,7 @@ return await call('create_voice_profile', { name, language });
 // ── ONE FACT, ONE STORE (RG-138) ─────────────────────────────────────────────
 //
 // `voice_profiles.language` is the ONLY place the recognition language lives, and
-// `capture.stt.language` is the console's copy of it — what Settings → Scripture &
+// `capture.stt.language` is the console's copy of it — what Settings → Before the
 // Languages renders, and what the Privacy overview reads. `setSttLanguage` keeps
 // them in step; these two did not, and both of them change that column and apply
 // it to the live engine:
@@ -2244,7 +2244,7 @@ export async function setServiceTarget(minutes) {
 // ── THE COUNTDOWN WARNING WINDOW ───────────────────────────────────────────────
 //
 // How long before zero a countdown turns red. Shipped as the last minute; an
-// operator can move it in Settings → General. Persisted in the settings KV under
+// operator can move it in Settings → Getting started. Persisted in the settings KV under
 // `countdown.warn_ms` and READ, which is the whole point of it: seven controls
 // were removed from that page on 2026-09-10 for saving a preference nothing
 // opened (DECISIONS §69), and a threshold nobody reads is that defect with a
@@ -2446,7 +2446,7 @@ export async function openChannelOutput(channelId) {
 if (get(safeMode)) {
   const msg =
     'Safe mode is on, so Relay will not open an output screen. ' +
-    'Turn it off in Settings → General if you want screens back.';
+    'Turn it off in Settings → Before the service if you want screens back.';
   throw Object.assign(new Error(msg), { kind: 'refused', message: msg });
 }
 const call = await invoke(); // throws in browser

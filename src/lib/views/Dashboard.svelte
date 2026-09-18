@@ -16,13 +16,20 @@
   // and then the app would be arguing with itself about whether it works.
   //
   // Everything else here is a SHORTCUT to a real surface, never a copy of one:
-  // the recent services link into Library, the plan into Planner. Nothing is
-  // editable from this screen.
+  // the services link into History, the plan into Planner. Nothing is editable
+  // from this screen.
   //
-  // NOTHING HERE CAN PUT ANYTHING ON A SCREEN. The quick actions open an output
-  // window (blank), arm the microphone, or toggle rehearsal. Firing content is
-  // the Live tab's job and stays there — a "go live" button on a summary screen
-  // is how the wrong thing reaches a congregation.
+  // NOTHING HERE CAN PUT ANYTHING ON A SCREEN, and since the quick actions were
+  // deleted nothing here can change the machine's state at all. It reports and it
+  // points; the controls live where they live. Firing content is the Live tab's
+  // job — a "go live" button on a summary screen is how the wrong thing reaches a
+  // congregation — and arming the microphone or entering rehearsal is the dock's,
+  // which is in the shell and therefore already on this screen.
+  //
+  // THIS IS SECTION ONE OF SETTINGS and it is the section, not a card in it. It
+  // stacks in one column because the reading column it renders into is capped at
+  // 880px (docs/REBRAND.md §11): a two-up card grid inside that is two ~420px
+  // columns, and the health list's own rows already wrap at 325px.
 
   import { onMount } from 'svelte';
   import { freshChecks, runChecks, rollUp } from '../boot/boot.js';
@@ -64,7 +71,6 @@
     listServices,
     listPlans,
     listOutputChannels,
-    openChannelOutput,
     startCapture,
     stopCapture,
     setRehearsal,
@@ -239,23 +245,12 @@
     busy = '';
   }
 
-  const openMain = () =>
-    act('output', async () => {
-      const ch =
-        channels.find((c) => c.render_target === 'native_window' && c.name === 'Main screen') ??
-        channels.find((c) => c.render_target === 'native_window');
-      if (!ch) throw new Error('No screen is configured yet. Add one in Outputs.');
-      await openChannelOutput(ch.id);
-    });
-
-  const toggleMic = () =>
-    act('mic', async () => {
-      if ($capturing) await stopCapture();
-      else await startCapture($capture.inputDevice || null);
-    });
-
-  const toggleRehearsal = () => act('rehearse', () => setRehearsal(!$rehearsing));
-
+  // `openMain`, `toggleMic` and `toggleRehearsal` USED TO BE HERE, behind the four
+  // quick actions. They are gone with them: `openChannelOutput` is the Outputs
+  // workspace's, and starting the microphone or entering rehearsal is the dock's,
+  // which is in the shell and so is on this screen already. `listOutputChannels` is
+  // still read — the path check and the plan pointers need to know a screen exists —
+  // but nothing on this surface opens one.
   const go = (tab) => setSession({ activeTab: tab });
 
   // A service row's date is an ISO string from SQLite; show it the way a person
@@ -403,36 +398,22 @@
     </section>
 
     <div class="d-side">
-      <!-- QUICK ACTIONS. Nothing here fires content. -->
-      <section class="d-card">
-        <header><h3>Quick actions</h3></header>
-        <div class="d-acts">
-          <button class="d-act" on:click={openMain} disabled={busy === 'output' || $safeMode}>
-            <b>Open the congregation screen</b>
-            <span>Opens the output window. It starts blank.</span>
-          </button>
-          <button class="d-act" on:click={toggleMic} disabled={busy === 'mic' || $safeMode}>
-            <b>{$capturing ? 'Stop listening' : 'Start listening'}</b>
-            <span>
-              {$capturing
-                ? 'The microphone is live right now.'
-                : 'Arms the microphone so Relay can hear the sermon.'}
-            </span>
-          </button>
-          <button class="d-act" class:on={$rehearsing} on:click={toggleRehearsal} disabled={busy === 'rehearse'}>
-            <b>{$rehearsing ? 'Leave rehearsal' : 'Rehearse'}</b>
-            <span>
-              {$rehearsing
-                ? 'Nothing is reaching the congregation.'
-                : 'Practise the whole run with nothing reaching a screen.'}
-            </span>
-          </button>
-          <button class="d-act" on:click={() => go('live')}>
-            <b>Go to the run surface</b>
-            <span>Live is where a service is actually run.</span>
-          </button>
-        </div>
-      </section>
+      <!-- QUICK ACTIONS WERE HERE, AND ALL FOUR WERE SOMETHING ELSE'S CONTROL.
+           *Open the congregation screen* is the Outputs workspace's Open button
+           and the first-run wizard's; *Start listening* and *Rehearse* are the
+           dock's, which is in the SHELL and therefore on this very screen, three
+           inches below, at every moment (rule 15's neighbourhood — the Controls
+           card never scrolls); and *Go to the run surface* is the first item in
+           the workspace strip at the top of the window.
+
+           A duplicate is not free even when it works. Two controls for one action
+           is the shape four separate bugs in this repository have had, and these
+           two in particular had already diverged from the dock's: the dock's mic
+           and rehearsal buttons read `busy`, `$capture.available` and — since
+           DECISIONS §86 — `$safeMode` on the detection switch beside them, while
+           these read a local `busy` string and `$safeMode` only. Keeping two
+           copies of a control in step is work that buys nothing; the dock owns
+           them. -->
 
       <!-- TODAY'S PLAN. A pointer into Planner, never an editor. -->
       <section class="d-card">
@@ -466,15 +447,16 @@
   <section class="d-card">
     <header>
       <h3>Recent services</h3>
-      {#if services.length}
-        <!-- HISTORY IS IN SETTINGS, and has been since it left the Library. This
-             sent an operator looking for past services to a workspace that no
-             longer has any. It names the section now rather than only the tab. -->
-        <button
-          class="d-link"
-          on:click={() => setSession({ activeTab: 'settings', settingsSection: 'history' })}
-          >All history</button>
-      {/if}
+      <!-- HISTORY IS ITS OWN ROUTE AGAIN. It was in the Library, then a section of
+           Settings, and is now neither: a record browser with a destructive erase
+           in it is not a setting, and it was three levels deep in a preferences
+           page. This is the ONE door into it, which is why it is no longer behind
+           `{#if services.length}` — a church with nothing recorded yet could not
+           reach the screen at all, and `scripts/qa-inventory.mjs` counts a route
+           nothing renders a control for as an orphan. The empty state on the other
+           side is honest and is the whole answer to "have we recorded anything?". -->
+      <button class="d-link" on:click={() => setSession({ activeTab: 'history' })}
+        >All history</button>
     </header>
     {#if services.length}
       <table class="d-table">
@@ -603,11 +585,16 @@
     color: var(--v-accent2);
   }
 
+  /* ONE COLUMN. This was `minmax(0,1.35fr) minmax(0,1fr)`, which was right when
+     the Dashboard was a full-width tab and is wrong now that it is section one of
+     Settings: the reading column §11 caps at 880px would make those two tracks
+     about 490px and 360px, and the health card's own rules already stack every
+     check at 325px because its value was ellipsising the sentence beside it. A
+     card grid inside a capped column is a grid fighting the cap. */
   .d-grid {
-    display: grid;
-    grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+    display: flex;
+    flex-direction: column;
     gap: 16px;
-    align-items: start;
   }
   .d-side {
     display: flex;
@@ -665,7 +652,6 @@
      "confirmed"), rose for one that was not — and a stage that has not been
      reached YET, while the walk is still running, is neither: it is grey, because
      "not yet" and "never" are different claims and the operator is watching. */
-  .d-walk { grid-column: 1 / -1; }
   .d-walknote {
     font-size: var(--v-fs-cap);
     color: var(--v-dim);
@@ -708,54 +694,12 @@
   }
   .d-walkverdict.bad { color: var(--v-rose); }
 
-  .d-acts {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-  /* AN ACTION TILE, not a button. Title over a sentence explaining what will
-     happen — "Opens the output window. It starts blank." — because these are
-     the four things a volunteer reaches for before a service and each one
-     needs saying out loud. A `.r-btn` is a 26px box with one label in it and
-     has nowhere to put the second line. */
-  .d-act {
-    display: block;
-    width: 100%;
-    text-align: left;
-    padding: 12px 14px;
-    border-radius: var(--v-r-md);
-    background: var(--v-surf2);
-    border: 1px solid var(--v-line);
-    color: var(--v-txt);
-    font: inherit;
-    cursor: pointer;
-    transition: border-color 0.14s, background 0.14s;
-  }
-  .d-act:hover:not(:disabled) {
-    border-color: var(--v-accent-line);
-    background: var(--v-surf3);
-  }
-  .d-act:disabled {
-    opacity: 0.45;
-    cursor: not-allowed;
-  }
-  .d-act.on {
-    border-color: var(--v-accent-line);
-    background: var(--v-accent-soft);
-  }
-  .d-act b {
-    display: block;
-    font-size: var(--v-fs-h3);
-    line-height: var(--v-lh-h3);
-    font-weight: 600;
-  }
-  .d-act span {
-    display: block;
-    margin-top: 3px;
-    font-size: var(--v-fs-b2);
-    color: var(--v-faint);
-    line-height: 1.5;
-  }
+  /* `.d-acts`, `.d-act` AND ITS FIVE STATES USED TO BE HERE — the action-tile
+     shape the four quick actions wore. The controls are gone (see the markup),
+     and a rule whose only elements have gone is dead weight one refactor away
+     from being copied onto something that is not an action tile. `.r-btn` is the
+     shape a button in this product has; anything that needs a second line of
+     explanation is a row, which is what `.rw-nv` is for. */
 
   .d-list {
     list-style: none;

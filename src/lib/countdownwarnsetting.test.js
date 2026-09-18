@@ -117,13 +117,16 @@ describe('the control an operator actually sets it with', () => {
   const code = strip(SETTINGS);
   const markup = code.slice(code.indexOf('</script>'), code.indexOf('<style>'));
 
-  it('is on General, beside the other figure a service is timed by', () => {
-    const general = markup.slice(
-      markup.indexOf("section === 'general'"),
-      markup.indexOf("section === 'screens'"),
-    );
-    expect(general).toMatch(/Countdown warning/);
-    expect(general).toMatch(/setCountdownWarnMs/);
+  it('is on Getting started, with the other number a new install sets once', () => {
+    // It was on General, beside Service length, on the argument that the two are
+    // the figures a service is timed by. General is gone: with safe mode promoted
+    // to Before the service and service length moved to This room it held one
+    // switch and a paragraph. The two rows parted because they are used at
+    // different times — a planned length is a fact about the morning and belongs
+    // with the room, a countdown warning is set once and never touched again.
+    const start = markup.slice(markup.indexOf("section === 'start'"));
+    expect(start).toMatch(/Countdown warning/);
+    expect(start).toMatch(/setCountdownWarnMs/);
   });
 
   it('shows the figure that is in force rather than a local mirror of it', () => {

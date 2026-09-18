@@ -22,7 +22,7 @@ Download the installer for your computer and run it. Open Relay. It will walk yo
 
 Relay listens to the sermon *on your computer* — it does not send audio anywhere, and it does not need the internet during a service. But to do that, it needs a **speech model**: a single file, about **148 MB**, downloaded once.
 
-Go to **Settings → Network & Integrations**, and press **Download**. It shows a progress bar. You can cancel it and it will pick up where it left off next time.
+Go to **Settings → Before the service**, and press **Download**. It shows a progress bar. You can cancel it and it will pick up where it left off next time.
 
 Until you do this, Relay still works as a *manual* tool — you can type a verse and put it on the screen, run a service plan, everything except listening. It will tell you so, plainly, rather than pretending.
 
@@ -32,7 +32,7 @@ Do this **before** Sunday. It is 148 MB over the church wifi.
 
 The recommended model is the small one, because it runs on any laptop. If Relay is
 mishearing a lot — especially over a poor microphone, or in Yoruba, Swahili or
-Hausa — Settings → Network & Integrations lists larger models that hear more
+Hausa — Settings → Before the service lists larger models that hear more
 accurately. They are bigger downloads and they need a faster computer.
 
 Two things worth knowing before you switch:
@@ -54,7 +54,7 @@ For a projector plugged into your laptop: pick the display, press **Open**. A fu
 
 ### 4. Choose the microphone
 
-**Settings → Audio.** Pick the input. **A bar should move when someone speaks.**
+**Settings → This room.** Pick the input. **A bar should move when someone speaks.**
 
 If the bar does not move, Relay cannot hear, and nothing else on this page will work. Fix that first.
 
@@ -62,7 +62,7 @@ If the bar does not move, Relay cannot hear, and nothing else on this page will 
 
 ### 5. Something to press, if you want it
 
-**Settings → History & Backup → Demo content → Load demo content.**
+**Settings → Getting started → Demo content → Load demo content.**
 
 A brand-new Relay is empty, which makes it hard to tell a working install from a broken one. This
 adds one sample Sunday so every workspace has something real in it: a service plan with four
@@ -106,13 +106,13 @@ Both actions are held back while a service is recording, like every other deleti
   verses — because the key you need under pressure is the one you should not be reading about at
   the time. It is not a simulated service: Relay cannot produce a sermon, and practising against
   a fake would teach you the shape of the fake.
-- **Run the path check.** **Settings → Diagnostics → say one verse.** Relay watches the six stages
+- **Run the path check.** **Settings → Before the service → say one verse.** Relay watches the six stages
   between the microphone and the screen and tells you which of them were reached. The twenty-one
   launch checks can all pass on a machine where nothing works end to end — a microphone the
   operating system has muted, an output window on a display that is asleep. This is the thing
   that finds that at 10:05 instead of 10:31. It only runs in rehearsal.
 
-**Save your room.** **Settings → Audio → Rooms → Save this room** remembers the microphone,
+**Save your room.** **Settings → This room → Rooms → Save this room** remembers the microphone,
 the language, the service length, the voice profile and which display each screen is on. Applying
 it back reports **which pieces did not take** — a projector that moved to another port comes back
 as four of six restored, named, rather than as a green tick over a dark wall. It deliberately does
@@ -154,12 +154,12 @@ Live software fails live. These are the things that actually happen.
 
 | What you see | What it means | What to do |
 |---|---|---|
-| **The bar doesn't move when someone speaks** | Relay cannot hear. Nothing else will work. | Settings → Audio. Try a different input. Check the cable and that the desk is sending. |
+| **The bar doesn't move when someone speaks** | Relay cannot hear. Nothing else will work. | Settings → This room. Try a different input. Check the cable and that the desk is sending. |
 | **The transcript is nonsense** | Usually the mic is too quiet, not the AI being bad. | Get a stronger feed. Relay adapts to a quiet room, but it cannot invent a signal that is not there. |
-| **"Relay keeps changing its mind about the language"** | On a strong accent, leaving the language on **Auto** makes Relay re-guess every few seconds — and a wrong guess garbles the transcript, which is where most wrong verses come from. | **Settings → Scripture & Languages → Recognition language.** Pick the language instead of Auto. This is the single biggest accuracy win for an accented preacher. **It is remembered** (since 0.2.0-3): the choice is written to the active voice profile and applied before the first word of every service after it, including after a speech-model change. It is the same setting as the Language field on **Settings → AI & Detection → Voice profiles** — one preacher, one language, one place it is stored — so changing it on either tab changes it on both. You can set it before any speech model has downloaded. |
+| **"Relay keeps changing its mind about the language"** | On a strong accent, leaving the language on **Auto** makes Relay re-guess every few seconds — and a wrong guess garbles the transcript, which is where most wrong verses come from. | **Settings → Before the service → Recognition language.** Pick the language instead of Auto. This is the single biggest accuracy win for an accented preacher. **It is remembered** (since 0.2.0-3): the choice is written to the active voice profile and applied before the first word of every service after it, including after a speech-model change. It is the same setting as the Language field on **Settings → Preachers → Voice profiles** — one preacher, one language, one place it is stored — so changing it in either place changes it in both. You can set it before any speech model has downloaded. |
 | **A suggestion says "Not in your Bible"** | Relay parsed a real-looking reference out of garbled speech — "Psalms 23:99" — and that verse does not exist. It is telling you it misheard a **number**. | Nothing to do about that one; its Approve button is deliberately dead. If it keeps happening, the microphone is the cause, not the AI — see the two rows above. |
 | **Wrong verses keep appearing on the wall** | Relay heard a book name and a number in ordinary speech — *"Matthew, one of the twelve"*, *"number one… number two…"*. | Turn the **sensitivity dial down** on Live. If it is still noisy, press the **armed** chip beside the dial (it reads `armed` / `off`) to turn detection off altogether and fire by hand. Be clear about what that costs: it stops Relay matching anything against scripture, so the suggestion feed goes quiet with it — it is not an auto-fire switch that leaves the rest running. And fix the language above first, because that is usually the real cause. |
-| **"No speech model loaded"** | Step 2 above never happened. | Settings → Network & Integrations → Download. Manual override still works meanwhile. |
+| **"No speech model loaded"** | Step 2 above never happened. | Settings → Before the service → Download. Manual override still works meanwhile. |
 | **Nothing appears on the projector** | The output window is not open, or it is on the wrong display. | Outputs → Screens → pick the display → **Open**. |
 | **OBS / the kiosk screen is blank** | The browser source is pointed at the wrong address. | Use the **Copy URL** button in Outputs → Screens — it is the only thing that fills in the right numbers. The address looks like `http://<this-computer>:8032/output.html?channel=1&template_id=1`. **Not 5032**, and do not drop the `channel=` part: without it the screen still shows verses, and then quietly ignores you every time you change its template. The same address and rule are in [OUTPUT_ROUTING.md](OUTPUT_ROUTING.md) §3, which also covers projectors and switchers; change one and change the other. |
 | **"The screens may still be live"** (red bar) | A clear or blackout **failed**. Relay is telling you rather than pretending. | **Look at the actual screen.** Clear it from the output window if you have to. |
@@ -178,24 +178,30 @@ Live software fails live. These are the things that actually happen.
 
 You will not need these during a service.
 
-- **Library** — your songs, saved verses, media and announcements. **Past services are not here any more**; they moved to Settings → History & Backup, and a laptop left on the old tab is redirected there.
+- **Library** — your songs, saved verses, media and announcements. **Past services are not here any more**; History is a screen of its own now, opened with **All history** on the readiness screen (Settings → Before the service), and a laptop left on the old tab lands there rather than on Live.
 - **Planner** — build a service plan. Cannot reach a screen.
 - **Templates** — what scripture *looks like* on the wall: fonts, colours, spacing, motion, and where everything sits. **A template carries the whole look** — there is no second layer beneath it to set up first, and nothing else has to be applied for a template to be finished. What you see in the editor is exactly what the projector shows. **Import** a design someone shared, or **Export** one of yours to a file (⋮ menu / the preview panel) to hand to another church.
 - **Outputs** — three panes: **Screens** (one row per output screen — the projector, a stage monitor, OBS, the preacher's phone), **Content looks** (which template scripture, lyrics, media and announcements wear by default), and **Sharing** (the LAN address and the preacher's stage remote). Set up once.
-- **Settings** — audio, speech model, sensitivity, **Application language** (the language the
-  console itself is written in), and seven more sections. Eleven in all. The three worth knowing
-  about: **Scripture & Languages** (how much of Yorùbá, Kiswahili and Hausa Relay actually knows
-  — including the columns that are honestly empty — and the **Recognition language** setting the
-  troubleshooting table above sends you to), **Privacy & Advanced** (what is on this machine and
-  what can leave it), and **Diagnostics** (is this machine ready, the path check above, the live
-  numbers, and a **one-file export** you can attach to an email when something goes wrong — it
-  contains nothing about your church, by construction). **History & Backup** is where past
-  services now live.
+- **Settings** — **eight sections, in the order you will need them**, not in alphabetical or
+  filing order. **Before the service** is the only one you will open every Sunday: is this machine
+  ready, the path check above, and the two settings that decide how well Relay hears — the speech
+  model and the **Recognition language** the troubleshooting table sends you to. Those two can only
+  be changed before the microphone opens, which is exactly why they are on the screen you read
+  first. Then **This room** (microphone, speakers, service length, saved rooms), **Preachers** (one
+  calibration per voice), **Scripture** (the translation, and how much of Yorùbá, Kiswahili and
+  Hausa Relay actually knows — including the columns that are honestly empty), **This machine**
+  (addresses, the live numbers, and a **one-file export** you can attach to an email when something
+  goes wrong — it contains nothing about your church, by construction), **Updates**, **Privacy**
+  (what is on this machine and what can leave it), and **Getting started** (the walk-through, the
+  sample Sunday, the keys, and the two numbers you set once).
 
 **And one screen that is not a tab.** **Help** is the same guide, inside the app, where you can
 read it without the internet, plus the six practice drills and an honest account of **what the AI
 is bad at**. It is not on the strip — six workspaces is the whole of the top row — so open it
-from **Settings → Shortcuts → Open Help & Shortcuts**, or press `?` from anywhere.
+from **Settings → Getting started → Open Help & Shortcuts**, or press `?` from anywhere. **History
+is the other one**: every service you have recorded, opened with **All history** on the readiness
+screen. It is not a tab because reading back what happened last Sunday is not something you do
+during one.
 
 ### Two things you will notice mid-service and should not worry about
 
@@ -218,7 +224,7 @@ that was working. If you see it, that passage is longer than the template was de
 
 ## Afterwards
 
-**Settings → History & Backup** holds every service. Open one and you get:
+**All history**, on the readiness screen (Settings → Before the service), holds every service. Open one and you get:
 
 - **The Sunday report** — how long, how many verses, how many Relay put up by itself versus how
   many you fired, **how many of its suggestions you took and how many you turned down**, and how
@@ -235,7 +241,7 @@ that was working. If you see it, that passage is longer than the template was de
   what was said aloud.
 - **Week on week** — whether the transcript is keeping up better or worse than last Sunday.
 
-**If something went wrong, send the diagnostic file** (Settings → Diagnostics → export) rather
+**If something went wrong, send the diagnostic file** (Settings → This machine → export) rather
 than a photograph of the screen. It is built by naming every field that may be in it, so it
 cannot leak a transcript, a verse, a lyric, an announcement or your service titles.
 

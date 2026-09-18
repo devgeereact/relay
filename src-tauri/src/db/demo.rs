@@ -8,7 +8,7 @@
 //!
 //! Nothing in `init_fresh`, `migrate`, `baseline_forward_fill` or `run_migrations`
 //! calls [`load`]. The only caller is the `load_demo_content` command, behind a
-//! button in Settings → History & Backup. A fresh install has the `demo_content`
+//! button in Settings → Getting started. A fresh install has the `demo_content`
 //! table and nothing in it — held from two directions by
 //! `qa::the_bare_fixture_is_a_first_launch_and_nothing_more` (which asserts what a
 //! first launch contains) and by `a_fresh_install_carries_no_demo_content` below

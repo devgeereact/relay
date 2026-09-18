@@ -514,7 +514,7 @@
   });
   // ── THE MICROPHONE, ON THE RUN SURFACE (L3, operator instruction) ──────────
   //
-  // The device list and the on/off already existed — in Settings → Audio, three
+  // The device list and the on/off already existed — in Settings → This room, three
   // workspaces away from the person watching the level. A volunteer who picks
   // the wrong input at 10:29 had to leave the run surface to fix it. Same store,
   // same wrappers, same contracts; this is a second door onto one control, not a
@@ -977,7 +977,7 @@
       <!-- THE MICROPHONE, beside the signal it produces. Which input, and
            whether it is open: the two facts a volunteer needs at 10:29 and had
            to leave the run surface to reach. Same store and same wrappers as
-           Settings → Audio (see the note above `toggleMic`).
+           Settings → This room (see the note above `toggleMic`).
            The device is fixed for the life of a capture, because that is what
            `start_capture` takes — so the picker is disabled while listening
            rather than silently doing nothing. -->
@@ -1080,7 +1080,7 @@
           aria-checked={$detectionOn}
           aria-label="Detection"
           title={$safeMode
-            ? 'Safe mode is on — detection stays disarmed. Turn safe mode off in Settings → General first.'
+            ? 'Safe mode is on — detection stays disarmed. Turn safe mode off in Settings → Before the service first.'
             : $detectionOn
               ? 'Detection armed — Relay is matching what it hears against scripture. Press to turn it off.'
               : 'Detection off — nothing is being matched against scripture. Press to arm it.'}
@@ -1409,7 +1409,7 @@
           on:click={() => run(endService)}
           disabled={busy || !recording || !$capture.available}
           title={recording
-            ? 'Stop recording this service. The transcript, the fires and the timeline are kept — Library → History reads them back.'
+            ? 'Stop recording this service. The transcript, the fires and the timeline are kept — History reads them back, from All history on the readiness screen.'
             : 'No service is being recorded. One starts when you start listening.'}
         >{recording ? 'End service' : 'No service'}</button>
         <button

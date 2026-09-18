@@ -156,7 +156,11 @@ describe('RG-61 · the last step names what to do before the first Sunday', () =
     // is the same as not naming it.
     expect(SRC).toMatch(/Practise/);
     expect(SRC).toMatch(/drills on the <b>Help<\/b> tab/);
-    expect(SRC).toMatch(/Settings → Diagnostics/);
+    // The path check is on Before the service now — it is the readiness screen's
+    // own control, and the readiness screen is section one. Naming the instrument
+    // without naming the section it is on is the same as not naming it, which is
+    // why this asserts the section rather than the word "Settings".
+    expect(SRC).toMatch(/Settings → Before the service/);
     expect(SRC).toMatch(/Rehearse<\/b> on the Live tab/);
   });
 

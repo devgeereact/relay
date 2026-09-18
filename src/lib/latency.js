@@ -142,7 +142,7 @@ export function diagnose(report) {
   if (decode !== null && partial !== null && decode > partial * 0.6) {
     return {
       verdict: 'The speech model is the bottleneck',
-      detail: `${Math.round(decode)}ms of the ${Math.round(partial)}ms is whisper decoding. A smaller model in Settings → Network & Integrations is the only thing that moves this.`,
+      detail: `${Math.round(decode)}ms of the ${Math.round(partial)}ms is whisper decoding. A smaller model in Settings → Before the service is the only thing that moves this.`,
     };
   }
   if (partial !== null && partial > 700) {

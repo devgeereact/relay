@@ -131,26 +131,28 @@ describe('where a session lands', () => {
 // lived inline in App.svelte as a one-key ternary and covered only
 // `stagedisplays`; `dashboard` and `history` had ALSO stopped being tabs, and an
 // operator last on either was silently dropped on Live instead of Settings, where
-// both of them went.
+// both of them went at the time. `history` has since come back out as a route of
+// its own and its entry is gone with it — see the last test in this block for why
+// removing an entry is as load-bearing as adding one.
 //
 // Nothing could catch that, because App.svelte is not unit-testable and the map
 // was not a value. It is now both.
 describe('a tab that moved sends the operator where it went', () => {
   // `KNOWN` is what App.svelte calls `routes`: the six workspaces in the strip,
-  // plus Help, which is reachable from inside Settings but is not a workspace.
+  // plus Help and History, both reachable from inside a workspace and neither a
+  // workspace itself.
   // Handing the resolver the STRIP alone would bounce Settings' two "Open Help"
   // buttons straight back to Live — a control that looks like it worked and did
   // nothing — so the two lists are deliberately different and this is the one the
   // resolver is given.
-  const KNOWN = ['live', 'library', 'planner', 'templates', 'channels', 'settings', 'help'];
+  const KNOWN = ['live', 'library', 'planner', 'templates', 'channels', 'settings', 'help', 'history'];
 
   it('sends each relocated surface to the tab that absorbed it', async () => {
     const { resolveActiveTab } = await import('./session.js?tabs1');
     // The gallery became real backend channels.
     expect(resolveActiveTab('stagedisplays', KNOWN)).toBe('channels');
-    // Both became sections INSIDE Settings.
+    // The Dashboard became a section INSIDE Settings — the FIRST one.
     expect(resolveActiveTab('dashboard', KNOWN)).toBe('settings');
-    expect(resolveActiveTab('history', KNOWN)).toBe('settings');
     // Themes were folded INTO templates (DECISIONS §87) — first as a desk inside
     // the Templates workspace, then into the template model itself. Without the
     // map entry an operator who was last on Themes lands on Live and has no
@@ -167,6 +169,22 @@ describe('a tab that moved sends the operator where it went', () => {
     const { resolveActiveTab, MOVED_TABS } = await import('./session.js?tabs5');
     expect(resolveActiveTab('help', KNOWN)).toBe('help');
     expect(MOVED_TABS).not.toHaveProperty('help');
+  });
+
+  // HISTORY IS THE SAME SHAPE, ARRIVED AT FROM THE OTHER DIRECTION. It was in the
+  // Library, then a Settings section, and is now a route of its own that is not a
+  // workspace — because a 900-line record browser carrying a two-step erase is not
+  // a setting, and burying a destructive action three levels inside a preferences
+  // page is how a volunteer finds it by accident.
+  //
+  // So its entry comes OUT of the map, and that is the only direction an entry may
+  // be removed in: the key it named is a real route again. A redirect that outlives
+  // the move it describes is worse than no redirect, because it looks deliberate —
+  // it would send somebody who asked for History to Settings, where it no longer is.
+  it('keeps History reachable now that it is a route rather than a section', async () => {
+    const { resolveActiveTab, MOVED_TABS } = await import('./session.js?tabs6');
+    expect(resolveActiveTab('history', KNOWN)).toBe('history');
+    expect(MOVED_TABS).not.toHaveProperty('history');
   });
 
   it('leaves a tab that still exists alone', async () => {

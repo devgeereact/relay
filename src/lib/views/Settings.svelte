@@ -2,13 +2,31 @@
   import { onMount, onDestroy } from 'svelte';
   import Button from '../ui/Button.svelte';
   import { whyDisabled, ENGINE_OFF, SERVICE_LOCKED, MIC_LIVE, BUSY } from '../ui/whydisabled.js';
+  // ── THE KIT, NOT A CLASS SOMEBODY REMEMBERED ──────────────────────────────
+  //
+  // This page carried NINETEEN raw `class="r-btn"` buttons against three that
+  // went through `ui/Button`, and the three were the only ones that could tell a
+  // disabled operator anything: `disabledReason` renders `title` AND
+  // `aria-describedby`, and neither channel reaches everybody on its own —
+  // `title` is invisible to a keyboard or screen-reader operator, `aria-describedby`
+  // to a mouse. Sixteen controls on a settings page grey themselves out and say
+  // nothing, and two of them are inside a service (unlock, and the walk-through's
+  // own guard). A class is opt-in in a way a component is not, which is the whole
+  // argument in `ui/Button.svelte`'s header.
+  //
+  // `ListState` is the same argument about a LIST. *empty ≠ loading ≠ error* was
+  // hand-rolled three times here with three different wordings, and one of the
+  // three had its branches in the wrong order — the translation list asked
+  // `!dataLoaded` BEFORE `$readErrors.listTranslations`, so a read that failed
+  // announced itself as still loading for the rest of the session. The precedence
+  // is fixed once, in the component, which is the reason it exists.
+  import ListState from '../ui/ListState.svelte';
   import { rangeFill } from '../rangefill.js';
   import { get } from 'svelte/store';
   import ModelSetup from '../ModelSetup.svelte';
   // The shared workspace grammar (docs/REBRAND.md §2 · §11) — the same columns,
   // panes, type roles and name/value row the Planner and Outputs desks use.
   import WorkspaceFrame from './WorkspaceFrame.svelte';
-  import History from './library/History.svelte';
   import Dashboard from './Dashboard.svelte';
   import { locale, setLocale, LOCALES, t } from '../i18n.js';
   import { restartSetup, setSession, session } from '../session.js';
@@ -49,60 +67,86 @@
     Math.round(
       (Object.keys(CATALOGUES[code] ?? {}).filter((k) => !k.startsWith('_')).length / TOTAL) * 100,
     );
-  import { capture, meter, templates, initAudio, startCapture, stopCapture, setSensitivity, getSensitivity, setSttLanguage, setInputDevice, listTranslations, getActiveTranslation, setActiveTranslation, localIp, loadTemplates, contentTemplates, loadContentTemplates, setContentTemplate, getCrashReporting, setCrashReporting, serviceTargetMinutes, loadServiceTarget, setServiceTarget, countdownWarnMs, loadCountdownWarnMs, setCountdownWarnMs, latencyReport, latencyReset, latencySetEnabled, serviceLock, loadServiceLock, setServiceLock, rooms, loadRooms, saveRoom, useRoom, deleteRoom,
+  import { capture, meter, initAudio, startCapture, stopCapture, setSensitivity, getSensitivity, setSttLanguage, setInputDevice, listTranslations, getActiveTranslation, setActiveTranslation, localIp, getCrashReporting, setCrashReporting, serviceTargetMinutes, loadServiceTarget, setServiceTarget, countdownWarnMs, loadCountdownWarnMs, setCountdownWarnMs, latencyReport, latencyReset, latencySetEnabled, serviceLock, loadServiceLock, setServiceLock, rooms, loadRooms, saveRoom, useRoom, deleteRoom,
     listOutputChannels, setChannelDisplay, activeVoiceProfile, languageReport, exportDiagnostics, readErrors,
     demoStatus, loadDemoContent, removeDemoContent } from '../stores/capture.js';
-  import Loading from '../ui/Loading.svelte';
-  import ErrorState from '../ui/ErrorState.svelte';
+  // `Loading` and `ErrorState` are no longer imported HERE and that is the point
+  // of the change, not an oversight: every list on this page renders them through
+  // `ListState`, which is the only thing that knows the precedence between them
+  // and empty. A view that imports the three separately is a view choosing the
+  // order again, and two of the five on this page chose it wrongly.
   import { captureRoom, observedNote, applyRoom, describeApply } from '../rooms.js';
   import { describeGate } from '../gate.js';
   import { snapshotPath, KEEP_SNAPSHOTS } from '../updater.js';
   import { diagnose, drift } from '../latency.js';
-  import { CONTENT_KINDS } from '../layers.js';
 
   // ─────────────────────────────────────────────────────────────────────────
-  // SECTION NAV — ELEVEN SECTIONS, MERGED FROM EIGHTEEN (docs/REBRAND.md §11).
+  // SECTION NAV — EIGHT SECTIONS, ORDERED BY HOW OFTEN AN OPERATOR NEEDS THEM.
   //
-  // The rail used to carry eighteen entries, seven of which were one screen cut
-  // in half: Network and Integrations, Scripture and Languages, Privacy and
-  // Advanced, History and Backup, Audio and Voice Profiles. A section that is
-  // three rows on a full-height page teaches an operator that the rail is long
-  // and mostly empty, and that is how a control gets lost.
+  // It was eighteen, then eleven (docs/REBRAND.md §11), and the eleven were
+  // organised by TAXONOMY — General, Screens, Audio, AI, Scripture, Network,
+  // History, Shortcuts, Updates, Diagnostics, Privacy. That is a filing system,
+  // and it is the wrong one, because an operator does not arrive with a category.
+  // They arrive with a moment: it is 10:20, the service is at 11:00, and the
+  // question is whether this machine is going to work.
   //
-  // Two sections were not merged but DELETED, because everything on them was a
-  // second copy of something else:
-  //   · `dashboard` — the readiness surface itself is untouched (it is the boot
-  //     ladder's own probes, re-run on demand); it now opens Diagnostics, which
-  //     is the section an operator reaches for when they ask "is this machine
-  //     going to work?". One question, one section.
-  //   · `account` — its Licence, Version and Environment rows are already in the
-  //     Overview rail on every section, and its "there are no accounts" sentence
-  //     is already a row on the Privacy report. Three rows, all duplicates.
+  // Measured on the eleven-section rail: the readiness screen and the path check
+  // — the only every-Sunday surfaces in the workspace — were at the BOTTOM of the
+  // tenth section, while ten setup-only controls (the console language, the
+  // countdown warning, the demo content, the walk-through, the key table) sat in
+  // the first two. The rail ran in almost exactly the wrong order.
+  //
+  // So the order is FREQUENCY, and each section is named for the moment rather
+  // than the category:
+  //
+  //   1 Before the service — every Sunday, and the only section that is.
+  //   2 This room          — occasionally: a new hall, a new microphone.
+  //   3 Preachers          — occasionally: a new voice to calibrate for.
+  //   4 Scripture          — rarely.
+  //   5 This machine       — rarely, and mostly when something is wrong.
+  //   6 Updates            — rarely.
+  //   7 Privacy            — rarely, and read rather than changed.
+  //   8 Getting started    — once, in the first week.
+  //
+  // THREE SECTIONS WENT AND NONE OF THEM TOOK A CONTROL WITH IT:
+  //
+  //   · `screens` — every row was a copy of Outputs. The content-look pickers are
+  //     the same five selects as `Channels.svelte`'s editable matrix (one writer,
+  //     `setContentTemplate`, DECISIONS §25 · §70) and the screens list was a
+  //     read-only restatement of the `followers` that matrix computes beside them.
+  //     A second surface onto one store is how two surfaces come to disagree.
+  //   · `history` — History is not a setting. It is a record browser with a
+  //     destructive erase in it, and it is a route of its own now (App.svelte).
+  //     What it shared the section with — the walk-through, the demo content, the
+  //     service lock — moved to the section that matches when they are used.
+  //   · `general` — with safe mode promoted to Before the service and service
+  //     length moved to This room, it held one switch and a paragraph, which is
+  //     not a section.
+  //
+  // Two sections were deleted in the previous pass for the same reason and stay
+  // deleted: `dashboard` (the readiness surface is section ONE now, not a rail
+  // entry named for a shape) and `account` (three rows, all duplicates).
   //
   // The `desc` is role two of §11's three: the STANDFIRST, one sentence about
   // what the section is for. It is rendered once, by the frame, and no section
   // repeats it a size smaller at the top of its own panel.
   // ─────────────────────────────────────────────────────────────────────────
   const SECTIONS = [
-    { key: 'general',     label: 'General',                desc: 'How this copy of Relay behaves, and whether it is armed at all.', icon: 'gear' },
-    { key: 'screens',     label: 'Screens & looks',        desc: 'Which template each kind of content wears, and which screens follow it.', icon: 'monitor' },
-    { key: 'audio',       label: 'Audio',                  desc: 'Microphone, live level, video sound output, and the rooms you run in.', icon: 'mic' },
-    { key: 'ai',          label: 'AI & Detection',         desc: 'What the gate lets through, and the calibration it keeps per preacher.', icon: 'sparkle' },
-    { key: 'scripture',   label: 'Scripture & Languages',  desc: 'Recognition language, Bible translations, and what Relay really knows.', icon: 'book' },
-    { key: 'network',     label: 'Network & Integrations', desc: 'How screens, OBS and the speech model reach this machine.', icon: 'nodes' },
-    { key: 'history',     label: 'History & Backup',       desc: 'Past services, the setup walk-through, and what is held back during one.', icon: 'clock' },
-    { key: 'shortcuts',   label: 'Shortcuts',              desc: 'The keys the live desk is driven from.', icon: 'keyboard' },
-    { key: 'updates',     label: 'Updates',                desc: 'This build, the update channel, and what an update would do to your history.', icon: 'refresh' },
-    { key: 'diagnostics', label: 'Diagnostics',            desc: 'Is this machine going to work — and the facts a support request needs.', icon: 'terminal' },
-    { key: 'privacy',     label: 'Privacy & Advanced',     desc: 'What is on this machine, what can leave it, and the one thing that does.', icon: 'shield' },
+    { key: 'ready',     label: 'Before the service', desc: 'Is this machine going to work, and the two settings that decide how well it hears.', icon: 'ready' },
+    { key: 'room',      label: 'This room',          desc: 'The microphone, where video sound goes, how long the service runs, and the rooms you save.', icon: 'mic' },
+    { key: 'preachers', label: 'Preachers',          desc: 'What the gate lets through, and the calibration Relay keeps for each voice.', icon: 'sparkle' },
+    { key: 'scripture', label: 'Scripture',          desc: 'The translation Relay reads from, and what it honestly knows in each language.', icon: 'book' },
+    { key: 'machine',   label: 'This machine',       desc: 'Addresses, other software, the facts a support request needs, and what the pipeline is measuring.', icon: 'terminal' },
+    { key: 'updates',   label: 'Updates',            desc: 'This build, the update channel, and what an update would do to your history.', icon: 'refresh' },
+    { key: 'privacy',   label: 'Privacy',            desc: 'What is on this machine, what can leave it, and the one thing that does.', icon: 'shield' },
+    { key: 'start',     label: 'Getting started',    desc: 'The walk-through, sample content, the keys, and the two numbers a new install sets once.', icon: 'flag' },
   ];
-  let section = 'general';
+  let section = 'ready';
   // ── A CONTROL THAT POINTED HERE MAY SAY WHERE ─────────────────────────────
   //
-  // Eleven sections behind one tab, and every control that meant one of them
+  // Eight sections behind one tab, and every control that meant one of them
   // could only say "Settings". `Change sensitivity in Settings` named a control
-  // and landed on General; `All history` pointed at the Library, where History
-  // has not lived since it moved in here.
+  // and landed on whatever section happened to be first.
   //
   // One-shot, and cleared as soon as it is used: `session.settingsSection` is an
   // instruction from the control that was just pressed, not a resume point. An
@@ -116,18 +160,20 @@
   });
   $: activeSection = SECTIONS.find((s) => s.key === section) ?? SECTIONS[0];
 
+  // One per section, and no more: an icon table with entries nothing renders is
+  // the same dead weight as a class nothing wears. `gear`, `monitor`, `clock`,
+  // `keyboard` and `nodes` went with the sections that used them.
   const ICONS = {
-    gear: '<circle cx="12" cy="12" r="3.2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/>',
-    monitor: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
+    // A tick inside a circle — the readiness verdict, which is what section one is.
+    ready: '<circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.6 2.6L16 9.5"/>',
     mic: '<path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v1a7 7 0 0 1-14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/>',
-    book: '<path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v15H6.5A2.5 2.5 0 0 0 4 19.5z"/><path d="M4 19.5A2.5 2.5 0 0 0 6.5 22H20"/>',
     sparkle: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3Z"/>',
-    keyboard: '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h12"/>',
-    nodes: '<rect x="9" y="2" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="16" y="16" width="6" height="6" rx="1"/><path d="M12 8v4M5 16v-2h14v2"/>',
-    clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
-    shield: '<path d="M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6l7-3Z"/>',
-    refresh: '<path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>',
+    book: '<path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v15H6.5A2.5 2.5 0 0 0 4 19.5z"/><path d="M4 19.5A2.5 2.5 0 0 0 6.5 22H20"/>',
     terminal: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/>',
+    refresh: '<path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>',
+    shield: '<path d="M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6l7-3Z"/>',
+    // A flag on a pole — the first week, not a category.
+    flag: '<path d="M5 22V3"/><path d="M5 4h11l-2 3.5L16 11H5z"/>',
   };
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -268,53 +314,27 @@
     dsnBusy = false;
   }
 
-  // Per-content-type default templates (ProPresenter-style).
+  // ── SCREENS & LOOKS WAS A SECTION HERE AND IS NOT ANY MORE ────────────────
   //
-  // THE KINDS AND THE MAP BOTH COME FROM ELSEWHERE, and neither used to.
-  // `contentTypes` was a private four-entry list that predated the timer, so the
-  // Countdown look could be set in the Templates gallery and was invisible here;
-  // `ctMap` was a private object with the same four keys, refilled once on mount,
-  // over the top of a store whose own comment says three surfaces used to hold
-  // private copies of exactly this and silently disagreed. `CONTENT_KINDS`
-  // (lib/layers.js) is the canonical list the gallery and the editor render, and
-  // `$contentTemplates` is the one store `setContentTemplate` writes — so this
-  // surface now cannot drift from either.
-  const contentTypes = CONTENT_KINDS;
-  async function pickCt(kind, val) {
-    const id = val ? parseInt(val, 10) : null;
-    await setContentTemplate(kind, id);
-  }
-
-  // WHICH SCREENS ACTUALLY FOLLOW THE MAP ABOVE. A read-only row per screen, and
-  // the reason it is here is DECISIONS §70: a screen's OWN template wins over a
-  // content look (§29), so a screen that has one ignores every choice on this
-  // page. For most of this product's life every screen always had one, and the
-  // content-look map could be filled in, saved, and change nothing in the
-  // building — with no way to tell from this screen.
+  // It carried the five content-look selects and a read-only list of which screens
+  // follow them, plus `contentTypes`, `pickCt`, `screens`, `screensState`,
+  // `loadScreens` and `screenLook`. Every row of it was a second surface onto
+  // something the Outputs workspace already renders: `Channels.svelte` has the
+  // same five selects in an EDITABLE matrix beside the screens they affect, and it
+  // computes `followers` from the same `list_output_channels` this copy re-read on
+  // mount. The writer never lived here at all — `setContentTemplate` is the ONE
+  // writer (DECISIONS §25 · §70) and Outputs and the template editor both call it.
   //
-  // Nothing here is editable; the screens are configured in the Outputs tab. It
-  // is the answer to "will what I just set do anything?", which the map alone
-  // cannot give.
-  let screens = [];
-  let screensState = 'loading';
-  async function loadScreens() {
-    try {
-      screens = await listOutputChannels();
-      screensState = 'ok';
-    } catch {
-      screens = [];
-      screensState = 'failed';
-    }
-  }
-  onMount(loadScreens);
-  // Reactive on purpose: the names come from `$templates`, which loads after this
-  // list does. A plain function would resolve once and keep printing
-  // "template #3" for the rest of the session.
-  /** The look a screen is wearing: its own template, or the content look. */
-  $: screenLook = (ch) =>
-    ch.template_id == null
-      ? 'follows the content look'
-      : ($templates.find((t) => t.id === ch.template_id)?.name ?? `template #${ch.template_id}`);
+  // Two surfaces onto one store is how two surfaces come to disagree, and this one
+  // was the weaker of the two by construction: the map and the screens it reaches
+  // were in different places on this page, which is exactly the question the
+  // matrix answers by putting them in one grid. Deleting the section costs nothing
+  // an operator could do here and removes a copy that could only ever go stale.
+  //
+  // The imports went with it — `CONTENT_KINDS`, `contentTemplates`,
+  // `setContentTemplate`, `loadContentTemplates`, `templates`, `loadTemplates` —
+  // because a store subscribed to by a surface that no longer renders it is a read
+  // nobody can see the result of.
 
   // ── THE SENSITIVITY DIAL, AND THE SAME ONE THE DOCK HAS ───────────────────
   //
@@ -415,7 +435,18 @@
   let roomName = '';
   let roomMsg = '';
   let roomBusy = false;
-  onMount(loadRooms);
+  // `asked` is the third fact an array cannot carry: a store that starts `[]` reads
+  // the same before the answer as after an empty one, and `loadRooms` swallows to
+  // `[]` on failure. `ListState` treats a null `items` as pending, but this is a
+  // STORE and is never null, so the flag is what tells it which of the three.
+  let roomsAsked = false;
+  onMount(async () => {
+    try {
+      await loadRooms();
+    } finally {
+      roomsAsked = true;
+    }
+  });
 
   // The diagnostic bundle. Says where the file went, because "saved" with no path
   // sends an operator hunting through a Downloads folder.
@@ -539,15 +570,16 @@
   // ─────────────────────────────────────────────────────────────────────────
   // DEMO CONTENT — a sample service to press, and one action that takes it back.
   //
-  // It lives on History & Backup because this is the section that already owns the
-  // DATABASE as a thing an operator manages: it is where past services are read and
-  // erased, where the pre-update snapshot of "your entire history" is explained, and
-  // where the service lock that guards every deletion is lifted. Loading and
-  // removing a sample dataset is a bulk write and a bulk delete on that same store.
-  // It also sits directly under the setup walk-through, which is the other control
-  // on this page aimed at somebody who has just installed Relay and wants to see it
-  // work — and the two answer the same question from different ends: the walk-through
-  // proves the MACHINE works, the demo set gives them something to run on it.
+  // It lives on Getting started, directly under the setup walk-through, because the
+  // two answer one question from opposite ends: the walk-through proves the MACHINE
+  // works, and the demo set gives somebody something to run on it. Both are aimed at
+  // an operator in their first week and neither is ever pressed again, which is what
+  // makes that their section.
+  //
+  // It used to sit on History & Backup, on the argument that that section owned the
+  // DATABASE as a thing an operator manages. That reading was defensible and it was
+  // the wrong axis: a section is a moment, not a table. History is its own route
+  // now, and "load me a sample Sunday" is not something anyone does twice.
   //
   // It is deliberately NOT in the Library or the Planner. Those are where a church's
   // own content lives, and a "load sample content" button among their songs is a
@@ -569,7 +601,7 @@
   }
   // Polled when the section opens, not on mount: the panel is only ever read here,
   // and a fresh install has nothing for it to say.
-  $: if (section === 'history') refreshDemo();
+  $: if (section === 'start') refreshDemo();
 
   async function doLoadDemo() {
     demoBusy = true;
@@ -702,8 +734,13 @@
   let editing = null; // a working copy; null = nothing open
   let newName = '';
 
+  let profilesAsked = false;
   async function refreshProfiles() {
-    profiles = await listVoiceProfiles();
+    try {
+      profiles = await listVoiceProfiles();
+    } finally {
+      profilesAsked = true;
+    }
   }
   onMount(refreshProfiles);
 
@@ -857,7 +894,7 @@
     lat = await latencyReport(0);
   }
   // Start and stop with the section, not with the component.
-  $: if (section === 'diagnostics') startLatencyPoll();
+  $: if (section === 'machine') startLatencyPoll();
   else stopLatencyPoll();
   function startLatencyPoll() {
     if (latTimer) return;
@@ -959,10 +996,6 @@
       await loadTranslations();
       activeTranslation = await getActiveTranslation();
       acceptCrash(await getCrashReporting());
-      await loadTemplates();
-      // Into the STORE, not a private copy. `loadContentTemplates` is the one
-      // reader that fills it, and every other surface subscribes.
-      await loadContentTemplates();
     } catch (e) {
       crashMsg = humanError(e);
     } finally {
@@ -1096,66 +1129,80 @@
     <main class="rw-pane s-read">
       <div class="rw-panebody s-panel">
 
-      {#if section === 'general'}
-        <div class="rw-nv">
-          <div class="s-nvtext">
-            <div class="rw-nvk">Application language</div>
-            <p class="rw-nvnote">The language the operator console is written in. Missing words stay in English.</p>
-          </div>
-          <select class="r-select rw-nvctl s-sel" value={$locale} on:change={(e) => setLocale(e.target.value)} aria-label="Application language">
-            {#each LOCALES as l}
-              {@const pct = coverage(l.code)}
-              <option value={l.code}>{l.label}{pct === 100 ? '' : ` · ${pct}%`}</option>
-            {/each}
+      {#if section === 'ready'}
+        <!-- SECTION ONE, AND THE ONLY ONE ANYBODY OPENS EVERY SUNDAY.
+             `Dashboard.svelte` is the boot ladder's own probes re-run on demand —
+             the same `freshChecks()` through the same `makeProbes()`, never a second
+             health panel — and it sat at the BOTTOM of the tenth of eleven sections.
+             It is the section now, not a card inside one: the verdict, the twenty-odd
+             checks, and the path check that asks the question the checks cannot (do
+             the parts work TOGETHER?).
+
+             The two settings under it are here because this is the only moment they
+             can still be changed. `select_stt_model` is guarded by the service lock,
+             so once the microphone opens the choice is made; and RG-116 measured what
+             the choice is worth — three of three auto-fires correct on `turbo` against
+             five of nine on `base`, in one morning, after the model was changed
+             mid-service. The readiness hero has NAMED both since RG-116 and the
+             controls to change them were five sections away, in Network and in
+             Scripture. Naming a fact beside no way to act on it is half a screen. -->
+        <div class="s-dash"><Dashboard /></div>
+
+        <div class="rw-group">Speech model</div>
+        <div class="s-prose">
+          {#if $capture.stt.loaded}
+            <div class="s-status ok s-model"><span class="s-sdot"></span>loaded</div>
+            <div class="s-modelpath">{$capture.stt.model}</div>
+          {/if}
+          <!-- ALWAYS rendered, not only when nothing is loaded. This used to be the
+               `{:else}` branch, which was right when there was one model and wrong the
+               moment there were several: the operator could install a more accurate
+               model and then had no way to see which one was running, let alone choose.
+               ModelSetup shows the picker once something is installed and the
+               download prompt when nothing is. -->
+          <ModelSetup />
+        </div>
+        <div class="rw-group">Recognition language</div>
+        <div class="s-prose">
+          <!-- NOT disabled when no model is loaded. The language is a stored
+               preference now, not a setting on a live engine: a church that has
+               just installed Relay has no model yet, and pinning the language
+               before the first service is exactly what RG-116 asks a pilot to do.
+               `stt_status` reports the stored value while there is no engine, so
+               the select cannot read "Auto-detect" over a profile that says
+               English. -->
+          <select class="r-select" value={$capture.stt.language ?? ''} on:change={(e) => pickLanguage(e.target.value || null)} disabled={langBusy} aria-label="Recognition language">
+            <option value="">Auto-detect (code-switching)</option>
+            <option value="en">English</option>
+            <option value="yo">Yoruba</option>
+            <option value="sw">Swahili</option>
+            <option value="ha">Hausa</option>
           </select>
+          {#if langErr}
+            <p class="s-alert" role="alert">{langErr}</p>
+          {/if}
+          <p class="rw-foot">Auto-detect handles English mixed with a local language mid-sentence — the normal case. Tier-1: Yoruba · Swahili · Hausa.</p>
+          <!-- WHOSE SETTING THIS IS. One fact, one store: this writes to the
+               ACTIVE voice profile, the same field the profile editor on AI &
+               Detection edits. Saying so is the difference between a setting that
+               persists and a setting that silently rewrites a profile the operator
+               is not looking at. -->
+          <p class="rw-foot">
+            Saved to the active voice profile{activeProfile ? ` — “${activeProfile.name}”` : ''}, and
+            applied before the first word of the next service. The same setting is on
+            <b>Preachers → Voice profiles</b>; one preacher, one language.
+            {#if !$capture.stt.loaded}
+              No speech model is loaded yet, so nothing is listening — the choice is stored
+              now and applied the moment one is.
+            {/if}
+          </p>
         </div>
 
-        <!-- Service length — drives the REMAINING timer on a stage/confidence
-             monitor. 0 = no target (the remaining line stays blank). Read by the
-             backend when the next service starts. -->
-        <div class="rw-nv">
-          <div class="s-nvtext">
-            <div class="rw-nvk">Service length</div>
-            <p class="rw-nvnote">Planned length in minutes. Shows a “time remaining” timer on stage and confidence monitors. 0 = no target. Applies to the next service you start.</p>
-          </div>
-          <div class="rw-nvctl s-lenctl">
-            <input class="r-input s-leninput" type="number" min="0" max="600" step="5"
-              value={$serviceTargetMinutes}
-              on:change={(e) => setServiceTarget(e.target.value)}
-              aria-label="Service length in minutes" />
-            <span class="s-lenunit r-mono">min</span>
-          </div>
-        </div>
-
-        <!-- COUNTDOWN WARNING. How long before zero a countdown turns red, on
-             the wall, on the preacher's page and in the dock. One rule
-             (`layers.js::countdownWarning`), one number, and this is where it is
-             set — the comment above that rule used to say the threshold was
-             deliberately not a setting because the control belonged in a Settings
-             pass. This is it.
-
-             SECONDS in the field, milliseconds in the row: an operator says
-             "ninety seconds", nobody says "ninety thousand". The floor is five
-             seconds, because a window shorter than the eye takes to find the
-             screen is a colour that is never seen.
-
-             It is READ. `App.svelte` loads it at launch and `setCountdownWarnMs`
-             applies it to the rule, so this is not another of the seven controls
-             removed on 2026-09-10 for saving a preference nothing opened. -->
-        <div class="rw-nv">
-          <div class="s-nvtext">
-            <div class="rw-nvk">Countdown warning</div>
-            <p class="rw-nvnote">How long before zero a countdown turns red, on every screen showing it. A countdown shorter than ten times this warns for its last tenth instead, so a short one is not red for half its life.</p>
-          </div>
-          <div class="rw-nvctl s-lenctl">
-            <input class="r-input s-leninput" type="number" min="5" max="600" step="5"
-              value={Math.round($countdownWarnMs / 1000)}
-              on:change={(e) => setCountdownWarnMs(Number(e.target.value) * 1000)}
-              aria-label="Countdown warning in seconds" />
-            <span class="s-lenunit r-mono">sec</span>
-          </div>
-        </div>
-
+        <!-- SAFE MODE. Promoted from General, which was the section it was least
+             likely to be found in: safe mode is not a preference, it is whether this
+             copy of Relay is ARMED at all, and it is the last thing an operator sets
+             before a service or the first thing they set when something is wrong.
+             `degraded.js` names this section in the sentence it prints. -->
         <!-- SAFE MODE. Moved here from Backup & Recovery, which is where it was
              least likely to be looked for: safe mode is not a backup and not a
              recovery, it is whether this copy of Relay is ARMED — the one switch
@@ -1198,7 +1245,6 @@
              so, and it is the same contract as a panic control (rule 15,
              DECISIONS §20 · §86). -->
         {#if $safeModeError}<p class="rw-foot s-netbad" role="alert">{$safeModeError}</p>{/if}
-
         <!-- SCREENS AT LAUNCH. A statement of what Relay already does, in the
              place an operator asks the question — NOT a switch.
              `App.svelte` calls `autoOpenOutputs()` on mount unless safe mode is
@@ -1216,69 +1262,46 @@
           <span class="rw-nvv" class:s-armed={$safeMode}>{$safeMode ? 'held back by safe mode' : 'reopened automatically'}</span>
         </div>
 
-        <div class="s-prose">
-          <!-- The absence is stated, and the list of names is not: an operator
-               needs to know that a switch they remember never did anything, not to
-               read a changelog on the page they came here to use. The eleven names
-               and the reason each one went live in DECISIONS §69 and in the
-               comments beside the code that used to render them. -->
-          <p class="rw-foot">
-            <b>Eleven preference controls used to be on this page and are not any
-            more</b>, each because it saved a setting nothing in Relay ever read.
-            One of them was on by default and promised a confirmation step between
-            you and the congregation's screen — there has never been one. The last
-            two, <i>Auto Start on Login</i> and <i>Minimize to System Tray</i>, were
-            greyed out with a “Soon” tag beside them, which is a promise as well.
-            Nothing was lost, because nothing they did ever happened.
-          </p>
-        </div>
+        <!-- SERVICE LOCK. It was on History & Backup, which no longer exists — and
+             it was never a backup. It belongs with the model and the language,
+             because it is the thing that decides whether either can still be changed:
+             the guard in `servicelock.rs` covers `select_stt_model`, `download_model`
+             and `install_model_file`, all of them on this same section, eight rows up.
 
-      {:else if section === 'screens'}
-        <div class="rw-group">Content looks</div>
-        {#each contentTypes as ct}
-          <div class="rw-nv">
-            <span class="rw-nvk">{ct.label}</span>
-            <select class="r-select rw-nvctl s-sel" value={$contentTemplates[ct.key] ?? ''} on:change={(e) => pickCt(ct.key, e.target.value)} aria-label="{ct.label} content look">
-              <option value="">Channel default</option>
-              {#each $templates as tpl}<option value={tpl.id}>{tpl.name}</option>{/each}
-            </select>
+             THE STATE IS A ROW OF ITS OWN, the way safe mode's is. The block below
+             only ever spoke when the lock was engaged, and a page that says nothing
+             in the ordinary case is a page that cannot be checked: "held" and
+             "lifted" are both real answers and an operator glancing at this section
+             before a service needs to be able to read the second one (rule 35). -->
+        <div class="rw-group">Service lock</div>
+        <div class="rw-nv">
+          <div class="s-nvtext">
+            <div class="rw-nvk">Service lock</div>
+            <p class="rw-nvnote">Deletions, speech-model changes and imports are held back while a service is being recorded. Nothing on the live path ever is.</p>
           </div>
-        {/each}
-
-        <!-- WILL ANY OF THAT DO ANYTHING? Read-only, and the reason it is here is
-             DECISIONS §70: a screen's OWN template wins over a content look (§29),
-             so this map only reaches screens that have no template of their own.
-             For most of this product's life every screen always had one and the
-             map could be filled in, saved, and change nothing in the building —
-             with nothing on this page able to say so. -->
-        <div class="rw-group">Screens</div>
-        {#if screensState === 'loading'}
-          <div class="rw-nv"><span class="rw-nvk">Screens</span><span class="rw-nvv">{settingValue(null, { loading: true })}</span></div>
-        {:else if screensState === 'failed'}
-          <div class="rw-nv"><span class="rw-nvk">Screens</span><span class="rw-nvv">{settingValue(null, { missing: 'could not be read' })}</span></div>
-        {:else}
-          {#each screens as ch (ch.id)}
-            <div class="rw-nv">
-              <span class="rw-nvk">{ch.name}</span>
-              <span class="rw-nvv">{screenLook(ch)}</span>
-            </div>
-          {:else}
-            <div class="rw-nv"><span class="rw-nvk">Screens</span><span class="rw-nvv">{settingValue(null, { missing: 'none configured yet' })}</span></div>
-          {/each}
-        {/if}
-
+          <span class="rw-nvv" class:s-armed={$serviceLock.engaged}>{$serviceLock.engaged ? 'held' : 'lifted'}</span>
+        </div>
         <div class="s-prose">
-          <p class="rw-foot">
-            A screen's own template <b>wins</b> over a content look (DECISIONS §29),
-            so the settings above reach only the screens that say <i>follows the
-            content look</i>. “Channel default” leaves the look to each output's own
-            template. Screens are added, given a look and given their copy-links and
-            QR codes in the <b>Outputs</b> tab — nothing on this page changes a
-            screen.
-          </p>
+          {#if $serviceLock.engaged}
+            <p class="rw-foot" style="margin-top:0; padding-top:0; border-top:0;">
+              <b class="s-netwarn">A service is being recorded.</b>
+              Relay is holding back a few things that cannot be undone, or that would take
+              the speech engine away mid-sermon: {$serviceLock.held_back.join(', ')}.
+              Firing, the transport, clearing and blacking out are unaffected.
+            </p>
+            <Button variant="ghost" size="sm" on:click={unlockService}>Unlock for this service</Button>
+            {#if lockErr}<p class="s-alert" role="alert">{lockErr}</p>{/if}
+          {:else}
+            <p class="rw-foot" style="margin-top:0; padding-top:0; border-top:0;">
+              While a service is being recorded, Relay holds back deletions, speech-model
+              changes and imports — an accident at 10:31 has no undo. It arms itself when you
+              start listening and lifts when the service ends. Nothing on the live path is
+              ever held back.
+            </p>
+          {/if}
         </div>
 
-      {:else if section === 'audio'}
+      {:else if section === 'room'}
         <div class="rw-group">Microphone</div>
         <div class="s-prose">
           <div class="s-inline">
@@ -1322,7 +1345,6 @@
             <p class="s-alert" role="alert">{micErr}</p>
           {/if}
         </div>
-
         <!-- AUDIO OUTPUT (speakers for video sound). Same section as the mic on
              purpose: input and output are one operator question. -->
         <div class="rw-group">Audio output</div>
@@ -1353,9 +1375,9 @@
             </p>
           {:else if outLocked}
             <div class="s-listen">
-              <button class="r-btn" on:click={detectSpeakers} disabled={outBusy}>
+              <Button on:click={detectSpeakers} disabled={outBusy} disabledReason={whyDisabled([outBusy, BUSY])}>
                 {outBusy ? 'Detecting…' : 'Detect speakers'}
-              </button>
+              </Button>
               <span class="s-rms">names need mic permission once</span>
             </div>
             <p class="rw-foot">
@@ -1379,6 +1401,28 @@
           {/if}
         </div>
 
+        <!-- SERVICE LENGTH, from General. It is a fact about the room and the
+             morning, not about this copy of Relay: it drives the "time remaining"
+             line on a stage or confidence monitor, and it is one of the five things
+             a saved room puts back. Its group is named for what it is about rather
+             than repeating the row's own name one size larger. -->
+        <div class="rw-group">This service</div>
+        <!-- Service length — drives the REMAINING timer on a stage/confidence
+             monitor. 0 = no target (the remaining line stays blank). Read by the
+             backend when the next service starts. -->
+        <div class="rw-nv">
+          <div class="s-nvtext">
+            <div class="rw-nvk">Service length</div>
+            <p class="rw-nvnote">Planned length in minutes. Shows a “time remaining” timer on stage and confidence monitors. 0 = no target. Applies to the next service you start.</p>
+          </div>
+          <div class="rw-nvctl s-lenctl">
+            <input class="r-input s-leninput" type="number" min="0" max="600" step="5"
+              value={$serviceTargetMinutes}
+              on:change={(e) => setServiceTarget(e.target.value)}
+              aria-label="Service length in minutes" />
+            <span class="s-lenunit r-mono">min</span>
+          </div>
+        </div>
         <div class="rw-group">Rooms</div>
         <div class="s-prose">
           <p class="rw-foot" style="margin-top:0; padding-top:0; border-top:0;">
@@ -1391,31 +1435,41 @@
           </p>
           <div class="s-addrow">
             <input class="r-input" placeholder="Main hall" bind:value={roomName} aria-label="Room name" />
-            <button class="r-btn ghost sm" on:click={doSaveRoom} disabled={roomBusy}>Save this room</button>
+            <Button variant="ghost" size="sm" on:click={doSaveRoom} disabled={roomBusy}
+              disabledReason={whyDisabled([roomBusy, BUSY])}>Save this room</Button>
           </div>
           {#if roomMsg}<p class="rw-foot" role="status">{roomMsg}</p>{/if}
         </div>
-        {#each $rooms as r (r.id)}
-          <div class="rw-nv">
-            <div class="s-nvtext">
-              <div class="rw-nvk">{r.name}</div>
-              {#if r.notes}<p class="rw-nvnote">{r.notes}</p>{/if}
+        <!-- `none yet` and `could not be read` are DIFFERENT facts (rule 35), and
+             so is `still asking` — the third one this row could not say at all,
+             because it was an `{:else}` on an `{#each}` and an `{#each}` has two
+             branches. `ListState` has the three, with error outranking loading and
+             loading outranking empty, decided once rather than three times on this
+             page in three different wordings. -->
+        <ListState
+          loading={!roomsAsked}
+          error={$readErrors.rooms}
+          items={$rooms}
+          what="saved rooms"
+          onRetry={loadRooms}
+          empty="No rooms saved yet. Name this space above and press Save this room, and one press puts it all back next time.">
+          {#each $rooms as r (r.id)}
+            <div class="rw-nv">
+              <div class="s-nvtext">
+                <div class="rw-nvk">{r.name}</div>
+                {#if r.notes}<p class="rw-nvnote">{r.notes}</p>{/if}
+              </div>
+              <div class="rw-nvctl s-nvpair">
+                <Button variant="ghost" size="sm" on:click={() => doUseRoom(r)} disabled={roomBusy}
+                  disabledReason={whyDisabled([roomBusy, BUSY])}>Use</Button>
+                <Button variant="ghost" size="sm" on:click={() => doDeleteRoom(r)} disabled={roomBusy}
+                  disabledReason={whyDisabled([roomBusy, BUSY])}>Remove</Button>
+              </div>
             </div>
-            <div class="rw-nvctl s-nvpair">
-              <button class="r-btn ghost sm" on:click={() => doUseRoom(r)} disabled={roomBusy}>Use</button>
-              <button class="r-btn ghost sm" on:click={() => doDeleteRoom(r)} disabled={roomBusy}>Remove</button>
-            </div>
-          </div>
-        {:else}
-          <!-- `none yet` and `could not be read` are DIFFERENT facts (rule 35). This
-               row printed the first over both, so a failed `list_environments` read
-               exactly like a church that had never saved a room. `readErrors` already
-               carries the distinction; nothing else was needed. -->
-          <div class="rw-nv"><span class="rw-nvk">Saved rooms</span><span class="rw-nvv"
-            >{$readErrors.rooms ? 'could not be read' : settingValue(null, { missing: 'none yet' })}</span></div>
-        {/each}
+          {/each}
+        </ListState>
 
-      {:else if section === 'ai'}
+      {:else if section === 'preachers'}
         <div class="rw-group">Detection sensitivity</div>
         <!-- A GATE THAT DID NOT MOVE SAYS SO. Until this existed, a rejected write
              left the thumb where it was dragged and printed nothing anywhere in
@@ -1468,8 +1522,9 @@
           <p class="rw-foot">Only a direct, high-confidence quotation can ever auto-fire. A paraphrase is always a suggestion — a cosine is not a probability.</p>
         </div>
 
-        <!-- VOICE PROFILES. Merged into this section rather than carrying their own:
-             a profile IS a calibration of the gate above it, and splitting the dial
+        <!-- VOICE PROFILES, and the gate above them, are ONE section — which is
+             why the section is named for the preacher rather than for the
+             machinery. A profile IS a calibration of that gate: splitting the dial
              from the thing it calibrates across two rail entries is how an operator
              comes to believe they are unrelated. -->
         <div class="rw-group">Voice profiles</div>
@@ -1485,7 +1540,18 @@
           {/if}
         </div>
 
-        {#each profiles as p (p.id)}
+        <!-- Three facts, decided once. This was an `{#each}`'s `{:else}`, which has
+             room for two: a failed `list_voice_profiles` and a church that has never
+             added a preacher shared one row, separated only by a ternary on
+             `readErrors`, and "still asking" could not be said at all. -->
+        <ListState
+          loading={!profilesAsked}
+          error={$readErrors.listVoiceProfiles}
+          items={profiles}
+          what="voice profiles"
+          onRetry={refreshProfiles}
+          empty="No voice profiles yet. Add a preacher’s name below — the first one you add becomes the active calibration.">
+          {#each profiles as p (p.id)}
           <div class="rw-nv">
             <div class="s-nvtext">
               <div class="rw-nvk">
@@ -1500,18 +1566,22 @@
             </div>
             <div class="rw-nvctl s-nvpair">
               {#if !p.is_active}
-                <button class="r-btn ghost sm" disabled={profileBusy} on:click={() => useProfile(p.id)}>Use</button>
+                <Button variant="ghost" size="sm" disabled={profileBusy}
+                  disabledReason={whyDisabled([profileBusy, BUSY])}
+                  on:click={() => useProfile(p.id)}>Use</Button>
               {/if}
-              <button class="r-btn ghost sm" disabled={profileBusy} on:click={() => openEditor(p)}>Edit</button>
+              <Button variant="ghost" size="sm" disabled={profileBusy}
+                disabledReason={whyDisabled([profileBusy, BUSY])}
+                on:click={() => openEditor(p)}>Edit</Button>
               <!-- Deleting the profile in use would leave the gate calibrated by
                    nothing, so the backend refuses it and says why. -->
-              <button class="r-btn ghost sm" disabled={profileBusy} on:click={() => removeProfile(p.id)}>Delete</button>
+              <Button variant="ghost" size="sm" disabled={profileBusy}
+                disabledReason={whyDisabled([profileBusy, BUSY])}
+                on:click={() => removeProfile(p.id)}>Delete</Button>
             </div>
           </div>
-        {:else}
-          <div class="rw-nv"><span class="rw-nvk">Profiles</span><span class="rw-nvv"
-            >{$readErrors.listVoiceProfiles ? 'could not be read' : settingValue(null, { missing: 'none yet' })}</span></div>
-        {/each}
+          {/each}
+        </ListState>
 
         <div class="s-prose">
           <div class="s-addrow">
@@ -1521,11 +1591,22 @@
               aria-label="New voice profile name"
               bind:value={newName}
               on:keydown={(e) => e.key === 'Enter' && addProfile()} />
-            <button class="r-btn" disabled={profileBusy || !newName.trim()} on:click={addProfile}>Add</button>
+            <!-- The empty-name reason is written at the CALL SITE, the same shape as
+                 the crash DSN's "Nothing has changed since the last save." The
+                 sentences in `whydisabled.js` are the shared GATES — the engine, safe
+                 mode, the service lock, a busy press — and a rule about this one
+                 field is not one of those. -->
+            <Button disabled={profileBusy || !newName.trim()}
+              disabledReason={whyDisabled(
+                [profileBusy, BUSY],
+                [!newName.trim(), 'Type the preacher’s name in the box first.'],
+              )}
+              on:click={addProfile}>Add</Button>
           </div>
-          {#if !profiles.length}
-            <p class="rw-foot">The first profile you add becomes the active calibration.</p>
-          {/if}
+          <!-- The sentence that used to be here — "The first profile you add becomes
+               the active calibration." — is the `ListState` empty message above, which
+               is where an operator is already looking when there is nothing in the
+               list. Two places saying it is two places to keep in step. -->
         </div>
 
         {#if editing}
@@ -1543,7 +1624,7 @@
               <option value="ha">Hausa</option>
             </select>
             <p class="rw-foot">
-              The same setting as <b>Scripture &amp; Languages → Recognition language</b>, which
+              The same setting as <b>Before the service → Recognition language</b>, which
               writes to whichever profile is active. There is one store for it, not two.
             </p>
 
@@ -1581,52 +1662,42 @@
             </p>
 
             <div class="s-addrow">
-              <button class="r-btn primary" disabled={profileBusy} on:click={saveProfile}>Save profile</button>
-              <button class="r-btn ghost" disabled={profileBusy} on:click={() => (editing = null)}>Cancel</button>
+              <Button variant="primary" disabled={profileBusy}
+                disabledReason={whyDisabled([profileBusy, BUSY])}
+                on:click={saveProfile}>Save profile</Button>
+              <Button variant="ghost" disabled={profileBusy}
+                disabledReason={whyDisabled([profileBusy, BUSY])}
+                on:click={() => (editing = null)}>Cancel</Button>
             </div>
           </div>
         {/if}
 
-      {:else if section === 'scripture'}
-        <div class="rw-group">Recognition language</div>
-        <div class="s-prose">
-          <!-- NOT disabled when no model is loaded. The language is a stored
-               preference now, not a setting on a live engine: a church that has
-               just installed Relay has no model yet, and pinning the language
-               before the first service is exactly what RG-116 asks a pilot to do.
-               `stt_status` reports the stored value while there is no engine, so
-               the select cannot read "Auto-detect" over a profile that says
-               English. -->
-          <select class="r-select" value={$capture.stt.language ?? ''} on:change={(e) => pickLanguage(e.target.value || null)} disabled={langBusy} aria-label="Recognition language">
-            <option value="">Auto-detect (code-switching)</option>
-            <option value="en">English</option>
-            <option value="yo">Yoruba</option>
-            <option value="sw">Swahili</option>
-            <option value="ha">Hausa</option>
-          </select>
-          {#if langErr}
-            <p class="s-alert" role="alert">{langErr}</p>
-          {/if}
-          <p class="rw-foot">Auto-detect handles English mixed with a local language mid-sentence — the normal case. Tier-1: Yoruba · Swahili · Hausa.</p>
-          <!-- WHOSE SETTING THIS IS. One fact, one store: this writes to the
-               ACTIVE voice profile, the same field the profile editor on AI &
-               Detection edits. Saying so is the difference between a setting that
-               persists and a setting that silently rewrites a profile the operator
-               is not looking at. -->
-          <p class="rw-foot">
-            Saved to the active voice profile{activeProfile ? ` — “${activeProfile.name}”` : ''}, and
-            applied before the first word of the next service. The same setting is on
-            <b>AI &amp; Detection → Voice profiles</b>; one preacher, one language.
-            {#if !$capture.stt.loaded}
-              No speech model is loaded yet, so nothing is listening — the choice is stored
-              now and applied the moment one is.
-            {/if}
-          </p>
-        </div>
+      
 
+      {:else if section === 'scripture'}
         <div class="rw-group">Bible translations</div>
+        <!-- THE BRANCHES WERE IN THE WRONG ORDER, and that is the bug `ListState`
+             exists to make unrepeatable. This chain asked `!dataLoaded` BEFORE
+             `$readErrors.listTranslations`, and `dataLoaded` is set in a `finally`
+             that runs whether the read worked or not — so for the frames in
+             between, and on any path where it had not landed, a read that FAILED
+             announced itself as still loading. Error outranks loading and loading
+             outranks empty; the precedence now lives in one place instead of being
+             re-typed per list, which is how two of the three on this page came to
+             order it differently.
+
+             The KJV is BUNDLED (`src-tauri/data/kjv.json`, `include_str!`), so "no
+             translations" cannot be true of a Relay that is working — which is why
+             the empty sentence says what it actually means rather than sending an
+             operator off to find a Bible to import. -->
         <div class="s-checklist">
-          {#if translations.length}
+          <ListState
+            loading={!dataLoaded}
+            error={$readErrors.listTranslations}
+            items={translations}
+            what="translations"
+            onRetry={loadTranslations}
+            empty="No translations in the corpus. The KJV ships inside Relay, so this means the verse table could not be read — Save a diagnostic file on This machine, and reinstalling restores it.">
             {#each translations as tr}
               <button class="s-tr" class:on={tr.id === activeTranslation} aria-pressed={tr.id === activeTranslation} on:click={() => pickTranslation(tr.id)}>
                 <span class="s-tr-dot" class:on={tr.id === activeTranslation}></span>
@@ -1635,28 +1706,22 @@
                 {#if tr.id === activeTranslation}<span class="s-tr-active r-mono">active</span>{/if}
               </button>
             {/each}
-          {:else if !dataLoaded}
-            <div class="r-empty" style="font-size:var(--v-fs-b1);">Loading translations…</div>
-          {:else if $readErrors.listTranslations}
-            <!-- The KJV is BUNDLED (`src-tauri/data/kjv.json`, `include_str!`), so
-                 "No translations loaded" cannot be true of a Relay that is working.
-                 It was, however, exactly what this row said when `list_translations`
-                 failed — the read swallows to `[]` and nothing here asked why. An
-                 operator reading that goes looking for a Bible to import; the actual
-                 answer is on the other branch. -->
-            <ErrorState error={$readErrors.listTranslations} onRetry={loadTranslations} />
-          {:else}
-            <div class="r-empty" style="font-size:var(--v-fs-b1);">No translations loaded.</div>
-          {/if}
+          </ListState>
         </div>
         <div class="s-prose">
           <p class="rw-foot">Only public-domain <b>KJV</b> is bundled. Additional versions need their verse data added to the corpus.</p>
         </div>
+        <!-- LANGUAGE COVERAGE. It had its own rail entry once and now shares a
+             section with the translation list, which is the other answer to "what
+             does Relay actually know?".
 
-        <!-- LANGUAGES. Merged into this section from its own rail entry: the
-             recognition language above is chosen FROM this table, and the honest
-             answer to "should I pick Yoruba?" is two rows down from the picker
-             rather than two clicks away. -->
+             THE PICKER IT USED TO SIT UNDER HAS MOVED, and that is deliberate
+             rather than an oversight. `Recognition language` is on Before the
+             service, beside the model, because the two together are what RG-116
+             measured; this table is the evidence behind that choice and is read
+             once, not every Sunday. The picker's own footnote says what the
+             honest answer is — Tier-1, and nothing measured — so the pairing
+             survives where it matters. -->
         <div class="rw-group">Language coverage</div>
         <div class="s-prose">
           <p class="rw-foot" style="margin-top:0; padding-top:0; border-top:0;">
@@ -1664,7 +1729,22 @@
             improving a number means improving the table the detector uses, which is
             a one-line change anyone who speaks the language can make.
           </p>
-          {#if langs.length}
+          <!-- THE FIFTH HAND-ROLLED LIST STATE, and it had the same wrong order as
+               the translation list: `!langsAsked` before `$readErrors.languageReport`,
+               so a failed `language_report` read as still loading. It also ended in a
+               fourth branch — "The language tables could not be read." — which is the
+               ERROR sentence standing in for the empty one, said without the reason
+               the store had kept and without a way to ask again.
+
+               An empty answer here is not a real state of a working Relay: the alias
+               table is compiled in. So the empty message says that, rather than
+               describing a failure it cannot diagnose. -->
+          <ListState
+            loading={!langsAsked}
+            error={$readErrors.languageReport}
+            items={langs}
+            what="the language tables"
+            empty="No language tables. They ship inside Relay, so this means the alias table could not be read — Save a diagnostic file on This machine.">
             <table class="s-lang">
               <thead>
                 <tr><th>Language</th><th>Books</th><th>Ways to say them</th><th>Numbers in-language</th><th>Console text</th><th>Checked by a speaker</th><th>Accuracy</th></tr>
@@ -1711,16 +1791,12 @@
               scripture on a wall. Fixing one is a one-line change to
               <span class="r-mono">data/book_aliases.json</span>, no code required.
             </p>
-          {:else if !langsAsked}
-            <Loading what="the language tables" />
-          {:else if $readErrors.languageReport}
-            <ErrorState error={$readErrors.languageReport} />
-          {:else}
-            <p class="rw-foot">The language tables could not be read.</p>
-          {/if}
+          </ListState>
         </div>
 
-      {:else if section === 'network'}
+      
+
+      {:else if section === 'machine'}
         <div class="rw-group">This machine</div>
         <div class="rw-nv"><span class="rw-nvk">Found on this computer</span><span class="rw-nvv">{settingValue(lanIp, {
             loading: lanState === 'loading',
@@ -1728,25 +1804,12 @@
           })}</span></div>
         <div class="rw-nv"><span class="rw-nvk">Output / stage pages</span><span class="rw-nvv">:8032 · http</span></div>
         <div class="rw-nv"><span class="rw-nvk">Live update channel</span><span class="rw-nvv">:8031 · websocket</span></div>
-
-        <div class="rw-group">Offline speech model</div>
-        <div class="s-prose">
-          {#if $capture.stt.loaded}
-            <div class="s-status ok s-model"><span class="s-sdot"></span>loaded</div>
-            <div class="s-modelpath">{$capture.stt.model}</div>
-          {/if}
-          <!-- ALWAYS rendered, not only when nothing is loaded. This used to be the
-               `{:else}` branch, which was right when there was one model and wrong the
-               moment there were several: the operator could install a more accurate
-               model and then had no way to see which one was running, let alone choose.
-               ModelSetup shows the picker once something is installed and the
-               download prompt when nothing is. -->
-          <ModelSetup />
-        </div>
-
-        <!-- INTEGRATIONS. Merged in from their own rail entry: every row on it was
-             an address on this machine's network, which is what the three rows at
-             the top of this section already are. -->
+        <!-- INTEGRATIONS. Every row on it is an address on this machine's network,
+             which is what the three rows above it are. The speech model used to sit
+             between the two and has gone to Before the service: it was filed here
+             because it ARRIVES over the network, which is true of the download and
+             of nothing else about it — an operator looking for the model is asking
+             how well Relay hears, not how it reaches the building. -->
         <div class="rw-group">Other software</div>
         <!-- The URL is CHANNEL-keyed (DECISIONS §29). Changing a screen's template
              broadcasts a channel_template message the output applies by matching its
@@ -1770,269 +1833,17 @@
           <p class="rw-foot"><b>NDI is parked</b> — it needs a proprietary SDK Relay does not bundle, so there is no NDI source to select. For a switcher, open a Relay output window on a display and feed that HDMI in. An <b>ATEM Mini</b> takes it directly. A <b>rack-mount ATEM</b> has SDI inputs only, so it needs a small HDMI-to-SDI converter first, costing about as much as a microphone cable. Relay does not speak SDI directly and will not; that is what the converter is for.</p>
         </div>
 
-      {:else if section === 'history'}
-        <!-- History moved into Settings. The view is self-contained (its own list,
-             detail, search, export) and reads from the same local SQLite store. -->
-        <div class="s-history"><History /></div>
-
-        <div class="rw-group">Setup</div>
-        <div class="s-prose">
-          <p class="rw-foot" style="margin-top:0; padding-top:0; border-top:0;">
-            <b>New here?</b> The setup walk-through picks your projector, checks the microphone is actually hearing something, and ends by putting a real verse on your real screen — so you have <i>seen</i> it work before Sunday.
-          </p>
-          <!-- THREE facts, and the third is the one the copy was already claiming.
-               `engaged` and `recording` are deliberately different (main.rs's own
-               note on `servicelock`): lifting the lock is a first-class operator
-               override and it does NOT end the service. So mid-service, an operator
-               who unlocked to delete something and stopped the microphone between
-               readings — exactly the gap `updater.js::idle` was widened for — had
-               both of the old terms false, and one click mounted `FirstRun` over a
-               recorded service: an opaque `.fr-scrim` at z-index 950 over the
-               dock's Clear screens, leaving only Esc, whose first press dismisses
-               the wizard and not the wall (rule 44). It then stops the microphone
-               and fires a verse. `recording` is in the same store and the dock
-               already reads it. -->
-          <button
-            class="r-btn ghost sm"
-            on:click={restartSetup}
-            disabled={$serviceLock.engaged || $serviceLock.recording || $capture.capturing}
-            title={whyDisabled(
-              [$capture.capturing, MIC_LIVE],
-              [$serviceLock.engaged || $serviceLock.recording, SERVICE_LOCKED],
-            ) || undefined}>Run the setup walk-through</button>
-          {#if $serviceLock.engaged || $serviceLock.recording || $capture.capturing}
-            <p class="rw-foot s-netwarn">Not while the microphone is live, or while a service is being recorded — including one you have unlocked, because unlocking does not end it. The walk-through stops the microphone and puts a verse on your screens. Stop listening and end the service first.</p>
-          {/if}
-        </div>
-
-        <!-- DEMO CONTENT. See the block in the script for why it lives on this
-             section and not in the Library. Two facts are always on screen: what is
-             loaded, and how many of it the operator has since changed — because the
-             changed ones are KEPT by a removal, and that has to be knowable BEFORE
-             the button is pressed, not discovered from the sentence afterwards. -->
-        <div class="rw-group">Demo content</div>
-        <div class="s-prose">
-          {#if demo.loaded}
-            <p class="rw-foot" style="margin-top:0; padding-top:0; border-top:0;">
-              <b>Relay's demo content is loaded</b> — {demo.total} items:
-              {demo.groups.map((g) => `${g.count} ${g.what}`).join(' · ')}.
-              Everything it added is named “Demo · …”, except the saved verses, whose
-              names are real Bible references and stay true ones.
-              {#if demo.edited > 0}
-                <!-- `.s-netwarn` (amethyst), not an inline amber. Amber means ON
-                     AIR and nothing else (rule 18), and Settings is never on air.
-                     This file's own comments say "Rose, never amber" three times
-                     and define the two colours a value may wear instead; this was
-                     the last inline exception left. Amethyst rather than rose
-                     because an edited demo item is a caution, not a failure — it
-                     is the thing the Remove button will KEEP. -->
-                <b class="s-netwarn"
-                  >{demo.edited} of them {demo.edited === 1 ? 'has' : 'have'} been changed since.</b
-                >
-                Removing will <b>keep</b> {demo.edited === 1 ? 'that one' : 'those'} and delete the
-                rest — there is no undo in Relay, so anything you have edited is treated as yours.
-              {/if}
-            </p>
-            {#if demoArmed}
-              <button class="r-btn danger sm" disabled={demoBusy} on:click={doRemoveDemo}>
-                {demoBusy ? 'Removing…' : 'Yes, remove the demo content'}
-              </button>
-              <button class="r-btn ghost sm" disabled={demoBusy} on:click={() => (demoArmed = false)}>
-                Cancel
-              </button>
-            {:else}
-              <button class="r-btn ghost sm" disabled={demoBusy} on:click={() => (demoArmed = true)}>
-                Remove demo content
-              </button>
-            {/if}
-          {:else}
-            <p class="rw-foot" style="margin-top:0; padding-top:0; border-top:0;">
-              <b>Nothing to press yet?</b> Relay can add a sample Sunday — a service plan with a
-              countdown, notices, three public-domain hymns, a passage and a background; plus the
-              songs, notices and saved verses behind it — so every workspace has something real in
-              it. It is all named “Demo · …”, it is never loaded by itself, and one action takes it
-              back out. <b>It adds no service history:</b> nothing here will ever look like a
-              service that happened.
-            </p>
-            <button class="r-btn ghost sm" disabled={demoBusy} on:click={doLoadDemo}>
-              {demoBusy ? 'Loading…' : 'Load demo content'}
-            </button>
-          {/if}
-          {#if demoErr}<p class="s-alert" role="alert">{demoErr}</p>{/if}
-          {#if demoNote}<p class="rw-foot" role="status">{demoNote}</p>{/if}
-        </div>
-
-        <!-- SERVICE LOCK. Reachable from the sentence the refusal itself prints,
-             which is the whole reason it lives here and not somewhere tidier. -->
-        <div class="rw-group">Service lock</div>
-        <div class="s-prose">
-          {#if $serviceLock.engaged}
-            <p class="rw-foot" style="margin-top:0; padding-top:0; border-top:0;">
-              <b class="s-netwarn">A service is being recorded.</b>
-              Relay is holding back a few things that cannot be undone, or that would take
-              the speech engine away mid-sermon: {$serviceLock.held_back.join(', ')}.
-              Firing, the transport, clearing and blacking out are unaffected.
-            </p>
-            <button class="r-btn ghost sm" on:click={unlockService}>Unlock for this service</button>
-            {#if lockErr}<p class="s-alert" role="alert">{lockErr}</p>{/if}
-          {:else}
-            <p class="rw-foot" style="margin-top:0; padding-top:0; border-top:0;">
-              While a service is being recorded, Relay holds back deletions, speech-model
-              changes and imports — an accident at 10:31 has no undo. It arms itself when you
-              start listening and lifts when the service ends. Nothing on the live path is
-              ever held back.
-            </p>
-          {/if}
-        </div>
-
-      {:else if section === 'shortcuts'}
-        <!-- ALWAYS ON, wherever you are — the panic keys and the cheatsheet.
-             Split out because the distinction is the whole point of `always` in
-             the table: these three fire from a global handler that survives a
-             crashed view, and the rest only work where the surface offers the
-             action (rule 15, DECISIONS §20). A list that ran them together would
-             be telling an operator that `A` is as reliable as `Esc`. -->
-        <div class="rw-group">Always active</div>
-        {#each SHORTCUTS.filter((s) => s.always) as sc}
-          <div class="rw-nv">
-            <span class="rw-nvk">{sc.label}</span>
-            <span class="s-sckeys rw-nvctl">{#each sc.keys as k}<kbd class="s-kbd">{k}</kbd>{/each}</span>
-          </div>
-        {/each}
-
-        <div class="rw-group">On the run surface</div>
-        {#each SHORTCUTS.filter((s) => !s.always) as sc}
-          <div class="rw-nv">
-            <span class="rw-nvk">{sc.label}</span>
-            <span class="s-sckeys rw-nvctl">{#each sc.keys as k}<kbd class="s-kbd">{k}</kbd>{/each}</span>
-          </div>
-        {/each}
-
-        <div class="s-prose">
-          <p class="rw-foot" style="margin-top:0; padding-top:0; border-top:0;">
-            The second group works on a surface that offers the action — Live offers
-            all of them; the Planner registers only next and previous, so <kbd class="s-kbd">A</kbd>,
-            <kbd class="s-kbd">D</kbd> and <kbd class="s-kbd">/</kbd> do nothing there and the
-            cheatsheet does not claim otherwise. <kbd class="s-kbd">→</kbd> is mode-aware: it
-            steps a plan slide when plan content is on air and walks the passage when a verse
-            is. The transport bar on Live always prints which.
-            <br /><br />
-            <!-- `b` WAS IN THIS LIST, AND `b` IS BLACKOUT. `SHORTCUTS` carries
-                 'B', so `RESERVED` carries `b`, so `assignKeys` can never issue
-                 it — a Bridge is deliberately on `r` for exactly this reason
-                 (REBRAND §10). The sentence promised "never one this page lists"
-                 while printing one this page lists, and a volunteer who followed
-                 it would black out the congregation's screens. -->
-            A song's sections take single letters
-            (<kbd class="s-kbd">v</kbd> <kbd class="s-kbd">c</kbd> <kbd class="s-kbd">r</kbd> …)
-            — never one this page lists, and never while a field has focus. They
-            work on the Library's song pane; the run surface does not take them yet.
-          </p>
-          <button class="r-btn ghost sm" on:click={() => setSession({ activeTab: 'help' })}>Open Help &amp; Shortcuts</button>
-        </div>
-
-      {:else if section === 'updates'}
-        <div class="rw-nv"><span class="rw-nvk">Installed version</span><span class="rw-nvv">{settingValue(appVersion, {
-            loading: versionState === 'loading',
-            missing: 'could not be read',
-          })}</span></div>
-        <div class="rw-nv"><span class="rw-nvk">Environment</span><span class="rw-nvv">{environment}</span></div>
-        <!-- The status of the CHANNEL, not the absence of news. This row used to
-             read "up to date" whenever nothing was waiting — which was also what
-             it said when the check had never run, when the laptop was offline,
-             and when the update manifest had been returning 404 since the day
-             Relay was installed. A badge that cannot detect its own failure
-             (CLAUDE.md rule 35), on the one path by which a fix reaches a church
-             that already has Relay. `describeChannel` is the ONE place a check
-             outcome becomes words, and both surfaces that talk about it — this
-             row and the Overview rail's quick link — call it. -->
-        <!-- `.s-nvp` because every answer `describeChannel` gives is a SENTENCE,
-             never a figure — and one of them is now 112 characters. `.rw-nvv` is
-             mono and sits in the `auto` half of a `minmax(0,1fr) auto` grid, so a
-             long value takes the width from the name beside it: measured in a
-             browser at an 878px row, "Update status" went from 772px with "up to
-             date" to 98.8px with the failure sentence. `.s-nvp` caps the value at
-             46ch and hands the name back 562.3px. It REPLACES `.rw-nvv` rather
-             than joining it, which is how the Privacy report already uses it —
-             keeping both left the sentence in mono. `.s-netbad` is declared after
-             `.s-nvp` at equal specificity, so a failure is still rose. -->
-        <div class="rw-nv"><span class="rw-nvk">Update status</span><span class="s-nvp" class:s-netbad={$updateChannel.state === 'failed'}>{describeChannel($updateChannel)}</span></div>
-        {#if $updateChannel.state === 'failed'}
-          <!-- The same cell type as the row above, for the same reason: this is an
-               arbitrary backend string, and the measured page had it reading
-               "Cannot read properties of undefined (reading 'invoke')". It renders
-               only when the channel has failed, directly beneath the sentence that
-               was taking the name's width — so both halves of one moment were
-               squeezing their own labels. -->
-          <div class="rw-nv"><span class="rw-nvk">Last attempt</span><span class="s-nvp">{$updateChannel.detail || 'no reason given'}</span></div>
-        {/if}
-        <div class="s-prose">
-          <button class="r-btn primary sm" on:click={doCheckUpdates} disabled={checking}>
-            {checking ? 'Checking…' : 'Check for Updates'}
-          </button>
-          <!-- ANNOUNCED. Six other message surfaces on this page carry a live
-               region and these two did not, so the two results a screen reader
-               user gets nothing for were the update check and the one control
-               that decides whether data leaves the machine. -->
-          {#if updateMsg}<p class="rw-foot" role="status">{updateMsg}</p>{/if}
-        </div>
-
-        <!-- WHAT AN UPDATE WOULD DO TO YOUR HISTORY.
-             Shown before the operator presses anything, because the question they
-             actually have — "is this safe right now?" — was previously answerable
-             only by trying it. Nothing here refuses on its own; `update_begin`
-             re-runs the same checks at the moment of truth. -->
-        <div class="rw-group">Before an update</div>
-        <div class="s-prose">
-          <p class="rw-foot" style="margin-top:0; padding-top:0; border-top:0;">
-            Relay copies your entire history — services, plans, songs, saved verses and
-            templates — before it installs anything, and keeps the last
-            {KEEP_SNAPSHOTS} copies. The app itself can always be reinstalled from a
-            release page; your history cannot.
-          </p>
-          {#if updReady?.during_service}
-            <p class="rw-foot"><b>A service is being recorded.</b> Relay will not update until it ends — an update restarts the app.</p>
-          {/if}
-          {#if $snapshotPath}
-            <p class="rw-foot">Your history was copied to <span class="r-mono">{$snapshotPath}</span>.</p>
-          {/if}
-        </div>
-        {#if updReady}
-          {#each updReady.checks as c (c.id)}
-            <div class="rw-nv">
-              <span class="rw-nvk">{c.label}</span>
-              <!-- `class:bad` / `class:warn` used to be here, and neither class was
-                   ever defined in this file or in `app.css` — so a pre-update check
-                   that FAILED was painted in exactly the same grey as one that
-                   passed, on the screen whose entire job is to say whether an update
-                   is safe right now. Rule 35, in a class attribute. Rose for a
-                   failure and amethyst for "worth a look", matching `.b-check.warn`
-                   in the boot ladder; never amber, which means ON AIR. -->
-              <span class="rw-nvv" class:s-netbad={c.state === 'fail'} class:s-netwarn={c.state === 'warn'}>
-                {c.note}
-              </span>
-            </div>
-          {/each}
-        {/if}
-
-      {:else if section === 'diagnostics'}
-        <!-- READINESS FIRST. The Dashboard is the boot ladder's own probes, re-run
-             on demand — the same `freshChecks()` through the same `makeProbes()`,
-             never a second health panel. It used to be its own rail entry called
-             "Dashboard", which is a name for a shape rather than for a question;
-             the question it answers is "is this machine going to work?", and that
-             is what an operator opens Diagnostics to ask. -->
-        <div class="s-dash"><Dashboard /></div>
-
+      
         <div class="rw-group">Support facts</div>
         <!-- A FILE, NOT A SCREEN. This table has shown the right facts for a while
              and been useless for the job it exists for: nobody can email a screen.
              What actually happens is somebody photographs it, losing half the table
              and all of the latency history. -->
         <div class="s-prose">
-          <button class="r-btn ghost sm" on:click={doExportDiagnostics} disabled={diagBusy}>
+          <Button variant="ghost" size="sm" on:click={doExportDiagnostics} disabled={diagBusy}
+            disabledReason={whyDisabled([diagBusy, BUSY])}>
             {diagBusy ? 'Writing…' : 'Save a diagnostic file'}
-          </button>
+          </Button>
           {#if diagMsg}<p class="rw-foot" role="status">{diagMsg}</p>{/if}
         </div>
         <div class="rw-nv"><span class="rw-nvk">Backend</span><span class="rw-nvv">{$capture.available ? 'connected' : 'not connected'}</span></div>
@@ -2050,7 +1861,6 @@
             missing: 'could not be read',
           })} · {environment}</span></div>
         <div class="rw-nv"><span class="rw-nvk">Uptime (this run)</span><span class="rw-nvv">{uptime}</span></div>
-
         <div class="rw-group">Live latency</div>
         <div class="s-prose">
           <p class="rw-foot" style="margin-top:0; padding-top:0; border-top:0;">
@@ -2118,7 +1928,6 @@
           </div>
           <p class="rw-foot">Start listening and speak for a few seconds to fill the table.</p>
         </div>
-
         <!-- §12 · ONE INSTRUMENT, and rule 35 on the same row.
              This was a second `r-btn` sitting beside *Start a fresh
              measurement* and reading `Stop measuring` — a text button whose
@@ -2132,14 +1941,34 @@
              button had, and it printed *measuring* over a backend that had never
              answered — the same reading as a healthy pipeline, which is exactly
              what rule 35 forbids. `latMeasuring` is a tri-state: true, false, or
-             null for "not read", and the value column says which. -->
+             null for "not read", and the value column says which.
+
+             AND IT IS NOT A SETTING, WHICH IS THE HALF THE ROW USED TO HIDE.
+             `latency.rs` holds `enabled` in process memory. There is no
+             `app_settings` key behind it and nothing reads one at launch, so
+             turning it off, closing Relay and opening it again puts it back on —
+             and the row read identically either way. A control presented as a
+             preference that silently reverts is rule 35 in the second person: it
+             does not lie about the engine, it lies about ITSELF.
+
+             PERSISTING IT WAS THE OTHER OPTION AND IS THE WRONG ONE. Measuring is
+             what Settings → This machine shows a church and what a diagnostic
+             bundle carries; its only purpose off is to prove, inside one field
+             test, that the instrument is not the delay (rule 31, where the reflex
+             answer was twice wrong). A church that turned it off one Sunday and
+             kept it off for a year would have paid for that with the numbers
+             nobody can now recover. A run is the right lifetime; the row simply
+             has to SAY so, in the note and in the value, rather than being filed
+             beside safe mode and crash reporting, which both outlive a relaunch. -->
         <div class="rw-nv">
           <div class="s-nvtext">
             <div class="rw-nvk">Measuring</div>
-            <p class="rw-nvnote">On by default. It costs a handful of timestamps per decode; turning it off is here so a field test can prove the instrument is not the delay.</p>
+            <p class="rw-nvnote">On by default, and <b>for this run of Relay only</b> — it is not saved. Close Relay and measuring is on again next time. It costs a handful of timestamps per decode; turning it off is here so a field test can prove the instrument is not the delay.</p>
           </div>
           <div class="rw-nvctl s-nvpair">
-            <span class="rw-nvv">{latMeasuring === null ? settingValue(null, { missing: 'not read yet' }) : latMeasuring ? 'on' : 'off'}</span>
+            <!-- The value says the LIFETIME as well as the state, because "off" on
+                 its own is what an operator would reasonably read as saved. -->
+            <span class="rw-nvv">{latMeasuring === null ? settingValue(null, { missing: 'not read yet' }) : latMeasuring ? 'on' : 'off · until you restart'}</span>
             {#if latMeasuring !== null}
               <button
                 class="r-switch"
@@ -2151,6 +1980,93 @@
             {/if}
           </div>
         </div>
+
+      {:else if section === 'updates'}
+        <div class="rw-nv"><span class="rw-nvk">Installed version</span><span class="rw-nvv">{settingValue(appVersion, {
+            loading: versionState === 'loading',
+            missing: 'could not be read',
+          })}</span></div>
+        <div class="rw-nv"><span class="rw-nvk">Environment</span><span class="rw-nvv">{environment}</span></div>
+        <!-- The status of the CHANNEL, not the absence of news. This row used to
+             read "up to date" whenever nothing was waiting — which was also what
+             it said when the check had never run, when the laptop was offline,
+             and when the update manifest had been returning 404 since the day
+             Relay was installed. A badge that cannot detect its own failure
+             (CLAUDE.md rule 35), on the one path by which a fix reaches a church
+             that already has Relay. `describeChannel` is the ONE place a check
+             outcome becomes words, and both surfaces that talk about it — this
+             row and the Overview rail's quick link — call it. -->
+        <!-- `.s-nvp` because every answer `describeChannel` gives is a SENTENCE,
+             never a figure — and one of them is now 112 characters. `.rw-nvv` is
+             mono and sits in the `auto` half of a `minmax(0,1fr) auto` grid, so a
+             long value takes the width from the name beside it: measured in a
+             browser at an 878px row, "Update status" went from 772px with "up to
+             date" to 98.8px with the failure sentence. `.s-nvp` caps the value at
+             46ch and hands the name back 562.3px. It REPLACES `.rw-nvv` rather
+             than joining it, which is how the Privacy report already uses it —
+             keeping both left the sentence in mono. `.s-netbad` is declared after
+             `.s-nvp` at equal specificity, so a failure is still rose. -->
+        <div class="rw-nv"><span class="rw-nvk">Update status</span><span class="s-nvp" class:s-netbad={$updateChannel.state === 'failed'}>{describeChannel($updateChannel)}</span></div>
+        {#if $updateChannel.state === 'failed'}
+          <!-- The same cell type as the row above, for the same reason: this is an
+               arbitrary backend string, and the measured page had it reading
+               "Cannot read properties of undefined (reading 'invoke')". It renders
+               only when the channel has failed, directly beneath the sentence that
+               was taking the name's width — so both halves of one moment were
+               squeezing their own labels. -->
+          <div class="rw-nv"><span class="rw-nvk">Last attempt</span><span class="s-nvp">{$updateChannel.detail || 'no reason given'}</span></div>
+        {/if}
+        <div class="s-prose">
+          <Button variant="primary" size="sm" on:click={doCheckUpdates} disabled={checking}
+            disabledReason={whyDisabled([checking, BUSY])}>
+            {checking ? 'Checking…' : 'Check for Updates'}
+          </Button>
+          <!-- ANNOUNCED. Six other message surfaces on this page carry a live
+               region and these two did not, so the two results a screen reader
+               user gets nothing for were the update check and the one control
+               that decides whether data leaves the machine. -->
+          {#if updateMsg}<p class="rw-foot" role="status">{updateMsg}</p>{/if}
+        </div>
+
+        <!-- WHAT AN UPDATE WOULD DO TO YOUR HISTORY.
+             Shown before the operator presses anything, because the question they
+             actually have — "is this safe right now?" — was previously answerable
+             only by trying it. Nothing here refuses on its own; `update_begin`
+             re-runs the same checks at the moment of truth. -->
+        <div class="rw-group">Before an update</div>
+        <div class="s-prose">
+          <p class="rw-foot" style="margin-top:0; padding-top:0; border-top:0;">
+            Relay copies your entire history — services, plans, songs, saved verses and
+            templates — before it installs anything, and keeps the last
+            {KEEP_SNAPSHOTS} copies. The app itself can always be reinstalled from a
+            release page; your history cannot.
+          </p>
+          {#if updReady?.during_service}
+            <p class="rw-foot"><b>A service is being recorded.</b> Relay will not update until it ends — an update restarts the app.</p>
+          {/if}
+          {#if $snapshotPath}
+            <p class="rw-foot">Your history was copied to <span class="r-mono">{$snapshotPath}</span>.</p>
+          {/if}
+        </div>
+        {#if updReady}
+          {#each updReady.checks as c (c.id)}
+            <div class="rw-nv">
+              <span class="rw-nvk">{c.label}</span>
+              <!-- `class:bad` / `class:warn` used to be here, and neither class was
+                   ever defined in this file or in `app.css` — so a pre-update check
+                   that FAILED was painted in exactly the same grey as one that
+                   passed, on the screen whose entire job is to say whether an update
+                   is safe right now. Rule 35, in a class attribute. Rose for a
+                   failure and amethyst for "worth a look", matching `.b-check.warn`
+                   in the boot ladder; never amber, which means ON AIR. -->
+              <span class="rw-nvv" class:s-netbad={c.state === 'fail'} class:s-netwarn={c.state === 'warn'}>
+                {c.note}
+              </span>
+            </div>
+          {/each}
+        {/if}
+
+      
 
       {:else if section === 'privacy'}
         <!-- WHAT IS LEAVING THIS MACHINE, ANSWERED FROM THE LIVE SETTINGS.
@@ -2321,6 +2237,212 @@
         {#if crashMsg}
           <div class="s-prose"><p class="rw-foot" role="status" style="margin-top:0;">{crashMsg}</p></div>
         {/if}
+
+      {:else if section === 'start'}
+        <div class="rw-group">Setup</div>
+        <div class="s-prose">
+          <p class="rw-foot" style="margin-top:0; padding-top:0; border-top:0;">
+            <b>New here?</b> The setup walk-through picks your projector, checks the microphone is actually hearing something, and ends by putting a real verse on your real screen — so you have <i>seen</i> it work before Sunday.
+          </p>
+          <!-- THREE facts, and the third is the one the copy was already claiming.
+               `engaged` and `recording` are deliberately different (main.rs's own
+               note on `servicelock`): lifting the lock is a first-class operator
+               override and it does NOT end the service. So mid-service, an operator
+               who unlocked to delete something and stopped the microphone between
+               readings — exactly the gap `updater.js::idle` was widened for — had
+               both of the old terms false, and one click mounted `FirstRun` over a
+               recorded service: an opaque `.fr-scrim` at z-index 950 over the
+               dock's Clear screens, leaving only Esc, whose first press dismisses
+               the wizard and not the wall (rule 44). It then stops the microphone
+               and fires a verse. `recording` is in the same store and the dock
+               already reads it. -->
+          <!-- THROUGH THE KIT, so the reason reaches both channels. This was a raw
+               `.r-btn` with a bare `title=`, which is the pointer answer and is
+               invisible to a keyboard or screen-reader operator — on the one
+               control here that mounts a full-screen wizard over a recorded
+               service. `disabledReason` renders `title` AND `aria-describedby`.
+               The three-fact guard and the prose reason below it are untouched. -->
+          <Button
+            variant="ghost"
+            size="sm"
+            on:click={restartSetup}
+            disabled={$serviceLock.engaged || $serviceLock.recording || $capture.capturing}
+            disabledReason={whyDisabled(
+              [$capture.capturing, MIC_LIVE],
+              [$serviceLock.engaged || $serviceLock.recording, SERVICE_LOCKED],
+            )}>Run the setup walk-through</Button>
+          {#if $serviceLock.engaged || $serviceLock.recording || $capture.capturing}
+            <p class="rw-foot s-netwarn">Not while the microphone is live, or while a service is being recorded — including one you have unlocked, because unlocking does not end it. The walk-through stops the microphone and puts a verse on your screens. Stop listening and end the service first.</p>
+          {/if}
+        </div>
+             section and not in the Library. Two facts are always on screen: what is
+             loaded, and how many of it the operator has since changed — because the
+             changed ones are KEPT by a removal, and that has to be knowable BEFORE
+             the button is pressed, not discovered from the sentence afterwards. -->
+        <div class="rw-group">Demo content</div>
+        <div class="s-prose">
+          {#if demo.loaded}
+            <p class="rw-foot" style="margin-top:0; padding-top:0; border-top:0;">
+              <b>Relay's demo content is loaded</b> — {demo.total} items:
+              {demo.groups.map((g) => `${g.count} ${g.what}`).join(' · ')}.
+              Everything it added is named “Demo · …”, except the saved verses, whose
+              names are real Bible references and stay true ones.
+              {#if demo.edited > 0}
+                <!-- `.s-netwarn` (amethyst), not an inline amber. Amber means ON
+                     AIR and nothing else (rule 18), and Settings is never on air.
+                     This file's own comments say "Rose, never amber" three times
+                     and define the two colours a value may wear instead; this was
+                     the last inline exception left. Amethyst rather than rose
+                     because an edited demo item is a caution, not a failure — it
+                     is the thing the Remove button will KEEP. -->
+                <b class="s-netwarn"
+                  >{demo.edited} of them {demo.edited === 1 ? 'has' : 'have'} been changed since.</b
+                >
+                Removing will <b>keep</b> {demo.edited === 1 ? 'that one' : 'those'} and delete the
+                rest — there is no undo in Relay, so anything you have edited is treated as yours.
+              {/if}
+            </p>
+            {#if demoArmed}
+              <Button variant="danger" size="sm" disabled={demoBusy}
+                disabledReason={whyDisabled([demoBusy, BUSY])} on:click={doRemoveDemo}>
+                {demoBusy ? 'Removing…' : 'Yes, remove the demo content'}
+              </Button>
+              <Button variant="ghost" size="sm" disabled={demoBusy}
+                disabledReason={whyDisabled([demoBusy, BUSY])} on:click={() => (demoArmed = false)}>
+                Cancel
+              </Button>
+            {:else}
+              <Button variant="ghost" size="sm" disabled={demoBusy}
+                disabledReason={whyDisabled([demoBusy, BUSY])} on:click={() => (demoArmed = true)}>
+                Remove demo content
+              </Button>
+            {/if}
+          {:else}
+            <p class="rw-foot" style="margin-top:0; padding-top:0; border-top:0;">
+              <b>Nothing to press yet?</b> Relay can add a sample Sunday — a service plan with a
+              countdown, notices, three public-domain hymns, a passage and a background; plus the
+              songs, notices and saved verses behind it — so every workspace has something real in
+              it. It is all named “Demo · …”, it is never loaded by itself, and one action takes it
+              back out. <b>It adds no service history:</b> nothing here will ever look like a
+              service that happened.
+            </p>
+            <Button variant="ghost" size="sm" disabled={demoBusy}
+              disabledReason={whyDisabled([demoBusy, BUSY])} on:click={doLoadDemo}>
+              {demoBusy ? 'Loading…' : 'Load demo content'}
+            </Button>
+          {/if}
+          {#if demoErr}<p class="s-alert" role="alert">{demoErr}</p>{/if}
+          {#if demoNote}<p class="rw-foot" role="status">{demoNote}</p>{/if}
+        </div>
+        <!-- ALWAYS ON, wherever you are — the panic keys and the cheatsheet.
+             Split out because the distinction is the whole point of `always` in
+             the table: these three fire from a global handler that survives a
+             crashed view, and the rest only work where the surface offers the
+             action (rule 15, DECISIONS §20). A list that ran them together would
+             be telling an operator that `A` is as reliable as `Esc`. -->
+        <div class="rw-group">Always active</div>
+        {#each SHORTCUTS.filter((s) => s.always) as sc}
+          <div class="rw-nv">
+            <span class="rw-nvk">{sc.label}</span>
+            <span class="s-sckeys rw-nvctl">{#each sc.keys as k}<kbd class="s-kbd">{k}</kbd>{/each}</span>
+          </div>
+        {/each}
+
+        <div class="rw-group">On the run surface</div>
+        {#each SHORTCUTS.filter((s) => !s.always) as sc}
+          <div class="rw-nv">
+            <span class="rw-nvk">{sc.label}</span>
+            <span class="s-sckeys rw-nvctl">{#each sc.keys as k}<kbd class="s-kbd">{k}</kbd>{/each}</span>
+          </div>
+        {/each}
+
+        <div class="s-prose">
+          <p class="rw-foot" style="margin-top:0; padding-top:0; border-top:0;">
+            The second group works on a surface that offers the action — Live offers
+            all of them; the Planner registers only next and previous, so <kbd class="s-kbd">A</kbd>,
+            <kbd class="s-kbd">D</kbd> and <kbd class="s-kbd">/</kbd> do nothing there and the
+            cheatsheet does not claim otherwise. <kbd class="s-kbd">→</kbd> is mode-aware: it
+            steps a plan slide when plan content is on air and walks the passage when a verse
+            is. The transport bar on Live always prints which.
+            <br /><br />
+            <!-- `b` WAS IN THIS LIST, AND `b` IS BLACKOUT. `SHORTCUTS` carries
+                 'B', so `RESERVED` carries `b`, so `assignKeys` can never issue
+                 it — a Bridge is deliberately on `r` for exactly this reason
+                 (REBRAND §10). The sentence promised "never one this page lists"
+                 while printing one this page lists, and a volunteer who followed
+                 it would black out the congregation's screens. -->
+            A song's sections take single letters
+            (<kbd class="s-kbd">v</kbd> <kbd class="s-kbd">c</kbd> <kbd class="s-kbd">r</kbd> …)
+            — never one this page lists, and never while a field has focus. They
+            work on the Library's song pane; the run surface does not take them yet.
+          </p>
+          <Button variant="ghost" size="sm" on:click={() => setSession({ activeTab: 'help' })}>Open Help &amp; Shortcuts</Button>
+        </div>
+
+      
+
+        <!-- THE TWO NUMBERS A NEW INSTALL SETS ONCE, and the note about the page
+             itself. General held five rows: safe mode and "screens at launch" moved
+             to Before the service, service length to This room, and these two are
+             what is left — neither is touched again after the first week, which is
+             what makes this their section rather than a sixth of the rail. -->
+        <div class="rw-group">This copy of Relay</div>
+        <div class="rw-nv">
+          <div class="s-nvtext">
+            <div class="rw-nvk">Application language</div>
+            <p class="rw-nvnote">The language the operator console is written in. Missing words stay in English.</p>
+          </div>
+          <select class="r-select rw-nvctl s-sel" value={$locale} on:change={(e) => setLocale(e.target.value)} aria-label="Application language">
+            {#each LOCALES as l}
+              {@const pct = coverage(l.code)}
+              <option value={l.code}>{l.label}{pct === 100 ? '' : ` · ${pct}%`}</option>
+            {/each}
+          </select>
+        </div>
+        <!-- COUNTDOWN WARNING. How long before zero a countdown turns red, on
+             the wall, on the preacher's page and in the dock. One rule
+             (`layers.js::countdownWarning`), one number, and this is where it is
+             set — the comment above that rule used to say the threshold was
+             deliberately not a setting because the control belonged in a Settings
+             pass. This is it.
+
+             SECONDS in the field, milliseconds in the row: an operator says
+             "ninety seconds", nobody says "ninety thousand". The floor is five
+             seconds, because a window shorter than the eye takes to find the
+             screen is a colour that is never seen.
+
+             It is READ. `App.svelte` loads it at launch and `setCountdownWarnMs`
+             applies it to the rule, so this is not another of the seven controls
+             removed on 2026-09-10 for saving a preference nothing opened. -->
+        <div class="rw-nv">
+          <div class="s-nvtext">
+            <div class="rw-nvk">Countdown warning</div>
+            <p class="rw-nvnote">How long before zero a countdown turns red, on every screen showing it. A countdown shorter than ten times this warns for its last tenth instead, so a short one is not red for half its life.</p>
+          </div>
+          <div class="rw-nvctl s-lenctl">
+            <input class="r-input s-leninput" type="number" min="5" max="600" step="5"
+              value={Math.round($countdownWarnMs / 1000)}
+              on:change={(e) => setCountdownWarnMs(Number(e.target.value) * 1000)}
+              aria-label="Countdown warning in seconds" />
+            <span class="s-lenunit r-mono">sec</span>
+          </div>
+        </div>
+        <div class="s-prose">
+          <!-- The absence is stated, and the list of names is not: an operator
+               needs to know that a switch they remember never did anything, not to
+               read a changelog on the page they came here to use. The eleven names
+               and the reason each one went live in DECISIONS §69 and in the
+               comments beside the code that used to render them. -->
+          <p class="rw-foot">
+            <b>Eleven preference controls used to be on this page and are not any
+            more</b>, each because it saved a setting nothing in Relay ever read.
+            One of them was on by default and promised a confirmation step between
+            you and the congregation's screen — there has never been one. The last
+            two, <i>Auto Start on Login</i> and <i>Minimize to System Tray</i>, were
+            greyed out with a “Soon” tag beside them, which is a promise as well.
+            Nothing was lost, because nothing they did ever happened.
+          </p>
+        </div>
       {/if}
       </div>
     </main>
@@ -2428,11 +2550,23 @@
   /* The footnote keeps its hairline and its own top padding; the margin is the
      block's job, so the two do not add up to a double gap. */
   .s-prose :global(.rw-foot){ margin-top:12px; max-width:80ch; }
-  /* Dashboard and History bring their own layout and their own card padding. */
+  /* THE READINESS SURFACE IS THE SECTION, so it takes the panel's own gutter and
+     nothing else — no card, no second border, no inset inside an inset. `.s-history`
+     lived beside this and is gone with the History embed; History is a route now.
+     `Dashboard.svelte` stacks its own panels in one column at this width rather
+     than laying out a card grid inside an 880px reading column. */
   .s-dash{ padding:12px; min-width:0; }
-  .s-history{ padding:12px; min-width:0; }
 
   .s-inline{ display:flex; justify-content:flex-end; }
+
+  /* THE THREE SHARED STATE BOXES TAKE THE PROSE GUTTER. `EmptyState`, `Loading`
+     and `ErrorState` all render `.r-empty` with a 2px side padding, which is right
+     inside a card and wrong at the panel's own edge — the rows around them bleed
+     to the seam deliberately (see the SEAMS note above), and a sentence that
+     starts two pixels from the edge reads as a rendering fault rather than as a
+     message. One rule, because `ListState` is the only thing that renders them
+     here and it renders all three. */
+  .s-panel :global(.r-empty){ padding-left:12px; padding-right:12px; }
 
   /* ── ROLE 3 · the halves of a row this file adds to the frame's ──
      A name cell that carries an explanatory line under it, a value that is a

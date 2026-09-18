@@ -72,7 +72,12 @@ describe('what counts as blocked, and what counts as reduced', () => {
     const [d] = degradations({ ...OK, safeMode: true });
     expect(d.id).toBe('safemode');
     expect(d.level).toBe('blocked');
-    expect(d.fix).toMatch(/Settings → General/);
+    // The SECTION is named, not just the tab — "Settings" alone is eight sections
+    // behind one button. Safe mode moved from General to Before the service when
+    // the rail was re-ordered by frequency: it is not a preference, it is whether
+    // this copy of Relay is armed, which is the first thing an operator checks and
+    // the first thing they change when something is wrong.
+    expect(d.fix).toMatch(/Settings → Before the service/);
   });
 
   it('and STOPS asserting the promise when safe mode could not be enforced', () => {

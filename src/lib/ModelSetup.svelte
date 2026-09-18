@@ -20,6 +20,9 @@
     readErrors,
   } from './stores/capture.js';
   import ErrorState from './ui/ErrorState.svelte';
+  import Button from './ui/Button.svelte';
+  import { whyDisabled, SERVICE_LOCKED, BUSY } from './ui/whydisabled.js';
+  import { serviceLock } from './stores/capture.js';
   import { humanError } from './errors.js';
 
   export let compact = false; // banner form (Console) vs full card (Settings)
@@ -102,6 +105,29 @@
     busy = false;
   }
 
+  // ── THE SERVICE LOCK IS VISIBLE HERE NOW, AND IT WAS NOT ──────────────────
+  //
+  // Every write on this panel is guarded in Rust: `select_stt_model`,
+  // `download_model` and `install_model_file` all call `lock.guard(...)`, which
+  // returns a REFUSED error — the typed kind that means pressing again will not
+  // help. That guard is right and it is the whole reason this panel exists in the
+  // state it does: the 2026-09-06 service changed model mid-service and produced a
+  // 44% wrong-verse rate, which is the event the lock was written for.
+  //
+  // What was missing was any sign of it BEFORE the press. The cards carried no
+  // `disabled` and no reason, so an operator pressed `Use this one` during a
+  // service and received a backend error for an outcome the interface already
+  // knew. A refusal an operator could have been spared is a refusal that reads as
+  // a fault, on the panel that decides how well Relay hears.
+  //
+  // `SERVICE_LOCKED` is `whydisabled.js`'s sentence, not one written here — the
+  // same one every other guarded control in the product says, naming the unlock
+  // and saying plainly that unlocking does not end the service. It reaches both
+  // channels through `ui/Button`: `title` for a pointer, `aria-describedby` for a
+  // keyboard or screen-reader operator, because neither alone reaches everybody.
+  $: locked = !!$serviceLock.engaged;
+  $: modelWriteReason = whyDisabled([locked, SERVICE_LOCKED], [busy, BUSY]);
+
   const mb = (b) => `${Math.round(b / 1_000_000)} MB`;
   $: pct =
     $modelProgress?.total > 0
@@ -139,7 +165,7 @@
       {mb($modelProgress.downloaded)} of {mb($modelProgress.total || 148_000_000)}
       · you can keep using Relay while this runs
     </div>
-    <button class="r-btn ghost sm" on:click={cancelModelDownload}>Cancel</button>
+    <Button variant="ghost" size="sm" on:click={cancelModelDownload}>Cancel</Button>
   {:else if installed && compact}
     <!-- The Live banner exists to get a first model onto the machine. Once one is
          here its job is done; choosing between models is a Settings job, not
@@ -158,6 +184,21 @@
         you can put any verse on screen by typing its reference.
       {/if}
     </p>
+
+    <!-- SAID ONCE, ABOVE THE CARDS. Every button below is held back while a
+         service is being recorded, and a tooltip is invisible to somebody who is
+         not hovering — so the panel would simply look broken. It is `role="status"`
+         because it appears under the operator rather than being navigated to, and
+         it names the way out, which is the half a refusal usually leaves off. -->
+    {#if locked}
+      <p class="ms-locked" role="status">
+        <b>A service is being recorded</b>, so the speech model cannot be changed,
+        downloaded or installed — swapping it mid-sermon takes the ears away, and a
+        service that did exactly that produced four wrong verses in one morning.
+        Unlock it in <b>Settings → Before the service</b> if you mean to; unlocking
+        does not end the service.
+      </p>
+    {/if}
 
     {#if !models.length && $readErrors.listModels}
       <!-- RG-95. The model list swallows to `[]`, and this screen renders a list —
@@ -183,19 +224,38 @@
           <p class="ms-caution">{m.caution}</p>
         {/if}
         {#if active}
-          <button class="r-btn" disabled>In use</button>
+          <!-- Disabled because it is already the answer, which is a different
+               reason from every other disabled control on this panel and is worth
+               saying rather than leaving a grey button to be puzzled over. -->
+          <Button
+            disabled
+            disabledReason="This is the model Relay is listening with. There is nothing to press.">
+            In use
+          </Button>
         {:else if m.installed}
-          <button class="r-btn" disabled={busy} on:click={() => use(m.filename)}>
+          <Button
+            disabled={busy || locked}
+            disabledReason={modelWriteReason}
+            on:click={() => use(m.filename)}>
             Use this one
-          </button>
+          </Button>
         {:else}
-          <button
-            class="r-btn"
-            class:amber={m.recommended}
-            disabled={busy}
+          <!-- AMBER IS NOT AVAILABLE TO THIS BUTTON, and it used to wear it.
+               `class:amber={m.recommended}` painted the recommended download in
+               `--v-amber`, which means ON AIR and only that (DESIGN_SYSTEM §1,
+               rule 18): the loudest colour in the product, reserved for "the
+               congregation is looking at this right now", spent on a download
+               button in a settings panel. `primary` is the house accent — steel
+               blue, "the thing you are working on" — which is exactly what a
+               recommended action is, and it is the same fill every other primary
+               button in the product wears. -->
+          <Button
+            variant={m.recommended ? 'primary' : ''}
+            disabled={busy || locked}
+            disabledReason={modelWriteReason}
             on:click={() => get(m.id)}>
             Download {m.recommended ? '— recommended' : ''}
-          </button>
+          </Button>
         {/if}
       </div>
     {/each}
@@ -214,7 +274,11 @@
       {#each found as f (f.id)}
         <div class="ms-foundrow">
           <span class="ms-foundname"><b>{f.label}</b><span class="r-mono">{f.path}</span></span>
-          <button class="r-btn sm" disabled={busy} on:click={() => installFound(f)}>Install</button>
+          <Button
+            size="sm"
+            disabled={busy || locked}
+            disabledReason={modelWriteReason}
+            on:click={() => installFound(f)}>Install</Button>
         </div>
       {/each}
     </div>
@@ -227,7 +291,7 @@
          remounted — with a working Try again button sitting right underneath it. -->
     <div class="ms-err" role="alert">
       <span>{$modelError}</span>
-      <button class="r-btn ghost sm" on:click={dismissModelError}>Dismiss</button>
+      <Button variant="ghost" size="sm" on:click={dismissModelError}>Dismiss</Button>
     </div>
   {/if}
 </div>
@@ -301,14 +365,34 @@
   .ms-opt-t b { font-size: var(--v-fs-pr); color: var(--v-txt); }
   .ms-size { font-size:var(--v-fs-lbl); color: var(--v-dim); }
   .ms-opt-d { font-size:var(--v-fs-b1); color: var(--v-dim); line-height: 1.55; margin: 3px 0 8px; }
-  /* Amber, not red: nothing is broken, and the operator may still have a good
-     reason to choose it. Red here would read as a failure and be clicked past. */
+  /* A CAUTION, AND IT WAS AMBER UNTIL THIS PASS. The reasoning beside it was
+     half right: nothing here is broken and the operator may still have a good
+     reason to pick the model, so red would read as a failure and be clicked
+     past. But amber is not the alternative to red — it means ON AIR and only
+     that, and this panel is never on air (DESIGN_SYSTEM §1, rule 18).
+
+     Amethyst, the same ink `.s-netwarn` and `.b-check.warn` already wear. It is
+     DECISIONS §93's open question rather than a promise being spent: this palette
+     publishes no caution colour, every other one is already a promise, and §93
+     enumerates the surfaces that answer that gap with amethyst so that paying it
+     off is visible. This one joins that list by being COUNTED there, which is the
+     opposite of the gap growing quietly — it was always a caution, and it was
+     wearing the one colour it was not allowed to wear. */
   .ms-caution {
     font-size:var(--v-fs-b1); line-height: 1.55; margin: 0 0 8px;
     padding: 7px 9px; border-radius: 7px;
-    background: var(--v-amber-soft);
-    border: 1px solid var(--v-amber-line);
-    color: var(--v-amber);
+    background: var(--v-amethyst-soft);
+    border: 1px solid var(--v-amethyst-line);
+    color: var(--v-amethyst2);
+  }
+  /* The service lock, stated once at the top of the panel rather than only as a
+     tooltip per card: a row of greyed buttons with the reason behind a hover is
+     still a panel that looks broken to somebody who is not hovering. Same ink as
+     the caution above, for the same reason — this is not a failure, it is Relay
+     holding something back on purpose, and the operator can lift it. */
+  .ms-locked {
+    font-size: var(--v-fs-b1); line-height: 1.55; margin: 8px 0 0;
+    color: var(--v-amethyst2);
   }
   .ms-live {
     font-size: 10.5px; letter-spacing: 0.04em; text-transform: uppercase;

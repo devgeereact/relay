@@ -1,13 +1,13 @@
 <script>
   import { humanError } from '../../errors.js';
   import Button from '../../ui/Button.svelte';
-  import { whyDisabled, ENGINE_OFF, BUSY } from '../../ui/whydisabled.js';
+  import { whyDisabled, ENGINE_OFF } from '../../ui/whydisabled.js';
   import { onMount } from 'svelte';
   import { showsConfidence } from '../../detect.js';
   import { sundayReport, replayAt, weekOnWeek, describeTrend } from '../../report.js';
   import Loading from '../../ui/Loading.svelte';
   import ErrorState from '../../ui/ErrorState.svelte';
-  import { capture, listServices, serviceDetail, serviceTimeline, servicePerf, perfHistory, endService, exportService, deleteService, readErrors } from '../../stores/capture.js';
+  import { capture, listServices, serviceDetail, serviceTimeline, servicePerf, perfHistory, exportService, deleteService, readErrors } from '../../stores/capture.js';
 
   let exportMsg = '';
 
@@ -157,15 +157,23 @@
   // `asked` is the third fact the array cannot carry. `readErrors.listServices` is
   // the reason, kept by `guardedRead` instead of discarded.
   let asked = false;
-  // Declared beside `refresh` because `refresh` clears the first of them — see
-  // `stopRecording`, further down, for what they are for.
-  let endErr = '';
-  let ending = false;
+  // ── END SERVICE IS NOT HERE, AND THAT IS THE POINT ────────────────────────
+  //
+  // This screen carried its own `End current service` button, beside Refresh, with
+  // `endErr`/`ending` state and a refusal line of its own. It was a second copy of
+  // the dock's control — the dock's is in the SHELL, on every workspace, ordered
+  // first when the card stacks, and it is the one an operator reaches for at 12:05
+  // (CLAUDE.md rule 15, DESIGN_SYSTEM §1.1: End service owns the on-air session
+  // and wears amber for it).
+  //
+  // Two copies of one action is the shape this repository has been bitten by four
+  // times: a guarantee kept on one door and skipped on its twin. The refusal
+  // contract `endservice.test.js` exists for is kept by `Dock.svelte::run`, which
+  // wraps every dock action in `catch (e) { err = humanError(e) }` and renders it
+  // in a live region; the test that used to press this button presses that one.
+  //
+  // What is left here is reading and erasing a RECORD, which is what a history is.
   async function refresh() {
-    // A failure line belongs to the press that caused it. Nothing else cleared
-    // `endErr`, so a refusal could sit under the buttons after the service had
-    // been ended from the dock — a stale accusation on a screen that is now right.
-    endErr = '';
     services = await listServices();
     asked = true;
     page = 0;
@@ -251,23 +259,6 @@
     selected = null;
     detail = null;
     refresh();
-  }
-  // `endService` is GROUP 1 — it throws. It used to swallow, and this function
-  // called `refresh()` unconditionally afterwards: a refused `end_service`
-  // repainted the identical list under the identical button, which is as close to
-  // a claim of success as a screen can get without words. A failure now says so
-  // beside the button that caused it, and the list is NOT repainted — an
-  // unchanged surface is the disguise, not the report.
-  async function stopRecording() {
-    ending = true;
-    endErr = '';
-    try {
-      await endService();
-      refresh();
-    } catch (e) {
-      endErr = humanError(e);
-    }
-    ending = false;
   }
 </script>
 
@@ -601,15 +592,7 @@
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
           Refresh
         </Button>
-        <Button variant="danger" on:click={stopRecording} disabled={!$capture.available || ending}
-          disabledReason={whyDisabled([!$capture.available, ENGINE_OFF], [ending, BUSY])}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
-          {ending ? 'Ending…' : 'End current service'}
-        </Button>
       </div>
-      {#if endErr}
-        <p class="lib-enderr" role="alert">The service was not ended — {endErr}</p>
-      {/if}
     </div>
 
     {#if !$capture.available}
@@ -761,11 +744,10 @@
   .lib-actions{ display:flex; gap:10px; flex-shrink:0; }
 
   .lib-warn{ margin-top:-6px; }
-  /* The one failure this bar can report. Full width so it wraps onto its own
-     line under the buttons rather than squeezing the lead paragraph, and ROSE —
-     a refusal, never amber, which means on air and nothing else. */
-  .lib-enderr{ flex:0 0 100%; margin:0; font-size:var(--v-fs-lbl);
-    color:var(--v-rose); word-break:break-word; }
+  /* `.lib-enderr` USED TO BE HERE — the rose line under `End current service`,
+     which was this bar's only failure to report. The button is the dock's and
+     always was; this screen's copy is gone, and a rule whose only element has
+     gone with it is dead weight one refactor away from being copied. */
 
   /* ── Stat cards ── */
   .lib-stats{ display:grid; grid-template-columns:repeat(3, 1fr); gap:14px; }

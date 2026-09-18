@@ -471,7 +471,7 @@ export const COUNTDOWN_WARN_MS = 60_000;
 
 /**
  * The DEFAULT warning window in force on this machine — the shipped minute until
- * an operator sets `Settings → General → Countdown warning`, which is persisted in
+ * an operator sets `Settings → Getting started → Countdown warning`, which is persisted in
  * the settings KV under `countdown.warn_ms`.
  *
  * It lives here, as one number behind one setter, because the three surfaces that
@@ -510,7 +510,7 @@ export function setCountdownWarnDefault(ms) {
  * This USED to say the threshold was a rule rather than a setting, deliberately,
  * because the control belonged in the Settings pass and a setting with nowhere to
  * set it is worse than a sensible default. That pass has happened. The MINUTE in
- * the rule below is now `warnDefaultMs`, which is `Settings → General → Countdown
+ * the rule below is now `warnDefaultMs`, which is `Settings → Getting started → Countdown
  * warning`, persisted under `countdown.warn_ms` and applied through
  * `setCountdownWarnDefault`; `warnMs` is a figure chosen for one timer, which
  * beats both. Two authorities, ranked once, here.
