@@ -27,6 +27,7 @@
 // TEMPLATE's own style (DECISIONS §87), not against the app's.
 
 import { migrateStyle, STYLE_DEFAULTS, bandLayout, faceOf } from './templatemodel.js';
+import { parseTemplateOverride } from './templates.js';
 
 let _seq = 0;
 /** A stable-ish unique id. Not crypto — just needs to be unique within a template. */
@@ -364,6 +365,50 @@ export function templateShows(template, kind) {
  * the ranking §29 and §70 describe — those decide between authorities that each
  * chose a look for this screen, and the default is what remains when none did.
  */
+/**
+ * THE LOOK A FIRE IS ASKING FOR — from the TWO forms it can arrive in.
+ *
+ * `resolveOutputTemplate` decides between a screen's own look and an override.
+ * This decides what that override IS, and it exists because an override crosses
+ * the wire in two shapes that no surface may be allowed to handle separately:
+ *
+ *  - **as JSON** (`template_json`) — a Planner cue's DELIBERATE per-cue choice.
+ *    It ships its own bytes because nothing on the receiving side could look it
+ *    up: a cue's template is a decision about one item, not a standing setting.
+ *  - **as an ID and nothing else** (`template_id`) — a per-kind CONTENT LOOK.
+ *    It ships no JSON on purpose, and the reason is recorded at
+ *    `main::cue_or_content_tpl`: a look carrying an embedded `data:` image has
+ *    been 13 MB in the field, and serialising that onto every fire made verses
+ *    take seconds. The id costs a settings lookup; the JSON costs the service.
+ *
+ * Nothing read the second form. Every surface derived its override from
+ * `parseTemplateOverride(template_json)` alone, which is null BY CONSTRUCTION for
+ * a content look — so "Follow the content look" resolved to nothing on the wall,
+ * on the console, and on the panel built to check it. DECISIONS §70 gave a screen
+ * the ability to have no look of its own; this is the other half, the look it was
+ * then supposed to follow actually arriving.
+ *
+ * `templates` is whatever that surface already holds — the `$templates` array on
+ * the console, the frames the kiosk hub sent on an output page. Passed as DATA
+ * rather than as a lookup function deliberately: Svelte tracks the identifiers
+ * written in a reactive expression, not the ones a called function happens to
+ * read, and `Channels.svelte` has been caught by exactly that twice.
+ *
+ * JSON WINS when both are present. A cue that pinned a template said so about
+ * this item; the id beside it is only what the console reads back.
+ */
+export function templateById(templates, id) {
+  if (id == null || !templates) return null;
+  const want = Number(id);
+  if (Array.isArray(templates)) return templates.find((t) => t && Number(t.id) === want) ?? null;
+  return templates[want] ?? templates[String(want)] ?? null;
+}
+
+/** @see templateById — the two forms an override arrives in, resolved to one. */
+export function resolveContentOverride(content, templates) {
+  return parseTemplateOverride(content?.template_json) ?? templateById(templates, content?.template_id);
+}
+
 export function resolveOutputTemplate(channelTpl, override, pinned = false, fallback = null) {
   // NO TEMPLATE OF ITS OWN = this screen follows the content look (DECISIONS §70).
   // It has to be answered before the transparency law below, because
