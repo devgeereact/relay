@@ -265,6 +265,7 @@ const REGISTER = [
       'src/lib/programmetimer.test.js',
       'src/lib/progtimerjoin.test.js',
       'src/lib/stageprogrow.test.js',
+      'src/lib/stagetimerover.test.js',
       'src/lib/stagetimerreach.test.js',
       'src/lib/stagezones.test.js',
       'src/lib/timers.test.js',

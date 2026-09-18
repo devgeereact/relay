@@ -199,6 +199,7 @@
     startTimer,
     listTimers,
     stopTimer,
+    adjustTimer,
     countdownWarnMs,
     rehearsing,
     loadRehearsal,
@@ -568,6 +569,42 @@
     ptBusy = false;
   }
 
+  /** One grant. Five minutes, because that is the unit a sermon is extended in. */
+  const PT_GRANT_MS = 5 * 60_000;
+
+  // ── GIVE THE PREACHER FIVE MORE MINUTES (DECISIONS §99) ────────────────────
+  //
+  // `adjust_timer` has existed since the registry landed, with a wrapper on this
+  // side, and NO RENDERED CONTROL COULD REACH IT. A registered command nothing
+  // can get to is what CLAUDE.md counts as attack surface nobody is watching, and
+  // the consequence for an operator was worse than the security one: the only way
+  // to extend a sermon clock was to Stop it and Start another, which throws away
+  // the elapsed figure the preacher is reading and starts his rail from scratch.
+  //
+  // ── WHAT `+5` MEANS ON A CLOCK THAT HAS ALREADY RUN OUT ───────────────────
+  //
+  // Five minutes FROM NOW, not five minutes onto a debt. `Math.max(0, left)` is
+  // the whole of it, and the discontinuity is deliberate: a clock 12:40 over would
+  // otherwise be re-aimed to 7:40 in the past, which `timers::adjust` refuses as
+  // `TooShort` — so the one moment an operator most wants this button is the one
+  // moment it would answer with a refusal. "I am giving him five minutes" is what
+  // the press means, and past zero that is the only reading of it that is true.
+  //
+  // It publishes nothing, because `adjust_timer` publishes nothing to a
+  // congregation: a Stage Timer has no wire form on a wall, and the stage tablet
+  // is told through `publish_timers`, unconditionally, on the Rust side.
+  async function grantProgrammeTimer(row) {
+    ptBusy = true;
+    ptErr = '';
+    try {
+      await adjustTimer(row.id, { remainingMs: Math.max(0, row.left ?? 0) + PT_GRANT_MS });
+      await loadProgrammeTimers();
+    } catch (e) {
+      ptErr = humanError(e);
+    }
+    ptBusy = false;
+  }
+
   // Read every two seconds; TICK every half second. The figures are arithmetic
   // this side already owns, so asking the engine for them at the speed of a clock
   // would be a round trip per second for a whole service to learn something
@@ -575,11 +612,30 @@
   // what there is; when one arrives this becomes a listener and both intervals go.
   const ptTick = setInterval(() => (ptNow = Date.now()), 500);
   const ptPoll = setInterval(loadProgrammeTimers, 2000);
-  $: ptRows = (ptTimers ?? []).map((t) => ({
-    id: t.id,
-    label: (t.label ?? '').trim(),
-    left: timerRemainingMs(t, ptNow),
-  }));
+  // PAST ZERO IT COUNTS UP, BECAUSE THE PREACHER'S RAIL DOES (DECISIONS §99).
+  //
+  // This band is the operator's mirror of `Stage.svelte`'s programme rail, and the
+  // rail has answered the negative since RG-153 while this one floored at zero.
+  // Two surfaces about one clock, disagreeing: the rail said `+12:40` in red beside
+  // the preacher and the console said `0:00` — which is also exactly what it says a
+  // second after a timer runs out, and what it said for the rest of the service.
+  // The person who can act on "he is twelve minutes over" is the one reading this
+  // row, and rule 35 is the whole of the argument: one reading over two situations
+  // that need different actions.
+  //
+  // `past: true` LIFTS THE FLOOR; IT DOES NOT ADD A READER. The figure is still
+  // `timers.js` → `countdown.js`, the same chain the rail uses, so the two cannot
+  // drift. `over` is the SIGN and nothing else — no threshold, no law colour, and
+  // none of the four words `programmetimer.test.js` forbids (see the band's CSS).
+  $: ptRows = (ptTimers ?? []).map((t) => {
+    const left = timerRemainingMs(t, ptNow, { past: true });
+    return {
+      id: t.id,
+      label: (t.label ?? '').trim(),
+      left,
+      over: left != null && left <= 0,
+    };
+  });
 
   // HAS THIS VIEW ALREADY GONE AWAY? `onMount` is async and Svelte does not wait
   // for it: `onDestroy` runs the instant the operator switches workspace, which
@@ -2211,7 +2267,25 @@
           <!-- NO GLYPH STANDS IN FOR A FIGURE. A dash in a value slot cannot tell
                "there is no deadline" from "we have not asked yet"; the words can,
                and this surface already forbids the glyph. -->
-          <span class="pt-fig r-mono">{t.left == null ? 'no deadline' : formatCountdown(t.left)}</span>
+          <!-- AND PAST ZERO IT COUNTS UP, the same way the preacher's rail does
+               (DECISIONS §99). `+12:40 over` says the one thing this row is
+               asked once the time has gone: how far. The word carries it rather
+               than a colour — amber is ON AIR, cyan is a guess, amethyst is
+               rehearsal, red is a failure, and a sermon running long is none of
+               the four. It is also the half a colour cannot say out loud to an
+               operator glancing down for a tenth of a second. -->
+          <span class="pt-fig r-mono" class:over={t.over}
+            >{#if t.left == null}no deadline{:else if t.over}+{formatCountdown(-t.left)} over{:else}{formatCountdown(t.left)}{/if}</span>
+          <!-- FIVE MORE MINUTES. The one thing an operator wants from a sermon
+               clock and the only rendered door to `adjust_timer`, which was a
+               registered command no control could reach. See `grantProgrammeTimer`
+               for what it means on a clock that has already run out. -->
+          <button
+            class="r-btn sm ghost"
+            on:click={() => grantProgrammeTimer(t)}
+            disabled={ptBusy}
+            aria-label={t.label ? `Give ${t.label} five more minutes` : 'Give this timer five more minutes'}
+            title="Add five minutes to this timer. Past zero it grants five minutes from now. It touches no screen.">+5</button>
           <button
             class="r-btn sm ghost"
             on:click={() => stopProgrammeTimer(t.id)}
@@ -2901,6 +2975,13 @@
   .pt-name{flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis;
     white-space:nowrap; font-size:var(--v-fs-b2); color:var(--v-txt)}
   .pt-fig{flex:0 0 auto; font-size:var(--v-fs-b2); color:var(--v-dim)}
+  /* AN OVER-RUNNING CLOCK IS THE ONE FIGURE IN THIS BAND THAT ASKS FOR AN ACTION,
+     so it is the one that is set in the body ink rather than the dim one — and in
+     NO LAW COLOUR, for the reason the band's header states. The mark is the sign
+     and the word; `.railrow.warn` on the preacher's own page is red because red on
+     THAT page is the preacher's own bookkeeping, and on a console red means
+     something has failed. Nothing has failed when a sermon runs long. */
+  .pt-fig.over{color:var(--v-txt); font-weight:600}
   .pt-chip > :global(button){flex:0 0 auto}
   .pt-cap{flex:0 0 auto; font-family:var(--f-mono); font-size:var(--v-fs-cap);
     letter-spacing:var(--v-tr-caps); color:var(--v-faint)}

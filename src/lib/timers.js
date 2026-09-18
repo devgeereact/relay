@@ -50,8 +50,24 @@ export function timerAsContent(t) {
  *
  * Null rather than zero, deliberately: a row printing 0:00 over a timer whose
  * target never arrived reads exactly like one that has just run out.
+ *
+ * ── AND PAST ZERO, `past` ANSWERS THE NEGATIVE (DECISIONS §99) ──────────────
+ *
+ * The same opt-in `countdownRemainingMs` already carries, forwarded rather than
+ * re-decided, so this stays one subtraction with a floor that one caller lifts.
+ * `timerAsContent` is still the only projection between the registry shape and
+ * the content shape, and this function is still where it ends.
+ *
+ * **It is an opt-in and not the default, and the two callers are the reason.**
+ * Live's Stage Timer band mirrors the preacher's rail, and the rail counts up
+ * (`Stage.svelte`, RG-153, DECISIONS §92) — a band that floored at zero told the
+ * one person who can signal the preacher that a clock twelve minutes over had
+ * just run out. The dock's way-back figure is a CONGREGATION countdown, where
+ * zero is a real answer: the wall reads zero as "it finished" and paints the done
+ * message, and a negative would never reach that branch. One rule, two honest
+ * readings, and the caller says which it is asking for.
  */
-export function timerRemainingMs(t, nowMs) {
+export function timerRemainingMs(t, nowMs, { past = false } = {}) {
   if (!t) return null;
-  return countdownRemainingMs(timerAsContent(t), nowMs);
+  return countdownRemainingMs(timerAsContent(t), nowMs, { past });
 }
