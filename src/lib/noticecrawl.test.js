@@ -25,14 +25,26 @@
 // full-frame block is the conversion being wrong, not the region rendering being
 // wrong. A notice belongs along the bottom of a wall.
 //
-// THE REPAIR IS THEREFORE IN `regionsToLayers`, IN `src/lib/layers.js`, AND IS
+// THE REPAIR WAS THEREFORE IN `regionsToLayers`, IN `src/lib/layers.js`, AND WAS
 // DELIBERATELY NOT MADE HERE: that file was being edited by another worktree in
 // the same session, and two agents rewriting one converter is how this repository
-// gets two of something in the first place. What this file does instead is make
-// the split VISIBLE. The day the conversion is made design-preserving, the
-// assertion below turns red and sends its reader to this comment — which is the
-// whole of what a characterisation test is for, and is strictly better than the
-// silence the row is complaining about.
+// gets two of something in the first place. What this file did instead was make
+// the split VISIBLE, and say that the day the conversion was made design-
+// preserving, the assertion below would turn red and send its reader to this
+// comment.
+//
+// THAT IS WHAT HAPPENED, on the same day, in the same session (RG-174). The
+// converter now gives a `scroll: true` row a band on the bottom edge, the
+// characterisation assertion went red on the rebase, and it has been REPLACED
+// with one that asserts the band — not deleted, and not relaxed. The case below
+// carries both halves of that history at its own call site. The split itself is
+// unchanged and still characterised here: a region row paints `.ticker`, a
+// converted row paints `.lrun`, and which one a church sees still depends on
+// whether anyone has opened the Templates workspace. What RG-174 fixed is that
+// the two now agree about WHERE a notice goes.
+//
+// This is what a characterisation test is for, and it is strictly better than the
+// silence the row was complaining about: the fix could not land quietly.
 //
 // ── TWO: THE HALF THAT IS RENDERER WORK, AND IS FIXED HERE ─────────────────
 //
@@ -155,26 +167,41 @@ describe('the two renderings of one announcement, told apart at last', () => {
     expect(el.querySelector('.lrun'), 'a region row painted a layer crawl').toBeNull();
   });
 
-  it('and the SAME row, once converted, paints a full-frame crawl instead', () => {
-    // THIS IS THE DEFECT, PINNED AS A FACT RATHER THAN BLESSED AS A DESIGN. Read
-    // the file header before changing it: when `regionsToLayers` learns to give a
-    // `scroll: true` row a band, this assertion is the thing that should fail, and
-    // the fix is to swap it for one that says the converted row paints a band —
-    // not to delete it.
+  it('and the SAME row, once converted, still paints a band — not a full-frame crawl', () => {
+    // THIS WAS THE DEFECT, AND IT IS NOW THE FIX, SWAPPED RATHER THAN DELETED.
+    // The characterisation this case carried — a converted crawl ending at 74,
+    // a block across the MIDDLE of the wall — went red the moment RG-174 taught
+    // `regionsToLayers` to give a `scroll: true` row a band, which is exactly
+    // what the header said should happen. The assertion below is its replacement
+    // and asserts the design rather than the bug: the crawl is a strip on the
+    // bottom edge, as the region path always painted it.
+    //
+    // The DESIGN SPLIT this file exists for is unchanged and still characterised
+    // above: a region row paints `.ticker`, a converted row paints `.lrun`. What
+    // RG-174 fixed is the GEOMETRY of the converted rendering, not the fact that
+    // there are two of them. `noticecrawlconvert.test.js` holds the converter's
+    // own contract in full (the label's band, its side, the no-reference case);
+    // this case is the one that had to fail here for that work to be visible.
     const converted = { ...REGION_ANNOUNCEMENT, layout: regionsToLayers(REGION_ANNOUNCEMENT) };
     expect(isLayered(converted), 'the conversion produced no layers').toBe(true);
     const el = mount(converted);
     expect(el.querySelector('.lrun'), 'no layer crawl after conversion').toBeTruthy();
     expect(el.querySelector('.ticker'), 'the footer band survived the conversion').toBeNull();
 
-    // The part that makes it a DESIGN change and not a data one: the crawl's box
-    // is most of the frame rather than a strip along the bottom.
+    // A notice belongs along the bottom of a wall, on BOTH paths. Before RG-174
+    // this box was `y20 h54` and ended at 74 — most of the frame, nothing near an
+    // edge. It is a band now, so it ends ON the bottom edge and is short.
     const crawl = converted.layout.layers.find((L) => L.scroll);
     expect(crawl, 'the conversion dropped the crawl').toBeTruthy();
     expect(
       crawl.y + crawl.h,
-      'the converted crawl now reaches the bottom of the frame like a band would',
-    ).toBeLessThan(90);
+      'the converted crawl does not reach the bottom edge, so it is not a band',
+    ).toBe(100);
+    expect(
+      crawl.h,
+      'the converted crawl is too tall to be a band — this is the y20 h54 ' +
+        'full-frame block RG-174 removed, back again',
+    ).toBeLessThanOrEqual(20);
   });
 });
 
