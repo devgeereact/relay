@@ -461,6 +461,48 @@
       scale *= FIT_STEP;
       label.style.fontSize = `${base * scale}px`;
     }
+    return Math.min(scale, fitStillBody(band));
+  }
+  /**
+   * THE BODY IS ONLY EXEMPT WHILE IT IS MOVING.
+   *
+   * `fitTicker` above says the body is deliberately not shrunk, *"it scrolls, so
+   * its length is time, not overflow"*, and that is exactly right of a crawl. It
+   * is exactly wrong of a stopped one: under `prefers-reduced-motion` there is no
+   * later, so the length IS overflow again and the track's `overflow: hidden`
+   * silently takes whatever does not fit.
+   *
+   * THE TRACK IS WHAT IS MEASURED, not the run. `.ticker-run` is an
+   * `inline-block` under `white-space: nowrap`, so it sizes its own box to its
+   * content and `scrollWidth` can never exceed `clientWidth` on it — the same
+   * trap `.ticker-label`'s own comment records about the label's 45% cap, and the
+   * same one `.content` fell into in RG-141. `.ticker-track` is the flex item
+   * with `overflow: hidden`, so it is the box that can report.
+   *
+   * The answer is returned rather than reported here, so it folds into
+   * `fitText`'s `worst` and reaches `onFit` through the one reporter — the same
+   * route every other box on this page takes (`report()`, `verifyFit`). A notice
+   * that has to go below rule 37's floor to fit its band is then shown small and
+   * SAID, which is the whole of the rule: small and reported is a thing an
+   * operator can act on before next Sunday, and 62% of a notice that was never
+   * painted is not.
+   */
+  function fitStillBody(band) {
+    if (!reduceMotion) return 1;
+    const track = band.querySelector('.ticker-track');
+    const run = band.querySelector('.ticker-run');
+    if (!track || !run) return 1;
+    // Same reasoning as the label's base above: read the template's declared size
+    // fresh every pass, never this function's own previous write, or a band that
+    // was narrow for one frame stays shrunk for the rest of the notice.
+    const base = (verseSize / 100) * stageEl.clientWidth;
+    if (!base) return 1;
+    let scale = 1;
+    run.style.fontSize = `${base}px`;
+    while (keepShrinking({ overflowing: track.scrollWidth > track.clientWidth + 1, scale })) {
+      scale *= FIT_STEP;
+      run.style.fontSize = `${base * scale}px`;
+    }
     return scale;
   }
   function fitText() {
@@ -548,13 +590,77 @@
     return `R${w}x${h}|${verseSize}|${refSize}|${content?.reference ?? ''}|${(content?.text ?? '').length}|${bandMode ? 1 : 0}|${countdownTo ? 1 : 0}`;
   }
   /**
-   * Hand a rebuilt element the size its layer was already fitted at.
+   * IS THE FITTER'S ANSWER THE SIZE THIS ELEMENT IS ACTUALLY WEARING?
    *
-   * `{#key text}` destroys and rebuilds a layer's `.lfit` whenever its words
-   * change, and the new one carries only the DECLARED base. When the words
-   * changed for a real reason the signature moves and a fresh fit runs; when they
-   * changed because a clock ticked, it must not — so the answer is re-applied
-   * instead of re-measured. Pure style writes: no `scrollHeight`, no reflow.
+   * `data-sized` used to be the whole question, and it is a ONE-WAY LATCH: it
+   * records that a fit once happened, never that its answer is still on the
+   * element. Both recovery paths below asked it, so both declined over an element
+   * whose fitted size had been wiped while the latch stayed set — which is rule
+   * 37's shape at the recovery layer rather than inside the loop. A flag that
+   * cannot report that the thing it stands for has been undone is not a flag.
+   *
+   * Attribute reads only — `style.fontSize` is the inline declaration, not a
+   * computed value — so this is free on the frames where it says yes. A box with
+   * no recorded answer is left to the latch: there is nothing to compare against,
+   * and claiming a disagreement from an absence is the same lie in the other
+   * direction (rule 39's `built_shape`).
+   */
+  function fitInForce(box, el) {
+    if (!el.dataset.sized) return false;
+    const px = box?.dataset?.fitted;
+    if (!px) return true;
+    return sizeIs(el, px);
+  }
+  /**
+   * IS THIS ELEMENT WEARING THIS SIZE? — and the comparison may not be a string
+   * one, which cost a measured regression on the way to the fix above.
+   *
+   * The fitter's answers are full-precision JS numbers (`21.166796875`), and the
+   * CSSOM does not store the string it was handed: writing `21.166796875cqw` and
+   * reading `style.fontSize` straight back returns `21.1668cqw` in Chrome. A
+   * string compare therefore says "different" forever, on an element that is
+   * wearing exactly the right size — which sent `anythingUnfitted` true on every
+   * frame and drove the full binary search four times a second. Measured with
+   * that compare in place: 118 fit passes and 2682 style writes in 29 seconds of
+   * one countdown, the precise reflow storm the fit gating exists to prevent.
+   *
+   * `FIT_EPS_CQW` is the fitter's own idea of a difference nobody could see, so
+   * it is the right tolerance: anything inside it IS this size, and a clobber
+   * back to a declared base that happens to land inside it needed no repair
+   * anyway. A missing or unparseable size is NaN and fails, which is the honest
+   * answer for an element nothing has sized.
+   */
+  function sizeIs(el, px) {
+    return Math.abs(parseFloat(el.style.fontSize) - Number(px)) <= FIT_EPS_CQW;
+  }
+  /**
+   * Hand an element back the size its layer was already fitted at.
+   *
+   * TWO THINGS TAKE IT AWAY, and for a long time this function knew about one.
+   *
+   *   1 · `{#key text}` destroys and rebuilds a layer's `.lfit` whenever its words
+   *       change, and the new one carries only the DECLARED base.
+   *   2 · SVELTE RE-WRITES THE SIZE ON AN ELEMENT IT DOES NOT REBUILD. The `.lfit`
+   *       markup declares `font-size:{baseSize(L)}cqw` inline, deliberately (rule
+   *       42 · `cardfit.test.js`), and Svelte 4 compiles that attribute into one
+   *       `set_style(div, 'font-size', …)` per interpolation whose update is
+   *       guarded on the DIRTY BIT ALONE — there is no value comparison, unlike
+   *       the plain `data-base` / `data-fit` attributes beside it. So every update
+   *       that marks `stackLayers` dirty re-writes the declared base over the
+   *       imperative fit, in place, on every visible text layer.
+   *
+   *       A countdown tick is exactly that update (`countdownText` → `layerViews`
+   *       → `stackLayers`) and it is the case where nothing repairs it: `fitSig`
+   *       folds a ticking layer in by text LENGTH, so `4:59` → `4:58` does not move
+   *       the signature and no re-fit runs. Measured at 1920×1080 on the shipped
+   *       `Timer · Titled` with a 118-character label: fitted `1.99375cqw`, painted
+   *       `3.4cqw` from the first tick onward, 176px of words in a 97px
+   *       `overflow:hidden` box — and `onFit` had already reported the fit a
+   *       success, because it was, half a second earlier (RG-139).
+   *
+   * Both are now the same question, asked of the DOM rather than of the trigger:
+   * is the size on the element the size we answered for its box? Pure style
+   * writes: no `scrollHeight`, no reflow, so it stays free at 4 Hz.
    */
   function reapplyFitted() {
     if (!stageEl || !layered) return;
@@ -562,8 +668,8 @@
       const px = box.dataset.fitted;
       if (!px) return;
       const el = box.querySelector('.lfit');
-      if (!el || el.dataset.sized) return;
-      el.style.fontSize = `${px}cqw`;
+      if (!el) return;
+      if (!sizeIs(el, px)) el.style.fontSize = `${px}cqw`;
       el.dataset.sized = '1';
     });
   }
@@ -593,7 +699,12 @@
   function anythingUnfitted() {
     if (!stageEl || !layered) return false;
     for (const el of stageEl.querySelectorAll('.lfit')) {
-      if (!el.dataset.sized) return true;
+      // The SAME question `reapplyFitted` asks, so the two cannot disagree about
+      // what "fitted" means. `reapplyFitted` runs first and repairs anything with
+      // a recorded answer, so what survives to here is a box that has none — a
+      // layer the fitter has genuinely never measured — and that is a real fit,
+      // with a real verdict, not a style write.
+      if (!fitInForce(el.closest('.ltext'), el)) return true;
     }
     return false;
   }
@@ -824,6 +935,26 @@
     });
   }
   function scheduleFit() {
+    // ── THE REPAIR CANNOT WAIT FOR A FRAME, AND THE MEASUREMENT MUST ─────────
+    //
+    // Two different costs, so two different schedules. The fit READS layout in a
+    // loop, which forces synchronous reflow, so it is deferred to one animation
+    // frame — that is what the whole gate below exists for. Putting back a size
+    // Svelte has just overwritten is pure style writes, and deferring THAT by a
+    // frame is what makes it visible.
+    //
+    // `afterUpdate` runs in the same task as the DOM update that clobbered the
+    // size (see `reapplyFitted`), before the browser paints; the next animation
+    // frame is one paint later. Measured at 1920×1080 on `Timer · Titled` with
+    // the repair left in the frame: sampling `getComputedStyle().fontSize` every
+    // animation frame for four seconds caught the DECLARED base on 4 of 482
+    // frames — one frame per countdown tick, a 65px flash on a 38px label four
+    // times a second, for the whole pre-service countdown. Repairing here instead
+    // closes that window by construction rather than by winning a race.
+    //
+    // It touches no Svelte state and reads no layout, so it cannot re-enter the
+    // scheduler (rule 1) and cannot cost a reflow.
+    reapplyFitted();
     if (fitRaf) return;
     fitRaf =
       typeof requestAnimationFrame !== 'undefined' ? requestAnimationFrame(runFit) : setTimeout(runFit, 16);
@@ -1186,6 +1317,36 @@
     typeof window !== 'undefined' && typeof window.matchMedia === 'function'
       ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
       : false;
+  /**
+   * DOES THIS LAYER ACTUALLY CRAWL? — and the answer is not `L.scroll` alone.
+   *
+   * A crawl shows a notice longer than its band by moving it past a window, so
+   * the words that do not fit are shown LATER. Under `prefers-reduced-motion` the
+   * animation is off and later never comes, and the box is still `white-space:
+   * nowrap; overflow: hidden` — so the notice is simply cut where the band ends,
+   * with nothing shown and nothing said. Measured at 1920×1080 on the shipped
+   * `Scroll · Banner` with a 185-character notice and reduced motion on:
+   * `clientWidth 1651` against `scrollWidth 4299`, so **2648px — 62% of the
+   * notice — was never on the screen at all**, while `onFit` reported
+   * `{ scale: 1, legible: true, clipped: false }`. A fit that reports a success
+   * over a notice with two thirds of it missing is rule 37 and rule 35 at once.
+   *
+   * DECISIONS §88 already had to distort the shelf around this: `High Visibility ·
+   * Announcement` deliberately does not scroll, *"because a crawl that stops under
+   * `prefers-reduced-motion` silently truncates a notice, and a family built for a
+   * low-vision or vestibular reader cannot ship the one member most likely to cut
+   * text off screen."* That reasoning is right and it should not have needed a
+   * carve-out: what a crawl that cannot move should become is an ordinary text
+   * layer. It wraps, the fitter measures it like every other layer, it shrinks if
+   * it must, and it REPORTS — which is what rule 37 asks for and is strictly
+   * better for a congregation than two thirds of a notice that never arrives.
+   *
+   * ONE FACT, READ IN BOTH PLACES. The class, the markup and `fitLayers`'
+   * `lscroll` skip all follow from this single answer, so the renderer cannot
+   * paint a still crawl while the fitter still believes it is moving — which is
+   * the shape of every "guarantee kept on one of two doors" bug in this file.
+   */
+  const crawls = (L) => !!L?.scroll && !reduceMotion;
   /** Svelte's transition contract, driven by the one pure function. */
   function slideIn(node, { mode, duration }) {
     return { duration, css: (t) => transitionCss(mode, t) };
@@ -1432,6 +1593,16 @@
       const mode = el.dataset.fit || 'both';
       if (el.classList.contains('lscroll') || mode === 'none') {
         el.style.fontSize = `${base}cqw`;
+        // A REFUSAL IS STILL AN ANSWER, and it has to be recorded like one. These
+        // two never entered the search, so they never carried `data-sized` — and
+        // `anythingUnfitted` therefore said "true" about them on every single
+        // frame, which sent a template carrying a crawl or a `fit:'none'` layer
+        // through the whole forced-reflow search four times a second for as long
+        // as a countdown was on the wall beside it. The size the fitter answers
+        // for a layer it declines to measure is that layer's declared base, so
+        // saying so is truthful as well as free.
+        el.dataset.sized = '1';
+        box.dataset.fitted = String(base);
         return;
       }
       // 'shrink' caps growth at the configured size; 'both' allows growing to a
@@ -1688,11 +1859,11 @@
                    template's own size instead of on the app's. `cardfit.test.js`. -->
               <div
                 class="lfit"
-                class:lscroll={L.scroll}
+                class:lscroll={crawls(L)}
                 data-base={baseSize(L)}
                 data-fit={L.fit || defaultFit(L)}
                 style="font-size:{baseSize(L)}cqw; color:{L.color}; font-family:{fontFamOf(L.font)}; font-weight:{L.weight || 400}; text-align:{L.align}; text-transform:{L.transform || 'none'}; line-height:{L.lineHeight || 1.3}; letter-spacing:{(L.letterSpacing || 0)}em; text-shadow:{shadowOf(L.shadow)}; font-style:{L.italic ? 'italic' : 'normal'};">
-                {#if L.scroll}
+                {#if crawls(L)}
                   <span class="lrun" style="--tickdur:{Math.min(60, Math.max(10, (text?.length || 0) * 0.42))}s">{text}</span>
                 {:else}
                   <!-- Verbatim: the text is shown exactly as imported/typed. Relay
@@ -1786,7 +1957,7 @@
                the announcement crawl — it never occupies the centre of the wall.
                The label obeys the Reference toggle just like every other region:
                turning the reference OFF removes it from the ticker too. -->
-          <div class="ticker" style="background:{tickerBg}; --tickdur:{tickerSecs}s;">
+          <div class="ticker" class:still={reduceMotion} style="background:{tickerBg}; --tickdur:{tickerSecs}s;">
             {#if show('reference') && content.reference}
               <span class="ticker-label" style="font-size:{refSize}cqw; {refStyle}">{content.reference}</span>
             {/if}
@@ -1798,6 +1969,7 @@
           <div
             class="content"
             class:panel={panelOn}
+            class:cdbox={countdownTo && countdownAllowed}
             style="text-align:{layout.align || 'center'}; font-family:{fontFamily}; background:{panelBg}; border-radius:{panelRadius}cqw;{bandMode && bandHeight ? ` min-height:${bandHeight}cqh;` : ''}"
           >
             {#if countdownTo && !countdownAllowed}
@@ -2007,6 +2179,48 @@
     max-height: 92%;
     overflow: hidden;
   }
+  /* ── THE BOX A COUNTDOWN IS FITTED AGAINST MAY NOT BE SIZED BY THE COUNTDOWN ──
+     RG-141. `.content` above declares no width and no height: it is a flex item
+     with caps, so it is shrink-to-fit and its box IS its text. That is right for
+     a verse — prose wraps, so a long passage grows to the 90%/92% caps and then
+     genuinely overflows them, which is a real signal the fitter can act on — and
+     it is wrong for a countdown, which is one `nowrap` line with `line-height:
+     1.05`, a leading deliberately TIGHTER than the face's own line box. The glyph
+     box is therefore a fixed FRACTION taller than the box measured around it, at
+     every size, and `fitOne`'s stop condition is an absolute one pixel.
+
+     A loop whose overflow scales with the thing it is adjusting, against a
+     tolerance that does not, can only terminate by shrinking until the residue
+     rounds under a pixel. Measured at 1920x1080 on a legacy region row declaring
+     `verseSize 5` — so a countdown designed at 10cqw, 192px — the residue went
+     12px, 10, 8, 5, 3, 2 as the scale went 1, 0.8, 0.6, 0.4, 0.3, 0.2, and the
+     loop stopped at 0.135: a 59x35px blob in the middle of an otherwise empty
+     1920x1080 screen, the digits at 26px and the label at 6px. `onFit` correctly
+     reported `legible: false`, which the audit could not confirm and which is the
+     one part of this that was already working.
+
+     It is rule 37 in its purest form — the loop had no notion of failure because
+     it had no notion of the BOX — and the repair is the box, not the tolerance.
+     Giving the countdown a definite rectangle makes `clientHeight` independent of
+     the type, so the search terminates on the true fit: at 1920x1080 the declared
+     192px now fits at scale 1 and paints at 192px. A template whose designer
+     genuinely asked for more than the frame still shrinks, still shows, and still
+     reports, exactly as rule 37 requires.
+
+     90%/92% are `.content`'s own caps, restated as sizes rather than limits, so
+     the countdown occupies the same budget every other kind already had and
+     nothing about the layout moves. This is also what the LAYER branch has always
+     had for free: `.ltext` and `.cd-default`'s lines are percentage boxes, which
+     is why a layered countdown never showed this. Same guarantee, reached the same
+     way, on the second door. */
+  .content.cdbox {
+    width: 90%;
+    height: 92%;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
   /* Text contrast panel — a plate behind the words for a bright background. The
      padding gives the plate room around the text; it collapses to nothing when
      the panel is off (background transparent, radius still set but invisible). */
@@ -2110,14 +2324,41 @@
       transform: translateX(-100%);
     }
   }
-  /* Reduced motion: the crawl stops and the notice sits static, still readable. */
+  /* ── A CRAWL THAT CANNOT CRAWL IS NOT A CRAWL ─────────────────────────────
+     This block used to read *"the crawl stops and the notice sits static, still
+     readable"*, and the second half of that was not true. Stopping the animation
+     inside a `white-space: nowrap; overflow: hidden` track shows the notice's
+     first bandful and discards the rest — and `text-overflow: ellipsis` did not
+     even mark the cut, because the track's inline content is a single
+     `inline-block` child rather than the text itself, so there was no truncated
+     line for it to apply to. See `crawls()` for the measured layer-mode figure and
+     for DECISIONS §88, which had to carve a family member out of the shelf over
+     exactly this.
+
+     A still notice is SHRUNK TO THE BAND IT WAS GIVEN and the result reaches
+     `onFit` through `fitText`'s `worst`, so a notice too long for its band is
+     shown small and REPORTED, never cut in silence. The band keeps its geometry
+     and the notice gives way, not the other way round: letting the text wrap was
+     tried first and measured, and it grew this band from 115px to 236px and
+     lifted its top edge from y965 to y844 — a legacy footer band silently
+     becoming a fifth of the wall, over a camera, because somebody's operating
+     system prefers less motion. A notice at 32% of its designed size is small;
+     one that has redrawn the screen behind it is a different template. The
+     layer-mode crawl has no such conflict, because `.ltext` is a real percentage
+     box: it wraps INSIDE the box its designer drew, which is the same lesson
+     `.content.cdbox` above records.
+
+     The class is set from the same `reduceMotion` flag the fitter reads, so the
+     stylesheet and the measurement cannot disagree about whether this notice is
+     moving. */
   @media (prefers-reduced-motion: reduce) {
     .ticker-run {
       animation: none;
       padding-left: 0;
     }
-    .ticker-track {
-      text-overflow: ellipsis;
-    }
+  }
+  .ticker.still .ticker-run {
+    animation: none;
+    padding-left: 0;
   }
 </style>
