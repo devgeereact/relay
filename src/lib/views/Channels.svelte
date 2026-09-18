@@ -61,7 +61,13 @@
   // something legible. Imported here so the preview and the wall reach the same
   // answer rather than two different kinds of nothing.
   import { DEFAULT_TEMPLATE } from '../templates.js';
-  import { CONTENT_KINDS, resolveOutputTemplate, isKeyedTemplate, templateById } from '../layers.js';
+  import {
+    CONTENT_KINDS,
+    resolveOutputTemplate,
+    isKeyedTemplate,
+    templateById,
+    lookIdFor,
+  } from '../layers.js';
   import { outputUrl } from '../outputurl.js';
   import { CHANNEL_ROLES, NO_ROLE_LABEL, stageRemoteUrl } from '../channelroles.js';
   import {
@@ -73,6 +79,9 @@
     liveTemplatePinned,
     contentTemplates,
     setContentTemplate,
+    channelLooks,
+    loadChannelLooks,
+    setChannelLook,
     loadTemplates,
     listOutputChannels,
     setChannelTemplate,
@@ -147,6 +156,10 @@
     try {
       await loadTemplates();
       await loadDefaultTemplate();
+      // WHAT EACH SCREEN WEARS FOR EACH KIND (DECISIONS §97). Read once, here,
+      // into the shared store — the disclosure and the card meta line both read
+      // the store, so the desk cannot describe one screen two ways.
+      await loadChannelLooks();
       monitors = await listMonitors();
       lanIp = (await localIp()) || 'localhost';
       await refresh();
@@ -177,6 +190,63 @@
   /** What a content look currently resolves to, by name — for a following screen. */
   const lookName = (kind) =>
     $templates.find((t) => t.id === $contentTemplates[kind])?.name ?? 'the default look';
+  // ── PER-KIND LOOKS: WHAT A SCREEN WEARS FOR ONE KIND (DECISIONS §97) ────────
+  //
+  // `$channelLooks` is NAMED in every expression below rather than reached
+  // through a helper that reads it. Svelte tracks the identifiers it can SEE in a
+  // reactive expression, not the ones a called function happens to read, and this
+  // file has been caught by exactly that twice (`stageUrl()`,
+  // `lookName('scripture')`).
+  //
+  // The inherit option NAMES ITS DESTINATION, RESOLVED LIVE. "Same as this
+  // screen · Classic · Scripture" and "Follow the content look · Aurora" and
+  // "Follow the configured default · Classic Serif" are three different answers,
+  // and an inherit option that reads identically whether a content look is set or
+  // not is not a line — it is the shape rule 35 is about, on the control where
+  // the operator is deciding what a congregation sees.
+  $: inheritLabel = (kind) => {
+    if (!sel) return 'Inherit';
+    if (sel.template_id != null) {
+      const own = $templates.find((t) => t.id === sel.template_id);
+      return `Same as this screen · ${own?.name ?? 'its own look'}`;
+    }
+    const look = $templates.find((t) => t.id === $contentTemplates[kind]);
+    if (look) return `Follow the content look · ${look.name}`;
+    const dflt = $templates.find((t) => t.id === $defaultTemplateId);
+    return dflt ? `Follow the configured default · ${dflt.name}` : 'Follow the bundled look';
+  };
+  // WHICH KINDS THIS SCREEN HAS A LOOK OF ITS OWN FOR. The summary NAMES them and
+  // never counts them: "2 kinds" is a number an operator has to open the
+  // disclosure to act on, and the whole reason the disclosure is closed by
+  // default is that most screens have nothing in it.
+  $: selLookKinds = sel
+    ? CONTENT_KINDS.filter((k) => lookIdFor($channelLooks, sel.id, k.key) != null)
+    : [];
+  $: perKindSummary = selLookKinds.length
+    ? selLookKinds.map((k) => k.label).join(' · ')
+    : 'Same look for every kind';
+  let perKindOpen = false;
+  let perKindFor = null;
+  // CLOSED AGAIN WHEN THE OPERATOR MOVES TO ANOTHER SCREEN. A disclosure that
+  // stayed open would carry one screen's five choices onto the next screen's
+  // panel, which reads as a setting that has followed them.
+  $: if ((sel?.id ?? null) !== perKindFor) {
+    perKindFor = sel?.id ?? null;
+    perKindOpen = false;
+  }
+  async function pickKindLook(kind, e) {
+    const v = e.target.value;
+    try {
+      await setChannelLook(sel.id, kind, v === '' ? null : parseInt(v, 10));
+      error = null;
+    } catch (err) {
+      error = err;
+    }
+  }
+  /** One term for the card's meta line — never a lamp and never a new colour. */
+  const perKindTerm = (c, looks) =>
+    CONTENT_KINDS.some((k) => lookIdFor(looks, c.id, k.key) != null) ? 'per-kind looks' : null;
+
   const monitorOf = (c) => {
     const i = parseInt(c.display_target ?? '', 10);
     return Number.isFinite(i) ? monitors.find((m) => m.index === i) || null : null;
@@ -903,7 +973,10 @@
                        this puts it one hover away rather than one click. -->
                   <span class="r-badge {SCREEN_BADGE[k.d.kind]} ch-lamp" title={k.d.note}><span class="bd"></span>{k.d.label}</span>
                 </div>
-                <div class="ch-cardmeta r-mono">{kindOf(k.c)} · {transportOf(k.c)}</div>
+                <!-- ONE TEXT TERM, no new lamp and no new colour. A per-kind look
+                     is configuration, and configuration does not get amber, cyan
+                     or amethyst — those mean ON AIR, a guess and a rehearsal. -->
+                <div class="ch-cardmeta r-mono">{kindOf(k.c)} · {transportOf(k.c)}{perKindTerm(k.c, $channelLooks) ? ` · ${perKindTerm(k.c, $channelLooks)}` : ''}</div>
 
                 <!-- `stopPropagation`: using a control must not also toggle the
                      selection of the card underneath it. -->
@@ -1176,6 +1249,60 @@
               choose <b>Follow the content look</b>.
             </p>
           {/if}
+
+          <!-- ══ PER KIND ══ (DECISIONS §97)
+               ONE CONTROL, IN THE INSPECTOR ONLY, AND CLOSED BY DEFAULT.
+               The screen CARD does not gain this and must not: a card is 232px of
+               picture and two words, and five choices do not go there. The card's
+               `<select>` keeps its meaning exactly and becomes the screen's look
+               for EVERYTHING ELSE.
+
+               Four screens times five kinds is twenty choices only for a church
+               that asks for twenty; for everyone else it is four choices and a
+               closed line of text. The summary NAMES the kinds and never counts
+               them — a count is a number an operator has to open the disclosure to
+               act on.
+
+               NOT a `<details>`: the summary has to state what is inside it while
+               closed, and the whole row is the control, so a plain button with
+               `aria-expanded` says what it does to a screen reader rather than
+               relying on the element's own semantics to carry a sentence. -->
+          <div class="r-lbl ch-flbl">Per kind</div>
+          <div class="ch-fin ch-perkind">
+            <button
+              class="r-btn ghost sm ch-perkindhead"
+              aria-expanded={perKindOpen}
+              disabled={!$capture.available}
+              on:click={() => (perKindOpen = !perKindOpen)}>
+              <span class="ch-perkindsum">{perKindSummary}</span>
+              <span class="ch-perkindmark" aria-hidden="true">{perKindOpen ? '−' : '+'}</span>
+            </button>
+            {#if perKindOpen}
+              <div class="ch-perkindrows">
+                {#each CONTENT_KINDS as k (k.key)}
+                  <div class="ch-perkindrow">
+                    <label class="r-lbl ch-perkindlbl" for="kindlook-{sel.id}-{k.key}">{k.label}</label>
+                    <select
+                      id="kindlook-{sel.id}-{k.key}"
+                      class="r-select ch-perkindsel"
+                      value={lookIdFor($channelLooks, sel.id, k.key) ?? ''}
+                      on:change={(e) => pickKindLook(k.key, e)}
+                      disabled={!$capture.available}>
+                      <option value="">{inheritLabel(k.key)}</option>
+                      {#each $templates as t (t.id)}
+                        <option value={t.id}>{t.name}</option>
+                      {/each}
+                    </select>
+                  </div>
+                {/each}
+                <p class="ch-finhint">
+                  A look here changes what this screen <b>wears</b> for that kind, never
+                  whether it <b>paints</b> it. Which kinds a screen shows at all is a
+                  separate question, answered by the template.
+                </p>
+              </div>
+            {/if}
+          </div>
 
           <!-- ROLE. A setting, not a guess: Live's programme pane used to decide
                which screen it was previewing from `render_target`, and a Stage
@@ -1640,6 +1767,22 @@
   .ch-infonote{ display:block; font-style:normal; font-size:var(--v-fs-cap); color:var(--v-faint); }
   .ch-fin{ width:100%; }
   .ch-finhint{ margin:6px 0 0; font-size:var(--v-fs-cap); line-height:1.45; color:var(--v-faint); }
+  /* PER-KIND LOOKS (DECISIONS §97). Configuration, so it borrows the desk's own
+     surfaces and introduces no colour of its own — amber means ON AIR, cyan means
+     a guess and amethyst means a rehearsal, and none of the three is ever allowed
+     to describe a setting. */
+  .ch-perkind{ display:block; }
+  .ch-perkindhead{ display:flex; align-items:center; justify-content:space-between;
+    gap:8px; width:100%; text-align:left; }
+  .ch-perkindsum{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ch-perkindmark{ flex:0 0 auto; opacity:.7; font-variant-numeric:tabular-nums; }
+  .ch-perkindrows{ margin-top:8px; display:flex; flex-direction:column; gap:6px; }
+  .ch-perkindrow{ display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.4fr);
+    align-items:center; gap:8px; }
+  /* The label is allowed to shrink and the picker is not: a template name cut in
+     half is a screen wearing a look nobody can read back. */
+  .ch-perkindlbl{ min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ch-perkindsel{ min-width:0; width:100%; }
   /* Sits under Actions, so it needs the gap the actions row does not provide. */
   .ch-reach{ margin-top:10px; }
 

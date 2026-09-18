@@ -1784,6 +1784,98 @@ return map ?? { ...EMPTY_CONTENT_LOOKS };
 }
 
 /**
+ * WHAT EACH SCREEN WEARS FOR EACH KIND — `{ 1: { scripture: 9, song: 12 } }`.
+ *
+ * DECISIONS §97. A per-kind look is the SCREEN'S own template for one kind, not
+ * an override: it joins one notch above the screen's blanket template, which is
+ * what leaves §29 and the transparency law intact.
+ *
+ * ONE store and ONE writer, the same discipline `contentTemplates` above records
+ * and for the reason recorded there: three surfaces each holding their own cached
+ * copy of a map is three surfaces that silently disagree about what a screen is
+ * wearing, on the desk an operator opens to check exactly that.
+ *
+ * A screen with no per-kind look is ABSENT from this map rather than present with
+ * an empty object, and a kind with no look is absent from its screen's entry —
+ * the shape the backend sends, because no row is the only spelling of "this kind
+ * inherits" and two spellings of one fact is what the schema already refuses.
+ */
+export const channelLooks = writable({});
+
+/** Load the per-kind look map into the shared store. */
+export async function loadChannelLooks() {
+  return guardedRead(
+    'loadChannelLooks',
+    async (call) => {
+      const map = await call('list_channel_looks');
+      // AN ANSWER THAT IS NOT AN OBJECT IS A FAILED READ, not "no screen has a
+      // per-kind look" — the same distinction `loadTemplates` draws for a
+      // non-array, and the same reason: the second reads as a setup nobody has
+      // made, over a setup somebody made and cannot see.
+      if (!map || typeof map !== 'object' || Array.isArray(map)) {
+        throw new Error('the per-kind look map came back as something else');
+      }
+      channelLooks.set(map);
+      return map;
+    },
+    null,
+    // A failed read must not leave the store holding a map the backend can no
+    // longer confirm — every surface would go on naming looks for screens out of
+    // it. A fallback VALUE cannot carry a side effect, so the reset is explicit;
+    // the same shape as `loadDefaultTemplate` above.
+    () => channelLooks.set({}),
+  );
+}
+
+/**
+ * THE ONE writer of the per-kind look map. `templateId` of null CLEARS the look
+ * for that kind, which means the kind INHERITS — the screen's own template, then
+ * the content look, then the configured default.
+ *
+ * It does NOT mean "this screen skips this kind". That question is answered by
+ * `layout.shows` on the template and by the screen's own `shows` set; conflating
+ * the two would make a look picker into a routing control, which is RG-161
+ * arriving through a door built for something else.
+ *
+ * GROUP 1 (throws). It is an operator action with a visible result and the
+ * backend refuses an unknown kind by name, so a swallowed refusal would leave the
+ * picker showing a look the screen does not wear — the same failure
+ * `setChannelTemplate` describes, on the setting that decides what a congregation
+ * sees. The caller renders it through `src/lib/errors.js`, never as a raw Rust
+ * string.
+ *
+ * Optimistic, then reconciled: the store moves first so every subscribed surface
+ * reflects the change instantly, and a failure reloads truth so the UI can never
+ * lie about what is stored.
+ */
+export async function setChannelLook(channelId, kind, templateId) {
+  const id = templateId ?? null;
+  const before = get(channelLooks);
+  channelLooks.update((m) => {
+    const mine = { ...(m[channelId] ?? m[String(channelId)] ?? {}) };
+    if (id == null) delete mine[kind];
+    else mine[kind] = id;
+    const next = { ...m };
+    // The backend omits a screen with nothing to say about it, so the store does
+    // too — one shape, both ends, or `lookIdFor` would have two empties to know
+    // about.
+    if (Object.keys(mine).length) next[channelId] = mine;
+    else {
+      delete next[channelId];
+      delete next[String(channelId)];
+    }
+    return next;
+  });
+  try {
+    const call = await invoke();
+    await call('set_channel_look', { channelId, kind, templateId: id });
+  } catch (e) {
+    channelLooks.set(before);
+    throw e;
+  }
+}
+
+/**
  * THE ONE writer of the content-look map (Decision §25). Maps a content type to
  * a template (null clears → the screen's own template). Updates the shared store
  * optimistically so every subscribed surface reflects the change instantly, then
