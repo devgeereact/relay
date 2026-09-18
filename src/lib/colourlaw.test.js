@@ -233,6 +233,15 @@ describe('the colour law — amethyst promises that nothing here reaches a congr
       ['src/lib/views/Settings.svelte', 'CAUTION GAP — .s-netwarn, §93'],
       ['src/lib/views/Help.svelte', 'CAUTION GAP — the callout, §93'],
       ['src/lib/views/library/LyricsPane.svelte', 'CAUTION GAP — .ly-warn, §93'],
+      // The fifth, and the ONE that arrived by a promise colour being given back
+      // rather than by a new caution being invented. `.ms-caution` (the model that
+      // will fall behind a live sermon on a machine with no acceleration) and
+      // `.ms-locked` (the service lock) were and are cautions; the first was
+      // painted `--v-amber`, which means ON AIR and only that, on a panel that is
+      // never on air. Moving it into the gap is the gap being COUNTED correctly,
+      // which is the opposite of it growing quietly — and it is what the law says
+      // to do when a caution is the honest reading.
+      ['src/lib/ModelSetup.svelte', 'CAUTION GAP — .ms-caution and .ms-locked, §93'],
     ]);
     // WHAT THIS DOES NOT SEE, said so it is not read as more. It matches
     // `var(--v-amethyst…)`, so a component that wears the shared `.r-badge
@@ -253,14 +262,22 @@ describe('the colour law — amethyst promises that nothing here reaches a congr
     expect(stale, 'these no longer paint amethyst — take them out of the list').toEqual([]);
   });
 
-  it('and the four cautions are still exactly four — the gap does not grow quietly', () => {
-    // The count is the assertion. `.b-check.warn` in `src/app.css` is the fourth
+  it('and the cautions are still exactly five — the gap does not grow quietly', () => {
+    // The count is the assertion. `.b-check.warn` in `src/app.css` is one of them
     // and lives in the stylesheet rather than in a component, so it is named here
     // rather than in the map above.
+    //
+    // IT WAS FOUR AND IT IS FIVE, and the direction matters. `ModelSetup.svelte`
+    // did not acquire a caution — it always had one, painted in the colour
+    // reserved for ON AIR. Paying an amber violation into the amethyst gap makes
+    // the gap one entry larger and the LAW one violation smaller, which is the
+    // trade §93 describes. A sixth arriving because somebody wanted a warning
+    // colour is the thing this count is watching for.
     const cautions = [
       'src/lib/views/Settings.svelte',
       'src/lib/views/Help.svelte',
       'src/lib/views/library/LyricsPane.svelte',
+      'src/lib/ModelSetup.svelte',
     ];
     for (const f of cautions) expect(paintsAmethyst(f), `${f}`).toBe(true);
     expect(read('src/app.css')).toMatch(/\.b-check\.warn \.ico\{ color:var\(--v-amethyst2\); \}/);
@@ -288,5 +305,139 @@ describe('the colour law — amethyst promises that nothing here reaches a congr
       ).toMatch(/used to read/);
     }
     expect(css).toMatch(/NOTHING HERE REACHES A CONGREGATION/);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// AMBER — THE SWEEP THIS FILE DID NOT HAVE, AND THE ONE VIOLATION IT MISSED.
+//
+// Everything above holds the law at `plan.js`'s two taxonomy tables, which is
+// where it was broken when this file was written, plus amethyst's boundary
+// across every component. Amber — the colour with the loudest promise of the
+// five — had no component sweep at all. Its only guard was the two taxonomy
+// tables and four hand-written lines about `Live.svelte`.
+//
+// So this was live and nothing could see it: `ModelSetup.svelte` painted the
+// *Download — recommended* button `class:amber={m.recommended}` — the ON AIR
+// fill, `--v-amber` behind `--v-amber-ink` with an amber glow, on a download
+// button in a settings panel. DESIGN_SYSTEM §1.1 says amber "survives only as
+// `.r-badge.amber`, `.r-btn.amber` and `.r-stat.amber` — the on-air cases, named
+// explicitly at the call site so reaching for one is a DECISION rather than a
+// default". That is the right mechanism and it had no test, so the decision was
+// never reviewed; a recommended download is not a congregation looking at
+// anything.
+//
+// TWO SWEEPS, because amber reaches a component two ways and a test that saw
+// only one would look exhaustive while checking half:
+//
+//   1. the shared CLASS (`class:amber`, `class="r-btn amber"`, `'amber'` inside
+//      a class expression) — app.css paints it, so the component names no token;
+//   2. the raw TOKEN (`var(--v-amber…)`) in the component's own stylesheet.
+//
+// Both are enumerated WITH a reason, the same shape as the amethyst map above
+// and as `buttonshapes.test.js`'s kept shapes: the only thing separating a
+// deliberate use from drift is somebody having said which it is. Adding an entry
+// is a decision about a congregation's tally light; adding one to make a build
+// green is the drift this exists to catch.
+//
+// WHAT THIS DOES NOT SEE, said so it is not read as more — the same boundary the
+// amethyst sweep states. A component wearing the shared `.r-cbtn.endsvc`,
+// `.r-badge amber` or `.r-btn.amber` class WITHOUT naming the word (the dock's
+// End service is painted by `app.css` on a `data-on` attribute) is outside this
+// sweep by construction. That is the right boundary — those rules carry their
+// meaning at their definition, which is where `app.css` argues for them — but it
+// means this is the files that reach for amber THEMSELVES, not every file on
+// which amber appears.
+describe('the colour law — amber means ON AIR, and every use is named', () => {
+  const ROOT = resolve(__dirname, '../..');
+  const read = (f) => readFileSync(resolve(ROOT, f), 'utf8');
+  const code = (f) =>
+    read(f)
+      .replace(/<!--[\s\S]*?-->/g, '')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+
+  /** Every .svelte under src/, derived rather than typed. */
+  const components = (() => {
+    const out = [];
+    const walk = (dir) => {
+      for (const name of readdirSync(join(ROOT, dir))) {
+        const rel = `${dir}/${name}`;
+        if (statSync(join(ROOT, rel)).isDirectory()) walk(rel);
+        else if (name.endsWith('.svelte')) out.push(rel);
+      }
+    };
+    walk('src');
+    return out;
+  })();
+
+  /** Does this file ASK app.css for the amber variant of a shared control? */
+  const wearsAmberClass = (f) =>
+    /class:amber\b/.test(code(f)) || /class="[^"]*\bamber\b[^"]*"/.test(code(f)) ||
+    /class=\{[^}]*'amber'[^}]*\}/.test(code(f)) || /class="[^"]*\{[^}]*'amber'[^}]*\}[^"]*"/.test(code(f));
+  /** Does this file paint the token itself? */
+  const paintsAmberToken = (f) => /var\(--v-amber/.test(code(f));
+
+  it('the two scanners can each see a real instance, and neither reads a comment', () => {
+    // Guards the guards, for the fourth time in this repository and for the same
+    // reason: `ipc.test.js` narrowed quietly twice while looking exhaustive, and a
+    // sweep matching nothing makes every assertion below pass vacuously.
+    expect(components.length, 'no components found at all').toBeGreaterThan(30);
+    expect(wearsAmberClass('src/lib/views/library/LiveOutputRail.svelte')).toBe(true);
+    expect(paintsAmberToken('src/lib/views/Live.svelte')).toBe(true);
+    // `TemplateRender.svelte` mentions amber ONLY in prose explaining what it must
+    // not do. A scanner counting that would fail on a correct file, and the
+    // cheapest way to go green would be deleting the explanation.
+    expect(read('src/lib/TemplateRender.svelte')).toMatch(/amber/i);
+    expect(paintsAmberToken('src/lib/TemplateRender.svelte')).toBe(false);
+    expect(wearsAmberClass('src/lib/TemplateRender.svelte')).toBe(false);
+  });
+
+  it('every surface wearing amber is one an operator reads as ON AIR', () => {
+    // WHAT EACH ENTRY MUST BE: something a congregation is looking at right now,
+    // the control that owns that state, or a template's own author-chosen colour.
+    // "It needed to stand out" is not on the list — that is what `--v-sel` is for,
+    // and DESIGN_SYSTEM §1.1 spends four paragraphs on why the accent stopped
+    // being amber.
+    const ALLOWED = new Map([
+      // THE TALLY ITSELF — what is on a wall, and for how long.
+      ['src/lib/views/Live.svelte', 'the on-air cell, the live slide ring and the air flag'],
+      ['src/App.svelte', 'the shell lamp and the on-air stopwatch'],
+      ['src/lib/views/library/LiveOutputRail.svelte', 'Go live — the button that puts it there'],
+      ['src/lib/views/library/VerseDeck.svelte', 'the On Air badge and its tally'],
+      ['src/lib/views/Channels.svelte', 'a screen that is painting right now'],
+      // THE PREACHER'S OWN PAGE — the stage alert, which is on air to one person.
+      ['src/Stage.svelte', 'the stage alert and the countdown warning on a live monitor'],
+      // TEMPLATE DATA, not chrome: a swatch showing a colour the operator chose.
+      ['src/lib/views/templates/TemplateEditor.svelte', 'a template author picking a colour'],
+      // A LYRIC THAT IS UP. Same promise, said on the pane that put it there.
+      ['src/lib/views/library/LyricsPane.svelte', 'the section currently on the screens'],
+    ]);
+    const offenders = components
+      .filter((f) => (wearsAmberClass(f) || paintsAmberToken(f)) && !ALLOWED.has(f))
+      .map((f) => `${f} — amber means ON AIR and nothing else (DESIGN_SYSTEM §1, rule 18)`);
+    expect(
+      offenders,
+      'if this is genuinely the tally light, add it to ALLOWED with its reason; ' +
+        'if it is emphasis, --v-sel is the accent; if it is caution, see §93',
+    ).toEqual([]);
+
+    // The list may only shrink. An entry for a file that has stopped wearing amber
+    // is an amnesty waiting for the next component of that name.
+    const stale = [...ALLOWED.keys()].filter((f) => !wearsAmberClass(f) && !paintsAmberToken(f));
+    expect(stale, 'these no longer wear amber — take them out of the list').toEqual([]);
+  });
+
+  it('the model panel does not wear it — the violation this sweep was written for', () => {
+    // Named rather than left to the sweep, so the regression is legible as itself
+    // rather than as one line of a list. Watched to fail: restoring
+    // `class:amber={m.recommended}` fails this and the sweep above.
+    const ms = code('src/lib/ModelSetup.svelte');
+    expect(ms, 'the recommended download is amber again').not.toMatch(/class:amber/);
+    expect(ms, 'ModelSetup paints the tally colour').not.toMatch(/var\(--v-amber/);
+    // …and it still marks the recommended one. The fix is a different colour, not
+    // a lost distinction: `primary` is the house accent, which is what a
+    // recommended action is.
+    expect(ms).toMatch(/variant=\{m\.recommended \? 'primary' : ''\}/);
   });
 });
