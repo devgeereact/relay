@@ -226,7 +226,6 @@ mod tests {
         "show_timer",
         "set_detection_enabled",
         "set_sensitivity",
-        "set_thresholds",
         "open_channel_output",
         "close_channel_output",
         "set_channel_template",

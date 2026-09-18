@@ -90,7 +90,51 @@ impl Thresholds {
         };
         (s * 100.0).round() as u8
     }
+
+    /// Would the dial position this gate reports actually PRODUCE this gate?
+    ///
+    /// ── Why a read-out needs this and a thumb does not ──────────────────────
+    ///
+    /// `to_sensitivity` is a nearest-position answer, taken from `auto_fire`
+    /// alone, and that is all a slider thumb needs. A READ-OUT needs more. Three
+    /// things move `Router.thresholds` without touching the dial — `apply_profile`
+    /// restoring what a voice profile LEARNED, a room being applied, and
+    /// `record_feedback` on every confirm and dismiss — and after any of them the
+    /// gate need not sit anywhere on this curve. It still has a nearest dial
+    /// position, and the dial will still be drawn at it, so the operator is shown
+    /// a number that reads as their own setting and is not.
+    ///
+    /// That is rule 35 on the one control governing what the AI may put on a wall
+    /// unasked: a reading that says the same thing when the thing behind it has
+    /// moved is not a reading. The surface asks this and says so in words.
+    ///
+    /// BOTH numbers are compared, and the second one is the load-bearing half.
+    /// `record_feedback` corrects `auto_fire` and leaves `suggest` alone, so the
+    /// reported dial position follows `auto_fire` while `suggest` stays behind —
+    /// a comparison of `auto_fire` against its own inverse would be tautological
+    /// on exactly the drift that actually happens.
+    ///
+    /// It lives here, beside the mapping, because it is a question ABOUT the
+    /// mapping: a copy of this reasoning in the frontend would be a second opinion
+    /// about the curve, and there is exactly one curve.
+    pub fn follows_dial(self) -> bool {
+        let dial = Thresholds::from_sensitivity(self.to_sensitivity());
+        (dial.auto_fire - self.auto_fire).abs() < DIAL_READOUT_EPSILON
+            && (dial.suggest - self.suggest).abs() < DIAL_READOUT_EPSILON
+    }
 }
+
+/// How far the gate may sit from the dial's own figures before the read-out has
+/// something to tell the operator.
+///
+/// Half of one percentage point, because the read-out is printed in whole
+/// percentage points. A difference smaller than this cannot change a figure on
+/// screen, so announcing it would be a caveat about nothing — and a caveat that
+/// is permanently on is a caveat an operator learns to read past, which would
+/// cost the real one its meaning. It is deliberately NOT bit-exactness: the
+/// thresholds are floats and the dial is an integer, so a gate that came back
+/// from SQLite as an `f64` must still be allowed to say it is the dial's.
+pub const DIAL_READOUT_EPSILON: f32 = 0.005;
 
 /// Decide what thresholds a voice-profile save should land on.
 ///
@@ -512,6 +556,82 @@ mod tests {
         }
         // The default thresholds ARE dial 50 (the one baseline, DECISIONS §19).
         assert_eq!(Thresholds::default().to_sensitivity(), 50);
+    }
+
+    /// ── THE DIAL POSITION IS NOT ALWAYS AN EXPLANATION OF THE GATE ──────────
+    ///
+    /// `to_sensitivity` answers "which dial position is nearest to this gate",
+    /// and it answers it from `auto_fire` alone. That is the right answer for
+    /// placing a thumb and the wrong answer for a READ-OUT, because a gate the
+    /// learning has walked away from still has a nearest dial position and will
+    /// happily report one. A surface that shows the dial at 40 cannot, from that
+    /// number, tell "the operator set 40" from "the operator set 40 three weeks
+    /// ago and the gate has moved since" — which is rule 35 on the one control
+    /// governing what the AI may put on a wall unasked.
+    ///
+    /// `follows_dial` is the missing half: it asks whether the dial position
+    /// being shown would actually PRODUCE the gate being shown beside it.
+    #[test]
+    fn a_gate_on_the_curve_is_explained_by_its_dial_and_a_learned_one_is_not() {
+        // Every dial position the operator can reach is, by construction, on the
+        // curve. Nothing the dial itself can do may ever raise the caveat.
+        for s in 0..=100u8 {
+            assert!(
+                Thresholds::from_sensitivity(s).follows_dial(),
+                "dial {s} does not explain the gate its own mapping produced"
+            );
+        }
+
+        // THE STATE A REAL INSTALL WAS FOUND IN (the Settings two-slider control,
+        // screenshotted at auto-fire 99% / suggest 69%). The dial cannot express
+        // an auto-fire of 0.99 at all — its cautious end is 0.90 — so
+        // `to_sensitivity` clamps to 0 and reports a position that would produce
+        // 0.90/0.70. Shown without a caveat, that is a read-out claiming the
+        // operator chose the most cautious setting there is while the gate sits
+        // above the top of the scale.
+        let screenshot = Thresholds {
+            auto_fire: 0.99,
+            suggest: 0.69,
+        };
+        assert_eq!(screenshot.to_sensitivity(), 0);
+        assert!(!screenshot.follows_dial());
+
+        // THE STATE A LIVE SERVICE WAS FOUND IN (DECISIONS §32.2): auto_fire
+        // 0.832 beside a profile reading sensitivity 50, whose mapping is 0.50.
+        assert!(!Thresholds {
+            auto_fire: 0.832,
+            suggest: 0.35,
+        }
+        .follows_dial());
+
+        // THE CASE `to_sensitivity` IS STRUCTURALLY BLIND TO, and the reason this
+        // function reads BOTH numbers. `record_feedback` corrects `auto_fire` and
+        // leaves `suggest` where it was, so the learning walks the pair off the
+        // curve while the reported dial position tracks `auto_fire` alone. Ask
+        // only about `auto_fire` and a gate of 0.596/0.350 at dial 38 — whose own
+        // mapping is 0.596/0.434 — reads as untouched.
+        let mut r = Router::default(); // dial 50: 0.500 / 0.350
+        r.set_thresholds(Thresholds {
+            auto_fire: 0.596,
+            suggest: 0.350,
+        });
+        let learned = r.thresholds();
+        let implied = Thresholds::from_sensitivity(learned.to_sensitivity());
+        assert!(
+            (implied.auto_fire - learned.auto_fire).abs() < DIAL_READOUT_EPSILON,
+            "this case is only interesting while auto_fire alone still agrees"
+        );
+        assert!(!learned.follows_dial());
+
+        // AND THE TOLERANCE IS NOT ZERO, deliberately. The read-out is printed in
+        // whole percentage points, so a difference that cannot change a printed
+        // figure has nothing to say to an operator, and a caveat that is always on
+        // is a caveat nobody reads.
+        assert!(Thresholds {
+            auto_fire: 0.5 + 0.001,
+            suggest: 0.35 - 0.001,
+        }
+        .follows_dial());
     }
 
     #[test]

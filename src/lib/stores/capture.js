@@ -133,6 +133,21 @@ export const capture = writable({
   // AI may put on a wall unasked.
   sensitivity: 50,
   sensitivityKnown: false,
+  // DOES THAT DIAL POSITION ACTUALLY PRODUCE THAT GATE?
+  //
+  // A third fact again, and for the same reason the second one exists.
+  // `to_sensitivity` reports the dial position NEAREST the gate, and three things
+  // move the gate without anybody touching the dial — a voice profile restoring
+  // what it learned, a room being applied, and the self-calibration on every
+  // confirm and dismiss. So the dial can be drawn at 38 over a gate that 38 would
+  // never produce, and the number reads as the operator's own setting.
+  //
+  // `Thresholds::follows_dial` answers it in Rust, beside the one curve it is a
+  // question about; `gate.js::describeGate` is the only place that turns the
+  // answer into words. Meaningful only when `sensitivityKnown` — an unread gate
+  // has not drifted, it is simply unread, and claiming otherwise would be
+  // inventing the worse of the two facts.
+  gateOnDial: true,
 });
 
 // What is currently ON the output screens (last fired content, null = cleared).
@@ -487,22 +502,38 @@ export async function initAudio() {
     return;
   }
   // Backend is attached. Load status pieces independently.
-  const [devices, stt, thresholds, detectionOn, storedDevice] = await Promise.all([
+  const [devices, stt, gate, detectionOn, storedDevice] = await Promise.all([
     call('list_audio_devices').catch(() => []),
     call('stt_status').catch(() => ({ loaded: false, model: null, language: null })),
-    call('get_thresholds').catch(() => ({ auto_fire: 0.5, suggest: 0.35 })),
+    // THE WHOLE READ-OUT, NOT ONLY THE TWO NUMBERS, and it has to be read here
+    // rather than waited for. `setup` applies the active profile's LEARNED gate
+    // before the window exists, so the emit that would have announced it has
+    // nobody to reach (the named exception in `hardrules.test.js`). A console that
+    // only listened would open showing the learned gate, drawn at whatever dial
+    // position is nearest it, with no caveat anywhere.
+    // `null` on failure, never a fabricated pair: the store's placeholder stays,
+    // and `sensitivityKnown` stays false so nothing mistakes it for a reading.
+    call('get_thresholds').catch(() => null),
     call('get_detection_enabled').catch(() => true),
     // RG-121. Every launch used to start on the system default, whatever was
     // selected last time, and nothing said so.
     call('get_setting', { key: INPUT_DEVICE_KEY }).catch(() => null),
   ]);
   const chosen = chooseInputDevice({ stored: storedDevice, devices });
+  // `get_thresholds` returns the same four facts `detection://thresholds` carries,
+  // deliberately: the event is how a surface hears about a change and this is how
+  // it starts out, and a surface that learned two different things from the two
+  // would be the drift the pair exists to prevent.
+  const gateRead = Number.isFinite(Number(gate?.sensitivity));
   capture.update((s) => ({
     ...s,
     available: true,
     devices,
     stt,
-    thresholds,
+    thresholds: gate ? { auto_fire: gate.auto_fire, suggest: gate.suggest } : s.thresholds,
+    sensitivity: gateRead ? Number(gate.sensitivity) : s.sensitivity,
+    sensitivityKnown: s.sensitivityKnown || gateRead,
+    gateOnDial: gateRead ? gate.on_dial !== false : s.gateOnDial,
     detectionOn,
     inputDevice: chosen.device,
     inputDeviceMissing: chosen.missing,
@@ -572,10 +603,11 @@ export async function initAudio() {
       await listen('rehearsal://changed', (e) => rehearsing.set(e.payload === true));
       // THE GATE MOVED, AND EVERY SURFACE SHOWING IT HEARS HERE.
       //
-      // Five things in Rust move `Router.thresholds` — the dial, the two Settings
-      // sliders, a profile saved, a profile selected or a room applied, and the
-      // learning on every confirm and dismiss — and until 2026-09-17 not one of
-      // them announced it. Live's dial was read once at `onMount` into a plain
+      // Four things in Rust move `Router.thresholds` — the dial, a profile saved,
+      // a profile selected or a room applied, and the learning on every confirm
+      // and dismiss — and until 2026-09-17 not one of them announced it. (It was
+      // five until the two Settings sliders were deleted: a second control over
+      // one fact, pointing the opposite way, DECISIONS §96.) Live's dial was read once at `onMount` into a plain
       // `let`, and the dock is mounted OUTSIDE the workspace router, so unlike
       // every view it is never rebuilt. It therefore showed its launch reading for
       // the rest of the session while the engine moved underneath it, and Settings
@@ -600,6 +632,10 @@ export async function initAudio() {
           // that is nobody's setting.
           sensitivity: Number.isFinite(sensitivity) ? sensitivity : s.sensitivity,
           sensitivityKnown: s.sensitivityKnown || Number.isFinite(sensitivity),
+          // The gate having MOVED is exactly when this can change, so it rides on
+          // the announcement that it moved. A missing field leaves the last answer
+          // alone rather than defaulting to "on the dial" — the reassuring one.
+          gateOnDial: typeof p.on_dial === 'boolean' ? p.on_dial : s.gateOnDial,
         }));
       });
       // A device failure (permission denied, unplugged) is non-fatal: surface
@@ -2954,27 +2990,6 @@ capture.update((s) => ({ ...s, stt: { ...s.stt, language: language ?? null } }))
 return profile ?? null;
 }
 
-/** Manual threshold override (Settings sliders).
- *
- *  GROUP 1 (THROWS), and it moved here on 2026-09-17. It was the last swallowing
- *  door onto the gate, and its twin `setSensitivity` had already been repaired for
- *  exactly this — the two controls are the same act expressed at different
- *  precision, and they had opposite failure contracts. The consequence was silent
- *  and specific: on failure the store is unchanged, so `value={$capture.thresholds
- *  .auto_fire}` is unchanged, so Svelte never rewrites the DOM property and the
- *  dragged thumb STAYS WHERE THE OPERATOR PUT IT, over a gate that did not move,
- *  with no error line anywhere in the section.
- *
- *  `set_thresholds` really can fail — `routing.0.lock()?` on a poisoned router
- *  mutex, the same shape as the `stopCapture` bug — and this is the control that
- *  governs what the AI may put on a wall without asking. */
-export async function setThresholds(auto_fire, suggest) {
-const call = await invoke();
-const thresholds = await call('set_thresholds', { thresholds: { auto_fire, suggest } });
-capture.update((s) => ({ ...s, thresholds }));
-return thresholds;
-}
-
 /** The single operator sensitivity dial (0..100), read from the live thresholds.
  *  One forward mapping (`from_sensitivity`) and its inverse both live in Rust —
  *  the frontend never duplicates the curve. */
@@ -3001,8 +3016,13 @@ try {
   return 50;
 }
 }
-/** Set sensitivity (0..100). Applies the same thresholds Settings would and keeps
- *  the local `thresholds` mirror in step. Returns the LANDED dial position.
+/** Set sensitivity (0..100) — THE one way the gate is set by hand, reached from
+ *  the dock's card on Live and from Settings → AI & Detection. Two doors onto one
+ *  control: the pair of Settings sliders that used to be the other way of doing
+ *  this were a second control over the same fact, pointing the opposite way, and
+ *  were deleted with their command (DECISIONS §96).
+ *
+ *  Keeps the local `thresholds` mirror in step. Returns the LANDED dial position.
  *
  *  GROUP 1 (THROWS). It used to be GROUP 2 with `catch { return sensitivity; }` —
  *  returning the value the caller ASKED for, as if it had landed, under a doc
@@ -3020,16 +3040,22 @@ try {
 export async function setSensitivity(sensitivity) {
 const call = await invoke();
 const landed = await call('set_sensitivity', { sensitivity });
-const thresholds = await call('get_thresholds');
+const gate = await call('get_thresholds');
 // `detection://thresholds` will say the same thing a moment later and this is not
 // redundant with it: the event is how OTHER surfaces find out, and this is how the
 // surface that just acted stops showing a stale figure between the command
 // returning and the event arriving.
+//
+// `on_dial` comes back true here by construction — the dial is the one control
+// that puts the gate ON its own curve — and it is read from the answer rather
+// than assumed, because assuming it is how a surface comes to report the
+// reassuring case over a state nobody checked.
 capture.update((s) => ({
   ...s,
-  thresholds,
+  thresholds: { auto_fire: gate.auto_fire, suggest: gate.suggest },
   sensitivity: Number.isFinite(Number(landed)) ? Number(landed) : s.sensitivity,
   sensitivityKnown: s.sensitivityKnown || Number.isFinite(Number(landed)),
+  gateOnDial: gate.on_dial !== false,
 }));
 return landed;
 }
