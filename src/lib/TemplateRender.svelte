@@ -548,13 +548,77 @@
     return `R${w}x${h}|${verseSize}|${refSize}|${content?.reference ?? ''}|${(content?.text ?? '').length}|${bandMode ? 1 : 0}|${countdownTo ? 1 : 0}`;
   }
   /**
-   * Hand a rebuilt element the size its layer was already fitted at.
+   * IS THE FITTER'S ANSWER THE SIZE THIS ELEMENT IS ACTUALLY WEARING?
    *
-   * `{#key text}` destroys and rebuilds a layer's `.lfit` whenever its words
-   * change, and the new one carries only the DECLARED base. When the words
-   * changed for a real reason the signature moves and a fresh fit runs; when they
-   * changed because a clock ticked, it must not — so the answer is re-applied
-   * instead of re-measured. Pure style writes: no `scrollHeight`, no reflow.
+   * `data-sized` used to be the whole question, and it is a ONE-WAY LATCH: it
+   * records that a fit once happened, never that its answer is still on the
+   * element. Both recovery paths below asked it, so both declined over an element
+   * whose fitted size had been wiped while the latch stayed set — which is rule
+   * 37's shape at the recovery layer rather than inside the loop. A flag that
+   * cannot report that the thing it stands for has been undone is not a flag.
+   *
+   * Attribute reads only — `style.fontSize` is the inline declaration, not a
+   * computed value — so this is free on the frames where it says yes. A box with
+   * no recorded answer is left to the latch: there is nothing to compare against,
+   * and claiming a disagreement from an absence is the same lie in the other
+   * direction (rule 39's `built_shape`).
+   */
+  function fitInForce(box, el) {
+    if (!el.dataset.sized) return false;
+    const px = box?.dataset?.fitted;
+    if (!px) return true;
+    return sizeIs(el, px);
+  }
+  /**
+   * IS THIS ELEMENT WEARING THIS SIZE? — and the comparison may not be a string
+   * one, which cost a measured regression on the way to the fix above.
+   *
+   * The fitter's answers are full-precision JS numbers (`21.166796875`), and the
+   * CSSOM does not store the string it was handed: writing `21.166796875cqw` and
+   * reading `style.fontSize` straight back returns `21.1668cqw` in Chrome. A
+   * string compare therefore says "different" forever, on an element that is
+   * wearing exactly the right size — which sent `anythingUnfitted` true on every
+   * frame and drove the full binary search four times a second. Measured with
+   * that compare in place: 118 fit passes and 2682 style writes in 29 seconds of
+   * one countdown, the precise reflow storm the fit gating exists to prevent.
+   *
+   * `FIT_EPS_CQW` is the fitter's own idea of a difference nobody could see, so
+   * it is the right tolerance: anything inside it IS this size, and a clobber
+   * back to a declared base that happens to land inside it needed no repair
+   * anyway. A missing or unparseable size is NaN and fails, which is the honest
+   * answer for an element nothing has sized.
+   */
+  function sizeIs(el, px) {
+    return Math.abs(parseFloat(el.style.fontSize) - Number(px)) <= FIT_EPS_CQW;
+  }
+  /**
+   * Hand an element back the size its layer was already fitted at.
+   *
+   * TWO THINGS TAKE IT AWAY, and for a long time this function knew about one.
+   *
+   *   1 · `{#key text}` destroys and rebuilds a layer's `.lfit` whenever its words
+   *       change, and the new one carries only the DECLARED base.
+   *   2 · SVELTE RE-WRITES THE SIZE ON AN ELEMENT IT DOES NOT REBUILD. The `.lfit`
+   *       markup declares `font-size:{baseSize(L)}cqw` inline, deliberately (rule
+   *       42 · `cardfit.test.js`), and Svelte 4 compiles that attribute into one
+   *       `set_style(div, 'font-size', …)` per interpolation whose update is
+   *       guarded on the DIRTY BIT ALONE — there is no value comparison, unlike
+   *       the plain `data-base` / `data-fit` attributes beside it. So every update
+   *       that marks `stackLayers` dirty re-writes the declared base over the
+   *       imperative fit, in place, on every visible text layer.
+   *
+   *       A countdown tick is exactly that update (`countdownText` → `layerViews`
+   *       → `stackLayers`) and it is the case where nothing repairs it: `fitSig`
+   *       folds a ticking layer in by text LENGTH, so `4:59` → `4:58` does not move
+   *       the signature and no re-fit runs. Measured at 1920×1080 on the shipped
+   *       `Timer · Titled` with a 118-character label: fitted `1.99375cqw`, painted
+   *       `3.4cqw` from the first tick onward, 176px of words in a 97px
+   *       `overflow:hidden` box — and `onFit` had already reported the fit a
+   *       success, because it was, half a second earlier (RG-139).
+   *
+   * Both are now the same question, asked of the DOM rather than of the trigger:
+   * is the size on the element the size we answered for its box? Pure style
+   * writes: no `scrollHeight`, no reflow, so it stays free at 4 Hz.
    */
   function reapplyFitted() {
     if (!stageEl || !layered) return;
@@ -562,8 +626,8 @@
       const px = box.dataset.fitted;
       if (!px) return;
       const el = box.querySelector('.lfit');
-      if (!el || el.dataset.sized) return;
-      el.style.fontSize = `${px}cqw`;
+      if (!el) return;
+      if (!sizeIs(el, px)) el.style.fontSize = `${px}cqw`;
       el.dataset.sized = '1';
     });
   }
@@ -593,7 +657,12 @@
   function anythingUnfitted() {
     if (!stageEl || !layered) return false;
     for (const el of stageEl.querySelectorAll('.lfit')) {
-      if (!el.dataset.sized) return true;
+      // The SAME question `reapplyFitted` asks, so the two cannot disagree about
+      // what "fitted" means. `reapplyFitted` runs first and repairs anything with
+      // a recorded answer, so what survives to here is a box that has none — a
+      // layer the fitter has genuinely never measured — and that is a real fit,
+      // with a real verdict, not a style write.
+      if (!fitInForce(el.closest('.ltext'), el)) return true;
     }
     return false;
   }
@@ -824,6 +893,26 @@
     });
   }
   function scheduleFit() {
+    // ── THE REPAIR CANNOT WAIT FOR A FRAME, AND THE MEASUREMENT MUST ─────────
+    //
+    // Two different costs, so two different schedules. The fit READS layout in a
+    // loop, which forces synchronous reflow, so it is deferred to one animation
+    // frame — that is what the whole gate below exists for. Putting back a size
+    // Svelte has just overwritten is pure style writes, and deferring THAT by a
+    // frame is what makes it visible.
+    //
+    // `afterUpdate` runs in the same task as the DOM update that clobbered the
+    // size (see `reapplyFitted`), before the browser paints; the next animation
+    // frame is one paint later. Measured at 1920×1080 on `Timer · Titled` with
+    // the repair left in the frame: sampling `getComputedStyle().fontSize` every
+    // animation frame for four seconds caught the DECLARED base on 4 of 482
+    // frames — one frame per countdown tick, a 65px flash on a 38px label four
+    // times a second, for the whole pre-service countdown. Repairing here instead
+    // closes that window by construction rather than by winning a race.
+    //
+    // It touches no Svelte state and reads no layout, so it cannot re-enter the
+    // scheduler (rule 1) and cannot cost a reflow.
+    reapplyFitted();
     if (fitRaf) return;
     fitRaf =
       typeof requestAnimationFrame !== 'undefined' ? requestAnimationFrame(runFit) : setTimeout(runFit, 16);
@@ -1432,6 +1521,16 @@
       const mode = el.dataset.fit || 'both';
       if (el.classList.contains('lscroll') || mode === 'none') {
         el.style.fontSize = `${base}cqw`;
+        // A REFUSAL IS STILL AN ANSWER, and it has to be recorded like one. These
+        // two never entered the search, so they never carried `data-sized` — and
+        // `anythingUnfitted` therefore said "true" about them on every single
+        // frame, which sent a template carrying a crawl or a `fit:'none'` layer
+        // through the whole forced-reflow search four times a second for as long
+        // as a countdown was on the wall beside it. The size the fitter answers
+        // for a layer it declines to measure is that layer's declared base, so
+        // saying so is truthful as well as free.
+        el.dataset.sized = '1';
+        box.dataset.fitted = String(base);
         return;
       }
       // 'shrink' caps growth at the configured size; 'both' allows growing to a
