@@ -219,10 +219,38 @@ the left rail**, slides in the big grid, inspector on the right. Clicking an ite
 
 ## 11 · Settings
 
-Eleven sections, merged from sixteen: General · Screens & looks · Audio · AI & Detection ·
-Scripture & Languages · Network & Integrations · History & Backup · Shortcuts · Updates · Diagnostics ·
-Privacy & Advanced. One type scale, three roles: **page title / standfirst / row**, with a footnote
-behind a hairline. A list row is a name and a **value** — never an em dash standing in for one.
+**Eight sections, ordered by how often an operator needs them.** One type scale, three roles:
+**page title / standfirst / row**, with a footnote behind a hairline. A list row is a name and a
+**value** — never an em dash standing in for one.
+
+| | Section | When |
+|---|---|---|
+| 1 | **Before the service** | every Sunday — readiness, the path check, the speech model, the recognition language, safe mode, the service lock |
+| 2 | **This room** | a new hall or microphone — mic + meter + Start listening, speakers, service length, saved rooms |
+| 3 | **Preachers** | a new voice — voice profiles, bias terms, the gate |
+| 4 | **Scripture** | rarely — translation, language coverage |
+| 5 | **This machine** | mostly when something is wrong — LAN, integrations, support facts, the diagnostic file, latency |
+| 6 | **Updates** | rarely |
+| 7 | **Privacy** | rarely, and read rather than changed |
+| 8 | **Getting started** | once, in the first week — walk-through, demo content, the keys, console language, countdown warning |
+
+**The sixteen-to-eleven merge this section used to describe is done, and so is the reorganisation it
+deliberately left.** The merge was landed in phase 11 (eighteen sections in this repository, not
+sixteen — two deleted rather than merged). What it did not do was re-ORDER them, and the spec's own
+note recorded why: *"merging sixteen sections into eleven is a reorganisation, not a repair, and it
+moves every control an operator has learned where to find."* That was the right caution and it left
+the page filed by taxonomy, which is a filing system rather than a sequence.
+
+Measured on the eleven-section rail: six every-Sunday controls were in sections 7 and 10 of 11, and
+ten setup-only controls were in sections 1 and 2. `Dashboard.svelte` — the only every-Sunday surface
+in the whole workspace — was the last thing in the tenth section. The rail ran in almost exactly the
+wrong order.
+
+Three sections went and none took a control with it. **Screens & looks** was a copy of the Outputs
+matrix row for row (`setContentTemplate` is the one writer and never lived there, DECISIONS §25 ·
+§70). **History** is not a setting and is a route of its own now; the walk-through, the demo content
+and the service lock moved to the sections that match when they are used. **General** dissolved: with
+safe mode promoted and service length moved it held one switch and a paragraph.
 
 ## 12 · Controls, sliders, switches
 
@@ -256,7 +284,8 @@ Each phase ends green: `cd src-tauri && cargo test`, `npx vitest run`, `npm run 
    detection helpers rather than a second parser. This one needs Rust tests: it is the same class of
    code as `detection.rs` and must never auto-fire anything.
 10. **Library** — layout, reflow editor, section keys, media upload, announcements.
-11. **Settings** — eleven sections, the type scale, values in the value column.
+11. **Settings** — the type scale, values in the value column, and a rail ordered by frequency
+    rather than by category (eight sections; see §11 for the table and for what the merge left).
 12. **SuperSource** — composite rendering as a template kind.
 
 **Rules that bound every phase**: no native `confirm()`/`alert()`/`prompt()`; panic controls never
@@ -399,7 +428,7 @@ suite totals survived the merge**.
 | 8 | Transitions | **done** | seven in one register (`transitions.js`), played by the renderer, migrated from the three old names, reduced motion is a cut. DECISIONS §71. `transitions.test.js` 15. **Wave 3 gave it an operator**: the chrome bar carries the picker and its duration, the override rides its own retained hub frame (never `last_screen`, which would erase the verse a late screen is shown), the native window gets `output://transition`, and the duration control is disabled while a template is followed rather than offered as a number that changes nothing. `resolveTransition` is the ONE place the two authorities are ranked and it reports which answered. DECISIONS §84 |
 | 9 | Search | **done** | glued digits parse, a literal hit must cover 55% of the query, and nothing a search does reaches a screen (DECISIONS §72). `search.rs` — one pure module, five named match kinds, **every hit says why it matched** and a guess says so in words with no percentage; a ≥2-letter book prefix resolves, **search-only** (`detection.rs` was not opened, and `e2e::r9_nothing_a_search_offers_can_reach_an_auto_fire` states rule 10 at the boundary); one click takes a hit the whole way. `search::tests` 8, `e2e::r9_*` ×9, `livesearchrail.test.js` 11 |
 | 10 | Library | **partly done** | the operator label reaches the record again and still not the glass (DECISIONS §73); announcements say which fields the room sees; the collection rail and reflow editing were already built when the previous line said they were not. **Section keys** (`v c r t i o` — **not `b`; see the departure note below** — numbered on repeat, per song, `[Bridge:g]` to ask for one), the key printed on the slide it fires, **media looked at before it is added** with the name the operator gives it, and the dead selection tick box off three panes. DECISIONS §76. `sectionkeys.test.js` 42, `medialook.test.js` 4, `db::giving_a_section_its_own_fire_key_flags_the_arrangement_rather_than_repointing_it`. **`b` is BLACKOUT, so a Bridge is on `r`** — CLAUDE.md beats the spec's alphabet. **The caption is CLOSED WITHOUT A COLUMN** (P2, wave 4): `media_assets.filename` is already the operator's own words — the add sheet writes what they typed into it and keeps the real file name only as a hint on screen — so a caption would be a SECOND operator-authored string beside the one that exists, and §10's own sentence for media is *the slide is the picture*, which means none of it reaches a congregation. The card's second line is `collections.js::mediaSub` instead — the kind and the date added, which are facts the name and the thumbnail could not already say, and the date is printed exactly as stored because an ISO date with no time run through `toLocaleDateString` is the day before it west of Greenwich. `librarysubline.test.js` 8. **Still not built: a key that fires from the Live tab's own grid** — and P2 looked at it, did not build it, and leaves the answer rather than a guess. What IS settled: `assignKeys` / `resolveKeystroke` are pure and tested, `Cell` carries a `tag`, and `gridSource` has three sources, of which exactly ONE has a clean namespace — `source: 'song'` is a single hand-picked song, so the song owns the letters exactly as it does in `LyricsPane`, and `stageSong` already holds `full.sections`, which is what `assignKeys` wants. `source: 'plan'` still has no answer: the grid is flat across every cue, two songs in one plan both want `c`, and nothing says which owns the namespace. **The obstacle that stopped P2 is a SECOND one, and it is the harder of the two**: `shortcuts.js` calls `preventDefault()` and dispatches to `ctx.sectionKey` whenever the handler is registered at all, and `Live.svelte` registers its context ONCE at mount, before any await, deliberately and pinned by `liveunmount.test.js`. So adding `sectionKey` to that registration swallows every `a`–`z0`–`9` keystroke on the run surface for a whole service, staged song or not — the exact thing the branch's own comment forbids (*a dead branch must not eat a keystroke the browser had a use for*). The two ways out are both bigger than a parity detail and neither may be chosen quietly: either `sectionKey` returns whether it CONSUMED the key and `shortcuts.js` defers `preventDefault` until it says so — a contract change inside the file that owns the panic keys — or Live re-registers its context reactively when `grid.source` changes, which is last-writer-wins on one global slot on the run surface, and is the shape of the bug `liveunmount.test.js` exists for. Whoever takes it: answer the plan namespace FIRST, decide the `preventDefault` contract SECOND, and print the key only on the cells it actually fires — a key printed on a slide that does nothing is the cheatsheet-that-lies failure `sectionkeys.js` spends a paragraph avoiding. And one thing to say out loud when it lands: the grid's press path arms a send on a **190 ms** double-click timer (`pressArbiter`), so a key that fires at once and a click that fires after a beat are two latencies on one cell |
-| 11 | Settings | **done** | eleven sections merged from eighteen (two deleted as duplicates, not merged); the three roles now come from `WorkspaceFrame` rather than from five private copies; Theme and a twice-offered Reset removed (DECISIONS §69, taking the tally to nine); Screens & looks says which screens actually follow a content look (§70). DECISIONS §77. `settingssections.test.js` 19 |
+| 11 | Settings | **done** | **eight sections, ordered by FREQUENCY** — the second half of this phase, landed 2026-09-18, and the half the first pass deliberately left. Eleven sections merged from eighteen (two deleted as duplicates, not merged), then re-ordered and three more deleted: `screens` was a copy of the Outputs matrix (one writer, `setContentTemplate`, which never lived there), `history` became a route of its own, and `general` held one switch and a paragraph once safe mode and service length had moved. The readiness screen is section ONE and is the section rather than a card at the bottom of the tenth, with the speech model and the recognition language editable beside it (RG-116's two largest levers, and `select_stt_model` is lock-guarded so before the mic opens is the only moment). The three roles come from `WorkspaceFrame` rather than from five private copies; Theme and a twice-offered Reset removed (DECISIONS §69, taking the tally to nine). Nineteen hand-rolled buttons and five hand-rolled empty/loading/error chains went through `ui/Button` and `ui/ListState` — two of the five ordered their branches wrongly, so a failed read announced itself as still loading. DECISIONS §77. `settingssections.test.js` 71 |
 | 12 | SuperSource | **done** | a `region` layer that is its own container, a depth cap, a built-ins-only inner template, the SuperSource starter and its inspector block. DECISIONS §74. `composite.test.js` 9 |
 
 **Where phase 1 departed from the prototype, and why.** Both are cases of the rule in Context —
@@ -619,9 +648,13 @@ three different causes an operator needs to tell apart: not fetched yet, the fet
 genuinely nothing there. One glyph over three situations is rule 35 — and the same shape as RG-83,
 where "up to date" was printed over a channel that had been 404ing for months.
 
-**Merging sixteen sections into eleven is a reorganisation, not a repair**, and it moves every
-control an operator has learned where to find. It is worth doing with somebody watching the
-screens rather than at the end of a long pass.
+**The reorganisation it left is DONE, on 2026-09-18.** The caution this paragraph used to carry —
+that re-ordering moves every control an operator has learned where to find, and is worth doing with
+somebody watching the screens — was right and is the reason it waited. What settled it is that the
+order was measurably wrong rather than merely different: the readiness screen and the path check,
+the only surfaces anybody opens weekly, were at the bottom of the tenth of eleven sections, while
+ten setup-only controls sat in the first two. §11 above carries the eight sections and what each one
+is for; the deleted sections are named there with where each of their controls went.
 
 **Phase 12 is the container-inside-a-container concept phases 5 and 6 were waiting for.** A
 `region` layer renders a real template inside its own `container-type: inline-size` box, so `cqw`

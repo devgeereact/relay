@@ -63,11 +63,26 @@ describe('a control may name the Settings section it means', () => {
   });
 
   it("the inspector's sensitivity link names the section that has the control", () => {
+    // AND THE KEY IS CHECKED AGAINST THE REAL SECTION LIST, which is what makes a
+    // stale one dangerous rather than loud: `Settings.svelte` drops a key it does
+    // not recognise and lands on section one, so a link left pointing at a
+    // renamed section looks like it worked. This asserts the key resolves rather
+    // than that it is a particular string.
     const src = read('./views/Live.svelte');
     const at = src.indexOf('onTuning=');
     expect(at, 'the inspector no longer offers the link').toBeGreaterThan(-1);
-    const body = src.slice(at, at + 400);
-    expect(body).toMatch(/settingsSection: 'ai'/);
+    // Searched from the handler rather than inside a fixed window: the comment
+    // beside this call explains why the key moved, at length, and a 400-character
+    // window stopped reaching the call it was about — a scanner that silently
+    // finds nothing is the failure this file's neighbours keep recording.
+    const key = src.slice(at).match(/settingsSection: '([a-z]+)'/)?.[1];
+    expect(key, 'the inspector stopped naming a section').toBeTruthy();
+    const settings = read('./views/Settings.svelte');
+    const rail = settings.slice(settings.indexOf('const SECTIONS = ['), settings.indexOf("let section ="));
+    expect(rail, `the inspector points at '${key}', which is not a section`).toContain(`key: '${key}'`);
+    // …and it is the section that actually holds the dial it names.
+    const pane = settings.slice(settings.indexOf(`section === '${key}'`));
+    expect(pane).toMatch(/Sensitivity|sensitivity/);
   });
 
   it('Settings clears it after acting, so it cannot outlive the press', () => {

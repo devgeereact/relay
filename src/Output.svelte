@@ -365,7 +365,7 @@
   /**
    * THE CONFIGURED WARNING WINDOW, DELIVERED RATHER THAN READ — RG-149(c).
    *
-   * `Settings → General → Countdown warning` is applied through
+   * `Settings → Getting started → Countdown warning` is applied through
    * `layers.js::setCountdownWarnDefault`, whose only writer is `stores/capture.js`
    * — a module a browser source cannot import, because it has no Tauri bridge. So
    * the figure rides with the content instead, on both doors, and this is where it

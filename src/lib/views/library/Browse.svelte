@@ -380,7 +380,7 @@
          before a service. -->
     <ErrorState error={$readErrors.listBooks} />
   {:else if !books.length}
-    <EmptyState message="No scripture is loaded. Check Settings → Diagnostics." />
+    <EmptyState message="No scripture is loaded. Check Settings → This machine." />
   {:else}
     <div class="br-grid">
       <!-- BOOKS. Canonical order, from the backend — never alphabetical. A Bible

@@ -841,7 +841,7 @@
         scope: 'stage',
         planItemId: item.id,
         // THE WARNING THRESHOLD TRAVELS ON THE TIMER, because the surface that has
-        // to obey it cannot look it up. `Settings → General → Countdown warning` is
+        // to obey it cannot look it up. `Settings → Getting started → Countdown warning` is
         // one row in the console's database (`countdown.warn_ms`); the stage page
         // has no Tauri bridge and never reads it, so `Stage.svelte::programmeWarn`
         // warns at the figure the FRAME carries or does not warn at all — which is
@@ -2436,7 +2436,7 @@
             disabled={!$capture.available || !$capture.stt.loaded || listenBusy}
             disabledReason={whyDisabled(
               [!$capture.available, ENGINE_OFF],
-              [!$capture.stt.loaded, 'No speech model is loaded. Download one in Settings → Audio before Relay can listen.'],
+              [!$capture.stt.loaded, 'No speech model is loaded. Download one in Settings → Before the service, which is where the picker is.'],
               [listenBusy, BUSY],
             )}>
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v4"/></svg>
@@ -2664,8 +2664,14 @@
     onTuning={() => {
       inspecting = null;
       // The inspector's link names a control, so it lands on the section that has
-      // it rather than on General with the operator left to find it.
-      setSession({ activeTab: 'settings', settingsSection: 'ai' });
+      // it rather than on whatever section happens to be first, with the operator
+      // left to find it. The key was `ai` while the section was called AI &
+      // Detection; the sensitivity dial and the calibration it belongs to are on
+      // `preachers` now. `Settings.svelte` checks this key against its own
+      // `SECTIONS` before using it, so a stale one does not render an empty
+      // pane — it lands on section one instead, silently, which is why this has
+      // to move with the rail rather than be left to fail loudly.
+      setSession({ activeTab: 'settings', settingsSection: 'preachers' });
     }}
   />
 </div>

@@ -572,7 +572,7 @@ it**: the capture callback → clean/chunk hop and the chunk → whisper hop wer
 the two in front of it.
 
 **Change.** Both are `sync_channel` with a non-blocking `try_send`. A full queue **sheds and
-counts** (`latency::note_dropped_audio`), surfaced in Settings → Diagnostics as **audio dropped
+counts** (`latency::note_dropped_audio`), surfaced in Settings → This machine as **audio dropped
 (never heard)** — worse news than a shed partial, and coloured accordingly, because a shed
 partial is re-decoded a moment later and shed audio is a piece of the sermon Relay never heard.
 The capture callback may never block: stalling a device's real-time callback kills the stream
@@ -1121,7 +1121,7 @@ Stated plainly, because a risk that is not named is a risk that is being hidden.
     that path), `Full` and `Disconnected` are distinguished so a Stop cannot inflate the
     counter, and the packaged binary still boots and loads its model. What is **not**: that
     audio flows through it from a physical microphone. **The first person to press Start
-    Listening on this branch should check Settings → Diagnostics afterwards and confirm *audio
+    Listening on this branch should check Settings → This machine afterwards and confirm *audio
     dropped (never heard)* reads 0.**
 
 12. **The corpus repair now runs on real installs, and no real install has run it.** RG-102 …
@@ -1236,7 +1236,7 @@ arithmetic, so `v1audit.test.js` checks it rather than asking you to.
 Relay and a church is evidence, a certificate and a published release — not code.**
 
 0. **Before anything else, on this branch: press Start Listening, say a verse, then open
-   Settings → Diagnostics and confirm *audio dropped (never heard)* reads 0.** It takes two
+   Settings → This machine and confirm *audio dropped (never heard)* reads 0.** It takes two
    minutes and it closes the one change in this pass that no instrument here could reach
    (the eleventh remaining risk in [§16](#16-remaining-risks--what-could-not-be-verified)).
    Everything below assumes it does.

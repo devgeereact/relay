@@ -444,7 +444,7 @@
     // a control that says the same thing whether or not it is in force (rule 35).
     loadLiveTransition();
     // …nor a countdown that turns red at a figure the operator did not choose.
-    // The window is a setting (`Settings → General → Countdown warning`), and the
+    // The window is a setting (`Settings → Getting started → Countdown warning`), and the
     // dock and the programme pane ask the rule long before anybody opens that
     // page — so it is loaded HERE, at the shell, not on the page that writes it.
     loadCountdownWarnMs();
@@ -796,7 +796,7 @@
       <!-- Microphone to a transcript on this screen, median. The span that exists
            during every service — `end_to_end_speech_to_scripture` has no samples
            at all until scripture has reached a screen. -->
-      <span class="st" title="Median time from the audio to a transcript update on this screen (audio_to_partial_transcript). Settings → Diagnostics has the whole report.">
+      <span class="st" title="Median time from the audio to a transcript update on this screen (audio_to_partial_transcript). Settings → This machine has the whole report.">
         <span class="k">Latency p50</span><span class="v">{lat === null ? orNoData(null) : `${lat} ms`}</span>
       </span>
       <!-- Shed partials, and RED the moment either counter moves. Audio that was
