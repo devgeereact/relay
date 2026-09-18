@@ -218,6 +218,24 @@ async function mountAndRead() {
   vi.useRealTimers();
   await new Promise((r) => setTimeout(r, 10));
   await tick();
+  // …AND THEN WAIT FOR THE ANSWER, RATHER THAN FOR A FIXED NUMBER OF TICKS.
+  //
+  // The reads behind this line are two awaited commands and a derivation, and a
+  // fixed settle is a bet on how many microtask turns a runtime takes to get
+  // through them. CI runs Node 20, 22 and 24 precisely because that bet is not
+  // portable, and it lost: this helper settled on 22 and 24 and did not on 20,
+  // where the line still read `Cannot tell which screens would show it` — which is
+  // the rule-35 fallback answering CORRECTLY about a read that had not landed.
+  //
+  // Bounded, so a line that never resolves still fails the test rather than
+  // hanging it, and the assertion that follows is then about the answer rather
+  // than about the scheduler.
+  for (let i = 0; i < 60; i += 1) {
+    const t = host.querySelector('.cdreach')?.textContent ?? '';
+    if (t && !/^\s*Cannot tell/.test(t)) break;
+    await new Promise((r) => setTimeout(r, 5));
+    await tick();
+  }
   return host;
 }
 

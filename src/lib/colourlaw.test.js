@@ -16,6 +16,7 @@
 // congregation. Nothing else may use it" five lines above the rule that painted
 // `--acc` with whatever `slideAccent` handed it.
 import { describe, it, expect } from 'vitest';
+import { codeOnly } from './codeonly.js';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { TYPE, TAXONOMY_INK, slideAccent, typeOf } from './plan.js';
@@ -159,11 +160,12 @@ describe('the colour law — amethyst promises that nothing here reaches a congr
   const ROOT = resolve(__dirname, '../..');
   const read = (f) => readFileSync(resolve(ROOT, f), 'utf8');
   /** Source with comments removed: only the code is the claim. */
-  const code = (f) =>
-    read(f)
-      .replace(/<!--[\s\S]*?-->/g, '')
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/^\s*\/\/.*$/gm, '');
+  // ONE STRIPPER, SHARED. Three regexes here was the shape that blanked 7 KB of
+  // `Stage.svelte` in `names.test.js`: a comment containing `:8032/api/*` opened a
+  // block comment that ran to the next real `*/`. `codeOnly` scans left to right,
+  // knows a quoted run cannot open a comment, and BLANKS rather than deletes, so
+  // every offset in the result still matches the file.
+  const code = (f) => codeOnly(read(f));
 
   /** Every .svelte under src/, derived rather than typed. */
   const components = (() => {
@@ -351,11 +353,12 @@ describe('the colour law — amethyst promises that nothing here reaches a congr
 describe('the colour law — amber means ON AIR, and every use is named', () => {
   const ROOT = resolve(__dirname, '../..');
   const read = (f) => readFileSync(resolve(ROOT, f), 'utf8');
-  const code = (f) =>
-    read(f)
-      .replace(/<!--[\s\S]*?-->/g, '')
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/^\s*\/\/.*$/gm, '');
+  // ONE STRIPPER, SHARED. Three regexes here was the shape that blanked 7 KB of
+  // `Stage.svelte` in `names.test.js`: a comment containing `:8032/api/*` opened a
+  // block comment that ran to the next real `*/`. `codeOnly` scans left to right,
+  // knows a quoted run cannot open a comment, and BLANKS rather than deletes, so
+  // every offset in the result still matches the file.
+  const code = (f) => codeOnly(read(f));
 
   /** Every .svelte under src/, derived rather than typed. */
   const components = (() => {

@@ -17,6 +17,7 @@
 // operator running a service yesterday comes back to Live; a section chosen by a
 // button last week is not something to come back to.
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { codeOnly } from './codeonly.js';
 import { get } from 'svelte/store';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -54,7 +55,7 @@ describe('a control may name the Settings section it means', () => {
     // Comments stripped first: the explanation beside the fix necessarily NAMES
     // the conditional it removed, and a scanner that counted that would fail on a
     // correct file — whose cheapest repair is deleting the explanation.
-    const src = read('./views/Dashboard.svelte').replace(/<!--[\s\S]*?-->/g, '');
+    const src = codeOnly(read('./views/Dashboard.svelte'));
     const head = src.slice(
       src.lastIndexOf('<header>', src.indexOf('All history')),
       src.indexOf('All history'),

@@ -13,6 +13,7 @@
 //
 //   npx vitest run src/lib/onegate.test.js
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { codeOnly } from './codeonly.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { get } from 'svelte/store';
@@ -31,11 +32,7 @@ const { capture, initAudio, setSensitivity } = await import('./stores/capture.js
 const ROOT = path.resolve(__dirname, '../..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 /** Comments are not the surface — this repository's own scanning rule. */
-const strip = (s) =>
-  s
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^\s*\/\/.*$/gm, '');
+const strip = (s) => codeOnly(s);
 
 const SETTINGS = strip(read('src/lib/views/Settings.svelte'));
 const DOCK = strip(read('src/lib/Dock.svelte'));
