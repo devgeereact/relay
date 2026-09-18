@@ -134,7 +134,7 @@
   import { whyDisabled, ENGINE_OFF, BUSY } from '../ui/whydisabled.js';
   import IconButton from '../ui/IconButton.svelte';
   import { describeScreen } from '../outputHealth.js';
-  import { programmeScreen } from '../channelroles.js';
+  import { programmeScreen, describeStageReach, describeCountdownReach } from '../channelroles.js';
   import TemplateRender from '../TemplateRender.svelte';
   import { resolveOutputTemplate, isKeyedTemplate, formatCountdown } from '../layers.js';
   import ModelSetup from '../ModelSetup.svelte';
@@ -337,6 +337,12 @@
   // which is the same class of bug as the badge it replaces.
   $: outs = channels.map((c) => ({
     c,
+    // THE RAW ROW RIDES ALONG, and it is not a second authority. `describeScreen`
+    // still decides what a screen's beat MEANS; the Stage Timer line below needs
+    // one fact the verdict deliberately folds away — `last_beat_ms == null`, an
+    // absence rather than a zero — to tell "this screen has never once reported
+    // painting" from "it stopped answering", which are different repairs.
+    st: $channelHealth[c.id] ?? null,
     s: describeScreen(
       $channelHealth[c.id] ?? null,
       { rehearsing: $rehearsing, live: !!$live, black: $screenBlack },
@@ -465,10 +471,29 @@
   //
   // No colour and no badge. Amber means ON AIR and is never allowed to lie; cyan
   // means a guess; amethyst means rehearsal. A row here could honestly wear none
-  // of them, because the only facts this band has are the registry's — a timer
-  // EXISTS and this much is left on it. Whether a stage tablet is painting one is
-  // not a fact available on this side, so the band claims it in no words and in
-  // no colour. A badge that says "on stage" whatever is happening is not a badge.
+  // of them, because the only facts a CHIP has are the registry's — a timer
+  // EXISTS and this much is left on it. A badge that says "on stage" whatever is
+  // happening is not a badge.
+  //
+  // ── AND HALF OF WHAT THIS PARAGRAPH USED TO SAY STOPPED BEING TRUE ─────────
+  //
+  // It read: *"whether a stage tablet is painting one is not a fact available on
+  // this side, so the band claims it in no words and in no colour."* The colour
+  // half stands and is the rule above. The WORDS half stopped being true when
+  // DECISIONS §89 landed: `output_channels.role` is a real column, several
+  // screens may hold `stage`, and `channel_status` reports whether each of them
+  // has a window and is answering on the beat. So the band CAN say where a Stage
+  // Timer would land, and saying nothing was rule 35 rather than restraint —
+  // `Start timer` succeeds with no stage screen anywhere and the band then read
+  // exactly as it reads with a tablet beside the preacher. That line is derived
+  // at `stageReach` below.
+  //
+  // WHAT IS GENUINELY STILL UNAVAILABLE, and is the reason the sentence says
+  // `attached` and never `on stage`: whether the preacher's `programme` ZONE is
+  // switched on is `localStorage` on his own device (`Stage.svelte`'s `ZONES`),
+  // deliberately, so two stage screens in one building may want different things
+  // and the console need not know about either. `attached` is a claim about a
+  // socket, and that is the most this side can honestly make.
   //
   // What it does distinguish is the three things the list can mean, because a
   // failed read answering `[]` renders exactly like a quiet Sunday:
@@ -476,6 +501,23 @@
   //   asked, refused → the reason, and the LAST GOOD LIST is kept on screen
   // `listTimers` throws for that reason (contract group 1) and this band must not
   // undo it by catching into an empty array.
+  // ── WHAT THE BAND SAYS ABOUT WHERE A STAGE TIMER WOULD GO (RG-167) ────────
+  //
+  // The paragraph above says this band "claims it in no words and in no colour",
+  // and half of that was rule 35 rather than restraint. `Start timer` succeeds
+  // when NOTHING holds the `stage` role — correctly, because a timer is a
+  // registry fact and a screen may be opened a minute later (§91) — and the band
+  // then read exactly as it reads with a tablet painting beside the preacher.
+  // One reassuring row over four different situations, on the surface a service
+  // is run from.
+  //
+  // The colour half stands: no badge, no law class, and none of the four words
+  // `programmetimer.test.js` forbids. `attached` is a claim about a socket.
+  $: stageReach = describeStageReach(outs, {
+    read: channelsRead,
+    error: $readErrors.listOutputChannels ? humanError($readErrors.listOutputChannels) : '',
+  });
+
   let ptMins = 25;
   let ptName = '';
   /** `null` = never read. `[]` = read, and there are none. The two differ. */
@@ -611,7 +653,13 @@
     await loadTemplates().catch(() => {});
     await loadDefaultTemplate().catch(() => {});
     if (dead) return;
-    channels = await listOutputChannels().catch(() => []);
+    // GROUP 2: this swallows and answers `[]`, so the `catch` can never fire and
+    // an empty list means BOTH "no screens" and "the read failed". The reason is
+    // in `readErrors`, which is what that store is for; `channelsRead` separates
+    // the third case, before the read has come back at all. All three are shown
+    // by the Stage Timer line below (rule 35).
+    channels = await listOutputChannels();
+    channelsRead = true;
     if (dead) return;
     await loadPlans();
     if (dead) return;
@@ -1672,6 +1720,8 @@
   // The configured render targets, read-only here. Editing them is the Channels
   // tab's job; this panel answers "is it up?" during a service and nothing else.
   let channels = [];
+  /** `false` until `list_output_channels` has answered once. `[]` is not an answer. */
+  let channelsRead = false;
 
   // ── §4 presentation modes ────────────────────────────────────────────────
   // FULL SCREEN is the one that is left. A `Normal | Compact` density switch sat
@@ -2137,6 +2187,13 @@
       disabled={ptBusy || !$capture.available || !(Number(ptMins) > 0)}
       title="Start a clock for the preacher's monitor. It puts nothing on a congregation screen."
       >Start timer</button>
+    <!-- WHERE IT WOULD GO. One line, beside the control that starts it, in the
+         band's own caption voice — no badge and no law colour, because the four
+         answers it gives are all honest and none of them is a claim about what a
+         congregation can see. `Live.svelte`'s own comment above `ptMins` records
+         why it says `attached` and never `on stage`. -->
+    <span class="pt-note" class:warn={stageReach.kind === 'norole' || stageReach.kind === 'down'}
+      >{stageReach.text}</span>
     <span class="pt-spring"></span>
     <!-- THREE ANSWERS, NOT TWO. A failed read keeps whatever was last known to be
          running and says the reason beside it; it never reports a quiet programme
@@ -2844,6 +2901,14 @@
   /* The reason a read failed, BESIDE whatever was last known to be running, so
      the operator sees both the stale list and why it is stale. */
   .pt-err{flex:0 1 auto; min-width:0; font-size:var(--v-fs-cap); color:var(--v-red)}
+  /* WHERE A STAGE TIMER WOULD GO (RG-167). It shrinks and ellipsises rather than
+     pushing `Start timer` or a running chip off the row — the same ordering the
+     chip's own name keeps, for the same reason. `.warn` is DIM, not red: nothing
+     has failed when no screen holds the role, and a red line that is on for every
+     church that has not opened Outputs is a line an operator learns to skip. */
+  .pt-note{flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap; font-size:var(--v-fs-cap); color:var(--v-faint)}
+  .pt-note.warn{color:var(--v-dim)}
 
   /* THE GRID TAKES WHAT IS LEFT. It shared the stage with a SERVICE PLAN pane
      and the two split the remaining height 1.15 : 1; the plan pane has gone —

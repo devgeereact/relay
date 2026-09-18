@@ -319,6 +319,7 @@ const REGISTER = [
     allowed: [
       'src/Stage.svelte',
       'src/lib/Dock.svelte',
+      'src/lib/countdownreach.test.js',
       'src/lib/layers.js',
       'src/lib/layers.test.js',
       'src/lib/quicktools.test.js',
@@ -339,11 +340,13 @@ const REGISTER = [
     name: 'Stage Timer',
     allowed: [
       'src/Stage.svelte',
+      'src/lib/channelroles.js',
       'src/lib/cuetimer.test.js',
       'src/lib/liverackfit.test.js',
       'src/lib/programmetimer.test.js',
       'src/lib/progtimerjoin.test.js',
       'src/lib/stageprogrow.test.js',
+      'src/lib/stagetimerreach.test.js',
       'src/lib/stagezones.test.js',
       'src/lib/timers.test.js',
       'src/lib/views/Live.svelte',
