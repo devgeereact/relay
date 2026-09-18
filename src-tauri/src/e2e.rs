@@ -5112,3 +5112,92 @@ fn r4_a_panic_control_takes_every_screen_whatever_look_it_was_wearing() {
         );
     }
 }
+/// A REFUSAL MAY NOT HAND AN OPERATOR AN INSTRUCTION THAT WILL NOT WORK.
+///
+/// `timer_refusal`'s `TooShort` sentence read *"A countdown needs a second or more
+/// left. Clear the screens to take it down."* over BOTH scopes. On a `Stage` timer
+/// every clause of it is false: it is not a countdown, it is on no screen, and
+/// `Clear screens` takes congregation timers only (DECISIONS §27) — so an operator
+/// mid-service is told to press a panic control that will do nothing about the thing
+/// they are looking at. One reassuring sentence over two different situations is
+/// rule 35, and a sentence is as much a readout as a badge is.
+///
+/// Both halves are asserted, because the two ways to be wrong here are opposite:
+/// a Stage Timer told to clear the screens, and a congregation countdown that stops
+/// being told to. DECISIONS §99.
+#[test]
+fn a_refused_stage_timer_is_not_told_to_clear_the_screens() {
+    let app = app();
+    let h = app.handle().clone();
+
+    let programme = start_timer(
+        h.clone(),
+        20.0,
+        "Sermon".into(),
+        String::new(),
+        "stage".into(),
+        None,
+        None,
+    )
+    .expect("a programme timer");
+
+    // Below a second, which `timers::adjust` refuses rather than substituting five
+    // minutes for — see `TimerError::TooShort`.
+    let err = adjust_timer(h.clone(), programme, Some(0), None)
+        .expect_err("a re-aim to nothing has to be refused");
+    let said = err.to_string();
+    assert!(
+        said.contains("Stage Timer"),
+        "the refusal does not say which instrument it is about: {said}"
+    );
+    assert!(
+        !said.to_lowercase().contains("clear the screens"),
+        "an operator was told to press a panic control that cannot touch this \
+         timer: {said}"
+    );
+    assert!(
+        said.contains("Stop"),
+        "the refusal names no way out, which is the half that makes it actionable: {said}"
+    );
+    // AND IT IS A SENTENCE, NOT A SOURCE LAYOUT. A Rust string split across lines
+    // with `\` strips the newline and the indentation; one written without it
+    // carries the indentation into what a volunteer reads. This caught exactly that,
+    // once, in the fix this test was written for.
+    assert!(
+        !said.contains("  "),
+        "the refusal carries its own source indentation into the booth: {said:?}"
+    );
+
+    // AND THE CONGREGATION SENTENCE IS UNMOVED. `Clear screens` genuinely is how a
+    // countdown comes off a wall, and losing that instruction would be this fix
+    // making the other half worse.
+    start_timer(
+        h.clone(),
+        5.0,
+        "Service begins in".into(),
+        "Welcome".into(),
+        "both".into(),
+        None,
+        None,
+    )
+    .expect("a congregation timer");
+    let err = adjust_countdown(h.clone(), Some(0), None)
+        .expect_err("the same re-aim, on the other scope");
+    let said = err.to_string();
+    assert!(
+        said.contains("Clear the screens"),
+        "the congregation refusal lost the instruction that does work: {said}"
+    );
+    assert!(
+        !said.contains("Stage Timer"),
+        "a congregation countdown was described as the preacher's clock: {said}"
+    );
+
+    // A timer that is not there at all is neither of these, and its sentence does
+    // not depend on a scope nobody can look up.
+    let err = adjust_timer(h.clone(), 9999, Some(60_000), None).expect_err("no such timer");
+    assert!(
+        err.to_string().contains("not running"),
+        "an unknown id must say so plainly: {err}"
+    );
+}

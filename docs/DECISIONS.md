@@ -5383,3 +5383,147 @@ hide a scripture fire.
 
 One control, in the screen inspector beside the template select: five checkboxes, the five
 content kinds. A screen with no opinion shows the five ticked and says so.
+## 99. Two clocks, two audiences — and the operator's mirror of the preacher's clock now agrees with it (2026-09-18)
+
+**This is an operator report, diagnosed, and two thirds of it turned out to be already
+fixed.** It is written down anyway, because "we looked and it was closed" is the finding an
+audit most needs recorded and the one least likely to be.
+
+### What was reported
+
+> *"Live Timer thats for the preacher still going on the Live screen and the Programme
+> timer in the live workspace, what does it do actually as its not showing naywhere and not
+> sure its needed there..only if you want to move the count down there and al its
+> function.... also Timer and countdown seams a duplicate in the live screen…"*
+
+Three complaints. They are not one finding, and separating them is most of the work.
+
+### Complaint 2 and 3 — the labels — were already closed, hours earlier
+
+**`Programme timer` is not a name this product uses any more.** RG-167 (DECISIONS §92
+addendum, 2026-09-18) renamed both clocks after their audience: **`Screen Countdown`**
+reaches the room, **`Stage Timer`** reaches one person. The operator's words are the
+*pre-rename* labels — `Programme timer`, `Timer`, `Countdown` — so the report was written
+against a build that predates the fix, and the same RG row added the two reach lines that
+answer *"it is not showing anywhere"*: `Live.svelte`'s band says where a Stage Timer would
+land, the dock says which screens would show a Screen Countdown, and both say so when the
+read failed rather than falling silent.
+
+**They are not duplicates, and the code is unambiguous about it.** `timers::Scope` is the
+whole distinction. `Scope::Both` is projected into the `countdown_*` fields of a content
+frame and reaches every screen; `Scope::Stage` publishes no content frame at all — it goes
+out through `channels::publish_timers` as a `"timer"` frame that only `stage.html` renders,
+which is exactly why it survives a verse. Two instruments, two audiences, two wire paths.
+What made them *read* as duplicates was six labels that never said which was which, and that
+is what RG-167 fixed.
+
+**The move is declined, for the second time and on the same reasoning.** The operator's
+suggestion — *"only if you want to move the count down there and all its function"* —
+was already evaluated and declined in RG-167: the dock is in the SHELL and renders on every
+workspace, a countdown is set before a service when the operator is as likely to be in
+Planner or Templates, and moving it to Live would make it unreachable from four of the six
+workspaces. Nothing found in this pass changes that, and re-deciding a settled question
+differently because it was asked twice is how a product acquires two answers.
+
+### Complaint 1 — the preacher's clock "still going" — was real, and it is rule 35 again
+
+`Stage.svelte`'s programme rail has answered the NEGATIVE since RG-153: past its deadline a
+row reads `+4:37`, in red, because the only question a preacher asks a clock that has run
+out is *how far over*. **Live's Stage Timer band, which is the operator's mirror of that
+rail, floored at zero.** `timerRemainingMs` forwarded to `countdownRemainingMs` without
+`past`, so the chip read `0:00` one second after the clock ran out and `0:00` for the rest
+of the service, while the preacher's own screen said `+12:40`.
+
+One reading over two situations that need different actions, on the surface a service is run
+from, about the one fact the operator is the only person who can act on. That is rule 35
+stated in a figure instead of a sentence, and it is the *twin-door* shape this repository has
+had four separate bugs of: RG-153 was fixed on the rail and its mirror was not.
+
+**The decision: the band counts up, through the same subtraction the rail uses.**
+`timerRemainingMs` gains the same `{ past }` opt-in `countdownRemainingMs` already carries
+and forwards it — one subtraction with a floor one caller lifts, never a second reader. Live
+opts in. The dock does **not**: its way-back figure is a congregation countdown, where zero
+is a real answer — the wall reads zero as *"it finished"* and paints the done message, and a
+negative would never reach that branch.
+
+**The mark is the sign and the word, and in no law colour.** `+12:40 over`. Amber is ON AIR,
+cyan is a guess, amethyst is rehearsal, red is a failure — and a sermon running long is none
+of the four (DECISIONS §93 records that this product publishes no caution ink, and the band
+already forbids the other three by test). The rail is red because on the preacher's own page
+red is his own bookkeeping; on a console red means something has broken. The over-running
+figure is set in the body ink at weight 600 rather than the dim one, because it is the single
+figure in that band that asks for an action. Measured in a real browser at 1320×860:
+`rgb(232, 234, 238)`, which is `--v-txt`, against `--v-red` `#f4515b`.
+
+### And the Stage Timer had no transport at all
+
+`adjust_timer` has been a registered Tauri command since the registry landed, with a wrapper
+in `capture.js` and tests of its own, and **no rendered control anywhere could reach it**.
+That is the class CLAUDE.md counts as attack surface nobody is watching, and the operator
+cost was the sharper half: the only way to extend a sermon was Stop and Start, which throws
+away the elapsed figure the preacher is reading and restarts his rail from nothing. It is
+also, plainly, the answer to *"what does it do actually"* — a clock you can only start and
+stop is not much of an instrument.
+
+**One button, `+5`, per running timer.** Five minutes is the unit a sermon is extended in.
+It publishes nothing to a congregation, because `adjust_timer` publishes nothing to one; the
+stage tablet is told through `publish_timers`, unconditionally, on the Rust side.
+
+**Past zero it grants five minutes FROM NOW, not five minutes onto a debt**, and the
+discontinuity is the point. A clock 12:40 over would otherwise be re-aimed to 7:40 in the
+past, which `timers::adjust` refuses as `TooShort` — so the press would answer with a
+refusal at precisely the moment an operator most wants it. *"I am giving him five minutes"*
+is what the press means, and past zero that is the only reading of it that is true.
+
+### A refusal that hands an operator an instruction that will not work
+
+Found on the way in and fixed with it. `timer_refusal`'s `TooShort` sentence read *"A
+countdown needs a second or more left. Clear the screens to take it down."* over **both**
+scopes. On a Stage Timer every clause is false: it is not a countdown, it is on no screen,
+and `Clear screens` takes congregation timers only (§27). One reassuring sentence over two
+different situations — and the half that makes it worse than silence is that it names a
+panic control which will do nothing about the thing the operator is looking at. The scope is
+passed in rather than looked up, because a refusal that has to read a registry can fail to.
+
+### What this deliberately does NOT do
+
+- **It does not move the Screen Countdown.** Declined above, on RG-167's reasoning.
+- **It does not add Pause to a Stage Timer**, although the transport exists and
+  `Stage.svelte` renders a `held` row nothing in the product can currently produce. Holding a
+  clock that has run out is structurally inexpressible — `countdownRemainingMs` answers a
+  held timer with a stored figure and that figure is positive by contract — so `Pause` would
+  work on a running sermon clock and refuse on an over-running one, which is a control whose
+  meaning depends on a state the operator is not being shown. Filed as **RG-175** rather than
+  improvised, with the unreachable `held` render named in it.
+- **It moves no threshold, no scope rule and no panic guarantee.** `Scope`, `stop_scope`,
+  `stop_started_in_rehearsal`, §27's clear rule and §91's split are not in the diff.
+- **It does not claim anything about a screen.** The band still wears no badge and none of
+  the four words `programmetimer.test.js` forbids, and the over-time branch is asserted
+  against that list from its own side rather than inheriting the older test's coverage.
+
+### Instruments
+
+`src/lib/stagetimerover.test.js` — eleven cases. The default floor is re-asserted from this
+side (the dock depends on it); the band's figure is asserted **equal to the rail's own
+expression** on the same timer rather than merely matching a shape; a running clock is
+asserted to gain no sign and no word; the over-time branch is put through
+`programmetimer.test.js`'s forbidden-words-and-colours list again; and `+5` is pinned on both
+sides of zero, including the refusal path. Watched to fail in four separate reverts — the
+shared `past` forward (4 red), Live's opt-in (2 red), the `over` render (2 red, printing
+`expected '0:00' not to be '0:00'`), the `+5` button (3 red) and the `Math.max(0, …)` clamp
+(1 red, `expected -460000 to be 300000` — the exact figure `timers::adjust` refuses).
+
+`e2e::a_refused_stage_timer_is_not_told_to_clear_the_screens` holds both directions of the
+refusal and, because this fix made the mistake once, that the sentence does not carry its own
+source indentation into a booth.
+
+**Geometry is a browser claim, not a jsdom one.** The band was measured in a real engine at
+1320×860, 1280×800 and 1366×768: `elementFromPoint` over the centre of every control in it —
+`Start timer`, both `+5`s and both `Stop`s — returns that control, the reach note is
+unclipped (`scrollWidth === clientWidth`, 280/280), and the `+5` button costs the band **zero
+extra height** at all three (58px with it and 58px without at two of them; at 1366×768 the
+band is 58px with and 60px without, because the wrap reshuffles). The rack does not reach the
+band (`rackBottom` 368 against `band.y` 376), which is the overlap `liverackfit.test.js`
+exists for. **At ≤1180px the Live desk scrolls and the band sits below the fold** — that is
+the pre-existing narrow step (`height:auto`), unchanged by this and measured identical with
+and without the new button.

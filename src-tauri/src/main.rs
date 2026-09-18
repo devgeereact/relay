@@ -3169,7 +3169,9 @@ fn adjust_countdown<R: tauri::Runtime>(
     let adjusted = app
         .state::<timers::TimerRegistry>()
         .adjust(timer.id, remaining_ms, paused, now_ms)
-        .map_err(timer_refusal)?;
+        // `newest_congregation_timer` is the only source of `timer` here, so the
+        // scope is `Both` by construction rather than by a lookup that can be wrong.
+        .map_err(|e| timer_refusal(e, timers::Scope::Both))?;
 
     // A RE-AIM MAY NOT TAKE A CONGREGATION SCREEN BACK FROM A SERMON.
     //
@@ -3238,12 +3240,29 @@ fn newest_congregation_timer<R: tauri::Runtime>(
 
 /// A registry refusal in words an operator can act on. Both are `Refused`, not
 /// faults: nothing is broken in either case.
-fn timer_refusal(e: timers::TimerError) -> error::Error {
+///
+/// ONE REFUSAL, TWO INSTRUMENTS, AND THE SENTENCE HAS TO KNOW WHICH (DECISIONS §99).
+///
+/// `TooShort` used to read *"A countdown needs a second or more left. Clear the
+/// screens to take it down."* over BOTH scopes. On a `Stage` timer both halves are
+/// false: it is not a countdown, it is on no screen, and `Clear screens` takes
+/// congregation timers only (DECISIONS §27) — so the one instruction in the sentence
+/// is an instruction that will not work, handed to an operator mid-service. Rule 35
+/// in its smallest form: one reassuring sentence over two different situations.
+///
+/// The scope is passed in rather than read here, because this function has no
+/// registry and a refusal that had to look one up could fail to.
+fn timer_refusal(e: timers::TimerError, scope: timers::Scope) -> error::Error {
     match e {
         timers::TimerError::NoSuchTimer => error::Error::not_found("That timer is not running."),
-        timers::TimerError::TooShort => error::Error::refused(
-            "A countdown needs a second or more left. Clear the screens to take it down.",
-        ),
+        timers::TimerError::TooShort => error::Error::refused(match scope {
+            timers::Scope::Both => {
+                "A countdown needs a second or more left. Clear the screens to take it down."
+            }
+            timers::Scope::Stage => {
+                "A Stage Timer needs a second or more left. Press Stop to take it off the preacher's monitor."
+            }
+        }),
     }
 }
 
@@ -3350,10 +3369,19 @@ fn adjust_timer<R: tauri::Runtime>(
     remaining_ms: Option<i64>,
     paused: Option<bool>,
 ) -> error::Result<()> {
+    // WHICH INSTRUMENT IS BEING REFUSED. Read before the adjustment and not after,
+    // because a refused adjustment returns no timer to ask; `None` can only mean
+    // `NoSuchTimer`, whose sentence is the same either way, so the fallback is never
+    // the one an operator reads.
+    let scope = app
+        .state::<timers::TimerRegistry>()
+        .get(timer_id)
+        .map(|t| t.scope)
+        .unwrap_or(timers::Scope::Both);
     let adjusted = app
         .state::<timers::TimerRegistry>()
         .adjust(timer_id, remaining_ms, paused, cd_now_ms())
-        .map_err(timer_refusal)?;
+        .map_err(|e| timer_refusal(e, scope))?;
 
     // …unless it IS on the screens, in which case the wall must agree with the
     // registry. Same rule, same reading of the same slot, as `adjust_countdown`.
