@@ -49,12 +49,13 @@
     Math.round(
       (Object.keys(CATALOGUES[code] ?? {}).filter((k) => !k.startsWith('_')).length / TOTAL) * 100,
     );
-  import { capture, meter, templates, initAudio, startCapture, stopCapture, setThresholds, setSttLanguage, setInputDevice, listTranslations, getActiveTranslation, setActiveTranslation, localIp, loadTemplates, contentTemplates, loadContentTemplates, setContentTemplate, getCrashReporting, setCrashReporting, serviceTargetMinutes, loadServiceTarget, setServiceTarget, countdownWarnMs, loadCountdownWarnMs, setCountdownWarnMs, latencyReport, latencyReset, latencySetEnabled, serviceLock, loadServiceLock, setServiceLock, rooms, loadRooms, saveRoom, useRoom, deleteRoom,
+  import { capture, meter, templates, initAudio, startCapture, stopCapture, setSensitivity, getSensitivity, setSttLanguage, setInputDevice, listTranslations, getActiveTranslation, setActiveTranslation, localIp, loadTemplates, contentTemplates, loadContentTemplates, setContentTemplate, getCrashReporting, setCrashReporting, serviceTargetMinutes, loadServiceTarget, setServiceTarget, countdownWarnMs, loadCountdownWarnMs, setCountdownWarnMs, latencyReport, latencyReset, latencySetEnabled, serviceLock, loadServiceLock, setServiceLock, rooms, loadRooms, saveRoom, useRoom, deleteRoom,
     listOutputChannels, setChannelDisplay, activeVoiceProfile, languageReport, exportDiagnostics, readErrors,
     demoStatus, loadDemoContent, removeDemoContent } from '../stores/capture.js';
   import Loading from '../ui/Loading.svelte';
   import ErrorState from '../ui/ErrorState.svelte';
   import { captureRoom, observedNote, applyRoom, describeApply } from '../rooms.js';
+  import { describeGate } from '../gate.js';
   import { snapshotPath, KEEP_SNAPSHOTS } from '../updater.js';
   import { diagnose, drift } from '../latency.js';
   import { CONTENT_KINDS } from '../layers.js';
@@ -315,33 +316,56 @@
       ? 'follows the content look'
       : ($templates.find((t) => t.id === ch.template_id)?.name ?? `template #${ch.template_id}`);
 
-  // Threshold sliders push to the router; keep the invariant auto_fire ≥ suggest.
+  // ── THE SENSITIVITY DIAL, AND THE SAME ONE THE DOCK HAS ───────────────────
   //
-  // A SLIDER THAT DID NOT TAKE MUST SAY SO. `setThresholds` throws now (it was the
-  // last swallowing door onto the gate), and a rejection here left the store
-  // unchanged, which left the bound value unchanged, which meant Svelte never
-  // rewrote the DOM property — so the thumb stayed exactly where it was dragged,
-  // over a gate that had not moved, with nothing on the page saying otherwise.
+  // This section used to carry a SECOND control over the gate: two sliders,
+  // `Auto-fire above` and `Suggest above`, fighting the dial on Live in four
+  // separate ways (DECISIONS §96). They pointed the opposite way — right was
+  // stricter here and right is more eager on the dial. They reached 0.99, which
+  // the dial cannot express at all. `to_sensitivity` reads `auto_fire` alone, so
+  // an independently-set `suggest` died the moment anybody nudged the dial. And
+  // `Suggest above` was labelled HYPER-AWARE at the end where Relay makes the
+  // FEWEST suggestions.
+  //
+  // None of that is fixable by syncing the two, because every sync makes one of
+  // them lie about what the operator just did. So the dial is the only gate
+  // control, exactly as DECISIONS §26 named it and as the self-calibration already
+  // assumed — the anchor it decays toward is the dial position, not a pair of
+  // hand-set bars.
+  //
+  // WHAT MAKES THIS THE SAME CONTROL and not a copy of it: one store
+  // (`$capture.sensitivity`), one command (`setSensitivity` → `set_sensitivity` →
+  // `apply_thresholds`), and `detection://thresholds` moving both surfaces the
+  // moment either moves. Two doors onto one control, like the microphone picker
+  // this page shares with the dock. A component-local copy of the number would be
+  // the defect the event itself was added to end.
+  //
+  // A DIAL THAT DID NOT TAKE MUST SAY SO. `setSensitivity` THROWS (contract group
+  // 1) precisely so this branch can exist: on failure the store is unchanged, so
+  // the bound value is unchanged, so Svelte never rewrites the DOM property and
+  // the thumb would stay exactly where it was dragged over a gate that had not
+  // moved. `pending` is the thumb while the engine is being asked, and only that.
   let gateErr = '';
-  async function pushThresholds(auto_fire, suggest) {
+  let gatePending = null;
+  $: gateDial = gatePending ?? $capture.sensitivity;
+  // The ONE place that decides what this page may say about the gate — shared with
+  // every other surface that shows it, so they cannot form separate opinions.
+  $: gate = describeGate($capture);
+  async function onSensitivity(v) {
+    gatePending = v;
     gateErr = '';
     try {
-      await setThresholds(auto_fire, suggest);
+      await setSensitivity(v);
+      gatePending = null; // the store now holds what actually landed
     } catch (e) {
+      gatePending = null;
+      try {
+        await getSensitivity();
+      } catch {
+        /* the dial is already disabled in this case */
+      }
       gateErr = humanError(e);
-      // Put the thumbs back where the ENGINE is, not where the drag ended. The
-      // store is the only thing that knows, and reassigning it is what forces the
-      // DOM property back.
-      capture.update((st) => ({ ...st, thresholds: { ...st.thresholds } }));
     }
-  }
-  function onAuto(v) {
-    const suggest = Math.min($capture.thresholds.suggest, v);
-    return pushThresholds(v, suggest);
-  }
-  function onSuggest(v) {
-    const suggest = Math.min(v, $capture.thresholds.auto_fire);
-    return pushThresholds($capture.thresholds.auto_fire, suggest);
   }
 
   // --- live audio input (real cpal capture through the Rust engine) ---
@@ -722,8 +746,9 @@
   // ── THE EDITOR OPENS ON THE ROW AS IT IS NOW ──────────────────────────────
   //
   // `profiles` was loaded on mount and refreshed only inside `profileAction`.
-  // `onAuto`/`onSuggest` move the gate and, through `apply_thresholds`, rewrite
-  // the active profile's row — and they do not refresh. So: drag the slider at the
+  // `onSensitivity` moves the gate and, through `apply_thresholds`, rewrites the
+  // active profile's row — and it does not refresh. (It was `onAuto`/`onSuggest`,
+  // the two sliders §96 deleted; the trap is the dial's as much as it was theirs.) So: drag the slider at the
   // top of this page, scroll down, press Edit, press Save profile, and
   // `update_voice_profile` compares the STALE figure against the already-updated
   // row, concludes the dial moved, and re-derives the gate from it. The operator's
@@ -1391,36 +1416,55 @@
         {/each}
 
       {:else if section === 'ai'}
-        <div class="rw-group">Detection thresholds</div>
-        <!-- A GATE THAT DID NOT MOVE SAYS SO. Until this existed, a rejected
-             `set_thresholds` left the thumb where it was dragged and printed
-             nothing anywhere in this section, on the one control that governs what
-             the AI may put on a wall without asking. -->
+        <div class="rw-group">Detection sensitivity</div>
+        <!-- A GATE THAT DID NOT MOVE SAYS SO. Until this existed, a rejected write
+             left the thumb where it was dragged and printed nothing anywhere in
+             this section, on the one control that governs what the AI may put on a
+             wall without asking. -->
         {#if gateErr}
           <div class="r-err" role="alert">The gate did not move — {gateErr}</div>
         {/if}
         <div class="s-prose">
           <div class="s-inline"><span class="s-count">self-calibrating</span></div>
+          <!-- THE SAME DIAL THAT IS ON LIVE. Same store, same command, same event
+               — move either and the other moves, with no reload. See the note
+               above `onSensitivity`. -->
           <div class="s-slider">
             <div class="s-slider-top">
-              <span class="r-lbl s-slider-name">Auto-fire above</span>
-              <span class="s-slider-val">{Math.round($capture.thresholds.auto_fire * 100)}%</span>
+              <span class="r-lbl s-slider-name">Sensitivity</span>
+              <span class="s-slider-val">{gateDial}</span>
             </div>
-            <input class="r-range" type="range" min="0.5" max="0.99" step="0.01"
-              value={$capture.thresholds.auto_fire}
-              on:input={(e) => onAuto(+e.target.value)} disabled={!$capture.available} use:rangeFill={$capture.thresholds.auto_fire} aria-label="Auto-fire above" />
-            <div class="s-slider-ends"><span>LAX (50%)</span><span>STRICT (100%)</span></div>
+            <input class="r-range" type="range" min="0" max="100" step="1"
+              value={gateDial}
+              on:input={(e) => onSensitivity(+e.target.value)}
+              disabled={!$capture.available}
+              use:rangeFill={gateDial}
+              aria-label="Detection sensitivity" />
+            <div class="s-slider-ends"><span>CAUTIOUS (few, sure)</span><span>EAGER (many, noisy)</span></div>
           </div>
-          <div class="s-slider">
-            <div class="s-slider-top">
-              <span class="r-lbl s-slider-name">Suggest above</span>
-              <span class="s-slider-val">{Math.round($capture.thresholds.suggest * 100)}%</span>
-            </div>
-            <input class="r-range" type="range" min="0.3" max="0.9" step="0.01"
-              value={$capture.thresholds.suggest}
-              on:input={(e) => onSuggest(+e.target.value)} disabled={!$capture.available} use:rangeFill={$capture.thresholds.suggest} aria-label="Suggest above" />
-            <div class="s-slider-ends"><span>PASSIVE</span><span>HYPER-AWARE</span></div>
-          </div>
+          <!-- WHAT THE DIAL DID, AS A RESULT AND NEVER AS A SETTING. These two
+               bars used to be sliders here, and that made them a second control
+               over one fact — see §96. They are still worth SHOWING: an operator
+               asking "what did 62 actually do" has nowhere else to look, and the
+               detection inspector prints the same pair in the same words.
+               `dd`, not `input`. Nothing here is draggable, and the label says
+               "result" rather than letting the layout imply it. -->
+          <p class="r-lbl s-gatelbl">What that sets right now</p>
+          <dl class="s-gatedl">
+            <dt>Auto-fire above</dt>
+            <dd class="r-mono">{gate.autoPct ?? '—'}</dd>
+            <dt>Suggest above</dt>
+            <dd class="r-mono">{gate.suggestPct ?? '—'}</dd>
+          </dl>
+          <!-- THE SENTENCE THAT SEPARATES THREE STATES A NUMBER CANNOT (rule 35):
+               no engine, an engine nobody has asked yet, and a gate the learning
+               has walked off the dial's curve. `describeGate` decides which, once,
+               for every surface. Steel and dim — never amber (on air), never cyan
+               (a guess about scripture), never amethyst (rehearsal). None of those
+               three promises is about a threshold. -->
+          {#if gate.note}
+            <p class="rw-foot s-gatenote" role="status">{gate.note}</p>
+          {/if}
           <p class="rw-foot">Only a direct, high-confidence quotation can ever auto-fire. A paraphrase is always a suggestion — a cosine is not a probability.</p>
         </div>
 
@@ -2485,6 +2529,23 @@
   .s-slider-name{ color:var(--v-dim); font-size:var(--v-fs-b2); }
   .s-slider-val{ font-family:var(--f-mono); font-size:var(--v-fs-h1); font-weight:500; color:var(--v-accent);
     font-variant-numeric:tabular-nums; }
+  /* ── THE GATE, AS A RESULT ────────────────────────────────────────────────
+     Two figures the dial produced, not two settings. The grammar is deliberately
+     NOT the slider grammar one line up: a label and a mono value on one row, the
+     same shape every read-only pair on this page uses, so nothing about the
+     layout invites a drag.
+     COLOUR: the page's own steel. No amber (ON AIR), no cyan (a guess about
+     scripture), no amethyst (rehearsal) — not one of those three promises is
+     about a threshold, and spending one here would weaken it everywhere. */
+  .s-gatelbl{ margin:16px 0 8px; color:var(--v-dim); }
+  .s-gatedl{ margin:0; display:grid; grid-template-columns:1fr auto; gap:6px 16px; align-items:baseline; }
+  .s-gatedl dt{ color:var(--v-dim); font-size:var(--v-fs-b2); }
+  .s-gatedl dd{ margin:0; text-align:right; color:var(--v-txt); font-size:var(--v-fs-mono); }
+  /* The caveat is a sentence, never a glyph: the three states it separates —
+     no engine, an engine nobody has asked, and a gate the learning has walked off
+     the dial's curve — cannot be told apart by a coloured dot. */
+  .s-gatenote{ color:var(--v-dim); }
+
   .s-slider-ends{ display:flex; justify-content:space-between; margin-top:8px;
     font-family:var(--f-mono); font-size:var(--v-fs-cap); letter-spacing:.06em; text-transform:uppercase;
     color:var(--v-faint); }

@@ -5808,36 +5808,55 @@ mod r4_audit {
         );
     }
 
-    // ── R4-10 · Settings' two sliders are the dial's untested twin ──────────
+    // ── R4-10 · the operator's gate control must move all three facts ───────
     //
     // `set_sensitivity` moves the gate, re-anchors the baseline, AND writes
     // `voice_profiles.sensitivity` alongside the thresholds — its doc comment
     // explains at length why writing one without the other leaves the profile
     // "describing a state that never existed", found live.
     //
-    // `set_thresholds`, the Settings two-slider twin, moves the gate and the
-    // in-memory baseline and writes NOTHING. The next confirm/dismiss then calls
-    // `persist_active_thresholds`, which writes auto_fire/suggest and leaves
-    // `sensitivity` stale — producing exactly the forbidden row. At next launch
-    // `apply_profile` re-anchors the baseline from that stale dial, so calibration
-    // decays back toward a number the operator overruled.
+    // ── WHAT CHANGED HERE, AND WHY THE GUARANTEE DID NOT ────────────────────
+    //
+    // This test used to drive `set_thresholds`, the Settings two-slider twin,
+    // because that was the door that moved the gate and the in-memory baseline
+    // and wrote NOTHING: the next confirm/dismiss called
+    // `persist_active_thresholds`, which wrote auto_fire/suggest and left
+    // `sensitivity` stale, producing exactly the forbidden row — and at the next
+    // launch `apply_profile` re-anchored the baseline from that stale dial, so
+    // calibration decayed back toward a number the operator had overruled.
+    //
+    // That door is gone. The two sliders were a second control over one fact,
+    // pointing the opposite way from the dial and reaching a range the dial cannot
+    // express, so they were deleted and `set_thresholds` with them (DECISIONS
+    // §96) — a registered command with no rendered control is attack surface
+    // nobody is watching.
+    //
+    // The GUARANTEE is not about which control was dragged. It is that whatever
+    // sets the gate by hand goes through `apply_thresholds`, which moves the gate,
+    // the anchor and the stored row together. So the test drags the one control
+    // that remains and asserts exactly what it asserted before. A future control
+    // that reaches `Router::set_thresholds` directly instead fails this in the
+    // same two ways it was written to catch.
     #[test]
-    fn r4_10_the_settings_sliders_leave_the_profile_in_a_state_the_router_was_in() {
+    fn r4_10_the_gate_control_leaves_the_profile_in_a_state_the_router_was_in() {
         use tauri::Manager;
         let app = crate::qa::bare_app();
         let h = app.handle().clone();
 
-        // The operator drags the two Settings sliders.
-        crate::set_thresholds(
+        // A cautious dial position, chosen for the reason 0.80 was: nowhere near
+        // the seeded default, so a row that agrees with it can only have been
+        // written by the command under test.
+        const DIAL: u8 = 13;
+        let wanted = Thresholds::from_sensitivity(DIAL);
+
+        // The operator drags the one gate control there is.
+        crate::set_sensitivity(
             h.clone(),
             h.state::<crate::Routing>(),
             h.state::<crate::Db>(),
-            Thresholds {
-                auto_fire: 0.80,
-                suggest: 0.60,
-            },
+            DIAL,
         )
-        .expect("set_thresholds");
+        .expect("set_sensitivity");
 
         // Later in the service they accept one suggestion, which persists.
         let live = h.state::<crate::Routing>().0.lock().unwrap().thresholds();
@@ -5892,9 +5911,10 @@ mod r4_audit {
             .baseline()
             .auto_fire;
         assert!(
-            (baseline - 0.80).abs() < 1e-4,
-            "the baseline is {baseline:.3}, not the 0.80 the operator set — the \
-             two Settings sliders moved the gate and left the anchor behind"
+            (baseline - wanted.auto_fire).abs() < 1e-4,
+            "the baseline is {baseline:.3}, not the {:.3} the operator set — the \
+             gate control moved the gate and left the anchor behind",
+            wanted.auto_fire
         );
     }
 }

@@ -432,7 +432,6 @@ fn main() {
             confirm_detection,
             dismiss_detection,
             get_thresholds,
-            set_thresholds,
             get_sensitivity,
             set_sensitivity,
             get_rehearsal,
@@ -5243,15 +5242,54 @@ fn thresholds_changed<R: tauri::Runtime>(app: &tauri::AppHandle<R>, t: Threshold
             "auto_fire": t.auto_fire,
             "suggest": t.suggest,
             "sensitivity": t.to_sensitivity(),
+            // ON THE CURVE, OR MERELY NEAREST TO IT. `sensitivity` alone cannot
+            // say which, and three of the five doors that move the gate move it to
+            // somewhere the dial cannot reach — see `Thresholds::follows_dial`.
+            // Without this field a surface showing the dial at 40 has no way to
+            // tell the operator's own setting from the position the learning has
+            // wandered nearest to, which is the defect the event itself exists to
+            // fix, one level down.
+            "on_dial": t.follows_dial(),
         }),
     );
 }
 
-/// Current gate thresholds — for the Settings sliders.
+/// Everything a surface needs to show the gate honestly, in one read.
+///
+/// The same four facts `detection://thresholds` carries, and deliberately the
+/// same shape: the event is how a surface hears about a change, this is how it
+/// starts out, and a surface that learned two different things from the two would
+/// be the drift this pair exists to prevent.
+///
+/// `sensitivity` and `on_dial` are both computed in Rust because both are
+/// questions about the one mapping — `to_sensitivity` and `from_sensitivity` live
+/// here and nowhere else, and the frontend never holds a copy of the curve.
+///
+/// WHY THIS IS READ AT LAUNCH AND NOT ONLY LISTENED FOR. `setup` applies the
+/// active profile's LEARNED gate before the window exists, so the one emit that
+/// would have announced it has nobody to reach (the named exception in
+/// `hardrules.test.js`). A console that only listened would therefore open with
+/// the learned gate on screen, drawn at whatever dial position is nearest it, and
+/// no caveat anywhere — which is the exact state this work was opened to fix.
+#[derive(Serialize)]
+struct GateReadout {
+    auto_fire: f32,
+    suggest: f32,
+    sensitivity: u8,
+    on_dial: bool,
+}
+
+/// The live gate: the two thresholds, the dial position they map back to, and
+/// whether that dial position actually explains them.
 #[tauri::command]
-fn get_thresholds(routing: tauri::State<'_, Routing>) -> error::Result<Thresholds> {
-    let router = routing.0.lock()?;
-    Ok(router.thresholds())
+fn get_thresholds(routing: tauri::State<'_, Routing>) -> error::Result<GateReadout> {
+    let t = routing.0.lock()?.thresholds();
+    Ok(GateReadout {
+        auto_fire: t.auto_fire,
+        suggest: t.suggest,
+        sensitivity: t.to_sensitivity(),
+        on_dial: t.follows_dial(),
+    })
 }
 
 // ===== Related scripture & series tracker (Phase A: A3/A4/A6) ===============
@@ -5347,26 +5385,9 @@ fn verse_repeat_count(
     db::count_verse_in_service(&conn, sid, v.id).map_err(Into::into)
 }
 
-/// Manual override of the thresholds (the always-available slider, DECISIONS.md).
-#[tauri::command]
-fn set_thresholds<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-    routing: tauri::State<'_, Routing>,
-    db: tauri::State<'_, Db>,
-    thresholds: Thresholds,
-) -> error::Result<Thresholds> {
-    // R4-10: this used to move the gate and NOTHING else — no baseline, no
-    // profile row. Its twin `set_sensitivity` did all three, and its doc comment
-    // explains at length why doing one without the others leaves the profile
-    // "describing a state that never existed". The Settings two-slider control is
-    // the same act expressed more precisely, so it goes through the same door.
-    apply_thresholds(&app, &routing, &db, thresholds)?;
-    Ok(routing.0.lock()?.thresholds())
-}
-
 /// Move the gate, the baseline, and the stored profile — together, always.
 ///
-/// ── Why this is one function and not three lines copied twice ───────────────
+/// ── Why this is one function and one caller, and not three lines copied ─────
 ///
 /// `sensitivity` is defined as the anchor the self-calibration decays back toward
 /// (DECISIONS §26). Setting the gate without setting the anchor means every later
@@ -5379,7 +5400,15 @@ fn set_thresholds<R: tauri::Runtime>(
 /// `set_sensitivity` got all of this right after it was caught in a live service.
 /// `set_thresholds`, doing the same job from the other control, got none of it.
 /// **A rule kept on one of two doors is this repository's most repeated bug**, so
-/// the rule now lives in the doorway both use.
+/// the rule moved into the doorway both used.
+///
+/// THERE IS NOW ONE DOOR. `set_thresholds` was deleted with the two Settings
+/// sliders it served: two controls over one fact cannot be reconciled by syncing,
+/// because every sync makes one of them lie, and the dial is the control
+/// DECISIONS §26 names and the one the self-calibration decays toward. This stays
+/// a separate function from `set_sensitivity` regardless — `apply_profile` and a
+/// room application reach the same three facts, and the next control to want them
+/// must find the rule in a doorway rather than reconstruct it.
 ///
 /// Returns the dial position that actually landed, recovered through
 /// `to_sensitivity` — the one inverse mapping, so the two directions cannot drift.
@@ -5412,10 +5441,17 @@ fn apply_thresholds<R: tauri::Runtime>(
     Ok(landed)
 }
 
-/// The single operator "sensitivity" dial (0..=100). Applies the SAME thresholds
-/// the two-slider Settings control would (`from_sensitivity` — the one forward
-/// mapping), so there is exactly one baseline. Returns the resulting dial
+/// The single operator "sensitivity" dial (0..=100), and the ONLY control that
+/// sets the gate by hand. It maps through `from_sensitivity` — the one forward
+/// mapping — so there is exactly one baseline. Returns the resulting dial
 /// position so the caller can reflect what actually landed.
+///
+/// It is reached from two places, the dock's card on Live and Settings → AI &
+/// Detection, and that is two doors onto one control rather than two controls:
+/// one value, one store, one command, and `detection://thresholds` moves both the
+/// moment either moves. The pair of Settings sliders that used to sit here were a
+/// second control, pointing the opposite way, over a range the dial could not
+/// express — see DECISIONS §96.
 /// ── Moving the dial must MOVE THE BASELINE, and must SURVIVE ────────────────
 ///
 /// This used to call `set_thresholds` alone. Two things followed from that, both
