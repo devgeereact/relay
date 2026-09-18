@@ -5197,3 +5197,189 @@ is the old R4-10 re-pointed at `set_sensitivity`: the guarantee was never about 
 control was dragged, only that a hand-set gate goes through `apply_thresholds`, and it was
 verified to reproduce the original defect (a 0.296-wide gap between the stored dial and the
 stored bars) when `set_sensitivity` is made to bypass that doorway.
+
+---
+
+## 97. A screen wears a different template for each kind of content (2026-09-18)
+
+The operator's report was *"each screen should be able to have their own template set to
+what they want"*. A screen already carried ONE template for ALL content (`output_channels.
+template_id`, §29) and there was a per-kind default GLOBAL to every screen
+(`app_settings['tpl_<kind>']`, §70). So an operator could have **per-kind globally** or
+**per-screen uniformly**, and never *"on the main screen scripture looks like this and songs
+look like that, while the lobby TV uses something else for both."*
+
+### The data model, and the back-fill it refuses
+
+`channel_looks` is a row per (screen, kind), not a column per kind. The five content kinds
+are already mirrored by hand in three places with no test linking them; a column would make
+DDL the fourth mirror and the least editable of the four, because SQLite cannot drop or
+rename one without the table rebuild rule 25 is the scar of. `kind` carries no `CHECK` for
+the same reason one level down: a sixth content kind would mean a rebuild before the window
+is shown, in order to refuse a row nothing would ever read.
+
+`template_id` is `NOT NULL` deliberately. **No row is the only way to say "this kind
+inherits."** An absent row and a NULL row would have to mean the same thing at every reader,
+and two spellings of one fact is exactly what the role map already refuses one screen at a
+time.
+
+**There is no back-fill, and refusing one is the whole of the migration.** An install with
+four channels each carrying a `template_id` ends with zero rows: every kind falls through to
+the screen's own template, and first launch is identical **by construction** rather than by
+comparison. The tempting back-fill — write each screen's current template into all five
+kinds so the shape is explicit — changes nothing on day one and everything on day two,
+because the operator then changes that screen's template and four kinds silently keep the
+old one with no control having been touched.
+
+### The resolution chain
+
+A per-kind look **is not an override**. It is the screen's own template, for one kind — so
+it joins one notch above the screen's blanket template, not at the override level. That is
+what leaves §29 and the transparency law intact.
+
+0. `templateShows`, unchanged, consulted on the SCREEN'S own template and never on the
+   resolved per-kind look — otherwise choosing a look for a kind could turn that kind off,
+   silently.
+1. **The transparency law** — a keyed screen never accepts an opaque pinned override.
+2. **A pinned cue template** — a deliberate choice about *this item* outranks a standing
+   preference about *this screen*.
+3. **The screen's look for this kind** — new.
+4. **The screen's own template** — §29, unchanged.
+5. **The global content look for this kind** — §70.
+6. **The configured default.**
+7. **`DEFAULT_TEMPLATE`**, the bundled floor.
+
+The law is evaluated **once, against the pinned claimant only**, after rungs 3 and 4 have
+produced "the screen's template". The null branch comes first, because `isKeyedTemplate(null)`
+is true and a following screen would otherwise "keep its keyed template", which is nothing.
+
+**The law must not run between rungs 3 and 4.** The naive implementation calls the existing
+resolver twice — screen template as channel, per-kind look as override — and that applies
+the law to the per-kind look, silently discarding an opaque Announcement look chosen for a
+lower-third screen. Which is §29's original complaint verbatim (*"all my outputs have a
+template set but the output shows something else"*), reintroduced by the feature meant to
+give an operator more control. So the per-kind look is an ARGUMENT to
+`resolveOutputTemplate` and not a second call to it, and the case is pinned in
+`channellooks.test.js`, watched red against the two-call form.
+
+### What crosses the wire
+
+**The content frame does not change at all.** Per-kind looks are configuration, and
+configuration already has a working pattern in this hub — the role map — so it is copied
+rather than reinvented: a retained slot, a `channel_looks` frame carrying ids only, channels
+and kinds with no row omitted, sent on every hello **including `{}`**. `{}` is an answer, and
+a page that cannot tell "nobody has told me" from "I have no per-kind look" paints the wrong
+template for one frame — which is the first frame after a browser source restarts
+mid-reading.
+
+Hello ordering: with the configuration, before the retained screen frame. A look must be in
+hand before the frame it dresses. Published on change on **both doors** — a Tauri emit for
+the native window, which has the bridge and no socket, and the hub frame for every browser
+source, which has the socket and no backend.
+
+**A look still rides as an ID only.** The 13 MB rule at `main::cue_or_content_tpl` is
+untouched: the bytes go up once per connect, in the `template` frames the content-look fix
+already built, and never per fire. The bound on those is now `channels::MAX_LOOK_IDS`, and it
+is a judgement rather than an arithmetic fact — the old bound was exactly five because there
+are five kinds, and per-kind looks add one id per (screen, kind), a product with no exact
+bound. Truncating says so out loud, because what is shed is the bytes behind a look some
+screen is wearing.
+
+### The UI
+
+**The screen card does not change.** A card is 232px of picture and two words; five choices
+do not go there. Its `<select>` keeps its meaning and becomes the screen's look **for
+everything else**. One new control, in the inspector only: a disclosure called **Per kind**,
+closed by default, summary reading *"Same look for every kind"*, zero rows. Each row's
+inherit option **names its destination, resolved live** — *Same as this screen · Classic*, or
+*Follow the content look · Aurora*, or *Follow the configured default · Classic Serif* —
+because an inherit option that reads identically whether a content look is set or not is not
+a line (rule 35). The summary names the kinds, never a count. The card gains one text term on
+its meta line, no new lamp and no new colour.
+
+`set_channel_look(channel_id, kind, template_id: Option<i64>)` — `None` deletes the row.
+**Not service-lock protected**, for the reason `rename_channel` states: it is reversible, and
+the moment an operator most wants it is when a look turns out wrong, which is during a
+service.
+
+### The line this holds, and it will be pushed
+
+**A per-kind look changes what a screen WEARS, never whether it PAINTS.** The moment somebody
+proposes "a look of NONE means this screen skips this kind", that is RG-161's per-cue
+targeting arriving through the back door with none of its pieces and none of its tests.
+`layout.shows` is the standing answer to that question and it lives on the template; §98 is
+the operator's own half of it and is deliberately a separate fact on a separate column.
+
+The content frame is unchanged, the publish stays global and unrouted, and retention is one
+configuration slot replayed to everyone. **It decides a LOOK at the receiver and never a
+DESTINATION at the sender.**
+
+### What this deliberately does not do
+
+No per-kind background, transition or role. No back-fill. No `CHECK` on `kind`. No look ids
+in the browser-source URL. No second resolver and no resolution in Rust — the client
+resolves, because the client is the screen.
+
+### The hole underneath it, found on the way and closed first
+
+**"Per-screen template selection does nothing" was a real and separate defect**, and building
+per-kind looks on top of it would have been building on sand. `run_kiosk_server`'s hello
+reply put its whole template branch inside `if let Some(id) = template_id`, and
+`Output.svelte` sends `template_id: null` whenever the URL is CHANNEL-keyed — which is the
+URL **Copy URL** produces and the one CLAUDE.md tells operators to use, because only a
+channel-keyed source follows a template swap. So the recommended URL was the one shape that
+received no screen template at all. Measured against the running backend, same screen and
+same verse: `?channel=3` painted at 32px Fraunces centred, `?channel=3&template_id=68` at
+15.97px Inter left. The hub now retains a `channel_template` frame per channel and sends the
+one this client asked to be — one channel's frame, never a map, because a template is bytes.
+
+---
+
+## 98. What a screen SHOWS is the operator's fact; what a template shows is the designer's (2026-09-18)
+
+The operator's second report was *"timers still show on all screens, even the live screen"*.
+Measured in the live install: of 44 templates, 40 list `countdown` in `layout.shows` and the
+other four declare no `shows` key at all, which `templateShows` reads as showing every kind.
+So every template in that install paints the congregation countdown — and `shows` is not
+editable from any surface in the app. It exists in seed data and in `TemplateRender`, and
+nowhere an operator can reach. There was no way to keep the countdown off a screen.
+
+§97 closed this door on purpose at its own level: a per-kind LOOK changes what a screen
+wears, never whether it paints. That was the right call for looks and it leaves the
+operator's actual problem unsolved, so the answer is a second fact on a second column rather
+than a meaning stretched onto the first.
+
+### Reach is a property of the SCREEN, not of the template
+
+`output_channels.shows_json`, nullable, holding a JSON array of content kinds. It is **ANDed
+with `templateShows`, never replacing it**:
+
+- a template's `shows` is the **designer's** statement about what that template can render —
+  a lower third has no regions for a countdown and never will;
+- the channel's set is the **operator's** statement about what this screen is for — the
+  lobby TV shows notices and the timer, the wall does not show the timer.
+
+Both must agree before a kind paints. So the new control can only ever **narrow**, and can
+never force a template to paint a kind it has no regions for — which would be a second
+authority on a fact the template already owns, the defect §69 and §71 are the scars from.
+
+**NULL means "no opinion, follow the template"**, which is the existing behaviour — so no
+install changes look on upgrade and there is no back-fill, for the same reason §97 refuses
+one. A newly added channel is NULL, not an explicit set: the default must never be able to
+hide a scripture fire.
+
+### The three guard rails, all load-bearing
+
+1. **It narrows CONTENT only, and is never consulted for `clear` or `black`.** A screen an
+   operator can accidentally configure out of a panic control is rule 15's exact failure, and
+   this is the precise shape it would take. The check goes where `templateShows` already is,
+   and nowhere near the panic path.
+2. **NULL shows everything.** An absent opinion is not an empty set. A page that read a
+   missing `shows_json` as "show nothing" would go dark for the rest of a service with
+   nothing to say why.
+3. **Both doors, and sent on every hello even when NULL**, for the reason `channel_roles` is:
+   an empty answer is an answer, and a page that cannot tell "nobody has told me" from "I
+   have no opinion set" is rule 35.
+
+One control, in the screen inspector beside the template select: five checkboxes, the five
+content kinds. A screen with no opinion shows the five ticked and says so.

@@ -410,17 +410,120 @@ export function resolveContentOverride(content, templates) {
   return parseTemplateOverride(content?.template_json) ?? templateById(templates, content?.template_id);
 }
 
-export function resolveOutputTemplate(channelTpl, override, pinned = false, fallback = null) {
+/**
+ * A SCREEN'S OWN LOOK FOR ONE KIND, BY ID — `{"1":{"scripture":9}}` (§97).
+ *
+ * The map arrives from the hub (a browser source) or from `list_channel_looks`
+ * (a native window), so its keys are JSON's: STRINGS. This page's channel is a
+ * number. That is the same comparison `roleOf` documents, and the same way a
+ * filter that looks right comes to refuse everything.
+ *
+ * A kind with no row INHERITS, and no row is the only spelling of that — the
+ * column is `NOT NULL` precisely so there is no second one to handle here.
+ * Every broken shape a failed read can produce answers the same absence rather
+ * than throwing: this runs on a live output page.
+ */
+export function lookIdFor(looks, channelId, kind) {
+  if (!looks || typeof looks !== 'object' || Array.isArray(looks)) return null;
+  if (channelId == null || !kind) return null;
+  const mine = looks[String(channelId)];
+  if (!mine || typeof mine !== 'object') return null;
+  const id = mine[kind];
+  return id == null ? null : Number(id);
+}
+
+/**
+ * …and the BYTES behind that id, out of whatever templates this surface holds.
+ *
+ * `templates` is passed as DATA rather than as a lookup function, for the reason
+ * `templateById` records: Svelte tracks the identifiers written in a reactive
+ * expression, not the ones a called function happens to read, and
+ * `Channels.svelte` has been caught by exactly that twice.
+ *
+ * AN ID WITH NO BYTES IS NOT A LOOK. It answers `null`, so the screen falls
+ * through to its blanket template rather than painting nothing — which is the
+ * whole reason the hub sends the `template` frames before the map, and the safe
+ * behaviour if it ever fails to.
+ */
+export function channelLookTemplate(looks, channelId, kind, templates) {
+  return templateById(templates, lookIdFor(looks, channelId, kind));
+}
+
+/**
+ * ── WHAT THIS SCREEN SHOWS AT ALL — THE OPERATOR'S HALF (DECISIONS §98) ──────
+ *
+ * `templateShows` answers the DESIGNER'S question: can this template render this
+ * kind? A lower third has no regions for a countdown and never will. This answers
+ * the OPERATOR'S: is this screen for that kind? The lobby TV shows notices and the
+ * timer; the wall does not show the timer.
+ *
+ * **THEY ARE ANDed, AND THIS ONE CAN ONLY NARROW.** A screen may not force a
+ * template to paint a kind it has no regions for — that would be a second
+ * authority on a fact the template already owns, which is the defect DECISIONS §69
+ * and §71 are the scars from. The caller does the AND, because the caller is the
+ * only party holding both facts.
+ *
+ * **NO OPINION IS NOT AN EMPTY SET, AND THE DIFFERENCE IS THE WHOLE FUNCTION.** A
+ * screen that is absent from the map, a map that is absent, a map that failed to
+ * parse: all three mean "follow the template", which is where this decision lived
+ * before the column existed and is the only safe direction to fail in. The unsafe
+ * direction is a congregation screen that paints nothing for the rest of a
+ * service, and nothing on it can say why.
+ *
+ * **IT IS NEVER CONSULTED FOR `clear` OR `black`.** A panic control addresses every
+ * screen and asks nothing about which — that is what makes it one (rule 15,
+ * DECISIONS §20). A screen an operator could configure out of a blackout is that
+ * rule's exact failure, and this function is the precise shape it would take, so
+ * the rule is written here as well as at the call sites.
+ */
+export function channelShowsKind(shows, channelId, kind) {
+  if (!kind) return true;
+  if (!shows || typeof shows !== 'object' || Array.isArray(shows)) return true;
+  if (channelId == null) return true;
+  const mine = shows[String(channelId)];
+  if (!Array.isArray(mine)) return true;
+  return mine.includes(kind);
+}
+
+/**
+ * ── THE PER-KIND LOOK JOINS AT RUNG 3, WHICH IS WHY IT IS A PARAMETER HERE ───
+ *
+ * `kindLook` is this screen's own template FOR THIS KIND (DECISIONS §97). It is
+ * not an override and must never be passed as one: it is the screen speaking, so
+ * it stands one notch ABOVE the blanket template and shares its authority — which
+ * is exactly what leaves §29 and the transparency law intact.
+ *
+ * **IT IS A PARAMETER AND NOT A SECOND CALL, AND THAT IS THE WHOLE OF IT.** The
+ * naive implementation calls this function twice — the screen's template as
+ * `channelTpl`, the per-kind look as `override` — and the result is that the
+ * transparency law runs BETWEEN rungs 3 and 4. An operator who deliberately
+ * chooses an opaque Announcement look for a lower-third screen then gets the band,
+ * silently, which is §29's original complaint verbatim ("all my outputs have a
+ * template set but the output shows something else") reintroduced by the feature
+ * meant to give them more control. The law is evaluated ONCE, against the PINNED
+ * claimant only, after rungs 3 and 4 have produced "the screen's template".
+ */
+export function resolveOutputTemplate(
+  channelTpl,
+  override,
+  pinned = false,
+  fallback = null,
+  kindLook = null,
+) {
+  // RUNGS 3 AND 4, IN ONE LINE: what this screen wears for this kind, else what it
+  // wears for everything. Everything below asks about THIS, never about the two
+  // separately, which is what stops the law running between them.
+  const screenLook = kindLook ?? channelTpl;
   // NO TEMPLATE OF ITS OWN = this screen follows the content look (DECISIONS §70).
   // It has to be answered before the transparency law below, because
   // `isKeyedTemplate(null)` is true — a template with no background layer is keyed,
   // and an absent template has no layers at all — so a following screen would have
   // "kept its keyed template", which is nothing, and painted an empty frame.
-  if (!channelTpl) return override ?? fallback ?? null;
-  if (!override) return channelTpl;
+  if (!screenLook) return override ?? fallback ?? null;
+  if (!override) return screenLook;
   // TRANSPARENCY LAW: a keyed (lower-third) screen never goes opaque for an opaque
   // override — the camera it keys over must not be covered. Wins over everything.
-  if (isKeyedTemplate(channelTpl) && !isKeyedTemplate(override)) return channelTpl;
+  if (isKeyedTemplate(screenLook) && !isKeyedTemplate(override)) return screenLook;
   // A cue's DELIBERATE per-cue template choice (pinned) overrides the screen — the
   // operator picked that look for that item. A content-type DEFAULT (a "content
   // look") does NOT: the SCREEN'S OWN template is authoritative, so an operator
@@ -428,7 +531,7 @@ export function resolveOutputTemplate(channelTpl, override, pinned = false, fall
   // "content look overrides every screen" — operators found it silently replaced
   // the per-screen templates they had deliberately set. See DECISIONS §29.)
   if (pinned) return override;
-  return channelTpl || override;
+  return screenLook;
 }
 
 /** Format an elapsed duration (ms) as a service timer: `M:SS`, or `H:MM:SS` once
@@ -964,10 +1067,35 @@ export function regionsToLayers(template) {
   const style = migrateStyle(template?.style ?? {});
   const regions = Array.isArray(layout.regions) ? layout.regions : [];
   const band = !!layout.lowerThird;
+  // ── A SCROLLING ROW IS A BAND CRAWL, BY CONSTRUCTION ────────────────────────
+  //
+  // `style.scroll` renders on the region path as a ProPresenter footer ticker: a
+  // band pinned to the very bottom of the frame, an optional fixed label on the
+  // left, the body crawling right-to-left at a constant reading speed. The
+  // renderer's own comment says it "never occupies the centre of the wall".
+  //
+  // This conversion used to hand it to `mkVerse(20, 54)` — a full-frame block
+  // across the middle of the screen with `scroll: true` on it — so one template
+  // rendered as two different things depending on which path a surface took. That
+  // is not a preview problem: `TemplateGallery.upgradeLegacyToLayers` runs on
+  // mount and SAVES the result, so a church's announcement template would have
+  // been re-shaped permanently by opening the Templates tab, in silence.
+  //
+  // It is checked BEFORE `band`, because the renderer checks it before `band`
+  // too: a lower third that scrolls paints the ticker and nothing else, so a
+  // converter that emitted the band shape as well would paint two bands.
+  const crawl = !!style.scroll;
   const refFirst = layout.refFirst || regions[0] === 'reference';
   const layers = [];
 
-  if (band) {
+  // THREE CASES, NOT TWO. A keyed template that crawls gets NEITHER: no band
+  // shape (the ticker replaces it, and two bands is two bands) and no background
+  // (an opaque frame covers the camera the lower third exists to caption, which
+  // is the transparency law's own failure written into a template).
+  if (band && crawl) {
+    // Nothing paints the frame — deliberately. The ticker bar below is the only
+    // opaque thing a keyed crawl puts on a screen.
+  } else if (band) {
     layers.push(
       makeLayer('shape', {
         name: 'Band',
@@ -1017,6 +1145,85 @@ export function regionsToLayers(template) {
 
   const hasVerse = regions.includes('verse_text');
   const hasRef = regions.includes('reference');
+
+  if (crawl) {
+    // THE GEOMETRY IS THE REGION PATH'S, EXPRESSED IN PERCENTAGES. `.ticker` is
+    // `left:0; right:0; bottom:0` with `1.4cqw` of padding around one line of
+    // type, which at the sizes a notice actually uses is a band of roughly a
+    // seventh of the frame. `CRAWL_H` is that, and `y = 100 - CRAWL_H` is what
+    // makes it a FOOTER rather than a floating strip — a ticker that does not
+    // touch the bottom edge is not a ticker.
+    const CRAWL_H = 14;
+    const y = 100 - CRAWL_H;
+    // THE BAR THE TICKER IS. On the region path it carries its own
+    // `background:{tickerBg}` and is NEVER transparent, because on a keyed
+    // lower-third channel the bar is the only thing composited over the camera —
+    // a crawl with no bar behind it is words floating on a live picture. Same
+    // precedence as `TemplateRender::tickerBg`, so the two cannot drift.
+    layers.push(
+      makeLayer('shape', {
+        name: 'Ticker bar',
+        x: 0, y, w: 100, h: CRAWL_H,
+        fill:
+          style.tickerBg ||
+          (style.background && style.background !== 'transparent'
+            ? style.background
+            : style.accent || '#0a0a0a'),
+        opacity: 1,
+        radius: 0,
+      }),
+    );
+    // Sizes fall back to the BAND defaults, not the full-frame ones. A crawl is a
+    // line of type in a band however the template was modelled, and 5.2cqw of
+    // verse in a 14%-tall bar is the full-frame default arriving by the back door.
+    const label = hasRef
+      ? makeLayer('text', {
+          name: 'Reference', bind: 'reference', x: 3, y, w: 26, h: CRAWL_H,
+          font: style.refFont || STYLE_DEFAULTS.refFont,
+          color: style.refColor || style.verseColor || '#f4e4c8',
+          size: Number(style.refSize) || 1.6,
+          align: 'left', valign: 'middle',
+          transform: style.refTransform || 'none', lineHeight: 1.2,
+          letterSpacing: Number(style.refLetterSpacing) || 0,
+          shadow: Number(style.refShadow) || 0,
+          italic: !!style.italicRef,
+          // THE LABEL DOES NOT CRAWL. On the region path it is `flex: 0 0 auto`
+          // outside the scrolling track — fixed on the left while the body runs
+          // past it. A label that moved with the text would be unreadable at
+          // exactly the moment it is meant to say what the notice is.
+          scroll: false,
+        })
+      : null;
+    if (label) layers.push(label);
+    if (hasVerse) {
+      layers.push(
+        makeLayer('text', {
+          name: 'Notice', bind: 'verse',
+          // Beside the label, never under it: the region path gives each its own
+          // box inside one flex row.
+          x: label ? 31 : 3,
+          y,
+          w: label ? 66 : 94,
+          h: CRAWL_H,
+          font: style.verseFont || STYLE_DEFAULTS.verseFont,
+          color: style.verseColor || '#f4e4c8',
+          size: Number(style.verseSize) || 2.6,
+          align: style.verseAlign || 'left', valign: 'middle',
+          transform: style.verseTransform || 'none',
+          lineHeight: Number(style.verseLineHeight) || 1.32,
+          letterSpacing: Number(style.verseLetterSpacing) || 0,
+          shadow: Number(style.verseShadow) || 0,
+          italic: false,
+          scroll: true,
+          // No curly quotes on a notice. `quote` is the region renderer's
+          // scripture convention and a ticker never takes it.
+          quote: false,
+        }),
+      );
+    }
+    return { ...layout, layers };
+  }
+
   if (band) {
     if (hasVerse) layers.push(mkVerse(74, 11));
     if (hasRef) layers.push(mkRef(85, 6));

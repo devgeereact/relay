@@ -192,6 +192,22 @@ impl Kiosk {
     pub(crate) fn silent(&mut self) -> bool {
         self.rx.try_recv().is_err()
     }
+
+    /// EVERYTHING waiting, in order, leaving the receiver empty.
+    ///
+    /// `next()` answers "what came next", which is the right question when one
+    /// frame is the claim. A configuration change publishes several frames and a
+    /// fire publishes several more, so a test that wants the LAST frame of a kind
+    /// — or wants to assert that no frame of a kind is present — has to look at
+    /// all of them, and hand-rolling that loop per test is how two tests come to
+    /// disagree about what "drained" means.
+    pub(crate) fn drain(&mut self) -> Vec<String> {
+        let mut out = Vec::new();
+        while let Ok(m) = self.rx.try_recv() {
+            out.push(m);
+        }
+        out
+    }
 }
 
 /// Tauri delivers events to listeners asynchronously on the mock runtime; give the
@@ -493,6 +509,7 @@ mod cold_start {
 
         // --- output_channels: Channels → Add screen
         let ch = add_channel(
+            h.clone(),
             h.state::<Db>(),
             "Crèche TV".into(),
             Some("network_client".into()),
@@ -1139,7 +1156,7 @@ mod cold_start {
         // GAP, deliberately recorded: a CHANNEL may be created with a blank name.
         // It then appears in Channels and in every screen picker as an unnamed
         // row. Nothing else refuses this.
-        let blank = add_channel(h.state::<Db>(), "   ".into(), None, None)
+        let blank = add_channel(h.clone(), h.state::<Db>(), "   ".into(), None, None)
             .expect("today a blank channel name is accepted");
         let db = h.state::<Db>();
         let conn = db.0.lock().unwrap();

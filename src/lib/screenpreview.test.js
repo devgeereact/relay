@@ -76,8 +76,13 @@ describe('the inspector and the output page resolve the same way', () => {
     expect(outputs, 'the inspector must NAME $templates, not reach it through a helper').toMatch(
       /\$: selOwn =[\s\S]{0,120}\$templates\.find/,
     );
+    // …and the page passes its screen's template as it is, with the per-kind look
+    // as the RUNG-3 ARGUMENT rather than as a second call (DECISIONS §97). The
+    // two-call form is the defect: it applies the transparency law between the
+    // per-kind look and the blanket template and silently discards an opaque
+    // Announcement look on a lower-third screen.
     expect(page).toMatch(
-      /resolveOutputTemplate\(t, override, !!content\?\.template_pinned, defaultTpl\)/,
+      /resolveOutputTemplate\(t, override, !!content\?\.template_pinned, defaultTpl, kindLook\)/,
     );
     // And the component is actually handed that answer, not a second one built
     // inline — a preview resolved twice is a preview that can disagree with itself.
@@ -115,5 +120,56 @@ describe('the inspector and the output page resolve the same way', () => {
     // Rule 35 in small. "Sample" read the same for a screen with its own look and
     // for one following a look it never showed.
     expect(outputs).toMatch(/follows the content look/);
+  });
+});
+
+// ── THE DESK RESOLVES THE PER-KIND LOOK, OR IT IS THE ONE SURFACE THAT LIES ───
+//
+// DECISIONS §97. This file's own opening paragraph records why: the Outputs tile
+// used to resolve a content look correctly while IDLE over a wall that was
+// wearing something else, so the panel an operator opens to CHECK the setup was
+// the one surface that made a broken setup look right. A per-kind look reaches
+// the wall at rung 3; a preview that stops at rung 4 reproduces exactly that, one
+// column along.
+//
+// Asserted on the SOURCE, like the assertions above it, because a card and an
+// inspector rendering the same screen is not a thing jsdom can measure — it
+// computes no layout. What it can hold is that both call sites pass the rung.
+describe('the desk resolves the same rungs the wall does', () => {
+  const outputs = code(read('lib/views/Channels.svelte'));
+
+  it('the inspector preview passes the per-kind look', () => {
+    expect(
+      outputs,
+      'the inspector resolved a screen without its per-kind look — the panel an ' +
+        'operator opens to check the setup would show the blanket template over a ' +
+        'wall wearing something else, which is this file’s own recorded defect',
+    ).toMatch(/\$: previewTemplate =[\s\S]{0,400}previewKindLook/);
+  });
+
+  it('and every card resolves its OWN, for the same kind', () => {
+    // NOT the inspector's value, and that distinction is the assertion. Every
+    // card is a different screen; a card that borrowed `previewKindLook` would
+    // paint the SELECTED screen's look on every tile, which is a worse lie than
+    // not resolving the rung at all — it would look like a whole wall correctly
+    // configured to one thing.
+    expect(
+      outputs,
+      'the cards do not resolve their own per-kind look, so a desk of four ' +
+        'screens shows the blanket template over four different walls',
+    ).toMatch(/\$: cards =[\s\S]{0,1400}lookIdFor\(\$channelLooks, c\.id, previewKind\)/);
+    expect(
+      outputs,
+      'a card borrowed the inspector\u2019s per-kind look — every tile would wear ' +
+        'the selected screen\u2019s',
+    ).not.toMatch(/\$: cards =[\s\S]{0,1400}previewKindLook/);
+  });
+
+  it('the kind it resolves for is the kind the preview is showing', () => {
+    // Idle the stand-in is a verse, so the look that applies is the SCRIPTURE
+    // one; live it is whatever is on air. A preview that always asked about
+    // scripture would be wrong on exactly the screens this feature exists for.
+    expect(outputs).toMatch(/\$: previewKind =[\s\S]{0,200}\$liveContent/);
+    expect(outputs).toMatch(/\$: previewKind =[\s\S]{0,200}'scripture'/);
   });
 });

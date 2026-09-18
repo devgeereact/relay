@@ -70,7 +70,36 @@ CREATE TABLE output_channels (
     template_id    INTEGER REFERENCES templates(id),
     display_target TEXT,                  -- display index, NDI source name, or kiosk client id
     status         TEXT NOT NULL DEFAULT 'offline' CHECK (status IN ('online', 'offline')),
-    role           TEXT CHECK (role IS NULL OR role IN ('main', 'stage'))  -- what this screen is FOR; NULL = a congregation screen with no special job
+    role           TEXT CHECK (role IS NULL OR role IN ('main', 'stage')),  -- what this screen is FOR; NULL = a congregation screen with no special job
+    -- WHICH KINDS OF CONTENT THIS SCREEN SHOWS AT ALL (DECISIONS §98). A JSON
+    -- array of content kinds, ANDed with the template's own `layout.shows` so it
+    -- can only ever NARROW. NULL = no opinion, follow the template -- which is
+    -- the behaviour every install had before this column, and is why there is no
+    -- back-fill. NULL and [] are deliberately different: the first shows
+    -- everything the template does, the second shows nothing.
+    shows_json     TEXT
+);
+
+-- WHAT ONE SCREEN WEARS FOR ONE KIND OF CONTENT (db/channels.rs).
+--
+-- A ROW PER (screen, kind), not a column per kind: the five content kinds are
+-- already mirrored by hand in three places, and a column would make DDL the
+-- fourth mirror and the least editable of them (SQLite cannot drop or rename one
+-- without a table rebuild at boot -- CLAUDE.md rule 25).
+--
+-- template_id is NOT NULL deliberately: NO ROW is the only way to say "this kind
+-- inherits". An absent row and a NULL row would have to mean the same thing at
+-- every reader, and two spellings of one fact is what output_channels.role
+-- already refuses.
+--
+-- kind carries no CHECK, for the same rule-25 reason: SQLite cannot ALTER a
+-- CHECK, so a sixth content kind would mean a rebuild before the window is
+-- shown. A kind nobody reads is an inert row.
+CREATE TABLE channel_looks (
+    channel_id  INTEGER NOT NULL REFERENCES output_channels(id) ON DELETE CASCADE,
+    kind        TEXT    NOT NULL,         -- one of CONTENT_KINDS (src/lib/layers.js)
+    template_id INTEGER NOT NULL REFERENCES templates(id),
+    PRIMARY KEY (channel_id, kind)
 );
 
 -- ===== Service plans & the unified cue (db/plans.rs) =====
