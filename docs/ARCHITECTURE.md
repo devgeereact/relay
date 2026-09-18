@@ -275,12 +275,29 @@ would otherwise get no clock until the operator next touched a timer. **It is ne
 retained as the screen frame**, for the same reason as `transition` and the two
 template frames: `last_screen` holds one frame and the newest wins, so a clock there
 would replace the verse and the next screen to join would be sent the programme over
-a blank wall. **The full hello order is template, `default_template`, `channel_roles`, `transition`,
-`timer`, then the retained screen frame last** — every configuration frame first, the
-reading last, so a late-joining tablet never flashes a clock or a role map over it. Two
-waves added a slot to that sequence independently and neither displaced the rule: the
-screen frame is still sent last, and nothing but `content`, `clear` and `black` is ever
-retained as one.
+a blank wall. **The full hello order is the client's own template, the CONTENT LOOKS, `default_template`,
+`channel_roles`, `transition`, `timer`, `background`, the retained screen frame, then
+`screen_state`** — every configuration frame first, the reading next to last, and the one
+frame that OVERRIDES the reading after it. Read the order out of `run_kiosk_server`'s
+`hello` arm rather than out of this sentence: it has been rewritten by four waves that each
+added a slot, and the version before this one had lost `background` and `screen_state`
+while still calling itself full.
+
+The rule none of them displaced is what the order is FOR: the screen frame is sent after
+everything it needs to render with, nothing but `content`, `clear` and `black` is ever
+retained as one, and `screen_state` comes after the screen frame because a screen the
+operator took down must not bring itself back up by replaying a verse (rule 43).
+
+**The content looks are the newest slot and the one that is sent by VALUE rather than by
+reference.** A per-kind content look reaches an output as `content.template_id` and no JSON,
+deliberately — `main::cue_or_content_tpl` records the reason in megabytes: one look carrying
+an embedded `data:` image was 13 MB, and serialising it onto every fire made verses take
+seconds to leave the machine. So the id rides the fire path and the bytes ride the connect
+path, once, bounded at `channels::MAX_CONTENT_LOOKS`. Until that existed the id crossed the
+wire and died at the receiver: a screen set to follow the content look (DECISIONS §70) wore
+the configured default for the life of the product, on both doors. A native output window
+has no socket and reads the same five ids over the Tauri bridge at mount, so the projector
+on HDMI and the browser source beside it end in the same place.
 
 **Every kind needs a verdict per client, and two of them are `false` on purpose.** `stage_next`
 and `stage_alert` are for the platform, not the room: the first is the verse coming up, the
