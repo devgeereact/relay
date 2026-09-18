@@ -461,6 +461,48 @@
       scale *= FIT_STEP;
       label.style.fontSize = `${base * scale}px`;
     }
+    return Math.min(scale, fitStillBody(band));
+  }
+  /**
+   * THE BODY IS ONLY EXEMPT WHILE IT IS MOVING.
+   *
+   * `fitTicker` above says the body is deliberately not shrunk, *"it scrolls, so
+   * its length is time, not overflow"*, and that is exactly right of a crawl. It
+   * is exactly wrong of a stopped one: under `prefers-reduced-motion` there is no
+   * later, so the length IS overflow again and the track's `overflow: hidden`
+   * silently takes whatever does not fit.
+   *
+   * THE TRACK IS WHAT IS MEASURED, not the run. `.ticker-run` is an
+   * `inline-block` under `white-space: nowrap`, so it sizes its own box to its
+   * content and `scrollWidth` can never exceed `clientWidth` on it — the same
+   * trap `.ticker-label`'s own comment records about the label's 45% cap, and the
+   * same one `.content` fell into in RG-141. `.ticker-track` is the flex item
+   * with `overflow: hidden`, so it is the box that can report.
+   *
+   * The answer is returned rather than reported here, so it folds into
+   * `fitText`'s `worst` and reaches `onFit` through the one reporter — the same
+   * route every other box on this page takes (`report()`, `verifyFit`). A notice
+   * that has to go below rule 37's floor to fit its band is then shown small and
+   * SAID, which is the whole of the rule: small and reported is a thing an
+   * operator can act on before next Sunday, and 62% of a notice that was never
+   * painted is not.
+   */
+  function fitStillBody(band) {
+    if (!reduceMotion) return 1;
+    const track = band.querySelector('.ticker-track');
+    const run = band.querySelector('.ticker-run');
+    if (!track || !run) return 1;
+    // Same reasoning as the label's base above: read the template's declared size
+    // fresh every pass, never this function's own previous write, or a band that
+    // was narrow for one frame stays shrunk for the rest of the notice.
+    const base = (verseSize / 100) * stageEl.clientWidth;
+    if (!base) return 1;
+    let scale = 1;
+    run.style.fontSize = `${base}px`;
+    while (keepShrinking({ overflowing: track.scrollWidth > track.clientWidth + 1, scale })) {
+      scale *= FIT_STEP;
+      run.style.fontSize = `${base * scale}px`;
+    }
     return scale;
   }
   function fitText() {
@@ -1275,6 +1317,36 @@
     typeof window !== 'undefined' && typeof window.matchMedia === 'function'
       ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
       : false;
+  /**
+   * DOES THIS LAYER ACTUALLY CRAWL? — and the answer is not `L.scroll` alone.
+   *
+   * A crawl shows a notice longer than its band by moving it past a window, so
+   * the words that do not fit are shown LATER. Under `prefers-reduced-motion` the
+   * animation is off and later never comes, and the box is still `white-space:
+   * nowrap; overflow: hidden` — so the notice is simply cut where the band ends,
+   * with nothing shown and nothing said. Measured at 1920×1080 on the shipped
+   * `Scroll · Banner` with a 185-character notice and reduced motion on:
+   * `clientWidth 1651` against `scrollWidth 4299`, so **2648px — 62% of the
+   * notice — was never on the screen at all**, while `onFit` reported
+   * `{ scale: 1, legible: true, clipped: false }`. A fit that reports a success
+   * over a notice with two thirds of it missing is rule 37 and rule 35 at once.
+   *
+   * DECISIONS §88 already had to distort the shelf around this: `High Visibility ·
+   * Announcement` deliberately does not scroll, *"because a crawl that stops under
+   * `prefers-reduced-motion` silently truncates a notice, and a family built for a
+   * low-vision or vestibular reader cannot ship the one member most likely to cut
+   * text off screen."* That reasoning is right and it should not have needed a
+   * carve-out: what a crawl that cannot move should become is an ordinary text
+   * layer. It wraps, the fitter measures it like every other layer, it shrinks if
+   * it must, and it REPORTS — which is what rule 37 asks for and is strictly
+   * better for a congregation than two thirds of a notice that never arrives.
+   *
+   * ONE FACT, READ IN BOTH PLACES. The class, the markup and `fitLayers`'
+   * `lscroll` skip all follow from this single answer, so the renderer cannot
+   * paint a still crawl while the fitter still believes it is moving — which is
+   * the shape of every "guarantee kept on one of two doors" bug in this file.
+   */
+  const crawls = (L) => !!L?.scroll && !reduceMotion;
   /** Svelte's transition contract, driven by the one pure function. */
   function slideIn(node, { mode, duration }) {
     return { duration, css: (t) => transitionCss(mode, t) };
@@ -1787,11 +1859,11 @@
                    template's own size instead of on the app's. `cardfit.test.js`. -->
               <div
                 class="lfit"
-                class:lscroll={L.scroll}
+                class:lscroll={crawls(L)}
                 data-base={baseSize(L)}
                 data-fit={L.fit || defaultFit(L)}
                 style="font-size:{baseSize(L)}cqw; color:{L.color}; font-family:{fontFamOf(L.font)}; font-weight:{L.weight || 400}; text-align:{L.align}; text-transform:{L.transform || 'none'}; line-height:{L.lineHeight || 1.3}; letter-spacing:{(L.letterSpacing || 0)}em; text-shadow:{shadowOf(L.shadow)}; font-style:{L.italic ? 'italic' : 'normal'};">
-                {#if L.scroll}
+                {#if crawls(L)}
                   <span class="lrun" style="--tickdur:{Math.min(60, Math.max(10, (text?.length || 0) * 0.42))}s">{text}</span>
                 {:else}
                   <!-- Verbatim: the text is shown exactly as imported/typed. Relay
@@ -1885,7 +1957,7 @@
                the announcement crawl — it never occupies the centre of the wall.
                The label obeys the Reference toggle just like every other region:
                turning the reference OFF removes it from the ticker too. -->
-          <div class="ticker" style="background:{tickerBg}; --tickdur:{tickerSecs}s;">
+          <div class="ticker" class:still={reduceMotion} style="background:{tickerBg}; --tickdur:{tickerSecs}s;">
             {#if show('reference') && content.reference}
               <span class="ticker-label" style="font-size:{refSize}cqw; {refStyle}">{content.reference}</span>
             {/if}
@@ -2252,14 +2324,41 @@
       transform: translateX(-100%);
     }
   }
-  /* Reduced motion: the crawl stops and the notice sits static, still readable. */
+  /* ── A CRAWL THAT CANNOT CRAWL IS NOT A CRAWL ─────────────────────────────
+     This block used to read *"the crawl stops and the notice sits static, still
+     readable"*, and the second half of that was not true. Stopping the animation
+     inside a `white-space: nowrap; overflow: hidden` track shows the notice's
+     first bandful and discards the rest — and `text-overflow: ellipsis` did not
+     even mark the cut, because the track's inline content is a single
+     `inline-block` child rather than the text itself, so there was no truncated
+     line for it to apply to. See `crawls()` for the measured layer-mode figure and
+     for DECISIONS §88, which had to carve a family member out of the shelf over
+     exactly this.
+
+     A still notice is SHRUNK TO THE BAND IT WAS GIVEN and the result reaches
+     `onFit` through `fitText`'s `worst`, so a notice too long for its band is
+     shown small and REPORTED, never cut in silence. The band keeps its geometry
+     and the notice gives way, not the other way round: letting the text wrap was
+     tried first and measured, and it grew this band from 115px to 236px and
+     lifted its top edge from y965 to y844 — a legacy footer band silently
+     becoming a fifth of the wall, over a camera, because somebody's operating
+     system prefers less motion. A notice at 32% of its designed size is small;
+     one that has redrawn the screen behind it is a different template. The
+     layer-mode crawl has no such conflict, because `.ltext` is a real percentage
+     box: it wraps INSIDE the box its designer drew, which is the same lesson
+     `.content.cdbox` above records.
+
+     The class is set from the same `reduceMotion` flag the fitter reads, so the
+     stylesheet and the measurement cannot disagree about whether this notice is
+     moving. */
   @media (prefers-reduced-motion: reduce) {
     .ticker-run {
       animation: none;
       padding-left: 0;
     }
-    .ticker-track {
-      text-overflow: ellipsis;
-    }
+  }
+  .ticker.still .ticker-run {
+    animation: none;
+    padding-left: 0;
   }
 </style>
