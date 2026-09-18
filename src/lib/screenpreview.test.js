@@ -100,7 +100,15 @@ describe('the inspector and the output page resolve the same way', () => {
     // reads `$templates` and `$contentTemplates` INSIDE a function, so the preview
     // would be right once, by luck of ordering, and never update again — the exact
     // trap `stageUrl()` fell into a few lines above it in this same file.
-    expect(outputs).toMatch(/\$: scriptureLook = \$templates[\s\S]{0,80}\$contentTemplates/);
+    //
+    // BOTH IDENTIFIERS IN THE ONE STATEMENT is the whole claim, and it is not a
+    // claim about the shape of the expression around them. The first version of
+    // this pinned `= $templates` literally, so passing the two stores to the same
+    // lookup the output page resolves a content look through — which names both,
+    // in the statement, and is the point of doing it — failed a test whose own
+    // comment says what it is checking. A regex tighter than its reason is a
+    // regex that refuses the fix.
+    expect(outputs).toMatch(/\$: scriptureLook =[^;]*\$templates[^;]*\$contentTemplates/);
   });
 
   it('the preview caption says which of the two situations it is in', () => {

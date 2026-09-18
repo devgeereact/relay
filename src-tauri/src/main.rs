@@ -225,6 +225,7 @@ fn main() {
             let kiosk_last_t = kiosk.last_timers_handle();
             let kiosk_last_bg = kiosk.last_background_handle();
             let kiosk_down = kiosk.screens_down_handle();
+            let kiosk_looks = kiosk.look_ids_handle();
             // The configured default, warmed before any client can connect — a
             // screen that joins during launch must not be told the default is
             // `null` and then corrected.
@@ -273,6 +274,22 @@ fn main() {
                         .and_then(|s| s.trim().parse::<i64>().ok());
                 app.state::<channels::CountdownWarnDefault>().set(warn);
             }
+            // …AND WHICH TEMPLATES THE CONTENT LOOKS NAME, on the same argument
+            // once more. A content look reaches a screen as an ID and no JSON
+            // (`cue_or_content_tpl` records why, in megabytes), so a browser
+            // source can only resolve it if the hub hands it the bytes on
+            // connect — and it has to hand them to the FIRST client too, not
+            // only to one that reconnects after the operator happens to touch
+            // the map.
+            {
+                let db = app.state::<Db>();
+                let ids =
+                    db.0.lock()
+                        .ok()
+                        .map(|conn| content_look_ids(&conn))
+                        .unwrap_or_default();
+                kiosk.cache_look_ids(&ids);
+            }
             // Warm the template cache so a browser client (OBS/kiosk) gets the
             // REAL saved template immediately on connect (matches the editor).
             {
@@ -301,6 +318,7 @@ fn main() {
                 kiosk_last_t,
                 kiosk_last_bg,
                 kiosk_down,
+                kiosk_looks,
                 app.state::<channels::OutputHealth>().inner().clone(),
                 8031,
             ));
@@ -3686,6 +3704,33 @@ fn cue_or_content_tpl(
     (id, None, false)
 }
 
+/// THE CONTENT KINDS A LOOK CAN BE SET FOR.
+///
+/// The same five names exist in three shapes, and this is the only one that can
+/// be iterated: `ContentTemplates` names them as struct FIELDS, because that is
+/// the map an operator edits and the IPC shape the console reads, and
+/// `channels::MAX_CONTENT_LOOKS` is this list's LENGTH expressed as a bound on
+/// what the hub will hand a client on connect. None of the three can be derived
+/// from the others, so `the_content_look_kinds_agree_with_the_map_and_the_bound`
+/// asserts that they still say the same thing — a kind added to the matrix and
+/// not to this array is a look an operator can set and no screen is ever sent.
+const CONTENT_LOOK_KINDS: [&str; 5] = ["scripture", "song", "media", "announce", "countdown"];
+
+/// The distinct template ids this install's content looks name, in kind order.
+///
+/// This is the whole of what a screen with no look of its own can be asked to
+/// wear, and it is small by construction — one template per kind, five kinds. It
+/// deliberately does NOT include `default_template_id`: the configured default
+/// already reaches every client in its own `default_template` frame carrying its
+/// own JSON, and the output page's resolver ends there anyway, so adding it here
+/// would put the same bytes on the wire twice for no change in what is painted.
+fn content_look_ids(conn: &rusqlite::Connection) -> Vec<i64> {
+    CONTENT_LOOK_KINDS
+        .iter()
+        .filter_map(|k| db::content_template_id(conn, k).ok().flatten())
+        .collect()
+}
+
 #[cfg(test)]
 mod media_url_tests {
     use super::*;
@@ -3722,6 +3767,54 @@ mod media_url_tests {
     fn a_bundled_picture_has_no_file_to_delete() {
         assert!(!media_file_is_on_disk("bundled:backgrounds/01-2.jpg"));
         assert!(media_file_is_on_disk("/Users/x/media/7_photo.jpg"));
+    }
+}
+
+#[cfg(test)]
+mod content_look_kinds_tests {
+    use super::*;
+
+    /// THE THREE SHAPES OF ONE LIST MUST STILL AGREE.
+    ///
+    /// `CONTENT_LOOK_KINDS` is what `content_look_ids` iterates to tell the hub
+    /// which templates a following screen may be asked to wear.
+    /// `ContentTemplates` is the map an operator edits. `MAX_CONTENT_LOOKS` is
+    /// the bound on how many of them a hello reply may carry. A sixth kind added
+    /// to the map alone is a look an operator can set, save, and never see: the
+    /// fire path would resolve its id and the hub would never send the bytes, so
+    /// the screen falls back to the configured default in silence — which is the
+    /// defect this whole path was built to close, reintroduced one kind at a time.
+    #[test]
+    fn the_content_look_kinds_agree_with_the_map_and_the_bound() {
+        let map = serde_json::to_value(ContentTemplates {
+            scripture: None,
+            song: None,
+            media: None,
+            announce: None,
+            countdown: None,
+        })
+        .expect("the content-look map serialises");
+        let fields: Vec<&String> = map
+            .as_object()
+            .expect("an object")
+            .keys()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            fields.len(),
+            CONTENT_LOOK_KINDS.len(),
+            "the map an operator edits and the list the hub is told about have              different lengths: {fields:?} vs {CONTENT_LOOK_KINDS:?}"
+        );
+        for kind in CONTENT_LOOK_KINDS {
+            assert!(
+                fields.iter().any(|f| f.as_str() == kind),
+                "`{kind}` is iterated but is not a field of the map an operator edits"
+            );
+        }
+        assert_eq!(
+            CONTENT_LOOK_KINDS.len(),
+            channels::MAX_CONTENT_LOOKS,
+            "the hub would truncate a look this install can legitimately set"
+        );
     }
 }
 
@@ -3793,13 +3886,45 @@ fn get_content_templates(db: tauri::State<'_, Db>) -> error::Result<ContentTempl
 
 /// Map a content type to a template (None clears it → channel default).
 #[tauri::command]
-fn set_content_template(
+fn set_content_template<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     db: tauri::State<'_, Db>,
+    kiosk: tauri::State<'_, channels::KioskHub>,
     kind: String,
     template_id: Option<i64>,
 ) -> error::Result<()> {
-    let conn = db.0.lock()?;
-    db::set_content_template(&conn, &kind, template_id).map_err(Into::into)
+    // WRITE, THEN TELL THE SCREENS — and release the lock in between, because
+    // nothing may hold a `Mutex` across a publish or an emit (rule 2).
+    let (ids, fresh) = {
+        let conn = db.0.lock()?;
+        db::set_content_template(&conn, &kind, template_id)?;
+        let fresh = template_id
+            .and_then(|id| db::get_template(&conn, id).ok().flatten())
+            .and_then(|t| serde_json::to_string(&t).ok().map(|j| (t.id, j)));
+        (content_look_ids(&conn), fresh)
+    };
+    // A LOOK CHANGED MID-SESSION IS NEWS, AND A SCREEN ALREADY OPEN HAS TO GET IT.
+    //
+    // A content look reaches an output as an id alone, so a screen can only wear
+    // one it holds the bytes for. Warming the hub's list is what makes the NEXT
+    // client resolve it; a screen that is already connected — the projector, the
+    // OBS source, the lobby TV — would otherwise go on resolving the new id
+    // against a cache that has never heard of it and silently paint the
+    // configured default until something reloaded it. That is DECISIONS §70's own
+    // finding ("staying silent leaves it wearing the look it was given") on the
+    // other half of the pair.
+    //
+    // Both doors, and neither of them a new message: `KioskHub::set_template` is
+    // the frame a browser source already applies, and `template://updated` is the
+    // event a native output window already answers by re-reading that id. A screen
+    // that does not care drops both, which is what they already do for every
+    // template edit the operator makes.
+    kiosk.cache_look_ids(&ids);
+    if let Some((id, j)) = fresh {
+        kiosk.set_template(id, &j);
+        let _ = app.emit("template://updated", id);
+    }
+    Ok(())
 }
 
 /// Read a raw app setting by key (the generic KV store). Used by the frontend
