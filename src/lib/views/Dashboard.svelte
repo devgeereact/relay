@@ -466,15 +466,16 @@
   <section class="d-card">
     <header>
       <h3>Recent services</h3>
-      {#if services.length}
-        <!-- HISTORY IS IN SETTINGS, and has been since it left the Library. This
-             sent an operator looking for past services to a workspace that no
-             longer has any. It names the section now rather than only the tab. -->
-        <button
-          class="d-link"
-          on:click={() => setSession({ activeTab: 'settings', settingsSection: 'history' })}
-          >All history</button>
-      {/if}
+      <!-- HISTORY IS ITS OWN ROUTE AGAIN. It was in the Library, then a section of
+           Settings, and is now neither: a record browser with a destructive erase
+           in it is not a setting, and it was three levels deep in a preferences
+           page. This is the ONE door into it, which is why it is no longer behind
+           `{#if services.length}` — a church with nothing recorded yet could not
+           reach the screen at all, and `scripts/qa-inventory.mjs` counts a route
+           nothing renders a control for as an orphan. The empty state on the other
+           side is honest and is the whole answer to "have we recorded anything?". -->
+      <button class="d-link" on:click={() => setSession({ activeTab: 'history' })}
+        >All history</button>
     </header>
     {#if services.length}
       <table class="d-table">

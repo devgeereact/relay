@@ -1336,7 +1336,7 @@
           on:click={() => run(endService)}
           disabled={busy || !recording || !$capture.available}
           title={recording
-            ? 'Stop recording this service. The transcript, the fires and the timeline are kept — Library → History reads them back.'
+            ? 'Stop recording this service. The transcript, the fires and the timeline are kept — History reads them back, from All history on the readiness screen.'
             : 'No service is being recorded. One starts when you start listening.'}
         >{recording ? 'End service' : 'No service'}</button>
         <button

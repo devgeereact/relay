@@ -6,9 +6,12 @@
 //
 //   * the detection inspector's `Change sensitivity in Settings` NAMES a control
 //     and landed on General, leaving the operator to find it;
-//   * Dashboard's `All history` pointed at the LIBRARY, where History has not
+//   * Dashboard's `All history` pointed at the LIBRARY, where History had not
 //     lived since it moved into Settings — so somebody looking for past services
-//     was sent to a workspace that no longer has any.
+//     was sent to a workspace that no longer has any. History has since come out
+//     of Settings and become a route of its own, so that link is a plain tab
+//     change again; what it may never go back to being is a pointer at a surface
+//     the thing is not on, which is what this block is really about.
 //
 // One-shot, not a resume point. `activeTab` is persisted deliberately, so an
 // operator running a service yesterday comes back to Live; a section chosen by a
@@ -28,16 +31,35 @@ beforeEach(() => clearSession());
 describe('a control may name the Settings section it means', () => {
   it('the session carries a section, and it starts empty', () => {
     expect(get(session).settingsSection ?? null).toBeNull();
-    setSession({ activeTab: 'settings', settingsSection: 'history' });
-    expect(get(session).settingsSection).toBe('history');
+    setSession({ activeTab: 'settings', settingsSection: 'preachers' });
+    expect(get(session).settingsSection).toBe('preachers');
   });
 
-  it('Dashboard sends All history to Settings, not to the Library', () => {
+  it('Dashboard sends All history to the History ROUTE, not to a workspace it left', () => {
     const src = read('./views/Dashboard.svelte');
     const btn = src.slice(src.indexOf('All history') - 400, src.indexOf('All history'));
     expect(btn, 'All history still points at the Library').not.toMatch(/go\('library'\)/);
-    expect(btn).toMatch(/activeTab: 'settings'/);
-    expect(btn).toMatch(/settingsSection: 'history'/);
+    expect(btn, 'All history still points at Settings, which no longer has it').not.toMatch(
+      /settingsSection: 'history'/,
+    );
+    expect(btn).toMatch(/activeTab: 'history'/);
+  });
+
+  it('…and it is the one door in, so it may not be hidden behind an empty list', () => {
+    // History is off the tab strip. This button is the only rendered control that
+    // reaches it, and it used to sit inside `{#if services.length}` — so a church
+    // that had recorded nothing could not open the screen that would have told
+    // them so. `scripts/qa-inventory.mjs` counts a route no control reaches as an
+    // orphan, and an empty state is a better answer than a missing door.
+    // Comments stripped first: the explanation beside the fix necessarily NAMES
+    // the conditional it removed, and a scanner that counted that would fail on a
+    // correct file — whose cheapest repair is deleting the explanation.
+    const src = read('./views/Dashboard.svelte').replace(/<!--[\s\S]*?-->/g, '');
+    const head = src.slice(
+      src.lastIndexOf('<header>', src.indexOf('All history')),
+      src.indexOf('All history'),
+    );
+    expect(head, 'All history is behind a conditional again').not.toMatch(/\{#if/);
   });
 
   it("the inspector's sensitivity link names the section that has the control", () => {

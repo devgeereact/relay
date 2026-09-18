@@ -64,19 +64,28 @@ describe('§2 · the strip is the six workspaces, in order', () => {
     expect(stripKeys()).toEqual(['live', 'library', 'planner', 'templates', 'channels', 'settings']);
   });
 
-  it('neither Themes nor Help takes a slot in it', () => {
+  it('neither Themes, Help nor History takes a slot in it', () => {
     expect(stripKeys()).not.toContain('themes');
     expect(stripKeys()).not.toContain('help');
+    // History was a Settings SECTION and is a route of its own again. Off the
+    // strip both times: six workspaces is the grammar, and reading back what
+    // happened last Sunday is not one of the six jobs a service is run from.
+    expect(stripKeys()).not.toContain('history');
   });
 
-  it('but Help is still a real route with a view behind it', () => {
+  it('but Help and History are real routes with views behind them', () => {
     // A surface nothing can reach is an orphan. Settings renders two controls
-    // that set this tab, and the resolver is handed `routes` (not the strip) so
-    // they land rather than bouncing back to Live.
-    expect(APP).toMatch(/const routes = \[\.\.\.tabs\.map\(\(x\) => x\.key\), 'help'\]/);
+    // that set the Help tab and the readiness screen renders one that sets
+    // History, and the resolver is handed `routes` (not the strip) so they land
+    // rather than bouncing back to Live.
+    expect(APP).toMatch(/const routes = \[\.\.\.tabs\.map\(\(x\) => x\.key\), 'help', 'history'\]/);
     expect(APP).toMatch(/resolveActiveTab\(\$session\.activeTab, routes\)/);
     expect(APP).toMatch(/help:\s*\(\) => import\('\.\/lib\/views\/Help\.svelte'\)/);
+    expect(APP).toMatch(
+      /history:\s*\(\) => import\('\.\/lib\/views\/library\/History\.svelte'\)/,
+    );
     expect(read('src/lib/views/Settings.svelte')).toMatch(/activeTab: 'help'/);
+    expect(read('src/lib/views/Dashboard.svelte')).toMatch(/activeTab: 'history'/);
   });
 
   it('the Templates workspace is one desk, and nothing of Themes is left in it', () => {
@@ -667,6 +676,39 @@ describe('the End service button says which of its two states it is in', () => {
     btn().click();
     for (let i = 0; i < 4; i++) await settle();
     expect(invoke.mock.calls.map((c) => c[0])).toContain('end_service');
+    cap.serviceLock.set({ engaged: false, held_back: [], recording: false });
+    cap.capture.update((s) => ({ ...s, available: false }));
+  });
+
+  // ── THE REFUSAL, ON THE SURFACE THAT NOW OFFERS THE CONTROL ───────────────
+  //
+  // `end_service` really can fail: it takes `session.0.lock()?`, so a thread that
+  // panicked holding the session mutex leaves it poisoned. `endservice.test.js`
+  // holds that the wrapper THROWS; neither it nor the state tests above can see
+  // what the surface does with the throw, and the original defect was entirely on
+  // that side — `await endService(); refresh();` repainted an identical list under
+  // an identical button, which is as close to a claim of success as a screen gets
+  // without words (CLAUDE.md rule 15).
+  //
+  // This test used to press History's copy of the button. There is only one copy
+  // now and it is this one, so the test came with it rather than being deleted:
+  // `Dock.svelte::run` is the door every dock action goes through, and a guarantee
+  // is only kept on the doors you checked.
+  it('a refused End service says so on the surface that offers it', async () => {
+    const cap = await import('./stores/capture.js');
+    cap.capture.update((s) => ({ ...s, available: true }));
+    cap.serviceLock.set({ engaged: true, held_back: [], recording: true });
+    invoke.mockImplementation(async (cmd) => {
+      if (cmd === 'end_service') throw { kind: 'refused', message: 'A service is being recorded.' };
+      return null;
+    });
+    await mount();
+    expect(host.querySelector('[role="alert"]')).toBe(null);
+    btn().click();
+    for (let i = 0; i < 6; i++) await settle();
+    const alert = host.querySelector('[role="alert"]');
+    expect(alert, 'a refused end reported nothing at all').toBeTruthy();
+    expect(alert.textContent).toMatch(/A service is being recorded/);
     cap.serviceLock.set({ engaged: false, held_back: [], recording: false });
     cap.capture.update((s) => ({ ...s, available: false }));
   });

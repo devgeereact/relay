@@ -152,6 +152,16 @@
     // cheatsheet that points at it — a surface nothing can reach is an orphan,
     // and `scripts/qa-inventory.mjs` is the instrument that says so.
     help:      () => import('./lib/views/Help.svelte'),
+    // HISTORY IS ROUTABLE AND NOT ON THE STRIP EITHER, for the same reason and
+    // by the opposite journey. It was a Settings SECTION, and it is not a
+    // setting: nothing on it configures anything. It is a 900-line record
+    // browser with its own list, detail, search, export and a two-step erase,
+    // and burying a destructive action three levels inside a preferences page is
+    // how a volunteer finds it by accident. Reading back what happened is not a
+    // job you run a service from, so it does not take a seventh workspace slot —
+    // it is reached from the readiness screen's own Recent services card, which
+    // is where somebody is already looking at the same rows.
+    history:   () => import('./lib/views/library/History.svelte'),
   };
   const viewCache = {}; // key → resolved component, loaded once then kept
   let current = null;   // the component for the active tab (null while its chunk loads)
@@ -195,8 +205,10 @@
     // template. Its internal key is still `channels`; the label is what an
     // operator reads.
     { key: 'channels',  label: 'tab.channels',  title: 'Outputs' },
-    // Service History and the Dashboard live INSIDE Settings — records and
-    // overview surfaces, not surfaces a service is run from.
+    // The Dashboard lives INSIDE Settings — it is the FIRST section of it now,
+    // because "is this machine going to work?" is the question a Sunday actually
+    // opens Settings to ask. Service History used to live there too and no
+    // longer does: it is its own route (see `viewLoaders`), off the strip.
     { key: 'settings',  label: 'tab.settings',  title: 'System Settings' },
   ];
   // Every key the shell can RENDER, which is the strip plus the routes that are
@@ -204,7 +216,7 @@
   // than the strip: hand it the strip alone and Settings' two "Open Help" buttons
   // would set a tab the resolver immediately bounces back to Live — a control
   // that looks like it worked and did nothing.
-  const routes = [...tabs.map((x) => x.key), 'help'];
+  const routes = [...tabs.map((x) => x.key), 'help', 'history'];
   // The active tab IS the session — not a local copy of it that happens to be
   // written back. One direction, one source of truth, so anything can navigate:
   // the Planner's "Run this plan" hands the operator to LIVE by setting it, and a
