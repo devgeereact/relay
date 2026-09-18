@@ -305,3 +305,45 @@ describe('the look takes its place in the order and does not jump it', () => {
     expect(fills()).toEqual(['#112233']);
   });
 });
+
+// ── THE CONSOLE'S TWO SURFACES READ THE SAME ID ─────────────────────────────
+//
+// `liveTemplateOverride` is what the program pane on Live (`progTpl`) and the
+// Outputs inspector tile (`previewOverride`) both resolve through, so it is the
+// one seam where a console surface can come to disagree with the wall. It read
+// `template_json` alone, which is null by construction for a content look — so
+// the operator's own preview of the wall could not show the look the wall was
+// about to wear, on the two surfaces built to be checkable.
+describe('the console resolves a content look through one store', () => {
+  it('reads the id form as well as the JSON form', async () => {
+    const { live, templates, liveTemplateOverride } = await import('./stores/capture.js');
+    const { get } = await import('svelte/store');
+
+    templates.set([LOOK, OWN]);
+    live.set({ kind: 'scripture', ...VERSE, template_id: 9, template_json: null });
+    expect(
+      get(liveTemplateOverride),
+      'the program pane resolved a content look to nothing — the operator is ' +
+        'watching a preview that cannot show what the wall is wearing',
+    ).toEqual(LOOK);
+
+    // A pinned cue template still wins: it said something about THIS item, and
+    // the id beside it is only what the console reads back.
+    live.set({
+      kind: 'scripture',
+      ...VERSE,
+      template_id: 9,
+      template_json: JSON.stringify(OWN),
+      template_pinned: true,
+    });
+    expect(get(liveTemplateOverride)).toEqual(OWN);
+
+    // An id the console has no template for is null, not an invention.
+    templates.set([]);
+    live.set({ kind: 'scripture', ...VERSE, template_id: 9, template_json: null });
+    expect(get(liveTemplateOverride)).toBe(null);
+
+    live.set(null);
+    templates.set([]);
+  });
+});

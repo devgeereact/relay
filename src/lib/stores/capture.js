@@ -75,7 +75,7 @@ import { countdownRemainingMs, countdownIsPaused } from '../countdown.js';
 // The warning WINDOW, as distinct from how long is left. `layers.js` holds the
 // one number the wall, the stage page and the dock all measure against; this file
 // is its one writer, because this file is the only one that can read the row.
-import { COUNTDOWN_WARN_MS, setCountdownWarnDefault } from '../layers.js';
+import { COUNTDOWN_WARN_MS, resolveContentOverride, setCountdownWarnDefault } from '../layers.js';
 // X1 · the transition override's store lives beside its register — see the block
 // further down for why it is not declared in this file.
 import { liveTransition } from '../transitions.js';
@@ -413,9 +413,30 @@ export const liveContent = derived(live, ($l) =>
  * render as lyrics, scripture as scripture), or null to use the channel's own
  * template. Malformed JSON falls back to the channel template rather than
  * throwing — a bad template must never take the screens down mid-service.
+ *
+ * ── IT DEPENDS ON `templates` NOW, AND THAT IS THE FIX ──────────────────────
+ *
+ * An override arrives in two shapes and this used to read only one of them.
+ * A Planner cue's PINNED choice ships its own JSON; a per-kind CONTENT LOOK
+ * ships an id and nothing else, deliberately, because a look carrying an
+ * embedded `data:` image has been 13 MB and serialising it onto every fire made
+ * verses take seconds (`main::cue_or_content_tpl`). `parseTemplateOverride` is
+ * null BY CONSTRUCTION for the second shape — so the console's program pane and
+ * the Outputs tile both resolved a content look to nothing, and both of them
+ * are the surfaces an operator uses to CHECK that a look is working.
+ *
+ * Two surfaces, one store, so they cannot reach different conclusions about the
+ * same screen. `Channels.svelte` records being caught by that class of drift
+ * three times; the program pane's claim is stronger still, because it is what an
+ * operator looks at instead of the wall.
+ *
+ * `templates` is the console's own list and is loaded by the dock at launch, so
+ * it is populated on every workspace rather than only where a view happens to
+ * fetch it. An empty list resolves to null — the old behaviour, which paints the
+ * screen's own template — rather than to anything invented.
  */
-export const liveTemplateOverride = derived(live, ($l) =>
-  parseTemplateOverride($l?.template_json),
+export const liveTemplateOverride = derived([live, templates], ([$l, $tpls]) =>
+  resolveContentOverride($l, $tpls),
 );
 
 /** Whether the live override is a PINNED cue choice (overrides the screen) vs a
