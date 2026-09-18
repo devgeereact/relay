@@ -3707,11 +3707,14 @@ fn cue_or_content_tpl(
 
 /// THE CONTENT KINDS A LOOK CAN BE SET FOR.
 ///
-/// Written once because it is read three times — `get_content_templates` builds
-/// the map an operator edits, `content_look_ids` tells the hub which templates a
-/// following screen may be asked to wear, and `channels::MAX_CONTENT_LOOKS` is
-/// this list's length expressed as a bound. Three copies of five strings is how
-/// a kind gets added to the matrix and never reaches the screens.
+/// The same five names exist in three shapes, and this is the only one that can
+/// be iterated: `ContentTemplates` names them as struct FIELDS, because that is
+/// the map an operator edits and the IPC shape the console reads, and
+/// `channels::MAX_CONTENT_LOOKS` is this list's LENGTH expressed as a bound on
+/// what the hub will hand a client on connect. None of the three can be derived
+/// from the others, so `the_content_look_kinds_agree_with_the_map_and_the_bound`
+/// asserts that they still say the same thing — a kind added to the matrix and
+/// not to this array is a look an operator can set and no screen is ever sent.
 const CONTENT_LOOK_KINDS: [&str; 5] = ["scripture", "song", "media", "announce", "countdown"];
 
 /// The distinct template ids this install's content looks name, in kind order.
@@ -3765,6 +3768,54 @@ mod media_url_tests {
     fn a_bundled_picture_has_no_file_to_delete() {
         assert!(!media_file_is_on_disk("bundled:backgrounds/01-2.jpg"));
         assert!(media_file_is_on_disk("/Users/x/media/7_photo.jpg"));
+    }
+}
+
+#[cfg(test)]
+mod content_look_kinds_tests {
+    use super::*;
+
+    /// THE THREE SHAPES OF ONE LIST MUST STILL AGREE.
+    ///
+    /// `CONTENT_LOOK_KINDS` is what `content_look_ids` iterates to tell the hub
+    /// which templates a following screen may be asked to wear.
+    /// `ContentTemplates` is the map an operator edits. `MAX_CONTENT_LOOKS` is
+    /// the bound on how many of them a hello reply may carry. A sixth kind added
+    /// to the map alone is a look an operator can set, save, and never see: the
+    /// fire path would resolve its id and the hub would never send the bytes, so
+    /// the screen falls back to the configured default in silence — which is the
+    /// defect this whole path was built to close, reintroduced one kind at a time.
+    #[test]
+    fn the_content_look_kinds_agree_with_the_map_and_the_bound() {
+        let map = serde_json::to_value(ContentTemplates {
+            scripture: None,
+            song: None,
+            media: None,
+            announce: None,
+            countdown: None,
+        })
+        .expect("the content-look map serialises");
+        let fields: Vec<&String> = map
+            .as_object()
+            .expect("an object")
+            .keys()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            fields.len(),
+            CONTENT_LOOK_KINDS.len(),
+            "the map an operator edits and the list the hub is told about have              different lengths: {fields:?} vs {CONTENT_LOOK_KINDS:?}"
+        );
+        for kind in CONTENT_LOOK_KINDS {
+            assert!(
+                fields.iter().any(|f| f.as_str() == kind),
+                "`{kind}` is iterated but is not a field of the map an operator edits"
+            );
+        }
+        assert_eq!(
+            CONTENT_LOOK_KINDS.len(),
+            channels::MAX_CONTENT_LOOKS,
+            "the hub would truncate a look this install can legitimately set"
+        );
     }
 }
 
