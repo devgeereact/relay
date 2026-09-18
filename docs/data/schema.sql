@@ -73,6 +73,28 @@ CREATE TABLE output_channels (
     role           TEXT CHECK (role IS NULL OR role IN ('main', 'stage'))  -- what this screen is FOR; NULL = a congregation screen with no special job
 );
 
+-- WHAT ONE SCREEN WEARS FOR ONE KIND OF CONTENT (db/channels.rs).
+--
+-- A ROW PER (screen, kind), not a column per kind: the five content kinds are
+-- already mirrored by hand in three places, and a column would make DDL the
+-- fourth mirror and the least editable of them (SQLite cannot drop or rename one
+-- without a table rebuild at boot -- CLAUDE.md rule 25).
+--
+-- template_id is NOT NULL deliberately: NO ROW is the only way to say "this kind
+-- inherits". An absent row and a NULL row would have to mean the same thing at
+-- every reader, and two spellings of one fact is what output_channels.role
+-- already refuses.
+--
+-- kind carries no CHECK, for the same rule-25 reason: SQLite cannot ALTER a
+-- CHECK, so a sixth content kind would mean a rebuild before the window is
+-- shown. A kind nobody reads is an inert row.
+CREATE TABLE channel_looks (
+    channel_id  INTEGER NOT NULL REFERENCES output_channels(id) ON DELETE CASCADE,
+    kind        TEXT    NOT NULL,         -- one of CONTENT_KINDS (src/lib/layers.js)
+    template_id INTEGER NOT NULL REFERENCES templates(id),
+    PRIMARY KEY (channel_id, kind)
+);
+
 -- ===== Service plans & the unified cue (db/plans.rs) =====
 
 CREATE TABLE service_plans (

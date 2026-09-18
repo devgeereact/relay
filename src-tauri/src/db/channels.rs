@@ -261,6 +261,138 @@ pub(super) fn ensure_channel_role(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// PER-KIND LOOKS — what a screen wears for ONE kind of content
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// CREATE `channel_looks`. A ROW PER (SCREEN, KIND), NOT A COLUMN PER KIND.
+///
+/// `CONTENT_KINDS` is already mirrored by hand in three places with no test
+/// linking them (`src/lib/layers.js`, `main::ContentTemplates`,
+/// `main::CONTENT_LOOK_KINDS`); a column per kind would make DDL the fourth
+/// mirror and the least editable of the four, because SQLite cannot drop or
+/// rename one without the table rebuild rule 25 is the scar of.
+///
+/// `template_id` is `NOT NULL` deliberately: **NO ROW is the only way to say
+/// "this kind inherits".** An absent row and a NULL row would have to mean the
+/// same thing at every reader, and two spellings of one fact is exactly what
+/// `channel_roles_json` already refuses one screen at a time.
+///
+/// `kind` carries no `CHECK`. SQLite cannot `ALTER` a `CHECK`, so a sixth content
+/// kind would mean a table rebuild at boot — rule 25's own failure, for the sake
+/// of refusing a row nothing would ever read. A kind nobody reads is an inert
+/// row; a rebuild before the window is shown is not.
+///
+/// **RULE 25, AND IT IS RETRYABLE BY HAVING NOTHING TO RETRY.** One
+/// `CREATE TABLE IF NOT EXISTS`: no scratch table, no rebuild, no transaction
+/// opened, so a mid-batch failure cannot leave one open for the following
+/// `PRAGMA foreign_keys = ON` to no-op inside.
+///
+/// **THERE IS NO BACK-FILL, AND REFUSING ONE IS THE WHOLE OF THIS MIGRATION.**
+/// An install with four channels each carrying a `template_id` ends here with
+/// zero rows: every kind falls through to the screen's own template and first
+/// launch is identical by construction rather than by comparison. The tempting
+/// back-fill — write each screen's current template into all five kinds so the
+/// shape is explicit — changes nothing on day one and everything on day two,
+/// because the operator then changes that screen's template and four kinds
+/// silently keep the old one with no control having been touched.
+pub(super) fn ensure_channel_looks(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS channel_looks (
+             channel_id  INTEGER NOT NULL REFERENCES output_channels(id) ON DELETE CASCADE,
+             kind        TEXT    NOT NULL,
+             template_id INTEGER NOT NULL REFERENCES templates(id),
+             PRIMARY KEY (channel_id, kind)
+         );",
+    )
+}
+
+/// THE PER-KIND LOOK MAP, AS IT GOES ON THE WIRE —
+/// `{"1":{"scripture":9,"song":12}}`.
+///
+/// Channel ids against kind → template id, and nothing else: no names, no
+/// addresses, nothing a client chose and nothing about who is connected. Shaped
+/// exactly like `channel_roles_json` and published the same way, because the hub
+/// cannot address one client (DECISIONS §35) and each client picks out its own id.
+///
+/// A screen with no per-kind look is OMITTED rather than written as `{}`, and a
+/// kind with no row is omitted rather than written as null — the same rule, for
+/// the same reason, one level down. The empty map `{}` is still an ANSWER and is
+/// sent: a page that cannot tell "nobody has told me" from "I have no per-kind
+/// look" paints the wrong template for one frame (rule 35).
+pub fn channel_looks_json(conn: &Connection) -> rusqlite::Result<String> {
+    let mut stmt = conn.prepare(
+        "SELECT channel_id, kind, template_id FROM channel_looks ORDER BY channel_id, kind",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, i64>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, i64>(2)?,
+        ))
+    })?;
+    let mut map = serde_json::Map::new();
+    for row in rows {
+        let (id, kind, tpl) = row?;
+        let entry = map
+            .entry(id.to_string())
+            .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+        if let Some(obj) = entry.as_object_mut() {
+            obj.insert(kind, serde_json::Value::from(tpl));
+        }
+    }
+    Ok(serde_json::Value::Object(map).to_string())
+}
+
+/// SET (or CLEAR) what one screen wears for one kind of content.
+///
+/// `None` DELETES the row, because no row is the only spelling of "this kind
+/// inherits" — see `ensure_channel_looks`. There is no second spelling to write.
+pub fn set_channel_look(
+    conn: &Connection,
+    channel_id: i64,
+    kind: &str,
+    template_id: Option<i64>,
+) -> rusqlite::Result<()> {
+    match template_id {
+        Some(tpl) => conn.execute(
+            "INSERT INTO channel_looks (channel_id, kind, template_id) VALUES (?1, ?2, ?3)
+               ON CONFLICT(channel_id, kind) DO UPDATE SET template_id = excluded.template_id",
+            (channel_id, kind, tpl),
+        )?,
+        None => conn.execute(
+            "DELETE FROM channel_looks WHERE channel_id = ?1 AND kind = ?2",
+            (channel_id, kind),
+        )?,
+    };
+    Ok(())
+}
+
+/// THE DISTINCT TEMPLATE IDS THE PER-KIND LOOKS NAME.
+///
+/// This is what the kiosk hub owes a client on connect beyond the content looks:
+/// a look reaches a screen as an id and NOTHING ELSE (the 13 MB reason is at
+/// `main::cue_or_content_tpl`), so the bytes have to be at the receiver before
+/// the id arrives. Distinct, because the same look on three screens is the same
+/// bytes and must not be counted three times against the bound on a hello reply.
+pub fn channel_look_ids(conn: &Connection) -> rusqlite::Result<Vec<i64>> {
+    let mut stmt =
+        conn.prepare("SELECT DISTINCT template_id FROM channel_looks ORDER BY template_id")?;
+    let rows = stmt.query_map([], |r| r.get::<_, i64>(0))?;
+    rows.collect()
+}
+
+/// THE TEMPLATE IDS SCREENS ARE WEARING FOR ONE KIND OR ANOTHER — the FIFTH
+/// RETIREMENT DOOR (`db::templates::ensure_retired_presets_are_gone`).
+///
+/// Identical in shape to `channel_look_ids` and deliberately a separate function
+/// from it: that one answers "what must the hub send", this one answers "what may
+/// the retirement not delete", and a reader who has to work out that one function
+/// serves both is a reader who can quietly narrow one of them.
+pub(super) fn template_ids_in_use_by_looks(conn: &Connection) -> rusqlite::Result<Vec<i64>> {
+    channel_look_ids(conn)
+}
+
 /// SET (or clear) A SCREEN'S ROLE, with the one-main rule enforced here.
 ///
 /// Not a partial index. An index would refuse the write with a constraint
@@ -478,5 +610,135 @@ mod tests {
                 ("Lobby screen".into(), None),
             ]
         );
+    }
+}
+
+#[cfg(test)]
+mod look_tests {
+    use super::*;
+    use crate::db::SCHEMA;
+
+    /// A database at the shape `schema.sql` ships, with the shelf and the four
+    /// seeded screens in it — because both foreign keys on `channel_looks` are
+    /// real and `schema.sql` turns the pragma on. A fixture without the rows a
+    /// real install has would pass on a table with no foreign keys at all.
+    fn install() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        conn.execute_batch("COMMIT;").ok();
+        crate::db::seed_templates(&conn).unwrap();
+        crate::db::seed_channels(&conn).unwrap();
+        conn
+    }
+
+    /// RULE 25, in the form this migration takes it: it is retryable by having
+    /// nothing to retry. One `CREATE TABLE IF NOT EXISTS`, no scratch table, no
+    /// rebuild, no transaction opened — so the failure rule 25 is the scar of (a
+    /// half-applied rebuild leaving `…_new` behind, and every subsequent boot
+    /// failing before the window is shown) has no way to arise here.
+    ///
+    /// Three calls on one connection, because two would not distinguish "runs
+    /// twice" from "is a no-op after the first". The rows written in between must
+    /// survive: a migration that quietly recreated the table would drop them, and
+    /// on a real install those rows are what four screens are wearing.
+    #[test]
+    fn ensure_channel_looks_is_retryable() {
+        let conn = install();
+        ensure_channel_looks(&conn).unwrap();
+        set_channel_look(&conn, 1, "scripture", Some(9)).unwrap();
+        ensure_channel_looks(&conn).unwrap();
+        ensure_channel_looks(&conn).unwrap();
+        assert_eq!(
+            channel_looks_json(&conn).unwrap(),
+            r#"{"1":{"scripture":9}}"#,
+            "a second or third run of the migration moved what a screen wears"
+        );
+    }
+
+    /// **THERE IS NO BACK-FILL, AND REFUSING ONE IS THE WHOLE OF THE MIGRATION.**
+    ///
+    /// Four seeded channels each carry a `template_id`. After the migration this
+    /// table must hold ZERO rows, so every kind falls through to the screen's own
+    /// template and first launch is identical BY CONSTRUCTION rather than by
+    /// comparison.
+    ///
+    /// The tempting back-fill — write each screen's current template into all
+    /// five kinds so the shape is explicit — changes nothing on day one and
+    /// everything on day two: the operator then changes that screen's template
+    /// and four kinds silently keep the old one, with no control having been
+    /// touched and nothing on any surface saying so.
+    #[test]
+    fn an_upgraded_install_behaves_identically_on_first_launch() {
+        let conn = install();
+        ensure_channel_looks(&conn).unwrap();
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM channel_looks", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            n, 0,
+            "the migration back-filled {n} rows — every screen now carries a \
+             per-kind look nobody chose, and changing that screen's template will \
+             move nothing"
+        );
+        assert_eq!(channel_looks_json(&conn).unwrap(), "{}");
+    }
+
+    /// A screen with no per-kind look is not written as an empty object, and a
+    /// kind with no row is not written as a null. An absent key and an explicit
+    /// null would have to mean the same thing at every receiver, which is the
+    /// reason the row itself is `NOT NULL` — two spellings of one fact is what
+    /// the role map already refuses.
+    #[test]
+    fn the_map_omits_what_it_has_nothing_to_say_about() {
+        let conn = install();
+        ensure_channel_looks(&conn).unwrap();
+        set_channel_look(&conn, 2, "song", Some(12)).unwrap();
+        set_channel_look(&conn, 2, "scripture", Some(9)).unwrap();
+        assert_eq!(
+            channel_looks_json(&conn).unwrap(),
+            r#"{"2":{"scripture":9,"song":12}}"#
+        );
+        // None DELETES the row. It is the only way to say "this kind inherits".
+        set_channel_look(&conn, 2, "song", None).unwrap();
+        assert_eq!(
+            channel_looks_json(&conn).unwrap(),
+            r#"{"2":{"scripture":9}}"#
+        );
+        set_channel_look(&conn, 2, "scripture", None).unwrap();
+        assert_eq!(
+            channel_looks_json(&conn).unwrap(),
+            "{}",
+            "a screen whose last per-kind look was cleared is still named in the map"
+        );
+    }
+
+    /// DELETING A SCREEN TAKES ITS LOOKS WITH IT.
+    ///
+    /// `ON DELETE CASCADE` on the foreign key, and it is asserted rather than
+    /// assumed: SQLite enforces foreign keys only with the pragma on, which
+    /// `db::mod` sets for every real connection. A row left behind would be sent
+    /// to every client on every hello, naming a channel no page can be, for ever.
+    #[test]
+    fn a_deleted_screen_takes_its_looks_with_it() {
+        let conn = install();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        ensure_channel_looks(&conn).unwrap();
+        set_channel_look(&conn, 3, "announce", Some(9)).unwrap();
+        delete_channel(&conn, 3).unwrap();
+        assert_eq!(channel_looks_json(&conn).unwrap(), "{}");
+    }
+
+    /// The distinct template ids the per-kind looks name — the whole of what the
+    /// hub has to put in a hello reply beyond the content looks.
+    #[test]
+    fn the_ids_a_hello_reply_owes_are_distinct_and_ordered() {
+        let conn = install();
+        ensure_channel_looks(&conn).unwrap();
+        set_channel_look(&conn, 1, "scripture", Some(9)).unwrap();
+        set_channel_look(&conn, 1, "song", Some(12)).unwrap();
+        // The same look on a second screen is the SAME bytes; it must not be
+        // counted twice against the bound on a hello reply.
+        set_channel_look(&conn, 2, "scripture", Some(9)).unwrap();
+        assert_eq!(channel_look_ids(&conn).unwrap(), vec![9, 12]);
     }
 }

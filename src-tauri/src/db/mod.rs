@@ -41,7 +41,7 @@ use rusqlite::{Connection, OptionalExtension};
 use std::path::PathBuf;
 
 // Migration + seed helpers, pulled from the aggregates they belong to.
-use channels::{ensure_channel_role, seed_channels};
+use channels::{ensure_channel_looks, ensure_channel_role, seed_channels};
 #[cfg(test)]
 use serde_json::Value;
 use templates::{
@@ -362,6 +362,19 @@ fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
                                    // before anything has renamed a row. Nothing between here and
                                    // `ensure_retired_presets_are_gone` may rename a seeded template.
     ensure_template_seed_identity(conn)?;
+    // ── THE FIFTH RETIREMENT DOOR HAS TO EXIST BEFORE THE RETIREMENT ASKS IT ──
+    //
+    // `ensure_retired_presets_are_gone` deletes a preset only when NOTHING points
+    // at it, and a screen's per-kind look is a fifth thing that can. The table has
+    // to be there when it asks: an install upgrading from before this wave would
+    // otherwise reach the retirement with no `channel_looks` table at all, and the
+    // door would be skipped on exactly the boot where the rows it protects are
+    // being created a few lines later.
+    //
+    // It is also the safe order for the other reason: the retirement reads this
+    // door with `?`, not `.ok()`, so a failed read retires NOTHING rather than
+    // deleting a template a screen is wearing. A missing table is a failed read.
+    ensure_channel_looks(conn)?;
     // RETIRE BEFORE SEEDING, not after. The seed became five families this wave and
     // the rows they replaced are removed from installs that already have them. But
     // seeds insert BY NAME and only when absent, and one retired shelf row shares
@@ -2411,6 +2424,51 @@ mod tests {
              seeding first skips the `Lower Third · Scripture` family member (the retired \
              shelf row still holds that name), and the retirement then deletes the row that \
              blocked it, leaving the Lower Third family one member short until the next boot"
+        );
+    }
+
+    /// THE FIFTH RETIREMENT DOOR HAS TO EXIST BEFORE THE RETIREMENT ASKS IT.
+    ///
+    /// Same source-scan pattern as its two siblings above, and the same reason:
+    /// driving `migrate` proves the outcome on one database, while the thing that
+    /// must not drift is the order of two lines.
+    ///
+    /// **WHAT THIS ORDER IS WORTH, STATED HONESTLY, BECAUSE IT IS LESS THAN IT
+    /// LOOKS.** The retirement SKIPS a door that is not there — the rule
+    /// `points_at_a_template` already states for `plan_items`, with its reason —
+    /// so a reordered ladder is not destructive: on the first upgraded boot the
+    /// table does not exist, holds no rows, and nothing can be wearing a template
+    /// through it; `ensure_channel_looks` then creates it empty, and on every
+    /// later boot the door is there when the retirement asks. A fresh install
+    /// gets the table from `schema.sql` before either line runs. So no test of
+    /// OUTCOMES can see this order, and none should pretend to.
+    ///
+    /// It is pinned anyway, for the reason the two siblings above are: a reader
+    /// must not have to derive that an absent door is safe before they can trust
+    /// the ladder, and the derivation stops being sound the moment somebody gives
+    /// this migration something to do beyond one `CREATE TABLE IF NOT EXISTS` —
+    /// a back-fill, say, which is the exact change DECISIONS §97 refuses and the
+    /// exact change a later wave will be tempted by.
+    #[test]
+    fn ensure_tables_creates_the_look_table_before_it_retires() {
+        const MOD: &str = include_str!("mod.rs");
+        let from = MOD
+            .find("fn ensure_tables(")
+            .expect("ensure_tables must exist");
+        let body = &MOD[from..];
+        let body = &body[..body.find("\n}").expect("unterminated fn")];
+        let looks = body
+            .find("ensure_channel_looks(conn)?")
+            .expect("ensure_tables must create channel_looks, or an upgrading install has no per-kind looks at all");
+        let retire = body
+            .find("ensure_retired_presets_are_gone(conn)?")
+            .expect("ensure_tables must run the retirement");
+        assert!(
+            looks < retire,
+            "ensure_channel_looks must run BEFORE ensure_retired_presets_are_gone: \
+             the retirement asks `channel_looks` whether a screen is wearing a \
+             template for one kind, and asks it with `?`, so running first means \
+             every upgrading install refuses to boot until the order is put back"
         );
     }
 

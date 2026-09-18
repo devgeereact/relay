@@ -1067,11 +1067,14 @@ fn points_at_a_template(conn: &Connection, table: &str) -> rusqlite::Result<bool
 /// 1. its name is one of the frozen twenty-one;
 /// 2. its `region_config_json` and `style_json` still equal the bytes the seed
 ///    wrote, so a single edited colour makes it the operator's and it stays;
-/// 3. nothing points at it, through any of the FOUR doors.
+/// 3. nothing points at it, through any of the FIVE doors.
 ///
-/// Those doors are a channel, a plan cue, a content look and the configured
-/// default. Three of four is the bug this repository has had four times, and two
-/// of the four are `app_settings` rows rather than foreign keys, so no
+/// Those doors are a channel, a plan cue, a content look, the configured default
+/// and — since per-kind looks (DECISIONS §97) — a screen's look for ONE KIND.
+/// Three of four was the bug this repository has had four times, and this wave
+/// added the fifth, which is why it is asserted on its own rather than folded in
+/// beside the content-look case. Three of the five are not foreign keys this
+/// DELETE can see (two `app_settings` rows and a table of its own), so no
 /// `NOT IN (SELECT ...)` can reach them and they are asked separately below.
 ///
 /// Rule 25: the whole loop is ONE transaction, and `unchecked_transaction` rolls
@@ -1151,6 +1154,40 @@ pub(super) fn ensure_retired_presets_are_gone(conn: &Connection) -> rusqlite::Re
     // tolerant parse below is still the right read.
     let default_id = get_setting(conn, "default_template_id")?.and_then(|s| s.parse::<i64>().ok());
 
+    // THE FIFTH DOOR: A TEMPLATE A SCREEN IS WEARING FOR ONE KIND.
+    //
+    // `channel_looks` is a table of its own, so no `NOT IN (SELECT …)` folded into
+    // the DELETE below would reach it unless somebody remembered to add it there
+    // — and the four doors that came before this one are the register of how often
+    // somebody does not. Missing it deletes a template a screen is wearing for one
+    // kind, on a Sunday, silently: the row goes, that screen falls back to its
+    // blanket template, and nothing anywhere says a look was removed.
+    //
+    // READ WITH `?` ONCE THE DOOR EXISTS, exactly like the two settings rows
+    // above and for the identical reason — a failed read is not the same fact as
+    // "no screen wears this for any kind", and stopping here retires nothing,
+    // which is the safe direction to fail in.
+    //
+    // **AND AN ABSENT DOOR IS SKIPPED, WHICH IS A DIFFERENT FACT FROM A FAILED
+    // READ.** That distinction is not a softening of the guard; it is the rule
+    // `points_at_a_template` already states for `plan_items` a few lines down,
+    // with the reason: naming a table a baseline-era database has never had is
+    // `no such table`, propagated out of `migrate`, at every boot, before the
+    // window is shown — rule 25's failure reached by a different road. Skipping
+    // loses no guarantee, and the argument is the same one: a table that does not
+    // exist holds no rows, and the one `ensure_channel_looks` creates later in
+    // this same boot is created EMPTY, so nothing can be wearing a template
+    // through it. The design document for this wave asked for a hard failure
+    // here; it was written without this precedent in front of it, and a refusal
+    // to boot on a Sunday is a worse outcome than the one it was guarding against
+    // — which cannot arise. `a_database_that_predates_the_planner_is_still_retired_from`
+    // is the test that says so, and it was RED against the hard version.
+    let worn = if points_at_a_template(conn, "channel_looks")? {
+        crate::db::channels::template_ids_in_use_by_looks(conn)?
+    } else {
+        Vec::new()
+    };
+
     // THE TWO THAT ARE FOREIGN KEYS, folded into the DELETE so the check and the
     // removal are one statement.
     let mut guards = String::new();
@@ -1212,7 +1249,7 @@ pub(super) fn ensure_retired_presets_are_gone(conn: &Connection) -> rusqlite::Re
             it.collect::<rusqlite::Result<Vec<_>>>()?
         };
         for id in ids {
-            if looks.contains(&id) || default_id == Some(id) {
+            if looks.contains(&id) || worn.contains(&id) || default_id == Some(id) {
                 continue;
             }
             tx.execute(&delete_sql, [id])?;
@@ -1238,7 +1275,7 @@ pub(super) fn ensure_retired_presets_are_gone(conn: &Connection) -> rusqlite::Re
             it.collect::<rusqlite::Result<Vec<_>>>()?
         };
         for id in ids {
-            if looks.contains(&id) || default_id == Some(id) {
+            if looks.contains(&id) || worn.contains(&id) || default_id == Some(id) {
                 continue;
             }
             tx.execute(&delete_sql, [id])?;
@@ -2663,6 +2700,132 @@ mod retired_preset_tests {
                 .unwrap();
             assert_eq!(n, 1, "a preset reachable through the {door} was retired");
         }
+    }
+
+    /// THE FIFTH DOOR — a template a SCREEN is wearing for ONE KIND.
+    ///
+    /// Asserted separately from the other four, and that separation is the whole
+    /// point. `a_referenced_preset_is_never_retired` enumerates the doors it knew
+    /// about when it was written; a door added later is invisible to it, and a
+    /// case folded in beside `look:scripture` would read as one more content
+    /// look rather than as a different table entirely. Missing this deletes a
+    /// template a screen is wearing for one kind, on a Sunday, silently — the row
+    /// goes, the screen falls back to its blanket template, and nothing anywhere
+    /// says a look was removed.
+    ///
+    /// FIVE CASES, one per kind, for the same reason the content-look door has
+    /// five: a single `scripture` case would pass on a door that only knew about
+    /// scripture.
+    ///
+    /// It is run against BOTH passes of the retirement. The identity pass (a
+    /// `legacy.` seed key, unedited) and the byte pass (the frozen bytes) each
+    /// have their own `continue`, and a guard added to one of the two is this
+    /// repository's most-repeated bug. `insert_retired_fixture` writes the frozen
+    /// bytes with no seed key, so the byte pass is the one that reaches it; the
+    /// identity case is built beside it.
+    #[test]
+    fn a_template_a_screen_wears_for_one_kind_is_not_retired() {
+        for kind in ["scripture", "song", "media", "announce", "countdown"] {
+            for pass in ["bytes", "identity"] {
+                let conn = Connection::open_in_memory().unwrap();
+                crate::db::migrate(&conn, true).unwrap();
+                let id = insert_retired_fixture(&conn, "Midnight Blue");
+                if pass == "identity" {
+                    // The other road into the same delete: a row carrying a
+                    // retired `legacy.` seed key that nobody has saved since.
+                    let key = legacy_seed_keys()
+                        .first()
+                        .map(|(_, k)| k.clone())
+                        .expect("the frozen identity record names at least one key");
+                    conn.execute(
+                        "UPDATE templates SET seed_key = ?1, edited_at = NULL WHERE id = ?2",
+                        (key, id),
+                    )
+                    .unwrap();
+                }
+                conn.execute(
+                    "INSERT INTO output_channels (name, render_target, template_id)
+                     VALUES ('Lobby','network_client',NULL)",
+                    [],
+                )
+                .unwrap();
+                let channel = conn.last_insert_rowid();
+                crate::db::set_channel_look(&conn, channel, kind, Some(id)).unwrap();
+
+                ensure_retired_presets_are_gone(&conn).unwrap();
+
+                let n: i64 = conn
+                    .query_row("SELECT COUNT(*) FROM templates WHERE id = ?1", [id], |r| {
+                        r.get(0)
+                    })
+                    .unwrap();
+                assert_eq!(
+                    n, 1,
+                    "the {pass} pass retired a template a screen is wearing for \
+                     {kind} — that screen falls back to its blanket template on \
+                     the next boot and nothing says a look was removed"
+                );
+            }
+        }
+    }
+
+    /// AND A FAILED READ OF THE FIFTH DOOR RETIRES NOTHING.
+    ///
+    /// The two settings doors are read with `?` rather than `.ok()` for exactly
+    /// this reason, written down at the call site: a failed read is not the same
+    /// fact as "no look is bound", and treating it as one deletes a template a
+    /// screen is wearing.
+    ///
+    /// Making that read fail takes some doing, because the one way it fails in
+    /// the field — the table not being there at all — is deliberately NOT an
+    /// error (see the case below, and the comment at the call site). So the
+    /// failure is staged the way a real corruption would present: a
+    /// `channel_looks` whose `template_id` holds something that is not an
+    /// integer. `points_at_a_template` still says the door is there, the query
+    /// still runs, and the row refuses to come back as an `i64`.
+    #[test]
+    fn a_fifth_door_that_cannot_be_read_retires_nothing() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate(&conn, true).unwrap();
+        insert_retired_fixture(&conn, "Midnight Blue");
+        conn.execute_batch(
+            "DROP TABLE channel_looks;
+             CREATE TABLE channel_looks (channel_id INTEGER, kind TEXT, template_id TEXT);
+             INSERT INTO channel_looks VALUES (1, 'scripture', 'not an id');",
+        )
+        .unwrap();
+        assert!(
+            ensure_retired_presets_are_gone(&conn).is_err(),
+            "the retirement carried on past a door it could not read"
+        );
+        assert_eq!(
+            count_named(&conn, "Midnight Blue"),
+            1,
+            "a preset was retired while one of the five doors could not be asked"
+        );
+    }
+
+    /// …AND A DATABASE THAT PREDATES THE DOOR STILL BOOTS, AND STILL RETIRES.
+    ///
+    /// The twin of `a_database_that_predates_the_planner_is_still_retired_from`,
+    /// on the door this wave added, and it is the case that makes the paragraph
+    /// at the call site true rather than reassuring. An absent table holds no
+    /// rows, so no screen can be wearing anything through it, so skipping it
+    /// loses nothing — and refusing to boot instead would turn a harmless state
+    /// into a church whose Relay will not start.
+    #[test]
+    fn a_database_that_predates_the_look_table_is_still_retired_from() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate(&conn, true).unwrap();
+        insert_retired_fixture(&conn, "Midnight Blue");
+        conn.execute_batch("DROP TABLE channel_looks;").unwrap();
+        ensure_retired_presets_are_gone(&conn)
+            .expect("a database with no channel_looks table must still boot");
+        assert_eq!(
+            count_named(&conn, "Midnight Blue"),
+            0,
+            "the whole retirement was skipped because one door was not there yet"
+        );
     }
 
     #[test]
