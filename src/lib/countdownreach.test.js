@@ -181,6 +181,7 @@ describe('the two exclusions are the real rules, not a copy of them', () => {
 
 import { beforeEach, afterEach, vi } from 'vitest';
 import { tick } from 'svelte';
+import { get } from 'svelte/store';
 
 const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a) => invoke(...a) }));
@@ -235,6 +236,24 @@ async function mountAndRead() {
     if (t && !/^\s*Cannot tell/.test(t)) break;
     await new Promise((r) => setTimeout(r, 10));
     await tick();
+  }
+  // AND SAY WHICH OF THE TWO `Cannot tell` CASES THIS IS, if it is one.
+  //
+  // `describeCountdownReach` reaches that sentence by two different roads —
+  // `list.read === false`, meaning the read has not landed, and `list.error`,
+  // meaning it landed and FAILED — and the rendered text is identical for both.
+  // That is correct for an operator, who can do nothing differently either way,
+  // and useless for a test, which spent three CI rounds being told the wrong
+  // story: the read had not failed to start, it had started and failed.
+  //
+  // So the failure message names the road. This asserts nothing; it only makes
+  // the next failure legible.
+  const err = get(cap.readErrors).listOutputChannels;
+  if (err) {
+    throw new Error(
+      `the channels read FAILED, so the line is on its error branch rather than ` +
+        `its answer: ${err?.message ?? err}`,
+    );
   }
   return host;
 }
