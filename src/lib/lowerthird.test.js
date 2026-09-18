@@ -34,6 +34,39 @@ const solid = () => ({
   style: { accent: '#e0a458', background: '#120d08' },
 });
 
+/**
+ * THE SAME BAND IN THE LAYER MODEL — and the reason `isKeyedTemplate` exists.
+ *
+ * There is no `lowerThird` flag here and there never can be: the band IS a shape
+ * layer, and nothing paints the whole frame, which is exactly what makes the
+ * channel keyed. `layers.js::isKeyedTemplate` answers `true`; `layout.lowerThird`
+ * answers `false`; and until RG-166 the countdown asked the second one.
+ */
+const layeredBand = () => ({
+  id: 10,
+  name: 'Stream lower third (layers)',
+  layout: {
+    layers: [
+      { id: 'b', type: 'shape', visible: true, x: 4, y: 76, w: 92, h: 20, fill: '#0b0f16', opacity: 1 },
+      { id: 't', type: 'text', visible: true, bind: 'verse', x: 6, y: 79, w: 88, h: 12, size: 3, color: '#fff' },
+    ],
+  },
+  style: {},
+});
+
+/** A layer-model template that DOES paint its own whole frame — the control. */
+const layeredSolid = () => ({
+  id: 11,
+  name: 'Main (layers)',
+  layout: {
+    layers: [
+      { id: 'bg', type: 'background', visible: true, fill: '#120d08', opacity: 1 },
+      { id: 't', type: 'text', visible: true, bind: 'verse', x: 8, y: 30, w: 84, h: 40, size: 5, color: '#fff' },
+    ],
+  },
+  style: { accent: '#e0a458' },
+});
+
 function mount(template, content) {
   host = document.createElement('div');
   document.body.appendChild(host);
@@ -117,5 +150,33 @@ describe('the countdown', () => {
   it('still shows on every other channel', () => {
     const el = mount(solid(), { reference: 'Service begins in', countdown_to: soon() });
     expect(el.querySelector('.countdown')).toBeTruthy();
+  });
+
+  // ── RG-166 · THE SECOND DOOR, WHICH THE TWO CASES ABOVE COULD NOT REACH ────
+  //
+  // Both of those mount REGION-model templates. `band()` sets
+  // `layout: { lowerThird: true }`, which is the flag a region-model band has and
+  // a LAYER-model one does not — its band is a shape layer. So the guarantee at
+  // the top of this file was kept on one of the two render paths for as long as
+  // the layer model has existed, and `TemplateRender`'s layer branch asked
+  // nothing at all: `.cd-default` is `position:absolute; inset:0`, so a fired
+  // countdown painted a full-frame clock straight over the camera.
+  //
+  // The whole shelf is enumerated in `keyedcountdown.test.js`. These two are here
+  // because this is the file that states the rule, and a rule stated in one file
+  // and tested in another is how the first door came to be the only one checked.
+  it('never goes out on a LAYER-model lower third either', () => {
+    const el = mount(layeredBand(), { reference: 'Service begins in', countdown_to: soon() });
+    expect(el.querySelector('.cd-default'), 'the default overlay painted over the camera').toBeNull();
+    expect(el.textContent, 'a clock reached a keyed screen').not.toMatch(/\d+:\d\d/);
+  });
+
+  it('and an OPAQUE layered template still paints the digits', () => {
+    // The half that stops the fix above from being "layered templates lost their
+    // countdown". A blanket refusal would satisfy the case above and blank the
+    // pre-service screen of every church on a layer-model template.
+    const el = mount(layeredSolid(), { reference: 'Service begins in', countdown_to: soon() });
+    expect(el.querySelector('.cd-default'), 'an opaque layered template lost its countdown').toBeTruthy();
+    expect(el.textContent).toMatch(/\d+:\d\d/);
   });
 });

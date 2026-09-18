@@ -65,7 +65,7 @@
   // template scales identically whether the container is a full screen or a
   // small preview box.
   import { afterUpdate, onMount, onDestroy } from 'svelte';
-  import { isLayered, boundValue, templateShows, formatElapsed, formatRemaining, formatCountdown, countdownWarning, topLevelLayers, drawBoxes } from './layers.js';
+  import { isLayered, isKeyedTemplate, boundValue, templateShows, formatElapsed, formatRemaining, formatCountdown, countdownWarning, topLevelLayers, drawBoxes } from './layers.js';
   // ONE timer, ONE formatter (docs/REBRAND.md §7). `layers.js` owns the formatter;
   // `countdown.js` owns the arithmetic in front of it — including the one exception,
   // a countdown that is being HELD.
@@ -172,7 +172,14 @@
   // TIMER layer (or any layer bound to 'countdown') is opt-in placement; when one
   // exists it renders the MM:SS itself and this default steps aside.
   $: hasTimerLayer = layered && layers.some((L) => L.visible !== false && (L.type === 'timer' || L.bind === 'countdown'));
-  $: showDefaultCountdown = layered && content?.countdown_to != null && !hasTimerLayer;
+  // AND IT ASKS THE KEYED QUESTION TOO. `countdownAllowed` is declared with the
+  // band-layout block far below; Svelte's reactive statements are ordered by
+  // dependency rather than by position, so reading it here is the same one
+  // predicate both models ask. Before this it was asked by the region markup
+  // alone, and `.cd-default` — `position:absolute; inset:0` — painted a
+  // full-frame clock straight over the camera on every layer-model lower third.
+  $: showDefaultCountdown =
+    layered && content?.countdown_to != null && !hasTimerLayer && countdownAllowed;
   // ── THE TEMPLATE'S OWN DEFAULTS, WHICH ARE NOT THE APP'S ──────────────────
   // This component renders BOTH the console's preview and the congregation's
   // wall, so every fallback it reaches for is a fallback a church sees. Two of
@@ -1076,10 +1083,39 @@
   // a coloured strip across the bottom of a full-frame photo that had nothing
   // written in it — a bar over someone's picture for no reason.
   $: bandHasWords = !!(content?.text || (hasRef && !bandMode));
-  // A COUNTDOWN NEVER REACHES A LOWER THIRD. The band is keyed over a live
-  // camera during the service; a clock ticking across it belongs on the lobby
-  // screen and the main screen, not over the preacher.
-  $: countdownAllowed = !!countdownTo && !bandMode;
+  // ── A COUNTDOWN NEVER REACHES A KEYED SCREEN ───────────────────────────────
+  //
+  // The reason is unchanged and is the transparency law's: a keyed channel is
+  // composited over a live camera in OBS or on an ATEM, so every pixel it fills
+  // that it did not have to fill takes the preacher off the stream — and nobody
+  // in the building can see it happen. A clock ticking across the shot belongs
+  // on the lobby screen and the main screen, not over the person talking.
+  //
+  // WHAT MOVED IS THE PREDICATE, AND IT IS THE ONE THIS REPOSITORY HAD ALREADY
+  // CORRECTED ONCE. This asked `bandMode` — `layout.lowerThird` — which is the
+  // check `layers.js::isKeyedTemplate` exists because of: a LAYER-MODEL lower
+  // third carries no such flag (its band is a shape layer), so the flag answers
+  // `false` for exactly the templates the rule is about. Blackout and the
+  // transparency law were migrated to `isKeyedTemplate` when that was found; the
+  // countdown was left behind, and ten of the forty shelf looks are keyed,
+  // declare `countdown` in `shows`, carry no timer layer, and painted
+  // `Service begins in 4:43` full-frame over the camera.
+  //
+  // AN ABSENT TEMPLATE IS NOT A KEYED ONE. `isKeyedTemplate(null)` and
+  // `isKeyedTemplate({})` both answer `true` — correctly, for the question
+  // blackout asks, since nothing paints a whole frame when there is no template
+  // at all. Answering the COUNTDOWN question from that would make a preview
+  // surface that has not resolved a template yet (`Live.svelte`'s slide cells
+  // and the Planner inspector both pass `?? {}`) silently refuse to draw the
+  // clock. So the refusal needs a template to have been given first, and only
+  // then asks the shared question. The §82 camera plate is unaffected: it is
+  // drawn by the previewing SURFACE, never by this component, and it already
+  // decides from `isKeyedTemplate` itself.
+  //
+  // `bandMode` goes back to being about band LAYOUT and nothing else.
+  $: templateGiven = !!(template && (template.layout || template.style));
+  $: keyedOut = templateGiven && isKeyedTemplate(template);
+  $: countdownAllowed = !!countdownTo && !keyedOut;
 
   // Background can be a color/gradient (style.background) OR an uploaded image
   // (style.bgImage, a data URL) rendered cover. An image wins when present. The

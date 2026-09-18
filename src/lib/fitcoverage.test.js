@@ -20,10 +20,19 @@ import TemplateRender from './TemplateRender.svelte';
 // test (`cardfit.test.js`) mounts via Svelte 4's own `new Component({ target,
 // props })`, so this file follows that convention rather than the brief's import.
 
+  // RG-166 — `type: 'bg'` IS NOT A LAYER TYPE. `TemplateRender` draws
+  // `background`, `backdrop`, `media`, `shape`, `band`, `region`, `text` and
+  // `timer`, and nothing else, so this template declared a black background that
+  // the renderer has never painted: it was a fully TRANSPARENT screen the whole
+  // time, and `layers.js::isKeyedTemplate` says so. That did not matter while the
+  // countdown refusal read `layout.lowerThird`; it does now that both render
+  // paths ask the keyed question, and a countdown may not paint over a camera.
+  // Corrected rather than exempted — the fixture now IS the opaque screen it
+  // always claimed to be, which is what these assertions are about.
 const timerTemplate = {
   id: 1,
   name: 'Timer',
-  layout: { layers: [{ id: 'bg', type: 'bg', fill: '#000' }] },
+  layout: { layers: [{ id: 'bg', type: 'background', visible: true, fill: '#000', opacity: 1 }] },
   style: { verseSize: '6' },
 };
 

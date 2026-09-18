@@ -201,11 +201,19 @@ describe('a held countdown holds on the wall', () => {
   let host;
   let app;
   const AT = 1_700_000_000_000;
+  // RG-166 — `style: {}` IS A KEYED TEMPLATE. A region-model template that names
+  // no background paints `transparent`, which is exactly the screen a lower third
+  // keys over a camera on, and `layers.js::isKeyedTemplate` has answered `true`
+  // for it since it was written (it is what §82 paints its camera plate behind).
+  // Now that the countdown refusal asks that one question on BOTH render paths
+  // instead of reading `layout.lowerThird`, a template shaped like this refuses
+  // the clock — correctly. This fixture is about a HELD countdown on a wall, so
+  // it gets the background a wall has.
   const template = {
     id: 40,
     name: 'Timer',
     layout: { regions: ['verse_text', 'reference'], align: 'center' },
-    style: {},
+    style: { background: '#120d08' },
   };
   const mount = async (content) => {
     const TemplateRender = (await import('./TemplateRender.svelte')).default;
