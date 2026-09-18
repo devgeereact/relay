@@ -2,6 +2,25 @@
   import { onMount, onDestroy } from 'svelte';
   import Button from '../ui/Button.svelte';
   import { whyDisabled, ENGINE_OFF, SERVICE_LOCKED, MIC_LIVE, BUSY } from '../ui/whydisabled.js';
+  // ── THE KIT, NOT A CLASS SOMEBODY REMEMBERED ──────────────────────────────
+  //
+  // This page carried NINETEEN raw `class="r-btn"` buttons against three that
+  // went through `ui/Button`, and the three were the only ones that could tell a
+  // disabled operator anything: `disabledReason` renders `title` AND
+  // `aria-describedby`, and neither channel reaches everybody on its own —
+  // `title` is invisible to a keyboard or screen-reader operator, `aria-describedby`
+  // to a mouse. Sixteen controls on a settings page grey themselves out and say
+  // nothing, and two of them are inside a service (unlock, and the walk-through's
+  // own guard). A class is opt-in in a way a component is not, which is the whole
+  // argument in `ui/Button.svelte`'s header.
+  //
+  // `ListState` is the same argument about a LIST. *empty ≠ loading ≠ error* was
+  // hand-rolled three times here with three different wordings, and one of the
+  // three had its branches in the wrong order — the translation list asked
+  // `!dataLoaded` BEFORE `$readErrors.listTranslations`, so a read that failed
+  // announced itself as still loading for the rest of the session. The precedence
+  // is fixed once, in the component, which is the reason it exists.
+  import ListState from '../ui/ListState.svelte';
   import { rangeFill } from '../rangefill.js';
   import { get } from 'svelte/store';
   import ModelSetup from '../ModelSetup.svelte';
@@ -51,8 +70,11 @@
   import { capture, meter, initAudio, startCapture, stopCapture, setThresholds, setSttLanguage, setInputDevice, listTranslations, getActiveTranslation, setActiveTranslation, localIp, getCrashReporting, setCrashReporting, serviceTargetMinutes, loadServiceTarget, setServiceTarget, countdownWarnMs, loadCountdownWarnMs, setCountdownWarnMs, latencyReport, latencyReset, latencySetEnabled, serviceLock, loadServiceLock, setServiceLock, rooms, loadRooms, saveRoom, useRoom, deleteRoom,
     listOutputChannels, setChannelDisplay, activeVoiceProfile, languageReport, exportDiagnostics, readErrors,
     demoStatus, loadDemoContent, removeDemoContent } from '../stores/capture.js';
-  import Loading from '../ui/Loading.svelte';
-  import ErrorState from '../ui/ErrorState.svelte';
+  // `Loading` and `ErrorState` are no longer imported HERE and that is the point
+  // of the change, not an oversight: every list on this page renders them through
+  // `ListState`, which is the only thing that knows the precedence between them
+  // and empty. A view that imports the three separately is a view choosing the
+  // order again, and two of the five on this page chose it wrongly.
   import { captureRoom, observedNote, applyRoom, describeApply } from '../rooms.js';
   import { snapshotPath, KEEP_SNAPSHOTS } from '../updater.js';
   import { diagnose, drift } from '../latency.js';
@@ -389,7 +411,18 @@
   let roomName = '';
   let roomMsg = '';
   let roomBusy = false;
-  onMount(loadRooms);
+  // `asked` is the third fact an array cannot carry: a store that starts `[]` reads
+  // the same before the answer as after an empty one, and `loadRooms` swallows to
+  // `[]` on failure. `ListState` treats a null `items` as pending, but this is a
+  // STORE and is never null, so the flag is what tells it which of the three.
+  let roomsAsked = false;
+  onMount(async () => {
+    try {
+      await loadRooms();
+    } finally {
+      roomsAsked = true;
+    }
+  });
 
   // The diagnostic bundle. Says where the file went, because "saved" with no path
   // sends an operator hunting through a Downloads folder.
@@ -677,8 +710,13 @@
   let editing = null; // a working copy; null = nothing open
   let newName = '';
 
+  let profilesAsked = false;
   async function refreshProfiles() {
-    profiles = await listVoiceProfiles();
+    try {
+      profiles = await listVoiceProfiles();
+    } finally {
+      profilesAsked = true;
+    }
   }
   onMount(refreshProfiles);
 
@@ -1226,7 +1264,7 @@
               the speech engine away mid-sermon: {$serviceLock.held_back.join(', ')}.
               Firing, the transport, clearing and blacking out are unaffected.
             </p>
-            <button class="r-btn ghost sm" on:click={unlockService}>Unlock for this service</button>
+            <Button variant="ghost" size="sm" on:click={unlockService}>Unlock for this service</Button>
             {#if lockErr}<p class="s-alert" role="alert">{lockErr}</p>{/if}
           {:else}
             <p class="rw-foot" style="margin-top:0; padding-top:0; border-top:0;">
@@ -1312,9 +1350,9 @@
             </p>
           {:else if outLocked}
             <div class="s-listen">
-              <button class="r-btn" on:click={detectSpeakers} disabled={outBusy}>
+              <Button on:click={detectSpeakers} disabled={outBusy} disabledReason={whyDisabled([outBusy, BUSY])}>
                 {outBusy ? 'Detecting…' : 'Detect speakers'}
-              </button>
+              </Button>
               <span class="s-rms">names need mic permission once</span>
             </div>
             <p class="rw-foot">
@@ -1372,29 +1410,39 @@
           </p>
           <div class="s-addrow">
             <input class="r-input" placeholder="Main hall" bind:value={roomName} aria-label="Room name" />
-            <button class="r-btn ghost sm" on:click={doSaveRoom} disabled={roomBusy}>Save this room</button>
+            <Button variant="ghost" size="sm" on:click={doSaveRoom} disabled={roomBusy}
+              disabledReason={whyDisabled([roomBusy, BUSY])}>Save this room</Button>
           </div>
           {#if roomMsg}<p class="rw-foot" role="status">{roomMsg}</p>{/if}
         </div>
-        {#each $rooms as r (r.id)}
-          <div class="rw-nv">
-            <div class="s-nvtext">
-              <div class="rw-nvk">{r.name}</div>
-              {#if r.notes}<p class="rw-nvnote">{r.notes}</p>{/if}
+        <!-- `none yet` and `could not be read` are DIFFERENT facts (rule 35), and
+             so is `still asking` — the third one this row could not say at all,
+             because it was an `{:else}` on an `{#each}` and an `{#each}` has two
+             branches. `ListState` has the three, with error outranking loading and
+             loading outranking empty, decided once rather than three times on this
+             page in three different wordings. -->
+        <ListState
+          loading={!roomsAsked}
+          error={$readErrors.rooms}
+          items={$rooms}
+          what="saved rooms"
+          onRetry={loadRooms}
+          empty="No rooms saved yet. Name this space above and press Save this room, and one press puts it all back next time.">
+          {#each $rooms as r (r.id)}
+            <div class="rw-nv">
+              <div class="s-nvtext">
+                <div class="rw-nvk">{r.name}</div>
+                {#if r.notes}<p class="rw-nvnote">{r.notes}</p>{/if}
+              </div>
+              <div class="rw-nvctl s-nvpair">
+                <Button variant="ghost" size="sm" on:click={() => doUseRoom(r)} disabled={roomBusy}
+                  disabledReason={whyDisabled([roomBusy, BUSY])}>Use</Button>
+                <Button variant="ghost" size="sm" on:click={() => doDeleteRoom(r)} disabled={roomBusy}
+                  disabledReason={whyDisabled([roomBusy, BUSY])}>Remove</Button>
+              </div>
             </div>
-            <div class="rw-nvctl s-nvpair">
-              <button class="r-btn ghost sm" on:click={() => doUseRoom(r)} disabled={roomBusy}>Use</button>
-              <button class="r-btn ghost sm" on:click={() => doDeleteRoom(r)} disabled={roomBusy}>Remove</button>
-            </div>
-          </div>
-        {:else}
-          <!-- `none yet` and `could not be read` are DIFFERENT facts (rule 35). This
-               row printed the first over both, so a failed `list_environments` read
-               exactly like a church that had never saved a room. `readErrors` already
-               carries the distinction; nothing else was needed. -->
-          <div class="rw-nv"><span class="rw-nvk">Saved rooms</span><span class="rw-nvv"
-            >{$readErrors.rooms ? 'could not be read' : settingValue(null, { missing: 'none yet' })}</span></div>
-        {/each}
+          {/each}
+        </ListState>
 
       {:else if section === 'preachers'}
         <div class="rw-group">Detection thresholds</div>
@@ -1448,7 +1496,18 @@
           {/if}
         </div>
 
-        {#each profiles as p (p.id)}
+        <!-- Three facts, decided once. This was an `{#each}`'s `{:else}`, which has
+             room for two: a failed `list_voice_profiles` and a church that has never
+             added a preacher shared one row, separated only by a ternary on
+             `readErrors`, and "still asking" could not be said at all. -->
+        <ListState
+          loading={!profilesAsked}
+          error={$readErrors.listVoiceProfiles}
+          items={profiles}
+          what="voice profiles"
+          onRetry={refreshProfiles}
+          empty="No voice profiles yet. Add a preacher’s name below — the first one you add becomes the active calibration.">
+          {#each profiles as p (p.id)}
           <div class="rw-nv">
             <div class="s-nvtext">
               <div class="rw-nvk">
@@ -1463,18 +1522,22 @@
             </div>
             <div class="rw-nvctl s-nvpair">
               {#if !p.is_active}
-                <button class="r-btn ghost sm" disabled={profileBusy} on:click={() => useProfile(p.id)}>Use</button>
+                <Button variant="ghost" size="sm" disabled={profileBusy}
+                  disabledReason={whyDisabled([profileBusy, BUSY])}
+                  on:click={() => useProfile(p.id)}>Use</Button>
               {/if}
-              <button class="r-btn ghost sm" disabled={profileBusy} on:click={() => openEditor(p)}>Edit</button>
+              <Button variant="ghost" size="sm" disabled={profileBusy}
+                disabledReason={whyDisabled([profileBusy, BUSY])}
+                on:click={() => openEditor(p)}>Edit</Button>
               <!-- Deleting the profile in use would leave the gate calibrated by
                    nothing, so the backend refuses it and says why. -->
-              <button class="r-btn ghost sm" disabled={profileBusy} on:click={() => removeProfile(p.id)}>Delete</button>
+              <Button variant="ghost" size="sm" disabled={profileBusy}
+                disabledReason={whyDisabled([profileBusy, BUSY])}
+                on:click={() => removeProfile(p.id)}>Delete</Button>
             </div>
           </div>
-        {:else}
-          <div class="rw-nv"><span class="rw-nvk">Profiles</span><span class="rw-nvv"
-            >{$readErrors.listVoiceProfiles ? 'could not be read' : settingValue(null, { missing: 'none yet' })}</span></div>
-        {/each}
+          {/each}
+        </ListState>
 
         <div class="s-prose">
           <div class="s-addrow">
@@ -1484,11 +1547,22 @@
               aria-label="New voice profile name"
               bind:value={newName}
               on:keydown={(e) => e.key === 'Enter' && addProfile()} />
-            <button class="r-btn" disabled={profileBusy || !newName.trim()} on:click={addProfile}>Add</button>
+            <!-- The empty-name reason is written at the CALL SITE, the same shape as
+                 the crash DSN's "Nothing has changed since the last save." The
+                 sentences in `whydisabled.js` are the shared GATES — the engine, safe
+                 mode, the service lock, a busy press — and a rule about this one
+                 field is not one of those. -->
+            <Button disabled={profileBusy || !newName.trim()}
+              disabledReason={whyDisabled(
+                [profileBusy, BUSY],
+                [!newName.trim(), 'Type the preacher’s name in the box first.'],
+              )}
+              on:click={addProfile}>Add</Button>
           </div>
-          {#if !profiles.length}
-            <p class="rw-foot">The first profile you add becomes the active calibration.</p>
-          {/if}
+          <!-- The sentence that used to be here — "The first profile you add becomes
+               the active calibration." — is the `ListState` empty message above, which
+               is where an operator is already looking when there is nothing in the
+               list. Two places saying it is two places to keep in step. -->
         </div>
 
         {#if editing}
@@ -1544,8 +1618,12 @@
             </p>
 
             <div class="s-addrow">
-              <button class="r-btn primary" disabled={profileBusy} on:click={saveProfile}>Save profile</button>
-              <button class="r-btn ghost" disabled={profileBusy} on:click={() => (editing = null)}>Cancel</button>
+              <Button variant="primary" disabled={profileBusy}
+                disabledReason={whyDisabled([profileBusy, BUSY])}
+                on:click={saveProfile}>Save profile</Button>
+              <Button variant="ghost" disabled={profileBusy}
+                disabledReason={whyDisabled([profileBusy, BUSY])}
+                on:click={() => (editing = null)}>Cancel</Button>
             </div>
           </div>
         {/if}
@@ -1554,8 +1632,28 @@
 
       {:else if section === 'scripture'}
         <div class="rw-group">Bible translations</div>
+        <!-- THE BRANCHES WERE IN THE WRONG ORDER, and that is the bug `ListState`
+             exists to make unrepeatable. This chain asked `!dataLoaded` BEFORE
+             `$readErrors.listTranslations`, and `dataLoaded` is set in a `finally`
+             that runs whether the read worked or not — so for the frames in
+             between, and on any path where it had not landed, a read that FAILED
+             announced itself as still loading. Error outranks loading and loading
+             outranks empty; the precedence now lives in one place instead of being
+             re-typed per list, which is how two of the three on this page came to
+             order it differently.
+
+             The KJV is BUNDLED (`src-tauri/data/kjv.json`, `include_str!`), so "no
+             translations" cannot be true of a Relay that is working — which is why
+             the empty sentence says what it actually means rather than sending an
+             operator off to find a Bible to import. -->
         <div class="s-checklist">
-          {#if translations.length}
+          <ListState
+            loading={!dataLoaded}
+            error={$readErrors.listTranslations}
+            items={translations}
+            what="translations"
+            onRetry={loadTranslations}
+            empty="No translations in the corpus. The KJV ships inside Relay, so this means the verse table could not be read — Save a diagnostic file on This machine, and reinstalling restores it.">
             {#each translations as tr}
               <button class="s-tr" class:on={tr.id === activeTranslation} aria-pressed={tr.id === activeTranslation} on:click={() => pickTranslation(tr.id)}>
                 <span class="s-tr-dot" class:on={tr.id === activeTranslation}></span>
@@ -1564,19 +1662,7 @@
                 {#if tr.id === activeTranslation}<span class="s-tr-active r-mono">active</span>{/if}
               </button>
             {/each}
-          {:else if !dataLoaded}
-            <div class="r-empty" style="font-size:var(--v-fs-b1);">Loading translations…</div>
-          {:else if $readErrors.listTranslations}
-            <!-- The KJV is BUNDLED (`src-tauri/data/kjv.json`, `include_str!`), so
-                 "No translations loaded" cannot be true of a Relay that is working.
-                 It was, however, exactly what this row said when `list_translations`
-                 failed — the read swallows to `[]` and nothing here asked why. An
-                 operator reading that goes looking for a Bible to import; the actual
-                 answer is on the other branch. -->
-            <ErrorState error={$readErrors.listTranslations} onRetry={loadTranslations} />
-          {:else}
-            <div class="r-empty" style="font-size:var(--v-fs-b1);">No translations loaded.</div>
-          {/if}
+          </ListState>
         </div>
         <div class="s-prose">
           <p class="rw-foot">Only public-domain <b>KJV</b> is bundled. Additional versions need their verse data added to the corpus.</p>
@@ -1599,7 +1685,22 @@
             improving a number means improving the table the detector uses, which is
             a one-line change anyone who speaks the language can make.
           </p>
-          {#if langs.length}
+          <!-- THE FIFTH HAND-ROLLED LIST STATE, and it had the same wrong order as
+               the translation list: `!langsAsked` before `$readErrors.languageReport`,
+               so a failed `language_report` read as still loading. It also ended in a
+               fourth branch — "The language tables could not be read." — which is the
+               ERROR sentence standing in for the empty one, said without the reason
+               the store had kept and without a way to ask again.
+
+               An empty answer here is not a real state of a working Relay: the alias
+               table is compiled in. So the empty message says that, rather than
+               describing a failure it cannot diagnose. -->
+          <ListState
+            loading={!langsAsked}
+            error={$readErrors.languageReport}
+            items={langs}
+            what="the language tables"
+            empty="No language tables. They ship inside Relay, so this means the alias table could not be read — Save a diagnostic file on This machine.">
             <table class="s-lang">
               <thead>
                 <tr><th>Language</th><th>Books</th><th>Ways to say them</th><th>Numbers in-language</th><th>Console text</th><th>Checked by a speaker</th><th>Accuracy</th></tr>
@@ -1646,13 +1747,7 @@
               scripture on a wall. Fixing one is a one-line change to
               <span class="r-mono">data/book_aliases.json</span>, no code required.
             </p>
-          {:else if !langsAsked}
-            <Loading what="the language tables" />
-          {:else if $readErrors.languageReport}
-            <ErrorState error={$readErrors.languageReport} />
-          {:else}
-            <p class="rw-foot">The language tables could not be read.</p>
-          {/if}
+          </ListState>
         </div>
 
       
@@ -1701,9 +1796,10 @@
              What actually happens is somebody photographs it, losing half the table
              and all of the latency history. -->
         <div class="s-prose">
-          <button class="r-btn ghost sm" on:click={doExportDiagnostics} disabled={diagBusy}>
+          <Button variant="ghost" size="sm" on:click={doExportDiagnostics} disabled={diagBusy}
+            disabledReason={whyDisabled([diagBusy, BUSY])}>
             {diagBusy ? 'Writing…' : 'Save a diagnostic file'}
-          </button>
+          </Button>
           {#if diagMsg}<p class="rw-foot" role="status">{diagMsg}</p>{/if}
         </div>
         <div class="rw-nv"><span class="rw-nvk">Backend</span><span class="rw-nvv">{$capture.available ? 'connected' : 'not connected'}</span></div>
@@ -1877,9 +1973,10 @@
           <div class="rw-nv"><span class="rw-nvk">Last attempt</span><span class="s-nvp">{$updateChannel.detail || 'no reason given'}</span></div>
         {/if}
         <div class="s-prose">
-          <button class="r-btn primary sm" on:click={doCheckUpdates} disabled={checking}>
+          <Button variant="primary" size="sm" on:click={doCheckUpdates} disabled={checking}
+            disabledReason={whyDisabled([checking, BUSY])}>
             {checking ? 'Checking…' : 'Check for Updates'}
-          </button>
+          </Button>
           <!-- ANNOUNCED. Six other message surfaces on this page carry a live
                region and these two did not, so the two results a screen reader
                user gets nothing for were the update check and the one control
@@ -2115,14 +2212,21 @@
                the wizard and not the wall (rule 44). It then stops the microphone
                and fires a verse. `recording` is in the same store and the dock
                already reads it. -->
-          <button
-            class="r-btn ghost sm"
+          <!-- THROUGH THE KIT, so the reason reaches both channels. This was a raw
+               `.r-btn` with a bare `title=`, which is the pointer answer and is
+               invisible to a keyboard or screen-reader operator — on the one
+               control here that mounts a full-screen wizard over a recorded
+               service. `disabledReason` renders `title` AND `aria-describedby`.
+               The three-fact guard and the prose reason below it are untouched. -->
+          <Button
+            variant="ghost"
+            size="sm"
             on:click={restartSetup}
             disabled={$serviceLock.engaged || $serviceLock.recording || $capture.capturing}
-            title={whyDisabled(
+            disabledReason={whyDisabled(
               [$capture.capturing, MIC_LIVE],
               [$serviceLock.engaged || $serviceLock.recording, SERVICE_LOCKED],
-            ) || undefined}>Run the setup walk-through</button>
+            )}>Run the setup walk-through</Button>
           {#if $serviceLock.engaged || $serviceLock.recording || $capture.capturing}
             <p class="rw-foot s-netwarn">Not while the microphone is live, or while a service is being recorded — including one you have unlocked, because unlocking does not end it. The walk-through stops the microphone and puts a verse on your screens. Stop listening and end the service first.</p>
           {/if}
@@ -2155,16 +2259,19 @@
               {/if}
             </p>
             {#if demoArmed}
-              <button class="r-btn danger sm" disabled={demoBusy} on:click={doRemoveDemo}>
+              <Button variant="danger" size="sm" disabled={demoBusy}
+                disabledReason={whyDisabled([demoBusy, BUSY])} on:click={doRemoveDemo}>
                 {demoBusy ? 'Removing…' : 'Yes, remove the demo content'}
-              </button>
-              <button class="r-btn ghost sm" disabled={demoBusy} on:click={() => (demoArmed = false)}>
+              </Button>
+              <Button variant="ghost" size="sm" disabled={demoBusy}
+                disabledReason={whyDisabled([demoBusy, BUSY])} on:click={() => (demoArmed = false)}>
                 Cancel
-              </button>
+              </Button>
             {:else}
-              <button class="r-btn ghost sm" disabled={demoBusy} on:click={() => (demoArmed = true)}>
+              <Button variant="ghost" size="sm" disabled={demoBusy}
+                disabledReason={whyDisabled([demoBusy, BUSY])} on:click={() => (demoArmed = true)}>
                 Remove demo content
-              </button>
+              </Button>
             {/if}
           {:else}
             <p class="rw-foot" style="margin-top:0; padding-top:0; border-top:0;">
@@ -2175,9 +2282,10 @@
               back out. <b>It adds no service history:</b> nothing here will ever look like a
               service that happened.
             </p>
-            <button class="r-btn ghost sm" disabled={demoBusy} on:click={doLoadDemo}>
+            <Button variant="ghost" size="sm" disabled={demoBusy}
+              disabledReason={whyDisabled([demoBusy, BUSY])} on:click={doLoadDemo}>
               {demoBusy ? 'Loading…' : 'Load demo content'}
-            </button>
+            </Button>
           {/if}
           {#if demoErr}<p class="s-alert" role="alert">{demoErr}</p>{/if}
           {#if demoNote}<p class="rw-foot" role="status">{demoNote}</p>{/if}
@@ -2224,7 +2332,7 @@
             — never one this page lists, and never while a field has focus. They
             work on the Library's song pane; the run surface does not take them yet.
           </p>
-          <button class="r-btn ghost sm" on:click={() => setSession({ activeTab: 'help' })}>Open Help &amp; Shortcuts</button>
+          <Button variant="ghost" size="sm" on:click={() => setSession({ activeTab: 'help' })}>Open Help &amp; Shortcuts</Button>
         </div>
 
       
@@ -2406,6 +2514,15 @@
   .s-dash{ padding:12px; min-width:0; }
 
   .s-inline{ display:flex; justify-content:flex-end; }
+
+  /* THE THREE SHARED STATE BOXES TAKE THE PROSE GUTTER. `EmptyState`, `Loading`
+     and `ErrorState` all render `.r-empty` with a 2px side padding, which is right
+     inside a card and wrong at the panel's own edge — the rows around them bleed
+     to the seam deliberately (see the SEAMS note above), and a sentence that
+     starts two pixels from the edge reads as a rendering fault rather than as a
+     message. One rule, because `ListState` is the only thing that renders them
+     here and it renders all three. */
+  .s-panel :global(.r-empty){ padding-left:12px; padding-right:12px; }
 
   /* ── ROLE 3 · the halves of a row this file adds to the frame's ──
      A name cell that carries an explanatory line under it, a value that is a

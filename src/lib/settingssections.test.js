@@ -783,12 +783,19 @@ describe('the setup walk-through is held back while a service is recording', () 
   const history = MARKUP_ONLY.slice(MARKUP_ONLY.indexOf("section === 'start'"));
 
   it('the button is disabled by a live fact that AGREES with the unlock control below it', () => {
+    // `<Button …>`, the shared component — it was a raw `.r-btn` with a bare
+    // `title=`, which is the POINTER answer only. `disabledReason` renders `title`
+    // and `aria-describedby`, and this is the control that mounts a full-screen
+    // wizard over a recorded service, so half a channel is the wrong half to have.
     const btn = history.match(
-      /<button\b[^<]*?on:click=\{restartSetup\}[^<]*?>Run the setup walk-through<\/button>/,
+      /<Button\b[\s\S]*?on:click=\{restartSetup\}[\s\S]*?>Run the setup walk-through<\/Button>/,
     )?.[0];
     expect(btn, 'no button calling restartSetup was found').toBeTruthy();
     // A bare/literal disable is furniture, same rule as the switches above.
     expect(btn).not.toMatch(/disabled(?![-\w=])|disabled=\{(true|false)\}|disabled="/);
+    // …and the reason goes to BOTH channels, which is the whole reason this is a
+    // `<Button>` rather than a `<button>` with a `title`.
+    expect(btn, 'the reason reaches a pointer only').toMatch(/disabledReason=\{whyDisabled\(/);
     const cond = btn.match(/disabled=\{([^}]*)\}/)?.[1];
     expect(cond, 'the button must be conditionally disabled').toBeTruthy();
     const terms = cond.split('||').map((s) => s.trim());
@@ -827,7 +834,7 @@ describe('the setup walk-through is held back while a service is recording', () 
     // was the copy. The reason that MATTERS is that a guard whose explanation sits
     // under a different condition can be disabled with nothing said.
     const guardCond = history
-      .match(/<button\b[^<]*?on:click=\{restartSetup\}[^<]*?>/)?.[0]
+      .match(/<Button\b[\s\S]*?on:click=\{restartSetup\}[\s\S]*?>/)?.[0]
       ?.match(/disabled=\{([^}]*)\}/)?.[1];
     expect(guardCond, 'no disabled condition on the walk-through button').toBeTruthy();
     const ifAt = history.indexOf(`{#if ${guardCond}}`);
@@ -1138,5 +1145,87 @@ describe('the Update status row does not let its own sentence eat the name', () 
     // Equal specificity, same stylesheet: source order decides. Reordering them
     // would paint a failed update channel in the dim body colour.
     expect(STYLE.indexOf('.s-netbad{')).toBeGreaterThan(STYLE.indexOf('.s-nvp{'));
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// THE KIT — a class is opt-in in a way a component is not.
+//
+// Measured before this pass: NINETEEN raw `class="r-btn"` buttons on this page
+// against three that went through `ui/Button`, and the three were the only ones
+// that could tell a disabled operator anything. `disabledReason` renders `title`
+// AND `aria-describedby`, and neither reaches everybody on its own — `title` is
+// invisible to a keyboard or screen-reader operator, `aria-describedby` to a
+// mouse. So sixteen controls greyed themselves out and said nothing, two of them
+// inside a running service (the service-lock unlock, and the walk-through guard
+// that mounts a full-screen wizard over a recorded one).
+//
+// `ListState` is the same argument about a list, and it had teeth here: FIVE
+// hand-rolled empty/loading/error chains, and TWO of the five ordered the
+// branches wrongly — the translation list and the language table both asked
+// "still loading?" before "did it fail?", so a read that failed announced itself
+// as still in progress. That is the precedence the component fixes once.
+describe('the component kit, and what adopting it buys', () => {
+  it('no button on this page is hand-rolled any more', () => {
+    // `.r-switch` is deliberately NOT in this claim: §12's one instrument is a
+    // switch, `src/lib/ui/` publishes no `Switch`, and hand-writing a `title` at
+    // each call site is the drift §12 exists to stop — this file already asserts
+    // that Settings defines no switch of its own. So the gap is NAMED rather than
+    // glossed: RG-166 files the one measured instance (Send crash reports,
+    // disabled on `!$capture.available` with nothing said) and what closing it
+    // would take.
+    const raw = [...MARKUP_ONLY.matchAll(/<button\b[^>]*class="([^"]*)"/g)]
+      .map((m) => m[1])
+      .filter((c) => /\br-btn\b/.test(c));
+    expect(raw, 'a hand-rolled .r-btn is back — use ui/Button, which carries the reason').toEqual(
+      [],
+    );
+    expect(MARKUP_ONLY.match(/<Button\b/g).length).toBeGreaterThan(15);
+  });
+
+  it('and every disabled button says why, through the component that reaches both channels', () => {
+    // The finding restated as a rule: a `<Button>` that is conditionally disabled
+    // and carries no `disabledReason` is a control at 45% opacity with no
+    // explanation, which a volunteer mid-service reasonably reads as Relay having
+    // crashed. A permanently-disabled one is exempt only if it says why in words
+    // (the model card's "In use" does).
+    const buttons = [...MARKUP_ONLY.matchAll(/<Button\b[\s\S]*?>/g)].map((m) => m[0]);
+    expect(buttons.length).toBeGreaterThan(15);
+    const silent = buttons
+      .filter((b) => /\bdisabled(?![-\w])/.test(b) && !/disabledReason=/.test(b))
+      .map((b) => b.replace(/\s+/g, ' ').slice(0, 80));
+    expect(silent, 'a disabled control owes the operator a reason').toEqual([]);
+  });
+
+  it('every list on the page decides empty/loading/error in ONE place', () => {
+    // Five chains, two of them in the wrong order. The component owns the
+    // precedence — error outranks loading, loading outranks empty — so a view
+    // cannot choose it again, and a view that imports the three parts separately
+    // is a view choosing it again.
+    expect(SCRIPT).toMatch(/import ListState from '\.\.\/ui\/ListState\.svelte'/);
+    expect(MARKUP_ONLY.match(/<ListState\b/g) ?? [], 'a list stopped going through it').toHaveLength(
+      4,
+    );
+    for (const gone of ['import Loading from', 'import ErrorState from'])
+      expect(SCRIPT_ONLY, `${gone} — the precedence is ListState's`).not.toContain(gone);
+  });
+
+  it('…and the two that had the branches the wrong way round cannot have them again', () => {
+    // Watched: putting `loading` first inside `ListState` is not expressible from a
+    // call site, which is the point. What IS expressible is a view rebuilding the
+    // chain by hand, so this asserts the shape of the two that were wrong.
+    const tr = MARKUP_ONLY.slice(
+      MARKUP_ONLY.indexOf('<div class="rw-group">Bible translations</div>'),
+      MARKUP_ONLY.indexOf('<div class="rw-group">Language coverage</div>'),
+    );
+    expect(tr).toMatch(/<ListState/);
+    expect(tr, 'the translation list is hand-rolling its states again').not.toMatch(
+      /\{:else if !dataLoaded\}/,
+    );
+    const lang = MARKUP_ONLY.slice(MARKUP_ONLY.indexOf('<div class="rw-group">Language coverage</div>'));
+    expect(lang).toMatch(/<ListState/);
+    expect(lang, 'the language table is hand-rolling its states again').not.toMatch(
+      /\{:else if !langsAsked\}/,
+    );
   });
 });
