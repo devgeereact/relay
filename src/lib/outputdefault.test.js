@@ -38,11 +38,25 @@ const HOUSE = {
 
 // The component's mount is a chain of awaited dynamic imports; jsdom's
 // microtask queue needs draining before the reads have all landed.
+//
+// **THE BUDGET IS NOT A CONSTANT, AND THIS FILE FOUND THAT OUT.** `Output.svelte`
+// performs its opening reads IN SERIES and registers its `listen` handlers after
+// the last of them, so the number of microtask turns a mount needs grows with
+// every read added to the page. The 40+40 this file shipped with was enough for
+// five reads and not for six (`loadChannelLooks`, DECISIONS §97): the assertion
+// that failed was *"the event listener must still be registered"*, which reads
+// exactly like a deleted listener and was a drained queue.
+//
+// Deepened rather than worked around, because the alternative — running the
+// opening reads concurrently — was tried and reverted: it reorders when the kiosk
+// fallback is taken and turned twenty-four tests in six files red. The serial
+// chain is the product's real shape, and a test of it has to drain the whole
+// thing.
 async function settle() {
-  for (let i = 0; i < 40; i += 1) await Promise.resolve();
-  await tick();
-  for (let i = 0; i < 40; i += 1) await Promise.resolve();
-  await tick();
+  for (let round = 0; round < 3; round += 1) {
+    for (let i = 0; i < 60; i += 1) await Promise.resolve();
+    await tick();
+  }
 }
 
 let host;

@@ -293,11 +293,18 @@ reference.** A per-kind content look reaches an output as `content.template_id` 
 deliberately — `main::cue_or_content_tpl` records the reason in megabytes: one look carrying
 an embedded `data:` image was 13 MB, and serialising it onto every fire made verses take
 seconds to leave the machine. So the id rides the fire path and the bytes ride the connect
-path, once, bounded at `channels::MAX_CONTENT_LOOKS`. Until that existed the id crossed the
+path, once, bounded at `channels::MAX_LOOK_IDS`. Until that existed the id crossed the
 wire and died at the receiver: a screen set to follow the content look (DECISIONS §70) wore
 the configured default for the life of the product, on both doors. A native output window
-has no socket and reads the same five ids over the Tauri bridge at mount, so the projector
+has no socket and reads the same ids over the Tauri bridge at mount, so the projector
 on HDMI and the browser source beside it end in the same place.
+
+**The same slot now carries per-kind looks (DECISIONS §97), and that is why the bound is a
+judgement rather than an arithmetic fact.** `MAX_CONTENT_LOOKS` was five because there are
+five content kinds and a look is one template per kind; `channel_looks` adds one id per
+(screen, kind), whose product has no exact bound, so `MAX_LOOK_IDS` is written down as a
+ceiling with its reasoning beside it and truncating says so out loud. The ids are
+deduplicated before they are counted, so three looks reused across four screens is three.
 
 **Every kind needs a verdict per client, and two of them are `false` on purpose.** `stage_next`
 and `stage_alert` are for the platform, not the room: the first is the verse coming up, the

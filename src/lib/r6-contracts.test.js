@@ -105,6 +105,16 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       // every hello and whenever the operator changes a role, so this page can
       // answer "am I the stage?" and stop being one the moment it is not.
       channel_roles: true,
+      // WHAT EACH SCREEN WEARS FOR EACH KIND (DECISIONS §97). This page is the
+      // party that resolves it, for the same reason as `channel_roles` above and
+      // `channel_template` below: the hub broadcasts to everybody and records
+      // nothing about who connected (§35), so the only surface that knows which
+      // screen this is, is this screen. The map is ids; the bytes arrive as
+      // `template` frames before it, and the page holds them in its own cache.
+      //
+      // `src/lib/channellookspage.test.js` drives the real page and asserts on
+      // what it PAINTS, which is the claim; this row only says a branch exists.
+      channel_looks: true,
       // The operator's transition override (DECISIONS §84). A congregation screen
       // is the whole point of it — a picker that moved the console preview and left
       // every OBS source cutting would be rule 35 on the one surface a congregation
@@ -176,6 +186,14 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       // `stagepageidentity.test.js` drives the real page and asserts what it
       // paints, which this file — which reads source text — cannot reach.
       channel_roles: true,
+      // PER-KIND LOOKS — DELIBERATELY NOT, and for the same reason `template`,
+      // `channel_template`, `default_template` and `transition` above are not:
+      // this page has one fixed look and does not render through
+      // `TemplateRender`, so there is nothing here for a per-kind template to
+      // resolve INTO. A look is a statement about how a congregation screen
+      // paints a kind of content; the stage page paints one thing one way, on
+      // purpose, because the person reading it is mid-sermon.
+      channel_looks: false,
       // THE STAGE TIMERS, and this page is the only client that may have them.
       // A `Stage`-scoped timer publishes no content frame at all — which is exactly
       // why it survives a verse — so this frame is its only way onto any screen,

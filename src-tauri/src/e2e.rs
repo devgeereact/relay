@@ -25,7 +25,7 @@
 
 use super::qa::{self, settle, Wall};
 use super::*;
-use tauri::Manager;
+use tauri::{Listener, Manager};
 
 /// A headless Relay with the same state `main()` manages, and a real database.
 ///
@@ -4935,4 +4935,186 @@ fn a_screen_rename_refuses_in_words_rather_than_writing_nothing_quietly() {
         names.contains(&"Lobby screen".to_string()),
         "a refused rename still changed the screen: {names:?}"
     );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DECISIONS §97 — a screen wears a different look for EACH KIND of content
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// THE MAP LEAVES THE MACHINE ON BOTH DOORS, AND THE CONTENT FRAME DOES NOT MOVE.
+///
+/// The per-kind look is decided at the RECEIVER, because the receiver is the
+/// screen: the hub broadcasts to everybody and records nothing about who
+/// connected (DECISIONS §35), so the only party that knows which screen this is,
+/// is that screen. What has to leave the machine is therefore the MAP, not a
+/// routed fire — and it has to leave on both doors, because a native output
+/// window has the Tauri bridge and no socket while a browser source has the
+/// socket and no bridge.
+///
+/// This is the e2e-level claim: the real command, against a real database,
+/// watched at the two doors. What each door then PAINTS is
+/// `src/lib/channellookspage.test.js`, which drives the real page — a test's
+/// assertion surface is part of its claim, and these two are different claims.
+#[test]
+fn r4_a_screen_wears_a_different_look_for_each_kind_on_both_doors() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = qa::Wall::watch(&h);
+    let mut kiosk = qa::Kiosk::attach(&h);
+
+    // `qa::Wall` records what a congregation SEES — content, clear, black — so the
+    // configuration event is listened for here rather than widened into the shared
+    // fixture. A map of looks is not something anybody watches happen.
+    let announced: std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    {
+        let seen = announced.clone();
+        h.listen("output://channel_looks", move |e| {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(e.payload()) {
+                seen.lock().expect("lock").push(v);
+            }
+        });
+    }
+
+    let scripture = scratch_template(&h, "Meridian");
+    let song = scratch_template(&h, "Chorus");
+    let chan = {
+        let db = h.state::<Db>();
+        let conn = db.0.lock().expect("db");
+        db::list_output_channels(&conn)
+            .expect("channels")
+            .first()
+            .expect("a fresh install seeds screens")
+            .id
+    };
+
+    super::set_channel_look(
+        h.clone(),
+        h.state::<Db>(),
+        h.state::<channels::KioskHub>(),
+        chan,
+        "scripture".into(),
+        Some(scripture),
+    )
+    .expect("a screen may wear a look for scripture");
+    super::set_channel_look(
+        h.clone(),
+        h.state::<Db>(),
+        h.state::<channels::KioskHub>(),
+        chan,
+        "song".into(),
+        Some(song),
+    )
+    .expect("a screen may wear a look for songs");
+    settle();
+
+    // THE TAURI DOOR — what a native output window is told.
+    let last = announced
+        .lock()
+        .expect("lock")
+        .last()
+        .cloned()
+        .expect(
+            "a native output window was never told what it wears for each kind, so \
+             the projector on HDMI resolves every fire against an empty map",
+        );
+    assert_eq!(last["looks"][chan.to_string()]["scripture"], scripture);
+    assert_eq!(last["looks"][chan.to_string()]["song"], song);
+
+    // THE KIOSK DOOR — what every browser source is told, ids only.
+    let frame = kiosk
+        .drain()
+        .into_iter()
+        .filter(|m| m.contains(r#""kind":"channel_looks""#))
+        .next_back()
+        .expect(
+            "no browser source was told what it wears for each kind — the OBS \
+             source and the projector beside it would disagree about the same verse",
+        );
+    assert!(
+        frame.contains(&format!(r#""scripture":{scripture}"#))
+            && frame.contains(&format!(r#""song":{song}"#)),
+        "got {frame}"
+    );
+    assert!(
+        !frame.contains("Meridian") && !frame.contains("Chorus"),
+        "the look map carried template BYTES — one look in the field was 13 MB, \
+         and this frame is sent to every client on every hello: {frame}"
+    );
+
+    // AND THE CONTENT FRAME DOES NOT MOVE. A fire is unchanged by any of this:
+    // per-kind looks are configuration, and a routed fire would be RG-161's
+    // per-cue targeting arriving through the back door with none of its pieces.
+    super::manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None)
+        .expect("scripture fires");
+    settle();
+    let out = wall.last().expect("scripture reached the wall");
+    assert!(
+        out.get("channel").is_none(),
+        "a fire named a screen — the publish is global and unrouted, and that is \
+         what keeps RG-161 closed: {out}"
+    );
+}
+
+/// A PANIC CONTROL TAKES EVERY SCREEN, WHATEVER LOOK IT WAS WEARING.
+///
+/// `clear_screens` and `blackout` address every screen and ask nothing about
+/// which — that is what makes them panic controls (rule 15, DECISIONS §20). There
+/// is no channel and no kind anywhere on that path, and the moment there is one,
+/// a screen can be configured out of a panic control.
+///
+/// Asserted by shape rather than by outcome: the frames a wipe publishes are
+/// checked for the absence of the two words, so a future "clear this screen's
+/// scripture" would fail here even if it happened to clear everything today.
+#[test]
+fn r4_a_panic_control_takes_every_screen_whatever_look_it_was_wearing() {
+    let app = app();
+    let h = app.handle().clone();
+    let mut kiosk = qa::Kiosk::attach(&h);
+
+    let look = scratch_template(&h, "Meridian");
+    let chan = {
+        let db = h.state::<Db>();
+        let conn = db.0.lock().expect("db");
+        db::list_output_channels(&conn)
+            .expect("channels")
+            .first()
+            .expect("seeded screens")
+            .id
+    };
+    super::set_channel_look(
+        h.clone(),
+        h.state::<Db>(),
+        h.state::<channels::KioskHub>(),
+        chan,
+        "scripture".into(),
+        Some(look),
+    )
+    .expect("a look is set");
+    super::manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None)
+        .expect("scripture fires");
+    settle();
+    let _ = kiosk.drain();
+
+    assert!(super::clear_screens(h.clone()).is_ok());
+    assert!(super::blackout(h.clone()).is_ok());
+    settle();
+
+    let after = kiosk.drain();
+    let wipes: Vec<&String> = after
+        .iter()
+        .filter(|m| m.contains(r#""kind":"clear""#) || m.contains(r#""kind":"black""#))
+        .collect();
+    assert_eq!(
+        wipes.len(),
+        2,
+        "a panic control did not reach the kiosk hub at all: {after:?}"
+    );
+    for frame in wipes {
+        assert!(
+            !frame.contains("channel") && !frame.contains("kind\":\"scripture"),
+            "a panic control named a screen or a kind — a screen an operator can \
+             configure out of a blackout is rule 15's exact failure: {frame}"
+        );
+    }
 }

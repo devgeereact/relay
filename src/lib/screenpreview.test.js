@@ -76,8 +76,13 @@ describe('the inspector and the output page resolve the same way', () => {
     expect(outputs, 'the inspector must NAME $templates, not reach it through a helper').toMatch(
       /\$: selOwn =[\s\S]{0,120}\$templates\.find/,
     );
+    // …and the page passes its screen's template as it is, with the per-kind look
+    // as the RUNG-3 ARGUMENT rather than as a second call (DECISIONS §97). The
+    // two-call form is the defect: it applies the transparency law between the
+    // per-kind look and the blanket template and silently discards an opaque
+    // Announcement look on a lower-third screen.
     expect(page).toMatch(
-      /resolveOutputTemplate\(t, override, !!content\?\.template_pinned, defaultTpl\)/,
+      /resolveOutputTemplate\(t, override, !!content\?\.template_pinned, defaultTpl, kindLook\)/,
     );
     // And the component is actually handed that answer, not a second one built
     // inline — a preview resolved twice is a preview that can disagree with itself.

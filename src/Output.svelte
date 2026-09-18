@@ -7,6 +7,7 @@
     isKeyedTemplate,
     resolveContentOverride,
     resolveOutputTemplate,
+    channelLookTemplate,
     templateShows,
     setCountdownWarnDefault,
   } from './lib/layers.js';
@@ -98,6 +99,33 @@
   function cacheTemplate(id, tpl) {
     if (id == null || !tpl) return;
     lookCache = { ...lookCache, [id]: tpl };
+  }
+
+  // ── WHAT THIS SCREEN WEARS FOR EACH KIND OF CONTENT ─────────────────────────
+  //
+  // `{ "1": { "scripture": 9, "song": 12 } }`, keyed by channel id (DECISIONS
+  // §97). Ids only: the bytes are in `lookCache` above, for the 13 MB reason
+  // recorded there, and this map is the CHOICE rather than the template.
+  //
+  // THE WHOLE SET ARRIVES EVERY TIME, never a delta — the same rule `screen_state`
+  // and the retained service clocks follow, and `{}` is an ANSWER rather than
+  // silence. A
+  // page that could not tell "nobody has told me" from "I have no per-kind look"
+  // would resolve the next fire against the wrong template for exactly one frame,
+  // and the frame after a browser source restarts mid-reading is the one a
+  // congregation is looking at.
+  //
+  // FILLED ON BOTH DOORS, like everything else on this page: a native output
+  // window READS it over the Tauri bridge and hears `output://channel_looks`; a
+  // browser source is SENT it in the hello reply's configuration block, before the
+  // retained frame it dresses. One door only would put a projector on HDMI and an
+  // OBS source in the same room in different templates for the same verse, which
+  // is the whole failure this feature exists to make impossible.
+  //
+  // REPLACED, never mutated, for the same reason as `lookCache`.
+  let channelLooks = {};
+  function applyChannelLooks(next) {
+    channelLooks = next && typeof next === 'object' && !Array.isArray(next) ? next : {};
   }
 
   // ── THE STAGE MESSAGE, AND WHY THIS PAGE MAY REFUSE IT ─────────────────────
@@ -256,8 +284,22 @@
   // DEFAULT_TEMPLATE is the floor: a screen that follows the content look, when
   // no content look is set either, still has to paint something legible rather
   // than nothing at all.
+  // THIS SCREEN'S OWN LOOK FOR THIS KIND — rung 3, above its blanket template and
+  // below a cue's deliberate pin (DECISIONS §97). Passed as an ARGUMENT rather
+  // than resolved by a second call to `resolveOutputTemplate`, and that is not a
+  // tidy-up: the two-call form applies the transparency law BETWEEN the per-kind
+  // look and the blanket template, so an opaque Announcement look deliberately
+  // chosen for a lower-third screen would be discarded in silence. The reasoning
+  // is at the resolver; the consequence is that the operator's choice moves
+  // nothing, which is §29's original complaint verbatim.
+  //
+  // `content?.kind` is the same field on both doors: the kiosk protocol calls it
+  // `content_kind` on the wire and `applyMessage` rebuilds it as `kind`, so the
+  // rule is shared and only the wire shape differs.
+  $: kindLook = channelLookTemplate(channelLooks, channelId, content?.kind, lookCache);
   $: activeTemplate =
-    resolveOutputTemplate(t, override, !!content?.template_pinned, defaultTpl) || DEFAULT_TEMPLATE;
+    resolveOutputTemplate(t, override, !!content?.template_pinned, defaultTpl, kindLook) ||
+    DEFAULT_TEMPLATE;
   // Set on mount; a no-op until then so onDestroy is safe if mounting threw.
   let stopBeat = () => {};
   // LAYER STYLE TOKENS. A layer bound to `theme:accent` resolves against the
@@ -390,6 +432,52 @@
       }
     } catch {
       /* no looks in hand; the resolver falls through exactly as it did before */
+    }
+  }
+  // Desktop only — WHAT THIS SCREEN WEARS FOR EACH KIND, read when this window
+  // opens, on exactly the argument `loadContentLooks` above makes and for exactly
+  // the same defect one rung up. The map reaches a browser source in the hello
+  // reply; a native output window has no socket and would be sent nothing, so a
+  // projector opened through `open_channel_output` would resolve every fire
+  // against an empty map and paint its blanket template — the exact failure on the
+  // exact screen the feature exists for, and invisible in the same way, because
+  // the OBS source in the same room would be correct.
+  //
+  // The BYTES are read here too and not only the ids. `loadContentLooks` warms the
+  // cache from the five global looks; a per-kind look can name a template no
+  // global look does, and an id whose bytes this page does not hold resolves to
+  // nothing and falls through to the blanket template — silently, which is the one
+  // way this feature can look like it was never configured.
+  //
+  // Guarded the same way as every read above it: a missing command or a backend
+  // that says nothing leaves this screen with no per-kind looks, which is the
+  // behaviour before this existed and the safe one, and never throws on a live
+  // output page.
+  async function loadChannelLooks() {
+    try {
+      const call = await invoke();
+      const map = await call('list_channel_looks');
+      applyChannelLooks(map);
+      const ids = [
+        ...new Set(
+          Object.values(map ?? {})
+            .flatMap((byKind) => Object.values(byKind ?? {}))
+            .filter((v) => v != null),
+        ),
+      ].filter((id) => !lookCache[id]);
+      // FETCHED TOGETHER, not one after another, and that is a real property of
+      // this page rather than a micro-optimisation. Every read on this mount path
+      // runs in series and the `listen` registrations come after the last of
+      // them, so each sequential await widens the window in which a window that
+      // has opened is not yet hearing events. A screen can carry a look per kind
+      // per screen, so a serial loop here is the one read on the path whose
+      // length is not a constant.
+      const got = await Promise.all(
+        ids.map(async (id) => [id, (await call('get_template', { id })) ?? null]),
+      );
+      for (const [id, tpl] of got) cacheTemplate(id, tpl);
+    } catch {
+      applyChannelLooks({});
     }
   }
   // Desktop only — what each screen is for, read when this window opens. Exactly
@@ -539,6 +627,12 @@
       // source that restarted mid-sermon comes back down rather than bringing
       // itself back up (rule 43, `channels::tests`).
       applyScreenState(m.screens);
+    } else if (m.kind === 'channel_looks') {
+      // WHAT THIS SCREEN WEARS FOR EACH KIND. Sent on every hello and whenever it
+      // changes, with the configuration and BEFORE the retained screen frame, so
+      // the look is in hand before the frame it dresses (rule 43). `{}` is an
+      // answer and is applied as one — see `applyChannelLooks`.
+      applyChannelLooks(m.looks);
     } else if (m.kind === 'channel_roles') {
       // WHAT EVERY SCREEN IS FOR. Sent on every hello and whenever it changes, so
       // this page can answer the only question it asks of it: am I the stage?
@@ -620,6 +714,7 @@
       await loadLiveBackground();
       await loadDefaultTemplate();
       await loadContentLooks();
+      await loadChannelLooks();
       await loadChannelRoles();
       const { listen } = await import('@tauri-apps/api/event');
       unlisten.push(await listen('output://content', (e) => {
@@ -716,6 +811,26 @@
       unlisten.push(
         await listen('output://channel_roles', (e) => {
           applyRoles(e.payload?.roles);
+        }),
+      );
+      // BOTH DOORS, for the seventh time in this file, and here the cost of one
+      // door is two screens in one room wearing different templates for the same
+      // verse. An operator who changes a look mid-service must see it move on the
+      // projector and in OBS at the same instant, or the one they are not looking
+      // at is the one that is wrong.
+      //
+      // The bytes may be new, so they are fetched for any id this page does not
+      // already hold — `template://updated` only fires for a template that was
+      // EDITED, and choosing an existing template for a kind edits nothing.
+      unlisten.push(
+        await listen('output://channel_looks', async (e) => {
+          applyChannelLooks(e.payload?.looks);
+          for (const byKind of Object.values(e.payload?.looks ?? {})) {
+            for (const id of Object.values(byKind ?? {})) {
+              if (id == null || lookCache[id]) continue;
+              cacheTemplate(id, await fetchTemplate(id));
+            }
+          }
         }),
       );
       isDesktop = true;

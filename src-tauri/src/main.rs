@@ -3772,14 +3772,22 @@ fn cue_or_content_tpl(
 
 /// THE CONTENT KINDS A LOOK CAN BE SET FOR.
 ///
-/// The same five names exist in three shapes, and this is the only one that can
-/// be iterated: `ContentTemplates` names them as struct FIELDS, because that is
-/// the map an operator edits and the IPC shape the console reads, and
-/// `channels::MAX_CONTENT_LOOKS` is this list's LENGTH expressed as a bound on
-/// what the hub will hand a client on connect. None of the three can be derived
-/// from the others, so `the_content_look_kinds_agree_with_the_map_and_the_bound`
-/// asserts that they still say the same thing — a kind added to the matrix and
-/// not to this array is a look an operator can set and no screen is ever sent.
+/// The same five names exist in two shapes, and this is the only one that can be
+/// iterated: `ContentTemplates` names them as struct FIELDS, because that is the
+/// map an operator edits and the IPC shape the console reads. Neither can be
+/// derived from the other, so `the_content_look_kinds_agree_with_the_map` asserts
+/// that they still say the same thing — a kind added to the matrix and not to
+/// this array is a look an operator can set and no screen is ever sent.
+///
+/// There used to be a THIRD shape: a bound in `channels` equal to this list's
+/// length, expressed as a limit on what a hello reply may carry. Per-kind looks
+/// (DECISIONS §97) put a second source of the same kind of id on that wire, so
+/// the bound is now `channels::MAX_LOOK_IDS` and is a judgement rather than this
+/// list's length. The assertion that survives is the useful half: these five must
+/// still fit.
+///
+/// It is also what `set_channel_look` validates against, so a kind missing from
+/// here cannot be written into `channel_looks` either.
 const CONTENT_LOOK_KINDS: [&str; 5] = ["scripture", "song", "media", "announce", "countdown"];
 
 /// The distinct template ids this install's content looks name, in kind order.
