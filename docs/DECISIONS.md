@@ -4790,6 +4790,32 @@ both waves' surfaces were individually green and the defects were in the seam be
 so it drives Live's real fire path and mounts the REAL stage page on the frame that comes out
 rather than adding cases to either side.
 
+### Addendum, 2026-09-18 — the two clocks are named after their audience (RG-167)
+
+**The ruling above is unchanged and is not reopened.** This records only what the two timers are now
+CALLED, because §27, §91 and the section above all discuss them under words the interface no longer
+uses.
+
+They had six labels between them and not one of them said which of the two it was. The
+congregation's clock was `Countdown` (the dock), `Countdown timer` (the binding list),
+`Timer / Countdown` (the layer type, the content-kind row and the template kind) and
+`Countdown Timer` (the starter); the preacher's was `Programme timer` (Live), `Programme` (the stage
+zone) and `programme clock` (a test). **Audience is carried by the first word: `Screen Countdown`
+reaches the room, `Stage Timer` reaches one person** — which is the family `Stage Message` and
+`Stage Note` already teach. Both are two words because the register's matcher is a case-insensitive
+substring: a one-word `Countdown` entry matches inside `countdownRemainingMs`, and a one-word
+`Timer` inside `stageTimerRows`. `src/lib/names.test.js` holds both entries and asserts that
+shortening either would detonate.
+
+**The wire kind stays `"timer"`.** It is protocol — `channels.rs` publishes it, `Stage.svelte` reads
+it — and a church running an older copy of `stage.html` would silently lose its rail. A label is
+what a person reads; a frame kind is what two programs agree on, and renaming the second to match
+the first is how a rename reaches a congregation.
+
+**The prose in §91 and §92 above is deliberately left as written**, in the words their authors used
+on the day the decisions were taken. A frozen ruling that follows a later rename is a ruling nobody
+can date.
+
 ## 93. Amethyst promises "nothing here reaches a congregation", and the caution gap is named rather than closed (2026-09-17)
 
 **A human may overrule this. It restates a law rather than moving one, and it deliberately leaves
