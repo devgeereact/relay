@@ -5009,15 +5009,10 @@ fn r4_a_screen_wears_a_different_look_for_each_kind_on_both_doors() {
     settle();
 
     // THE TAURI DOOR — what a native output window is told.
-    let last = announced
-        .lock()
-        .expect("lock")
-        .last()
-        .cloned()
-        .expect(
-            "a native output window was never told what it wears for each kind, so \
+    let last = announced.lock().expect("lock").last().cloned().expect(
+        "a native output window was never told what it wears for each kind, so \
              the projector on HDMI resolves every fire against an empty map",
-        );
+    );
     assert_eq!(last["looks"][chan.to_string()]["scripture"], scripture);
     assert_eq!(last["looks"][chan.to_string()]["song"], song);
 
@@ -5025,8 +5020,7 @@ fn r4_a_screen_wears_a_different_look_for_each_kind_on_both_doors() {
     let frame = kiosk
         .drain()
         .into_iter()
-        .filter(|m| m.contains(r#""kind":"channel_looks""#))
-        .next_back()
+        .rfind(|m| m.contains(r#""kind":"channel_looks""#))
         .expect(
             "no browser source was told what it wears for each kind — the OBS \
              source and the projector beside it would disagree about the same verse",

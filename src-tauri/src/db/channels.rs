@@ -29,6 +29,22 @@ pub struct OutputChannel {
     /// WIRED. So is `channels.rs`'s `MonitorInfo::primary`, which is a property of
     /// a physical display.
     pub role: Option<String>,
+    /// WHICH KINDS OF CONTENT THIS SCREEN SHOWS AT ALL — a JSON array of content
+    /// kinds, or `None` for NO OPINION (DECISIONS §98).
+    ///
+    /// `None` is not an empty set and the difference is the whole column. A
+    /// screen with no opinion follows the TEMPLATE, which is where this question
+    /// was answered before and still is: `layout.shows` is the designer's
+    /// statement about what a template can render, and this is the operator's
+    /// about what the screen is for. The two are ANDed, so this can only ever
+    /// NARROW — it can never force a template to paint a kind it has no regions
+    /// for, which would be a second authority on a fact the template already
+    /// owns.
+    ///
+    /// A page that read a missing value as "show nothing" would go dark for the
+    /// rest of a service with nothing to say why, which is why the absence has to
+    /// travel as an absence all the way to the renderer.
+    pub shows_json: Option<String>,
 }
 
 /// What `set_channel_role` did — the enforcement, in one place, phrased so the
@@ -55,7 +71,7 @@ pub const CHANNEL_ROLES: &[&str] = &["main", "stage"];
 /// All configured output channels.
 pub fn list_output_channels(conn: &Connection) -> rusqlite::Result<Vec<OutputChannel>> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, render_target, template_id, display_target, status, role
+        "SELECT id, name, render_target, template_id, display_target, status, role, shows_json
            FROM output_channels ORDER BY id",
     )?;
     let rows = stmt.query_map([], |r| {
@@ -67,6 +83,7 @@ pub fn list_output_channels(conn: &Connection) -> rusqlite::Result<Vec<OutputCha
             display_target: r.get(4)?,
             status: r.get(5)?,
             role: r.get(6)?,
+            shows_json: r.get(7)?,
         })
     })?;
     rows.collect()
@@ -393,6 +410,88 @@ pub(super) fn template_ids_in_use_by_looks(conn: &Connection) -> rusqlite::Resul
     channel_look_ids(conn)
 }
 
+/// ADD `output_channels.shows_json` — WHAT THIS SCREEN SHOWS AT ALL (§98).
+///
+/// Retryable and idempotent (rule 25) by the same shape as `ensure_channel_role`
+/// immediately above: the column is sniffed for before the `ALTER`, and losing
+/// the race against a second Relay process is the DESIRED END STATE rather than a
+/// panic before the window is shown.
+///
+/// **There is no back-fill and there must not be one.** NULL means "no opinion,
+/// follow the template", which is exactly the behaviour every install has today,
+/// so an upgrade changes no screen. Writing the five current kinds into every row
+/// to make the shape explicit would change nothing on day one and strand every
+/// screen on day two, the moment a sixth kind exists — the identical argument
+/// `ensure_channel_looks` makes about its own missing back-fill.
+pub(super) fn ensure_channel_shows(conn: &Connection) -> rusqlite::Result<()> {
+    let present: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('output_channels') WHERE name = 'shows_json'",
+        [],
+        |r| r.get(0),
+    )?;
+    if present == 0 {
+        match conn.execute_batch("ALTER TABLE output_channels ADD COLUMN shows_json TEXT;") {
+            Err(e) if crate::db::plans::is_duplicate_column(&e) => {}
+            other => other?,
+        }
+    }
+    Ok(())
+}
+
+/// WHAT EACH SCREEN SHOWS, AS IT GOES ON THE WIRE — `{"1":["scripture","song"]}`.
+///
+/// A screen with NO OPINION is OMITTED, exactly as a screen with no role is
+/// omitted from `channel_roles_json` and for the identical reason: an absent key
+/// and an explicit null would have to mean the same thing at the receiver, and
+/// two spellings of one fact is how a filter comes to have two answers. Here the
+/// two answers are "show everything" and "show nothing", and one of them is a
+/// congregation screen going dark for the rest of a service.
+///
+/// An unparseable stored value is treated as NO OPINION rather than as an empty
+/// set, for the same reason. It is the safe direction: the template still decides,
+/// which is where the decision lived before this column existed.
+pub fn channel_shows_json(conn: &Connection) -> rusqlite::Result<String> {
+    let mut stmt = conn.prepare(
+        "SELECT id, shows_json FROM output_channels WHERE shows_json IS NOT NULL ORDER BY id",
+    )?;
+    let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?;
+    let mut map = serde_json::Map::new();
+    for row in rows {
+        let (id, raw) = row?;
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
+            if v.is_array() {
+                map.insert(id.to_string(), v);
+            }
+        }
+    }
+    Ok(serde_json::Value::Object(map).to_string())
+}
+
+/// SET (or CLEAR, with `None`) WHICH KINDS A SCREEN SHOWS.
+///
+/// `None` writes SQL NULL and means "no opinion, follow the template". An EMPTY
+/// list is a different thing and is stored as one: an operator who unticks every
+/// kind has said this screen shows nothing, which is a legitimate — if unusual —
+/// setting for a camera-only keyed channel, and it is still only ever a NARROWING
+/// of the template. It cannot reach a panic control: `clear` and `black` do not
+/// pass through any of this.
+///
+/// The kinds are validated by the caller, once, in the command — the discipline
+/// `rename_channel` states: two layers that both validate are two layers that can
+/// disagree about what is legal.
+pub fn set_channel_shows(
+    conn: &Connection,
+    id: i64,
+    kinds: Option<&[String]>,
+) -> rusqlite::Result<()> {
+    let value = kinds.map(|k| serde_json::Value::from(k.to_vec()).to_string());
+    conn.execute(
+        "UPDATE output_channels SET shows_json = ?1 WHERE id = ?2",
+        (value, id),
+    )?;
+    Ok(())
+}
+
 /// SET (or clear) A SCREEN'S ROLE, with the one-main rule enforced here.
 ///
 /// Not a partial index. An index would refuse the write with a constraint
@@ -455,12 +554,24 @@ mod tests {
         conn
     }
 
+    /// THE ROLE COLUMN, READ DIRECTLY.
+    ///
+    /// It went through `list_output_channels`, which was fine until that function
+    /// gained a `shows_json` this fixture's deliberately-OLD table does not have —
+    /// seven tests about ROLES then failed with `no such column: shows_json`, in a
+    /// module whose whole subject is what an old database does. A test of one
+    /// column should not fail every time another is added, and the fixture must
+    /// stay old, because being old is the thing it exists to be.
     fn roles(conn: &Connection) -> Vec<(String, Option<String>)> {
-        list_output_channels(conn)
-            .unwrap()
-            .into_iter()
-            .map(|c| (c.name, c.role))
-            .collect()
+        let mut stmt = conn
+            .prepare("SELECT name, role FROM output_channels ORDER BY id")
+            .unwrap();
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
+            })
+            .unwrap();
+        rows.collect::<rusqlite::Result<Vec<_>>>().unwrap()
     }
 
     /// RULE 25 — a migration that runs on every boot must be a no-op the second

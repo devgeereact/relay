@@ -70,7 +70,14 @@ CREATE TABLE output_channels (
     template_id    INTEGER REFERENCES templates(id),
     display_target TEXT,                  -- display index, NDI source name, or kiosk client id
     status         TEXT NOT NULL DEFAULT 'offline' CHECK (status IN ('online', 'offline')),
-    role           TEXT CHECK (role IS NULL OR role IN ('main', 'stage'))  -- what this screen is FOR; NULL = a congregation screen with no special job
+    role           TEXT CHECK (role IS NULL OR role IN ('main', 'stage')),  -- what this screen is FOR; NULL = a congregation screen with no special job
+    -- WHICH KINDS OF CONTENT THIS SCREEN SHOWS AT ALL (DECISIONS §98). A JSON
+    -- array of content kinds, ANDed with the template's own `layout.shows` so it
+    -- can only ever NARROW. NULL = no opinion, follow the template -- which is
+    -- the behaviour every install had before this column, and is why there is no
+    -- back-fill. NULL and [] are deliberately different: the first shows
+    -- everything the template does, the second shows nothing.
+    shows_json     TEXT
 );
 
 -- WHAT ONE SCREEN WEARS FOR ONE KIND OF CONTENT (db/channels.rs).

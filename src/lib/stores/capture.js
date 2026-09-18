@@ -2624,6 +2624,33 @@ await call('set_channel_role', { id, role: role || null });
 }
 
 /**
+ * WHICH KINDS OF CONTENT A SCREEN SHOWS AT ALL — `null` for NO OPINION.
+ *
+ * DECISIONS §98. `null` clears the column and means "follow the template", which
+ * is what every install did before this existed. An EMPTY ARRAY is a different
+ * thing and is sent as one: an operator who unticks every kind has said this
+ * screen shows nothing, and the two must not collapse into each other — one of
+ * them is a screen that paints everything its template allows and the other is a
+ * screen that paints nothing.
+ *
+ * It can only NARROW. The backend stores it, the output page ANDs it with the
+ * template's own `layout.shows`, and nothing anywhere lets it force a template to
+ * paint a kind it has no regions for.
+ *
+ * It is NEVER on the panic path. `clearScreens` and `blackout` address every
+ * screen and ask nothing about which; a screen an operator could configure out of
+ * one is rule 15's exact failure.
+ *
+ * GROUP 1 (throws). The backend refuses an unknown kind by name, and a swallowed
+ * refusal would leave the checkboxes showing a set the screen does not have — on
+ * the control that decides whether a congregation sees something at all.
+ */
+export async function setChannelShows(id, kinds) {
+  const call = await invoke();
+  await call('set_channel_shows', { id, kinds: kinds ?? null });
+}
+
+/**
  * RENAME A SCREEN.
  *
  * GROUP 1 (throws). It is an operator action with a visible result and the

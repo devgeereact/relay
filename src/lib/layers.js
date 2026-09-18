@@ -450,6 +450,42 @@ export function channelLookTemplate(looks, channelId, kind, templates) {
 }
 
 /**
+ * ── WHAT THIS SCREEN SHOWS AT ALL — THE OPERATOR'S HALF (DECISIONS §98) ──────
+ *
+ * `templateShows` answers the DESIGNER'S question: can this template render this
+ * kind? A lower third has no regions for a countdown and never will. This answers
+ * the OPERATOR'S: is this screen for that kind? The lobby TV shows notices and the
+ * timer; the wall does not show the timer.
+ *
+ * **THEY ARE ANDed, AND THIS ONE CAN ONLY NARROW.** A screen may not force a
+ * template to paint a kind it has no regions for — that would be a second
+ * authority on a fact the template already owns, which is the defect DECISIONS §69
+ * and §71 are the scars from. The caller does the AND, because the caller is the
+ * only party holding both facts.
+ *
+ * **NO OPINION IS NOT AN EMPTY SET, AND THE DIFFERENCE IS THE WHOLE FUNCTION.** A
+ * screen that is absent from the map, a map that is absent, a map that failed to
+ * parse: all three mean "follow the template", which is where this decision lived
+ * before the column existed and is the only safe direction to fail in. The unsafe
+ * direction is a congregation screen that paints nothing for the rest of a
+ * service, and nothing on it can say why.
+ *
+ * **IT IS NEVER CONSULTED FOR `clear` OR `black`.** A panic control addresses every
+ * screen and asks nothing about which — that is what makes it one (rule 15,
+ * DECISIONS §20). A screen an operator could configure out of a blackout is that
+ * rule's exact failure, and this function is the precise shape it would take, so
+ * the rule is written here as well as at the call sites.
+ */
+export function channelShowsKind(shows, channelId, kind) {
+  if (!kind) return true;
+  if (!shows || typeof shows !== 'object' || Array.isArray(shows)) return true;
+  if (channelId == null) return true;
+  const mine = shows[String(channelId)];
+  if (!Array.isArray(mine)) return true;
+  return mine.includes(kind);
+}
+
+/**
  * ── THE PER-KIND LOOK JOINS AT RUNG 3, WHICH IS WHY IT IS A PARAMETER HERE ───
  *
  * `kindLook` is this screen's own template FOR THIS KIND (DECISIONS §97). It is

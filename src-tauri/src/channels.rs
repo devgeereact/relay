@@ -1873,6 +1873,25 @@ pub struct KioskHub {
     /// published — the discipline `last_screen` already keeps, and the reason
     /// `the_screen_frame_matcher_agrees_with_what_is_published` exists.
     channel_tpls: Arc<Mutex<HashMap<i64, String>>>,
+    /// WHICH KINDS EACH SCREEN SHOWS AT ALL — `{"1":["scripture","song"]}`
+    /// (DECISIONS §98).
+    ///
+    /// The third small map in this struct and shaped exactly like the other two,
+    /// deliberately: a second pattern for "a map of ids every client filters for
+    /// itself" is how two maps come to be replayed at two different points in one
+    /// hello reply.
+    ///
+    /// **A screen with NO OPINION is OMITTED, and `{}` is still sent.** Those are
+    /// two different absences and both have to survive the wire: an omitted screen
+    /// follows its template, which is where this decision lived before the column
+    /// existed; an empty MAP means no screen anywhere has an opinion, and a page
+    /// that could not tell that from "the reply has not arrived yet" would resolve
+    /// the next fire against an opinion it has not been given.
+    ///
+    /// **It NARROWS content and nothing else.** `clear` and `black` do not pass
+    /// through it, are not published from it, and never will be — a screen an
+    /// operator can configure out of a panic control is rule 15's exact failure.
+    channel_shows: Arc<Mutex<String>>,
     /// THE PROGRAMME TIMERS A STAGE TABLET IS SHOWING — the last `timer` frame.
     ///
     /// ITS OWN SLOT, NOT `last_screen`, and this is the fourth time that sentence
@@ -1964,6 +1983,7 @@ impl Default for KioskHub {
             channel_roles: Arc::new(Mutex::new("{}".to_string())),
             channel_looks: Arc::new(Mutex::new("{}".to_string())),
             channel_tpls: Arc::new(Mutex::new(HashMap::new())),
+            channel_shows: Arc::new(Mutex::new("{}".to_string())),
             last_timers: Arc::new(Mutex::new(None)),
             last_background: Arc::new(Mutex::new(None)),
             // THE EMPTY FRAME, not an empty map. This slot holds a frame ready to
@@ -2283,6 +2303,49 @@ impl KioskHub {
         let blob = self.channel_looks_json();
         self.publish(format!(r#"{{"kind":"channel_looks","looks":{blob}}}"#));
     }
+    /// Shared handle to the per-screen `shows` map, for the WS task's `hello`.
+    pub fn channel_shows_handle(&self) -> Arc<Mutex<String>> {
+        self.channel_shows.clone()
+    }
+    /// Validate + store the `shows` map WITHOUT pushing (startup warm).
+    ///
+    /// Same validate-then-store rule as `cache_channel_roles` and
+    /// `cache_channel_looks`, and for the same reason: the value goes RAW into a
+    /// WS frame, and one unparseable frame stops a client applying every frame
+    /// after it — including the retained verse later in the same hello reply.
+    /// Anything that is not a JSON object becomes `{}`, which is "no screen has an
+    /// opinion": every screen follows its template, which is where this decision
+    /// lived before the column existed and is the only safe direction to fail in.
+    /// The unsafe direction is an empty LIST, which is a congregation screen that
+    /// paints nothing for the rest of a service.
+    pub fn cache_channel_shows(&self, shows_json: &str) {
+        let safe = match serde_json::from_str::<serde_json::Value>(shows_json) {
+            Ok(v) if v.is_object() => shows_json.to_string(),
+            _ => "{}".to_string(),
+        };
+        if let Ok(mut m) = self.channel_shows.lock() {
+            *m = safe;
+        }
+    }
+    /// The cached `shows` map (`{}` when no screen has an opinion).
+    pub fn channel_shows_json(&self) -> String {
+        self.channel_shows
+            .lock()
+            .map(|m| m.clone())
+            .unwrap_or_else(|_| "{}".into())
+    }
+    /// Update the `shows` map AND push it live.
+    ///
+    /// It paints nothing on arrival and it can never blank a screen that is
+    /// already showing something: it narrows what the NEXT fire of a kind reaches,
+    /// which is what makes it configuration rather than a control. What must not
+    /// wait is the other half — an operator who has just taken the countdown off
+    /// the wall is about to start one.
+    pub fn set_channel_shows(&self, shows_json: &str) {
+        self.cache_channel_shows(shows_json);
+        let blob = self.channel_shows_json();
+        self.publish(format!(r#"{{"kind":"channel_shows","shows":{blob}}}"#));
+    }
     /// Shared handle to the per-channel template frames, for the WS task's `hello`.
     pub fn channel_templates_handle(&self) -> Arc<Mutex<HashMap<i64, String>>> {
         self.channel_tpls.clone()
@@ -2495,6 +2558,7 @@ pub async fn run_kiosk_server(
     channel_roles: Arc<Mutex<String>>,
     channel_looks: Arc<Mutex<String>>,
     channel_tpls: Arc<Mutex<HashMap<i64, String>>>,
+    channel_shows: Arc<Mutex<String>>,
     last_screen: Arc<Mutex<Option<String>>>,
     last_transition: TransitionSlot,
     last_timers: Arc<Mutex<Option<String>>>,
@@ -2537,6 +2601,7 @@ pub async fn run_kiosk_server(
         let channel_roles = channel_roles.clone();
         let channel_looks = channel_looks.clone();
         let channel_tpls = channel_tpls.clone();
+        let channel_shows = channel_shows.clone();
         let last_screen = last_screen.clone();
         let last_transition = last_transition.clone();
         let last_timers = last_timers.clone();
@@ -2855,6 +2920,32 @@ pub async fn run_kiosk_server(
                                         .send(tokio_tungstenite::tungstenite::Message::Text(
                                             format!(
                                                 r#"{{"kind":"channel_looks","looks":{lblob}}}"#
+                                            ),
+                                        ))
+                                        .await;
+                                    // AND WHICH KINDS EACH SCREEN SHOWS AT ALL
+                                    // (DECISIONS §98). Sent on EVERY hello, `{}`
+                                    // included, on the identical argument to the
+                                    // two maps above: an empty answer is an answer.
+                                    // A page that could not tell "nobody has told
+                                    // me" from "no screen has an opinion" would
+                                    // resolve the first fire after a reconnect
+                                    // against something it has not been given.
+                                    //
+                                    // With the configuration and before the
+                                    // retained frame, because it decides whether
+                                    // that frame paints here at all — sent after
+                                    // it, a screen the operator has taken the
+                                    // countdown off would paint one and then drop
+                                    // it, in front of a congregation.
+                                    let sblob = channel_shows
+                                        .lock()
+                                        .map(|m| m.clone())
+                                        .unwrap_or_else(|_| "{}".into());
+                                    let _ = write
+                                        .send(tokio_tungstenite::tungstenite::Message::Text(
+                                            format!(
+                                                r#"{{"kind":"channel_shows","shows":{sblob}}}"#
                                             ),
                                         ))
                                         .await;
@@ -4288,6 +4379,7 @@ mod tests {
             hub.channel_roles_handle(),
             hub.channel_looks_handle(),
             hub.channel_templates_handle(),
+            hub.channel_shows_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
@@ -4355,6 +4447,7 @@ mod tests {
             hub.channel_roles_handle(),
             hub.channel_looks_handle(),
             hub.channel_templates_handle(),
+            hub.channel_shows_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
@@ -4445,6 +4538,7 @@ mod tests {
             hub.channel_roles_handle(),
             hub.channel_looks_handle(),
             hub.channel_templates_handle(),
+            hub.channel_shows_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
@@ -4502,6 +4596,7 @@ mod tests {
             hub.channel_roles_handle(),
             hub.channel_looks_handle(),
             hub.channel_templates_handle(),
+            hub.channel_shows_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
@@ -4528,7 +4623,7 @@ mod tests {
         // cached under id 7, so it is effectively first; the loop bound is
         // generous rather than exact, matching the cached-template test above).
         let mut got = false;
-        for _ in 0..4 {
+        for _ in 0..HELLO_FRAMES {
             let Ok(Some(Ok(msg))) =
                 tokio::time::timeout(std::time::Duration::from_secs(2), read.next()).await
             else {
@@ -4588,6 +4683,7 @@ mod tests {
             hub.channel_roles_handle(),
             hub.channel_looks_handle(),
             hub.channel_templates_handle(),
+            hub.channel_shows_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
@@ -4614,7 +4710,7 @@ mod tests {
             .expect("send hello");
 
         let mut order: Vec<String> = Vec::new();
-        for _ in 0..8 {
+        for _ in 0..HELLO_FRAMES {
             let Ok(Some(Ok(msg))) =
                 tokio::time::timeout(std::time::Duration::from_millis(600), read.next()).await
             else {
@@ -4689,6 +4785,7 @@ mod tests {
             hub.channel_roles_handle(),
             hub.channel_looks_handle(),
             hub.channel_templates_handle(),
+            hub.channel_shows_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
@@ -4713,7 +4810,7 @@ mod tests {
             .expect("send hello");
 
         let mut order: Vec<String> = Vec::new();
-        for _ in 0..12 {
+        for _ in 0..HELLO_FRAMES {
             let Ok(Some(Ok(msg))) =
                 tokio::time::timeout(std::time::Duration::from_millis(600), read.next()).await
             else {
@@ -4742,6 +4839,115 @@ mod tests {
             "every screen's template was sent to one client — a template is BYTES, \
              and one in the field was 13 MB: {order:?}"
         );
+    }
+
+    /// A CHANNEL-KEYED CLIENT IS SENT ITS OWN SCREEN'S `shows` SET ON HELLO.
+    ///
+    /// DECISIONS §98, at the level this file has now missed twice: the map is
+    /// sent on EVERY hello including `{}`, and it is sent BEFORE the retained
+    /// screen frame it can suppress. A screen sent the frame first paints a
+    /// countdown the operator took off it and then drops it, in front of a
+    /// congregation.
+    ///
+    /// The whole map goes, unlike the per-channel template beside it, because
+    /// this is a handful of short strings rather than bytes — the same reasoning
+    /// as `channel_roles` and `channel_looks`, and each client filters for its own
+    /// id at the receiver because the hub cannot address one (§35).
+    #[tokio::test]
+    async fn a_client_that_connects_is_told_which_kinds_its_screen_shows() {
+        let port = free_port();
+        let hub = KioskHub::default();
+        hub.cache_channel_shows(r#"{"1":["scripture","song"]}"#);
+        hub.publish(kiosk_content_json(&OutputContent {
+            kind: Some("scripture".into()),
+            reference: "Romans 8:28".into(),
+            text: Some("And we know".into()),
+            ..Default::default()
+        }));
+        tokio::spawn(run_kiosk_server(
+            log_only(),
+            hub.sender(),
+            hub.templates_handle(),
+            hub.clients_handle(),
+            hub.default_template_handle(),
+            hub.channel_roles_handle(),
+            hub.channel_looks_handle(),
+            hub.channel_templates_handle(),
+            hub.channel_shows_handle(),
+            hub.last_screen_handle(),
+            hub.last_transition_handle(),
+            hub.last_timers_handle(),
+            hub.last_background_handle(),
+            hub.screens_down_handle(),
+            hub.look_ids_handle(),
+            OutputHealth::default(),
+            port,
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
+            .await
+            .expect("connect");
+        let (mut write, mut read) = ws.split();
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"kind":"hello","channel":1,"template_id":null}"#.to_string(),
+            ))
+            .await
+            .expect("send hello");
+
+        let mut order: Vec<String> = Vec::new();
+        for _ in 0..HELLO_FRAMES {
+            let Ok(Some(Ok(msg))) =
+                tokio::time::timeout(std::time::Duration::from_millis(600), read.next()).await
+            else {
+                break;
+            };
+            order.push(msg.into_text().unwrap());
+        }
+        let at = order
+            .iter()
+            .position(|m| m.contains(r#""kind":"channel_shows""#))
+            .unwrap_or_else(|| {
+                panic!(
+                    "a screen that joined was never told which kinds it shows, so it \
+                     paints every kind its template allows — which is the state that \
+                     put a countdown on every screen in the building: {order:?}"
+                )
+            });
+        assert!(
+            order[at].contains(r#""1":["scripture","song"]"#),
+            "the set arrived empty over a hub that has one: {}",
+            order[at]
+        );
+        let verse_at = order
+            .iter()
+            .position(|m| m.contains(r#""kind":"content""#))
+            .expect("the retained verse never arrived, so the ordering claim is vacuous");
+        assert!(
+            at < verse_at,
+            "the set arrived AFTER the frame it can suppress — a screen joining \
+             mid-service paints a kind it was configured out of, then drops it: \
+             {order:?}"
+        );
+    }
+
+    /// AN UNPARSEABLE `shows` MAP BECOMES `{}` — NO OPINION, NEVER AN EMPTY SET.
+    ///
+    /// The asymmetry is the whole point and it runs one way only. `{}` means no
+    /// screen has an opinion, so every screen follows its template, which is where
+    /// this decision lived before the column existed. The other direction — an
+    /// empty LIST arrived at by accident — is a congregation screen that paints
+    /// nothing for the rest of a service with nothing on it able to say why.
+    #[test]
+    fn a_shows_map_that_is_not_an_object_becomes_no_opinion() {
+        let hub = KioskHub::default();
+        hub.cache_channel_shows("{not json");
+        assert_eq!(hub.channel_shows_json(), "{}");
+        hub.cache_channel_shows(r#"["scripture"]"#);
+        assert_eq!(hub.channel_shows_json(), "{}");
+        hub.cache_channel_shows(r#"{"1":["scripture"]}"#);
+        assert_eq!(hub.channel_shows_json(), r#"{"1":["scripture"]}"#);
     }
 
     /// THE LOOK MAP IS NOT A SCREEN FRAME.
@@ -4833,6 +5039,7 @@ mod tests {
             hub.channel_roles_handle(),
             hub.channel_looks_handle(),
             hub.channel_templates_handle(),
+            hub.channel_shows_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
@@ -4856,7 +5063,7 @@ mod tests {
             .expect("send hello");
 
         let mut order: Vec<String> = Vec::new();
-        for _ in 0..12 {
+        for _ in 0..HELLO_FRAMES {
             let Ok(Some(Ok(msg))) =
                 tokio::time::timeout(std::time::Duration::from_millis(600), read.next()).await
             else {
@@ -4944,6 +5151,7 @@ mod tests {
             hub.channel_roles_handle(),
             hub.channel_looks_handle(),
             hub.channel_templates_handle(),
+            hub.channel_shows_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
@@ -4967,7 +5175,7 @@ mod tests {
             .expect("send hello");
 
         let mut got = None;
-        for _ in 0..5 {
+        for _ in 0..HELLO_FRAMES {
             let Ok(Some(Ok(msg))) =
                 tokio::time::timeout(std::time::Duration::from_secs(2), read.next()).await
             else {
@@ -5111,11 +5319,34 @@ mod tests {
         assert!(!is_screen_frame(
             r#"{"kind":"channel_looks","looks":{"1":{"scripture":9}}}"#
         ));
+        // …and the fifth. A screen's `shows` set decides whether a frame paints
+        // here; it is not itself a frame that paints.
+        assert!(!is_screen_frame(
+            r#"{"kind":"channel_shows","shows":{"1":["scripture"]}}"#
+        ));
     }
 
     /// Every `kind` this module publishes, and whether it decides what a screen
     /// is SHOWING. `true` here means the hub retains it and replays it to a
     /// client that joins late (rule 43).
+    /// HOW MANY FRAMES A TEST READS OFF A HELLO REPLY BEFORE IT GIVES UP.
+    ///
+    /// **ONE NUMBER, BECAUSE SIXTEEN HAND-WRITTEN ONES IS SIXTEEN THINGS THAT GO
+    /// STALE TOGETHER.** Every reader here loops until its own budget runs out OR
+    /// the socket goes quiet, and the quiet is what normally ends it — so a
+    /// generous budget costs nothing and a tight one is a time bomb. The bomb went
+    /// off twice in one afternoon: `channel_looks` and then `channel_shows` joined
+    /// the configuration block, and four tests that had nothing to do with either
+    /// began reporting *"a screen that reconnected mid-reading was left blank"* —
+    /// rule 43's own failure message, over a hub that was replaying the frame
+    /// correctly and a reader that stopped one frame short of it.
+    ///
+    /// It must stay comfortably above the size of the whole hello reply, which is
+    /// the configuration block plus everything retained. Raise it when that grows;
+    /// never lower it to make a test "tighter", because a tight budget here does
+    /// not assert anything — it only changes which bug the failure message names.
+    const HELLO_FRAMES: usize = 24;
+
     const FRAME_VERDICTS: &[(&str, bool)] = &[
         ("content", true),
         ("clear", true),
@@ -5162,6 +5393,19 @@ mod tests {
         // and BEFORE the retained screen frame: a look must be in hand before the
         // frame it dresses.
         ("channel_looks", false),
+        // WHICH KINDS EACH SCREEN SHOWS AT ALL (DECISIONS §98). Configuration for
+        // the fifth time and not retained HERE for the fifth identical reason:
+        // `last_screen` holds one frame and the newest wins. It has its own slot
+        // (`channel_shows`) and is replayed on hello from there, on EVERY hello and
+        // BEFORE the retained screen frame — because it decides whether that frame
+        // paints on this screen at all, and sent after it a screen the operator has
+        // taken the countdown off would paint one and then drop it.
+        //
+        // It is the one frame in this list that can stop a fire reaching a screen,
+        // which is why it is worth saying what it can NOT stop: it narrows CONTENT,
+        // it is never consulted for `clear` or `black`, and a screen an operator
+        // could configure out of a panic control is rule 15's exact failure.
+        ("channel_shows", false),
         // The programme timers a stage tablet is showing. Not retained HERE, for
         // the same reason as the three above: `last_screen` holds one frame and the
         // newest wins, so retaining a clock would replace the verse and the next
@@ -5371,6 +5615,19 @@ mod tests {
              refusing real messages once the operator went live — the failure \
              `set_default_template` describes, on a surface where the cost is a \
              preacher not being told something",
+        ),
+        (
+            "set_channel_shows",
+            false,
+            "configuration, and the same verdict as `set_channel_looks` beside it \
+             for the same reason: it paints nothing on arrival and cannot blank a \
+             screen that is already showing something — it narrows what the NEXT \
+             fire of a kind reaches. Gating it would leave every screen still \
+             obeying the pre-rehearsal set once the operator went live, which is \
+             `set_default_template`'s failure on the one control whose whole point \
+             is that a congregation screen does NOT show something. And a \
+             rehearsal is exactly when an operator checks whether the countdown is \
+             off the wall",
         ),
         (
             "set_channel_looks",
@@ -5679,6 +5936,7 @@ mod tests {
             hub.channel_roles_handle(),
             hub.channel_looks_handle(),
             hub.channel_templates_handle(),
+            hub.channel_shows_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
@@ -5707,7 +5965,7 @@ mod tests {
             .expect("send hello");
 
         let mut got = None;
-        for _ in 0..4 {
+        for _ in 0..HELLO_FRAMES {
             let Ok(Some(Ok(msg))) =
                 tokio::time::timeout(std::time::Duration::from_secs(2), read.next()).await
             else {
@@ -5749,6 +6007,7 @@ mod tests {
             hub.channel_roles_handle(),
             hub.channel_looks_handle(),
             hub.channel_templates_handle(),
+            hub.channel_shows_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
@@ -5780,7 +6039,7 @@ mod tests {
         // BOTH, and the content must still arrive — that is the whole assertion.
         let mut saw_content = false;
         let mut saw_transition = false;
-        for _ in 0..6 {
+        for _ in 0..HELLO_FRAMES {
             let Ok(Some(Ok(msg))) =
                 tokio::time::timeout(std::time::Duration::from_secs(2), read.next()).await
             else {
@@ -6281,6 +6540,7 @@ mod tests {
             hub.channel_roles_handle(),
             hub.channel_looks_handle(),
             hub.channel_templates_handle(),
+            hub.channel_shows_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
@@ -6310,7 +6570,7 @@ mod tests {
             .expect("send hello");
 
         let mut got = None;
-        for _ in 0..8 {
+        for _ in 0..HELLO_FRAMES {
             let Ok(Some(Ok(msg))) =
                 tokio::time::timeout(std::time::Duration::from_secs(2), read.next()).await
             else {
@@ -6347,6 +6607,7 @@ mod tests {
             hub.channel_roles_handle(),
             hub.channel_looks_handle(),
             hub.channel_templates_handle(),
+            hub.channel_shows_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
@@ -6376,7 +6637,7 @@ mod tests {
             .expect("send hello");
 
         let mut frames: Vec<String> = Vec::new();
-        for _ in 0..8 {
+        for _ in 0..HELLO_FRAMES {
             let Ok(Some(Ok(msg))) =
                 tokio::time::timeout(std::time::Duration::from_millis(600), read.next()).await
             else {
@@ -6419,6 +6680,7 @@ mod tests {
             hub.channel_roles_handle(),
             hub.channel_looks_handle(),
             hub.channel_templates_handle(),
+            hub.channel_shows_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
@@ -6445,7 +6707,7 @@ mod tests {
             .expect("send hello");
 
         let mut got = None;
-        for _ in 0..6 {
+        for _ in 0..HELLO_FRAMES {
             let Ok(Some(Ok(msg))) =
                 tokio::time::timeout(std::time::Duration::from_secs(2), read.next()).await
             else {
@@ -6503,6 +6765,7 @@ mod tests {
             hub.channel_roles_handle(),
             hub.channel_looks_handle(),
             hub.channel_templates_handle(),
+            hub.channel_shows_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
@@ -6545,7 +6808,7 @@ mod tests {
         // bug. The loop ends on the read timeout, so a wrong order is reported as a
         // wrong order.
         let mut order: Vec<String> = Vec::new();
-        for _ in 0..12 {
+        for _ in 0..HELLO_FRAMES {
             let Ok(Some(Ok(msg))) =
                 tokio::time::timeout(std::time::Duration::from_millis(600), read.next()).await
             else {
@@ -6569,6 +6832,10 @@ mod tests {
                 // configuration, before anything that paints, on the same rule as
                 // the role map above it.
                 "channel_looks",
+                // WHICH KINDS EACH SCREEN SHOWS AT ALL (DECISIONS §98) — with the
+                // configuration and BEFORE anything that paints, because it can
+                // suppress what paints.
+                "channel_shows",
                 "transition",
                 "timer",
                 "background",
@@ -6610,6 +6877,7 @@ mod tests {
             hub.channel_roles_handle(),
             hub.channel_looks_handle(),
             hub.channel_templates_handle(),
+            hub.channel_shows_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
@@ -6640,7 +6908,7 @@ mod tests {
             .expect("send hello");
 
         let mut order: Vec<String> = Vec::new();
-        for _ in 0..8 {
+        for _ in 0..HELLO_FRAMES {
             let Ok(Some(Ok(msg))) =
                 tokio::time::timeout(std::time::Duration::from_millis(600), read.next()).await
             else {
@@ -6724,6 +6992,7 @@ mod tests {
             hub.channel_roles_handle(),
             hub.channel_looks_handle(),
             hub.channel_templates_handle(),
+            hub.channel_shows_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
@@ -6753,7 +7022,7 @@ mod tests {
             .expect("send hello");
 
         let mut got = None;
-        for _ in 0..4 {
+        for _ in 0..HELLO_FRAMES {
             let Ok(Some(Ok(msg))) =
                 tokio::time::timeout(std::time::Duration::from_secs(2), read.next()).await
             else {
@@ -6791,6 +7060,7 @@ mod tests {
             hub.channel_roles_handle(),
             hub.channel_looks_handle(),
             hub.channel_templates_handle(),
+            hub.channel_shows_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
@@ -6820,7 +7090,7 @@ mod tests {
             .expect("send hello");
 
         let mut frames = Vec::new();
-        for _ in 0..4 {
+        for _ in 0..HELLO_FRAMES {
             let Ok(Some(Ok(msg))) =
                 tokio::time::timeout(std::time::Duration::from_millis(900), read.next()).await
             else {
@@ -6869,6 +7139,7 @@ mod tests {
             hub.channel_roles_handle(),
             hub.channel_looks_handle(),
             hub.channel_templates_handle(),
+            hub.channel_shows_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
@@ -6897,7 +7168,7 @@ mod tests {
             .expect("send hello");
 
         let mut frames = Vec::new();
-        for _ in 0..4 {
+        for _ in 0..HELLO_FRAMES {
             let Ok(Some(Ok(msg))) =
                 tokio::time::timeout(std::time::Duration::from_millis(900), read.next()).await
             else {
@@ -6933,6 +7204,7 @@ mod tests {
             hub.channel_roles_handle(),
             hub.channel_looks_handle(),
             hub.channel_templates_handle(),
+            hub.channel_shows_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
@@ -7196,6 +7468,7 @@ mod tests {
             hub.channel_roles_handle(),
             hub.channel_looks_handle(),
             hub.channel_templates_handle(),
+            hub.channel_shows_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
@@ -7257,6 +7530,7 @@ mod tests {
             hub.channel_roles_handle(),
             hub.channel_looks_handle(),
             hub.channel_templates_handle(),
+            hub.channel_shows_handle(),
             hub.last_screen_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),

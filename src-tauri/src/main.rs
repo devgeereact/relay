@@ -222,6 +222,7 @@ fn main() {
             let kiosk_roles = kiosk.channel_roles_handle();
             let kiosk_kind_looks = kiosk.channel_looks_handle();
             let kiosk_screen_tpls = kiosk.channel_templates_handle();
+            let kiosk_shows = kiosk.channel_shows_handle();
             let kiosk_last = kiosk.last_screen_handle();
             let kiosk_last_x = kiosk.last_transition_handle();
             let kiosk_last_t = kiosk.last_timers_handle();
@@ -279,6 +280,21 @@ fn main() {
                         .and_then(|conn| db::channel_looks_json(&conn).ok())
                         .unwrap_or_else(|| "{}".into());
                 kiosk.cache_channel_looks(&lj);
+            }
+            // …AND WHICH KINDS EACH SCREEN SHOWS AT ALL (DECISIONS §98), on the
+            // identical argument once more. An unreadable database leaves `{}` —
+            // no screen has an opinion, so every screen follows its template,
+            // which is where this decision lived before the column existed. The
+            // other direction, an empty LIST arrived at by accident, is a
+            // congregation screen that paints nothing.
+            {
+                let db = app.state::<Db>();
+                let sj =
+                    db.0.lock()
+                        .ok()
+                        .and_then(|conn| db::channel_shows_json(&conn).ok())
+                        .unwrap_or_else(|| "{}".into());
+                kiosk.cache_channel_shows(&sj);
             }
             // …AND WHAT EACH SCREEN WEARS FOR EVERYTHING ELSE — its own template.
             //
@@ -377,6 +393,7 @@ fn main() {
                 kiosk_roles,
                 kiosk_kind_looks,
                 kiosk_screen_tpls,
+                kiosk_shows,
                 kiosk_last,
                 kiosk_last_x,
                 kiosk_last_t,
@@ -551,6 +568,7 @@ fn main() {
             set_channel_template,
             list_channel_looks,
             set_channel_look,
+            set_channel_shows,
             rename_channel,
             clear_screen,
             blackout_screen,
@@ -7046,12 +7064,13 @@ fn delete_channel<R: tauri::Runtime>(
     // is still open would otherwise keep the role of a channel that no longer
     // exists — which on a stage display means it keeps accepting stage messages
     // after the operator has deleted it.
-    let (roles, looks, ids) = {
+    let (roles, looks, shows, ids) = {
         let conn = db.0.lock()?;
         db::delete_channel(&conn, id)?;
         (
             db::channel_roles_json(&conn)?,
             db::channel_looks_json(&conn)?,
+            db::channel_shows_json(&conn)?,
             resolvable_look_ids(&conn),
         )
     };
@@ -7063,6 +7082,7 @@ fn delete_channel<R: tauri::Runtime>(
     // is not there. The same argument as the role map one line up, on the map that
     // decides what a screen paints rather than what it accepts.
     publish_channel_looks(&app, &looks);
+    publish_channel_shows(&app, &shows);
     if let Some(hub) = app.try_state::<channels::KioskHub>() {
         hub.cache_look_ids(&ids);
         // …AND WHAT THE DELETED SCREEN WORE. Nothing can be that channel any more,
@@ -7286,6 +7306,81 @@ fn set_channel_look<R: tauri::Runtime>(
     }
     publish_channel_looks(&app, &looks);
     Ok(())
+}
+
+/// SET (or CLEAR, with `None`) WHICH KINDS A SCREEN SHOWS AT ALL (§98).
+///
+/// The operator's report was "timers still show on all screens, even the live
+/// screen". Measured in a live install: of 44 templates, 40 list `countdown` in
+/// `layout.shows` and the other four declare no `shows` key at all, which
+/// `templateShows` reads as showing every kind. So every template in that install
+/// painted the congregation countdown, and `shows` was not editable from any
+/// surface — it existed in seed data and in `TemplateRender` and nowhere an
+/// operator could reach.
+///
+/// **THIS IS A SECOND FACT ON A SECOND COLUMN, NOT A MEANING STRETCHED ONTO THE
+/// FIRST.** A template's `shows` is the DESIGNER'S statement about what that
+/// template can render — a lower third has no regions for a countdown and never
+/// will. This is the OPERATOR'S statement about what this screen is for. They are
+/// ANDed at the receiver, so this can only ever NARROW and can never force a
+/// template to paint a kind it has no regions for, which would be a second
+/// authority on a fact the template already owns.
+///
+/// `None` clears the column to SQL NULL and means "no opinion, follow the
+/// template" — the behaviour every install has today, which is why there is no
+/// back-fill and why a newly added channel is NULL rather than an explicit set.
+/// An EMPTY list is a different thing and is stored as one: an operator who
+/// unticks every kind has said this screen shows nothing.
+///
+/// **IT NARROWS CONTENT AND NOTHING ELSE.** `clear_screens` and `blackout` do not
+/// pass through any of this, are never published from it, and never will be — a
+/// screen an operator can accidentally configure out of a panic control is rule
+/// 15's exact failure, and this is the precise shape it would take.
+///
+/// Not service-lock protected, for the same reason as `set_channel_look` and
+/// `rename_channel`: reversible by doing it again, and the moment an operator most
+/// wants it is when something is on a screen it should not be on, which is during
+/// a service.
+///
+/// BOTH DOORS, in the same arms including the CLEARING arm — which is the half
+/// `set_channel_template` already gets right and the half this kind of command
+/// most often gets wrong, because clearing reads as "nothing to tell anybody".
+#[tauri::command]
+fn set_channel_shows<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    db: tauri::State<'_, Db>,
+    id: i64,
+    kinds: Option<Vec<String>>,
+) -> error::Result<()> {
+    if let Some(list) = &kinds {
+        for k in list {
+            if !CONTENT_LOOK_KINDS.contains(&k.as_str()) {
+                return Err(error::Error::refused(format!(
+                    "Relay has no kind of content called \"{k}\"."
+                )));
+            }
+        }
+    }
+    let shows = {
+        let conn = db.0.lock()?;
+        db::set_channel_shows(&conn, id, kinds.as_deref())?;
+        db::channel_shows_json(&conn)?
+    };
+    publish_channel_shows(&app, &shows);
+    Ok(())
+}
+
+/// The two doors, once. Called by every command that can change the `shows` map.
+///
+/// `try_state` rather than a `State` parameter, for the reason
+/// `publish_channel_roles` records: a headless Relay manages no hub.
+fn publish_channel_shows<R: tauri::Runtime>(app: &tauri::AppHandle<R>, shows_json: &str) {
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(shows_json) {
+        let _ = app.emit("output://channel_shows", serde_json::json!({ "shows": v }));
+    }
+    if let Some(hub) = app.try_state::<channels::KioskHub>() {
+        hub.set_channel_shows(shows_json);
+    }
 }
 
 /// The two doors, once. Called by every command that can change the look map.

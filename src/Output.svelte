@@ -8,6 +8,7 @@
     resolveContentOverride,
     resolveOutputTemplate,
     channelLookTemplate,
+    channelShowsKind,
     templateShows,
     setCountdownWarnDefault,
   } from './lib/layers.js';
@@ -126,6 +127,38 @@
   let channelLooks = {};
   function applyChannelLooks(next) {
     channelLooks = next && typeof next === 'object' && !Array.isArray(next) ? next : {};
+  }
+
+  // ── WHICH KINDS THIS SCREEN SHOWS AT ALL (DECISIONS §98) ────────────────────
+  //
+  // `{ "1": ["scripture", "song"] }`, keyed by channel id. A screen with no
+  // opinion is OMITTED, and `{}` means no screen anywhere has one — two different
+  // absences, both of which have to survive the wire, because the first means
+  // "follow the template" and the second means "nobody has set this up" and they
+  // resolve to the same behaviour for different reasons.
+  //
+  // ANDed with `templateShows` at the two call sites below, never replacing it: a
+  // template's `shows` is what it CAN render and this is what the screen is FOR,
+  // so this can only narrow. It is never consulted for `clear` or `black` — see
+  // `channelShowsKind`, and rule 15.
+  //
+  // Whole set every time, both doors, `{}` is an answer: the same three rules as
+  // the look map above it, for the same three reasons.
+  let channelShows = {};
+  function applyChannelShows(next) {
+    channelShows = next && typeof next === 'object' && !Array.isArray(next) ? next : {};
+  }
+  /**
+   * THE ONE PLACE THE TWO HALVES ARE ANDed.
+   *
+   * Both doors call this and neither answers the question itself, because a rule
+   * kept on one of two surfaces is the mistake this file's own comments count
+   * seven times — and here the cost is a countdown on the wall the operator took
+   * it off, on whichever of the projector and the OBS source they are not looking
+   * at.
+   */
+  function paintsKind(kind) {
+    return templateShows(t, kind) && channelShowsKind(channelShows, channelId, kind);
   }
 
   // ── THE STAGE MESSAGE, AND WHY THIS PAGE MAY REFUSE IT ─────────────────────
@@ -489,17 +522,51 @@
   // Guarded the same way — a missing command or a backend that says nothing
   // leaves this screen with no role, which is the refusing answer and the safe
   // one, and never throws on a live output page.
-  async function loadChannelRoles() {
+  // Desktop only — WHAT EVERY SCREEN IS FOR AND WHAT EACH ONE SHOWS, read when
+  // this window opens. ONE read, two facts, and they are one function because they
+  // come off ONE ROW: `list_output_channels` carries `role` and `shows_json`
+  // together, and asking for the same rows twice is one more sequential IPC
+  // round-trip on the path a projector opened mid-service is already waiting on.
+  //
+  // That is not a micro-optimisation here. Every opening read on this page runs in
+  // SERIES and the `listen` registrations come after the last of them, so each
+  // extra read widens the window in which a window that has visibly opened is not
+  // yet hearing events. Two reads of one row were two turns of that window for
+  // nothing.
+  //
+  // The kiosk hub sends both of these in the hello reply; a native output window
+  // has no socket and would be sent neither, so a projector opened through
+  // `open_channel_output` would know nothing about itself until the operator
+  // happened to change something — the "guarantee kept on one door" mistake, on
+  // the two screens most often in the same room.
+  //
+  // Guarded the same way as every read above it, and the two failures differ:
+  // no role is the REFUSING answer (a screen that is not the stage may not be
+  // shown a word meant for the preacher), while no `shows` opinion is the
+  // PERMISSIVE one (follow the template, which is where the decision lived before
+  // the column existed). An empty `shows` list arrived at by accident is a
+  // congregation screen painting nothing, so the absence must stay an absence.
+  async function loadChannelConfig() {
     try {
       const call = await invoke();
       const list = await call('list_output_channels');
-      const next = {};
+      const roles = {};
+      const shows = {};
       for (const c of Array.isArray(list) ? list : []) {
-        if (c?.role) next[String(c.id)] = c.role;
+        if (c?.role) roles[String(c.id)] = c.role;
+        if (!c?.shows_json) continue;
+        try {
+          const kinds = JSON.parse(c.shows_json);
+          if (Array.isArray(kinds)) shows[String(c.id)] = kinds;
+        } catch {
+          /* an unreadable value is NO OPINION, never an empty set */
+        }
       }
-      applyRoles(next);
+      applyRoles(roles);
+      applyChannelShows(shows);
     } catch {
       applyRoles({});
+      applyChannelShows({});
     }
   }
   async function fetchTemplate(id) {
@@ -564,7 +631,7 @@
       // in `onMount` — the native window has the Tauri bridge and no socket, so a
       // filter written here and not there is the "guarantee kept on one door"
       // mistake, on the two screens most often in the same room.
-      if (m.content_kind && !templateShows(t, m.content_kind)) return;
+      if (m.content_kind && !paintsKind(m.content_kind)) return;
       // The override takes effect WITH the content, never before it — see the
       // snapshot comment at the top of this file.
       appliedTransition = pendingTransition;
@@ -633,6 +700,12 @@
       // the look is in hand before the frame it dresses (rule 43). `{}` is an
       // answer and is applied as one — see `applyChannelLooks`.
       applyChannelLooks(m.looks);
+    } else if (m.kind === 'channel_shows') {
+      // WHICH KINDS THIS SCREEN SHOWS AT ALL. Sent on every hello with the
+      // configuration and BEFORE the retained screen frame, because it decides
+      // whether that frame paints here — sent after it, a screen the operator has
+      // taken the countdown off would paint one and then drop it.
+      applyChannelShows(m.shows);
     } else if (m.kind === 'channel_roles') {
       // WHAT EVERY SCREEN IS FOR. Sent on every hello and whenever it changes, so
       // this page can answer the only question it asks of it: am I the stage?
@@ -715,7 +788,7 @@
       await loadDefaultTemplate();
       await loadContentLooks();
       await loadChannelLooks();
-      await loadChannelRoles();
+      await loadChannelConfig();
       const { listen } = await import('@tauri-apps/api/event');
       unlisten.push(await listen('output://content', (e) => {
         // Per-screen visibility (see applyMessage) — hold what's up if this screen
@@ -723,7 +796,7 @@
         // renames `kind` to `content_kind`, so the two doors read a differently
         // named field off differently shaped messages and only the rule is shared.
         // Swept with the kiosk door and needed nothing for the same reason.
-        if (e.payload?.kind && !templateShows(t, e.payload.kind)) return;
+        if (e.payload?.kind && !paintsKind(e.payload.kind)) return;
         appliedTransition = pendingTransition;
         content = e.payload;
         // BOTH DOORS. The struct emit carries every field, so the chosen threshold
@@ -822,6 +895,14 @@
       // The bytes may be new, so they are fetched for any id this page does not
       // already hold — `template://updated` only fires for a template that was
       // EDITED, and choosing an existing template for a kind edits nothing.
+      // BOTH DOORS, for the eighth time in this file. A screen the operator takes
+      // the countdown off must lose it on the projector and in OBS at the same
+      // instant, or the one they are not looking at is the one still showing it.
+      unlisten.push(
+        await listen('output://channel_shows', (e) => {
+          applyChannelShows(e.payload?.shows);
+        }),
+      );
       unlisten.push(
         await listen('output://channel_looks', async (e) => {
           applyChannelLooks(e.payload?.looks);

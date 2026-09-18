@@ -41,7 +41,7 @@ use rusqlite::{Connection, OptionalExtension};
 use std::path::PathBuf;
 
 // Migration + seed helpers, pulled from the aggregates they belong to.
-use channels::{ensure_channel_looks, ensure_channel_role, seed_channels};
+use channels::{ensure_channel_looks, ensure_channel_role, ensure_channel_shows, seed_channels};
 #[cfg(test)]
 use serde_json::Value;
 use templates::{
@@ -405,6 +405,7 @@ fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
     // a leftover row by its BYTES — see the function's own note. Wave 5, Track E.
     ensure_templates_name_real_families(conn)?;
     ensure_channel_role(conn)?; // output_channels.role — what a screen is FOR
+    ensure_channel_shows(conn)?; // output_channels.shows_json — what a screen SHOWS (§98)
     ensure_service_plans(conn)?; // Planner
     ensure_songs(conn)?; // Lyrics
     ensure_saved_scripture(conn)?; // Library

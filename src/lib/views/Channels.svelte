@@ -86,6 +86,7 @@
     listOutputChannels,
     setChannelTemplate,
     setChannelRole,
+    setChannelShows,
     listMonitors,
     openChannelOutput,
     closeChannelOutput,
@@ -517,6 +518,54 @@
   // a picker that silently cannot be chosen explains nothing, and the sentence
   // says which screen to clear.
   const assignRole = (c, e) => act(() => setChannelRole(c.id, e.target.value === '' ? null : e.target.value));
+  // ── WHAT THIS SCREEN SHOWS AT ALL (DECISIONS §98) ──────────────────────────
+  //
+  // Read off the channel row rather than kept in a second copy here, for the
+  // reason `downOf` above states about liveness: a local copy disagrees with the
+  // row the moment a second console, a reconnect or a refused call moves one of
+  // them — and what it would disagree about is whether a congregation sees
+  // something.
+  //
+  // NO OPINION IS NOT AN EMPTY SET, and the UI has to show that difference rather
+  // than resolve it. A screen with no opinion shows all five ticked AND says so in
+  // its hint: "ticked" and "showing everything because nobody has chosen" look
+  // identical on a checkbox and are different facts about the setup.
+  const showsOf = (c) => {
+    if (!c?.shows_json) return null;
+    try {
+      const v = JSON.parse(c.shows_json);
+      return Array.isArray(v) ? v : null;
+    } catch {
+      // An unreadable value is NO OPINION, never an empty set. The backend makes
+      // the same judgement in `channel_shows_json`, and the safe direction is the
+      // one where the template still decides.
+      return null;
+    }
+  };
+  $: selShows = showsOf(sel);
+  $: selShowsAll = selShows == null;
+  /**
+   * Tick or untick one kind.
+   *
+   * Starting from NO OPINION, the first untick has to write the other four
+   * explicitly — there is no "everything except" to store, and inventing one
+   * would be a second spelling of a fact the column already holds one way.
+   *
+   * Ticking the last missing kind goes back to NO OPINION rather than to an
+   * explicit list of all five. That is not tidiness: an explicit five is a
+   * standing instruction that a SIXTH content kind would be silently excluded
+   * from, which is the same trap `layout.shows` already sets on the twenty-five
+   * preset templates.
+   */
+  const toggleShows = (c, kind, on) => {
+    const current = showsOf(c) ?? CONTENT_KINDS.map((k) => k.key);
+    const next = on ? [...new Set([...current, kind])] : current.filter((k) => k !== kind);
+    const all = next.length === CONTENT_KINDS.length;
+    return act(async () => {
+      await setChannelShows(c.id, all ? null : next);
+      await refresh();
+    });
+  };
   const openNative = (c) => act(() => openChannelOutput(c.id));
   const closeNative = (c) => act(() => closeChannelOutput(c.id));
 
@@ -1304,6 +1353,51 @@
             {/if}
           </div>
 
+          <!-- ══ SHOWS ══ (DECISIONS §98)
+               WHAT THIS SCREEN IS FOR, as against what its template CAN render.
+               The two are ANDed at the output page and this half can only ever
+               narrow: unticking a kind here can take the countdown off the wall,
+               and ticking one can never make a lower third paint a countdown it
+               has no regions for.
+
+               Five checkboxes and not a picker, because this is a SET and an
+               operator reading the panel has to see the four that are on as
+               readily as the one that is off.
+
+               It is not on the panic path and cannot be: `Clear screens` and
+               `Blackout` address every screen and ask nothing about which. -->
+          <div class="r-lbl ch-flbl">Shows</div>
+          <div class="ch-fin ch-shows">
+            {#each CONTENT_KINDS as k (k.key)}
+              <label class="ch-showsrow">
+                <input
+                  type="checkbox"
+                  checked={selShowsAll || selShows.includes(k.key)}
+                  disabled={!$capture.available}
+                  on:change={(e) => toggleShows(sel, k.key, e.currentTarget.checked)} />
+                <span>{k.label}</span>
+              </label>
+            {/each}
+          </div>
+          {#if selShowsAll}
+            <p class="ch-finhint">
+              This screen has <b>no opinion</b>, so it shows whatever its template can
+              render. Untick a kind to keep it off this screen — it never makes a
+              template show something it has no room for, and it never affects
+              <b>Clear screens</b> or <b>Blackout</b>.
+            </p>
+          {:else if selShows.length === 0}
+            <p class="ch-finhint">
+              This screen shows <b>nothing</b>. Its panic controls still reach it, and it
+              still reports that it is painting.
+            </p>
+          {:else}
+            <p class="ch-finhint">
+              This screen shows only what is ticked, and only where its template can
+              render it. Tick them all to go back to <b>no opinion</b>.
+            </p>
+          {/if}
+
           <!-- ROLE. A setting, not a guess: Live's programme pane used to decide
                which screen it was previewing from `render_target`, and a Stage
                Message is filtered on this at the receiving page. -->
@@ -1783,6 +1877,12 @@
      half is a screen wearing a look nobody can read back. */
   .ch-perkindlbl{ min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .ch-perkindsel{ min-width:0; width:100%; }
+  /* WHAT THIS SCREEN SHOWS (DECISIONS §98). A set, laid out as a set: the four
+     that are on have to read as readily as the one that is off. */
+  .ch-shows{ display:flex; flex-wrap:wrap; gap:4px 14px; }
+  .ch-showsrow{ display:flex; align-items:center; gap:6px; min-width:0;
+    font-size:var(--v-fs-cap); color:var(--v-txt); cursor:pointer; }
+  .ch-showsrow input{ flex:0 0 auto; }
   /* Sits under Actions, so it needs the gap the actions row does not provide. */
   .ch-reach{ margin-top:10px; }
 
