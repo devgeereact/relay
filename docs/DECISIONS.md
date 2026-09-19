@@ -5527,3 +5527,64 @@ band (`rackBottom` 368 against `band.y` 376), which is the overlap `liverackfit.
 exists for. **At ≤1180px the Live desk scrolls and the band sits below the fold** — that is
 the pre-existing narrow step (`height:auto`), unchanged by this and measured identical with
 and without the new button.
+
+## 100. A screen that reports is told the time, and an unanswered report is how a phone knows it is alone (2026-09-19)
+
+Two findings on the preacher's phone wanted the same thing, so they got one frame.
+
+**A socket is not a screen.** `Stage.svelte` set `connected` on `onopen` and never revisited
+it. A half-open socket never fires `onclose`, so a phone that slept, roamed between access
+points, or sat behind a NAT that had quietly timed out kept a green `live` pip over frozen
+content — for the rest of a service, on the one screen whose reader cannot glance at the
+console to find out what happened. This is rule 35 on the surface a preacher is holding.
+
+**A countdown was computed against the phone's clock.** `countdown_to` is an absolute epoch
+produced on the host; this page subtracted its own `Date.now()` from it. A tablet a minute
+out showed a minute of error on the figure a sermon is paced against.
+
+The first cannot be solved by watching for silence. The hub publishes only when something
+CHANGES, so no frames is the normal state of a quiet service, and a page that treated quiet
+as a fault would cry wolf through every sermon. What distinguishes the two cases is that the
+page can ask. It already does: since plan finding S11 it sends a `beat` every two seconds,
+the same one every other output page sends.
+
+**So the hub answers it.** `{"kind":"beat_ack","at":<host epoch ms>}`, written to the one
+socket whose beat prompted it, exactly as the hello reply is written. Three unanswered beats
+— `BEAT_INTERVAL_MS * 3`, the same grace the console gives a screen — and the header reads
+`not answering` rather than `live`. The same ack carries the host clock, so the correction
+rides a round trip that was already happening rather than adding a protocol.
+
+**It is a reply, not a broadcast, and that is the whole shape of it.** A `tick` to every
+browser source and lobby TV in the building would be traffic bought for one page's benefit,
+and it would still need a second answer for the clock. Because it is a reply it is also not a
+retained frame: `FRAME_VERDICTS` carries `("beat_ack", false)` with the reason, since a
+retained ack would hold a timestamp that was true when a *different* client reported, and a
+late joiner gets its own within two seconds by beating itself.
+
+**Answered inside the parse.** The ack is sent within the same `if let` that validates
+`state` against `PaintState`, so a malformed beat draws no reply. An ack that came back for
+anything would let a client distinguish a good frame from a bad one by whether the server
+spoke, which is a probe this deliberately read-only server does not owe anybody
+(`a_beat_that_does_not_parse_is_not_answered`).
+
+**The offset is a median of five samples, not the last one.** One slow round trip is a
+latency measurement, not a clock change, and a single outlier must not move what the preacher
+is reading. One corrected instant then drives the wall clock, the countdown mirror, the
+programme rail and the service-elapsed figure, so those four cannot disagree with each other.
+The offset is short by the return leg, because the host stamped `at` before sending it: on a
+LAN that is single-digit milliseconds against a figure displayed to the second. It is not
+corrected for, and this sentence is the honest statement of that rather than a claim of
+sub-second synchronisation.
+
+**What this does NOT do.** `Output.svelte` does not read the ack, so a congregation screen's
+countdown is still on its own clock. For the native window on this machine the skew is zero
+by construction, but a kiosk browser source on a second computer has exactly the same
+exposure — and a wrong countdown on the wall is seen by more people than a wrong one on a
+phone. It needs the offset threaded into `TemplateRender`, which ticks its own `Date.now()`
+and is the shared renderer for the wall, so it is its own change with its own tests. Filed as
+plan finding S14, and `r6-contracts.test.js` carries an explicit `beat_ack: false` for that
+page with the reason attached, so it cannot be forgotten quietly.
+
+**It is not authentication and must never be described as one.** DECISIONS §35 is untouched:
+the ack carries a number this server already knows and nothing any client said, and the hub
+still records nothing about who connected.
