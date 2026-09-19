@@ -2537,6 +2537,12 @@ try {
 } catch {
   return null;
 }
+
+}
+/** Interface enumeration. Throws so a failed refresh cannot look successful. */
+export async function networkAddresses() {
+  const call = await invoke();
+  return await call('network_addresses');
 }
 
 /** Bible translations available in the corpus. */

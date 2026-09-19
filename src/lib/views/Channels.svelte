@@ -69,7 +69,7 @@
     lookIdFor,
   } from '../layers.js';
   import { outputUrl } from '../outputurl.js';
-  import { CHANNEL_ROLES, NO_ROLE_LABEL, stageRemoteUrl } from '../channelroles.js';
+  import { CHANNEL_ROLES, NO_ROLE_LABEL, stageRemoteUrl, isSharableHost } from '../channelroles.js';
   import {
     capture,
     templates,
@@ -103,6 +103,7 @@
     addChannel,
     deleteChannel,
     localIp,
+    networkAddresses,
     defaultTemplateId,
     loadDefaultTemplate,
     readErrors,
@@ -133,6 +134,38 @@
   let lanIp = 'localhost';
   let qrOpen = null;
   let qrData = '';
+  let qrUrl = '';
+  let qrError = '';
+  let addresses = [];
+  let networkBusy = false;
+  let networkError = '';
+  let chosenAddress = null;
+  let selectedStageId = null;
+
+  async function refreshNetwork() {
+    if (networkBusy) return;
+    networkBusy = true;
+    networkError = '';
+    try {
+      const [detected, preferred] = await Promise.all([networkAddresses(), localIp()]);
+      addresses = Array.isArray(detected) ? detected : [];
+      // Keep a deliberate choice through refresh. If it disappears, require a
+      // new choice rather than handing out a different network's QR silently.
+      if (chosenAddress != null) {
+        lanIp = addresses.some((a) => a.address === chosenAddress) ? chosenAddress : 'localhost';
+      } else {
+        lanIp = addresses.find((a) => a.address === preferred)?.address || addresses[0]?.address || preferred || 'localhost';
+      }
+    } catch (e) {
+      lanIp = 'localhost';
+      networkError = 'Could not refresh local network addresses. Try Refresh addresses again.';
+    } finally { networkBusy = false; }
+  }
+
+  function chooseAddress(e) {
+    chosenAddress = e.target.value || null;
+    lanIp = chosenAddress || 'localhost';
+  }
 
   let filter = 'all'; // all | native_window | network_client
   let q = '';
@@ -162,7 +195,7 @@
       // the store, so the desk cannot describe one screen two ways.
       await loadChannelLooks();
       monitors = await listMonitors();
-      lanIp = (await localIp()) || 'localhost';
+      await refreshNetwork();
       await refresh();
       // Make sure the poller is running even if this tab was opened before the
       // shell got there — idempotent, so this cannot create a second timer.
@@ -366,14 +399,28 @@
   $: followers = channels.filter((c) => c.template_id == null);
 
   async function showQr(c) {
-    if (qrOpen === c.id) { qrOpen = null; return; }
+    const address = obsUrl(c);
+    if (qrOpen === c.id && qrUrl === address) { qrOpen = null; return; }
+    qrError = '';
+    // A QR IS A SECOND DEVICE, BY DEFINITION. The URL beside it is not: a
+    // loopback output address is exactly right for OBS on this computer, so
+    // Copy URL keeps working and only the photograph is refused. `showStageQr`
+    // has withheld a loopback link since its own fix; this door had no guard at
+    // all and would happily photograph `http://localhost:8032/output.html`,
+    // which names the PHONE that scans it.
+    if (!isSharableHost(lanIp)) {
+      qrOpen = null;
+      qrError = 'Relay has no local network address yet, so a QR here could only point the other device at itself. Pick an address in Sharing and try again — or copy the URL, which is still correct for OBS on this computer.';
+      return;
+    }
     try {
-      qrData = await QRCode.toDataURL(obsUrl(c), { width: 190, margin: 1, color: { dark: '#0a0a0a', light: '#ffffff' } });
+      const data = await QRCode.toDataURL(address, { width: 240, margin: 4, color: { dark: '#0a0a0a', light: '#ffffff' } });
+      if (address !== obsUrl(c)) return;
+      qrData = data;
+      qrUrl = address;
       qrOpen = c.id;
     } catch (e) {
-      // The URL is shown on the row regardless, so a failed QR is cosmetic — but
-      // log it rather than swallow, so a dead-looking button isn't invisible.
-      console.warn('QR generation failed', e);
+      qrError = 'Could not create the QR code. Copy the output URL and open it on the other device.';
     }
   }
 
@@ -391,18 +438,27 @@
   // bare address is one that renders the reading perfectly and never receives the
   // message it was set up for. `url` is null when no screen holds the role, and
   // the panel says that rather than printing an address that half works.
-  $: stageRemote = stageRemoteUrl(lanIp, channels);
+  $: stageScreens = channels.filter((c) => c.role === 'stage');
+  $: stageRemote = stageRemoteUrl(lanIp, channels, selectedStageId);
   $: stageUrl = stageRemote.url;
   let stageQr = '';
   let stageQrOpen = false;
+  let stageQrUrl = '';
+  let stageQrError = '';
   let copiedStage = false;
   async function showStageQr() {
-    if (stageQrOpen) { stageQrOpen = false; return; }
+    if (stageQrOpen && stageQrUrl === stageUrl) { stageQrOpen = false; return; }
+    const address = stageUrl;
+    if (!address) return;
+    stageQrError = '';
     try {
-      stageQr = await QRCode.toDataURL(stageUrl, { width: 200, margin: 1, color: { dark: '#0a0a0a', light: '#ffffff' } });
+      const data = await QRCode.toDataURL(address, { width: 240, margin: 4, color: { dark: '#0a0a0a', light: '#ffffff' } });
+      if (address !== stageUrl) return;
+      stageQr = data;
+      stageQrUrl = address;
       stageQrOpen = true;
     } catch (e) {
-      console.warn('QR generation failed', e);
+      if (address === stageUrl) stageQrError = 'Could not create the QR code. Copy the stage link and open it on the phone or tablet.';
     }
   }
   // ── A COPY THAT FAILED MUST NOT LOOK LIKE ONE THAT DID NOTHING ─────────────
@@ -1573,7 +1629,7 @@
               {/if}
             {:else if !isNdi(sel)}
               <button class="r-btn ghost sm" on:click={() => copyUrl(sel)}>{copyFailedId === sel.id ? COPY_FAILED : copiedId === sel.id ? 'Copied ✓' : 'Copy URL'}</button>
-              <button class="r-btn ghost sm" on:click={() => showQr(sel)}>{qrOpen === sel.id ? 'Hide QR' : 'Show QR'}</button>
+              <button class="r-btn ghost sm" on:click={() => showQr(sel)}>{qrOpen === sel.id && qrUrl === selAddr ? 'Hide QR' : 'Show QR'}</button>
             {/if}
             <button class="r-btn ghost sm ch-del" class:arm={delArm === sel.id} on:click={() => remove(sel)} disabled={!$capture.available}>
               {delArm === sel.id ? 'Click again to confirm' : 'Remove'}
@@ -1592,9 +1648,10 @@
                button set a flag that painted nothing once the table became a grid.
                A control whose result renders somewhere else is a control that
                stops working the moment that somewhere else changes shape. -->
-          {#if qrOpen === sel.id}
+          {#if qrError}<p class="ch-stage-warn" role="status">{qrError}</p>{/if}
+          {#if qrOpen === sel.id && qrUrl === selAddr}
             <div class="ch-qr">
-              <img class="ch-qr-img" src={qrData} alt="QR code to open {sel.name} output" width="132" height="132" />
+              <img class="ch-qr-img" src={qrData} alt="QR code to open {sel.name} output" width="240" height="240" />
               <div class="ch-qr-info">
                 <div class="r-lbl">Scan on the other device</div>
                 <div class="ch-qr-hint r-mono">Open Camera or a QR app and point it here. Same Wi-Fi required.</div>
@@ -1660,6 +1717,21 @@
     <aside class="rw-pane rw-insp">
       <div class="rw-panehead"><h2 class="rw-panettl">Preacher's stage remote</h2></div>
       <div class="rw-panebody pad">
+        <label class="r-lbl" for="stage-device">Stage screen</label>
+        <select id="stage-device" value={stageRemote.channel?.id ?? ''} on:change={(e) => selectedStageId = e.target.value ? Number(e.target.value) : null}>
+          {#if !stageRemote.channel}<option value="">Choose a stage screen</option>{/if}
+          {#each stageScreens as c (c.id)}<option value={c.id}>{c.name}</option>{/each}
+        </select>
+        <label class="r-lbl" for="stage-network">Computer's network address</label>
+        <select id="stage-network" value={lanIp} on:change={chooseAddress} disabled={networkBusy}>
+          {#if !addresses.some((a) => a.address === lanIp)}
+            <option value={lanIp}>{lanIp === 'localhost' ? 'No network address selected' : lanIp}</option>
+          {/if}
+          {#each addresses as a}<option value={a.address}>{a.interface}: {a.address}</option>{/each}
+        </select>
+        <button class="r-btn ghost sm" on:click={refreshNetwork} disabled={networkBusy}>{networkBusy ? 'Refreshing addresses…' : 'Refresh addresses'}</button>
+        {#if networkError}<p class="ch-stage-warn" role="status">{networkError}</p>{/if}
+        <p class="ch-stage-sub r-dim">Choose the network shared with the phone or tablet. An address alone does not prove the device can connect.</p>
         {#if stageUrl}
           <p class="ch-stage-sub r-dim">
             The live verse on a phone or iPad, updating in real time. Scan the QR (same
@@ -1671,19 +1743,22 @@
                number rather than concluding the link is broken. -->
           <p class="ch-stage-sub r-dim">
             This is the link for <b>{stageRemote.channel.name}</b>.
-            {#if stageRemote.others.length}
-              {stageRemote.others.join(', ')} {stageRemote.others.length === 1 ? 'is' : 'are'}
-              also set as a stage display; open {stageRemote.others.length === 1 ? 'it' : 'them'}
-              in <b>Screens</b> for {stageRemote.others.length === 1 ? 'its' : 'their'} own address.
-            {/if}
           </p>
           <div class="ch-stage-actions">
-            <button class="r-btn primary sm" on:click={showStageQr}>{stageQrOpen ? 'Hide QR' : 'Show QR'}</button>
-            <button class="r-btn ghost sm" on:click={copyStage}>{copyLabel(copiedStage, 'Copy link')}</button>
+            <button class="r-btn primary sm" on:click={showStageQr} disabled={networkBusy}>{stageQrOpen && stageQrUrl === stageUrl ? 'Hide QR' : 'Show QR'}</button>
+            <button class="r-btn ghost sm" on:click={copyStage} disabled={networkBusy}>{copyLabel(copiedStage, 'Copy link')}</button>
           </div>
-          {#if stageQrOpen}
-            <img class="ch-stage-qr" src={stageQr} alt="QR code to open the stage remote" width="150" height="150" />
+          {#if stageQrError}<p class="ch-stage-warn" role="status">{stageQrError}</p>{/if}
+          {#if stageQrOpen && stageQrUrl === stageUrl}
+            <img class="ch-stage-qr" src={stageQr} alt="QR code to open the stage remote" width="240" height="240" />
           {/if}
+        {:else if stageRemote.channel}
+          <p class="ch-stage-warn" role="status">
+            Relay could not find a local network address for the preacher's phone or tablet.
+            Connect this computer and the device to the same local network, then use Refresh addresses and choose an address above.
+          </p>
+        {:else if stageScreens.length}
+          <p class="ch-stage-warn">The selected screen is no longer a stage display. Choose a stage screen above.</p>
         {:else}
           <!-- NO ADDRESS, AND A REASON — rule 35.
                A bare `stage.html` renders the reading, the countdown and the
@@ -1826,7 +1901,7 @@
   .ch-cardout{ flex:1; min-width:0; font-size:var(--v-fs-cap); color:var(--v-dim);
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
-  .ch-qr{ display:flex; align-items:center; gap:14px; padding:12px 0 0; }
+  .ch-qr{ display:flex; flex-direction:column; align-items:flex-start; gap:14px; padding:12px 0 0; }
   .ch-qr-img{ border-radius:var(--v-r-sm); flex:0 0 auto; }
   .ch-qr-info{ flex:1; min-width:0; }
   .ch-qr-hint{ font-size:var(--v-fs-cap); color:var(--v-faint); }
@@ -1857,7 +1932,9 @@
     background:var(--v-amber-soft); border:1px solid var(--v-amber-line);
     color:var(--v-amber); font-size:var(--v-fs-b2); line-height:1.45;
   }
-  .ch-stage-qr{ display:block; margin-top:12px; border-radius:var(--v-r-sm); }
+  .ch-stage-qr{ display:block; max-width:100%; height:auto; margin-top:12px; border-radius:var(--v-r-sm); }
+  .ch-qr-img { max-width:100%; height:auto; }
+  #stage-device, #stage-network { display:block; width:100%; margin:6px 0 12px; }
 
   /* ── inspector ── */
   .ch-inspttl{ flex:1; text-transform:none; letter-spacing:var(--v-tr-h2);

@@ -10,6 +10,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+### Connecting the preacher's phone
+
+When Relay cannot find a local network address, Sharing now explains the problem
+instead of offering a stage link that points back at the phone itself. The stage
+QR code is larger, has a wider white border, and reports generation failures with
+a copy-link recovery action. Sharing also lists this computer's network adapters
+so the right one can be chosen when there are several, and lets a church with more
+than one stage screen pick which screen the link is for.
+
+The same guard now covers the QR code in Outputs -> Screens, which previously could
+produce a code for `http://localhost:8032/...` — an address that names whichever
+device scans it. The output URL itself is unchanged and still copyable, because
+that address is correct for OBS running on this same computer; only the QR code,
+which exists to be photographed by a second device, is withheld and explained.
+
+Physical phone and tablet scanning remains to be verified.
+
 ### Lower thirds had nothing behind the words
 
 A lower third is the caption bar Relay puts over a live camera on the stream. All of

@@ -525,6 +525,7 @@ fn main() {
             migration_status,
             list_audio_devices,
             local_ip,
+            network_addresses,
             start_capture,
             stop_capture,
             stt_status,
@@ -4825,6 +4826,12 @@ fn local_ip() -> Option<String> {
     } else {
         Some(ip.to_string())
     }
+}
+
+/// Local interface addresses for sharing links. No network requests or settings changes.
+#[tauri::command]
+async fn network_addresses() -> Vec<sysprobe::NetworkAddress> {
+    sysprobe::network_addresses()
 }
 
 /// Start capturing from `device` (default input when None). Each produced chunk

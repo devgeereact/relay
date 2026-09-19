@@ -33,6 +33,47 @@ use std::net::{SocketAddr, TcpStream};
 use std::path::Path;
 use std::time::Duration;
 
+/// A local IPv4 address, not a claim that another device can reach it.
+#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct NetworkAddress {
+    pub interface: String,
+    pub address: String,
+}
+
+/// Enumerate interfaces without depending on an internet/default route. The
+/// existing HTTP and WebSocket listeners are IPv4, so do not offer IPv6 links.
+pub fn network_addresses() -> Vec<NetworkAddress> {
+    let networks = sysinfo::Networks::new_with_refreshed_list();
+    sharing_addresses(networks.iter().flat_map(|(name, data)| {
+        data.ip_networks()
+            .iter()
+            .map(move |ip| (name.clone(), ip.addr))
+    }))
+}
+
+fn sharing_addresses(
+    addresses: impl IntoIterator<Item = (String, std::net::IpAddr)>,
+) -> Vec<NetworkAddress> {
+    let mut found: Vec<_> = addresses
+        .into_iter()
+        .filter_map(|(interface, address)| {
+            let std::net::IpAddr::V4(ip) = address else {
+                return None;
+            };
+            if ip.is_loopback() || ip.is_unspecified() || ip.is_multicast() || ip.is_broadcast() {
+                return None;
+            }
+            Some(NetworkAddress {
+                interface,
+                address: ip.to_string(),
+            })
+        })
+        .collect();
+    found.sort();
+    found.dedup();
+    found
+}
+
 /// A snapshot of the host, taken at the moment of the call.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Hardware {
@@ -207,6 +248,29 @@ pub fn probe_integrations() -> Vec<PortProbe> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn sharing_addresses_keep_offline_lans_and_exclude_non_destinations() {
+        let addresses = super::sharing_addresses([
+            ("Wi-Fi".into(), "192.168.1.42".parse().unwrap()),
+            ("Ethernet".into(), "169.254.2.8".parse().unwrap()),
+            ("Wi-Fi".into(), "192.168.1.42".parse().unwrap()),
+            ("loopback".into(), "127.0.0.1".parse().unwrap()),
+            ("any".into(), "0.0.0.0".parse().unwrap()),
+            ("multicast".into(), "224.0.0.1".parse().unwrap()),
+            ("broadcast".into(), "255.255.255.255".parse().unwrap()),
+            ("IPv6".into(), "::1".parse().unwrap()),
+        ]);
+        assert_eq!(addresses, vec![
+            super::NetworkAddress { interface: "Ethernet".into(), address: "169.254.2.8".into() },
+            super::NetworkAddress { interface: "Wi-Fi".into(), address: "192.168.1.42".into() },
+        ]);
+    }
+
+    #[test]
+    fn sharing_addresses_do_not_invent_an_address_when_none_exist() {
+        assert!(super::sharing_addresses([]).is_empty());
+    }
+
     use super::*;
     use std::net::TcpListener;
 
