@@ -5772,6 +5772,31 @@ was stopping one being added, and "no migration exists" and "the file holding it
 read" produce exactly the same green. `every_db_module_is_named_in_the_migration_scanners`
 now compares the directory against the names.
 
-**What this does NOT do.** An operator cannot yet create, rename or edit a layout — the
-three starters are assignable and that is all. The editor is the next slice; the model is
-what had to be right first, because it is the part a migration makes permanent.
+**The editor, added in the following commit.** Outputs gains a **Stage layouts** section:
+create, rename, re-zone, delete. A zone toggle does NOT write through — it would change what
+a preacher is looking at on every tap while the operator was still deciding — so Save is the
+moment it reaches a screen, and the editor says when there is something unsaved rather than
+leaving the operator to remember. The row just saved is re-selected by the id the engine
+handed back rather than by guessing which row in the reloaded list is new, because two
+layouts saved in one sitting make that guess wrong.
+
+Two refusals, both about a change that would not stay done or would not stay visible. A
+layout a screen is **wearing** is refused and the screens are NAMED: falling back to their
+device zones is a defined and safe state, and an invisible one, so the operator would have
+changed what a preacher sees by deleting something that did not say which screens it
+affected. A **shipped starter** is refused outright, because `ensure_stage_layouts` seeds by
+key when the key is absent — a deleted starter returns on the next launch, and a delete that
+undoes itself overnight is worse than a refusal. The test proves that rather than asserting
+it: it force-deletes a starter, runs the ladder, and checks the count came back.
+
+**The zone list moved to `src/lib/stagelayout.js`** so the desk offers exactly the switches
+the screen renders. A second copy is a desk offering a zone no page draws, or missing one it
+does — the mistake `names.test.js` exists to catch with words, in keys. That move broke a
+tripwire which asserted the stage page's own zone labels were visible to the comment
+stripper (RG-167's regression test). It was not deleted: the trap it guards is still in
+`Stage.svelte`, so it now checks that a name declared after that `:8032/api/*` comment is
+still visible there AND that the labels are visible in their new home.
+
+**What this does NOT do.** A layout cannot be assigned by a cue, and a preview of one does
+not exist — an operator picks zones by name and sees the result on the device. Both belong
+with phase 5's cue work rather than here.

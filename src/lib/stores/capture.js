@@ -1726,6 +1726,35 @@ return guardedRead('listStageLayouts', async (call) => {
 }
 
 /**
+ * CREATE A STAGE LAYOUT, or rename and re-zone one that exists.
+ *
+ * `id` null creates. Returns the layout's identity so the caller can select
+ * what it just made without re-reading the list and guessing which row is new.
+ *
+ * THROWS (contract group 1). Every refusal it can raise is one the operator has
+ * to see and act on — a name already taken, a layout with no name — and a save
+ * that silently did nothing is the worst of them.
+ */
+export async function upsertStageLayout(id, name, zones) {
+const call = await invoke();
+return await call('upsert_stage_layout', { id: id ?? null, name, zones });
+}
+
+/**
+ * REMOVE A STAGE LAYOUT.
+ *
+ * Refused when a screen is wearing it (the screens are named) and when it is
+ * one Relay ships with (the seed would put it back on the next launch, and a
+ * delete that undoes itself overnight is worse than a refusal).
+ *
+ * THROWS (contract group 1).
+ */
+export async function deleteStageLayout(id) {
+const call = await invoke();
+await call('delete_stage_layout', { id });
+}
+
+/**
  * POINT ONE STAGE SCREEN AT ONE LAYOUT, or at none.
  *
  * `null` is the way back and a real answer: the screen returns to the zones the

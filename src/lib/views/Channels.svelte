@@ -70,6 +70,7 @@
   } from '../layers.js';
   import { outputUrl } from '../outputurl.js';
   import { CHANNEL_ROLES, NO_ROLE_LABEL, stageRemoteUrl, isSharableHost } from '../channelroles.js';
+  import { STAGE_ZONES, DEFAULT_STAGE_ZONES, readStageZones } from '../stagelayout.js';
   import {
     capture,
     templates,
@@ -88,6 +89,8 @@
     setChannelRole,
     listStageLayouts,
     setChannelStageLayout,
+    upsertStageLayout,
+    deleteStageLayout,
     setChannelShows,
     listMonitors,
     openChannelOutput,
@@ -115,12 +118,14 @@
   // rail and the inspector: a section that drops two of the three columns is a
   // different workspace wearing the same tab, and that is what made Content
   // looks and Sharing read as a separate product.
-  let view = 'screens'; // screens | looks | sharing
+  let view = 'screens'; // screens | looks | layouts | sharing
   const VIEWS = [
     { key: 'screens', label: 'Screens',
       lead: 'Every target Relay can paint: a projector on HDMI, an OBS or kiosk browser source over the network.' },
     { key: 'looks', label: 'Content looks',
       lead: 'Which template each kind of content wears on any screen that has no look of its own.' },
+    { key: 'layouts', label: 'Stage layouts',
+      lead: 'What a preacher\'s screen shows. Assign one to a stage screen in Screens; a screen with none is set from the device itself.' },
     { key: 'sharing', label: 'Sharing',
       lead: 'The addresses other devices in the building use to reach this machine.' },
   ];
@@ -588,6 +593,82 @@
   let stageLayouts = [];
   const assignStageLayout = (c, e) =>
     act(() => setChannelStageLayout(c.id, e.target.value === '' ? null : Number(e.target.value)));
+
+  // ── THE LAYOUT EDITOR ────────────────────────────────────────────────────
+  //
+  // The draft is held apart from the saved row on purpose: a zone toggle that
+  // wrote straight through would change what a preacher is looking at on every
+  // tap while an operator was still deciding. Save is the moment it reaches a
+  // screen, and until then `layoutDirty` says there is something unsaved rather
+  // than leaving the operator to remember.
+  let selLayout = null;
+  let layoutName = '';
+  let layoutZones = { ...DEFAULT_STAGE_ZONES };
+  let layoutBusy = false;
+  let layoutDelArm = null;
+
+  $: layoutSaved = stageLayouts.find((l) => l.id === selLayout) ?? null;
+  $: layoutDirty =
+    selLayout != null &&
+    layoutSaved != null &&
+    (layoutName.trim() !== layoutSaved.name ||
+      STAGE_ZONES.some((z) => !!layoutZones[z.key] !== !!(readStageZones(layoutSaved.zones) ?? DEFAULT_STAGE_ZONES)[z.key]));
+  /** Which screens wear this layout — the same fact the delete refusal names. */
+  $: layoutWornBy = channels.filter((c) => c.stage_layout_id === selLayout).map((c) => c.name);
+
+  function pickLayout(l) {
+    selLayout = l.id;
+    layoutName = l.name;
+    layoutZones = { ...(readStageZones(l.zones) ?? DEFAULT_STAGE_ZONES) };
+    layoutDelArm = null;
+  }
+  function newLayout() {
+    selLayout = 'new';
+    layoutName = '';
+    layoutZones = { ...DEFAULT_STAGE_ZONES };
+    layoutDelArm = null;
+  }
+  const toggleLayoutZone = (key) =>
+    (layoutZones = { ...layoutZones, [key]: !layoutZones[key] });
+
+  // THROUGH `act`, LIKE EVERY OTHER MUTATION ON THIS DESK. It stores the TYPED
+  // error and `ui/ErrorState.svelte` turns it into words — which is why this
+  // desk calls the humaniser nowhere itself, a fact `r6-contracts.test.js`
+  // records (by raw substring, so do not name the function here either) so that
+  // a later audit does not read its absence as a defect. A second error surface
+  // in this editor would be a second set of words for the same refusal.
+  async function saveLayout() {
+    layoutBusy = true;
+    await act(async () => {
+      const id = await upsertStageLayout(
+        selLayout === 'new' ? null : selLayout,
+        layoutName,
+        layoutZones,
+      );
+      stageLayouts = (await listStageLayouts()) ?? [];
+      // Select what was just saved BY THE ID THE ENGINE GAVE BACK, rather than
+      // guessing which row is new from the list — two layouts saved in one
+      // sitting would make that guess wrong.
+      const saved = stageLayouts.find((l) => l.id === id);
+      if (saved) pickLayout(saved);
+    });
+    layoutBusy = false;
+  }
+
+  async function removeLayout() {
+    if (layoutDelArm !== selLayout) {
+      layoutDelArm = selLayout;
+      return;
+    }
+    layoutBusy = true;
+    await act(async () => {
+      await deleteStageLayout(selLayout);
+      stageLayouts = (await listStageLayouts()) ?? [];
+      selLayout = null;
+    });
+    layoutDelArm = null;
+    layoutBusy = false;
+  }
 
   const assignRole = (c, e) => act(() => setChannelRole(c.id, e.target.value === '' ? null : e.target.value));
   // ── WHAT THIS SCREEN SHOWS AT ALL (DECISIONS §98) ──────────────────────────
@@ -1210,6 +1291,33 @@
       </div>
     </section>
 
+  {:else if view === 'layouts'}
+    <!-- ══ STAGE LAYOUTS ══ A layout is GLOBAL and its assignment is per screen
+         (DECISIONS §103). The list lives here; which screen wears which is on a
+         screen's own card in Screens, because that is a decision about a screen. -->
+    <section class="rw-pane">
+      <div class="rw-panehead">
+        <h2 class="rw-panettl">Stage layouts</h2>
+        <button class="r-btn ghost sm" on:click={newLayout} disabled={!$capture.available}>New layout</button>
+      </div>
+      <div class="rw-panebody">
+        {#each stageLayouts as l (l.id)}
+          <button
+            class="rw-nv ch-lrow"
+            class:on={selLayout === l.id}
+            aria-pressed={selLayout === l.id}
+            on:click={() => pickLayout(l)}>
+            <span class="rw-nvk">{l.name}</span>
+            <!-- WHICH SCREENS WEAR IT, on the row. Without it an operator has to
+                 open every screen to find out what a layout is doing, and the
+                 delete refusal would be the first time they were told. -->
+            <span class="rw-nvv">{channels.filter((c) => c.stage_layout_id === l.id).map((c) => c.name).join(', ') || 'not in use'}</span>
+          </button>
+        {:else}
+          <div class="ch-empty r-empty">No stage layouts. Make one with <b>New layout</b>.</div>
+        {/each}
+      </div>
+    </section>
   {:else if view === 'looks'}
     <!-- ══ CONTENT LOOKS ══ THE one writer of the type → template default map.
          Every other surface that shows an assignment reads the shared store and
@@ -1723,6 +1831,73 @@
       {/if}
     </aside>
 
+  {:else if view === 'layouts'}
+    <aside class="rw-pane rw-insp">
+      <div class="rw-panehead">
+        <h2 class="rw-panettl">{selLayout === 'new' ? 'New layout' : layoutSaved?.name ?? 'Stage layout'}</h2>
+      </div>
+      <div class="rw-panebody pad">
+        {#if selLayout == null}
+          <div class="ch-empty r-empty">
+            Choose a layout on the left, or make one. A stage screen with no layout is
+            set from the device itself.
+          </div>
+        {:else}
+          <label class="r-lbl" for="ch-lname">Name</label>
+          <input
+            id="ch-lname"
+            class="r-input"
+            type="text"
+            bind:value={layoutName}
+            placeholder="Preacher"
+            autocomplete="off"
+            disabled={layoutBusy} />
+
+          <div class="r-lbl ch-lzlbl">Shows</div>
+          <div class="ch-lzones">
+            {#each STAGE_ZONES as z (z.key)}
+              <button
+                class="r-btn ghost sm ch-lz"
+                class:on={layoutZones[z.key]}
+                aria-pressed={layoutZones[z.key]}
+                disabled={layoutBusy}
+                on:click={() => toggleLayoutZone(z.key)}>{z.label}</button>
+            {/each}
+          </div>
+
+          <!-- UNSAVED IS SAID OUT LOUD. A zone toggle does not write through —
+               it would change what a preacher is looking at on every tap while
+               the operator was still deciding — so the operator has to be told
+               there is something here that has not reached a screen yet. -->
+          {#if layoutDirty}
+            <p class="ch-stage-sub r-dim">Not saved yet. Nothing has changed on any screen.</p>
+          {/if}
+
+          {#if layoutWornBy.length}
+            <p class="ch-stage-sub r-dim">
+              Worn by <b>{layoutWornBy.join(', ')}</b>. Saving changes what
+              {layoutWornBy.length === 1 ? 'it shows' : 'they show'} straight away.
+            </p>
+          {/if}
+
+          <div class="ch-stage-actions">
+            <button
+              class="r-btn primary sm"
+              on:click={saveLayout}
+              disabled={layoutBusy || !$capture.available || !layoutName.trim()}>Save</button>
+            {#if selLayout !== 'new'}
+              <button
+                class="r-btn ghost sm ch-del"
+                class:arm={layoutDelArm === selLayout}
+                on:click={removeLayout}
+                disabled={layoutBusy || !$capture.available}>
+                {layoutDelArm === selLayout ? 'Click again to confirm' : 'Delete'}
+              </button>
+            {/if}
+          </div>
+        {/if}
+      </div>
+    </aside>
   {:else if view === 'looks'}
     <aside class="rw-pane rw-insp">
       <div class="rw-panehead"><h2 class="rw-panettl">Screens that follow</h2></div>
@@ -1946,6 +2121,17 @@
   .ch-cardout{ flex:1; min-width:0; font-size:var(--v-fs-cap); color:var(--v-dim);
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
+  /* A LAYOUT ROW. A name and what wears it, selectable — the same two-column
+     shape as `.rw-nv` beside it, made pressable rather than redrawn, so a list
+     of layouts reads as the desk's other lists do and not as a row of buttons. */
+  .ch-lrow{ display:flex; width:100%; text-align:left; background:none; border:0;
+    cursor:pointer; }
+  .ch-lrow.on{ background:var(--v-sel); }
+  /* A ZONE SWITCH. The shared button, pressed-state only — it is a toggle in a
+     set rather than an action, so `on` is its whole visual job. */
+  .ch-lz.on{ background:var(--v-sel); color:var(--v-txt); }
+  .ch-lzlbl{ margin-top:14px; }
+  .ch-lzones{ display:flex; flex-wrap:wrap; gap:6px; margin:6px 0 12px; }
   .ch-qr{ display:flex; flex-direction:column; align-items:flex-start; gap:14px; padding:12px 0 0; }
   .ch-qr-img{ border-radius:var(--v-r-sm); flex:0 0 auto; }
   .ch-qr-info{ flex:1; min-width:0; }

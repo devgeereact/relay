@@ -175,6 +175,7 @@ const REGISTER = [
       // Wave 5 Track C — the test that ratifies what a panic control does to a
       // Stage Message also asserts that the Stage Note beside it still goes.
       'src/lib/stagealertpanic.test.js',
+      'src/lib/stagelayout.js',
     ],
     forbidden: ['Operator note', 'Cue note', 'Monitor note', 'Confidence note'],
   },
@@ -236,7 +237,6 @@ const REGISTER = [
     concept: 'the countdown a CONGREGATION watches — `countdown` content, every screen',
     name: 'Screen Countdown',
     allowed: [
-      'src/Stage.svelte',
       'src/lib/Dock.svelte',
       'src/lib/countdownreach.test.js',
       'src/lib/layers.js',
@@ -245,6 +245,7 @@ const REGISTER = [
       'src/lib/stagezones.test.js',
       'src/lib/templateKind.js',
       'src/lib/wayback.test.js',
+      'src/lib/stagelayout.js',
     ],
     // `'Pre-service countdown'` is deliberately NOT here, for the same reason
     // `'Congregation timer'` is not on the entry below: it appears fourteen times
@@ -274,6 +275,7 @@ const REGISTER = [
       'src/lib/views/Live.svelte',
       'src/lib/views/ServicePlanner.svelte',
       'src/lib/wayback.test.js',
+      'src/lib/stagelayout.js',
     ],
     // `'Congregation timer'` stays permitted: it is accurate prose in `timers.rs`
     // and `main.rs` describing a SCOPE, not a control anybody reads a label on.
@@ -478,13 +480,30 @@ describe('the scanner itself', () => {
     const line = `  // Hits the LAN HTTP API on :8032/api/*, which runs the same path\n  const ZONES = [{ label: 'Screen Countdown' }];\n  /* a real block */\n`;
     expect(hits(codeOnly(line), 'Screen Countdown')).toEqual(['Screen Countdown']);
 
+    // AGAINST THE REAL FILE, and the hazard is still in it: `Stage.svelte`
+    // carries that `:8032/api/*` comment to this day. What moved is the ZONE
+    // TABLE — the labels now live in `src/lib/stagelayout.js`, because the desk
+    // that assigns a layout has to offer the same switches the screen renders
+    // and a second copy is a desk offering a zone no page draws (DECISIONS
+    // §103). So this checks BOTH: that a name declared after that comment in
+    // the stage page is still visible, and that the labels are visible in their
+    // new home. Pointing it only at the new file would retire the original
+    // regression test while the file that caused it still contains the trap.
     const stage = files.find(([rel]) => rel === 'src/Stage.svelte');
     expect(stage, 'the scanner cannot see the stage page').toBeTruthy();
+    expect(codeOnly(stage[1]), 'the trap this test exists for has gone').toContain(':8032/api');
     expect(
-      hits(codeOnly(stage[1]), 'Screen Countdown').length,
-      "the stage page's own zone labels are invisible to this scanner again",
+      hits(codeOnly(stage[1]), 'Stage Note').length,
+      'a name declared after that comment is invisible to this scanner again',
     ).toBeGreaterThan(0);
-    expect(hits(codeOnly(stage[1]), 'Stage Timer').length).toBeGreaterThan(0);
+
+    const zones = files.find(([rel]) => rel === 'src/lib/stagelayout.js');
+    expect(zones, 'the scanner cannot see the zone table').toBeTruthy();
+    expect(
+      hits(codeOnly(zones[1]), 'Screen Countdown').length,
+      'the zone labels are invisible to this scanner again',
+    ).toBeGreaterThan(0);
+    expect(hits(codeOnly(zones[1]), 'Stage Timer').length).toBeGreaterThan(0);
   });
 
   it('a one-word rename would detonate, which is why both new names are two words', () => {

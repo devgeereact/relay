@@ -13,6 +13,9 @@
   import { onMount, onDestroy } from 'svelte';
   import { acceptsStageMessage, roleOf } from './lib/channelroles.js';
   import { startBeat, paintState, BEAT_INTERVAL_MS } from './lib/outputHealth.js';
+  // ONE LIST OF ZONES, shared with the desk that assigns them. A second copy
+  // here would be a desk offering a zone this page does not draw.
+  import { STAGE_ZONES as ZONES, DEFAULT_STAGE_ZONES, readStageZones } from './lib/stagelayout.js';
 
   // ── WHICH SCREEN THIS IS ────────────────────────────────────────────────────
   //
@@ -291,27 +294,6 @@
   //
   // Every read and write is guarded: a private window, blocked site data or a
   // kiosk with storage disabled must give the DEFAULT layout, never a blank page.
-  const ZONES = [
-    { key: 'reading', label: 'Reading' },
-    { key: 'next', label: 'Next' },
-    { key: 'note', label: 'Stage Note' },
-    { key: 'countdown', label: 'Screen Countdown' },
-    { key: 'clock', label: 'Clock' },
-    { key: 'elapsed', label: 'Service elapsed' },
-    // The preacher's bookkeeping. A lobby TV running this page has no business
-    // carrying it, and until this key existed there was no way to take it off —
-    // the rail was the one region on the screen with no switch behind it.
-    { key: 'programme', label: 'Stage Timer' },
-  ];
-  const DEFAULT_ZONES = {
-    reading: true,
-    next: true,
-    note: true,
-    countdown: true,
-    clock: true,
-    elapsed: true,
-    programme: true,
-  };
   const ZONE_KEY = 'relay.stage.zones';
   // ── WHOSE DECISION THIS IS ────────────────────────────────────────────────
   //
@@ -323,7 +305,7 @@
   // until somebody deliberately assigns a layout to the screen. Assigning is
   // what moves the decision off the device; there is no silent migration and no
   // default layout handed out on first sight.
-  let deviceZones = { ...DEFAULT_ZONES };
+  let deviceZones = { ...DEFAULT_STAGE_ZONES };
   let assignedZones = null;
   $: zones = assignedZones ?? deviceZones;
   $: operatorSet = assignedZones !== null;
@@ -1076,21 +1058,14 @@
     // Key by key off the DEFAULTS, exactly as `loadZones` does: a zone added in
     // a later version arrives on its own default rather than absent, and a
     // corrupt value cannot delete one.
-    const next = { ...DEFAULT_ZONES };
-    let said = 0;
-    for (const z of ZONES) {
-      if (typeof mine[z.key] === 'boolean') {
-        next[z.key] = mine[z.key];
-        said += 1;
-      }
-    }
+    const next = readStageZones(mine);
     // AN ENTRY THAT NAMES NO ZONE IS NOT A LAYOUT. Without this, `{}` becomes an
     // assigned layout of all-defaults: it takes the toggles away from the device
     // and replaces whatever that device was set to, while looking — on a default
     // install — exactly like the fallback it replaced. `db/stage.rs` already
     // says an empty object falls through to the device's own zones; this is the
     // receiver keeping that promise rather than assuming the sender.
-    assignedZones = said > 0 ? next : null;
+    assignedZones = next;
   }
 
   /** The initial read. A failure leaves the device's own zones in force. */

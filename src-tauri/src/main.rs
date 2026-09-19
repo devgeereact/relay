@@ -490,6 +490,8 @@ fn main() {
             reset_timer,
             list_stage_layouts,
             set_channel_stage_layout,
+            upsert_stage_layout,
+            delete_stage_layout,
             stop_timer,
             list_timers,
             show_timer,
@@ -3438,6 +3440,79 @@ fn list_stage_layouts(db: tauri::State<'_, Db>) -> error::Result<Vec<db::StageLa
         message: "The database is busy. Try again.".into(),
     })?;
     Ok(db::list_stage_layouts(&conn)?)
+}
+
+/// Turn a layout refusal into a sentence a volunteer can act on.
+///
+/// Every arm names WHAT to do next, because a refusal an operator cannot act on
+/// is a dead end in the middle of setting a service up.
+fn layout_refusal(r: db::LayoutRefusal) -> error::Error {
+    match r {
+        db::LayoutRefusal::NoName => {
+            error::Error::refused("A stage layout needs a name.".to_string())
+        }
+        db::LayoutRefusal::NameTaken => error::Error::refused(
+            "There is already a stage layout with that name. Choose another.".to_string(),
+        ),
+        db::LayoutRefusal::BadZones => error::Error::refused(
+            "That layout does not name any zones, so nothing would change.".to_string(),
+        ),
+        db::LayoutRefusal::Seeded => error::Error::refused(
+            "This is one of the layouts Relay ships with, so it cannot be removed — \
+             it would come back the next time Relay starts. Rename it and change \
+             what it shows instead."
+                .to_string(),
+        ),
+        db::LayoutRefusal::InUse(names) => error::Error::refused(format!(
+            "{} {} using this layout. Give {} a different one first.",
+            names.join(", "),
+            if names.len() == 1 { "is" } else { "are" },
+            if names.len() == 1 { "it" } else { "them" },
+        )),
+        db::LayoutRefusal::NotFound => {
+            error::Error::not_found("That stage layout is no longer there.".to_string())
+        }
+    }
+}
+
+/// Create a stage layout, or rename and re-zone one that exists.
+#[tauri::command]
+fn upsert_stage_layout<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    db: tauri::State<'_, Db>,
+    id: Option<i64>,
+    name: String,
+    zones: serde_json::Value,
+) -> error::Result<i64> {
+    let saved = {
+        let conn = db.0.lock().map_err(|_| error::Error::Busy {
+            message: "The database is busy. Try again.".into(),
+        })?;
+        db::upsert_stage_layout(&conn, id, &name, &zones)?
+    };
+    let id = saved.map_err(layout_refusal)?;
+    // An EDIT changes what screens already wearing it show, so the screens are
+    // told. A create changes nothing until it is assigned, and publishing then
+    // is a no-op — one call either way rather than a branch that can be wrong.
+    publish_stage_zones(&app, &db);
+    Ok(id)
+}
+
+/// Remove a stage layout, unless doing so would be silently wrong.
+#[tauri::command]
+fn delete_stage_layout<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    db: tauri::State<'_, Db>,
+    id: i64,
+) -> error::Result<()> {
+    {
+        let conn = db.0.lock().map_err(|_| error::Error::Busy {
+            message: "The database is busy. Try again.".into(),
+        })?;
+        db::delete_stage_layout(&conn, id)?.map_err(layout_refusal)?;
+    }
+    publish_stage_zones(&app, &db);
+    Ok(())
 }
 
 /// Point one stage screen at one layout, or at none.

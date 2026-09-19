@@ -87,6 +87,14 @@ Screens you have not given a layout to are left exactly as they are, set from
 the device as before — nothing is migrated and nothing is overwritten. Clearing
 a screen's layout hands it back to the device rather than resetting it.
 
+Stage layouts can be created and edited, not only chosen. Outputs has a Stage
+layouts section: name a layout, pick what it shows, and assign it to a stage
+screen. Changing the switches does not affect any screen until you press Save,
+and the editor says when there is something unsaved. A layout a screen is
+wearing cannot be deleted until that screen has been given a different one, and
+the layouts Relay ships with cannot be deleted at all — they would come back the
+next time Relay started, so they can be renamed and changed instead.
+
 Physical phone and tablet scanning remains to be verified.
 
 ### Lower thirds had nothing behind the words

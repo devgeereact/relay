@@ -36,7 +36,7 @@
 //! arrangement a church is already using. Assigning a layout is the deliberate
 //! act that takes the decision off the device.
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 /// One named set of choices a stage screen can wear.
@@ -190,6 +190,127 @@ pub fn set_channel_stage_layout(
     Ok(())
 }
 
+/// Why a layout could not be saved or removed. Refusals an operator can act on.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LayoutRefusal {
+    /// Two layouts with one name is a picker an operator cannot use.
+    NameTaken,
+    /// A layout needs a name. Blank is not one.
+    NoName,
+    /// Screens are wearing it. Named, so the operator knows where to go.
+    InUse(Vec<String>),
+    /// A shipped starter. Deleting one is not durable — the seed would put it
+    /// back on the next launch, and a delete that undoes itself overnight is
+    /// worse than a refusal.
+    Seeded,
+    /// No layout with that id.
+    NotFound,
+    /// The zones are not a set of switches. Its own variant rather than being
+    /// folded into `NoName`, because a refusal that names the wrong field sends
+    /// an operator to fix something that was never wrong.
+    BadZones,
+}
+
+/// Create a layout, or rename and re-zone one that is already there.
+///
+/// `id` is `None` to create. The name is trimmed and must be unique, because
+/// the only place a layout is ever chosen is a select and two identical entries
+/// are a control an operator cannot use correctly.
+pub fn upsert_stage_layout(
+    conn: &Connection,
+    id: Option<i64>,
+    name: &str,
+    zones: &serde_json::Value,
+) -> rusqlite::Result<Result<i64, LayoutRefusal>> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Ok(Err(LayoutRefusal::NoName));
+    }
+    let clash: Option<i64> = conn
+        .query_row(
+            "SELECT id FROM stage_layouts WHERE name = ?1 COLLATE NOCASE",
+            rusqlite::params![name],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if let Some(other) = clash {
+        if Some(other) != id {
+            return Ok(Err(LayoutRefusal::NameTaken));
+        }
+    }
+    // The zones are stored as the caller gave them, with one rule: it has to be
+    // an object. A non-object would reach `stage_zones_json`, be skipped there,
+    // and the screen would silently keep whatever it had — a save that appears
+    // to work and changes nothing.
+    if !zones.is_object() {
+        return Ok(Err(LayoutRefusal::BadZones));
+    }
+    let blob = zones.to_string();
+    match id {
+        Some(existing) => {
+            let n = conn.execute(
+                "UPDATE stage_layouts SET name = ?2, zones_json = ?3 WHERE id = ?1",
+                rusqlite::params![existing, name, blob],
+            )?;
+            if n == 0 {
+                return Ok(Err(LayoutRefusal::NotFound));
+            }
+            Ok(Ok(existing))
+        }
+        None => {
+            conn.execute(
+                "INSERT INTO stage_layouts (name, zones_json, seed_key) VALUES (?1, ?2, NULL)",
+                rusqlite::params![name, blob],
+            )?;
+            Ok(Ok(conn.last_insert_rowid()))
+        }
+    }
+}
+
+/// Remove a layout, unless something would be silently wrong afterwards.
+///
+/// Two refusals, both about a delete that does not stay done or does not stay
+/// quiet:
+///
+/// * **In use.** Screens wearing it would fall back to their own device zones,
+///   which is a defined and safe state — and an invisible one. The operator
+///   would have changed what a preacher sees by deleting something that did not
+///   name the screens it affected. So they are named and the delete is refused.
+/// * **A shipped starter.** `ensure_stage_layouts` seeds by key when the key is
+///   absent, so a deleted starter comes back on the next launch. A delete that
+///   undoes itself overnight is worse than a refusal, and the operator can
+///   rename and re-zone a starter into whatever they actually want.
+pub fn delete_stage_layout(
+    conn: &Connection,
+    id: i64,
+) -> rusqlite::Result<Result<(), LayoutRefusal>> {
+    let seeded: Option<Option<String>> = conn
+        .query_row(
+            "SELECT seed_key FROM stage_layouts WHERE id = ?1",
+            rusqlite::params![id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let Some(seed_key) = seeded else {
+        return Ok(Err(LayoutRefusal::NotFound));
+    };
+    if seed_key.is_some() {
+        return Ok(Err(LayoutRefusal::Seeded));
+    }
+    let mut q = conn.prepare("SELECT name FROM output_channels WHERE stage_layout_id = ?1")?;
+    let wearing: Vec<String> = q
+        .query_map(rusqlite::params![id], |r| r.get::<_, String>(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    if !wearing.is_empty() {
+        return Ok(Err(LayoutRefusal::InUse(wearing)));
+    }
+    conn.execute(
+        "DELETE FROM stage_layouts WHERE id = ?1",
+        rusqlite::params![id],
+    )?;
+    Ok(Ok(()))
+}
+
 /// WHAT EACH SCREEN SHOWS, AS IT GOES ON THE WIRE — `{"2":{"reading":true,…}}`.
 ///
 /// Resolved HERE rather than on the page, so a stage tablet never has to hold a
@@ -240,6 +361,122 @@ mod tests {
         ensure_stage_layouts(&c).expect("layouts");
         ensure_channel_stage_layout(&c).expect("column");
         c
+    }
+
+    fn zones(reading: bool) -> serde_json::Value {
+        serde_json::json!({
+            "reading": reading, "next": true, "note": true,
+            "countdown": true, "clock": true, "elapsed": true, "programme": true
+        })
+    }
+
+    #[test]
+    fn an_operator_can_make_a_layout_and_change_it() {
+        let c = db();
+        let id = upsert_stage_layout(&c, None, "  Back wall  ", &zones(false))
+            .expect("save")
+            .expect("accepted");
+        let mine = list_stage_layouts(&c)
+            .expect("list")
+            .into_iter()
+            .find(|l| l.id == id)
+            .expect("saved layout is missing");
+        assert_eq!(mine.name, "Back wall", "the name was not trimmed");
+        assert_eq!(mine.zones["reading"], serde_json::json!(false));
+
+        upsert_stage_layout(&c, Some(id), "Back wall", &zones(true))
+            .expect("save")
+            .expect("accepted");
+        let again = list_stage_layouts(&c)
+            .expect("list")
+            .into_iter()
+            .find(|l| l.id == id)
+            .expect("gone after an edit");
+        assert_eq!(again.zones["reading"], serde_json::json!(true));
+        assert_eq!(again.name, "Back wall");
+    }
+
+    /// TWO LAYOUTS WITH ONE NAME IS A PICKER NOBODY CAN USE.
+    #[test]
+    fn a_name_already_taken_is_refused_however_it_is_cased() {
+        let c = db();
+        assert_eq!(
+            upsert_stage_layout(&c, None, "preacher", &zones(true)).expect("save"),
+            Err(LayoutRefusal::NameTaken)
+        );
+    }
+
+    #[test]
+    fn a_layout_may_keep_its_own_name_while_being_edited() {
+        // The uniqueness check must not refuse a row for clashing with itself.
+        let c = db();
+        let id = list_stage_layouts(&c).expect("list")[0].id;
+        let name = list_stage_layouts(&c).expect("list")[0].name.clone();
+        assert!(upsert_stage_layout(&c, Some(id), &name, &zones(false))
+            .expect("save")
+            .is_ok());
+    }
+
+    #[test]
+    fn a_blank_name_and_a_non_object_are_refused_for_their_own_reasons() {
+        let c = db();
+        assert_eq!(
+            upsert_stage_layout(&c, None, "   ", &zones(true)).expect("save"),
+            Err(LayoutRefusal::NoName)
+        );
+        assert_eq!(
+            upsert_stage_layout(&c, None, "Odd", &serde_json::json!("nope")).expect("save"),
+            Err(LayoutRefusal::BadZones),
+            "a refusal that names the wrong field sends an operator to fix \
+             something that was never wrong"
+        );
+    }
+
+    /// A DELETE THAT UNDOES ITSELF OVERNIGHT IS WORSE THAN A REFUSAL.
+    #[test]
+    fn a_shipped_starter_cannot_be_deleted_because_the_seed_would_bring_it_back() {
+        let c = db();
+        let id = list_stage_layouts(&c).expect("list")[0].id;
+        assert_eq!(
+            delete_stage_layout(&c, id).expect("delete"),
+            Err(LayoutRefusal::Seeded)
+        );
+        // And the reason is real: prove the seed WOULD restore it.
+        c.execute("DELETE FROM stage_layouts WHERE id = ?1", [id])
+            .expect("force");
+        ensure_stage_layouts(&c).expect("ladder");
+        assert_eq!(
+            list_stage_layouts(&c).expect("list").len(),
+            SEEDED.len(),
+            "the starter did not come back, so this refusal guards nothing"
+        );
+    }
+
+    /// DELETING SOMETHING A SCREEN IS WEARING CHANGES WHAT A PREACHER SEES.
+    #[test]
+    fn a_layout_a_screen_wears_is_refused_and_the_screen_is_named() {
+        let c = db();
+        let id = upsert_stage_layout(&c, None, "Back wall", &zones(true))
+            .expect("save")
+            .expect("accepted");
+        set_channel_stage_layout(&c, 2, Some(id)).expect("assign");
+        assert_eq!(
+            delete_stage_layout(&c, id).expect("delete"),
+            Err(LayoutRefusal::InUse(vec!["Stage".to_string()])),
+            "the refusal has to say WHERE, or the operator cannot act on it"
+        );
+        // Unassigned, it goes.
+        set_channel_stage_layout(&c, 2, None).expect("clear");
+        assert!(delete_stage_layout(&c, id).expect("delete").is_ok());
+    }
+
+    #[test]
+    fn deleting_a_layout_that_is_not_there_is_a_refusal_not_a_silent_success() {
+        let c = db();
+        assert_eq!(
+            delete_stage_layout(&c, 4040).expect("delete"),
+            Err(LayoutRefusal::NotFound)
+        );
     }
 
     #[test]
