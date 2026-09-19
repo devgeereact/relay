@@ -25,6 +25,12 @@ device scans it. The output URL itself is unchanged and still copyable, because
 that address is correct for OBS running on this same computer; only the QR code,
 which exists to be photographed by a second device, is withheld and explained.
 
+The preacher's screen now reports that it is working. Every other output screen
+has told Relay every two seconds that it is still painting; the stage page never
+did, so a phone or tablet that was set up correctly and showing the reading
+perfectly was described on the operator's console as a screen that had never
+painted, alongside advice to fix a problem it did not have.
+
 Physical phone and tablet scanning remains to be verified.
 
 ### Lower thirds had nothing behind the words

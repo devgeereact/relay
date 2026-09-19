@@ -12,6 +12,7 @@
   // like an OBS/kiosk output, but rendered as a readable mobile confidence view.
   import { onMount, onDestroy } from 'svelte';
   import { acceptsStageMessage, roleOf } from './lib/channelroles.js';
+  import { startBeat, paintState } from './lib/outputHealth.js';
 
   // ── WHICH SCREEN THIS IS ────────────────────────────────────────────────────
   //
@@ -910,9 +911,36 @@
     }
   }
 
+  // ── THIS SCREEN ANSWERS FOR ITSELF (plan S11) ──────────────────────────────
+  //
+  // Every other output page has reported every two seconds since
+  // `outputHealth.js` landed. This one said `hello` and then nothing, for the
+  // whole service — and `OutputHealth` is keyed per CHANNEL, so a channel whose
+  // only client is the preacher's tablet held `last_beat_ms == null` forever.
+  // `describeScreen` reads that as `never` and `describeStageReach` tells the
+  // operator the tablet "has never reported painting — a Stage Timer needs the
+  // stage address". A correctly wired phone accused itself of being unwired, on
+  // the surface an operator watches during a service. Rule 35, on the console's
+  // side of the connection.
+  //
+  // `startBeat` already takes `getWs` for precisely this case — a kiosk client
+  // has a socket and no bridge — so this joins the existing mechanism rather
+  // than adding a second one. Both are GETTERS, not captured values: the socket
+  // is replaced on every reconnect, and the state must describe the screen now
+  // rather than when the timer started. Channel 0 is refused inside `startBeat`,
+  // so an unidentified page cannot attach health to a screen nobody chose.
+  let stopBeat = null;
+
   onMount(() => {
     loadZones();
     connect(location.hostname || 'localhost');
+    stopBeat = startBeat({
+      channelId,
+      // Blackout outranks content, per `paintState`: a blacked screen with a
+      // stale verse under it is black to the person holding it.
+      getState: () => paintState({ black: down === 'black', visible: shown, content: !!content }),
+      getWs: () => ws,
+    });
     const tick = () => {
       clock = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       nowMs = Date.now(); // drives the countdown mirror
@@ -922,6 +950,8 @@
   });
   onDestroy(() => {
     closed = true;
+    stopBeat?.();
+    stopBeat = null;
     if (ws) ws.close();
     clearInterval(timer);
   });
