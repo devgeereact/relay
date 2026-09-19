@@ -123,15 +123,68 @@
   // DECISIONS §35. `search` and `live` mutate nothing and stay GET.
   const MUTATES = new Set(['fire', 'next', 'prev', 'clear', 'black']);
 
+  // ── A REQUEST THAT DOES NOT COME BACK (plan S9) ───────────────────────────
+  //
+  // A bare `fetch` has no deadline. A phone that has roamed to a dead access
+  // point, or a laptop asleep behind a NAT that swallows the SYN, leaves a
+  // promise that neither resolves nor rejects — so `busy` is never cleared by
+  // its own `finally` and every control on this panel stays disabled, silently,
+  // for the rest of the service. The only way out was reloading the page in the
+  // middle of a sermon.
+  //
+  // Six seconds. It is over a LAN to a machine in the same building: a reply
+  // that has not arrived by then is not late, it is lost.
+  const REQUEST_TIMEOUT_MS = 6000;
+
+  /**
+   * No reply arrived — unreachable, aborted on the deadline, or the answer was
+   * lost on the way back.
+   *
+   * This is deliberately NOT the same as a refusal. A refusal is Relay
+   * answering; this is Relay not answering, and the difference matters because
+   * a mutating request that got no reply MAY STILL HAVE EXECUTED. The phone
+   * cannot know, so it must not say.
+   */
+  class NoAnswer extends Error {}
+
   async function api(path) {
     const route = path.split('?')[0];
     const method = MUTATES.has(route) ? 'POST' : 'GET';
-    const r = await fetch(`${API}/${path}`, { method });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const j = await r.json();
-    if (!j.ok) throw new Error(j.error || 'failed');
-    return j;
+    const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+    let bell = null;
+    // TWO MECHANISMS, BECAUSE THEY GUARANTEE DIFFERENT THINGS. The abort asks
+    // the platform to release the connection, which is the tidy half and the
+    // only one that frees a socket. The race is what actually gets this panel
+    // its buttons back: a webview whose `fetch` ignores `signal` would leave
+    // the promise pending for ever and `busy` latched with it, and "we asked it
+    // to stop" is not the same guarantee as "we stopped waiting".
+    const deadline = new Promise((_, reject) => {
+      bell = setTimeout(() => {
+        try { ctl?.abort(); } catch { /* aborting must never take the page down */ }
+        reject(new NoAnswer('deadline'));
+      }, REQUEST_TIMEOUT_MS);
+    });
+    try {
+      let r;
+      try {
+        r = await Promise.race([fetch(`${API}/${path}`, { method, signal: ctl?.signal }), deadline]);
+      } catch {
+        throw new NoAnswer('no answer');
+      }
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error || 'failed');
+      return j;
+    } finally {
+      if (bell !== null) clearTimeout(bell);
+    }
   }
+
+  // WHAT AN UNANSWERED REQUEST IS ALLOWED TO SAY. Never a fact about the
+  // passage, and never an instruction to tap again: the wall is the only
+  // witness, and the preacher is looking at it.
+  const NO_ANSWER_NAV = 'Relay did not answer. Look at the screen — it may or may not have moved.';
+  const NO_ANSWER_FIRE = 'Relay did not answer. Look at the screen before tapping again.';
 
   let searchSeq = 0;
   async function doSearch() {
@@ -157,7 +210,7 @@
       await api(`fire?ref=${encodeURIComponent(reference)}`);
       results = []; q = '';
     } catch (e) {
-      ctlErr = 'Could not put that on screen.';
+      ctlErr = e instanceof NoAnswer ? NO_ANSWER_FIRE : 'Could not put that on screen.';
     } finally { busy = false; }
   }
 
@@ -183,7 +236,16 @@
         ctlErr = NAV_SAID[j.nav.kind] ?? (dir === 'next' ? 'No next verse.' : 'No previous verse.');
       }
     } catch (e) {
-      ctlErr = dir === 'next' ? 'No next verse.' : 'No previous verse.';
+      // THE WORDS OF A CORRECT BOUNDARY OVER A TRANSPORT FAILURE. This used to
+      // say "No next verse." for both — which is what Relay says when the
+      // reading has genuinely ended, so a phone that could not reach the
+      // building's computer reported a true-sounding fact about the passage.
+      // And it is not a safe lie: the request may have reached the server and
+      // executed, with only the reply lost, so those words could be printed
+      // over a wall that had just advanced.
+      ctlErr = e instanceof NoAnswer
+        ? NO_ANSWER_NAV
+        : (dir === 'next' ? 'No next verse.' : 'No previous verse.');
     } finally { busy = false; }
   }
 

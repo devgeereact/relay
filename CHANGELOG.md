@@ -31,6 +31,13 @@ did, so a phone or tablet that was set up correctly and showing the reading
 perfectly was described on the operator's console as a screen that had never
 painted, alongside advice to fix a problem it did not have.
 
+Controls on the preacher's phone now give up after six seconds instead of
+waiting for ever. Previously a request that never came back left every button on
+that panel disabled for the rest of the service, with a page reload as the only
+way out. And when the phone cannot reach Relay, it now says so, rather than
+saying "No next verse" — which is what Relay says when a reading has genuinely
+ended, and which could appear over a wall that had in fact just advanced.
+
 Physical phone and tablet scanning remains to be verified.
 
 ### Lower thirds had nothing behind the words
