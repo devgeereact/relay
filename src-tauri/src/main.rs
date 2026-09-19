@@ -2237,7 +2237,16 @@ fn remote_api<R: tauri::Runtime>(
                     .ok()
                     .and_then(|conn| db::stage_zones_json(&conn).ok())
                     .unwrap_or_else(|| "{}".to_string());
-            format!(r#""zones":{blob}"#)
+            // THE WHOLE OBJECT, not a fragment. Every arm of this match builds
+            // its own complete reply — `ok` sets the body verbatim and wraps
+            // nothing. This returned `"zones":{…}` with no braces, which is not
+            // JSON at all: `Stage.svelte`'s `api()` calls `r.json()`, that
+            // throws, `loadStageZones` swallows it by design, and the page
+            // falls back to the device's own zones. An assigned stage layout
+            // would have silently never applied on a real device while every
+            // test passed, because the tests mock `fetch`. Found by running the
+            // packaged app and curling the route.
+            format!(r#"{{"ok":true,"zones":{blob}}}"#)
         }
         "search" => {
             let q = param("q").unwrap_or_default();
