@@ -235,3 +235,110 @@ describe('stage.html honours it too — both doors, not one', () => {
     expect(painted()).toContain(WORDS);
   });
 });
+
+// ── AND A CUE THAT NAMES A SCREEN (RG-161) ─────────────────────────────────
+//
+// The same mechanic one field along, and the fourth time in this codebase: the
+// hub broadcasts to everybody and records nothing about who connected
+// (DECISIONS §35), so the only party that knows which screen it is, is the
+// screen. `channel_template` does this, `stage_alert` does this,
+// `screen_state` above does this, and now content does.
+//
+// What a plan that names a screen is FOR: stopping a notice landing on the
+// preacher's tablet, a lobby TV showing a countdown after the service has
+// started, and a band channel taking words it is not meant to carry.
+//
+// **A screen a cue does not name is UNTOUCHED, not cleared.** Targeting means
+// "these screens change and the others carry on" — the alternative gives a plan
+// cue the reach of a panic control, and a cue built on a Tuesday with one
+// screen ticked would blank every other screen on the Sunday.
+describe('a cue that names its screens', () => {
+  const NOTICE = {
+    ...VERSE,
+    reference: 'Tea afterwards',
+    text: 'In the hall',
+    channels: [4],
+  };
+
+  it('paints on the screen it names', async () => {
+    await openOutput(4);
+    send(NOTICE);
+    await settle();
+    expect(painted()).toContain('In the hall');
+  });
+
+  it('does not paint on a screen it does not name', async () => {
+    await openOutput(1);
+    send(NOTICE);
+    await settle();
+    expect(painted()).not.toContain('In the hall');
+  });
+
+  it('leaves an unnamed screen showing what it already had, rather than clearing it', async () => {
+    // THE DECISION, and the reason it is not "untargeted screens go blank".
+    await openOutput(1);
+    send(VERSE);
+    await settle();
+    const before = painted();
+    expect(before).toContain('For God so loved');
+    send(NOTICE);
+    await settle();
+    expect(painted()).toContain('For God so loved');
+    expect(painted()).not.toContain('In the hall');
+  });
+
+  it('reaches every screen when the cue names none', async () => {
+    // Every cue built before targeting existed says nothing about screens.
+    await openOutput(1);
+    send(VERSE);
+    await settle();
+    expect(painted()).toContain('For God so loved');
+  });
+
+  it('reaches no screen when the cue names an empty set', async () => {
+    // Not "all of them". A cue that reaches nothing is a real thing to ask for.
+    await openOutput(1);
+    send({ ...VERSE, channels: [] });
+    await settle();
+    expect(painted()).not.toContain('For God so loved');
+  });
+
+  it('paints on a raw preview, which belongs to no screen', async () => {
+    // Channel 0 is a template preview. A preview that silently dropped a
+    // targeted cue would be a preview that lies about the plan.
+    await openOutput(0);
+    send(NOTICE);
+    await settle();
+    expect(painted()).toContain('In the hall');
+  });
+
+  // ── AND THE SECOND DOOR ─────────────────────────────────────────────────
+  //
+  // The rehearsal guarantee was green and false for the stage tablet for
+  // exactly this reason: a rule kept on `output.html` and skipped on its twin.
+  it('stage.html paints a cue that names it', async () => {
+    await openStage(2);
+    send({ ...VERSE, channels: [2] });
+    await tick();
+    expect(painted()).toContain('For God so loved');
+  });
+
+  it('stage.html ignores a cue aimed at the wall', async () => {
+    await openStage(2);
+    send({ ...VERSE, channels: [1] });
+    await tick();
+    expect(painted()).not.toContain('For God so loved');
+  });
+
+  it('stage.html keeps the reading when a later cue is aimed elsewhere', async () => {
+    // The preacher is halfway through a reading; a notice goes to the foyer.
+    await openStage(2);
+    send(VERSE);
+    await tick();
+    expect(painted()).toContain('For God so loved');
+    send({ ...VERSE, reference: 'Tea', text: 'In the hall', channels: [4] });
+    await tick();
+    expect(painted()).toContain('For God so loved');
+    expect(painted()).not.toContain('In the hall');
+  });
+});

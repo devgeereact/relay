@@ -82,7 +82,15 @@ fn r6_1_the_remote_still_names_a_live_verse_after_the_screens_are_cleared() {
     let h = app.handle().clone();
     let wall = Wall::watch(&h);
 
-    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).expect("fire");
+    manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "John 3:16".into(),
+        None,
+        None,
+        None,
+    )
+    .expect("fire");
     settle();
     assert_eq!(wall.count(), 1, "the verse reached the wall");
     assert_eq!(api(&h, "live")["live"]["reference"], "John 3:16");
@@ -120,7 +128,15 @@ fn r6_2_a_rehearsal_verse_is_readable_over_the_lan() {
     let wall = Wall::watch(&h);
 
     h.state::<channels::Rehearsal>().set(true);
-    manual_fire(h.clone(), h.state::<Db>(), "Psalm 23:1".into(), None, None).expect("fire");
+    manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "Psalm 23:1".into(),
+        None,
+        None,
+        None,
+    )
+    .expect("fire");
     settle();
 
     // The gate held on the push doors: the console saw it, the wall did not.
@@ -204,7 +220,15 @@ fn r6_5_the_remote_refuses_a_verse_that_does_not_exist_without_blanking_the_wall
     let h = app.handle().clone();
     let wall = Wall::watch(&h);
 
-    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).expect("fire");
+    manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "John 3:16".into(),
+        None,
+        None,
+        None,
+    )
+    .expect("fire");
     settle();
     let before = wall.count();
 

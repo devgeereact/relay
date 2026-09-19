@@ -5527,3 +5527,276 @@ band (`rackBottom` 368 against `band.y` 376), which is the overlap `liverackfit.
 exists for. **At ≤1180px the Live desk scrolls and the band sits below the fold** — that is
 the pre-existing narrow step (`height:auto`), unchanged by this and measured identical with
 and without the new button.
+
+## 100. A screen that reports is told the time, and an unanswered report is how a phone knows it is alone (2026-09-19)
+
+Two findings on the preacher's phone wanted the same thing, so they got one frame.
+
+**A socket is not a screen.** `Stage.svelte` set `connected` on `onopen` and never revisited
+it. A half-open socket never fires `onclose`, so a phone that slept, roamed between access
+points, or sat behind a NAT that had quietly timed out kept a green `live` pip over frozen
+content — for the rest of a service, on the one screen whose reader cannot glance at the
+console to find out what happened. This is rule 35 on the surface a preacher is holding.
+
+**A countdown was computed against the phone's clock.** `countdown_to` is an absolute epoch
+produced on the host; this page subtracted its own `Date.now()` from it. A tablet a minute
+out showed a minute of error on the figure a sermon is paced against.
+
+The first cannot be solved by watching for silence. The hub publishes only when something
+CHANGES, so no frames is the normal state of a quiet service, and a page that treated quiet
+as a fault would cry wolf through every sermon. What distinguishes the two cases is that the
+page can ask. It already does: since plan finding S11 it sends a `beat` every two seconds,
+the same one every other output page sends.
+
+**So the hub answers it.** `{"kind":"beat_ack","at":<host epoch ms>}`, written to the one
+socket whose beat prompted it, exactly as the hello reply is written. Three unanswered beats
+— `BEAT_INTERVAL_MS * 3`, the same grace the console gives a screen — and the header reads
+`not answering` rather than `live`. The same ack carries the host clock, so the correction
+rides a round trip that was already happening rather than adding a protocol.
+
+**It is a reply, not a broadcast, and that is the whole shape of it.** A `tick` to every
+browser source and lobby TV in the building would be traffic bought for one page's benefit,
+and it would still need a second answer for the clock. Because it is a reply it is also not a
+retained frame: `FRAME_VERDICTS` carries `("beat_ack", false)` with the reason, since a
+retained ack would hold a timestamp that was true when a *different* client reported, and a
+late joiner gets its own within two seconds by beating itself.
+
+**Answered inside the parse.** The ack is sent within the same `if let` that validates
+`state` against `PaintState`, so a malformed beat draws no reply. An ack that came back for
+anything would let a client distinguish a good frame from a bad one by whether the server
+spoke, which is a probe this deliberately read-only server does not owe anybody
+(`a_beat_that_does_not_parse_is_not_answered`).
+
+**The offset is a median of five samples, not the last one.** One slow round trip is a
+latency measurement, not a clock change, and a single outlier must not move what the preacher
+is reading. One corrected instant then drives the wall clock, the countdown mirror, the
+programme rail and the service-elapsed figure, so those four cannot disagree with each other.
+The offset is short by the return leg, because the host stamped `at` before sending it: on a
+LAN that is single-digit milliseconds against a figure displayed to the second. It is not
+corrected for, and this sentence is the honest statement of that rather than a claim of
+sub-second synchronisation.
+
+**What this does NOT do.** `Output.svelte` does not read the ack, so a congregation screen's
+countdown is still on its own clock. For the native window on this machine the skew is zero
+by construction, but a kiosk browser source on a second computer has exactly the same
+exposure — and a wrong countdown on the wall is seen by more people than a wrong one on a
+phone. It needs the offset threaded into `TemplateRender`, which ticks its own `Date.now()`
+and is the shared renderer for the wall, so it is its own change with its own tests. Filed as
+plan finding S14, and `r6-contracts.test.js` carries an explicit `beat_ack: false` for that
+page with the reason attached, so it cannot be forgotten quietly.
+
+**It is not authentication and must never be described as one.** DECISIONS §35 is untouched:
+the ack carries a number this server already knows and nothing any client said, and the hub
+still records nothing about who connected.
+
+## 101. A sermon that has run over can be held, which needed the held figure to be signed (2026-09-19)
+
+§99 declined this and said why: *"holding a clock that has run out is structurally
+inexpressible, because `countdownRemainingMs` answers a held timer with a stored figure that
+is positive by contract"*. It filed RG-175 rather than forcing it, and recorded that
+`Stage.svelte` renders a `held` row nothing in the product can produce.
+
+That was an accurate reading of the code and the wrong conclusion about the cause. Nothing
+about it was structural. Four things, on four layers, each of which looks local:
+
+1. `timers::remaining_ms` clamped with `.max(0)`, so a timer two minutes over answered `0`.
+2. `TimerRegistry::adjust` refused anything under a second as `TooShort`.
+3. `countdown.js::countdownRemainingMs` returned a held figure only when `held > 0`.
+4. No rendered control anywhere called `adjust_timer` with `paused` — `+5` and `Stop` were
+   the whole transport, which is RG-152's shape one command along.
+
+Three of the four could be fixed with the feature still entirely broken, which is why this
+is recorded as one decision rather than four repairs.
+
+**The held figure is now SIGNED, and the audience guarantee moved rather than weakened.** It
+used to rest on the contract being positive. It now rests on the same clamp a RUNNING
+countdown already had: `countdownRemainingMs` returns the held figure as-is under `past` and
+`Math.max(0, held)` without it, exactly as it treats a live deadline. A congregation wall
+reads zero as "it finished" and paints the done message; `-2:00` in front of a room is not a
+thing anybody asked for, and it still cannot happen. In Rust the split is
+`remaining_signed_ms` with `remaining_ms` as its clamped caller — one subtraction with a
+floor one caller lifts, the same shape §99 chose for `timerRemainingMs({ past })` and stated
+twice across the bridge for the same reason.
+
+**A REQUEST AND A READING ARE NOT THE SAME THING, and that distinction is the whole repair.**
+`adjust`'s floor still refuses a requested length under a second in both scopes — `-1`
+walking a clock to zero and the caller then substituting five minutes is the failure that
+guard exists for, and `+5` past zero still grants five minutes *from now* rather than onto a
+debt. What is now allowed to be negative is only the figure `adjust` works out for ITSELF
+when the caller named none, which happens when the caller is merely holding. So the Live
+control names no figure, deliberately: its own reading is clamped at zero, and a hold it
+computed would be refused at exactly the moment an operator wants it.
+
+**Why hold at all, when Stop and `+5` exist.** They answer different questions. Stop throws
+the elapsed figure away; `+5` re-aims it. Holding is the third answer — *note where we got
+to* — and past zero it is the only one that keeps the number the preacher has been reading,
+which is the number somebody is about to make a decision on.
+
+**Words, not colour, on both surfaces.** Live's band prints `held` beside the figure and dims
+it; the preacher's rail already had its `Held` chip and its own CSS. Neither gets a law
+colour: amber is ON AIR, cyan a guess, amethyst rehearsal, red a failure, and a held clock is
+none of the four. A held row is still never WARNED — it is not running out, it is where the
+operator left it, and a frozen figure pulsing red says the opposite of what is true.
+
+**A stale comment corrected in the same commit.** `Stage.svelte`'s rail carried *"the stored
+figure … is always positive, so a held row can never take the over-time branch above"*. True
+when written, exactly backwards now, and on the surface a preacher reads from — the class of
+defect this repository files against its own handbook.
+
+**What this does NOT do.** It does not add reset-to-configured-length, timer modes, or
+count-down-to-a-time-of-day; those are the rest of the plan's phase 3 and want their own
+decisions, particularly around midnight, DST and system sleep. It does not let a cue-bound
+timer reach a congregation screen. And it does not persist anything: the registry is still
+in memory, so a relaunch mid-service still loses every clock, held or running.
+
+## 102. A countdown may name a time of day, and a time that has gone stays gone (2026-09-19)
+
+Every timer in Relay was a LENGTH. `start_countdown` and `start_timer` both took
+`minutes: f64` and computed `now + minutes * 60_000`, and `grep -rniE
+'count.?down.?to.?time|time_of_day|target_time'` over `src-tauri/src` and `src` returned
+nothing outside tests. So the commonest countdown a church shows — *the service starts at
+10:30* — could only be approximated by arithmetic an operator did in their head, and it was
+wrong the moment the service slipped, with the wall counting on confidently.
+
+ProPresenter has had this since 7 as one of three timer types, confirmed by three mutually
+exclusive payload shapes in its own API: Countdown (`duration`), Count Down To Time
+(`time_of_day` plus `am|pm|24_hour`), Elapsed Time (`start_time`, optional `end_time`).
+`docs/research/PROPRESENTER7_STAGE_AND_TIMERS.md` records the sourcing.
+
+**The instant is computed on the frontend, and that is a correctness decision rather than a
+convenience.** Turning "10:30" into a moment needs the machine's timezone and its DST rules.
+`std` has neither, this project has no `chrono`, and `Date` has both — `setHours` on a local
+`Date` is DST-correct by construction, so on the morning the clocks go forward "10:30" is
+still 10:30 on the wall and the gap to it is whatever it is. `countdown.js::atClockTime` is
+the ONE place a wall time becomes an instant. Rust stores the answer and never has to ask
+what day it is.
+
+**A time that has already gone is kept, not rolled to tomorrow.** At 10:35, "count down to
+10:30" starts five minutes over and counts up. The alternative reads 23:55:00, which is
+defensible as a literal reading of the words and is the wrong thing on a screen: a mistyped
+time becomes invisible until the service has started, whereas `+5:00 over` is obvious in the
+second it appears. The overrun behaviour it lands in is the one §99 and §101 already built,
+so this adds no new state — a time-of-day countdown that has passed is just a countdown that
+has passed.
+
+**`until_ms` is a second field, not a mode flag over `configured_ms`.** The two exist because
+Reset means different things: a duration timer resets to a LENGTH ("give me twenty minutes
+again"), an appointment resets to an INSTANT ("aim at 10:30 again") — and 10:30 today is the
+same instant it already was, which is why Reset needs no clock arithmetic either. A `+5`
+re-aims `target_ms` and leaves `until_ms` alone, so Reset goes back to the time somebody
+chose rather than to the extension. Storing the appointment in `target_ms` alone could not
+tell those apart.
+
+**Both scopes, because the mode is a property of the timer and not of the audience.** A lobby
+screen counting to 10:30 and a stage clock saying "be off the platform at 11:15" are the same
+feature. Making it congregation-only would have made a mode into a property of `Scope`, which
+is the shape CLAUDE.md warns about under "output channels are render targets of one shared
+template engine".
+
+**It governs Start only.** `±1` and Reset act on the countdown already on the wall; re-aiming
+those at a clock time would change what a congregation is counting to under an operator who
+pressed a minute button.
+
+**What this does NOT add.** No Elapsed-Time timer type: Relay already has a service-elapsed
+binding (`layers.js`, `elapsed`) fed by `service_started_at`, and a named elapsed timer in
+the registry is a different instrument that wants its own design. No presets. No per-timer
+overrun policy — overrun is always on, because §99 and §101 made counting up the behaviour
+for every timer and a per-timer switch would be a second answer to a settled question. And
+still no persistence: a relaunch mid-service loses every clock, appointment or not, which
+remains the largest open thing in this area.
+
+## 103. A stage layout is an operator's decision, and the device keeps its own until one is given (2026-09-19)
+
+`Stage.svelte` has carried seven zone switches since wave 4, in `localStorage` on the
+device. That is right for a preference and wrong for a decision: the operator could not set
+them, could not see them, and could not tell whether what they had just sent was being
+rendered — `Live.svelte` says so out loud, that whether the preacher's programme zone is on
+"is not a fact available on this side of the room". A tablet reset, or a second device, lost
+the arrangement silently.
+
+**A layout is global; its assignment is per screen.** That is ProPresenter's own shape
+(`docs/research/PROPRESENTER7_STAGE_AND_TIMERS.md`): one list you edit, each stage screen
+pointed at an entry. `stage_layouts` holds the list, `output_channels.stage_layout_id` holds
+the assignment.
+
+**It is deliberately not a row in `templates`, and the plan's own wording said it should
+be.** A template carries regions, a style and a `TemplateRender` output. A stage layout
+carries none of those, because `stage.html` is a hand-drawn monitor rather than a render
+target — the rail geometry RG-147 and RG-154 fixed is its own CSS, and the
+template-rendered surface cannot show a Stage Timer at all (`timer: false` for
+`Output.svelte` in `r6-contracts.test.js`). One table holding both would be two kinds of
+thing rendered by two renderers, and the Templates gallery would show a layout as a broken
+visual template. Converging the two renderers first remains the coherent end state and is a
+much larger change to the surface that paints every congregation screen; it is not a
+prerequisite for taking this decision off a device.
+
+**NULL IS A REAL ANSWER AND THE DEFAULT.** A screen with no layout falls back to the zones
+that device already has. A church running a tablet set by hand keeps exactly that
+arrangement until somebody deliberately assigns a layout: there is no migration of existing
+preferences, no default layout handed out on first sight, and clearing an assignment hands
+the screen back rather than resetting it. The receiver keeps the same promise from the other
+end — an entry naming no zone at all is treated as no layout, not as show-nothing, because
+the key-by-key merge would otherwise turn `{}` into an assigned layout of all-defaults that
+looks identical to the fallback it replaced while locking the device out.
+
+**Read over HTTP, updated over the socket, and that trade has a cost worth naming.** Every
+other configuration map — roles, looks, shows — is a retained hub slot replayed on `hello`,
+because the pages needing those have no other way to ask. `stage.html` is the only consumer
+of this one and the only page with an HTTP control plane, so it reads `GET /api/stage_zones`
+on connect and the `stage_zones` frame carries only live changes. The alternative was an
+eighteenth parameter on `run_kiosk_server` and twenty-five test call sites for a fact one
+page reads. The cost is that initial state and live updates arrive by two paths, and a
+failed read leaves the device's own zones in force — the safe direction, a working screen
+rather than a blank one.
+
+**Seeded by key, not by name.** Three starters ship: Preacher, Confidence monitor, Timer
+focus. `seed_key` is what a starter IS independent of what it is called, because seeding by
+name re-creates a renamed starter beside itself on every launch — `templates` already
+carries the column for the identical reason, and the test caught it on the first run.
+
+**Three enumeration guards refused this change until it answered them**, which is them
+working: the retention verdict in `FRAME_VERDICTS`, the per-client verdict in
+`r6-contracts.test.js`, and the rehearsal verdict — which is `false`, on the same reasoning
+as `set_channel_roles`, `set_channel_shows` and `set_channel_looks`. A layout is
+configuration, not content: it paints nothing on arrival, it decides which zones the next
+reading appears in, and each of those is gated on its own. Gating it would leave a screen
+still wearing the pre-rehearsal layout once the operator went live — and a rehearsal is
+exactly when a stage gets set up.
+
+**A fourth guard was missing entirely and this change exposed it.** The two db migration
+scanners each carried a hand-written source list, and `stage.rs` was in neither — so one
+test reported a column with no migration while the migration sat in a file it could not
+read. `demo.rs`, `starter.rs` and `verses.rs` had never been in either list either. None of
+the three carries an `ALTER TABLE … ADD COLUMN` today, so nothing was being missed; nothing
+was stopping one being added, and "no migration exists" and "the file holding it is not
+read" produce exactly the same green. `every_db_module_is_named_in_the_migration_scanners`
+now compares the directory against the names.
+
+**The editor, added in the following commit.** Outputs gains a **Stage layouts** section:
+create, rename, re-zone, delete. A zone toggle does NOT write through — it would change what
+a preacher is looking at on every tap while the operator was still deciding — so Save is the
+moment it reaches a screen, and the editor says when there is something unsaved rather than
+leaving the operator to remember. The row just saved is re-selected by the id the engine
+handed back rather than by guessing which row in the reloaded list is new, because two
+layouts saved in one sitting make that guess wrong.
+
+Two refusals, both about a change that would not stay done or would not stay visible. A
+layout a screen is **wearing** is refused and the screens are NAMED: falling back to their
+device zones is a defined and safe state, and an invisible one, so the operator would have
+changed what a preacher sees by deleting something that did not say which screens it
+affected. A **shipped starter** is refused outright, because `ensure_stage_layouts` seeds by
+key when the key is absent — a deleted starter returns on the next launch, and a delete that
+undoes itself overnight is worse than a refusal. The test proves that rather than asserting
+it: it force-deletes a starter, runs the ladder, and checks the count came back.
+
+**The zone list moved to `src/lib/stagelayout.js`** so the desk offers exactly the switches
+the screen renders. A second copy is a desk offering a zone no page draws, or missing one it
+does — the mistake `names.test.js` exists to catch with words, in keys. That move broke a
+tripwire which asserted the stage page's own zone labels were visible to the comment
+stripper (RG-167's regression test). It was not deleted: the trap it guards is still in
+`Stage.svelte`, so it now checks that a name declared after that `:8032/api/*` comment is
+still visible there AND that the labels are visible in their new home.
+
+**What this does NOT do.** A layout cannot be assigned by a cue, and a preview of one does
+not exist — an operator picks zones by name and sees the result on the device. Both belong
+with phase 5's cue work rather than here.

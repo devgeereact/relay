@@ -19,6 +19,7 @@ import {
   MIN_BROADCAST_MS,
   countdownRemainingMs,
   countdownIsPaused,
+  atClockTime,
   countdownTotalMs,
 } from './countdown.js';
 
@@ -273,5 +274,124 @@ describe('the set duration outlives the dock', () => {
     countdownSet.set(11 * MIN);
     expect(get(countdownSet)).toBe(11 * MIN);
     countdownSet.set(DEFAULT_COUNTDOWN_MS);
+  });
+});
+
+// ── A HOLD PAST ZERO (RG-175, DECISIONS §99's open half) ───────────────────
+//
+// `paused_ms` was positive by contract, and this reader enforced it with
+// `held > 0`. That is what DECISIONS §99 meant by a hold past zero being
+// "structurally inexpressible": a stage timer two minutes over answered its
+// deadline instead of its held figure, so `Stage.svelte`'s `held` row — real,
+// styled and tested since wave 4 — could never be produced by anything.
+//
+// The contract is now SIGNED, and the audience reading is what keeps the old
+// guarantee: a held figure is clamped at zero unless the caller opted into
+// `past`, exactly as a running one is. A congregation wall reads zero as "it
+// finished" and paints the done message; `-2:00` in front of a room is not a
+// thing anybody asked for.
+//
+// **The `> 0` was also doing something nobody wrote down.** `Number(null)` is
+// `0`, so a `countdown_paused_ms: null` — which is what the wire sends for a
+// timer that is NOT held — fell through on the `> 0` and read as running by
+// accident. Widen the check to "is it finite" and every unheld timer freezes at
+// `0:00`. Hence the explicit null guard, and hence these tests.
+describe('holding a clock that has already run out', () => {
+  const overrun = { countdown_to: 1_000, countdown_paused_ms: -120_000 };
+
+  it('answers the negative figure the preacher is reading', () => {
+    expect(countdownRemainingMs(overrun, 999_999, { past: true })).toBe(-120_000);
+  });
+
+  it('clamps it for a congregation, where zero means the done message', () => {
+    expect(countdownRemainingMs(overrun, 999_999)).toBe(0);
+  });
+
+  it('counts a negative hold as held, or the rail cannot render it frozen', () => {
+    expect(countdownIsPaused(overrun)).toBe(true);
+  });
+
+  it('still counts a positive hold as held, and answers it either way', () => {
+    const held = { countdown_to: 1_000, countdown_paused_ms: 90_000 };
+    expect(countdownIsPaused(held)).toBe(true);
+    expect(countdownRemainingMs(held, 999_999)).toBe(90_000);
+    expect(countdownRemainingMs(held, 999_999, { past: true })).toBe(90_000);
+  });
+
+  // THE TRAP. `Number(null) === 0`, and `0` is finite.
+  it.each([
+    ['null', null],
+    ['undefined', undefined],
+    ['absent', 'ABSENT'],
+  ])('does not call a timer held when paused_ms is %s', (_name, value) => {
+    const c = { countdown_to: 2_000_000 };
+    if (value !== 'ABSENT') c.countdown_paused_ms = value;
+    expect(countdownIsPaused(c)).toBe(false);
+    // …and it must still count down rather than freezing at that phantom zero.
+    expect(countdownRemainingMs(c, 1_000_000)).toBe(1_000_000);
+  });
+});
+
+// ── A CLOCK TIME IS NOT A LENGTH (DECISIONS §102) ──────────────────────────
+//
+// Every timer in Relay was a DURATION: `start_countdown` and `start_timer` both
+// take `minutes: f64` and compute `now + minutes*60000`, and there was no
+// `time_of_day` anywhere in the product. So "the service starts at 10:30" could
+// only be approximated by arithmetic the operator did in their head, and it was
+// wrong the moment the service slipped.
+//
+// This is the one place a wall time becomes an instant, and it is on this side
+// of the bridge because that is where the answer can be correct: turning
+// "10:30" into a moment needs the machine's timezone and its DST rules, `std`
+// has neither and `Date` has both.
+describe('turning a time of day into an instant', () => {
+  const at = (iso) => new Date(iso).getTime();
+
+  it('lands on today at that local clock time', () => {
+    const now = at('2026-09-19T08:00:00');
+    const t = atClockTime('10:30', now);
+    const d = new Date(t);
+    expect(d.getHours()).toBe(10);
+    expect(d.getMinutes()).toBe(30);
+    expect(d.getSeconds()).toBe(0);
+    expect(d.getMilliseconds()).toBe(0);
+    expect(d.getDate()).toBe(new Date(now).getDate());
+  });
+
+  it('accepts a single-digit hour', () => {
+    const d = new Date(atClockTime('9:05', at('2026-09-19T08:00:00')));
+    expect(d.getHours()).toBe(9);
+    expect(d.getMinutes()).toBe(5);
+  });
+
+  // THE DECISION, pinned here so it cannot drift into "roll it to tomorrow".
+  it('returns a time that has already gone, rather than rolling it to tomorrow', () => {
+    const now = at('2026-09-19T10:35:00');
+    const t = atClockTime('10:30', now);
+    expect(t).toBeLessThan(now);
+    expect(new Date(t).getDate()).toBe(new Date(now).getDate());
+    // Which is the point: the countdown starts about five minutes over, and the
+    // operator sees the typo. Rolling forward would read 23:55:00 and hide it
+    // until the service had started.
+    expect(now - t).toBe(5 * 60_000);
+  });
+
+  it.each([
+    ['not a time', 'soon'],
+    ['no minutes', '10'],
+    ['nonsense hour', '25:00'],
+    ['nonsense minutes', '10:75'],
+    ['empty', ''],
+    ['nothing at all', null],
+    ['undefined', undefined],
+  ])('answers null for %s rather than guessing', (_name, value) => {
+    expect(atClockTime(value, at('2026-09-19T08:00:00'))).toBeNull();
+  });
+
+  it('is midnight-safe at both ends of the day', () => {
+    const now = at('2026-09-19T13:00:00');
+    expect(new Date(atClockTime('00:00', now)).getHours()).toBe(0);
+    expect(new Date(atClockTime('23:59', now)).getHours()).toBe(23);
+    expect(new Date(atClockTime('23:59', now)).getMinutes()).toBe(59);
   });
 });

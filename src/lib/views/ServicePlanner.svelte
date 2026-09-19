@@ -44,6 +44,7 @@
     cueCountLabel,
     dropIndex,
     reorderTo,
+    planChannelsOf,
   } from '../plan.js';
   import {
     capture,
@@ -61,6 +62,8 @@
     setPlanSection,
     setPlanDuration,
     setPlanTimer,
+    setPlanChannels,
+    listOutputChannels,
     setPlanTemplate,
     searchScripture,
     searchSongs,
@@ -150,6 +153,10 @@
       })
       .finally(() => (loading = false));
     loadTemplates();
+    // The screens a cue may be pointed at. A failed read leaves the list
+    // empty and the control says so, rather than offering a picker with
+    // nothing in it and no reason.
+    loadScreens();
   });
 
   async function refresh() {
@@ -226,6 +233,10 @@
     await loadItems();
     if (items.length) selId = items[0].id;
   }
+  async function loadScreens() {
+    screens = (await listOutputChannels()) ?? [];
+  }
+
   async function loadItems() {
     items = await planItems(openPlan.id);
   }
@@ -532,6 +543,37 @@
    * `setPlanDuration`: one is a clock a preacher watches, the other the estimate
    * this workspace adds up in its header.
    */
+  // ── WHICH SCREENS THIS CUE IS FOR (RG-161) ───────────────────────────────
+  //
+  // The Planner is where a plan is built, and "which screens" is a decision the
+  // plan makes cue by cue — the only per-screen control before this was the
+  // receiver filtering on content KIND against its own template, which is a
+  // coarse standing preference rather than a choice a plan gets to make.
+  //
+  // EVERY SCREEN is the default and is shown as a real option, not as nothing
+  // ticked. A screen a cue does not name is left showing what it already had,
+  // so this narrows what a cue reaches and can never blank a screen.
+  let screens = [];
+  $: cueChannels = planChannelsOf(selCue?.channels_json ?? null);
+
+  async function saveChannels(next) {
+    if (!selCue) return;
+    await act(async () => {
+      await setPlanChannels(selCue.id, next);
+      await loadItems();
+    });
+  }
+  /** Tick or untick one screen, starting from "every screen" if nothing is set. */
+  function toggleCueChannel(id) {
+    const from = cueChannels ?? screens.map((c) => c.id);
+    const next = from.includes(id) ? from.filter((n) => n !== id) : [...from, id];
+    // Back to NULL when every screen is ticked again: "all of them" has one
+    // spelling, and an explicit list of every screen would silently stop
+    // including a screen added later.
+    const all = screens.length > 0 && next.length === screens.length;
+    return saveChannels(all ? null : next);
+  }
+
   async function saveTimer(ev) {
     if (!selCue) return;
     const v = ev.target.value;
@@ -1073,6 +1115,38 @@
                 </select>
               </span>
             </div>
+            <div class="rw-nv sp-chrow">
+              <span class="rw-nvk">Screens</span>
+              <span class="rw-nvctl">
+                {#if screens.length}
+                  <!-- EVERY SCREEN IS A CHOICE, not nothing ticked. A cue that
+                       names no screens reaches all of them, which is what every
+                       cue written before this existed does — and a screen a cue
+                       does NOT name keeps showing whatever it already had, so
+                       this narrows what a cue reaches and can never blank one. -->
+                  <span class="sp-chset">
+                    {#each screens as c (c.id)}
+                      <button
+                        class="r-btn ghost sm sp-ch"
+                        class:on={(cueChannels ?? screens.map((x) => x.id)).includes(c.id)}
+                        aria-pressed={(cueChannels ?? screens.map((x) => x.id)).includes(c.id)}
+                        on:click={() => toggleCueChannel(c.id)}>{c.name}</button>
+                    {/each}
+                  </span>
+                  <span class="sp-chnote r-dim">
+                    {#if cueChannels == null}
+                      Every screen.
+                    {:else if cueChannels.length === 0}
+                      No screen — this cue reaches nothing.
+                    {:else}
+                      Other screens keep what they are showing.
+                    {/if}
+                  </span>
+                {:else}
+                  <span class="sp-chnote r-dim">No screens are set up yet — add one in Outputs.</span>
+                {/if}
+              </span>
+            </div>
             <div class="rw-nv">
               <span class="rw-nvk">Fires</span>
               <!-- `ty.trig`, never a guess from the kind at this call site: it is
@@ -1416,7 +1490,13 @@
   .sp-kv{ margin-top:16px; border:1px solid var(--v-line); border-radius:var(--v-r-sm);
     background:var(--v-surf2); overflow:hidden; }
   .sp-tplsel{ max-width:172px; }
-  .sp-tmrsel{ max-width:172px; }
+/* A SCREEN TICK. The shared button, pressed-state only: it is a toggle in a
+     set rather than an action, so `on` is its whole visual job. */
+  .sp-ch.on{ background:var(--v-sel); color:var(--v-txt); }
+  .sp-chset{ display:flex; flex-wrap:wrap; gap:4px; }
+  .sp-chrow{ align-items:flex-start; }
+  .sp-chnote{ display:block; margin-top:4px; font-size:var(--v-fs-cap); }
+    .sp-tmrsel{ max-width:172px; }
   .sp-fhelp{ margin:6px 0 0; font-size:var(--v-fs-cap); line-height:1.45; color:var(--v-faint); }
   .sp-note{ width:100%; resize:vertical; font-family:inherit; line-height:1.45; }
 

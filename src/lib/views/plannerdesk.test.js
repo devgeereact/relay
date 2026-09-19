@@ -489,7 +489,10 @@ describe('§2 · the cue inspector answers the question it is asked', () => {
     await mount();
     await until(() => host.querySelector('.sp-kv'), 'the inspector facts');
     const keys = [...host.querySelectorAll('.sp-kv .rw-nvk')].map((e) => e.textContent.trim());
-    expect(keys).toEqual(['Kind', 'Template', 'Timer', 'Fires']);
+    // `Screens` is RG-161: which screens this cue is for. Listed here rather
+    // than the assertion being loosened, because an exhaustive row list is what
+    // makes a row added without a decision visible at all.
+    expect(keys).toEqual(['Kind', 'Template', 'Timer', 'Screens', 'Fires']);
     // The first cue is an announcement: it may not claim the auto-detect that
     // only scripture has (`typeOf`, the one door).
     expect(host.querySelector('.sp-kv').textContent).toContain('NOTICE');

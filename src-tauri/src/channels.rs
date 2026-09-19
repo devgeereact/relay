@@ -44,6 +44,26 @@ pub struct OutputContent {
     /// in the output page against the template's `shows` set. None = unspecified
     /// (treated as always shown, for older paths).
     pub kind: Option<String>,
+    /// WHICH SCREENS THIS CUE IS FOR (RG-161). `None` is every screen and is the
+    /// default — a cue that says nothing about screens behaves exactly as every
+    /// cue did before this existed.
+    ///
+    /// **A screen this does not name is UNTOUCHED, not cleared.** Targeting
+    /// means "these screens change and the others carry on": a notice aimed at
+    /// the foyer TV leaves the wall on the verse and leaves the reading the
+    /// preacher is halfway through. The alternative — untargeted screens go
+    /// blank — gives a plan cue the reach of a panic control, and a cue built on
+    /// a Tuesday with one screen ticked would blank every other screen on the
+    /// Sunday in front of somebody who never saw it happen.
+    ///
+    /// An EMPTY list is not the same as `None` and is deliberately allowed: it
+    /// is a cue that reaches no screen, which is what a disabled row in a plan
+    /// should do rather than quietly reaching all of them.
+    ///
+    /// The panic controls never carry this. A `clear` that has to ask which
+    /// screens it is talking to is a `clear` that can fail (rule 15,
+    /// DECISIONS §20).
+    pub channels: Option<Vec<i64>>,
     pub reference: String,
     pub text: Option<String>,
     pub translation: Option<String>,
@@ -974,6 +994,10 @@ pub(crate) fn kiosk_content_json(content: &OutputContent) -> String {
     serde_json::json!({
         "kind": "content",
         "content_kind": content.kind,
+        // null = every screen. Receivers filter on it; the hub cannot address
+        // one client (DECISIONS §35), so the routing is the receiver's, exactly
+        // as `channel_template` and the Stage Message already are.
+        "channels": content.channels,
         "reference": content.reference,
         "text": content.text,
         "translation": content.translation,
@@ -1636,6 +1660,43 @@ fn timer_frame_json(timers: &[crate::timers::Timer], warn_default_ms: Option<i64
 fn is_timer_frame(msg: &str) -> bool {
     msg.contains(r#""kind":"timer""#)
 }
+/// WHICH SCREENS A FRAME NAMES, or `None` for every screen (RG-161).
+///
+/// Reads the wire rather than the struct, because retention happens at
+/// `publish`, which is handed a finished string — the same reason
+/// `is_screen_frame` parses rather than matching on a type.
+///
+/// `None` covers three cases that must behave identically: the key is absent
+/// (every frame built before this existed), it is `null` (a cue that names no
+/// screens), and it is not an array at all (a malformed frame, where reaching
+/// every screen is the safe direction because the alternative is content that
+/// silently reaches none).
+///
+/// An EMPTY array is `Some(vec![])` and is NOT `None`: a cue that reaches no
+/// screen is a real thing to ask for, and turning it into "every screen" would
+/// be the worst possible reading of it.
+fn frame_channels(msg: &str) -> Option<Vec<i64>> {
+    let v: serde_json::Value = serde_json::from_str(msg).ok()?;
+    let arr = v.get("channels")?.as_array()?;
+    Some(arr.iter().filter_map(|n| n.as_i64()).collect())
+}
+
+/// WHICH LAYOUT EACH STAGE SCREEN WEARS — `{"2":{"reading":true,…}}`.
+///
+/// The frame lives HERE rather than beside its one caller in `main.rs`, and
+/// that is not tidiness. `every_kind_this_module_publishes_has_an_explicit_verdict`
+/// and `r6-contracts.test.js` both find published kinds by reading THIS
+/// module's source for `"kind":"…"` literals, so a frame published from
+/// anywhere else is invisible to both — it would ship with no retention verdict
+/// and no per-client verdict, which is the enumeration failing silently rather
+/// than catching anything.
+///
+/// A screen with no layout is OMITTED by the query that builds `blob`, never
+/// sent an empty object: absent means "use the device's own zones" and empty
+/// would mean "show nothing", and those are a working screen and a blank one.
+pub fn stage_zones_frame(blob: &str) -> String {
+    format!(r#"{{"kind":"stage_zones","zones":{blob}}}"#)
+}
 
 /// THE PROGRAMME TIMERS, TO THE STAGE TABLET AND NOWHERE ELSE.
 ///
@@ -1791,6 +1852,26 @@ pub struct KioskHub {
     /// rehearsal publishes nothing to this hub at all (the gate is at the
     /// publishers), so nothing a rehearsal did can be replayed either.
     last_screen: Arc<Mutex<Option<String>>>,
+    /// WHAT IS ON ONE SCREEN, when that screen was told something the others
+    /// were not (RG-161).
+    ///
+    /// Rule 43 says a screen joining mid-service is shown what is on the
+    /// screens — and the moment a cue can name screens, *the screens* stops
+    /// being one answer. `last_screen` alone would replay a targeted frame to
+    /// every late joiner, which is the targeting failing in exactly the way it
+    /// was added to prevent.
+    ///
+    /// The two slots are kept consistent by one rule, in `publish`: an
+    /// UNTARGETED frame supersedes everything, so it writes `last_screen` and
+    /// EMPTIES this map. A targeted frame writes only the channels it names.
+    /// So a present entry is always newer than `last_screen`, and `hello` needs
+    /// no timestamps to decide between them — it prefers this map and falls
+    /// back to the global slot.
+    ///
+    /// `clear` and `black` are untargeted by construction (the panic controls
+    /// never carry a channel set), so they empty this map too and a cleared
+    /// wall stays cleared for every screen that joins after it.
+    last_screen_by_channel: Arc<Mutex<HashMap<i64, String>>>,
     /// THE OPERATOR'S LIVE TRANSITION OVERRIDE — `(mode, ms)`, or `None` to follow
     /// each template's own choice (DECISIONS §84).
     ///
@@ -1979,6 +2060,7 @@ impl Default for KioskHub {
             clients: Arc::new(Mutex::new(HashMap::new())),
             default_tpl: Arc::new(Mutex::new("null".to_string())),
             last_screen: Arc::new(Mutex::new(None)),
+            last_screen_by_channel: Arc::new(Mutex::new(HashMap::new())),
             last_transition: Arc::new(Mutex::new(None)),
             channel_roles: Arc::new(Mutex::new("{}".to_string())),
             channel_looks: Arc::new(Mutex::new("{}".to_string())),
@@ -2053,8 +2135,26 @@ impl Drop for ClientGuard {
 impl KioskHub {
     pub fn publish(&self, msg: String) {
         if is_screen_frame(&msg) {
-            if let Ok(mut last) = self.last_screen.lock() {
-                *last = Some(msg.clone());
+            // TARGETED OR NOT, and the two write different slots. See
+            // `last_screen_by_channel`: an untargeted frame supersedes
+            // everything and empties the map, so a present per-channel entry is
+            // always the newer of the two and `hello` needs no clock to choose.
+            match frame_channels(&msg) {
+                Some(ids) => {
+                    if let Ok(mut per) = self.last_screen_by_channel.lock() {
+                        for id in ids {
+                            per.insert(id, msg.clone());
+                        }
+                    }
+                }
+                None => {
+                    if let Ok(mut last) = self.last_screen.lock() {
+                        *last = Some(msg.clone());
+                    }
+                    if let Ok(mut per) = self.last_screen_by_channel.lock() {
+                        per.clear();
+                    }
+                }
             }
         }
         // A SECOND SLOT, TESTED SEPARATELY. The two matchers are disjoint by
@@ -2092,6 +2192,10 @@ impl KioskHub {
         let _ = self.tx.send(msg); // Err only means no subscribers — fine.
     }
     /// Shared handle to the retained screen frame, for the WS task to send on hello.
+    /// Shared handle to the per-channel screen frames, for the WS task's `hello`.
+    pub fn last_screen_by_channel_handle(&self) -> Arc<Mutex<HashMap<i64, String>>> {
+        self.last_screen_by_channel.clone()
+    }
     pub fn last_screen_handle(&self) -> Arc<Mutex<Option<String>>> {
         self.last_screen.clone()
     }
@@ -2560,6 +2664,7 @@ pub async fn run_kiosk_server(
     channel_tpls: Arc<Mutex<HashMap<i64, String>>>,
     channel_shows: Arc<Mutex<String>>,
     last_screen: Arc<Mutex<Option<String>>>,
+    last_screen_by_channel: Arc<Mutex<HashMap<i64, String>>>,
     last_transition: TransitionSlot,
     last_timers: Arc<Mutex<Option<String>>>,
     last_background: Arc<Mutex<Option<String>>>,
@@ -2603,6 +2708,7 @@ pub async fn run_kiosk_server(
         let channel_tpls = channel_tpls.clone();
         let channel_shows = channel_shows.clone();
         let last_screen = last_screen.clone();
+        let last_screen_by_channel = last_screen_by_channel.clone();
         let last_transition = last_transition.clone();
         let last_timers = last_timers.clone();
         let last_background = last_background.clone();
@@ -2715,6 +2821,50 @@ pub async fn run_kiosk_server(
                                             .and_then(PaintState::parse),
                                     ) {
                                         health.beat(ch, st, "kiosk", BeatGap::from_json(&v));
+                                        // ── AND THE SCREEN IS TOLD THE TIME ──
+                                        //
+                                        // Answered here, INSIDE the parse, so an
+                                        // unparseable beat draws no reply: an ack
+                                        // that arrived for anything would let a
+                                        // client tell a good frame from a bad one
+                                        // by whether the server spoke, which is a
+                                        // probe this read-only server does not owe
+                                        // anybody.
+                                        //
+                                        // Two findings wanted this one frame. The
+                                        // page cannot detect a half-open socket
+                                        // from silence, because the hub only
+                                        // publishes when something CHANGES and
+                                        // silence is the normal state of a quiet
+                                        // service — so the thing it is already
+                                        // sending every two seconds gets an
+                                        // answer, and three unanswered beats mean
+                                        // stale. And `countdown_to` is an absolute
+                                        // epoch produced on THIS machine while the
+                                        // stage page subtracts its own
+                                        // `Date.now()`, so a tablet a minute out
+                                        // showed a minute of error to the person
+                                        // preaching; the host clock rides the ack,
+                                        // and the round trip that carried it is
+                                        // what bounds how well the offset can be
+                                        // known.
+                                        //
+                                        // To the ONE client that beat, exactly as
+                                        // the hello reply is, rather than
+                                        // broadcast: a tick to every browser
+                                        // source and lobby TV in the building
+                                        // would be traffic bought for one page.
+                                        // It carries a number this server already
+                                        // knows and nothing any client said.
+                                        let out = format!(
+                                            r#"{{"kind":"beat_ack","at":{}}}"#,
+                                            crate::now_epoch_ms()
+                                        );
+                                        let _ = write
+                                            .send(tokio_tungstenite::tungstenite::Message::Text(
+                                                out,
+                                            ))
+                                            .await;
                                     }
                                 }
                                 if v.get("kind").and_then(|k| k.as_str()) == Some("hello") {
@@ -3005,7 +3155,30 @@ pub async fn run_kiosk_server(
                                     // with has already arrived. `clear` and `black`
                                     // are retained the same way, so this can never
                                     // undo a panic control.
-                                    let retained = last_screen.lock().ok().and_then(|l| l.clone());
+                                    //
+                                    // AND WHAT IS ON *THIS* SCREEN, once a cue
+                                    // can name screens (RG-161). `the screens`
+                                    // stopped being one answer, so the per-
+                                    // channel slot is preferred and the global
+                                    // one is the fallback. No timestamps are
+                                    // needed to choose between them: an
+                                    // untargeted frame empties the map when it
+                                    // is published, so a present entry is
+                                    // always the newer of the two — which is
+                                    // also why a `clear` still reaches a screen
+                                    // that joins afterwards.
+                                    let mine = v
+                                        .get("channel")
+                                        .and_then(|c| c.as_i64())
+                                        .filter(|c| *c > 0)
+                                        .and_then(|ch| {
+                                            last_screen_by_channel
+                                                .lock()
+                                                .ok()
+                                                .and_then(|m| m.get(&ch).cloned())
+                                        });
+                                    let retained = mine
+                                        .or_else(|| last_screen.lock().ok().and_then(|l| l.clone()));
                                     if let Some(frame) = retained {
                                         let _ = write
                                             .send(tokio_tungstenite::tungstenite::Message::Text(frame))
@@ -4381,6 +4554,7 @@ mod tests {
             hub.channel_templates_handle(),
             hub.channel_shows_handle(),
             hub.last_screen_handle(),
+            hub.last_screen_by_channel_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
@@ -4449,6 +4623,7 @@ mod tests {
             hub.channel_templates_handle(),
             hub.channel_shows_handle(),
             hub.last_screen_handle(),
+            hub.last_screen_by_channel_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
@@ -4540,6 +4715,7 @@ mod tests {
             hub.channel_templates_handle(),
             hub.channel_shows_handle(),
             hub.last_screen_handle(),
+            hub.last_screen_by_channel_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
@@ -4598,6 +4774,7 @@ mod tests {
             hub.channel_templates_handle(),
             hub.channel_shows_handle(),
             hub.last_screen_handle(),
+            hub.last_screen_by_channel_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
@@ -4685,6 +4862,7 @@ mod tests {
             hub.channel_templates_handle(),
             hub.channel_shows_handle(),
             hub.last_screen_handle(),
+            hub.last_screen_by_channel_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
@@ -4787,6 +4965,7 @@ mod tests {
             hub.channel_templates_handle(),
             hub.channel_shows_handle(),
             hub.last_screen_handle(),
+            hub.last_screen_by_channel_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
@@ -4875,6 +5054,7 @@ mod tests {
             hub.channel_templates_handle(),
             hub.channel_shows_handle(),
             hub.last_screen_handle(),
+            hub.last_screen_by_channel_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
@@ -5041,6 +5221,7 @@ mod tests {
             hub.channel_templates_handle(),
             hub.channel_shows_handle(),
             hub.last_screen_handle(),
+            hub.last_screen_by_channel_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
@@ -5153,6 +5334,7 @@ mod tests {
             hub.channel_templates_handle(),
             hub.channel_shows_handle(),
             hub.last_screen_handle(),
+            hub.last_screen_by_channel_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
@@ -5432,6 +5614,33 @@ mod tests {
         // it, because it overrides what is on the screens rather than being what
         // is on them.
         ("screen_state", false),
+        // NOT A PUBLISHED FRAME AT ALL, AND THAT IS THE VERDICT.
+        //
+        // Every other row here answers "should a screen that joins late be
+        // shown this?". `beat_ack` does not reach the hub: it is written
+        // straight to the one socket whose `beat` prompted it, the same way the
+        // hello reply is, so there is nothing to retain and nobody to replay it
+        // to. Retaining it would be meaningless twice over — it carries a host
+        // timestamp that was true when a DIFFERENT client reported, and a late
+        // joiner gets its own within two seconds by beating itself.
+        //
+        // It is listed rather than excused because the scanner reads source
+        // literals, and a kind with no row is the finding this test exists for.
+        ("beat_ack", false),
+        // WHICH LAYOUT EACH STAGE SCREEN WEARS. Not retained, and this one is
+        // the exception that has to justify itself, because unlike `beat_ack`
+        // it IS durable configuration and rule 43 would ordinarily replay it.
+        //
+        // `stage.html` is its only consumer and the only page with an HTTP
+        // control plane, so it READS this map from `GET /api/stage_zones` when
+        // it connects and this frame exists only to carry a LIVE change to a
+        // screen already open. Retaining it as well would be a second source of
+        // one fact, and the one that a reconnecting page does not consult.
+        //
+        // The cost of that trade is real: a screen whose HTTP read fails falls
+        // back to the device's own zones rather than to the assigned layout.
+        // That is the safe direction — a working screen, not a blank one.
+        ("stage_zones", false),
     ];
 
     /// THE ENUMERATION MUST GROW WITH THE MODULE, OR IT IS NOT AN ENUMERATION.
@@ -5604,6 +5813,20 @@ mod tests {
              control the operator pressed deliberately. It is not a panic control, \
              so it is allowed to refuse; `clear` and `black` are and are not, which \
              is why the split is in the call",
+        ),
+        (
+            "publish_stage_zones",
+            false,
+            "WHICH LAYOUT a stage screen wears, which is configuration and not \
+             content — the same verdict as `set_channel_roles`, \
+             `set_channel_shows` and `set_channel_looks` below, for the same \
+             reason. It paints nothing on arrival: it decides which ZONES the \
+             next reading, note or clock appears in, and each of those is gated \
+             on its own. Gating this instead would leave a screen still wearing \
+             the pre-rehearsal layout once the operator went live, which is the \
+             failure the other three rows already name — and a rehearsal is \
+             exactly when an operator sets a stage up, so a change that appeared \
+             to do nothing would be the worst possible moment for it",
         ),
         (
             "set_channel_roles",
@@ -5938,6 +6161,7 @@ mod tests {
             hub.channel_templates_handle(),
             hub.channel_shows_handle(),
             hub.last_screen_handle(),
+            hub.last_screen_by_channel_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
@@ -6009,6 +6233,7 @@ mod tests {
             hub.channel_templates_handle(),
             hub.channel_shows_handle(),
             hub.last_screen_handle(),
+            hub.last_screen_by_channel_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
@@ -6174,6 +6399,9 @@ mod tests {
             paused_ms: None,
             warn_ms: None,
             scope: crate::timers::Scope::Stage,
+            // A fixture states no configured length; `start` fills it from the span.
+            configured_ms: 0,
+            until_ms: None,
             plan_item_id: None,
             started_in_rehearsal: false,
         }
@@ -6542,6 +6770,7 @@ mod tests {
             hub.channel_templates_handle(),
             hub.channel_shows_handle(),
             hub.last_screen_handle(),
+            hub.last_screen_by_channel_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
@@ -6609,6 +6838,7 @@ mod tests {
             hub.channel_templates_handle(),
             hub.channel_shows_handle(),
             hub.last_screen_handle(),
+            hub.last_screen_by_channel_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
@@ -6682,6 +6912,7 @@ mod tests {
             hub.channel_templates_handle(),
             hub.channel_shows_handle(),
             hub.last_screen_handle(),
+            hub.last_screen_by_channel_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
@@ -6726,6 +6957,257 @@ mod tests {
         );
     }
 
+    /// A CUE THAT NAMES A SCREEN IS RETAINED FOR THAT SCREEN ONLY (RG-161).
+    ///
+    /// Rule 43 says a screen joining mid-service is shown what is on the
+    /// screens. The moment a cue can name screens, *the screens* stops being
+    /// one answer — and a single retained slot would replay a targeted frame to
+    /// every late joiner, which is the targeting failing in precisely the way
+    /// it exists to prevent.
+    #[test]
+    fn a_targeted_frame_is_replayed_only_to_the_screen_it_named() {
+        let hub = KioskHub::default();
+        hub.publish(r#"{"kind":"content","channels":[2],"reference":"Notices"}"#.to_string());
+
+        let per = hub.last_screen_by_channel.lock().expect("slot").clone();
+        assert!(
+            per.contains_key(&2),
+            "the named screen has nothing retained"
+        );
+        assert!(
+            !per.contains_key(&1),
+            "an unnamed screen was given the frame"
+        );
+        assert!(
+            hub.last_screen.lock().expect("slot").is_none(),
+            "a targeted frame became what EVERY late joiner is shown"
+        );
+    }
+
+    /// AN UNTARGETED FRAME SUPERSEDES EVERYTHING, which is what lets `hello`
+    /// choose between the two slots without a clock.
+    #[test]
+    fn a_frame_for_every_screen_clears_what_one_screen_was_told() {
+        let hub = KioskHub::default();
+        hub.publish(r#"{"kind":"content","channels":[2],"reference":"Notices"}"#.to_string());
+        hub.publish(r#"{"kind":"content","reference":"John 3:16"}"#.to_string());
+
+        assert!(
+            hub.last_screen_by_channel.lock().expect("slot").is_empty(),
+            "a screen would rejoin to a stale targeted frame that a later \
+             all-screens cue had already replaced"
+        );
+        assert!(hub.last_screen.lock().expect("slot").is_some());
+    }
+
+    /// AND A PANIC CONTROL STILL REACHES EVERY SCREEN.
+    ///
+    /// `clear` and `black` never carry a channel set — a control that has to
+    /// ask which screens it is talking to is one that can fail (rule 15,
+    /// DECISIONS §20) — so they take the untargeted path and empty the map with
+    /// it. A screen that joins after a clear finds a cleared wall, targeted cue
+    /// or not.
+    #[test]
+    fn a_clear_still_takes_down_what_one_screen_alone_was_shown() {
+        let hub = KioskHub::default();
+        hub.publish(r#"{"kind":"content","channels":[2],"reference":"Notices"}"#.to_string());
+        hub.publish(r#"{"kind":"clear"}"#.to_string());
+
+        assert!(
+            hub.last_screen_by_channel.lock().expect("slot").is_empty(),
+            "a targeted cue survived a panic control for a screen joining later"
+        );
+        let global = hub.last_screen.lock().expect("slot").clone();
+        assert!(global
+            .as_deref()
+            .unwrap_or("")
+            .contains(r#""kind":"clear""#));
+    }
+
+    /// THE THREE READINGS OF AN ABSENT CHANNEL SET, which must not diverge.
+    #[test]
+    fn a_frame_that_names_no_screens_is_every_screen_and_an_empty_list_is_none() {
+        // Absent — every cue built before targeting existed.
+        assert_eq!(frame_channels(r#"{"kind":"content"}"#), None);
+        // Explicitly null.
+        assert_eq!(
+            frame_channels(r#"{"kind":"content","channels":null}"#),
+            None
+        );
+        // Malformed. Reaching every screen is the safe direction: content that
+        // silently reaches nothing is worse than content that reaches more.
+        assert_eq!(frame_channels(r#"{"kind":"content","channels":7}"#), None);
+        // Empty is NOT none-of-the-above: a cue that reaches no screen is a
+        // real thing to ask for.
+        assert_eq!(
+            frame_channels(r#"{"kind":"content","channels":[]}"#),
+            Some(vec![])
+        );
+        assert_eq!(
+            frame_channels(r#"{"kind":"content","channels":[2,5]}"#),
+            Some(vec![2, 5])
+        );
+    }
+
+    /// AN EMPTY TARGET REACHES NO SCREEN AND OVERWRITES NOTHING.
+    #[test]
+    fn a_cue_that_names_no_screen_leaves_every_screen_as_it_was() {
+        let hub = KioskHub::default();
+        hub.publish(r#"{"kind":"content","reference":"John 3:16"}"#.to_string());
+        hub.publish(r#"{"kind":"content","channels":[],"reference":"Nobody"}"#.to_string());
+
+        let global = hub.last_screen.lock().expect("slot").clone();
+        assert!(
+            global.as_deref().unwrap_or("").contains("John 3:16"),
+            "a cue aimed at nothing replaced what every screen was showing"
+        );
+        assert!(hub.last_screen_by_channel.lock().expect("slot").is_empty());
+    }
+
+    /// A SCREEN THAT REPORTS IS TOLD THE TIME, AND THAT IT WAS HEARD.
+    ///
+    /// Two open findings wanted the same frame, so they get one (plan S5, S6).
+    ///
+    /// **S5 — a socket is not a screen.** `Stage.svelte` set `connected` on
+    /// `onopen` and never re-evaluated it, so a phone that slept, roamed, or sat
+    /// behind a NAT that had timed out kept a green `live` pip over frozen
+    /// content. Absence of frames cannot detect that: the hub only publishes
+    /// when something changes, so silence is the normal state of a quiet
+    /// service. Something has to answer on a schedule, and the page is already
+    /// sending a `beat` every two seconds.
+    ///
+    /// **S6 — the countdown was computed against the phone's clock.**
+    /// `countdown_to` is an absolute epoch produced on the HOST, and the stage
+    /// page subtracts its own `Date.now()`. A tablet a minute out showed a
+    /// minute of error to the person preaching. The ack carries the host's
+    /// epoch, so the offset comes from the round trip that was already
+    /// happening — and the round trip's own duration is what bounds the
+    /// correction's accuracy.
+    ///
+    /// It is sent to the ONE client that beat, exactly as the hello reply is,
+    /// rather than broadcast: a tick to every browser source and lobby TV in
+    /// the building would be traffic bought for one page's benefit. It stays
+    /// inert and read-only — it carries a number this server already knows and
+    /// nothing a client said.
+    #[tokio::test]
+    async fn a_screen_that_beats_is_answered_with_the_host_clock() {
+        let port = free_port();
+        let hub = KioskHub::default();
+        tokio::spawn(run_kiosk_server(
+            log_only(),
+            hub.sender(),
+            hub.templates_handle(),
+            hub.clients_handle(),
+            hub.default_template_handle(),
+            hub.channel_roles_handle(),
+            hub.channel_looks_handle(),
+            hub.channel_templates_handle(),
+            hub.channel_shows_handle(),
+            hub.last_screen_handle(),
+            hub.last_screen_by_channel_handle(),
+            hub.last_transition_handle(),
+            hub.last_timers_handle(),
+            hub.last_background_handle(),
+            hub.screens_down_handle(),
+            hub.look_ids_handle(),
+            OutputHealth::default(),
+            port,
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
+            .await
+            .expect("connect");
+        let (mut write, mut read) = ws.split();
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"kind":"beat","channel":2,"state":"content"}"#.to_string(),
+            ))
+            .await
+            .expect("send beat");
+
+        let before = crate::now_epoch_ms();
+        let mut ack = None;
+        for _ in 0..HELLO_FRAMES {
+            let Ok(Some(Ok(msg))) =
+                tokio::time::timeout(std::time::Duration::from_secs(2), read.next()).await
+            else {
+                break;
+            };
+            let text = msg.into_text().unwrap_or_default();
+            if text.contains(r#""kind":"beat_ack""#) {
+                ack = Some(text);
+                break;
+            }
+        }
+        let after = crate::now_epoch_ms();
+
+        let ack = ack.expect("a screen reported and was told nothing back");
+        let v: serde_json::Value = serde_json::from_str(&ack).expect("beat_ack is not JSON");
+        let at = v
+            .get("at")
+            .and_then(|a| a.as_i64())
+            .expect("no host clock on the ack");
+        assert!(
+            at >= before && at <= after,
+            "the ack carried {at}, which is not a host time taken between \
+             {before} and {after} — a stage page correcting its clock against \
+             this would be corrected to the wrong one"
+        );
+    }
+
+    /// AND A MALFORMED BEAT IS STILL DROPPED, RATHER THAN ANSWERED.
+    ///
+    /// The ack must not become a way to make the server talk. `state` is parsed
+    /// against a closed enum and a beat that fails it touches no health and now
+    /// must also draw no reply — otherwise an unparseable beat would be
+    /// distinguishable from a parseable one by whether an answer came back,
+    /// which is a probe this read-only server does not owe anybody.
+    #[tokio::test]
+    async fn a_beat_that_does_not_parse_is_not_answered() {
+        let port = free_port();
+        let hub = KioskHub::default();
+        tokio::spawn(run_kiosk_server(
+            log_only(),
+            hub.sender(),
+            hub.templates_handle(),
+            hub.clients_handle(),
+            hub.default_template_handle(),
+            hub.channel_roles_handle(),
+            hub.channel_looks_handle(),
+            hub.channel_templates_handle(),
+            hub.channel_shows_handle(),
+            hub.last_screen_handle(),
+            hub.last_screen_by_channel_handle(),
+            hub.last_transition_handle(),
+            hub.last_timers_handle(),
+            hub.last_background_handle(),
+            hub.screens_down_handle(),
+            hub.look_ids_handle(),
+            OutputHealth::default(),
+            port,
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
+            .await
+            .expect("connect");
+        let (mut write, mut read) = ws.split();
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"kind":"beat","channel":2,"state":"sideways"}"#.to_string(),
+            ))
+            .await
+            .expect("send beat");
+
+        let answered =
+            tokio::time::timeout(std::time::Duration::from_millis(400), read.next()).await;
+        assert!(
+            answered.is_err(),
+            "an unparseable beat drew a reply: {answered:?}"
+        );
+    }
+
     /// AND THE READING IS PAINTED LAST.
     ///
     /// Order, not merely presence. A tablet sent the timers AFTER the retained
@@ -6767,6 +7249,7 @@ mod tests {
             hub.channel_templates_handle(),
             hub.channel_shows_handle(),
             hub.last_screen_handle(),
+            hub.last_screen_by_channel_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
@@ -6879,6 +7362,7 @@ mod tests {
             hub.channel_templates_handle(),
             hub.channel_shows_handle(),
             hub.last_screen_handle(),
+            hub.last_screen_by_channel_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
@@ -6994,6 +7478,7 @@ mod tests {
             hub.channel_templates_handle(),
             hub.channel_shows_handle(),
             hub.last_screen_handle(),
+            hub.last_screen_by_channel_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
@@ -7062,6 +7547,7 @@ mod tests {
             hub.channel_templates_handle(),
             hub.channel_shows_handle(),
             hub.last_screen_handle(),
+            hub.last_screen_by_channel_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
@@ -7141,6 +7627,7 @@ mod tests {
             hub.channel_templates_handle(),
             hub.channel_shows_handle(),
             hub.last_screen_handle(),
+            hub.last_screen_by_channel_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
@@ -7206,6 +7693,7 @@ mod tests {
             hub.channel_templates_handle(),
             hub.channel_shows_handle(),
             hub.last_screen_handle(),
+            hub.last_screen_by_channel_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
@@ -7470,6 +7958,7 @@ mod tests {
             hub.channel_templates_handle(),
             hub.channel_shows_handle(),
             hub.last_screen_handle(),
+            hub.last_screen_by_channel_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
@@ -7532,6 +8021,7 @@ mod tests {
             hub.channel_templates_handle(),
             hub.channel_shows_handle(),
             hub.last_screen_handle(),
+            hub.last_screen_by_channel_handle(),
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
