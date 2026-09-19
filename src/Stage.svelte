@@ -378,6 +378,7 @@
   let lastAckAt = null;
   let beatingSince = null;
   let stale = false;
+  let staleForS = 0;
 
   /** Only a page that actually beats is owed an answer. Channel 0 sends none. */
   $: expectsAck = channelId > 0;
@@ -956,16 +957,102 @@
       ? "can't reach Relay — retrying"
       : 'connecting…'
     : stale
-      ? 'not answering'
+      ? `not answering · ${staleForS}s`
       : 'live';
+
+  // ── ONE SOCKET, A BACKOFF, AND WAKING UP AS A TRIGGER ─────────────────────
+  //
+  // The retry was a flat 1.5 s with `onclose` as its only trigger. Through a
+  // real outage — an access point rebooting, a lid closed between services —
+  // that is forty reconnects a minute, for as long as it lasts, on a battery in
+  // somebody's hand. A backoff fixes that and immediately creates the opposite
+  // problem, because the phone that has just woken up becomes the one waiting.
+  //
+  // So the backoff is only acceptable BECAUSE resuming is a trigger: the long
+  // delays belong to a page nobody is looking at, and the moment somebody looks
+  // at it again the wait is abandoned. `visibilitychange` and `online` are the
+  // two moments the platform tells us anything changed.
+  //
+  // Two triggers means two ways to open a socket, and every guard here is about
+  // there being exactly one. Two sockets both say hello, both are sent the
+  // retained frame, and the one that loses the race goes on beating into a
+  // channel that now has two clients answering for it.
+  const RETRY_MIN_MS = 1000;
+  const RETRY_MAX_MS = 20_000;
+  let retryId = null;
+  let wsHost = null;
+
+  /** 1s, 2s, 4s … capped. Doubling, so a long outage costs a few wakes, not hundreds. */
+  const retryDelay = () =>
+    Math.min(RETRY_MIN_MS * 2 ** Math.max(0, Math.min(attempts, 6) - 1), RETRY_MAX_MS);
+
+  function scheduleRetry() {
+    if (closed) return;
+    if (retryId !== null) clearTimeout(retryId);
+    retryId = setTimeout(() => {
+      retryId = null;
+      connect(wsHost);
+    }, retryDelay());
+  }
+
+  /**
+   * Somebody is looking at this page again, or the device says it has a network.
+   *
+   * A STALE CONNECTION IS NOT A CLOSED ONE, and that is the case this exists
+   * for: a half-open socket never fires `onclose`, so the retry path above is
+   * unreachable by construction and the page would sit on a dead socket for the
+   * rest of the service. Closing it explicitly is the only way out.
+   */
+  function reconnectNow() {
+    if (closed) return;
+    if (connected && !stale) return; // already working; opening another is the bug
+    const old = ws;
+    ws = null; // so the old socket's own handlers see they have been superseded
+    if (old) {
+      try {
+        old.close();
+      } catch {
+        /* a failed close must never take the page down */
+      }
+    }
+    if (retryId !== null) {
+      clearTimeout(retryId);
+      retryId = null;
+    }
+    attempts = 0;
+    connect(wsHost);
+  }
 
   function connect(host) {
     if (closed) return;
+    wsHost = host;
+    if (retryId !== null) {
+      clearTimeout(retryId);
+      retryId = null;
+    }
+    // CONNECTING (0) or OPEN (1) — there is already one in flight.
+    if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;
+    let sock;
     try {
-      ws = new WebSocket(`ws://${host}:8031`);
+      sock = new WebSocket(`ws://${host}:8031`);
+    } catch {
+      attempts += 1;
+      scheduleRetry();
+      return;
+    }
+    ws = sock;
+    {
       ws.onopen = () => {
+        // Superseded while connecting: a newer socket owns the page now.
+        if (ws !== sock) return;
         connected = true;
         attempts = 0;
+        // A FRESH CONNECTION IS NOT INSTANTLY STALE. The staleness clock starts
+        // again here, or a page that has just reconnected would report itself
+        // as not answering using the age of the outage it just survived.
+        lastAckAt = null;
+        beatingSince = Date.now();
+        stale = false;
         // ── RULE 43, ON THE ONE SCREEN THAT IS CARRIED AROUND ─────────────────
         //
         // `KioskHub` retains the last `content` / `clear` / `black` frame and
@@ -1008,17 +1095,18 @@
         }
       };
       ws.onmessage = (e) => {
+        if (ws !== sock) return;
         try { apply(JSON.parse(e.data)); } catch { /* ignore */ }
       };
       ws.onclose = () => {
+        // A socket we have already replaced must not schedule anything: its
+        // close arrives AFTER `reconnectNow` has opened the one that matters.
+        if (ws !== sock) return;
         connected = false;
         attempts += 1;
-        if (!closed) setTimeout(() => connect(host), 1500);
+        scheduleRetry();
       };
-      ws.onerror = () => { try { ws.close(); } catch { /* onclose retries */ } };
-    } catch {
-      attempts += 1;
-      if (!closed) setTimeout(() => connect(host), 1500);
+      ws.onerror = () => { try { sock.close(); } catch { /* onclose retries */ } };
     }
   }
 
@@ -1042,9 +1130,17 @@
   // so an unidentified page cannot attach health to a screen nobody chose.
   let stopBeat = null;
 
+  /** Visible again, or the device says it has a network. Both mean: try now. */
+  const onWake = () => {
+    if (typeof document !== 'undefined' && document.hidden) return;
+    reconnectNow();
+  };
+
   onMount(() => {
     loadZones();
     connect(location.hostname || 'localhost');
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onWake);
+    if (typeof window !== 'undefined') window.addEventListener('online', onWake);
     stopBeat = startBeat({
       channelId,
       // Blackout outranks content, per `paintState`: a blacked screen with a
@@ -1065,7 +1161,12 @@
       // alone cannot show that — the hub publishes only when something changes —
       // but an unanswered beat can, because the page knows it asked.
       const since = lastAckAt ?? beatingSince;
-      stale = expectsAck && since !== null && Date.now() - since > STALE_AFTER_MS;
+      const quiet = since === null ? 0 : Date.now() - since;
+      stale = expectsAck && since !== null && quiet > STALE_AFTER_MS;
+      // HOW LONG, not merely that something is wrong. "not answering" reads the
+      // same at four seconds and at ten minutes, and those want different things
+      // from whoever is holding the phone.
+      staleForS = stale ? Math.round(quiet / 1000) : 0;
     };
     tick();
     timer = setInterval(tick, 1000);
@@ -1074,6 +1175,12 @@
     closed = true;
     stopBeat?.();
     stopBeat = null;
+    if (retryId !== null) {
+      clearTimeout(retryId);
+      retryId = null;
+    }
+    if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onWake);
+    if (typeof window !== 'undefined') window.removeEventListener('online', onWake);
     if (ws) ws.close();
     clearInterval(timer);
   });

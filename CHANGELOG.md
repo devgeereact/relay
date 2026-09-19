@@ -46,6 +46,12 @@ It also notices when Relay has stopped answering and says "not answering"
 instead of showing a live indicator over frozen content, which a sleeping or
 roaming phone could previously do for the rest of a service.
 
+A phone that has been asleep now reconnects the moment you pick it up, rather
+than on the next retry, and a phone left alone during a long network outage
+stops retrying every second and a half for the whole service. When Relay has
+stopped answering, the stage screen says for how long, because "not answering"
+reads the same after four seconds as after ten minutes.
+
 Physical phone and tablet scanning remains to be verified.
 
 ### Lower thirds had nothing behind the words
