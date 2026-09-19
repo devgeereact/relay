@@ -196,6 +196,26 @@ open it on another device (or a second browser).
 
 ---
 
+## 11b. A cue that names its screens (RG-161)
+
+In the Planner, select a cue and use its **Screens** row.
+
+| Check | Do this | Expected |
+|---|---|---|
+| 11b-i | Leave a cue alone and fire it | Reaches every screen, exactly as before. This is the half that must not regress |
+| 11b-ii | Point a cue at the main screen only, fire it | It appears on the main screen |
+| 11b-iii | Look at the preacher's screen at the same moment | **It still shows whatever it had.** It must NOT go blank — targeting narrows what a cue reaches and can never clear a screen |
+| 11b-iv | Untick every screen, fire it | Reaches nothing. The row says so before you fire |
+| 11b-v | Tick every screen again | The row goes back to saying "Every screen" |
+| 11b-vi | With a targeted cue live, reload a screen it did NOT name | It comes back to what IT was showing, not to the targeted cue |
+| 11b-vii | With a targeted cue live, press **Clear all screens** | Every screen clears, targeted or not |
+
+11b-iii and 11b-vii are the two that matter. The first is the product decision —
+an unnamed screen carries on — and the second is the guarantee that a panic
+control is never narrowed by any of this.
+
+---
+
 ## 12. The packaged build
 
 Only meaningful on `npm run tauri build`.
