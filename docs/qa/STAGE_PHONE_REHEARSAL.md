@@ -36,6 +36,40 @@ Record: which you ran, and the time you built.
 
 ---
 
+## 0b. What has already been checked from this machine — and what that is worth
+
+Run against the **packaged build** on 2026-09-19, over the LAN address
+`192.168.1.144`, with no mocks anywhere. This is not a phone and does not
+replace any check below; it means the parts a phone depends on were working
+before you started.
+
+| Checked | Result |
+|---|---|
+| `GET /stage.html` over the LAN address | HTTP 200 |
+| `GET /output.html` over the LAN address | HTTP 200 |
+| CSP header on the packaged build (§12b) | present, `default-src 'self'` … plus `X-Content-Type-Options: nosniff` |
+| `GET /api/stage_zones` | `{"ok":true,"zones":{}}` — valid JSON |
+| `GET /api/live`, `/api/search` | 200 |
+| `GET /api/next` | 405, as it must be — mutators are POST only |
+| WebSocket `hello` on channel 2 | replies `template, default_template, channel_roles, channel_looks, channel_shows, screen_state` |
+| `beat` → `beat_ack` (§4) | answered, host clock within **1 ms** |
+| Unparseable frames in the whole exchange | 0 |
+
+**This found a real defect before you did.** `/api/stage_zones` was returning
+`"zones":{}` — a fragment, not JSON. `Stage.svelte` would have thrown parsing
+it, swallowed the error by design, and fallen back to the device's own zones —
+so **§9b would have failed with no explanation anywhere**. Both test suites were
+green: the frontend one mocks `fetch`, and the Rust route inventory only checked
+that a route answered, not that the answer could be read. Fixed, and the
+inventory now parses every route's body.
+
+**What this does NOT tell you**, and why the rest of this document still stands:
+nothing here rendered a pixel, decoded a QR with a camera, ran on iOS or
+Android, survived a sleeping phone, or watched a timer for an hour. A socket
+that answers correctly to a script is not a screen a preacher can read.
+
+---
+
 ## 1. Record the room
 
 Before touching Relay, write down:
