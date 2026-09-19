@@ -456,8 +456,15 @@ mod cold_start {
         let h = app.handle().clone();
         let wall = Wall::watch(&h);
 
-        manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None)
-            .expect("a fresh install must be able to fire a verse");
+        manual_fire(
+            h.clone(),
+            h.state::<Db>(),
+            "John 3:16".into(),
+            None,
+            None,
+            None,
+        )
+        .expect("a fresh install must be able to fire a verse");
         settle();
 
         let shown = wall.last().expect("nothing reached the outputs");
@@ -611,10 +618,18 @@ mod cold_start {
             "announcement".into(),
             None,
             None,
+            None,
         )
         .expect("fire_content");
-        manual_fire(h.clone(), h.state::<Db>(), "Psalm 23".into(), None, None)
-            .expect("manual_fire during a service");
+        manual_fire(
+            h.clone(),
+            h.state::<Db>(),
+            "Psalm 23".into(),
+            None,
+            None,
+            None,
+        )
+        .expect("manual_fire during a service");
         settle();
 
         // --- templates: the Templates editor saves through `save_template`,
@@ -1221,6 +1236,7 @@ mod cold_start {
             "announce".into(),
             None,
             Some(doomed),
+            None,
         )
         .unwrap();
         settle();
@@ -1261,6 +1277,7 @@ mod cold_start {
             "announce".into(),
             None,
             Some(doomed),
+            None,
         )
         .unwrap();
         settle();
@@ -1317,8 +1334,15 @@ mod cold_start {
         // The fire still succeeds and still emits. `output://content` is a
         // BROADCAST, not a per-channel send — so with no channels configured the
         // event goes out and no window is listening.
-        manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None)
-            .expect("firing with no screens configured is not refused");
+        manual_fire(
+            h.clone(),
+            h.state::<Db>(),
+            "John 3:16".into(),
+            None,
+            None,
+            None,
+        )
+        .expect("firing with no screens configured is not refused");
         settle();
         assert_eq!(
             wall.count(),

@@ -113,6 +113,15 @@ pub struct Fire {
     /// `emit_detections`; `None` on every human-driven path, which is exactly the
     /// distinction the latency report needs (see `OutputContent::trace_id`).
     pub trace_id: Option<u64>,
+    /// WHICH SCREENS THIS CUE IS FOR (RG-161). `None` is every screen, which is
+    /// what a detected verse and a manual fire always are — targeting is a
+    /// property of a PLANNED cue, because the plan is the only place anybody
+    /// has said which screens a thing belongs on.
+    ///
+    /// It rides through `Fire` rather than being added at `broadcast_content`
+    /// so that the one constructor of `OutputContent` carries it, per the rule
+    /// that nothing builds output by hand.
+    pub channels: Option<Vec<i64>>,
 }
 
 impl Fire {
@@ -142,6 +151,7 @@ impl Fire {
     pub fn output(&self) -> OutputContent {
         OutputContent {
             kind: Some("scripture".into()),
+            channels: self.channels.clone(),
             trace_id: self.trace_id,
             reference: self.key.clone(),
             text: self.text.clone(),
@@ -447,6 +457,8 @@ mod tests {
     fn fire(status: FireStatus) -> Fire {
         let r = vref("John", 3, 16);
         Fire {
+            // A fixture names no screens: every screen.
+            channels: None,
             key: Fire::key_for(&r),
             reference: r,
             verse_id: Some(42),

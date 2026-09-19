@@ -92,7 +92,15 @@ fn an_unshowable_cue_is_refused_and_the_wall_is_left_alone() {
     let wall = Wall::watch(&h);
 
     // Something real on the wall first, so "left alone" has something to mean.
-    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).expect("fire");
+    manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "John 3:16".into(),
+        None,
+        None,
+        None,
+    )
+    .expect("fire");
     settle();
     assert_eq!(
         wall.last().expect("nothing on the wall")["reference"],
@@ -108,6 +116,7 @@ fn an_unshowable_cue_is_refused_and_the_wall_is_left_alone() {
         "   ".into(),
         "  \n ".into(),
         "announce".into(),
+        None,
         None,
         None,
     )
@@ -138,6 +147,7 @@ fn an_unshowable_cue_is_refused_and_the_wall_is_left_alone() {
         "Car park".into(),
         "Please move the blue Fiesta".into(),
         "announce".into(),
+        None,
         None,
         None,
     )
@@ -202,7 +212,15 @@ fn a_service_records_what_happened_and_it_survives_the_service() {
     .expect("start");
 
     // Things an operator does, and one thing Relay notices about itself.
-    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).expect("fire");
+    manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "John 3:16".into(),
+        None,
+        None,
+        None,
+    )
+    .expect("fire");
     settle();
     clear_screens(h.clone()).expect("clear");
     set_service_lock(h.clone(), h.state::<servicelock::ServiceLock>(), false);
@@ -458,7 +476,15 @@ fn a_detection_points_at_the_words_that_produced_it() {
     persist_transcript(&h, "I left, aha, yesterday you back, did you see?", "en");
 
     // …then a fire whose window said something else entirely.
-    manual_fire(h.clone(), h.state::<Db>(), "Psalm 23".into(), None, None).expect("fire");
+    manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "Psalm 23".into(),
+        None,
+        None,
+        None,
+    )
+    .expect("fire");
     settle();
 
     let conn = db.0.lock().unwrap();
@@ -534,8 +560,15 @@ fn a_recorded_service_holds_back_a_deletion_but_never_the_wall() {
     );
 
     // 2 · Everything the operator runs a service with still works, right now.
-    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None)
-        .expect("the operator must always be able to fire");
+    manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "John 3:16".into(),
+        None,
+        None,
+        None,
+    )
+    .expect("the operator must always be able to fire");
     settle();
     assert_eq!(
         wall.last().expect("nothing reached the wall")["reference"],
@@ -597,8 +630,15 @@ fn a_verse_the_operator_fires_reaches_the_congregation_with_its_text() {
     let h = app.handle().clone();
     let wall = Wall::watch(&h);
 
-    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None)
-        .expect("fire John 3:16");
+    manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "John 3:16".into(),
+        None,
+        None,
+        None,
+    )
+    .expect("fire John 3:16");
     settle();
 
     let shown = wall.last().expect("nothing reached the outputs");
@@ -647,6 +687,7 @@ fn a_bounded_passage_shows_no_next_verse_past_its_end() {
         h.clone(),
         h.state::<Db>(),
         "John 3:16-17".into(),
+        None,
         None,
         None,
     )
@@ -698,6 +739,7 @@ fn a_plan_cues_own_template_reaches_the_wall_not_just_the_content_default() {
         "John 3:16".into(),
         None,
         Some(override_id),
+        None,
     )
     .expect("fire with a template override");
     settle();
@@ -731,6 +773,7 @@ fn a_lyric_slide_projects_the_lyric_and_not_the_song_title() {
         "Blessed Assurance · Verse 1".into(),
         "Blessed assurance, Jesus is mine".into(),
         "song".into(),
+        None,
         None,
         None,
     )
@@ -781,6 +824,7 @@ fn r10_a_suppressed_label_is_still_in_the_service_record() {
         "song".into(),
         None,
         None,
+        None,
     )
     .expect("fire the lyric");
     settle();
@@ -811,6 +855,7 @@ fn an_announcement_still_shows_its_title() {
         "announce".into(),
         None,
         None,
+        None,
     )
     .expect("fire the notice");
     settle();
@@ -827,7 +872,15 @@ fn next_and_back_walk_the_passage() {
     let h = app.handle().clone();
     let wall = Wall::watch(&h);
 
-    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).unwrap();
+    manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "John 3:16".into(),
+        None,
+        None,
+        None,
+    )
+    .unwrap();
 
     match nav(h.clone(), "next".into()).expect("nav next") {
         NavResult::Fired { reference } => assert_eq!(reference, "John 3:17"),
@@ -866,7 +919,15 @@ fn nav_says_so_when_it_cannot_move_instead_of_doing_nothing() {
 
     // "Psalm 23" is a whole-chapter reference, so the passage is BOUNDED — Relay knows
     // it ends at verse 6. Walk to the end of it and step off.
-    manual_fire(h.clone(), h.state::<Db>(), "Psalm 23".into(), None, None).unwrap();
+    manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "Psalm 23".into(),
+        None,
+        None,
+        None,
+    )
+    .unwrap();
     for _ in 0..5 {
         assert!(
             matches!(
@@ -894,7 +955,15 @@ fn stepping_past_the_last_verse_of_a_book_is_reported_not_swallowed() {
     let app = app();
     let h = app.handle().clone();
 
-    manual_fire(h.clone(), h.state::<Db>(), "Jude 1:25".into(), None, None).unwrap(); // last verse of Jude
+    manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "Jude 1:25".into(),
+        None,
+        None,
+        None,
+    )
+    .unwrap(); // last verse of Jude
     let r = nav(h.clone(), "next".into()).unwrap();
 
     assert!(
@@ -914,7 +983,15 @@ fn clear_blanks_the_screens_and_reports_that_it_did() {
     let h = app.handle().clone();
     let wall = Wall::watch(&h);
 
-    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).unwrap();
+    manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "John 3:16".into(),
+        None,
+        None,
+        None,
+    )
+    .unwrap();
     settle();
     assert!(wall.last().is_some());
 
@@ -989,7 +1066,15 @@ fn the_transition_control_reaches_both_doors_and_delays_no_panic_control() {
     );
 
     // AND THE PANIC CONTROLS ARE EXACTLY AS UNCONDITIONAL AS THEY WERE.
-    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).unwrap();
+    manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "John 3:16".into(),
+        None,
+        None,
+        None,
+    )
+    .unwrap();
     settle();
     assert!(wall.last().is_some(), "the verse never reached the wall");
 
@@ -1025,6 +1110,7 @@ fn a_verse_that_does_not_exist_never_reaches_the_wall() {
         "Psalms 23:99".into(),
         None,
         None,
+        None,
     );
     settle();
 
@@ -1053,7 +1139,15 @@ fn nothing_reaches_the_congregation_during_a_rehearsal() {
     )
     .expect("enter rehearsal");
 
-    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).unwrap();
+    manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "John 3:16".into(),
+        None,
+        None,
+        None,
+    )
+    .unwrap();
     let _ = nav(h.clone(), "next".into());
     settle();
 
@@ -1411,7 +1505,15 @@ fn r2_a_spoken_passage_jump_that_cannot_move_must_say_so() {
         super::detection::detect_passage_nav("verse ninety nine").is_some(),
         "precondition: the phrase is understood as a jump"
     );
-    manual_fire(h.clone(), h.state::<Db>(), "Psalm 23".into(), None, None).unwrap();
+    manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "Psalm 23".into(),
+        None,
+        None,
+        None,
+    )
+    .unwrap();
     settle();
     let before = wall.count();
 
@@ -1461,7 +1563,15 @@ fn r2_a_passage_must_not_stay_armed_under_unrelated_content() {
     let wall = Wall::watch(&h);
 
     // Sermon scripture, twenty minutes ago.
-    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).unwrap();
+    manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "John 3:16".into(),
+        None,
+        None,
+        None,
+    )
+    .unwrap();
     // …then the closing song takes the wall. Nothing scripture-shaped since.
     fire_content(
         h.clone(),
@@ -1469,6 +1579,7 @@ fn r2_a_passage_must_not_stay_armed_under_unrelated_content() {
         "Blessed Assurance · Verse 1".into(),
         "Blessed assurance, Jesus is mine".into(),
         "song".into(),
+        None,
         None,
         None,
     )
@@ -1522,7 +1633,15 @@ fn r2_a_payload_that_forgot_its_kind_still_disarms_the_passage() {
     let wall = Wall::watch(&h);
 
     // Sermon scripture, and the passage armed behind it.
-    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).unwrap();
+    manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "John 3:16".into(),
+        None,
+        None,
+        None,
+    )
+    .unwrap();
     settle();
     assert!(
         matches!(
@@ -1942,6 +2061,7 @@ fn a_verse_a_human_fired_carries_no_pass() {
         r,
         1.0,
         super::PassageUpdate::Note(None),
+        None,
         None,
         None
     ));
@@ -2427,8 +2547,15 @@ fn r4_a_following_screen_wears_a_different_look_for_each_kind() {
     }
 
     // Nobody touches a screen between these three fires. That is the claim.
-    super::manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None)
-        .expect("scripture fires");
+    super::manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "John 3:16".into(),
+        None,
+        None,
+        None,
+    )
+    .expect("scripture fires");
     settle();
     let a = wall.last().expect("scripture reached the wall");
 
@@ -2438,6 +2565,7 @@ fn r4_a_following_screen_wears_a_different_look_for_each_kind() {
         "Verse 1".into(),
         "Great is thy faithfulness".into(),
         "song".into(),
+        None,
         None,
         None,
     )
@@ -2451,6 +2579,7 @@ fn r4_a_following_screen_wears_a_different_look_for_each_kind() {
         "Car park".into(),
         "Please move the blue Fiesta".into(),
         "announce".into(),
+        None,
         None,
         None,
     )
@@ -2645,7 +2774,15 @@ fn r5_a_word_to_the_preacher_reaches_no_congregation_channel() {
 
     // A real verse first, so the test is run against a wall that HAS something on
     // it — the case where a leak would be indistinguishable from the verse.
-    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).unwrap();
+    manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "John 3:16".into(),
+        None,
+        None,
+        None,
+    )
+    .unwrap();
     settle();
     let before = wall.count();
     assert_eq!(before, 1, "the fixture's own fire did not reach the wall");
@@ -3448,7 +3585,15 @@ fn r7_the_transport_can_never_start_a_countdown() {
     // back in front of people is `show_timer`, an explicit action that says what it
     // does; it is never a side effect of `+1`.
     start_five(&h);
-    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).expect("fire");
+    manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "John 3:16".into(),
+        None,
+        None,
+        None,
+    )
+    .expect("fire");
     settle();
     let before = wall.count();
     adjust_countdown(h.clone(), Some(60_000), None).expect("the countdown is still there");
@@ -3486,7 +3631,15 @@ fn r7_a_countdown_survives_a_verse_and_can_still_be_re_aimed_without_taking_the_
     let wall = Wall::watch(&h);
 
     start_five(&h);
-    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).expect("fire");
+    manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "John 3:16".into(),
+        None,
+        None,
+        None,
+    )
+    .expect("fire");
     settle();
     let before = wall.count();
 
@@ -3751,7 +3904,15 @@ fn r0_a_picture_reaches_the_wall_and_disarms_the_passage() {
     let wall = Wall::watch(&h);
 
     // Sermon scripture, on screen a moment ago — a passage is armed.
-    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).unwrap();
+    manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "John 3:16".into(),
+        None,
+        None,
+        None,
+    )
+    .unwrap();
 
     let media_id = {
         let db = h.state::<Db>();
@@ -3835,7 +3996,15 @@ fn r0_a_background_survives_the_verse_painted_on_it() {
     );
 
     // Now the reading, over the top of it.
-    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).expect("fire");
+    manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "John 3:16".into(),
+        None,
+        None,
+        None,
+    )
+    .expect("fire");
     settle();
     assert_eq!(
         wall.last().expect("the wall")["reference"],
@@ -3880,7 +4049,15 @@ fn r0_a_panic_control_takes_the_background_off_every_screen() {
         let pic = seed_picture(&h);
 
         show_background(h.clone(), h.state::<Db>(), Some(pic)).expect("backdrop up");
-        manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).expect("fire");
+        manual_fire(
+            h.clone(),
+            h.state::<Db>(),
+            "John 3:16".into(),
+            None,
+            None,
+            None,
+        )
+        .expect("fire");
         settle();
         assert!(
             retained_backdrop(&h).is_some(),
@@ -4006,7 +4183,15 @@ fn firing_a_verse_does_not_forget_the_congregation_timer() {
     start_five(&h);
     assert_eq!(list_timers(h.clone()).expect("list").len(), 1);
 
-    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).expect("fire");
+    manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "John 3:16".into(),
+        None,
+        None,
+        None,
+    )
+    .expect("fire");
     settle();
     assert_eq!(
         list_timers(h.clone()).expect("list").len(),
@@ -4021,6 +4206,7 @@ fn firing_a_verse_does_not_forget_the_congregation_timer() {
         "Notices".into(),
         "Tea afterwards".into(),
         "announcement".into(),
+        None,
         None,
         None,
     )
@@ -4558,6 +4744,71 @@ fn a_programme_timer_past_zero_can_be_held_at_the_figure_it_is_showing() {
     );
 }
 
+/// A CUE THAT NAMES A SCREEN SAYS SO ON THE WIRE (RG-161).
+///
+/// The unit tests cover the retention rule and the receiver filter; this is the
+/// command path between them — that a screen set given to `manual_fire`
+/// survives `resolve_fire`, `Fire::output` and `broadcast_content` and arrives
+/// on the frame a screen actually reads. Every one of those was a place it
+/// could have been dropped silently, and a dropped set is a notice on the
+/// preacher's tablet.
+#[test]
+fn a_cue_that_names_a_screen_carries_it_to_the_wire() {
+    let app = app();
+    let h = app.handle().clone();
+    let mut kiosk = qa::Kiosk::attach(&h);
+
+    manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "John 3:16".into(),
+        None,
+        None,
+        Some(vec![4]),
+    )
+    .expect("fire");
+    settle();
+
+    let frame = kiosk.next().expect("the fire reached no screen at all");
+    let v: serde_json::Value = serde_json::from_str(&frame).expect("valid JSON");
+    assert_eq!(v["kind"], "content");
+    assert_eq!(
+        v["channels"],
+        serde_json::json!([4]),
+        "the screen set was dropped somewhere between the command and the wire: {frame}"
+    );
+}
+
+/// AND A FIRE THAT NAMES NONE SAYS NULL, WHICH IS EVERY SCREEN.
+///
+/// The half that must not regress: every existing path — a detected verse, the
+/// operator's reference box, the preacher's phone — names no screens, and a
+/// frame that arrived with an empty list instead of a null would reach nothing.
+#[test]
+fn a_fire_that_names_no_screen_reaches_every_screen() {
+    let app = app();
+    let h = app.handle().clone();
+    let mut kiosk = qa::Kiosk::attach(&h);
+
+    manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "John 3:16".into(),
+        None,
+        None,
+        None,
+    )
+    .expect("fire");
+    settle();
+
+    let frame = kiosk.next().expect("the fire reached no screen at all");
+    let v: serde_json::Value = serde_json::from_str(&frame).expect("valid JSON");
+    assert!(
+        v["channels"].is_null(),
+        "an untargeted fire carried a screen set: {frame}"
+    );
+}
+
 /// A CONGREGATION TIMER IS NOT THE PROGRAMME, AND THE STAGE FRAME SAYS SO.
 ///
 /// The two scopes share a registry and a wire vocabulary, which is precisely why
@@ -4807,7 +5058,15 @@ fn one_screen_goes_down_and_the_wall_stays_live() {
     let wall = Wall::watch(&h);
     let mut kiosk = qa::Kiosk::attach(&h);
 
-    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).expect("fire");
+    manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "John 3:16".into(),
+        None,
+        None,
+        None,
+    )
+    .expect("fire");
     settle();
     while kiosk.next().is_some() {} // drain the fire
 
@@ -4853,7 +5112,15 @@ fn the_total_controls_never_learned_about_channels() {
     let wall = Wall::watch(&h);
     let mut kiosk = qa::Kiosk::attach(&h);
 
-    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).expect("fire");
+    manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "John 3:16".into(),
+        None,
+        None,
+        None,
+    )
+    .expect("fire");
     settle();
     clear_screen(h.clone(), 4).expect("take the lobby TV down first");
     settle();
@@ -4900,7 +5167,15 @@ fn a_screen_taken_down_stays_down_until_it_is_put_back() {
 
     blackout_screen(h.clone(), 4).expect("take the lobby TV down");
     settle();
-    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).expect("fire");
+    manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "John 3:16".into(),
+        None,
+        None,
+        None,
+    )
+    .expect("fire");
     settle();
 
     assert_eq!(
@@ -5137,8 +5412,15 @@ fn r4_a_screen_wears_a_different_look_for_each_kind_on_both_doors() {
     // AND THE CONTENT FRAME DOES NOT MOVE. A fire is unchanged by any of this:
     // per-kind looks are configuration, and a routed fire would be RG-161's
     // per-cue targeting arriving through the back door with none of its pieces.
-    super::manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None)
-        .expect("scripture fires");
+    super::manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "John 3:16".into(),
+        None,
+        None,
+        None,
+    )
+    .expect("scripture fires");
     settle();
     let out = wall.last().expect("scripture reached the wall");
     assert!(
@@ -5183,8 +5465,15 @@ fn r4_a_panic_control_takes_every_screen_whatever_look_it_was_wearing() {
         Some(look),
     )
     .expect("a look is set");
-    super::manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None)
-        .expect("scripture fires");
+    super::manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "John 3:16".into(),
+        None,
+        None,
+        None,
+    )
+    .expect("scripture fires");
     settle();
     let _ = kiosk.drain();
 

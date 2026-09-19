@@ -479,6 +479,7 @@ fn main() {
             set_plan_section,
             set_plan_duration,
             set_plan_timer,
+            set_plan_channels,
             set_plan_template,
             list_songs,
             search_songs,
@@ -689,6 +690,10 @@ fn resolve_fire(
     stage_note: Option<String>,
     matched_text: Option<String>,
     cue_template_id: Option<i64>,
+    // WHICH SCREENS (RG-161). `None` is every screen, which every path but a
+    // planned cue passes: a detected verse and a manual fire have nowhere
+    // anybody could have said otherwise.
+    channels: Option<Vec<i64>>,
 ) -> Fire {
     let looked = db::lookup_verse(conn, &r.book, r.chapter, r.verse)
         .ok()
@@ -709,6 +714,7 @@ fn resolve_fire(
         confidence,
         method,
         status,
+        channels,
         stage_note,
         next_reference: None,
         next_text: None,
@@ -878,6 +884,9 @@ fn fire_manual<R: tauri::Runtime>(
     update: PassageUpdate,
     stage_note: Option<String>,
     cue_template_id: Option<i64>,
+    // WHICH SCREENS (RG-161). Only a planned cue has an answer; every other
+    // operator path passes `None`, which is every screen.
+    cue_channels: Option<Vec<i64>>,
 ) -> bool {
     let db = handle.state::<Db>();
     let ctx = handle.state::<Context>();
@@ -897,6 +906,7 @@ fn fire_manual<R: tauri::Runtime>(
             // the AI's guesses.
             None,
             cue_template_id,
+            cue_channels,
         );
         // Not in the corpus → leave the screen exactly as it is. Better to show
         // the previous verse than to blank the wall mid-sentence. Same rule the
@@ -1353,8 +1363,9 @@ fn emit_detections<R: tauri::Runtime>(
             };
             let end = passage_end(&conn, &c);
             // Auto-detection has no plan cue behind it — content-type default.
-            let mut fire =
-                resolve_fire(&conn, c.r, c.conf, c.method, status, None, c.matched, None);
+            let mut fire = resolve_fire(
+                &conn, c.r, c.conf, c.method, status, None, c.matched, None, None,
+            );
             // Which decode pass put this verse here. Rides to the console and to
             // every output so the last leg — pixels on a projector — can be timed
             // rather than assumed.
@@ -1500,7 +1511,7 @@ fn handle_nav<R: tauri::Runtime>(
     let reference = Fire::key_for(&r);
     // Advance keeps the staged passage span, so a range/chapter walk stays bounded.
     // A nav step walks a passage, not a plan cue — content-type default.
-    if fire_manual(handle, r, 1.0, PassageUpdate::Advance, None, None) {
+    if fire_manual(handle, r, 1.0, PassageUpdate::Advance, None, None, None) {
         Ok(NavResult::Fired { reference })
     } else {
         Ok(NavResult::NotInLibrary { reference })
@@ -1618,7 +1629,7 @@ fn passage_nav_outcome<R: tauri::Runtime>(
     };
     let reference = Fire::key_for(&target);
     Some(Ok(
-        if fire_manual(handle, target, 1.0, PassageUpdate::Jump, None, None) {
+        if fire_manual(handle, target, 1.0, PassageUpdate::Jump, None, None, None) {
             NavResult::Fired { reference }
         } else {
             // The verse parsed and is not in the corpus. Firing it would blank the
@@ -2265,7 +2276,9 @@ fn remote_api<R: tauri::Runtime>(
         "fire" => match param("ref") {
             None => "{\"ok\":false,\"error\":\"no reference\"}".to_string(),
             Some(reference) => {
-                match manual_fire(app.clone(), app.state::<Db>(), reference, None, None) {
+                // The preacher's phone fires at every screen: it is a person asking
+                // for a verse, not a plan cue that named screens.
+                match manual_fire(app.clone(), app.state::<Db>(), reference, None, None, None) {
                     Ok(()) => format!("{{\"ok\":true,{}}}", live_json(app)),
                     Err(e) => format!("{{\"ok\":false,\"error\":{}}}", json_str(&e.to_string())),
                 }
@@ -2528,6 +2541,26 @@ fn set_plan_duration(db: tauri::State<'_, Db>, id: i64, seconds: i64) -> error::
 fn set_plan_timer(db: tauri::State<'_, Db>, id: i64, minutes: Option<i64>) -> error::Result<()> {
     let conn = db.0.lock()?;
     db::set_plan_timer(&conn, id, minutes).map_err(Into::into)
+}
+
+/// Planner: which screens this cue is for, or every screen (RG-161).
+///
+/// `None` clears the targeting and means EVERY screen — what every cue written
+/// before this existed has, and what a cue goes back to. An empty list reaches
+/// NO screen and is deliberately not folded into `None`: those are opposite
+/// instructions, and collapsing them would make the emptier one unsayable.
+///
+/// It STORES and it fires nothing, like `set_plan_timer` beside it: the Planner
+/// may not reach an output (`plannerbuildonly.test.js`), so this is a fact
+/// about the plan and Live is what acts on it when the cue goes on air.
+#[tauri::command]
+fn set_plan_channels(
+    db: tauri::State<'_, Db>,
+    id: i64,
+    channels: Option<Vec<i64>>,
+) -> error::Result<()> {
+    let conn = db.0.lock()?;
+    db::set_plan_channels(&conn, id, channels).map_err(Into::into)
 }
 
 /// Planner: point a cue at a specific template, or back at the channel default.
@@ -3767,6 +3800,9 @@ fn countdown_content(
 // GENERIC OVER THE RUNTIME, deliberately (CLAUDE.md §24). Welded to the
 // concrete desktop handle, this path could not be driven from `e2e.rs` — and
 // the one code that decides what a congregation reads would have no test.
+// EIGHT ARGUMENTS, and a struct would be worse — see `start_countdown`. A
+// Tauri command's parameters are the named fields of the IPC payload.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 fn fire_content<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -3776,6 +3812,8 @@ fn fire_content<R: tauri::Runtime>(
     kind: String,
     stage_note: Option<String>,
     template_id: Option<i64>,
+    // WHICH SCREENS (RG-161). `None` is every screen.
+    channels: Option<Vec<i64>>,
 ) -> error::Result<()> {
     let label = label.trim().to_string();
     let (tid, tjson, tpinned) = {
@@ -3797,6 +3835,7 @@ fn fire_content<R: tauri::Runtime>(
         &app,
         OutputContent {
             kind: Some(kind.clone()),
+            channels,
             reference: projected,
             text: Some(text),
             translation: None,
@@ -5425,6 +5464,10 @@ fn confirm_detection<R: tauri::Runtime>(
             None,
             // Confirming an AI suggestion is not a plan cue — scripture default.
             None,
+            // …and for the same reason it names no screens. Nobody has said
+            // which screens an AI suggestion belongs on; every screen is the
+            // only honest answer.
+            None,
         ) {
             // Same wording as `manual_fire`'s, deliberately: it is the same
             // failure, and a volunteer should not have to learn two sentences for
@@ -6566,6 +6609,9 @@ fn manual_fire<R: tauri::Runtime>(
     reference: String,
     stage_note: Option<String>,
     template_id: Option<i64>,
+    // WHICH SCREENS (RG-161), when a plan cue said so. `None` from the
+    // operator's own reference box, which is every screen.
+    channels: Option<Vec<i64>>,
 ) -> error::Result<()> {
     let m = detection::detect_direct(&reference)
         .into_iter()
@@ -6594,6 +6640,7 @@ fn manual_fire<R: tauri::Runtime>(
         PassageUpdate::Note(end),
         clean_note(stage_note),
         template_id,
+        channels,
     ) {
         // Parsed fine, but that verse doesn't exist (e.g. "John 3:99"). Say so.
         // This used to broadcast an EMPTY verse instead — blanking the wall
@@ -8551,6 +8598,8 @@ mod named_translation_gap_tests {
     /// A fire carrying a translation, shaped the way `resolve_fire` leaves one.
     fn fire_showing(translation: Option<&str>) -> pipeline::Fire {
         pipeline::Fire {
+            // A fixture names no screens: every screen.
+            channels: None,
             key: "Hebrews 11:19".into(),
             reference: detection::VerseRef {
                 book: "Hebrews".into(),

@@ -213,6 +213,7 @@
   // long is left on one. `timerRemainingMs` ENDS in `countdownRemainingMs`, which
   // stays the only countdown arithmetic on this side of the bridge.
   import { stageTimers, timerRemainingMs, timerIsHeld } from '../timers.js';
+  import { planChannelsOf } from '../plan.js';
   import { atClockTime } from '../countdown.js';
 
   // ── the plan being RUN (not edited) ──────────────────────────────────────
@@ -902,13 +903,18 @@
     // fire so a plan item renders with its own chosen look, not just the
     // content-type default. null → the backend falls back to that default.
     const tpl = item.template_id ?? null;
+    // WHICH SCREENS THIS CUE IS FOR (RG-161). Stored on the cue in the Planner;
+    // `null` — which is every cue written before targeting existed — means
+    // every screen, exactly as before. A screen this does not name is left
+    // showing whatever it already had.
+    const cueChannels = planChannelsOf(item.channels_json);
     try {
       if (item.cue_type === 'scripture') {
         // keepPlan: TRUE — this is a plan slide, so the transport must stay in
         // Slide mode. Without it, manualFire's leavePlan() flipped us to Verse
         // mode the moment a scripture cue fired, and the next → walked the passage
         // instead of advancing the plan. That was the Slide-mode bug.
-        await manualFire(p.reference || item.label, stageNote, tpl, true);
+        await manualFire(p.reference || item.label, stageNote, tpl, true, cueChannels);
       } else if (item.cue_type === 'media') {
         if (!p.media_id) {
           flash('Media asset missing — re-add it from the Library.');
@@ -939,9 +945,9 @@
         // service record then had nothing to say about which song was on screen,
         // and the Library's own fire (which passes the label) disagreed with this
         // one about the same rule.
-        await fireContent(item.label, s.text, 'song', stageNote, tpl, true); // keepPlan
+        await fireContent(item.label, s.text, 'song', stageNote, tpl, true, cueChannels); // keepPlan
       } else {
-        await fireContent(item.label, s.text, 'announce', stageNote, tpl, true); // keepPlan
+        await fireContent(item.label, s.text, 'announce', stageNote, tpl, true, cueChannels); // keepPlan
       }
       // Mark the cue live ONLY after the fire resolves. Setting onAir before the
       // await meant a failed fire left this cue amber "On Air" — and the reactive

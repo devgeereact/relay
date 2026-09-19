@@ -95,6 +95,16 @@ wearing cannot be deleted until that screen has been given a different one, and
 the layouts Relay ships with cannot be deleted at all — they would come back the
 next time Relay started, so they can be renamed and changed instead.
 
+A cue in the service plan can name the screens it is for. Until now every cue
+went to every screen, so a notice landed on the preacher's tablet, a lobby TV
+kept showing a countdown after the service had started, and a stream channel
+took words it was not meant to carry. Each cue in the Planner now has a
+**Screens** row; leave it alone and the cue goes everywhere, exactly as before.
+
+A screen a cue does not name keeps showing whatever it already had. Targeting
+narrows what a cue reaches — it can never blank a screen — and **Clear all
+screens** and **Blackout** still reach everything, always.
+
 Physical phone and tablet scanning remains to be verified.
 
 ### Lower thirds had nothing behind the words

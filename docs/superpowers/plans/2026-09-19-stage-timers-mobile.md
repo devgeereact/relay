@@ -166,6 +166,11 @@ Acceptance: save/reopen/restart retains the layout; two stage devices can have d
 
 ### Phase 5: output and cue integration
 
+**RG-161 is closed** (two commits: the plumbing, then the writer). A cue names
+its screens; an untargeted screen is UNTOUCHED, not cleared. Stage-layout cue
+actions are still NOT built — the plan says to add them only after manual
+assignment is proven, and no device has proven it.
+
 - Verify native window, browser source and mobile stage as separate consumers of the same state. Keep browser-source URL, look and channel identity coherent.
 - Wire existing cue timer actions to the richer timer state. Add stage-layout cue actions only after manual assignment is proven; preview/rehearsal must not switch real screens.
 - Exercise physical display disconnect/reconnect, per-screen clear/black/restore, template changes, current-state replay and shared health reporting.

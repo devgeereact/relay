@@ -1282,9 +1282,18 @@ try {
  *  advancing the plan. Songs/media/countdown never hit this (they don't fire
  *  through `manual_fire`); only scripture cues did, which is exactly what made
  *  Slide mode "break" on a scripture item. Hand-typed fires keep the default. */
-export async function manualFire(reference, stageNote = null, templateId = null, keepPlan = false) {
+export async function manualFire(
+reference,
+stageNote = null,
+templateId = null,
+keepPlan = false,
+// WHICH SCREENS (RG-161). `null` is every screen, which is what the operator's
+// own reference box and the preacher's phone always are — only a plan cue has
+// anywhere anybody could have said otherwise.
+channels = null,
+) {
 const call = await invoke();
-await call('manual_fire', { reference, stageNote, templateId });
+await call('manual_fire', { reference, stageNote, templateId, channels });
 if (keepPlan) return; // a plan slide fire — stay on the plan (Slide mode holds)
 // A hand-typed verse is not a plan cue. If the arrows still thought we were in
 // the plan, the next → would jump back to a slide the congregation has moved on
@@ -1770,6 +1779,23 @@ await call('set_channel_stage_layout', { channelId, layoutId: layoutId ?? null }
 }
 
 /**
+ * WHICH SCREENS A PLAN CUE IS FOR (RG-161), or every screen.
+ *
+ * `null` clears the targeting. An empty array reaches NO screen and is NOT the
+ * same thing — a cue that goes nowhere is a real thing to ask for, and folding
+ * the two together would make it unsayable.
+ *
+ * It STORES and it fires nothing: the Planner may not reach an output, so this
+ * is a fact about the plan and Live acts on it when the cue goes on air.
+ *
+ * THROWS (contract group 1).
+ */
+export async function setPlanChannels(id, channels) {
+const call = await invoke();
+await call('set_plan_channels', { id, channels: channels ?? null });
+}
+
+/**
  * PUT A TIMER BACK TO THE LENGTH IT WAS STARTED AT.
  *
  * The third transport verb, and not a Stop: the timer, its label, its chosen
@@ -1844,9 +1870,11 @@ kind = 'announce',
 stageNote = null,
 templateId = null,
 keepPlan = false,
+// WHICH SCREENS (RG-161). `null` is every screen.
+channels = null,
 ) {
 const call = await invoke();
-await call('fire_content', { label, text, kind, stageNote, templateId });
+await call('fire_content', { label, text, kind, stageNote, templateId, channels });
 if (!keepPlan) leavePlan();
 }
 

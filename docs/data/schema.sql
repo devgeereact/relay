@@ -162,9 +162,16 @@ CREATE TABLE plan_items (
     section_title TEXT NOT NULL DEFAULT '',  -- non-empty = this cue BEGINS a section
     duration_sec  INTEGER NOT NULL DEFAULT 0, -- planned length, for the running-time
                                               -- estimate only (plan.js). 0 = untimed.
-    timer_minutes INTEGER                     -- a programme clock this cue asks Live to
+    timer_minutes INTEGER,                    -- a programme clock this cue asks Live to
                                               -- start when it goes on air. NULL = unbound,
                                               -- which is NOT the same as 0. See PlanItem.
+    -- WHICH SCREENS THIS CUE IS FOR (RG-161) -- a JSON array of channel ids.
+    -- NULL is EVERY screen, and is what every cue written before targeting
+    -- existed has, so a plan that has never been told about screens behaves
+    -- exactly as it always did. An empty array reaches NO screen, which is a
+    -- different thing and a real thing to ask for.
+    -- A screen a cue does not name is UNTOUCHED, not cleared.
+    channels_json TEXT
 );
 CREATE INDEX idx_plan_items ON plan_items(plan_id, position);
 

@@ -469,3 +469,28 @@ export function previewState(item, hasText) {
     message: `This ${known.label.toLowerCase()} cue has no words saved, so firing it would put nothing on the screen.`,
   };
 }
+
+
+/**
+ * WHICH SCREENS A CUE IS FOR (RG-161), read off `plan_items.channels_json`.
+ *
+ * `null` is EVERY screen and is what every cue written before targeting
+ * existed carries — so a plan that has never been told about screens behaves
+ * exactly as it always did. A value that will not parse is also every screen:
+ * content that silently reaches nothing is worse than content that reaches
+ * more than it had to.
+ *
+ * An EMPTY array survives as an empty array. "Reaches no screen" and "reaches
+ * every screen" are opposite instructions, and this is the one place the
+ * difference could quietly be lost.
+ */
+export function planChannelsOf(raw) {
+  if (raw == null) return null;
+  try {
+    const v = JSON.parse(raw);
+    if (!Array.isArray(v)) return null;
+    return v.filter((n) => Number.isFinite(n));
+  } catch {
+    return null;
+  }
+}
