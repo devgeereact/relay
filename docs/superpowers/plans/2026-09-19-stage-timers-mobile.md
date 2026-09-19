@@ -175,6 +175,12 @@ Acceptance: a cue may change the intended stage layout/timer without touching an
 
 ### Phase 6: packaged rehearsal and operator acceptance
 
+**The script exists: [`../../qa/STAGE_PHONE_REHEARSAL.md`](../../qa/STAGE_PHONE_REHEARSAL.md).**
+Twelve numbered sections, in dependency order, each saying what to expect and what to record
+when it does not happen. It opens with the build step because a binary predating
+`network_addresses` reproduces the very defect it is meant to test (S13), and it ends with
+what a useful report back looks like. It is NOT RUN.
+
 - Build the actual Tauri bundle; verify its CSP, stage assets, local HTTP and WebSocket services.
 - Use a physical iPhone/iPad Safari and Android Chrome where available, on the same LAN as the computer. Record OS, browser, Relay build and network topology without copying credentials.
 - Scan each QR from the operator's screen. Test first join, second device, app restart, device lock/unlock, portrait/landscape, Wi-Fi interruption and IP refresh.
