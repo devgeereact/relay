@@ -173,6 +173,15 @@ update at the same instant as the main screen. Relay is at its best here because
 each screen carries its own template, so the stage monitor can show plain white
 text on black while the wall shows the full design.
 
+**A monitor for the PREACHER is a different address, though, and this is the
+setup mistake that costs a Sunday.** The `output.html` URL in section 3 renders
+a stage-shaped template perfectly well and **cannot show a Stage Timer or be
+sent a Stage Message** — those exist only on `stage.html`, which is handed out
+from **Outputs → Sharing** once a screen's Role is *Stage display*. A confidence
+monitor in the booth is happy on either; the platform wants the stage address.
+[USER_GUIDE.md](USER_GUIDE.md) §"Screens for the platform and the booth" has the
+whole distinction.
+
 Where it matters, the hardware limits are these.
 
 **On a Mac, the chip decides, and no adapter changes it.** Apple Silicon does not

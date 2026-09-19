@@ -1641,12 +1641,16 @@ doneMsg = '',
 templateId = null,
 keepPlan = false,
 warnMs = null,
+untilMs = null,
 ) {
 if (countdownRunning()) {
   throw new Error('A countdown is already running — clear the screen to start a new one.');
 }
 const call = await invoke();
-await call('start_countdown', { minutes, label, doneMsg, templateId, warnMs });
+// `untilMs` is an absolute instant, worked out by `atClockTime` where the
+// machine's timezone and DST rules are actually known. When it is given it wins
+// over `minutes`; the engine stores it so Reset goes back to the appointment.
+await call('start_countdown', { minutes, label, doneMsg, templateId, warnMs, untilMs });
 if (!keepPlan) leavePlan();
 }
 
@@ -1679,9 +1683,10 @@ doneMsg = '',
 scope = 'both',
 warnMs = null,
 planItemId = null,
+untilMs = null,
 }) {
 const call = await invoke();
-return call('start_timer', { minutes, label, doneMsg, scope, warnMs, planItemId });
+return call('start_timer', { minutes, label, doneMsg, scope, warnMs, planItemId, untilMs });
 }
 
 /**
@@ -1699,6 +1704,87 @@ return call('start_timer', { minutes, label, doneMsg, scope, warnMs, planItemId 
 export async function adjustTimer(timerId, { remainingMs = null, paused = null } = {}) {
 const call = await invoke();
 await call('adjust_timer', { timerId, remainingMs, paused });
+}
+
+/**
+ * THE STAGE LAYOUTS AN OPERATOR CAN CHOOSE BETWEEN. Global, by name.
+ *
+ * A read for a picker: an empty list is a usable answer (no layouts yet) and a
+ * failed read must not take the Outputs desk down with it, so this swallows and
+ * answers `[]` — group 2.
+ */
+export async function listStageLayouts() {
+return guardedRead('listStageLayouts', async (call) => {
+    const rows = await call('list_stage_layouts');
+    // ALWAYS A LIST. `guardedRead`'s fallback covers a THROW; it does not cover
+    // a bridge that answers with something that is not a list, and the one
+    // consumer is an `{#each}`. A picker handed a non-list takes the whole
+    // Outputs desk down with it — which is a screen-configuration surface
+    // failing because a list of layouts could not be read.
+    return Array.isArray(rows) ? rows : [];
+}, []);
+}
+
+/**
+ * CREATE A STAGE LAYOUT, or rename and re-zone one that exists.
+ *
+ * `id` null creates. Returns the layout's identity so the caller can select
+ * what it just made without re-reading the list and guessing which row is new.
+ *
+ * THROWS (contract group 1). Every refusal it can raise is one the operator has
+ * to see and act on — a name already taken, a layout with no name — and a save
+ * that silently did nothing is the worst of them.
+ */
+export async function upsertStageLayout(id, name, zones) {
+const call = await invoke();
+return await call('upsert_stage_layout', { id: id ?? null, name, zones });
+}
+
+/**
+ * REMOVE A STAGE LAYOUT.
+ *
+ * Refused when a screen is wearing it (the screens are named) and when it is
+ * one Relay ships with (the seed would put it back on the next launch, and a
+ * delete that undoes itself overnight is worse than a refusal).
+ *
+ * THROWS (contract group 1).
+ */
+export async function deleteStageLayout(id) {
+const call = await invoke();
+await call('delete_stage_layout', { id });
+}
+
+/**
+ * POINT ONE STAGE SCREEN AT ONE LAYOUT, or at none.
+ *
+ * `null` is the way back and a real answer: the screen returns to the zones the
+ * DEVICE itself has, which is the arrangement a church may already be running.
+ * Nothing is erased by assigning, and nothing is reset by clearing.
+ *
+ * THROWS (contract group 1). It changes what a preacher sees, and a failure the
+ * operator cannot see is a control that lies about what it did.
+ */
+export async function setChannelStageLayout(channelId, layoutId) {
+const call = await invoke();
+await call('set_channel_stage_layout', { channelId, layoutId: layoutId ?? null });
+}
+
+/**
+ * PUT A TIMER BACK TO THE LENGTH IT WAS STARTED AT.
+ *
+ * The third transport verb, and not a Stop: the timer, its label, its chosen
+ * warning threshold and its cue binding all survive. It answers how long, never
+ * running-or-not — a held timer is reset where it stands and stays held.
+ *
+ * It names no figure on purpose. The length lives on the registry row
+ * (`configured_ms`), because a re-aim moves `target_ms` and leaves `from_ms`, so
+ * nothing on this side of the bridge can reconstruct what was originally chosen.
+ *
+ * THROWS (contract group 1).
+ */
+export async function resetTimer(timerId) {
+const call = await invoke();
+await call('reset_timer', { timerId });
 }
 
 /**
@@ -2537,6 +2623,12 @@ try {
 } catch {
   return null;
 }
+
+}
+/** Interface enumeration. Throws so a failed refresh cannot look successful. */
+export async function networkAddresses() {
+  const call = await invoke();
+  return await call('network_addresses');
 }
 
 /** Bible translations available in the corpus. */

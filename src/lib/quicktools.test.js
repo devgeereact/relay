@@ -735,3 +735,74 @@ describe('L2 · the Controls card keeps Relay’s order, on purpose', () => {
     expect(src).toMatch(/never scrolls/);
   });
 });
+
+// ── A CONGREGATION COUNTDOWN CAN NAME A TIME OF DAY (DECISIONS §102) ───────
+//
+// "The service starts at 10:30" is the commonest countdown a church puts on a
+// screen, and it was the one thing this transport could not express. Every
+// creator in the product took `minutes: f64` and computed `now + minutes*60000`
+// — there was no `time_of_day` in the schema, the commands, the stores or any
+// control — so a time of day was arithmetic an operator did in their head, and
+// it was wrong the moment the service slipped while the wall counted on.
+describe('counting down to a time of day', () => {
+  const clockBox = () => host.querySelector('[aria-label="Countdown clock time"]');
+  const startBtn = () =>
+    [...host.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Start');
+
+  const typeAt = async (value) => {
+    const box = clockBox();
+    expect(box, 'no clock-time control on the countdown card').toBeTruthy();
+    box.value = value;
+    box.dispatchEvent(new Event('input'));
+    await settle();
+    return box;
+  };
+
+  it('sends the instant rather than a number of minutes', async () => {
+    mount();
+    await settle();
+    await typeAt('10:30');
+    startBtn().click();
+    await settle();
+    const call = called('start_countdown').at(-1);
+    expect(call, 'Start reached no command').toBeTruthy();
+    const d = new Date(call[1].untilMs);
+    expect(d.getHours()).toBe(10);
+    expect(d.getMinutes()).toBe(30);
+  });
+
+  it('sends no instant when the field is empty, so the length still means a length', async () => {
+    mount();
+    await settle();
+    startBtn().click();
+    await settle();
+    expect(called('start_countdown').at(-1)[1].untilMs ?? null).toBeNull();
+  });
+
+  it('will not start on something that is not a time', async () => {
+    mount();
+    await settle();
+    const box = await typeAt('half ten');
+    expect(box.getAttribute('aria-invalid')).toBe('true');
+    expect(startBtn().disabled).toBe(true);
+    expect(called('start_countdown')).toHaveLength(0);
+  });
+
+  it('does not let a clock time re-aim a countdown that is already up', async () => {
+    // `±1` and Reset are about the countdown on the wall. Re-aiming those at a
+    // clock time would change what a congregation is counting to under an
+    // operator who pressed a minute button.
+    cap.live.set({ kind: 'countdown', reference: 'Service begins in', countdown_to: Date.now() + 300_000 });
+    mount();
+    await settle();
+    await typeAt('10:30');
+    const plus = [...host.querySelectorAll('button')].find((b) => b.textContent.trim() === '+1');
+    if (plus && !plus.disabled) {
+      plus.click();
+      await settle();
+      expect(called('start_countdown')).toHaveLength(0);
+      const adj = called('adjust_countdown').at(-1);
+      if (adj) expect(adj[1].untilMs ?? null).toBeNull();
+    }
+  });
+});

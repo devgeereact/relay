@@ -21,6 +21,7 @@ mod profiles;
 mod services;
 mod settings;
 mod songs;
+mod stage;
 mod starter;
 mod templates;
 mod verses;
@@ -33,6 +34,7 @@ pub use profiles::*;
 pub use services::*;
 pub use settings::*;
 pub use songs::*;
+pub use stage::*;
 pub use starter::*;
 pub use templates::*;
 pub use verses::*;
@@ -44,6 +46,7 @@ use std::path::PathBuf;
 use channels::{ensure_channel_looks, ensure_channel_role, ensure_channel_shows, seed_channels};
 #[cfg(test)]
 use serde_json::Value;
+use stage::{ensure_channel_stage_layout, ensure_stage_layouts};
 use templates::{
     ensure_lower_third_band_is_not_a_law_colour, ensure_lyrics_template, ensure_preset_templates,
     ensure_retired_presets_are_gone, ensure_template_seed_identity,
@@ -375,6 +378,12 @@ fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
     // door with `?`, not `.ok()`, so a failed read retires NOTHING rather than
     // deleting a template a screen is wearing. A missing table is a failed read.
     ensure_channel_looks(conn)?;
+    // STAGE LAYOUTS, BEFORE THE COLUMN THAT POINTS AT THEM. An install can
+    // reach one and not the other, and a `stage_layout_id` referencing a table
+    // that does not exist yet is a screen with an assignment nothing can
+    // resolve. Both are retryable (rule 25) and neither leaves a scratch table.
+    ensure_stage_layouts(conn)?;
+    ensure_channel_stage_layout(conn)?;
     // RETIRE BEFORE SEEDING, not after. The seed became five families this wave and
     // the rows they replaced are removed from installs that already have them. But
     // seeds insert BY NAME and only when absent, and one retired shelf row shares
@@ -2159,6 +2168,65 @@ mod tests {
     /// Closing the other half needs a copy of the OLD schema to diff against, and
     /// this repo does not keep one. That is a gap, and it is written down rather
     /// than papered over.
+    /// EVERY DB MODULE IS IN BOTH MIGRATION SCANNERS.
+    ///
+    /// The two tests below each carry a hand-written `SOURCES` list, because
+    /// `include_str!` needs literals. A hand-written source list is the exact
+    /// shape that has twice made a scanner in this repository look exhaustive
+    /// while checking less than it claimed (`ipc.test.js` records both), and it
+    /// did it again here: `stage.rs` was added with two `ALTER TABLE … ADD
+    /// COLUMN` statements in it and BOTH lists were blind to them, so one test
+    /// reported a column with no migration while the migration was sitting in a
+    /// file it could not see.
+    ///
+    /// This is the tripwire. It compares the directory against the names, so a
+    /// new module cannot be invisible to those tests without failing this one
+    /// first — and it checks the LENGTH of each list rather than its contents,
+    /// which is all it can do from here and is enough to catch a file added to
+    /// one scanner and forgotten in the other.
+    const DB_MODULES: &[&str] = &[
+        "mod.rs",
+        "services.rs",
+        "songs.rs",
+        "templates.rs",
+        "profiles.rs",
+        "library.rs",
+        "plans.rs",
+        "environments.rs",
+        "settings.rs",
+        "channels.rs",
+        "stage.rs",
+        // NEVER IN EITHER SCANNER UNTIL THIS TRIPWIRE WAS WRITTEN. None of the
+        // three carries an `ALTER TABLE … ADD COLUMN` today, so nothing was
+        // being missed — but nothing was stopping one being added either, and
+        // "no migration exists" and "the file holding it is not read" produce
+        // exactly the same green.
+        "demo.rs",
+        "starter.rs",
+        "verses.rs",
+    ];
+
+    #[test]
+    fn every_db_module_is_named_in_the_migration_scanners() {
+        let mut on_disk: Vec<String> =
+            std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/src/db"))
+                .expect("read src/db")
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|n| n.ends_with(".rs"))
+                .collect();
+        on_disk.sort();
+        let mut named: Vec<String> = DB_MODULES.iter().map(|s| (*s).to_string()).collect();
+        named.sort();
+        assert_eq!(
+            on_disk, named,
+            "a db module is missing from DB_MODULES, so any `ALTER TABLE … ADD \
+             COLUMN` in it is invisible to both migration scanners and their \
+             assertions are weaker than they read. Add it here AND to both \
+             `SOURCES` lists."
+        );
+    }
+
     #[test]
     fn every_column_an_upgrade_adds_reaches_a_database_that_predates_it() {
         // The `ALTER`s live across the db modules; read them the way the code
@@ -2174,7 +2242,18 @@ mod tests {
             include_str!("environments.rs"),
             include_str!("settings.rs"),
             include_str!("channels.rs"),
+            include_str!("stage.rs"),
+            include_str!("demo.rs"),
+            include_str!("starter.rs"),
+            include_str!("verses.rs"),
         ];
+        assert_eq!(
+            SOURCES.len(),
+            DB_MODULES.len(),
+            "this scanner reads fewer files than there are db modules — see \
+             `every_db_module_is_named_in_the_migration_scanners`"
+        );
+
         let mut adds: Vec<(String, String)> = Vec::new();
         for src in SOURCES {
             for line in src.lines() {
@@ -2327,7 +2406,17 @@ mod tests {
             include_str!("environments.rs"),
             include_str!("settings.rs"),
             include_str!("channels.rs"),
+            include_str!("stage.rs"),
+            include_str!("demo.rs"),
+            include_str!("starter.rs"),
+            include_str!("verses.rs"),
         ];
+        assert_eq!(
+            SOURCES.len(),
+            DB_MODULES.len(),
+            "this scanner reads fewer files than there are db modules — see \
+             `every_db_module_is_named_in_the_migration_scanners`"
+        );
         let migrated: Vec<String> = SOURCES
             .iter()
             .flat_map(|s| s.lines())

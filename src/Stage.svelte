@@ -12,6 +12,10 @@
   // like an OBS/kiosk output, but rendered as a readable mobile confidence view.
   import { onMount, onDestroy } from 'svelte';
   import { acceptsStageMessage, roleOf } from './lib/channelroles.js';
+  import { startBeat, paintState, BEAT_INTERVAL_MS } from './lib/outputHealth.js';
+  // ONE LIST OF ZONES, shared with the desk that assigns them. A second copy
+  // here would be a desk offering a zone this page does not draw.
+  import { STAGE_ZONES as ZONES, DEFAULT_STAGE_ZONES, readStageZones } from './lib/stagelayout.js';
 
   // ── WHICH SCREEN THIS IS ────────────────────────────────────────────────────
   //
@@ -122,15 +126,68 @@
   // DECISIONS §35. `search` and `live` mutate nothing and stay GET.
   const MUTATES = new Set(['fire', 'next', 'prev', 'clear', 'black']);
 
+  // ── A REQUEST THAT DOES NOT COME BACK (plan S9) ───────────────────────────
+  //
+  // A bare `fetch` has no deadline. A phone that has roamed to a dead access
+  // point, or a laptop asleep behind a NAT that swallows the SYN, leaves a
+  // promise that neither resolves nor rejects — so `busy` is never cleared by
+  // its own `finally` and every control on this panel stays disabled, silently,
+  // for the rest of the service. The only way out was reloading the page in the
+  // middle of a sermon.
+  //
+  // Six seconds. It is over a LAN to a machine in the same building: a reply
+  // that has not arrived by then is not late, it is lost.
+  const REQUEST_TIMEOUT_MS = 6000;
+
+  /**
+   * No reply arrived — unreachable, aborted on the deadline, or the answer was
+   * lost on the way back.
+   *
+   * This is deliberately NOT the same as a refusal. A refusal is Relay
+   * answering; this is Relay not answering, and the difference matters because
+   * a mutating request that got no reply MAY STILL HAVE EXECUTED. The phone
+   * cannot know, so it must not say.
+   */
+  class NoAnswer extends Error {}
+
   async function api(path) {
     const route = path.split('?')[0];
     const method = MUTATES.has(route) ? 'POST' : 'GET';
-    const r = await fetch(`${API}/${path}`, { method });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const j = await r.json();
-    if (!j.ok) throw new Error(j.error || 'failed');
-    return j;
+    const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+    let bell = null;
+    // TWO MECHANISMS, BECAUSE THEY GUARANTEE DIFFERENT THINGS. The abort asks
+    // the platform to release the connection, which is the tidy half and the
+    // only one that frees a socket. The race is what actually gets this panel
+    // its buttons back: a webview whose `fetch` ignores `signal` would leave
+    // the promise pending for ever and `busy` latched with it, and "we asked it
+    // to stop" is not the same guarantee as "we stopped waiting".
+    const deadline = new Promise((_, reject) => {
+      bell = setTimeout(() => {
+        try { ctl?.abort(); } catch { /* aborting must never take the page down */ }
+        reject(new NoAnswer('deadline'));
+      }, REQUEST_TIMEOUT_MS);
+    });
+    try {
+      let r;
+      try {
+        r = await Promise.race([fetch(`${API}/${path}`, { method, signal: ctl?.signal }), deadline]);
+      } catch {
+        throw new NoAnswer('no answer');
+      }
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error || 'failed');
+      return j;
+    } finally {
+      if (bell !== null) clearTimeout(bell);
+    }
   }
+
+  // WHAT AN UNANSWERED REQUEST IS ALLOWED TO SAY. Never a fact about the
+  // passage, and never an instruction to tap again: the wall is the only
+  // witness, and the preacher is looking at it.
+  const NO_ANSWER_NAV = 'Relay did not answer. Look at the screen — it may or may not have moved.';
+  const NO_ANSWER_FIRE = 'Relay did not answer. Look at the screen before tapping again.';
 
   let searchSeq = 0;
   async function doSearch() {
@@ -156,7 +213,7 @@
       await api(`fire?ref=${encodeURIComponent(reference)}`);
       results = []; q = '';
     } catch (e) {
-      ctlErr = 'Could not put that on screen.';
+      ctlErr = e instanceof NoAnswer ? NO_ANSWER_FIRE : 'Could not put that on screen.';
     } finally { busy = false; }
   }
 
@@ -182,7 +239,16 @@
         ctlErr = NAV_SAID[j.nav.kind] ?? (dir === 'next' ? 'No next verse.' : 'No previous verse.');
       }
     } catch (e) {
-      ctlErr = dir === 'next' ? 'No next verse.' : 'No previous verse.';
+      // THE WORDS OF A CORRECT BOUNDARY OVER A TRANSPORT FAILURE. This used to
+      // say "No next verse." for both — which is what Relay says when the
+      // reading has genuinely ended, so a phone that could not reach the
+      // building's computer reported a true-sounding fact about the passage.
+      // And it is not a safe lie: the request may have reached the server and
+      // executed, with only the reply lost, so those words could be printed
+      // over a wall that had just advanced.
+      ctlErr = e instanceof NoAnswer
+        ? NO_ANSWER_NAV
+        : (dir === 'next' ? 'No next verse.' : 'No previous verse.');
     } finally { busy = false; }
   }
 
@@ -228,29 +294,21 @@
   //
   // Every read and write is guarded: a private window, blocked site data or a
   // kiosk with storage disabled must give the DEFAULT layout, never a blank page.
-  const ZONES = [
-    { key: 'reading', label: 'Reading' },
-    { key: 'next', label: 'Next' },
-    { key: 'note', label: 'Stage Note' },
-    { key: 'countdown', label: 'Screen Countdown' },
-    { key: 'clock', label: 'Clock' },
-    { key: 'elapsed', label: 'Service elapsed' },
-    // The preacher's bookkeeping. A lobby TV running this page has no business
-    // carrying it, and until this key existed there was no way to take it off —
-    // the rail was the one region on the screen with no switch behind it.
-    { key: 'programme', label: 'Stage Timer' },
-  ];
-  const DEFAULT_ZONES = {
-    reading: true,
-    next: true,
-    note: true,
-    countdown: true,
-    clock: true,
-    elapsed: true,
-    programme: true,
-  };
   const ZONE_KEY = 'relay.stage.zones';
-  let zones = { ...DEFAULT_ZONES };
+  // ── WHOSE DECISION THIS IS ────────────────────────────────────────────────
+  //
+  // `deviceZones` is this device's own preference, in its own `localStorage`.
+  // `assignedZones` is the layout an OPERATOR gave this screen, and it wins.
+  //
+  // Null is a real answer and the reason nothing was erased: a church already
+  // running a tablet with zones set by hand keeps exactly that arrangement
+  // until somebody deliberately assigns a layout to the screen. Assigning is
+  // what moves the decision off the device; there is no silent migration and no
+  // default layout handed out on first sight.
+  let deviceZones = { ...DEFAULT_STAGE_ZONES };
+  let assignedZones = null;
+  $: zones = assignedZones ?? deviceZones;
+  $: operatorSet = assignedZones !== null;
   let figures = 'bottom'; // 'bottom' | 'beside'
   let showZones = false;
 
@@ -262,7 +320,8 @@
       if (!saved || typeof saved !== 'object') return;
       // Key by key, off the DEFAULTS — so a zone added in a later version is on
       // its own default rather than absent, and a corrupt value cannot delete one.
-      for (const z of ZONES) if (typeof saved[z.key] === 'boolean') zones[z.key] = saved[z.key];
+      for (const z of ZONES)
+        if (typeof saved[z.key] === 'boolean') deviceZones[z.key] = saved[z.key];
       if (saved.figures === 'beside' || saved.figures === 'bottom') figures = saved.figures;
     } catch {
       /* defaults stand */
@@ -270,13 +329,18 @@
   }
   function saveZones() {
     try {
-      localStorage.setItem(ZONE_KEY, JSON.stringify({ ...zones, figures }));
+      localStorage.setItem(ZONE_KEY, JSON.stringify({ ...deviceZones, figures }));
     } catch {
       /* the layout still applies to this session */
     }
   }
   function toggleZone(key) {
-    zones = { ...zones, [key]: !zones[key] };
+    // An operator's layout is not editable from the device it is displayed on:
+    // two people changing one screen from two places is how a stage ends up
+    // showing something nobody chose. The panel says so rather than silently
+    // ignoring the tap.
+    if (operatorSet) return;
+    deviceZones = { ...deviceZones, [key]: !deviceZones[key] };
     saveZones();
   }
   function setFigures(v) {
@@ -292,6 +356,46 @@
   let cdWarnMs = null; // the threshold chosen for THIS countdown, when one was
   let svcStart = null; // service-start epoch, for the elapsed zone
   let nowMs = 0;
+
+  // ── THE HOST'S CLOCK, AND WHETHER ANYBODY IS STILL ANSWERING (S5, S6) ─────
+  //
+  // `countdown_to` is an absolute epoch produced on the HOST. This page used to
+  // subtract its own `Date.now()` from it, so a tablet a minute out showed a
+  // minute of error on the figure a preacher paces a sermon against. The hub
+  // now answers every `beat` with its own epoch, so the correction rides a
+  // round trip that was already happening.
+  //
+  // A MEDIAN, not the last sample: one slow round trip is a latency
+  // measurement, not a clock change, and a single outlier must not be able to
+  // move what the preacher is reading. The offset is short by the return leg,
+  // which on a LAN is single-digit milliseconds against a figure displayed to
+  // the second — so it is not corrected for, and this comment is the honest
+  // statement of that rather than a claim of sub-second sync.
+  const HOST_SAMPLES = 5;
+  /** Three unanswered beats. Same grace the console gives a screen. */
+  const STALE_AFTER_MS = BEAT_INTERVAL_MS * 3;
+  let hostSamples = [];
+  let hostOffsetMs = 0;
+  let lastAckAt = null;
+  let beatingSince = null;
+  let stale = false;
+  let staleForS = 0;
+
+  /** Only a page that actually beats is owed an answer. Channel 0 sends none. */
+  $: expectsAck = channelId > 0;
+
+  function noteHostClock(at) {
+    if (typeof at !== 'number' || !Number.isFinite(at)) return;
+    const seen = Date.now();
+    lastAckAt = seen;
+    // Answered, so it is not stale — set here rather than waiting for the next
+    // one-second tick, because the pip is the thing being looked at.
+    stale = false;
+    hostSamples = [...hostSamples, at - seen].slice(-HOST_SAMPLES);
+    const sorted = [...hostSamples].sort((a, b) => a - b);
+    hostOffsetMs = sorted[Math.floor(sorted.length / 2)];
+    nowMs = Date.now() + hostOffsetMs;
+  }
   // ONE READER, shared with the wall and the console (docs/REBRAND.md §7). This was
   // its own subtraction, which was fine while the answer was a subtraction — and is
   // not, now that it has an exception. A preacher's own screen counting down through
@@ -394,11 +498,18 @@
   // new row, not RG-153.
   // ── AND A HELD ROW IS FROZEN, AND SAYS SO (wave 4 track A) ────────────────
   //
-  // `countdownRemainingMs` answers a held timer with its stored figure, which is
-  // always positive, so a held row can never take the over-time branch above. It
-  // is never warned either: a held timer is not running out, it is where the
-  // operator left it, and a frozen figure pulsing red says the opposite of what is
-  // true.
+  // `countdownRemainingMs` answers a held timer with its stored figure, and as of
+  // RG-175 that figure is SIGNED — a sermon held two minutes over holds at
+  // `-120000` and this row reads `+2:00`, frozen. The sentence that used to sit
+  // here said the stored figure was "always positive, so a held row can never
+  // take the over-time branch above", which was true when it was written and is
+  // now exactly backwards: holding past zero is the case the hold exists for,
+  // because the elapsed figure the preacher has been reading is the thing Stop
+  // throws away and `+5` re-aims.
+  //
+  // It is never WARNED, though, and that half is unchanged: a held timer is not
+  // running out, it is where the operator left it, and a frozen figure pulsing
+  // red says the opposite of what is true.
   //
   // ── WHY THE OPERATOR'S DONE MESSAGE IS STILL NOT READ HERE ────────────────
   //
@@ -710,6 +821,18 @@
 
   function apply(m) {
     if (m.kind === 'content') {
+      // IS THIS CUE FOR THIS SCREEN? (RG-161) The hub broadcasts to every
+      // client and cannot address one (DECISIONS §35), so the routing is the
+      // receiver's — and this page is the second door. A guarantee kept on
+      // `output.html` alone is the mistake that left a Stage Message on every
+      // copy of this page, and a notice aimed at the foyer TV landing on the
+      // preacher's tablet is the same shape.
+      //
+      // Absent, null or malformed is every screen: cues built before targeting
+      // existed say nothing, and the safe direction is to show them. An empty
+      // array reaches nothing, on purpose. A page with no channel is
+      // unidentified and takes everything, as it does for every other frame.
+      if (Array.isArray(m.channels) && channelId && !m.channels.includes(channelId)) return;
       content = { reference: m.reference, text: m.text, translation: m.translation };
       note = m.stage_note || '';
       cdTo = m.countdown_to || null;
@@ -814,6 +937,16 @@
       // and a panic control takes it down with everything else it says (§91).
       if (!acceptsStageMessage(myRole)) return;
       alert = (m.text || '').trim();
+    } else if (m.kind === 'stage_zones') {
+      // A LIVE CHANGE. The initial read is over HTTP on connect (see
+      // `loadStageZones`) because this page is the only consumer of this map
+      // and the only one with that plane; this frame is what makes an
+      // operator's change reach a screen already open.
+      applyStageZones(m.zones);
+    } else if (m.kind === 'beat_ack') {
+      // The hub's answer to this page's own beat. Carries the host clock and
+      // nothing else; it is the only inbound frame this page ASKED for.
+      noteHostClock(m.at);
     } else if (m.kind === 'stage_next') {
       next = m.label || m.text ? { label: m.label || '', text: m.text || '' } : null;
     } else if (m.kind === 'timer') {
@@ -845,15 +978,148 @@
   // preacher holding the phone cannot tell a page that is about to work from one
   // that never will. After a few failed attempts it says so plainly instead.
   let attempts = 0;
-  $: reach = connected ? 'live' : attempts > 3 ? "can't reach Relay — retrying" : 'connecting…';
+  $: reach = !connected
+    ? attempts > 3
+      ? "can't reach Relay — retrying"
+      : 'connecting…'
+    : stale
+      ? `not answering · ${staleForS}s`
+      : 'live';
+
+  // ── ONE SOCKET, A BACKOFF, AND WAKING UP AS A TRIGGER ─────────────────────
+  //
+  // The retry was a flat 1.5 s with `onclose` as its only trigger. Through a
+  // real outage — an access point rebooting, a lid closed between services —
+  // that is forty reconnects a minute, for as long as it lasts, on a battery in
+  // somebody's hand. A backoff fixes that and immediately creates the opposite
+  // problem, because the phone that has just woken up becomes the one waiting.
+  //
+  // So the backoff is only acceptable BECAUSE resuming is a trigger: the long
+  // delays belong to a page nobody is looking at, and the moment somebody looks
+  // at it again the wait is abandoned. `visibilitychange` and `online` are the
+  // two moments the platform tells us anything changed.
+  //
+  // Two triggers means two ways to open a socket, and every guard here is about
+  // there being exactly one. Two sockets both say hello, both are sent the
+  // retained frame, and the one that loses the race goes on beating into a
+  // channel that now has two clients answering for it.
+  const RETRY_MIN_MS = 1000;
+  const RETRY_MAX_MS = 20_000;
+  let retryId = null;
+  let wsHost = null;
+
+  /** 1s, 2s, 4s … capped. Doubling, so a long outage costs a few wakes, not hundreds. */
+  const retryDelay = () =>
+    Math.min(RETRY_MIN_MS * 2 ** Math.max(0, Math.min(attempts, 6) - 1), RETRY_MAX_MS);
+
+  function scheduleRetry() {
+    if (closed) return;
+    if (retryId !== null) clearTimeout(retryId);
+    retryId = setTimeout(() => {
+      retryId = null;
+      connect(wsHost);
+    }, retryDelay());
+  }
+
+  /**
+   * Somebody is looking at this page again, or the device says it has a network.
+   *
+   * A STALE CONNECTION IS NOT A CLOSED ONE, and that is the case this exists
+   * for: a half-open socket never fires `onclose`, so the retry path above is
+   * unreachable by construction and the page would sit on a dead socket for the
+   * rest of the service. Closing it explicitly is the only way out.
+   */
+  function reconnectNow() {
+    if (closed) return;
+    if (connected && !stale) return; // already working; opening another is the bug
+    const old = ws;
+    ws = null; // so the old socket's own handlers see they have been superseded
+    if (old) {
+      try {
+        old.close();
+      } catch {
+        /* a failed close must never take the page down */
+      }
+    }
+    if (retryId !== null) {
+      clearTimeout(retryId);
+      retryId = null;
+    }
+    attempts = 0;
+    connect(wsHost);
+  }
+
+  /**
+   * Take the operator's layout for THIS screen out of the whole map.
+   *
+   * A screen that is not named in the map has not been given a layout, and
+   * falls back to the device's own zones — which is different from being given
+   * an empty one. An empty object would mean "show nothing", and those two
+   * readings are a working screen and a blank one.
+   */
+  function applyStageZones(map) {
+    if (!map || typeof map !== 'object' || !channelId) {
+      assignedZones = null;
+      return;
+    }
+    const mine = map[String(channelId)];
+    if (!mine || typeof mine !== 'object') {
+      assignedZones = null;
+      return;
+    }
+    // Key by key off the DEFAULTS, exactly as `loadZones` does: a zone added in
+    // a later version arrives on its own default rather than absent, and a
+    // corrupt value cannot delete one.
+    const next = readStageZones(mine);
+    // AN ENTRY THAT NAMES NO ZONE IS NOT A LAYOUT. Without this, `{}` becomes an
+    // assigned layout of all-defaults: it takes the toggles away from the device
+    // and replaces whatever that device was set to, while looking — on a default
+    // install — exactly like the fallback it replaced. `db/stage.rs` already
+    // says an empty object falls through to the device's own zones; this is the
+    // receiver keeping that promise rather than assuming the sender.
+    assignedZones = next;
+  }
+
+  /** The initial read. A failure leaves the device's own zones in force. */
+  async function loadStageZones() {
+    try {
+      const j = await api('stage_zones');
+      applyStageZones(j.zones);
+    } catch {
+      /* the device's own zones are a working screen; say nothing */
+    }
+  }
 
   function connect(host) {
     if (closed) return;
+    wsHost = host;
+    if (retryId !== null) {
+      clearTimeout(retryId);
+      retryId = null;
+    }
+    // CONNECTING (0) or OPEN (1) — there is already one in flight.
+    if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;
+    let sock;
     try {
-      ws = new WebSocket(`ws://${host}:8031`);
+      sock = new WebSocket(`ws://${host}:8031`);
+    } catch {
+      attempts += 1;
+      scheduleRetry();
+      return;
+    }
+    ws = sock;
+    {
       ws.onopen = () => {
+        // Superseded while connecting: a newer socket owns the page now.
+        if (ws !== sock) return;
         connected = true;
         attempts = 0;
+        // A FRESH CONNECTION IS NOT INSTANTLY STALE. The staleness clock starts
+        // again here, or a page that has just reconnected would report itself
+        // as not answering using the age of the outage it just survived.
+        lastAckAt = null;
+        beatingSince = Date.now();
+        stale = false;
         // ── RULE 43, ON THE ONE SCREEN THAT IS CARRIED AROUND ─────────────────
         //
         // `KioskHub` retains the last `content` / `clear` / `black` frame and
@@ -889,6 +1155,7 @@
         // retained frames (`channels::tests::FRAME_VERDICTS` holds both at
         // `false`), so a word meant for the preacher cannot arrive again later,
         // and a rehearsal publishes nothing to this hub at all.
+        void loadStageZones();
         try {
           ws.send(JSON.stringify({ kind: 'hello', channel: channelId }));
         } catch {
@@ -896,32 +1163,92 @@
         }
       };
       ws.onmessage = (e) => {
+        if (ws !== sock) return;
         try { apply(JSON.parse(e.data)); } catch { /* ignore */ }
       };
       ws.onclose = () => {
+        // A socket we have already replaced must not schedule anything: its
+        // close arrives AFTER `reconnectNow` has opened the one that matters.
+        if (ws !== sock) return;
         connected = false;
         attempts += 1;
-        if (!closed) setTimeout(() => connect(host), 1500);
+        scheduleRetry();
       };
-      ws.onerror = () => { try { ws.close(); } catch { /* onclose retries */ } };
-    } catch {
-      attempts += 1;
-      if (!closed) setTimeout(() => connect(host), 1500);
+      ws.onerror = () => { try { sock.close(); } catch { /* onclose retries */ } };
     }
   }
+
+  // ── THIS SCREEN ANSWERS FOR ITSELF (plan S11) ──────────────────────────────
+  //
+  // Every other output page has reported every two seconds since
+  // `outputHealth.js` landed. This one said `hello` and then nothing, for the
+  // whole service — and `OutputHealth` is keyed per CHANNEL, so a channel whose
+  // only client is the preacher's tablet held `last_beat_ms == null` forever.
+  // `describeScreen` reads that as `never` and `describeStageReach` tells the
+  // operator the tablet "has never reported painting — a Stage Timer needs the
+  // stage address". A correctly wired phone accused itself of being unwired, on
+  // the surface an operator watches during a service. Rule 35, on the console's
+  // side of the connection.
+  //
+  // `startBeat` already takes `getWs` for precisely this case — a kiosk client
+  // has a socket and no bridge — so this joins the existing mechanism rather
+  // than adding a second one. Both are GETTERS, not captured values: the socket
+  // is replaced on every reconnect, and the state must describe the screen now
+  // rather than when the timer started. Channel 0 is refused inside `startBeat`,
+  // so an unidentified page cannot attach health to a screen nobody chose.
+  let stopBeat = null;
+
+  /** Visible again, or the device says it has a network. Both mean: try now. */
+  const onWake = () => {
+    if (typeof document !== 'undefined' && document.hidden) return;
+    reconnectNow();
+  };
 
   onMount(() => {
     loadZones();
     connect(location.hostname || 'localhost');
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onWake);
+    if (typeof window !== 'undefined') window.addEventListener('online', onWake);
+    stopBeat = startBeat({
+      channelId,
+      // Blackout outranks content, per `paintState`: a blacked screen with a
+      // stale verse under it is black to the person holding it.
+      getState: () => paintState({ black: down === 'black', visible: shown, content: !!content }),
+      getWs: () => ws,
+    });
+    beatingSince = Date.now();
     const tick = () => {
-      clock = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      nowMs = Date.now(); // drives the countdown mirror
+      // ONE CORRECTED INSTANT drives the clock, the countdown mirror, the
+      // programme rail and the service-elapsed figure, so they cannot disagree
+      // with each other or with the wall.
+      nowMs = Date.now() + hostOffsetMs;
+      clock = new Date(nowMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      // A SOCKET IS NOT A SCREEN. `connected` is set on `onopen` and a half-open
+      // socket never fires `onclose`, so a phone that slept, roamed, or sat
+      // behind a timed-out NAT kept a green pip over frozen content. Silence
+      // alone cannot show that — the hub publishes only when something changes —
+      // but an unanswered beat can, because the page knows it asked.
+      const since = lastAckAt ?? beatingSince;
+      const quiet = since === null ? 0 : Date.now() - since;
+      stale = expectsAck && since !== null && quiet > STALE_AFTER_MS;
+      // HOW LONG, not merely that something is wrong. "not answering" reads the
+      // same at four seconds and at ten minutes, and those want different things
+      // from whoever is holding the phone.
+      staleForS = stale ? Math.round(quiet / 1000) : 0;
     };
     tick();
     timer = setInterval(tick, 1000);
   });
   onDestroy(() => {
     closed = true;
+    stopBeat?.();
+    stopBeat = null;
+    if (retryId !== null) {
+      clearTimeout(retryId);
+      retryId = null;
+    }
+    if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onWake);
+    if (typeof window !== 'undefined') window.removeEventListener('online', onWake);
     if (ws) ws.close();
     clearInterval(timer);
   });
@@ -936,7 +1263,7 @@
 <div class="sr">
   <header>
     <span class="brand">Relay · Stage</span>
-    <span class="status" class:on={connected}><i></i>{reach}</span>
+    <span class="status" class:on={connected && !stale}><i></i>{reach}</span>
     <button class="ctl-toggle" class:active={showZones} on:click={() => (showZones = !showZones)} aria-label="Choose what this screen shows">
       Zones
     </button>
@@ -1075,9 +1402,26 @@
 
   {#if showZones}
     <section class="zonepanel" aria-label="Zones">
+      <!-- A DISABLED CONTROL THAT SAYS NOTHING IS A BROKEN CONTROL. When an
+           operator has assigned a layout to this screen, these toggles are not
+           this device's to change — two people editing one screen from two
+           places is how a stage ends up showing something nobody chose. So they
+           are disabled AND the reason is written here, rather than the taps
+           being silently ignored. -->
+      {#if operatorSet}
+        <p class="zonenote" role="status">
+          The desk has given this screen a layout, so these are set from there.
+        </p>
+      {/if}
       <div class="zonegrid">
         {#each ZONES as z (z.key)}
-          <button class="zonebtn" class:on={zones[z.key]} aria-pressed={zones[z.key]} on:click={() => toggleZone(z.key)}>
+          <button
+            class="zonebtn"
+            class:on={zones[z.key]}
+            aria-pressed={zones[z.key]}
+            disabled={operatorSet}
+            title={operatorSet ? 'Set by the desk for this screen' : null}
+            on:click={() => toggleZone(z.key)}>
             {z.label}
           </button>
         {/each}
@@ -1457,6 +1801,7 @@
   .zonepanel { flex: 0 0 auto; max-height: 46dvh; overflow-y: auto; padding: 14px 18px;
     display: flex; flex-direction: column; gap: 10px;
     border-top: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.03); }
+  .zonenote{ margin:0 0 10px; font-size:var(--v-fs-pr); line-height:1.4; color:var(--v-dim); }
   .zonegrid { display: flex; flex-wrap: wrap; gap: 8px; }
   .zonebtn { flex: 1 1 auto; min-height: 44px; padding: 0 14px; cursor: pointer;
     font-family: var(--f-mono); font-size:var(--v-fs-b1); font-weight: 700; letter-spacing: .08em;

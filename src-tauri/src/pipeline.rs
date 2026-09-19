@@ -749,6 +749,9 @@ mod tests {
             paused_ms: None,
             warn_ms: Some(120_000),
             scope: crate::timers::Scope::Both,
+            // A fixture states no configured length; `start` fills it from the span.
+            configured_ms: 0,
+            until_ms: None,
             plan_item_id: None,
             started_in_rehearsal: false,
         });
@@ -796,6 +799,9 @@ mod tests {
             paused_ms: Some(90_000),
             warn_ms: None,
             scope: crate::timers::Scope::Both,
+            // A fixture states no configured length; `start` fills it from the span.
+            configured_ms: 0,
+            until_ms: None,
             plan_item_id: None,
             started_in_rehearsal: false,
         });
