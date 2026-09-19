@@ -249,22 +249,60 @@ cannot leak a transcript, a verse, a lyric, an announcement or your service titl
 
 ## Screens for the platform and the booth
 
-The congregation's wall is not the only screen you can drive. A **stage display**
-(facing the preacher) and a **confidence monitor** (facing the booth) are just
-templates — start a new template from the **Stage Display** or **Confidence Monitor**
-preset, then assign it to a screen in **Outputs** exactly like the projector.
+The congregation's wall is not the only screen you can drive. There are **two different
+ways** to give the platform a screen, they are not interchangeable, and choosing the wrong
+one is the commonest setup mistake there is.
 
-These monitors show what the wall cannot:
+### The preacher's screen — a phone, a tablet, a monitor on the platform
 
-- the **current verse and its reference**, large enough to read from the platform;
-- the **verse coming up next** — bounded by the reading, so a "John 3:16–17" reading
-  shows nothing after 3:17 rather than running on into the next verse;
-- the **wall clock** and a **service timer** counting up from when you started recording;
-- your **private operator note** for the cue (never shown to the congregation).
+Go to **Outputs → Screens**, set that screen's **Role** to *Stage display*, then go to
+**Outputs → Sharing** and use the QR code or **Copy link**. The address ends in
+`stage.html`.
 
-They are ordinary templates, so a monitor matches your house style.
-One thing to know: pressing **Clear all screens** clears the monitors too — the panic
-key is deliberately total, so it clears *everything*, monitor timers included.
+This is the one that shows:
+
+- the **current verse and its reference**, sized to be read from the platform;
+- the **verse coming up next**, and your private **Stage Note** for the cue;
+- a **Stage Message** you type in Quick tools — only a screen whose Role is *Stage display*
+  is ever shown one;
+- the **Stage Timers** — the sermon clocks, counting up past zero when they run over;
+- the wall clock, the Screen Countdown and the service timer.
+
+It also has a **Control** panel: search, fire a verse, and step through a reading from the
+platform.
+
+**What it shows is set in Outputs → Stage layouts**, and assigned to the screen on its own
+card. A screen you have not given a layout to is set from the device itself, in the Zones
+panel on the screen — which is fine, and means the desk cannot see what it was set to.
+
+### A stage-shaped template on an ordinary screen
+
+You can also start a template from the **Stage Display** or **Confidence Monitor** preset
+and assign it to a screen like any other. That gives you the verse, the next verse, the
+note, the clock and a service timer in your house style, on the ordinary output page.
+
+**It cannot show a Stage Timer, and it cannot be sent a Stage Message.** Those live only on
+`stage.html`. If you have handed the preacher a **Copy URL** address from Outputs → Screens
+and the sermon clocks never appear, this is why — that button gives out the `output.html`
+address, which is the right one for OBS and a projector and the wrong one for the platform.
+Relay says so on the Live desk when it can tell.
+
+### What a panic key does to them
+
+**Clear all screens** and **Blackout** take the reading off every screen, the preacher's
+included, and they take the **Screen Countdown** with them, because that is a congregation
+clock.
+
+**They deliberately leave the Stage Timers running.** A sermon clock belongs to the person
+preaching, not to the wall, and a panic key is about what a congregation can see — so
+clearing the screens does not throw away how long they have been going. Stop a Stage Timer
+from the band on the Live desk. (This paragraph used to say the opposite — that the panic
+key was "deliberately total, monitor timers included". It has not been true since sermon
+clocks got a lifetime of their own, and `e2e::a_clear_takes_the_congregation_timer_and_leaves_the_programme_timer`
+is what holds it.)
+
+A Stage Message also comes down with a panic key, and does not come back when a screen
+reconnects.
 
 ---
 
