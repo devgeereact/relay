@@ -41,6 +41,11 @@ describe('the timer wrappers', () => {
       scope: 'stage',
       warnMs: null,
       planItemId: null,
+      // A LENGTH, NOT AN APPOINTMENT (DECISIONS §102). Absent is `null` and never
+      // omitted, for the same reason `warnMs` is: the equality here is
+      // exhaustive on purpose, and a field that may or may not be in the payload
+      // is a field nobody is checking.
+      untilMs: null,
     });
   });
 

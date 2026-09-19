@@ -5648,3 +5648,59 @@ count-down-to-a-time-of-day; those are the rest of the plan's phase 3 and want t
 decisions, particularly around midnight, DST and system sleep. It does not let a cue-bound
 timer reach a congregation screen. And it does not persist anything: the registry is still
 in memory, so a relaunch mid-service still loses every clock, held or running.
+
+## 102. A countdown may name a time of day, and a time that has gone stays gone (2026-09-19)
+
+Every timer in Relay was a LENGTH. `start_countdown` and `start_timer` both took
+`minutes: f64` and computed `now + minutes * 60_000`, and `grep -rniE
+'count.?down.?to.?time|time_of_day|target_time'` over `src-tauri/src` and `src` returned
+nothing outside tests. So the commonest countdown a church shows — *the service starts at
+10:30* — could only be approximated by arithmetic an operator did in their head, and it was
+wrong the moment the service slipped, with the wall counting on confidently.
+
+ProPresenter has had this since 7 as one of three timer types, confirmed by three mutually
+exclusive payload shapes in its own API: Countdown (`duration`), Count Down To Time
+(`time_of_day` plus `am|pm|24_hour`), Elapsed Time (`start_time`, optional `end_time`).
+`docs/research/PROPRESENTER7_STAGE_AND_TIMERS.md` records the sourcing.
+
+**The instant is computed on the frontend, and that is a correctness decision rather than a
+convenience.** Turning "10:30" into a moment needs the machine's timezone and its DST rules.
+`std` has neither, this project has no `chrono`, and `Date` has both — `setHours` on a local
+`Date` is DST-correct by construction, so on the morning the clocks go forward "10:30" is
+still 10:30 on the wall and the gap to it is whatever it is. `countdown.js::atClockTime` is
+the ONE place a wall time becomes an instant. Rust stores the answer and never has to ask
+what day it is.
+
+**A time that has already gone is kept, not rolled to tomorrow.** At 10:35, "count down to
+10:30" starts five minutes over and counts up. The alternative reads 23:55:00, which is
+defensible as a literal reading of the words and is the wrong thing on a screen: a mistyped
+time becomes invisible until the service has started, whereas `+5:00 over` is obvious in the
+second it appears. The overrun behaviour it lands in is the one §99 and §101 already built,
+so this adds no new state — a time-of-day countdown that has passed is just a countdown that
+has passed.
+
+**`until_ms` is a second field, not a mode flag over `configured_ms`.** The two exist because
+Reset means different things: a duration timer resets to a LENGTH ("give me twenty minutes
+again"), an appointment resets to an INSTANT ("aim at 10:30 again") — and 10:30 today is the
+same instant it already was, which is why Reset needs no clock arithmetic either. A `+5`
+re-aims `target_ms` and leaves `until_ms` alone, so Reset goes back to the time somebody
+chose rather than to the extension. Storing the appointment in `target_ms` alone could not
+tell those apart.
+
+**Both scopes, because the mode is a property of the timer and not of the audience.** A lobby
+screen counting to 10:30 and a stage clock saying "be off the platform at 11:15" are the same
+feature. Making it congregation-only would have made a mode into a property of `Scope`, which
+is the shape CLAUDE.md warns about under "output channels are render targets of one shared
+template engine".
+
+**It governs Start only.** `±1` and Reset act on the countdown already on the wall; re-aiming
+those at a clock time would change what a congregation is counting to under an operator who
+pressed a minute button.
+
+**What this does NOT add.** No Elapsed-Time timer type: Relay already has a service-elapsed
+binding (`layers.js`, `elapsed`) fed by `service_started_at`, and a named elapsed timer in
+the registry is a different instrument that wants its own design. No presets. No per-timer
+overrun policy — overrun is always on, because §99 and §101 made counting up the behaviour
+for every timer and a per-timer switch would be a second answer to a settled question. And
+still no persistence: a relaunch mid-service loses every clock, appointment or not, which
+remains the largest open thing in this area.

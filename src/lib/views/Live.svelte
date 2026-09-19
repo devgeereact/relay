@@ -213,6 +213,7 @@
   // long is left on one. `timerRemainingMs` ENDS in `countdownRemainingMs`, which
   // stays the only countdown arithmetic on this side of the bridge.
   import { stageTimers, timerRemainingMs, timerIsHeld } from '../timers.js';
+  import { atClockTime } from '../countdown.js';
 
   // ── the plan being RUN (not edited) ──────────────────────────────────────
   let plans = [];
@@ -549,8 +550,24 @@
       // `start_timer` creates the timer and publishes nothing. Putting a clock in
       // front of a congregation is `startCountdown` or `showTimer`, and neither is
       // reachable from here on purpose.
-      await startTimer({ minutes: Number(ptMins), label: ptName.trim(), scope: 'stage' });
+      // A LENGTH OR AN APPOINTMENT (DECISIONS §102). "Twenty minutes" and "be
+      // off at 11:15" are both things an operator wants from a sermon clock, and
+      // until now only the first could be said — every creator took minutes, so
+      // a time of day was arithmetic somebody did in their head and got wrong
+      // the moment the service slipped.
+      //
+      // The instant is worked out HERE because this is where the machine's
+      // timezone and DST rules are known. A time already gone is kept, so the
+      // clock starts over and the typo is visible immediately.
+      const at = ptUntil.trim() ? atClockTime(ptUntil) : null;
+      await startTimer({
+        minutes: Number(ptMins),
+        label: ptName.trim(),
+        scope: 'stage',
+        untilMs: at,
+      });
       ptName = '';
+      ptUntil = '';
       await loadProgrammeTimers();
     } catch (e) {
       ptErr = humanError(e);
@@ -569,6 +586,12 @@
     }
     ptBusy = false;
   }
+
+  /** A clock time to aim at, as typed. Empty means this is a length, not an appointment. */
+  let ptUntil = '';
+  /** Does what is typed name a real time? Null both for empty and for nonsense. */
+  $: ptUntilAt = ptUntil.trim() ? atClockTime(ptUntil) : null;
+  $: ptUntilBad = ptUntil.trim().length > 0 && ptUntilAt === null;
 
   /** One grant. Five minutes, because that is the unit a sermon is extended in. */
   const PT_GRANT_MS = 5 * 60_000;
@@ -2275,6 +2298,23 @@
       bind:value={ptMins}
       aria-label="Stage Timer minutes" />
     <span class="pt-unit">min</span>
+    <!-- OR AN APPOINTMENT. Empty means the minutes beside it; a time here wins.
+         `type="text"` rather than `type="time"`: the native picker is a
+         different interaction on every platform and this is a control an
+         operator uses once, under pressure, with a mouse already moving. -->
+    <span class="pt-unit">or at</span>
+    <input
+      class="r-input pt-at"
+      class:bad={ptUntilBad}
+      type="text"
+      bind:value={ptUntil}
+      placeholder="10:30"
+      inputmode="numeric"
+      autocomplete="off"
+      aria-label="Stage Timer clock time"
+      aria-invalid={ptUntilBad}
+      title="A time of day to count down to, like 10:30. Leave it empty to use the minutes beside it."
+      on:keydown={(e) => e.key === 'Enter' && !ptUntilBad && startProgrammeTimer()} />
     <input
       class="r-input pt-name-in"
       type="text"
@@ -2286,7 +2326,7 @@
     <button
       class="r-btn sm primary"
       on:click={startProgrammeTimer}
-      disabled={ptBusy || !$capture.available || !(Number(ptMins) > 0)}
+      disabled={ptBusy || !$capture.available || ptUntilBad || !(Number(ptMins) > 0 || ptUntilAt !== null)}
       title="Start a clock for the preacher's monitor. It puts nothing on a congregation screen."
       >Start timer</button>
     <!-- WHERE IT WOULD GO. One line, beside the control that starts it, in the
@@ -3058,6 +3098,8 @@
      AIR, cyan a guess, amethyst rehearsal, red a failure, and neither "over" nor
      "held" is any of the four. The word beside it carries the meaning, which is
      also the half a colour cannot say to somebody glancing down. */
+  .pt-at{flex:0 0 70px; min-width:0}
+  .pt-at.bad{border-color:var(--v-red-line)}
   .pt-fig.pt-held{color:var(--v-dim); font-weight:600}
   .pt-state{flex:0 0 auto; font-size:var(--v-fs-cap); color:var(--v-dim);
     text-transform:uppercase; letter-spacing:var(--v-tr-h2)}

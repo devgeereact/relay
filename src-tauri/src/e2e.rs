@@ -3313,6 +3313,7 @@ fn start_five(h: &tauri::AppHandle<tauri::test::MockRuntime>) {
         "Welcome".into(),
         None,
         None,
+        None,
     )
     .expect("start a countdown");
 }
@@ -3603,6 +3604,7 @@ fn r7_a_re_aim_does_not_rename_or_re_skin_the_countdown() {
         "Please come in".into(),
         None,
         None,
+        None,
     )
     .expect("start");
     settle();
@@ -3656,6 +3658,7 @@ fn r7_a_countdown_says_how_long_it_was_aimed_for() {
         2.0,
         "Service begins in".into(),
         "Welcome".into(),
+        None,
         None,
         None,
     )
@@ -4068,6 +4071,7 @@ fn starting_a_second_countdown_replaces_the_first_rather_than_stacking() {
         "stage".into(),
         None,
         None,
+        None,
     )
     .expect("a programme timer");
     start_five(&h);
@@ -4103,6 +4107,7 @@ fn a_programme_timer_cannot_be_put_on_a_congregation_screen() {
         "stage".into(),
         None,
         None,
+        None,
     )
     .expect("a programme timer");
     settle();
@@ -4132,6 +4137,7 @@ fn a_programme_timer_cannot_be_put_on_a_congregation_screen() {
         "monitor".into(),
         None,
         None,
+        None,
     )
     .expect_err("there are two scopes and that is not one of them");
 }
@@ -4159,6 +4165,7 @@ fn a_clear_takes_the_congregation_timer_and_leaves_the_programme_timer() {
         "Sermon".into(),
         "Wrap up".into(),
         "stage".into(),
+        None,
         None,
         None,
     )
@@ -4218,6 +4225,7 @@ fn a_programme_timer_published_during_a_rehearsal_reaches_no_stage_tablet() {
         "stage".into(),
         None,
         None,
+        None,
     )
     .expect("a programme timer");
     settle();
@@ -4244,6 +4252,7 @@ fn a_programme_timer_published_during_a_rehearsal_reaches_no_stage_tablet() {
         "Offering".into(),
         String::new(),
         "stage".into(),
+        None,
         None,
         None,
     )
@@ -4289,6 +4298,7 @@ fn a_timer_started_inside_a_rehearsal_does_not_outlive_it() {
         "stage".into(),
         None,
         None,
+        None,
     )
     .expect("a programme timer");
     settle();
@@ -4312,6 +4322,7 @@ fn a_timer_started_inside_a_rehearsal_does_not_outlive_it() {
         "Rehearsal only".into(),
         String::new(),
         "stage".into(),
+        None,
         None,
         None,
     )
@@ -4400,6 +4411,7 @@ fn a_timer_that_predates_a_rehearsal_survives_the_end_of_it() {
         "stage".into(),
         None,
         None,
+        None,
     )
     .expect("a programme timer");
 
@@ -4446,6 +4458,7 @@ fn stopping_the_last_programme_timer_publishes_an_empty_set_to_the_stage() {
         "stage".into(),
         None,
         None,
+        None,
     )
     .expect("a programme timer");
     settle();
@@ -4489,6 +4502,7 @@ fn a_programme_timer_past_zero_can_be_held_at_the_figure_it_is_showing() {
         "Sermon".into(),
         String::new(),
         "stage".into(),
+        None,
         None,
         None,
     )
@@ -4564,6 +4578,7 @@ fn a_congregation_countdown_never_appears_in_the_programme_rail() {
         "both".into(),
         None,
         None,
+        None,
     )
     .expect("a congregation timer");
     settle();
@@ -4627,6 +4642,7 @@ fn a_blackout_answers_the_same_way_as_a_clear() {
         "Sermon".into(),
         "Wrap up".into(),
         "stage".into(),
+        None,
         None,
         None,
     )
@@ -4696,6 +4712,7 @@ fn ending_a_service_takes_the_programme_clocks_off_the_preachers_rail() {
         "stage".into(),
         Some(120_000),
         Some(7),
+        None,
     )
     .expect("a programme timer");
     let notices = start_timer(
@@ -4706,6 +4723,7 @@ fn ending_a_service_takes_the_programme_clocks_off_the_preachers_rail() {
         "stage".into(),
         None,
         Some(8),
+        None,
     )
     .expect("a second programme timer");
     let wall_clock = start_timer(
@@ -4714,6 +4732,7 @@ fn ending_a_service_takes_the_programme_clocks_off_the_preachers_rail() {
         "Service begins in".into(),
         "Welcome".into(),
         "both".into(),
+        None,
         None,
         None,
     )
@@ -5217,6 +5236,7 @@ fn a_refused_stage_timer_is_not_told_to_clear_the_screens() {
         "stage".into(),
         None,
         None,
+        None,
     )
     .expect("a programme timer");
 
@@ -5256,6 +5276,7 @@ fn a_refused_stage_timer_is_not_told_to_clear_the_screens() {
         "Service begins in".into(),
         "Welcome".into(),
         "both".into(),
+        None,
         None,
         None,
     )

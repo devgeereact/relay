@@ -19,6 +19,7 @@ import {
   MIN_BROADCAST_MS,
   countdownRemainingMs,
   countdownIsPaused,
+  atClockTime,
   countdownTotalMs,
 } from './countdown.js';
 
@@ -328,5 +329,69 @@ describe('holding a clock that has already run out', () => {
     expect(countdownIsPaused(c)).toBe(false);
     // …and it must still count down rather than freezing at that phantom zero.
     expect(countdownRemainingMs(c, 1_000_000)).toBe(1_000_000);
+  });
+});
+
+// ── A CLOCK TIME IS NOT A LENGTH (DECISIONS §102) ──────────────────────────
+//
+// Every timer in Relay was a DURATION: `start_countdown` and `start_timer` both
+// take `minutes: f64` and compute `now + minutes*60000`, and there was no
+// `time_of_day` anywhere in the product. So "the service starts at 10:30" could
+// only be approximated by arithmetic the operator did in their head, and it was
+// wrong the moment the service slipped.
+//
+// This is the one place a wall time becomes an instant, and it is on this side
+// of the bridge because that is where the answer can be correct: turning
+// "10:30" into a moment needs the machine's timezone and its DST rules, `std`
+// has neither and `Date` has both.
+describe('turning a time of day into an instant', () => {
+  const at = (iso) => new Date(iso).getTime();
+
+  it('lands on today at that local clock time', () => {
+    const now = at('2026-09-19T08:00:00');
+    const t = atClockTime('10:30', now);
+    const d = new Date(t);
+    expect(d.getHours()).toBe(10);
+    expect(d.getMinutes()).toBe(30);
+    expect(d.getSeconds()).toBe(0);
+    expect(d.getMilliseconds()).toBe(0);
+    expect(d.getDate()).toBe(new Date(now).getDate());
+  });
+
+  it('accepts a single-digit hour', () => {
+    const d = new Date(atClockTime('9:05', at('2026-09-19T08:00:00')));
+    expect(d.getHours()).toBe(9);
+    expect(d.getMinutes()).toBe(5);
+  });
+
+  // THE DECISION, pinned here so it cannot drift into "roll it to tomorrow".
+  it('returns a time that has already gone, rather than rolling it to tomorrow', () => {
+    const now = at('2026-09-19T10:35:00');
+    const t = atClockTime('10:30', now);
+    expect(t).toBeLessThan(now);
+    expect(new Date(t).getDate()).toBe(new Date(now).getDate());
+    // Which is the point: the countdown starts about five minutes over, and the
+    // operator sees the typo. Rolling forward would read 23:55:00 and hide it
+    // until the service had started.
+    expect(now - t).toBe(5 * 60_000);
+  });
+
+  it.each([
+    ['not a time', 'soon'],
+    ['no minutes', '10'],
+    ['nonsense hour', '25:00'],
+    ['nonsense minutes', '10:75'],
+    ['empty', ''],
+    ['nothing at all', null],
+    ['undefined', undefined],
+  ])('answers null for %s rather than guessing', (_name, value) => {
+    expect(atClockTime(value, at('2026-09-19T08:00:00'))).toBeNull();
+  });
+
+  it('is midnight-safe at both ends of the day', () => {
+    const now = at('2026-09-19T13:00:00');
+    expect(new Date(atClockTime('00:00', now)).getHours()).toBe(0);
+    expect(new Date(atClockTime('23:59', now)).getHours()).toBe(23);
+    expect(new Date(atClockTime('23:59', now)).getMinutes()).toBe(59);
   });
 });

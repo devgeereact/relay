@@ -91,6 +91,30 @@ pub struct Timer {
     /// put the clock to nothing, which is never what anybody meant by it.
     #[serde(default)]
     pub configured_ms: i64,
+    /// THE INSTANT THIS TIMER IS AIMED AT, when it was set as a TIME OF DAY.
+    ///
+    /// `None` is a duration timer — "twenty minutes from now" — and `configured_ms`
+    /// is what Reset restores. `Some` is an appointment: "the service starts at
+    /// 10:30", and what Reset restores is the INSTANT, not a length.
+    ///
+    /// That difference is the whole reason this is a second field rather than a
+    /// mode flag over the first. Reset on a duration timer means "give me twenty
+    /// minutes again"; on an appointment it means "aim at 10:30 again", and 10:30
+    /// today is the same instant it already was. A `+5` re-aims `target_ms` and
+    /// leaves this alone, so Reset still goes back to the appointment rather than
+    /// to the extension.
+    ///
+    /// **It is an absolute epoch, computed by the caller, and that is deliberate.**
+    /// Turning "10:30" into an instant needs the machine's timezone and its DST
+    /// rules; `std` has neither, and the frontend's `Date` has both. So the clock
+    /// arithmetic happens once, where local time is actually known, and this side
+    /// stores the answer. Nothing here ever has to ask what day it is.
+    ///
+    /// A time already gone is stored as it is, not rolled to tomorrow: the timer
+    /// simply starts over, which is what an operator who typed a time that has
+    /// passed needs to see. A lobby screen reading 23:55:00 would hide that.
+    #[serde(default)]
+    pub until_ms: Option<i64>,
     pub plan_item_id: Option<i64>,
     /// WAS THIS TIMER STARTED INSIDE A REHEARSAL? — RG-150.
     ///
@@ -258,17 +282,35 @@ impl TimerRegistry {
     pub fn reset(&self, id: TimerId, now_ms: i64) -> Result<Timer, TimerError> {
         let mut g = self.inner();
         let t = g.timers.get_mut(&id).ok_or(TimerError::NoSuchTimer)?;
-        let len = if t.configured_ms > 0 {
-            t.configured_ms
-        } else {
-            (t.target_ms - t.from_ms).max(0)
+        // AN APPOINTMENT IS RESET TO ITS INSTANT; A DURATION TO ITS LENGTH.
+        // "Aim at 10:30 again" and "give me twenty minutes again" are different
+        // requests, and the same button is the right place for both — what
+        // differs is what the timer was configured AS.
+        t.target_ms = match t.until_ms {
+            Some(at) => at,
+            None => {
+                let len = if t.configured_ms > 0 {
+                    t.configured_ms
+                } else {
+                    (t.target_ms - t.from_ms).max(0)
+                };
+                now_ms + len
+            }
         };
-        t.target_ms = now_ms + len;
         // `from_ms` moves, and only here. Reset is the one operation that is
         // honestly a fresh start, so the span the warning rule reads should be
         // the new one; a re-aim is not, which is why `adjust` leaves it alone.
         t.from_ms = now_ms;
-        t.paused_ms = t.paused_ms.map(|_| len);
+        // A held timer stays held, at whatever the reset figure now is — which
+        // for an appointment already in the past is a negative, and correctly
+        // so: resetting does not make a time that has gone come back.
+        //
+        // From `target_ms` DIRECTLY, not through `remaining_signed_ms`: that
+        // reader answers the held figure first, and the held figure here is
+        // still the pre-reset one. It would hand back the number this line is
+        // trying to replace.
+        let figure = t.target_ms - now_ms;
+        t.paused_ms = t.paused_ms.map(|_| figure);
         Ok(t.clone())
     }
 
@@ -452,6 +494,7 @@ mod tests {
             scope,
             // A fixture states no configured length; `start` fills it from the span.
             configured_ms: 0,
+            until_ms: None,
             plan_item_id: None,
             started_in_rehearsal: false,
         }
@@ -553,10 +596,84 @@ mod tests {
         let reg = TimerRegistry::default();
         let id = reg.start(Timer {
             configured_ms: 0,
+            until_ms: None,
             ..five(now, Scope::Stage)
         });
         let back = reg.reset(id, now + 60_000).expect("reset");
         assert_eq!(remaining_signed_ms(&back, now + 60_000), 5 * 60_000);
+    }
+
+    /// AN APPOINTMENT IS RESET TO ITS INSTANT, NOT TO A LENGTH.
+    ///
+    /// "The service starts at 10:30" and "give me twenty minutes" are different
+    /// requests wearing the same button. Resetting the first means aiming at
+    /// 10:30 again — and 10:30 today is the same instant it already was — so
+    /// there is no clock arithmetic to do here and no timezone to know.
+    #[test]
+    fn resetting_an_appointment_aims_at_the_same_instant_again() {
+        let now = 1_000_000;
+        let at = now + 30 * 60_000; // "half past", as the caller worked it out
+        let reg = TimerRegistry::default();
+        let id = reg.start(Timer {
+            target_ms: at,
+            until_ms: Some(at),
+            configured_ms: 30 * 60_000,
+            ..five(now, Scope::Both)
+        });
+
+        let back = reg.reset(id, now + 10 * 60_000).expect("reset");
+        assert_eq!(
+            back.target_ms, at,
+            "resetting an appointment moved the appointment"
+        );
+    }
+
+    /// AND A GRANT DOES NOT BECOME THE NEW APPOINTMENT.
+    ///
+    /// `+5` re-aims `target_ms` and leaves `until_ms` alone, so Reset still goes
+    /// back to the time somebody chose rather than to the extension. Storing the
+    /// instant in `target_ms` alone could not tell the two apart.
+    #[test]
+    fn five_more_minutes_does_not_move_the_appointment_reset_goes_back_to() {
+        let now = 1_000_000;
+        let at = now + 30 * 60_000;
+        let reg = TimerRegistry::default();
+        let id = reg.start(Timer {
+            target_ms: at,
+            until_ms: Some(at),
+            configured_ms: 30 * 60_000,
+            ..five(now, Scope::Both)
+        });
+
+        reg.adjust(id, Some(45 * 60_000), None, now).expect("grant");
+        let back = reg.reset(id, now).expect("reset");
+        assert_eq!(
+            back.target_ms, at,
+            "Reset went back to the extension instead of the appointment"
+        );
+    }
+
+    /// A TIME THAT HAS GONE STAYS GONE, AND THE CLOCK STARTS OVER.
+    ///
+    /// The product decision (DECISIONS §102): an operator who typed a time that
+    /// has passed sees `+5:00 over` immediately. Rolling to tomorrow would read
+    /// 23:55:00 on a lobby screen and hide the typo until the service started.
+    #[test]
+    fn an_appointment_already_past_starts_over_rather_than_tomorrow() {
+        let now = 1_000_000;
+        let at = now - 5 * 60_000;
+        let reg = TimerRegistry::default();
+        let id = reg.start(Timer {
+            target_ms: at,
+            until_ms: Some(at),
+            configured_ms: 0,
+            ..five(now, Scope::Both)
+        });
+        let t = reg.get(id).expect("timer");
+        assert_eq!(remaining_signed_ms(&t, now), -5 * 60_000);
+        // And resetting it does not make the time come back.
+        let back = reg.reset(id, now).expect("reset");
+        assert_eq!(remaining_signed_ms(&back, now), -5 * 60_000);
     }
 
     /// A SERMON THAT HAS RUN OVER CAN STILL BE HELD (RG-175).
@@ -748,6 +865,7 @@ mod tests {
         let other_cue = Timer {
             // A fixture states no configured length; `start` fills it from the span.
             configured_ms: 0,
+            until_ms: None,
             plan_item_id: Some(7),
             ..five(now, Scope::Stage)
         };
@@ -761,6 +879,7 @@ mod tests {
         let mine = reg.start(Timer {
             // A fixture states no configured length; `start` fills it from the span.
             configured_ms: 0,
+            until_ms: None,
             plan_item_id: Some(42),
             label: "Sermon".into(),
             ..five(now, Scope::Stage)
@@ -777,6 +896,7 @@ mod tests {
         let again = reg.start(Timer {
             // A fixture states no configured length; `start` fills it from the span.
             configured_ms: 0,
+            until_ms: None,
             plan_item_id: Some(42),
             ..five(now, Scope::Stage)
         });

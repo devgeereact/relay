@@ -38,6 +38,7 @@ const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a) => invoke(...a) }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: async () => () => {} }));
 
+const { atClockTime } = await import('./countdown.js');
 const cap = await import('./stores/capture.js');
 const { setSession } = await import('./session.js');
 const Live = (await import('./views/Live.svelte')).default;
@@ -250,5 +251,72 @@ describe('resetting a Stage Timer', () => {
     for (const forbidden of ['adjust_countdown', 'start_countdown', 'show_timer']) {
       expect(called(forbidden), `Reset reached ${forbidden}`).toHaveLength(0);
     }
+  });
+});
+
+// ── A LENGTH OR AN APPOINTMENT (DECISIONS §102) ────────────────────────────
+//
+// Every creator in the product took `minutes: f64` and computed
+// `now + minutes*60000`. There was no `time_of_day` in any layer — not in the
+// schema, the commands, the stores or any control — so "be off the platform at
+// 11:15" was arithmetic an operator did in their head, and it was wrong the
+// moment the service slipped.
+describe('starting a Stage Timer at a time of day', () => {
+  const typeAt = async (value) => {
+    const box = host.querySelector('[aria-label="Stage Timer clock time"]');
+    expect(box, 'no clock-time control on the band').toBeTruthy();
+    box.value = value;
+    box.dispatchEvent(new Event('input'));
+    await settle(20);
+    return box;
+  };
+
+  it('sends the instant that clock time names, not a number of minutes', async () => {
+    bridge();
+    mount();
+    await settle(40);
+    await typeAt('10:30');
+    byText('Start timer').click();
+    await settle(40);
+    const call = called('start_timer').at(-1);
+    expect(call, 'Start reached no command').toBeTruthy();
+    const expected = atClockTime('10:30');
+    // Within a second: the component and the assertion each call `Date.now()`.
+    expect(Math.abs(call[1].untilMs - expected)).toBeLessThan(1000);
+    expect(call[1].scope).toBe('stage');
+  });
+
+  it('sends no instant when the field is empty, so minutes still mean minutes', async () => {
+    bridge();
+    mount();
+    await settle(40);
+    byText('Start timer').click();
+    await settle(40);
+    expect(called('start_timer').at(-1)[1].untilMs).toBeNull();
+  });
+
+  it('refuses to start on something that is not a time, and says which field', async () => {
+    bridge();
+    mount();
+    await settle(40);
+    const box = await typeAt('half ten');
+    expect(box.getAttribute('aria-invalid')).toBe('true');
+    expect(byText('Start timer').disabled, 'Start stayed live over a time nobody can parse').toBe(true);
+    expect(called('start_timer')).toHaveLength(0);
+  });
+
+  it('accepts a time that has already gone, so the clock starts over', async () => {
+    // The decision: an operator who typed a time that has passed sees it
+    // immediately. Rolling to tomorrow would read 23:55:00 and hide the typo.
+    bridge();
+    mount();
+    await settle(40);
+    const gone = new Date(Date.now() - 5 * 60_000);
+    const hhmm = `${gone.getHours()}:${String(gone.getMinutes()).padStart(2, '0')}`;
+    await typeAt(hhmm);
+    expect(byText('Start timer').disabled).toBe(false);
+    byText('Start timer').click();
+    await settle(40);
+    expect(called('start_timer').at(-1)[1].untilMs).toBeLessThan(Date.now());
   });
 });

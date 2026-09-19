@@ -3052,6 +3052,11 @@ fn clean_note(note: Option<String>) -> Option<String> {
 // code, and welded to the concrete desktop handle it could not be driven from
 // `e2e.rs` — which is why the countdown was the one fire path with no end-to-end
 // test while every other take had one.
+// EIGHT ARGUMENTS, AND A STRUCT WOULD BE WORSE HERE. A Tauri command's
+// parameters are the named fields of the IPC payload, so grouping them nests
+// what the frontend sends and what `ipc.test.js` reads — a shape change to
+// every caller in exchange for a lint. Same precedent as `save_song`.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 fn start_countdown<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -3061,6 +3066,7 @@ fn start_countdown<R: tauri::Runtime>(
     done_msg: String,
     template_id: Option<i64>,
     warn_ms: Option<i64>,
+    until_ms: Option<i64>,
 ) -> error::Result<()> {
     let mins = if minutes.is_finite() && minutes > 0.0 {
         minutes
@@ -3071,7 +3077,17 @@ fn start_countdown<R: tauri::Runtime>(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
-    let target = now_ms + (mins * 60_000.0) as i64;
+    // AN APPOINTMENT WINS OVER A LENGTH. `until_ms` is an absolute instant the
+    // caller worked out from a clock time, because turning "10:30" into an
+    // instant needs the machine's timezone and DST rules and `std` has neither.
+    // A time already gone is kept as it is rather than rolled to tomorrow: the
+    // countdown starts over, which is what an operator who typed a time that has
+    // passed needs to see. 23:55:00 on a lobby screen would hide it.
+    let until_ms = until_ms.filter(|at| *at > 0);
+    let target = match until_ms {
+        Some(at) => at,
+        None => now_ms + (mins * 60_000.0) as i64,
+    };
 
     // THE REGISTRY IS WHERE THE COUNTDOWN NOW LIVES, and the four wire fields below
     // are its projection rather than a second copy of it. A second `Both` timer over
@@ -3109,6 +3125,7 @@ fn start_countdown<R: tauri::Runtime>(
             // one creator and left at zero by the other is how the two come to
             // disagree about the same timer.
             configured_ms: (mins * 60_000.0) as i64,
+            until_ms,
             plan_item_id: None,
             // The mode in force at this instant, stamped once and never rewritten
             // (RG-150). Leaving a rehearsal happens to clear the screens, which
@@ -3301,6 +3318,11 @@ struct TimerView {
 /// guessed at: guessing `Both` would put a programme timer in front of a
 /// congregation, which is the one mistake that cannot be taken back quietly.
 // GENERIC OVER THE RUNTIME (rule 24) — it is timer-path code and `e2e.rs` drives it.
+// EIGHT ARGUMENTS, AND A STRUCT WOULD BE WORSE HERE. A Tauri command's
+// parameters are the named fields of the IPC payload, so grouping them nests
+// what the frontend sends and what `ipc.test.js` reads — a shape change to
+// every caller in exchange for a lint. Same precedent as `save_song`.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 fn start_timer<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -3310,6 +3332,7 @@ fn start_timer<R: tauri::Runtime>(
     scope: String,
     warn_ms: Option<i64>,
     plan_item_id: Option<i64>,
+    until_ms: Option<i64>,
 ) -> error::Result<i64> {
     let scope = match scope.trim().to_ascii_lowercase().as_str() {
         "both" => timers::Scope::Both,
@@ -3343,7 +3366,10 @@ fn start_timer<R: tauri::Runtime>(
         id: 0, // assigned by the registry
         label: label.trim().to_string(),
         done_msg: clean_note(Some(done_msg)).unwrap_or_default(),
-        target_ms: now_ms + (mins * 60_000.0) as i64,
+        target_ms: match until_ms.filter(|at| *at > 0) {
+            Some(at) => at,
+            None => now_ms + (mins * 60_000.0) as i64,
+        },
         from_ms: now_ms,
         paused_ms: None,
         warn_ms,
@@ -3352,6 +3378,10 @@ fn start_timer<R: tauri::Runtime>(
         // re-aim moves `target_ms` and leaves `from_ms`, so the span stops
         // being the length anybody chose the first time `+5` is pressed.
         configured_ms: (mins * 60_000.0) as i64,
+        // See `start_countdown`: an appointment is an instant the caller worked
+        // out where local time is known, and Reset goes back to it rather than
+        // to a length.
+        until_ms: until_ms.filter(|at| *at > 0),
         plan_item_id,
         // The mode in force at this instant — see `start_countdown`, and
         // `timers::Timer::started_in_rehearsal` for why it is a property of the

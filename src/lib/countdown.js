@@ -132,6 +132,38 @@ function heldMs(c) {
   return Number.isFinite(held) ? held : null;
 }
 
+/**
+ * "10:30" → the epoch instant of today at that local clock time, or null.
+ *
+ * **THE ONLY PLACE IN RELAY WHERE A CLOCK TIME BECOMES AN INSTANT**, and it is on
+ * this side of the bridge for a reason that is not convenience: turning a wall
+ * time into a moment needs the machine's timezone and its DST rules, `std` has
+ * neither, and `Date` has both. `setHours` on a local `Date` is DST-correct by
+ * construction — on the morning a clock goes forward, "10:30" is still 10:30 on
+ * the wall, and the number of milliseconds to it is whatever it is.
+ *
+ * **A time that has already gone is returned as it is**, not rolled to tomorrow.
+ * The timer then simply starts over, which is what an operator who typed a time
+ * that has passed needs to see; 23:55:00 on a lobby screen would hide the typo
+ * until the service had started. That is a product decision, recorded in
+ * DECISIONS §102, and this function is where it is implemented rather than
+ * where it is decided — callers do not get to re-decide it.
+ *
+ * @param {string} hhmm  a 24-hour clock time, `H:MM` or `HH:MM`
+ * @param {number} now   the instant "today" is measured from
+ * @returns {number|null} epoch ms, or null when that is not a clock time
+ */
+export function atClockTime(hhmm, now = Date.now()) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm ?? '').trim());
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (!Number.isFinite(h) || !Number.isFinite(min) || h > 23 || min > 59) return null;
+  const d = new Date(Number(now) || Date.now());
+  d.setHours(h, min, 0, 0);
+  return d.getTime();
+}
+
 /** Is the countdown on this content being HELD? One reader, same reason as above. */
 export function countdownIsPaused(content) {
   return heldMs(content || {}) !== null;

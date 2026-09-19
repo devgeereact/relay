@@ -1641,12 +1641,16 @@ doneMsg = '',
 templateId = null,
 keepPlan = false,
 warnMs = null,
+untilMs = null,
 ) {
 if (countdownRunning()) {
   throw new Error('A countdown is already running — clear the screen to start a new one.');
 }
 const call = await invoke();
-await call('start_countdown', { minutes, label, doneMsg, templateId, warnMs });
+// `untilMs` is an absolute instant, worked out by `atClockTime` where the
+// machine's timezone and DST rules are actually known. When it is given it wins
+// over `minutes`; the engine stores it so Reset goes back to the appointment.
+await call('start_countdown', { minutes, label, doneMsg, templateId, warnMs, untilMs });
 if (!keepPlan) leavePlan();
 }
 
@@ -1679,9 +1683,10 @@ doneMsg = '',
 scope = 'both',
 warnMs = null,
 planItemId = null,
+untilMs = null,
 }) {
 const call = await invoke();
-return call('start_timer', { minutes, label, doneMsg, scope, warnMs, planItemId });
+return call('start_timer', { minutes, label, doneMsg, scope, warnMs, planItemId, untilMs });
 }
 
 /**

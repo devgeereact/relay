@@ -176,6 +176,7 @@
     msFromFields,
     fieldsFromMs,
     wayBack,
+    atClockTime,
   } from './countdown.js';
   // The one projection from a REGISTRY row into the shape the one countdown
   // reader takes. Imported rather than repeated: a second bridging of those two
@@ -646,6 +647,20 @@
    * and this half only performs it. `broadcastMs === null` means "touch no
    * screen", which is what Clear and an off-air ±1 both are.
    */
+  // ── A LENGTH OR AN APPOINTMENT, ON THE CONGREGATION'S CLOCK (§102) ───────
+  //
+  // "The service starts at 10:30" is the commonest countdown a church puts on a
+  // screen, and until now it could only be expressed as a number of minutes
+  // somebody worked out in their head — which is wrong as soon as the service
+  // slips and nobody notices, because the wall goes on counting confidently.
+  //
+  // Empty means the hh:mm:ss fields beside it. A time here wins, and a time that
+  // has already gone is kept rather than rolled to tomorrow: the wall reads
+  // `+5:00` over and the mistake is visible, where 23:55:00 would hide it.
+  let cdUntil = '';
+  $: cdUntilAt = cdUntil.trim() ? atClockTime(cdUntil) : null;
+  $: cdUntilBad = cdUntil.trim().length > 0 && cdUntilAt === null;
+
   function press(action) {
     const r = countdownPress(action, $countdownSet, cdRunning, cdPaused);
     countdownSet.set(r.setMs);
@@ -675,9 +690,14 @@
     // nothing to say about them; supplying a guess on the operator's behalf is a
     // control that decides something the operator was never asked. A cue that
     // wants words says so in the Planner, and fires them through Live.
+    // AN APPOINTMENT ONLY APPLIES TO STARTING ONE. `±1` and Reset are about the
+    // countdown that is already up, and re-aiming those at a clock time would
+    // silently change what the wall is counting to under an operator who pressed
+    // a minute button.
+    const at = action === 'start' && cdUntil.trim() ? atClockTime(cdUntil) : null;
     run(() =>
       action === 'start'
-        ? startCountdown(r.broadcastMs / 60_000)
+        ? startCountdown(r.broadcastMs / 60_000, '', '', null, false, null, at)
         : adjustCountdown(r.broadcastMs),
     );
   }
@@ -1201,6 +1221,28 @@
             <input class="r-input cdf" type="number" min="0" max="59" value={cdFields.s}
               on:input={(e) => setField('s', e.target.value)} aria-label="Countdown seconds" />
           </span>
+          <!-- OR A TIME OF DAY (DECISIONS §102). "The service starts at 10:30" is
+               the commonest countdown a church shows, and it could only be said
+               here as a number of minutes somebody worked out in their head —
+               wrong the moment the service slipped, with the wall counting
+               confidently on. Empty means the fields beside it.
+
+               It governs START only. `±1` and Reset are about the countdown
+               already up, and re-aiming those at a clock time would change what
+               the wall is counting to under an operator who pressed a minute
+               button. -->
+          <span class="cdsep">or at</span>
+          <input
+            class="r-input cdat"
+            class:bad={cdUntilBad}
+            type="text"
+            bind:value={cdUntil}
+            placeholder="10:30"
+            inputmode="numeric"
+            autocomplete="off"
+            aria-label="Countdown clock time"
+            aria-invalid={cdUntilBad}
+            title="A time of day to count down to, like 10:30. Leave it empty to use the length beside it." />
           <!-- SET IT, DO NOT ONLY NUDGE IT (§7). A pre-service countdown and a
                90-minute service are both timers, and `5:00` and `0:05:00` are the
                same number read two ways. The picker is the third argument
@@ -1225,7 +1267,7 @@
              along is the one that blanks a wall. -->
         <div class="qbtns cdtrans" role="group" aria-label="Countdown transport">
           <button class="r-btn sm ghost" on:click={() => press('start')}
-            disabled={busy || !$capture.available || !countdownCan('start', $countdownSet, cdRunning, cdPaused)}>Start</button>
+            disabled={busy || !$capture.available || cdUntilBad || !countdownCan('start', $countdownSet, cdRunning, cdPaused)}>Start</button>
           <!-- PAUSE AND RESUME ARE TWO ACTIONS, NOT A TOGGLE (§7, and the engine
                field that finally made it possible). Which one is offered is read
                from the CONTENT on the wall, so a press can never do the opposite of
@@ -1732,6 +1774,8 @@
   .cdf::-webkit-outer-spin-button,
   .cdf::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
   .cdsep { font-style: normal; color: var(--v-faint); flex: 0 0 auto; }
+  .cdat { flex: 0 0 62px; min-width: 0; text-align: center; }
+  .cdat.bad { border-color: var(--v-red-line); }
   /* The figure on the wall. NOT amber: a countdown is content on a screen, but
      this is a readout of it, and amber in this room means ON AIR and is never
      allowed to be anything else (CLAUDE.md rule 18). */

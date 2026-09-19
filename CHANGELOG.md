@@ -66,6 +66,17 @@ at. Doing that by hand meant stopping the timer and starting a new one, which
 also threw away its name, its warning setting and its link to the service plan.
 Reset keeps all of those, and leaves a held timer held.
 
+Countdowns can now count down to a time of day. Until now every timer in Relay
+was a length — "twenty minutes" — so "the service starts at 10:30" meant working
+out the minutes in your head, and the screen went on counting confidently once
+the service slipped. Both the congregation countdown and the preacher's Stage
+Timer accept a clock time now; leave the field empty and the length beside it
+works exactly as before.
+
+If the time has already gone, the clock starts counting up from it rather than
+jumping to tomorrow, so a mistyped time is obvious straight away instead of
+showing 23 hours and something.
+
 Physical phone and tablet scanning remains to be verified.
 
 ### Lower thirds had nothing behind the words
