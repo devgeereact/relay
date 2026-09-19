@@ -61,6 +61,11 @@ read, including past zero, and letting go carries on from there. It touches no
 congregation screen, and a countdown in front of a room still cannot show a
 negative.
 
+Sermon timers gained Reset, which puts a clock back to the length it was started
+at. Doing that by hand meant stopping the timer and starting a new one, which
+also threw away its name, its warning setting and its link to the service plan.
+Reset keeps all of those, and leaves a held timer held.
+
 Physical phone and tablet scanning remains to be verified.
 
 ### Lower thirds had nothing behind the words

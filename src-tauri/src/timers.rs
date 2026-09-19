@@ -79,6 +79,18 @@ pub struct Timer {
     pub paused_ms: Option<i64>,
     pub warn_ms: Option<i64>,
     pub scope: Scope,
+    /// THE LENGTH THIS TIMER WAS STARTED AT, in ms, and what Reset goes back to.
+    ///
+    /// It is not derivable from the other two. `from_ms` is never re-stamped but
+    /// `target_ms` is, so `target_ms - from_ms` grows by five minutes every time
+    /// `+5` is pressed — which is the right span for the warning rule and the
+    /// wrong one for "start that again".
+    ///
+    /// `serde(default)` for an older or hand-built payload, and `start` fills a
+    /// zero from the span the timer was aimed for. A zero reaching Reset would
+    /// put the clock to nothing, which is never what anybody meant by it.
+    #[serde(default)]
+    pub configured_ms: i64,
     pub plan_item_id: Option<i64>,
     /// WAS THIS TIMER STARTED INSIDE A REHEARSAL? — RG-150.
     ///
@@ -213,8 +225,51 @@ impl TimerRegistry {
         let mut g = self.inner();
         g.next_id += 1;
         let id = g.next_id;
-        g.timers.insert(id, Timer { id, ..timer });
+        // A timer with no configured length takes the one it was aimed for, so
+        // every row in this registry can answer Reset however it was built.
+        let configured_ms = if timer.configured_ms > 0 {
+            timer.configured_ms
+        } else {
+            (timer.target_ms - timer.from_ms).max(0)
+        };
+        g.timers.insert(
+            id,
+            Timer {
+                id,
+                configured_ms,
+                ..timer
+            },
+        );
         id
+    }
+
+    /// PUT A TIMER BACK TO THE LENGTH IT WAS STARTED AT. It can never create one
+    /// and it never deletes one.
+    ///
+    /// The third transport verb, beside `+5` (add to what is there) and Stop
+    /// (take the timer away). Without it, "start that again" meant Stop then
+    /// Start, which throws away the label, the warning threshold and the cue
+    /// binding along with the figure.
+    ///
+    /// **It answers "how long", not "running or not".** A held timer is reset
+    /// where it stands and stays held: letting go as a side effect would start a
+    /// clock nobody asked to start, which on a stage is a figure moving under
+    /// somebody mid-sentence.
+    pub fn reset(&self, id: TimerId, now_ms: i64) -> Result<Timer, TimerError> {
+        let mut g = self.inner();
+        let t = g.timers.get_mut(&id).ok_or(TimerError::NoSuchTimer)?;
+        let len = if t.configured_ms > 0 {
+            t.configured_ms
+        } else {
+            (t.target_ms - t.from_ms).max(0)
+        };
+        t.target_ms = now_ms + len;
+        // `from_ms` moves, and only here. Reset is the one operation that is
+        // honestly a fresh start, so the span the warning rule reads should be
+        // the new one; a re-aim is not, which is why `adjust` leaves it alone.
+        t.from_ms = now_ms;
+        t.paused_ms = t.paused_ms.map(|_| len);
+        Ok(t.clone())
     }
 
     /// The timer with that id, cloned, or None.
@@ -395,9 +450,113 @@ mod tests {
             paused_ms: None,
             warn_ms: None,
             scope,
+            // A fixture states no configured length; `start` fills it from the span.
+            configured_ms: 0,
             plan_item_id: None,
             started_in_rehearsal: false,
         }
+    }
+
+    /// RESET PUTS A CLOCK BACK TO THE LENGTH IT WAS STARTED AT.
+    ///
+    /// The third transport verb, and the one with no way to express itself
+    /// before this: `+5` adds to whatever is there, `Stop` deletes the timer,
+    /// and neither is "start that again". An operator who wanted a fresh
+    /// twenty minutes had to Stop and Start, which loses the label, the warning
+    /// threshold and the cue binding along with the figure.
+    ///
+    /// It needs a length to go back TO, and there was not one. `from_ms` is not
+    /// re-stamped by a re-aim but `target_ms` is, so `target_ms - from_ms`
+    /// grows by five minutes every time `+5` is pressed — a perfectly good span
+    /// for the warning rule and useless as a configured length.
+    #[test]
+    fn reset_restores_the_length_the_timer_was_started_at() {
+        let now = 1_000_000;
+        let reg = TimerRegistry::default();
+        let id = reg.start(five(now, Scope::Stage));
+
+        // Two grants and four minutes of running later.
+        reg.adjust(id, Some(8 * 60_000), None, now + 60_000)
+            .expect("grant");
+        reg.adjust(id, Some(9 * 60_000), None, now + 120_000)
+            .expect("grant");
+
+        let back = reg.reset(id, now + 240_000).expect("reset");
+        assert_eq!(
+            remaining_signed_ms(&back, now + 240_000),
+            5 * 60_000,
+            "reset did not restore the five minutes this timer was started at"
+        );
+    }
+
+    /// AND IT IS NOT STOP. The timer, its label and its identity all survive.
+    #[test]
+    fn reset_is_not_a_stop_in_disguise() {
+        let now = 1_000_000;
+        let reg = TimerRegistry::default();
+        let id = reg.start(five(now, Scope::Stage));
+        reg.reset(id, now + 60_000).expect("reset");
+        let still = reg.get(id).expect("reset deleted the timer");
+        assert_eq!(still.id, id);
+        assert_eq!(still.label, "Service begins in");
+        assert_eq!(reg.snapshot().len(), 1);
+    }
+
+    /// A CLOCK THAT HAS RUN OVER IS EXACTLY WHAT RESET IS FOR.
+    #[test]
+    fn reset_recovers_a_timer_that_is_already_past_zero() {
+        let now = 1_000_000;
+        let reg = TimerRegistry::default();
+        let id = reg.start(five(now, Scope::Stage));
+        let over = now + 9 * 60_000;
+        let back = reg.reset(id, over).expect("reset an overrun timer");
+        assert_eq!(remaining_signed_ms(&back, over), 5 * 60_000);
+    }
+
+    /// A HELD TIMER IS RESET WHERE IT STANDS, AND STAYS HELD.
+    ///
+    /// Reset answers "how long", not "running or not". Letting it resume as a
+    /// side effect would start a clock nobody asked to start, which on a stage
+    /// is a figure moving under somebody mid-sentence.
+    #[test]
+    fn reset_leaves_a_held_timer_held() {
+        let now = 1_000_000;
+        let reg = TimerRegistry::default();
+        let id = reg.start(five(now, Scope::Stage));
+        let over = now + 7 * 60_000;
+        reg.adjust(id, None, Some(true), over).expect("hold");
+        let back = reg.reset(id, over).expect("reset");
+        assert_eq!(
+            back.paused_ms,
+            Some(5 * 60_000),
+            "reset let a held clock go, or reset it to the wrong figure"
+        );
+    }
+
+    /// AND IT CANNOT CREATE ONE, for the same reason `adjust` cannot.
+    #[test]
+    fn reset_refuses_a_timer_that_is_not_there() {
+        let reg = TimerRegistry::default();
+        assert_eq!(reg.reset(404, 1_000_000), Err(TimerError::NoSuchTimer));
+    }
+
+    /// A TIMER BUILT WITHOUT A CONFIGURED LENGTH STILL HAS ONE.
+    ///
+    /// `configured_ms` is `serde(default)`, and a hand-built or older payload
+    /// would carry `0` — which would make Reset put the clock to zero, the one
+    /// answer that is never what was meant. `start` fills it from the span it
+    /// was aimed for, so every timer in the registry has a usable one however
+    /// it was constructed.
+    #[test]
+    fn a_timer_started_without_a_configured_length_takes_the_one_it_was_aimed_for() {
+        let now = 1_000_000;
+        let reg = TimerRegistry::default();
+        let id = reg.start(Timer {
+            configured_ms: 0,
+            ..five(now, Scope::Stage)
+        });
+        let back = reg.reset(id, now + 60_000).expect("reset");
+        assert_eq!(remaining_signed_ms(&back, now + 60_000), 5 * 60_000);
     }
 
     /// A SERMON THAT HAS RUN OVER CAN STILL BE HELD (RG-175).
@@ -587,6 +746,8 @@ mod tests {
         // Two clocks that are NOT this cue's: one free-standing, one another cue's.
         reg.start(five(now, Scope::Stage));
         let other_cue = Timer {
+            // A fixture states no configured length; `start` fills it from the span.
+            configured_ms: 0,
             plan_item_id: Some(7),
             ..five(now, Scope::Stage)
         };
@@ -598,6 +759,8 @@ mod tests {
         );
 
         let mine = reg.start(Timer {
+            // A fixture states no configured length; `start` fills it from the span.
+            configured_ms: 0,
             plan_item_id: Some(42),
             label: "Sermon".into(),
             ..five(now, Scope::Stage)
@@ -612,6 +775,8 @@ mod tests {
         // Put the cue on air a second time. The clock somebody is looking at is
         // the one that started last.
         let again = reg.start(Timer {
+            // A fixture states no configured length; `start` fills it from the span.
+            configured_ms: 0,
             plan_item_id: Some(42),
             ..five(now, Scope::Stage)
         });

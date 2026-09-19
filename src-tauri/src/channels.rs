@@ -6231,6 +6231,8 @@ mod tests {
             paused_ms: None,
             warn_ms: None,
             scope: crate::timers::Scope::Stage,
+            // A fixture states no configured length; `start` fills it from the span.
+            configured_ms: 0,
             plan_item_id: None,
             started_in_rehearsal: false,
         }

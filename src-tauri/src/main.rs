@@ -487,6 +487,7 @@ fn main() {
             adjust_countdown,
             start_timer,
             adjust_timer,
+            reset_timer,
             stop_timer,
             list_timers,
             show_timer,
@@ -3101,6 +3102,13 @@ fn start_countdown<R: tauri::Runtime>(
             // None is absent, never zero — see `BothProjection::countdown_warn_ms`.
             warn_ms: warn_ms.filter(|n| *n > 0),
             scope: timers::Scope::Both,
+            // What Reset would go back to. A congregation countdown has no
+            // Reset control today — the dock's Reset is the TOOL's, and puts
+            // the length field back rather than the running clock — but the
+            // registry row is the same shape either way, and a field filled by
+            // one creator and left at zero by the other is how the two come to
+            // disagree about the same timer.
+            configured_ms: (mins * 60_000.0) as i64,
             plan_item_id: None,
             // The mode in force at this instant, stamped once and never rewritten
             // (RG-150). Leaving a rehearsal happens to clear the screens, which
@@ -3340,6 +3348,10 @@ fn start_timer<R: tauri::Runtime>(
         paused_ms: None,
         warn_ms,
         scope,
+        // WHAT RESET GOES BACK TO. Stated here rather than derived later: a
+        // re-aim moves `target_ms` and leaves `from_ms`, so the span stops
+        // being the length anybody chose the first time `+5` is pressed.
+        configured_ms: (mins * 60_000.0) as i64,
         plan_item_id,
         // The mode in force at this instant — see `start_countdown`, and
         // `timers::Timer::started_in_rehearsal` for why it is a property of the
@@ -3361,6 +3373,48 @@ fn start_timer<R: tauri::Runtime>(
 /// running", which is what the dock's transport means. This one names the timer, so
 /// a console showing several can move the one under the operator's finger.
 ///
+/// PUT A TIMER BACK TO THE LENGTH IT WAS STARTED AT.
+///
+/// The third transport verb. `+5` adds to what is there and Stop takes the timer
+/// away; neither is "start that again", and doing it by hand — Stop then Start —
+/// loses the label, the chosen warning threshold and the cue binding along with
+/// the figure.
+///
+/// It answers HOW LONG, never running-or-not: a held timer is reset where it
+/// stands and stays held. Resuming as a side effect would start a clock nobody
+/// asked to start, which on a stage is a figure moving under somebody
+/// mid-sentence.
+///
+/// Same publication rule as `adjust_timer`: it puts nothing on a screen, and a
+/// `Both` timer that IS on the screens has the wall brought into line rather
+/// than re-fired — the registry and the wall may never disagree about the same
+/// countdown.
+#[tauri::command]
+fn reset_timer<R: tauri::Runtime>(app: tauri::AppHandle<R>, timer_id: i64) -> error::Result<()> {
+    let scope = app
+        .state::<timers::TimerRegistry>()
+        .get(timer_id)
+        .map(|t| t.scope)
+        .unwrap_or(timers::Scope::Both);
+    let back = app
+        .state::<timers::TimerRegistry>()
+        .reset(timer_id, cd_now_ms())
+        .map_err(|e| timer_refusal(e, scope))?;
+
+    if back.scope == timers::Scope::Both {
+        if let Some(mut content) = channels::live_content(&app).filter(is_countdown_content) {
+            let shown = timers::project_both(&back);
+            content.countdown_to = Some(shown.countdown_to);
+            content.countdown_from = Some(shown.countdown_from);
+            content.countdown_paused_ms = shown.countdown_paused_ms;
+            content.trace_id = None;
+            broadcast_with_clock(&app, content)?;
+        }
+    }
+    channels::publish_timers(&app);
+    Ok(())
+}
+
 /// Like `adjust_countdown`, it publishes nothing: changing a number on a timer that
 /// is not on the screens must not put it on them.
 #[tauri::command]

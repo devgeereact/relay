@@ -1702,6 +1702,24 @@ await call('adjust_timer', { timerId, remainingMs, paused });
 }
 
 /**
+ * PUT A TIMER BACK TO THE LENGTH IT WAS STARTED AT.
+ *
+ * The third transport verb, and not a Stop: the timer, its label, its chosen
+ * warning threshold and its cue binding all survive. It answers how long, never
+ * running-or-not — a held timer is reset where it stands and stays held.
+ *
+ * It names no figure on purpose. The length lives on the registry row
+ * (`configured_ms`), because a re-aim moves `target_ms` and leaves `from_ms`, so
+ * nothing on this side of the bridge can reconstruct what was originally chosen.
+ *
+ * THROWS (contract group 1).
+ */
+export async function resetTimer(timerId) {
+const call = await invoke();
+await call('reset_timer', { timerId });
+}
+
+/**
  * TAKE A TIMER OFF THE REGISTRY. It does not touch a screen — `Clear screens` is
  * how a wall is taken back, and it is one key away at every moment (rule 15).
  *

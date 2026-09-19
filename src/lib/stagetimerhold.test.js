@@ -23,6 +23,13 @@
 // preacher has been reading. Stop throws that away; `+5` re-aims it. Neither is
 // "note where we got to".
 //
+// The file also holds RESET, the third transport verb, because it is the same
+// question one verb along: what an operator is allowed to do to a clock that
+// has run out. `+5` adds to what is there, Stop takes the timer away, Hold
+// freezes the figure — and Reset is "start that again" without losing the
+// label, the chosen warning threshold or the cue binding, which Stop-then-Start
+// throws away along with it.
+//
 //   npx vitest run src/lib/stagetimerhold.test.js
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { tick } from 'svelte';
@@ -188,6 +195,60 @@ describe('holding a Stage Timer from the operator desk', () => {
     await settle(40);
     for (const forbidden of ['show_timer', 'start_countdown', 'adjust_countdown', 'fire_content']) {
       expect(called(forbidden), `Hold reached ${forbidden}`).toHaveLength(0);
+    }
+  });
+});
+
+describe('resetting a Stage Timer', () => {
+  it('offers a Reset control and reaches the command with the timer id', async () => {
+    bridge({ timers: [T()] });
+    mount();
+    await settle(40);
+    const reset = byText('Reset');
+    expect(reset, 'no Reset control on the band').toBeTruthy();
+    reset.click();
+    await settle(40);
+    const call = called('reset_timer').at(-1);
+    expect(call, 'Reset reached no backend command').toBeTruthy();
+    expect(call[1].timerId).toBe(7);
+  });
+
+  it('is not a Stop, and must never reach one', async () => {
+    // The whole reason Reset exists: doing it by hand means Stop then Start,
+    // which loses the name, the warning threshold and the cue binding.
+    bridge({ timers: [T()] });
+    mount();
+    await settle(40);
+    byText('Reset').click();
+    await settle(40);
+    expect(called('stop_timer')).toHaveLength(0);
+    expect(called('start_timer')).toHaveLength(0);
+  });
+
+  it('names no length, because only the registry knows the configured one', async () => {
+    // A re-aim moves `target_ms` and leaves `from_ms`, so the span on this side
+    // grows by five minutes every time `+5` is pressed. Nothing here can
+    // reconstruct what was originally chosen, so nothing here should try.
+    bridge({ timers: [T({ target_ms: Date.now() + 900_000 })] });
+    mount();
+    await settle(40);
+    byText('Reset').click();
+    await settle(40);
+    const call = called('reset_timer').at(-1);
+    expect(Object.keys(call[1])).toEqual(['timerId']);
+  });
+
+  it('resets a timer that has run over, and touches no congregation control', async () => {
+    bridge({ timers: [T({ target_ms: Date.now() - 120_000, remaining_ms: 0 })] });
+    mount();
+    await settle(40);
+    const reset = byText('Reset');
+    expect(reset.disabled).toBe(false);
+    reset.click();
+    await settle(40);
+    expect(called('reset_timer')).toHaveLength(1);
+    for (const forbidden of ['adjust_countdown', 'start_countdown', 'show_timer']) {
+      expect(called(forbidden), `Reset reached ${forbidden}`).toHaveLength(0);
     }
   });
 });

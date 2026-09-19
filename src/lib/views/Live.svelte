@@ -200,6 +200,7 @@
     listTimers,
     stopTimer,
     adjustTimer,
+    resetTimer,
     countdownWarnMs,
     rehearsing,
     loadRehearsal,
@@ -607,6 +608,25 @@
     ptErr = '';
     try {
       await adjustTimer(row.id, { paused: !row.held });
+      await loadProgrammeTimers();
+    } catch (e) {
+      ptErr = humanError(e);
+    }
+    ptBusy = false;
+  }
+
+  // START THAT AGAIN. Not Stop-then-Start, which throws away the label, the
+  // chosen warning threshold and the cue binding along with the figure — and
+  // not `+5`, which adds to whatever is there.
+  //
+  // It names no figure: the configured length lives on the registry row,
+  // because a re-aim moves `target_ms` and leaves `from_ms`, so nothing on this
+  // side can reconstruct what was originally chosen.
+  async function resetProgrammeTimer(row) {
+    ptBusy = true;
+    ptErr = '';
+    try {
+      await resetTimer(row.id);
       await loadProgrammeTimers();
     } catch (e) {
       ptErr = humanError(e);
@@ -2330,6 +2350,12 @@
             disabled={ptBusy}
             aria-label={t.label ? `Give ${t.label} five more minutes` : 'Give this timer five more minutes'}
             title="Add five minutes to this timer. Past zero it grants five minutes from now. It touches no screen.">+5</button>
+          <button
+            class="r-btn sm ghost"
+            on:click={() => resetProgrammeTimer(t)}
+            disabled={ptBusy}
+            aria-label={t.label ? `Reset ${t.label}` : 'Reset this timer'}
+            title="Put this timer back to the length it was started at. It keeps its name and stays held if it is held. It touches no screen.">Reset</button>
           <button
             class="r-btn sm ghost"
             on:click={() => stopProgrammeTimer(t.id)}
