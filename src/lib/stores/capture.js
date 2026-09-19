@@ -1707,6 +1707,40 @@ await call('adjust_timer', { timerId, remainingMs, paused });
 }
 
 /**
+ * THE STAGE LAYOUTS AN OPERATOR CAN CHOOSE BETWEEN. Global, by name.
+ *
+ * A read for a picker: an empty list is a usable answer (no layouts yet) and a
+ * failed read must not take the Outputs desk down with it, so this swallows and
+ * answers `[]` — group 2.
+ */
+export async function listStageLayouts() {
+return guardedRead('listStageLayouts', async (call) => {
+    const rows = await call('list_stage_layouts');
+    // ALWAYS A LIST. `guardedRead`'s fallback covers a THROW; it does not cover
+    // a bridge that answers with something that is not a list, and the one
+    // consumer is an `{#each}`. A picker handed a non-list takes the whole
+    // Outputs desk down with it — which is a screen-configuration surface
+    // failing because a list of layouts could not be read.
+    return Array.isArray(rows) ? rows : [];
+}, []);
+}
+
+/**
+ * POINT ONE STAGE SCREEN AT ONE LAYOUT, or at none.
+ *
+ * `null` is the way back and a real answer: the screen returns to the zones the
+ * DEVICE itself has, which is the arrangement a church may already be running.
+ * Nothing is erased by assigning, and nothing is reset by clearing.
+ *
+ * THROWS (contract group 1). It changes what a preacher sees, and a failure the
+ * operator cannot see is a control that lies about what it did.
+ */
+export async function setChannelStageLayout(channelId, layoutId) {
+const call = await invoke();
+await call('set_channel_stage_layout', { channelId, layoutId: layoutId ?? null });
+}
+
+/**
  * PUT A TIMER BACK TO THE LENGTH IT WAS STARTED AT.
  *
  * The third transport verb, and not a Stop: the timer, its label, its chosen

@@ -92,6 +92,11 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       // its own change, with its own tests, on the surface that paints the
       // wall. Filed as S14; this row is what stops it being forgotten.
       beat_ack: false,
+      // NO ZONES ON A CONGREGATION SCREEN. `stage_zones` says which layout a
+      // STAGE screen wears, and a layout is a set of `Stage.svelte` zones — a
+      // page that draws none of them has nothing to apply. This is `false`
+      // because there is nothing for it to do, not because it is withheld.
+      stage_zones: false,
       content: true,
       clear: true,
       black: true, // a panic control
@@ -181,6 +186,11 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       // host's clock, because `countdown_to` is an absolute epoch produced on
       // the host and this page was subtracting its own `Date.now()` from it.
       beat_ack: true,
+      // The operator's layout for this screen, applied live. The INITIAL read
+      // is over HTTP on connect (`GET /api/stage_zones`), because this page is
+      // the only consumer and the only one with that plane; this frame is what
+      // makes a change reach a screen that is already open.
+      stage_zones: true,
       content: true,
       clear: true,
       black: true, // WAS false, and that was the finding — see the note above

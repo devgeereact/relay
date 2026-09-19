@@ -1636,6 +1636,22 @@ fn timer_frame_json(timers: &[crate::timers::Timer], warn_default_ms: Option<i64
 fn is_timer_frame(msg: &str) -> bool {
     msg.contains(r#""kind":"timer""#)
 }
+/// WHICH LAYOUT EACH STAGE SCREEN WEARS — `{"2":{"reading":true,…}}`.
+///
+/// The frame lives HERE rather than beside its one caller in `main.rs`, and
+/// that is not tidiness. `every_kind_this_module_publishes_has_an_explicit_verdict`
+/// and `r6-contracts.test.js` both find published kinds by reading THIS
+/// module's source for `"kind":"…"` literals, so a frame published from
+/// anywhere else is invisible to both — it would ship with no retention verdict
+/// and no per-client verdict, which is the enumeration failing silently rather
+/// than catching anything.
+///
+/// A screen with no layout is OMITTED by the query that builds `blob`, never
+/// sent an empty object: absent means "use the device's own zones" and empty
+/// would mean "show nothing", and those are a working screen and a blank one.
+pub fn stage_zones_frame(blob: &str) -> String {
+    format!(r#"{{"kind":"stage_zones","zones":{blob}}}"#)
+}
 
 /// THE PROGRAMME TIMERS, TO THE STAGE TABLET AND NOWHERE ELSE.
 ///
@@ -5489,6 +5505,20 @@ mod tests {
         // It is listed rather than excused because the scanner reads source
         // literals, and a kind with no row is the finding this test exists for.
         ("beat_ack", false),
+        // WHICH LAYOUT EACH STAGE SCREEN WEARS. Not retained, and this one is
+        // the exception that has to justify itself, because unlike `beat_ack`
+        // it IS durable configuration and rule 43 would ordinarily replay it.
+        //
+        // `stage.html` is its only consumer and the only page with an HTTP
+        // control plane, so it READS this map from `GET /api/stage_zones` when
+        // it connects and this frame exists only to carry a LIVE change to a
+        // screen already open. Retaining it as well would be a second source of
+        // one fact, and the one that a reconnecting page does not consult.
+        //
+        // The cost of that trade is real: a screen whose HTTP read fails falls
+        // back to the device's own zones rather than to the assigned layout.
+        // That is the safe direction — a working screen, not a blank one.
+        ("stage_zones", false),
     ];
 
     /// THE ENUMERATION MUST GROW WITH THE MODULE, OR IT IS NOT AN ENUMERATION.
@@ -5661,6 +5691,20 @@ mod tests {
              control the operator pressed deliberately. It is not a panic control, \
              so it is allowed to refuse; `clear` and `black` are and are not, which \
              is why the split is in the call",
+        ),
+        (
+            "publish_stage_zones",
+            false,
+            "WHICH LAYOUT a stage screen wears, which is configuration and not \
+             content — the same verdict as `set_channel_roles`, \
+             `set_channel_shows` and `set_channel_looks` below, for the same \
+             reason. It paints nothing on arrival: it decides which ZONES the \
+             next reading, note or clock appears in, and each of those is gated \
+             on its own. Gating this instead would leave a screen still wearing \
+             the pre-rehearsal layout once the operator went live, which is the \
+             failure the other three rows already name — and a rehearsal is \
+             exactly when an operator sets a stage up, so a change that appeared \
+             to do nothing would be the worst possible moment for it",
         ),
         (
             "set_channel_roles",

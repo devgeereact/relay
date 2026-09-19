@@ -488,6 +488,8 @@ fn main() {
             start_timer,
             adjust_timer,
             reset_timer,
+            list_stage_layouts,
+            set_channel_stage_layout,
             stop_timer,
             list_timers,
             show_timer,
@@ -2196,6 +2198,32 @@ fn remote_api<R: tauri::Runtime>(
     };
 
     ok(match route_name {
+        // WHICH LAYOUT EACH STAGE SCREEN WEARS — `{"2":{"reading":true,…}}`.
+        //
+        // READ over HTTP rather than replayed on the WebSocket hello, and that
+        // is a deliberate trade with a cost worth naming. Every other
+        // configuration map (roles, looks, shows) is a retained hub slot
+        // replayed on hello, because the pages that need those have no other
+        // way to ask. `stage.html` is the ONLY consumer of this one and it
+        // already has this HTTP control plane, so the alternative was an
+        // eighteenth parameter on `run_kiosk_server` and twenty-five test call
+        // sites for a fact one page reads.
+        //
+        // The cost: initial state and live updates arrive by two different
+        // paths — this route on connect, and a `stage_zones` broadcast when an
+        // operator changes an assignment. They are the same two paths this page
+        // already uses for its control panel (search over HTTP, content over
+        // the socket), and a failed read falls back to the device's own zones
+        // rather than to a blank screen.
+        "stage_zones" => {
+            let db = app.state::<Db>();
+            let blob =
+                db.0.lock()
+                    .ok()
+                    .and_then(|conn| db::stage_zones_json(&conn).ok())
+                    .unwrap_or_else(|| "{}".to_string());
+            format!(r#""zones":{blob}"#)
+        }
         "search" => {
             let q = param("q").unwrap_or_default();
             let rows = {
@@ -3403,6 +3431,59 @@ fn start_timer<R: tauri::Runtime>(
 /// running", which is what the dock's transport means. This one names the timer, so
 /// a console showing several can move the one under the operator's finger.
 ///
+/// The stage layouts an operator can choose between. Global, by name.
+#[tauri::command]
+fn list_stage_layouts(db: tauri::State<'_, Db>) -> error::Result<Vec<db::StageLayout>> {
+    let conn = db.0.lock().map_err(|_| error::Error::Busy {
+        message: "The database is busy. Try again.".into(),
+    })?;
+    Ok(db::list_stage_layouts(&conn)?)
+}
+
+/// Point one stage screen at one layout, or at none.
+///
+/// `None` is the way back, and it is a real answer rather than a reset: the
+/// screen returns to whatever zones the DEVICE has in its own `localStorage`,
+/// which is the arrangement a church may already be using. That is what stops
+/// this feature silently erasing one.
+///
+/// It publishes the whole map, the way every other configuration map is
+/// published — a delta would leave a screen that missed one frame wrong about
+/// itself for the rest of a service with no way to find out.
+#[tauri::command]
+fn set_channel_stage_layout<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    db: tauri::State<'_, Db>,
+    channel_id: i64,
+    layout_id: Option<i64>,
+) -> error::Result<()> {
+    {
+        let conn = db.0.lock().map_err(|_| error::Error::Busy {
+            message: "The database is busy. Try again.".into(),
+        })?;
+        db::set_channel_stage_layout(&conn, channel_id, layout_id)?;
+    }
+    publish_stage_zones(&app, &db);
+    Ok(())
+}
+
+/// Tell every stage screen which layout it wears now.
+///
+/// Broadcast only — there is no retained slot and no hello replay for this one.
+/// `stage.html` reads its initial state from `GET /api/stage_zones` on connect,
+/// because it is the only consumer and the only page with that HTTP plane; see
+/// the route for the trade and its cost.
+fn publish_stage_zones<R: tauri::Runtime>(app: &tauri::AppHandle<R>, db: &tauri::State<'_, Db>) {
+    let blob =
+        db.0.lock()
+            .ok()
+            .and_then(|conn| db::stage_zones_json(&conn).ok())
+            .unwrap_or_else(|| "{}".to_string());
+    if let Some(hub) = app.try_state::<channels::KioskHub>() {
+        hub.publish(channels::stage_zones_frame(&blob));
+    }
+}
+
 /// PUT A TIMER BACK TO THE LENGTH IT WAS STARTED AT.
 ///
 /// The third transport verb. `+5` adds to what is there and Stop takes the timer

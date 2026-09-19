@@ -5704,3 +5704,74 @@ overrun policy — overrun is always on, because §99 and §101 made counting up
 for every timer and a per-timer switch would be a second answer to a settled question. And
 still no persistence: a relaunch mid-service loses every clock, appointment or not, which
 remains the largest open thing in this area.
+
+## 103. A stage layout is an operator's decision, and the device keeps its own until one is given (2026-09-19)
+
+`Stage.svelte` has carried seven zone switches since wave 4, in `localStorage` on the
+device. That is right for a preference and wrong for a decision: the operator could not set
+them, could not see them, and could not tell whether what they had just sent was being
+rendered — `Live.svelte` says so out loud, that whether the preacher's programme zone is on
+"is not a fact available on this side of the room". A tablet reset, or a second device, lost
+the arrangement silently.
+
+**A layout is global; its assignment is per screen.** That is ProPresenter's own shape
+(`docs/research/PROPRESENTER7_STAGE_AND_TIMERS.md`): one list you edit, each stage screen
+pointed at an entry. `stage_layouts` holds the list, `output_channels.stage_layout_id` holds
+the assignment.
+
+**It is deliberately not a row in `templates`, and the plan's own wording said it should
+be.** A template carries regions, a style and a `TemplateRender` output. A stage layout
+carries none of those, because `stage.html` is a hand-drawn monitor rather than a render
+target — the rail geometry RG-147 and RG-154 fixed is its own CSS, and the
+template-rendered surface cannot show a Stage Timer at all (`timer: false` for
+`Output.svelte` in `r6-contracts.test.js`). One table holding both would be two kinds of
+thing rendered by two renderers, and the Templates gallery would show a layout as a broken
+visual template. Converging the two renderers first remains the coherent end state and is a
+much larger change to the surface that paints every congregation screen; it is not a
+prerequisite for taking this decision off a device.
+
+**NULL IS A REAL ANSWER AND THE DEFAULT.** A screen with no layout falls back to the zones
+that device already has. A church running a tablet set by hand keeps exactly that
+arrangement until somebody deliberately assigns a layout: there is no migration of existing
+preferences, no default layout handed out on first sight, and clearing an assignment hands
+the screen back rather than resetting it. The receiver keeps the same promise from the other
+end — an entry naming no zone at all is treated as no layout, not as show-nothing, because
+the key-by-key merge would otherwise turn `{}` into an assigned layout of all-defaults that
+looks identical to the fallback it replaced while locking the device out.
+
+**Read over HTTP, updated over the socket, and that trade has a cost worth naming.** Every
+other configuration map — roles, looks, shows — is a retained hub slot replayed on `hello`,
+because the pages needing those have no other way to ask. `stage.html` is the only consumer
+of this one and the only page with an HTTP control plane, so it reads `GET /api/stage_zones`
+on connect and the `stage_zones` frame carries only live changes. The alternative was an
+eighteenth parameter on `run_kiosk_server` and twenty-five test call sites for a fact one
+page reads. The cost is that initial state and live updates arrive by two paths, and a
+failed read leaves the device's own zones in force — the safe direction, a working screen
+rather than a blank one.
+
+**Seeded by key, not by name.** Three starters ship: Preacher, Confidence monitor, Timer
+focus. `seed_key` is what a starter IS independent of what it is called, because seeding by
+name re-creates a renamed starter beside itself on every launch — `templates` already
+carries the column for the identical reason, and the test caught it on the first run.
+
+**Three enumeration guards refused this change until it answered them**, which is them
+working: the retention verdict in `FRAME_VERDICTS`, the per-client verdict in
+`r6-contracts.test.js`, and the rehearsal verdict — which is `false`, on the same reasoning
+as `set_channel_roles`, `set_channel_shows` and `set_channel_looks`. A layout is
+configuration, not content: it paints nothing on arrival, it decides which zones the next
+reading appears in, and each of those is gated on its own. Gating it would leave a screen
+still wearing the pre-rehearsal layout once the operator went live — and a rehearsal is
+exactly when a stage gets set up.
+
+**A fourth guard was missing entirely and this change exposed it.** The two db migration
+scanners each carried a hand-written source list, and `stage.rs` was in neither — so one
+test reported a column with no migration while the migration sat in a file it could not
+read. `demo.rs`, `starter.rs` and `verses.rs` had never been in either list either. None of
+the three carries an `ALTER TABLE … ADD COLUMN` today, so nothing was being missed; nothing
+was stopping one being added, and "no migration exists" and "the file holding it is not
+read" produce exactly the same green. `every_db_module_is_named_in_the_migration_scanners`
+now compares the directory against the names.
+
+**What this does NOT do.** An operator cannot yet create, rename or edit a layout — the
+three starters are assignable and that is all. The editor is the next slice; the model is
+what had to be right first, because it is the part a migration makes permanent.

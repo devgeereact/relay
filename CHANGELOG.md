@@ -77,6 +77,16 @@ If the time has already gone, the clock starts counting up from it rather than
 jumping to tomorrow, so a mistyped time is obvious straight away instead of
 showing 23 hours and something.
 
+The desk can now decide what a preacher's screen shows. Until now those choices
+lived on the device itself, so the operator could not set them, could not see
+them, and a tablet reset lost the arrangement. Outputs now offers a stage layout
+per stage screen, with three to start from: Preacher, Confidence monitor and
+Timer focus.
+
+Screens you have not given a layout to are left exactly as they are, set from
+the device as before — nothing is migrated and nothing is overwritten. Clearing
+a screen's layout hands it back to the device rather than resetting it.
+
 Physical phone and tablet scanning remains to be verified.
 
 ### Lower thirds had nothing behind the words

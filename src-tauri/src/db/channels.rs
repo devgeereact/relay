@@ -45,6 +45,10 @@ pub struct OutputChannel {
     /// rest of a service with nothing to say why, which is why the absence has to
     /// travel as an absence all the way to the renderer.
     pub shows_json: Option<String>,
+    /// Which stage layout this screen wears (`db/stage.rs`). `None` means the
+    /// screen has not been given one and the DEVICE's own zones still apply —
+    /// a real answer, not an absent setting.
+    pub stage_layout_id: Option<i64>,
 }
 
 /// What `set_channel_role` did — the enforcement, in one place, phrased so the
@@ -71,7 +75,8 @@ pub const CHANNEL_ROLES: &[&str] = &["main", "stage"];
 /// All configured output channels.
 pub fn list_output_channels(conn: &Connection) -> rusqlite::Result<Vec<OutputChannel>> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, render_target, template_id, display_target, status, role, shows_json
+        "SELECT id, name, render_target, template_id, display_target, status, role, shows_json,
+                stage_layout_id
            FROM output_channels ORDER BY id",
     )?;
     let rows = stmt.query_map([], |r| {
@@ -84,6 +89,7 @@ pub fn list_output_channels(conn: &Connection) -> rusqlite::Result<Vec<OutputCha
             status: r.get(5)?,
             role: r.get(6)?,
             shows_json: r.get(7)?,
+            stage_layout_id: r.get(8)?,
         })
     })?;
     rows.collect()

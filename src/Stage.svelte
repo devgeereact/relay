@@ -313,7 +313,20 @@
     programme: true,
   };
   const ZONE_KEY = 'relay.stage.zones';
-  let zones = { ...DEFAULT_ZONES };
+  // ── WHOSE DECISION THIS IS ────────────────────────────────────────────────
+  //
+  // `deviceZones` is this device's own preference, in its own `localStorage`.
+  // `assignedZones` is the layout an OPERATOR gave this screen, and it wins.
+  //
+  // Null is a real answer and the reason nothing was erased: a church already
+  // running a tablet with zones set by hand keeps exactly that arrangement
+  // until somebody deliberately assigns a layout to the screen. Assigning is
+  // what moves the decision off the device; there is no silent migration and no
+  // default layout handed out on first sight.
+  let deviceZones = { ...DEFAULT_ZONES };
+  let assignedZones = null;
+  $: zones = assignedZones ?? deviceZones;
+  $: operatorSet = assignedZones !== null;
   let figures = 'bottom'; // 'bottom' | 'beside'
   let showZones = false;
 
@@ -325,7 +338,8 @@
       if (!saved || typeof saved !== 'object') return;
       // Key by key, off the DEFAULTS — so a zone added in a later version is on
       // its own default rather than absent, and a corrupt value cannot delete one.
-      for (const z of ZONES) if (typeof saved[z.key] === 'boolean') zones[z.key] = saved[z.key];
+      for (const z of ZONES)
+        if (typeof saved[z.key] === 'boolean') deviceZones[z.key] = saved[z.key];
       if (saved.figures === 'beside' || saved.figures === 'bottom') figures = saved.figures;
     } catch {
       /* defaults stand */
@@ -333,13 +347,18 @@
   }
   function saveZones() {
     try {
-      localStorage.setItem(ZONE_KEY, JSON.stringify({ ...zones, figures }));
+      localStorage.setItem(ZONE_KEY, JSON.stringify({ ...deviceZones, figures }));
     } catch {
       /* the layout still applies to this session */
     }
   }
   function toggleZone(key) {
-    zones = { ...zones, [key]: !zones[key] };
+    // An operator's layout is not editable from the device it is displayed on:
+    // two people changing one screen from two places is how a stage ends up
+    // showing something nobody chose. The panel says so rather than silently
+    // ignoring the tap.
+    if (operatorSet) return;
+    deviceZones = { ...deviceZones, [key]: !deviceZones[key] };
     saveZones();
   }
   function setFigures(v) {
@@ -924,6 +943,12 @@
       // and a panic control takes it down with everything else it says (§91).
       if (!acceptsStageMessage(myRole)) return;
       alert = (m.text || '').trim();
+    } else if (m.kind === 'stage_zones') {
+      // A LIVE CHANGE. The initial read is over HTTP on connect (see
+      // `loadStageZones`) because this page is the only consumer of this map
+      // and the only one with that plane; this frame is what makes an
+      // operator's change reach a screen already open.
+      applyStageZones(m.zones);
     } else if (m.kind === 'beat_ack') {
       // The hub's answer to this page's own beat. Carries the host clock and
       // nothing else; it is the only inbound frame this page ASKED for.
@@ -1030,6 +1055,54 @@
     connect(wsHost);
   }
 
+  /**
+   * Take the operator's layout for THIS screen out of the whole map.
+   *
+   * A screen that is not named in the map has not been given a layout, and
+   * falls back to the device's own zones — which is different from being given
+   * an empty one. An empty object would mean "show nothing", and those two
+   * readings are a working screen and a blank one.
+   */
+  function applyStageZones(map) {
+    if (!map || typeof map !== 'object' || !channelId) {
+      assignedZones = null;
+      return;
+    }
+    const mine = map[String(channelId)];
+    if (!mine || typeof mine !== 'object') {
+      assignedZones = null;
+      return;
+    }
+    // Key by key off the DEFAULTS, exactly as `loadZones` does: a zone added in
+    // a later version arrives on its own default rather than absent, and a
+    // corrupt value cannot delete one.
+    const next = { ...DEFAULT_ZONES };
+    let said = 0;
+    for (const z of ZONES) {
+      if (typeof mine[z.key] === 'boolean') {
+        next[z.key] = mine[z.key];
+        said += 1;
+      }
+    }
+    // AN ENTRY THAT NAMES NO ZONE IS NOT A LAYOUT. Without this, `{}` becomes an
+    // assigned layout of all-defaults: it takes the toggles away from the device
+    // and replaces whatever that device was set to, while looking — on a default
+    // install — exactly like the fallback it replaced. `db/stage.rs` already
+    // says an empty object falls through to the device's own zones; this is the
+    // receiver keeping that promise rather than assuming the sender.
+    assignedZones = said > 0 ? next : null;
+  }
+
+  /** The initial read. A failure leaves the device's own zones in force. */
+  async function loadStageZones() {
+    try {
+      const j = await api('stage_zones');
+      applyStageZones(j.zones);
+    } catch {
+      /* the device's own zones are a working screen; say nothing */
+    }
+  }
+
   function connect(host) {
     if (closed) return;
     wsHost = host;
@@ -1095,6 +1168,7 @@
         // retained frames (`channels::tests::FRAME_VERDICTS` holds both at
         // `false`), so a word meant for the preacher cannot arrive again later,
         // and a rehearsal publishes nothing to this hub at all.
+        void loadStageZones();
         try {
           ws.send(JSON.stringify({ kind: 'hello', channel: channelId }));
         } catch {
@@ -1341,9 +1415,26 @@
 
   {#if showZones}
     <section class="zonepanel" aria-label="Zones">
+      <!-- A DISABLED CONTROL THAT SAYS NOTHING IS A BROKEN CONTROL. When an
+           operator has assigned a layout to this screen, these toggles are not
+           this device's to change — two people editing one screen from two
+           places is how a stage ends up showing something nobody chose. So they
+           are disabled AND the reason is written here, rather than the taps
+           being silently ignored. -->
+      {#if operatorSet}
+        <p class="zonenote" role="status">
+          The desk has given this screen a layout, so these are set from there.
+        </p>
+      {/if}
       <div class="zonegrid">
         {#each ZONES as z (z.key)}
-          <button class="zonebtn" class:on={zones[z.key]} aria-pressed={zones[z.key]} on:click={() => toggleZone(z.key)}>
+          <button
+            class="zonebtn"
+            class:on={zones[z.key]}
+            aria-pressed={zones[z.key]}
+            disabled={operatorSet}
+            title={operatorSet ? 'Set by the desk for this screen' : null}
+            on:click={() => toggleZone(z.key)}>
             {z.label}
           </button>
         {/each}
@@ -1723,6 +1814,7 @@
   .zonepanel { flex: 0 0 auto; max-height: 46dvh; overflow-y: auto; padding: 14px 18px;
     display: flex; flex-direction: column; gap: 10px;
     border-top: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.03); }
+  .zonenote{ margin:0 0 10px; font-size:var(--v-fs-pr); line-height:1.4; color:var(--v-dim); }
   .zonegrid { display: flex; flex-wrap: wrap; gap: 8px; }
   .zonebtn { flex: 1 1 auto; min-height: 44px; padding: 0 14px; cursor: pointer;
     font-family: var(--f-mono); font-size:var(--v-fs-b1); font-weight: 700; letter-spacing: .08em;

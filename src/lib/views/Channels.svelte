@@ -86,6 +86,8 @@
     listOutputChannels,
     setChannelTemplate,
     setChannelRole,
+    listStageLayouts,
+    setChannelStageLayout,
     setChannelShows,
     listMonitors,
     openChannelOutput,
@@ -195,6 +197,7 @@
       // the store, so the desk cannot describe one screen two ways.
       await loadChannelLooks();
       monitors = await listMonitors();
+      stageLayouts = (await listStageLayouts()) ?? [];
       await refreshNetwork();
       await refresh();
       // Make sure the poller is running even if this tab was opened before the
@@ -573,6 +576,19 @@
   // on this desk. It is deliberately not pre-empted here by disabling the option:
   // a picker that silently cannot be chosen explains nothing, and the sentence
   // says which screen to clear.
+  // ── THE LAYOUT A STAGE SCREEN WEARS ──────────────────────────────────────
+  //
+  // Global list, per-screen assignment — ProPresenter's own shape, and the
+  // reason it is not a template: a stage layout has no regions, no style and no
+  // `TemplateRender` output, because `stage.html` draws its own zones.
+  //
+  // "Whatever the device is set to" is a real choice and the DEFAULT, not a
+  // missing value. A church already running a tablet with zones set by hand
+  // keeps that arrangement until somebody deliberately picks a layout here.
+  let stageLayouts = [];
+  const assignStageLayout = (c, e) =>
+    act(() => setChannelStageLayout(c.id, e.target.value === '' ? null : Number(e.target.value)));
+
   const assignRole = (c, e) => act(() => setChannelRole(c.id, e.target.value === '' ? null : e.target.value));
   // ── WHAT THIS SCREEN SHOWS AT ALL (DECISIONS §98) ──────────────────────────
   //
@@ -1502,6 +1518,35 @@
               A screen the platform reads, not the congregation. It is the only kind of
               screen a <b>Stage Message</b> is painted on, and several screens may be
               stages — a confidence monitor and a preacher's tablet, for instance.
+            </p>
+            <!-- ONLY FOR A STAGE, because only `stage.html` has zones. Rendered
+                 inside the role branch rather than beside it, so the control
+                 cannot be offered for a screen it would do nothing to. -->
+            <label class="r-lbl" for="ch-stage-layout">Stage layout</label>
+            <select
+              id="ch-stage-layout"
+              class="r-select ch-fin"
+              value={sel.stage_layout_id ?? ''}
+              on:change={(e) => assignStageLayout(sel, e)}
+              disabled={!$capture.available}>
+              <!-- THE DEFAULT IS A CHOICE, NOT AN ABSENCE. Naming it is what
+                   tells an operator the screen is being set from the device and
+                   not from here — the fact `Live.svelte` records as "not
+                   available on this side of the room". -->
+              <option value="">Whatever the device is set to</option>
+              {#each stageLayouts as l (l.id)}
+                <option value={l.id}>{l.name}</option>
+              {/each}
+            </select>
+            <p class="ch-finhint">
+              {#if sel.stage_layout_id}
+                This screen shows what the layout says, and the Zones panel on the
+                device is set from here.
+              {:else}
+                Whoever is holding this screen sets its zones, in its own Zones panel.
+                Relay cannot see what they chose. Pick a layout to decide from here
+                instead.
+              {/if}
             </p>
           {:else}
             <p class="ch-finhint">
