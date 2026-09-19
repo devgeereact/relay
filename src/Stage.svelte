@@ -821,6 +821,18 @@
 
   function apply(m) {
     if (m.kind === 'content') {
+      // IS THIS CUE FOR THIS SCREEN? (RG-161) The hub broadcasts to every
+      // client and cannot address one (DECISIONS §35), so the routing is the
+      // receiver's — and this page is the second door. A guarantee kept on
+      // `output.html` alone is the mistake that left a Stage Message on every
+      // copy of this page, and a notice aimed at the foyer TV landing on the
+      // preacher's tablet is the same shape.
+      //
+      // Absent, null or malformed is every screen: cues built before targeting
+      // existed say nothing, and the safe direction is to show them. An empty
+      // array reaches nothing, on purpose. A page with no channel is
+      // unidentified and takes everything, as it does for every other frame.
+      if (Array.isArray(m.channels) && channelId && !m.channels.includes(channelId)) return;
       content = { reference: m.reference, text: m.text, translation: m.translation };
       note = m.stage_note || '';
       cdTo = m.countdown_to || null;

@@ -224,6 +224,7 @@ fn main() {
             let kiosk_screen_tpls = kiosk.channel_templates_handle();
             let kiosk_shows = kiosk.channel_shows_handle();
             let kiosk_last = kiosk.last_screen_handle();
+            let kiosk_last_by_ch = kiosk.last_screen_by_channel_handle();
             let kiosk_last_x = kiosk.last_transition_handle();
             let kiosk_last_t = kiosk.last_timers_handle();
             let kiosk_last_bg = kiosk.last_background_handle();
@@ -395,6 +396,7 @@ fn main() {
                 kiosk_screen_tpls,
                 kiosk_shows,
                 kiosk_last,
+                kiosk_last_by_ch,
                 kiosk_last_x,
                 kiosk_last_t,
                 kiosk_last_bg,

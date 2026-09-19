@@ -161,6 +161,32 @@
     return templateShows(t, kind) && channelShowsKind(channelShows, channelId, kind);
   }
 
+  /**
+   * IS THIS CUE FOR THIS SCREEN? (RG-161)
+   *
+   * `channels` on a content frame is the set of screens the cue names. The hub
+   * cannot address one client (DECISIONS §35), so the routing is the
+   * receiver's — the same mechanic `channel_template` and the Stage Message
+   * already use, and the reason each of those had to be fixed on BOTH doors.
+   *
+   * ABSENT, NULL OR MALFORMED IS EVERY SCREEN, and that is the safe direction:
+   * every cue built before this existed says nothing about screens, and
+   * content that silently reaches nothing is worse than content that reaches
+   * more than it had to.
+   *
+   * An EMPTY array reaches nothing, deliberately — a cue that names no screen
+   * is a real thing to ask for and must not be read as "all of them".
+   *
+   * Channel 0 is a raw preview belonging to no screen. It paints everything: it
+   * is not a screen anybody is watching, and a preview that silently dropped a
+   * targeted cue would be a preview that lies about the plan.
+   */
+  function paintsHere(list) {
+    if (!Array.isArray(list)) return true;
+    if (!channelId) return true;
+    return list.includes(channelId);
+  }
+
   // ── THE STAGE MESSAGE, AND WHY THIS PAGE MAY REFUSE IT ─────────────────────
   //
   // `channels::stage_alert` publishes to EVERY kiosk client. It has to: the hub
@@ -631,6 +657,11 @@
       // in `onMount` — the native window has the Tauri bridge and no socket, so a
       // filter written here and not there is the "guarantee kept on one door"
       // mistake, on the two screens most often in the same room.
+      // WHICH SCREENS, then which kinds. Both doors ask both questions — a
+      // guarantee kept on one of two doors is the mistake this file counts
+      // seven times, and the rehearsal guarantee was green and false for the
+      // stage tablet for exactly that reason.
+      if (!paintsHere(m.channels)) return;
       if (m.content_kind && !paintsKind(m.content_kind)) return;
       // The override takes effect WITH the content, never before it — see the
       // snapshot comment at the top of this file.
@@ -796,6 +827,7 @@
         // renames `kind` to `content_kind`, so the two doors read a differently
         // named field off differently shaped messages and only the rule is shared.
         // Swept with the kiosk door and needed nothing for the same reason.
+        if (!paintsHere(e.payload?.channels)) return;
         if (e.payload?.kind && !paintsKind(e.payload.kind)) return;
         appliedTransition = pendingTransition;
         content = e.payload;
