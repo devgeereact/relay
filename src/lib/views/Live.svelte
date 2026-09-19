@@ -211,7 +211,7 @@
   // The Stage Timer's two pure questions — which rows belong here, and how
   // long is left on one. `timerRemainingMs` ENDS in `countdownRemainingMs`, which
   // stays the only countdown arithmetic on this side of the bridge.
-  import { stageTimers, timerRemainingMs } from '../timers.js';
+  import { stageTimers, timerRemainingMs, timerIsHeld } from '../timers.js';
 
   // ── the plan being RUN (not edited) ──────────────────────────────────────
   let plans = [];
@@ -593,6 +593,27 @@
   // It publishes nothing, because `adjust_timer` publishes nothing to a
   // congregation: a Stage Timer has no wire form on a wall, and the stage tablet
   // is told through `publish_timers`, unconditionally, on the Rust side.
+  // HOLD AND LET GO. The third answer to a clock that has run out, beside Stop
+  // (which throws the figure away) and `+5` (which re-aims it).
+  //
+  // IT NAMES NO FIGURE, DELIBERATELY. `adjust_timer` reads the clock itself when
+  // `remainingMs` is absent, and that is the whole repair: the reading available
+  // on this side is clamped at zero, and the engine refuses a REQUESTED length
+  // under a second as `TooShort` — so a hold computed here would be refused at
+  // exactly the moment an operator wants it. A request and a reading are not the
+  // same thing, and only the engine can take the reading.
+  async function holdProgrammeTimer(row) {
+    ptBusy = true;
+    ptErr = '';
+    try {
+      await adjustTimer(row.id, { paused: !row.held });
+      await loadProgrammeTimers();
+    } catch (e) {
+      ptErr = humanError(e);
+    }
+    ptBusy = false;
+  }
+
   async function grantProgrammeTimer(row) {
     ptBusy = true;
     ptErr = '';
@@ -634,6 +655,11 @@
       label: (t.label ?? '').trim(),
       left,
       over: left != null && left <= 0,
+      // HELD IS A THIRD STATE, not the absence of running (RG-175). A held row
+      // is frozen at the figure it was holding, including past zero — which is
+      // the case the hold exists for, because the elapsed figure a preacher has
+      // been reading is the thing Stop throws away and `+5` re-aims.
+      held: timerIsHeld(t),
     };
   });
 
@@ -2274,12 +2300,30 @@
                rehearsal, red is a failure, and a sermon running long is none of
                the four. It is also the half a colour cannot say out loud to an
                operator glancing down for a tenth of a second. -->
-          <span class="pt-fig r-mono" class:over={t.over}
+          <span class="pt-fig r-mono" class:over={t.over} class:pt-held={t.held}
             >{#if t.left == null}no deadline{:else if t.over}+{formatCountdown(-t.left)} over{:else}{formatCountdown(t.left)}{/if}</span>
+          <!-- A FROZEN FIGURE HAS TO SAY SO. Without the word, a held clock and a
+               clock nobody is looking at read identically for as long as the
+               operator does not stare at the digits — and the rail on the
+               preacher's tablet already says `Held`, so the two surfaces would
+               disagree about the same timer. Words, not a colour: none of the
+               four law colours means "paused". -->
+          {#if t.held}<span class="pt-state">held</span>{/if}
           <!-- FIVE MORE MINUTES. The one thing an operator wants from a sermon
                clock and the only rendered door to `adjust_timer`, which was a
                registered command no control could reach. See `grantProgrammeTimer`
                for what it means on a clock that has already run out. -->
+          <button
+            class="r-btn sm ghost"
+            on:click={() => holdProgrammeTimer(t)}
+            disabled={ptBusy}
+            aria-label={t.label
+              ? `${t.held ? 'Resume' : 'Hold'} ${t.label}`
+              : `${t.held ? 'Resume' : 'Hold'} this timer`}
+            title={t.held
+              ? 'Let this timer carry on from where it was held. It touches no screen.'
+              : 'Freeze this timer at the figure it is showing, including past zero. It touches no screen.'}
+            >{t.held ? 'Resume' : 'Hold'}</button>
           <button
             class="r-btn sm ghost"
             on:click={() => grantProgrammeTimer(t)}
@@ -2982,6 +3026,15 @@
      THAT page is the preacher's own bookkeeping, and on a console red means
      something has failed. Nothing has failed when a sermon runs long. */
   .pt-fig.over{color:var(--v-txt); font-weight:600}
+  /* A HELD FIGURE IS DIMMED AND NEVER COLOURED. `.over` is body ink because a
+     sermon running long is a fact the operator must read; holding it is a thing
+     they did on purpose, so it recedes. No law colour either way — amber is ON
+     AIR, cyan a guess, amethyst rehearsal, red a failure, and neither "over" nor
+     "held" is any of the four. The word beside it carries the meaning, which is
+     also the half a colour cannot say to somebody glancing down. */
+  .pt-fig.pt-held{color:var(--v-dim); font-weight:600}
+  .pt-state{flex:0 0 auto; font-size:var(--v-fs-cap); color:var(--v-dim);
+    text-transform:uppercase; letter-spacing:var(--v-tr-h2)}
   .pt-chip > :global(button){flex:0 0 auto}
   .pt-cap{flex:0 0 auto; font-family:var(--f-mono); font-size:var(--v-fs-cap);
     letter-spacing:var(--v-tr-caps); color:var(--v-faint)}

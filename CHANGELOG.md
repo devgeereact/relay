@@ -52,6 +52,15 @@ stops retrying every second and a half for the whole service. When Relay has
 stopped answering, the stage screen says for how long, because "not answering"
 reads the same after four seconds as after ten minutes.
 
+A sermon timer that has run over can now be held. Until now the only things an
+operator could do to a clock past zero were stop it, which throws away how far
+over it is, or add five minutes, which re-aims it — neither of which is "note
+where we got to". The preacher's screen has always been able to show a held
+timer; nothing could put one into that state. Holding freezes the figure being
+read, including past zero, and letting go carries on from there. It touches no
+congregation screen, and a countdown in front of a room still cannot show a
+negative.
+
 Physical phone and tablet scanning remains to be verified.
 
 ### Lower thirds had nothing behind the words

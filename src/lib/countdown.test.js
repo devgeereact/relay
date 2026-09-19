@@ -275,3 +275,58 @@ describe('the set duration outlives the dock', () => {
     countdownSet.set(DEFAULT_COUNTDOWN_MS);
   });
 });
+
+// ── A HOLD PAST ZERO (RG-175, DECISIONS §99's open half) ───────────────────
+//
+// `paused_ms` was positive by contract, and this reader enforced it with
+// `held > 0`. That is what DECISIONS §99 meant by a hold past zero being
+// "structurally inexpressible": a stage timer two minutes over answered its
+// deadline instead of its held figure, so `Stage.svelte`'s `held` row — real,
+// styled and tested since wave 4 — could never be produced by anything.
+//
+// The contract is now SIGNED, and the audience reading is what keeps the old
+// guarantee: a held figure is clamped at zero unless the caller opted into
+// `past`, exactly as a running one is. A congregation wall reads zero as "it
+// finished" and paints the done message; `-2:00` in front of a room is not a
+// thing anybody asked for.
+//
+// **The `> 0` was also doing something nobody wrote down.** `Number(null)` is
+// `0`, so a `countdown_paused_ms: null` — which is what the wire sends for a
+// timer that is NOT held — fell through on the `> 0` and read as running by
+// accident. Widen the check to "is it finite" and every unheld timer freezes at
+// `0:00`. Hence the explicit null guard, and hence these tests.
+describe('holding a clock that has already run out', () => {
+  const overrun = { countdown_to: 1_000, countdown_paused_ms: -120_000 };
+
+  it('answers the negative figure the preacher is reading', () => {
+    expect(countdownRemainingMs(overrun, 999_999, { past: true })).toBe(-120_000);
+  });
+
+  it('clamps it for a congregation, where zero means the done message', () => {
+    expect(countdownRemainingMs(overrun, 999_999)).toBe(0);
+  });
+
+  it('counts a negative hold as held, or the rail cannot render it frozen', () => {
+    expect(countdownIsPaused(overrun)).toBe(true);
+  });
+
+  it('still counts a positive hold as held, and answers it either way', () => {
+    const held = { countdown_to: 1_000, countdown_paused_ms: 90_000 };
+    expect(countdownIsPaused(held)).toBe(true);
+    expect(countdownRemainingMs(held, 999_999)).toBe(90_000);
+    expect(countdownRemainingMs(held, 999_999, { past: true })).toBe(90_000);
+  });
+
+  // THE TRAP. `Number(null) === 0`, and `0` is finite.
+  it.each([
+    ['null', null],
+    ['undefined', undefined],
+    ['absent', 'ABSENT'],
+  ])('does not call a timer held when paused_ms is %s', (_name, value) => {
+    const c = { countdown_to: 2_000_000 };
+    if (value !== 'ABSENT') c.countdown_paused_ms = value;
+    expect(countdownIsPaused(c)).toBe(false);
+    // …and it must still count down rather than freezing at that phantom zero.
+    expect(countdownRemainingMs(c, 1_000_000)).toBe(1_000_000);
+  });
+});

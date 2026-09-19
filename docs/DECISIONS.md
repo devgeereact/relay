@@ -5588,3 +5588,63 @@ page with the reason attached, so it cannot be forgotten quietly.
 **It is not authentication and must never be described as one.** DECISIONS §35 is untouched:
 the ack carries a number this server already knows and nothing any client said, and the hub
 still records nothing about who connected.
+
+## 101. A sermon that has run over can be held, which needed the held figure to be signed (2026-09-19)
+
+§99 declined this and said why: *"holding a clock that has run out is structurally
+inexpressible, because `countdownRemainingMs` answers a held timer with a stored figure that
+is positive by contract"*. It filed RG-175 rather than forcing it, and recorded that
+`Stage.svelte` renders a `held` row nothing in the product can produce.
+
+That was an accurate reading of the code and the wrong conclusion about the cause. Nothing
+about it was structural. Four things, on four layers, each of which looks local:
+
+1. `timers::remaining_ms` clamped with `.max(0)`, so a timer two minutes over answered `0`.
+2. `TimerRegistry::adjust` refused anything under a second as `TooShort`.
+3. `countdown.js::countdownRemainingMs` returned a held figure only when `held > 0`.
+4. No rendered control anywhere called `adjust_timer` with `paused` — `+5` and `Stop` were
+   the whole transport, which is RG-152's shape one command along.
+
+Three of the four could be fixed with the feature still entirely broken, which is why this
+is recorded as one decision rather than four repairs.
+
+**The held figure is now SIGNED, and the audience guarantee moved rather than weakened.** It
+used to rest on the contract being positive. It now rests on the same clamp a RUNNING
+countdown already had: `countdownRemainingMs` returns the held figure as-is under `past` and
+`Math.max(0, held)` without it, exactly as it treats a live deadline. A congregation wall
+reads zero as "it finished" and paints the done message; `-2:00` in front of a room is not a
+thing anybody asked for, and it still cannot happen. In Rust the split is
+`remaining_signed_ms` with `remaining_ms` as its clamped caller — one subtraction with a
+floor one caller lifts, the same shape §99 chose for `timerRemainingMs({ past })` and stated
+twice across the bridge for the same reason.
+
+**A REQUEST AND A READING ARE NOT THE SAME THING, and that distinction is the whole repair.**
+`adjust`'s floor still refuses a requested length under a second in both scopes — `-1`
+walking a clock to zero and the caller then substituting five minutes is the failure that
+guard exists for, and `+5` past zero still grants five minutes *from now* rather than onto a
+debt. What is now allowed to be negative is only the figure `adjust` works out for ITSELF
+when the caller named none, which happens when the caller is merely holding. So the Live
+control names no figure, deliberately: its own reading is clamped at zero, and a hold it
+computed would be refused at exactly the moment an operator wants it.
+
+**Why hold at all, when Stop and `+5` exist.** They answer different questions. Stop throws
+the elapsed figure away; `+5` re-aims it. Holding is the third answer — *note where we got
+to* — and past zero it is the only one that keeps the number the preacher has been reading,
+which is the number somebody is about to make a decision on.
+
+**Words, not colour, on both surfaces.** Live's band prints `held` beside the figure and dims
+it; the preacher's rail already had its `Held` chip and its own CSS. Neither gets a law
+colour: amber is ON AIR, cyan a guess, amethyst rehearsal, red a failure, and a held clock is
+none of the four. A held row is still never WARNED — it is not running out, it is where the
+operator left it, and a frozen figure pulsing red says the opposite of what is true.
+
+**A stale comment corrected in the same commit.** `Stage.svelte`'s rail carried *"the stored
+figure … is always positive, so a held row can never take the over-time branch above"*. True
+when written, exactly backwards now, and on the surface a preacher reads from — the class of
+defect this repository files against its own handbook.
+
+**What this does NOT do.** It does not add reset-to-configured-length, timer modes, or
+count-down-to-a-time-of-day; those are the rest of the plan's phase 3 and want their own
+decisions, particularly around midnight, DST and system sleep. It does not let a cue-bound
+timer reach a congregation screen. And it does not persist anything: the registry is still
+in memory, so a relaunch mid-service still loses every clock, held or running.

@@ -121,7 +121,25 @@ pub enum TimerError {
 /// one side, which is the bug `docs/REBRAND.md` phase 7 records as fixed once
 /// already.
 pub fn remaining_ms(t: &Timer, now_ms: i64) -> i64 {
-    t.paused_ms.unwrap_or(t.target_ms - now_ms).max(0)
+    remaining_signed_ms(t, now_ms).max(0)
+}
+
+/// THE SAME READING WITH THE FLOOR LIFTED — the figure past zero.
+///
+/// `remaining_ms` is this, clamped. One subtraction with a floor one caller
+/// lifts, which is exactly the shape `timers.js::timerRemainingMs` already has
+/// on the far side of the bridge (`{ past }`, DECISIONS §99) — and it is stated
+/// twice across the bridge for the same reason that one is, never a third time
+/// on one side.
+///
+/// **Who is allowed to ask.** A `Scope::Stage` clock is read by one person who
+/// is deciding whether to wrap up, and `+2:00 over` is the fact they are acting
+/// on. A `Scope::Both` countdown is read by a room, where zero means "it
+/// finished" and the wall paints the done message — a negative would never
+/// reach that branch and `-2:00` in front of a congregation is not a thing
+/// anybody asked for. So the callers that clamp keep clamping.
+pub fn remaining_signed_ms(t: &Timer, now_ms: i64) -> i64 {
+    t.paused_ms.unwrap_or(t.target_ms - now_ms)
 }
 
 /// What a `Both` timer looks like on the wire: the `countdown_*` fields and the
@@ -285,8 +303,27 @@ impl TimerRegistry {
         let mut g = self.inner();
         let t = g.timers.get_mut(&id).ok_or(TimerError::NoSuchTimer)?;
 
-        let next = remaining_ms_arg.unwrap_or_else(|| remaining_ms(t, now_ms));
-        if next < 1000 {
+        // ── A REQUESTED LENGTH AND AN OBSERVED ONE ARE NOT THE SAME THING ────
+        //
+        // `Some(v)` is a REQUEST — `+5`, `-1`, a re-aim — and the floor guards
+        // it in both scopes, because a request for zero followed by the
+        // caller's five-minute substitution puts 5:00 on a wall nobody aimed
+        // at. `None` is a READING: the caller is only holding or letting go,
+        // and the figure is whatever the clock already says.
+        //
+        // A reading is allowed to be negative on the stage, and that is RG-175.
+        // The rail has rendered a `held` row since wave 4 and nothing could
+        // produce one, because this clamped to zero and then refused the result
+        // as `TooShort` — so a sermon two minutes over could not be held at the
+        // figure the preacher was reading. DECISIONS §99 left it open as
+        // "structurally inexpressible"; it was one clamp.
+        let requested = remaining_ms_arg.is_some();
+        let next = match remaining_ms_arg {
+            Some(v) => v,
+            None if t.scope == Scope::Stage => remaining_signed_ms(t, now_ms),
+            None => remaining_ms(t, now_ms),
+        };
+        if next < 1000 && (requested || t.scope != Scope::Stage) {
             return Err(TimerError::TooShort);
         }
         let hold = paused.unwrap_or(t.paused_ms.is_some());
@@ -361,6 +398,116 @@ mod tests {
             plan_item_id: None,
             started_in_rehearsal: false,
         }
+    }
+
+    /// A SERMON THAT HAS RUN OVER CAN STILL BE HELD (RG-175).
+    ///
+    /// The one thing `Stage.svelte` could render and nothing could produce. Its
+    /// rail has modelled a `held` row — frozen, never warned, with its own CSS —
+    /// since wave 4, and `adjust_timer` has taken a `paused` argument for as
+    /// long; but `remaining_ms` clamps at zero and `adjust` refuses anything
+    /// under a second, so a timer past zero answered `0` and the hold came back
+    /// `TooShort`. DECISIONS §99 recorded it as "structurally inexpressible" and
+    /// left it open, which is what this closes.
+    ///
+    /// The figure past zero is what the preacher is actually reading — `+2:00
+    /// over` is the fact somebody is deciding to act on — so holding must freeze
+    /// THAT, not reset to zero and not refuse.
+    #[test]
+    fn a_stage_timer_can_be_held_after_it_has_run_out() {
+        let now = 1_000_000;
+        let reg = TimerRegistry::default();
+        let id = reg.start(five(now, Scope::Stage));
+
+        // Seven minutes later: two minutes past a five-minute clock.
+        let over = now + 7 * 60_000;
+        let held = reg
+            .adjust(id, None, Some(true), over)
+            .expect("a stage timer two minutes over could not be held");
+        assert_eq!(
+            held.paused_ms,
+            Some(-120_000),
+            "the hold did not freeze the figure the preacher is reading"
+        );
+        assert_eq!(
+            remaining_signed_ms(&held, over + 30_000),
+            -120_000,
+            "a held timer moved while it was held"
+        );
+    }
+
+    /// AND RESUMING CONTINUES FROM IT, rather than from zero.
+    #[test]
+    fn resuming_an_overrun_stage_timer_carries_on_counting_up() {
+        let now = 1_000_000;
+        let reg = TimerRegistry::default();
+        let id = reg.start(five(now, Scope::Stage));
+        let over = now + 7 * 60_000;
+        reg.adjust(id, None, Some(true), over).expect("hold");
+
+        // Held for a minute, then let go.
+        let later = over + 60_000;
+        let run = reg.adjust(id, None, Some(false), later).expect("resume");
+        assert_eq!(run.paused_ms, None, "still held after a resume");
+        assert_eq!(
+            remaining_signed_ms(&run, later + 1_000),
+            -121_000,
+            "a resumed overrun clock did not carry on from where it was held"
+        );
+    }
+
+    /// THE AUDIENCE CONTRACT IS UNCHANGED, AND THAT IS HALF THE POINT.
+    ///
+    /// A congregation countdown reads zero as "it finished" and paints the done
+    /// message; a negative would never reach that branch, and a wall showing
+    /// `-2:00` to a room is not a thing anybody asked for. So the signed figure
+    /// is a `Scope::Stage` affordance only, and `Both` still refuses.
+    #[test]
+    fn a_congregation_countdown_still_refuses_to_be_held_past_zero() {
+        let now = 1_000_000;
+        let reg = TimerRegistry::default();
+        let id = reg.start(five(now, Scope::Both));
+        let over = now + 7 * 60_000;
+        assert_eq!(
+            reg.adjust(id, None, Some(true), over),
+            Err(TimerError::TooShort),
+            "a congregation countdown was held at a negative figure"
+        );
+    }
+
+    /// AND AN EXPLICIT RE-AIM IS STILL REFUSED BELOW A SECOND, BOTH SCOPES.
+    ///
+    /// The guard that stops `-1` walking a clock to zero and the caller then
+    /// substituting five minutes. Only the IMPLICIT figure — the one `adjust`
+    /// works out for itself when the caller is merely holding — is allowed to be
+    /// negative, because that one is a reading rather than a request.
+    #[test]
+    fn a_re_aim_below_a_second_is_still_refused() {
+        let now = 1_000_000;
+        let reg = TimerRegistry::default();
+        for scope in [Scope::Both, Scope::Stage] {
+            let id = reg.start(five(now, scope));
+            assert_eq!(
+                reg.adjust(id, Some(0), None, now),
+                Err(TimerError::TooShort),
+                "{scope:?}: a re-aim to zero was accepted"
+            );
+            assert_eq!(
+                reg.adjust(id, Some(-5_000), None, now),
+                Err(TimerError::TooShort),
+                "{scope:?}: a re-aim to a negative length was accepted"
+            );
+        }
+    }
+
+    /// AND THE CLAMPED READING IS STILL CLAMPED, for every existing caller.
+    #[test]
+    fn the_clamped_reading_never_answers_a_negative() {
+        let now = 1_000_000;
+        let t = five(now, Scope::Stage);
+        let over = now + 7 * 60_000;
+        assert_eq!(remaining_ms(&t, over), 0);
+        assert_eq!(remaining_signed_ms(&t, over), -120_000);
     }
 
     /// A TIMER OUTLIVES CONTENT THAT IS NOT A TIMER.

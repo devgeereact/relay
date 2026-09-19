@@ -96,18 +96,45 @@ export const MIN_BROADCAST_MS = 1000;
  */
 export function countdownRemainingMs(content, nowMs = Date.now(), { past = false } = {}) {
   const c = content || {};
-  const held = Number(c.countdown_paused_ms);
-  if (Number.isFinite(held) && held > 0) return held;
+  const held = heldMs(c);
+  // A HELD FIGURE IS SIGNED, AND THE FLOOR IS THE CALLER'S (RG-175).
+  //
+  // This used to test `held > 0`, which made a hold past zero impossible to
+  // express: a stage timer two minutes over answered its deadline instead of
+  // its held figure, so the `held` row `Stage.svelte` has rendered since wave 4
+  // could never be produced. DECISIONS §99 recorded that as structural; it was
+  // this comparison.
+  //
+  // The audience guarantee is kept by the same clamp a RUNNING countdown gets,
+  // rather than by the contract being positive: a wall reads zero as "it
+  // finished" and paints the done message, and `-2:00` in front of a room is
+  // not a thing anybody asked for. One rule, one opt-in, both readings honest.
+  if (held !== null) return past ? held : Math.max(0, held);
   const to = Number(c.countdown_to);
   if (!Number.isFinite(to) || to <= 0) return null;
   const left = to - (Number(nowMs) || 0);
   return left > 0 || past ? left : 0;
 }
 
+/**
+ * The held figure, or `null` when this timer is not held.
+ *
+ * **The null guard is explicit because it used to be accidental.** `Number(null)`
+ * is `0`, and `null` is exactly what the wire sends for a timer that is NOT
+ * held — so the old `held > 0` was rejecting it by arithmetic rather than by
+ * intent. Widen that test to "is it finite" without this, and every unheld
+ * countdown in the product freezes at `0:00`.
+ */
+function heldMs(c) {
+  const raw = c?.countdown_paused_ms;
+  if (raw === null || raw === undefined || raw === '') return null;
+  const held = Number(raw);
+  return Number.isFinite(held) ? held : null;
+}
+
 /** Is the countdown on this content being HELD? One reader, same reason as above. */
 export function countdownIsPaused(content) {
-  const held = Number(content?.countdown_paused_ms);
-  return Number.isFinite(held) && held > 0;
+  return heldMs(content || {}) !== null;
 }
 
 /**

@@ -4465,6 +4465,85 @@ fn stopping_the_last_programme_timer_publishes_an_empty_set_to_the_stage() {
     );
 }
 
+/// A SERMON THAT HAS RUN OVER CAN BE HELD, THROUGH THE REAL COMMAND (RG-175).
+///
+/// The registry test proves the arithmetic and the mounted test proves a control
+/// reaches it; this proves the command path in between, and that the figure
+/// survives onto the wire the preacher's tablet actually reads.
+///
+/// It matters because every one of the four things that made this impossible
+/// lived on a different layer — the clamp in `timers::remaining_ms`, the
+/// `TooShort` refusal in `adjust`, the `> 0` in `countdown.js`, and no rendered
+/// control at all. Three of them could be fixed with this path still broken.
+#[test]
+fn a_programme_timer_past_zero_can_be_held_at_the_figure_it_is_showing() {
+    let app = app();
+    let h = app.handle().clone();
+    let mut kiosk = qa::Kiosk::attach(&h);
+
+    // The shortest timer `start_timer` will accept without substituting its own
+    // length: a tenth of a second, so it is over before the hold is asked for.
+    let programme = start_timer(
+        h.clone(),
+        0.002,
+        "Sermon".into(),
+        String::new(),
+        "stage".into(),
+        None,
+        None,
+    )
+    .expect("a programme timer");
+    settle();
+    kiosk.next().expect("the start reached the tablet");
+    std::thread::sleep(std::time::Duration::from_millis(250));
+
+    // No figure named: the engine reads the clock. Naming one is what a caller
+    // on the far side of the bridge cannot do, because its own reading is
+    // clamped at zero and a REQUESTED zero is refused as `TooShort`.
+    adjust_timer(h.clone(), programme, None, Some(true))
+        .expect("a programme timer past zero refused to be held");
+    settle();
+    let held = list_timers(h.clone())
+        .expect("list")
+        .into_iter()
+        .find(|t| t.timer.id == programme)
+        .expect("the held timer vanished");
+    assert!(
+        held.timer.paused_ms.is_some_and(|p| p < 0),
+        "the hold did not freeze the overrun figure: {:?}",
+        held.timer.paused_ms
+    );
+
+    let frame = kiosk.next().expect("the hold told the tablet nothing");
+    let v: serde_json::Value = serde_json::from_str(&frame).expect("valid JSON");
+    assert_eq!(v["kind"], "timer");
+    let row = &v["timers"][0];
+    let paused = row["countdown_paused_ms"]
+        .as_i64()
+        .expect("no held figure on the wire");
+    assert!(
+        paused < 0,
+        "the wire carried {paused}: the tablet cannot render a row it is not sent"
+    );
+
+    // AND LETTING GO CARRIES ON FROM THERE, rather than restarting at zero.
+    adjust_timer(h.clone(), programme, None, Some(false)).expect("resume");
+    let run = list_timers(h.clone())
+        .expect("list")
+        .into_iter()
+        .find(|t| t.timer.id == programme)
+        .expect("the resumed timer vanished");
+    assert_eq!(
+        run.timer.paused_ms, None,
+        "a resumed timer is still holding a figure"
+    );
+    assert!(
+        run.timer.target_ms < crate::now_epoch_ms(),
+        "a resumed overrun timer was re-aimed into the future, losing the elapsed \
+         figure the hold existed to keep"
+    );
+}
+
 /// A CONGREGATION TIMER IS NOT THE PROGRAMME, AND THE STAGE FRAME SAYS SO.
 ///
 /// The two scopes share a registry and a wire vocabulary, which is precisely why

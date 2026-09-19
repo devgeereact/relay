@@ -497,11 +497,18 @@
   // new row, not RG-153.
   // ── AND A HELD ROW IS FROZEN, AND SAYS SO (wave 4 track A) ────────────────
   //
-  // `countdownRemainingMs` answers a held timer with its stored figure, which is
-  // always positive, so a held row can never take the over-time branch above. It
-  // is never warned either: a held timer is not running out, it is where the
-  // operator left it, and a frozen figure pulsing red says the opposite of what is
-  // true.
+  // `countdownRemainingMs` answers a held timer with its stored figure, and as of
+  // RG-175 that figure is SIGNED — a sermon held two minutes over holds at
+  // `-120000` and this row reads `+2:00`, frozen. The sentence that used to sit
+  // here said the stored figure was "always positive, so a held row can never
+  // take the over-time branch above", which was true when it was written and is
+  // now exactly backwards: holding past zero is the case the hold exists for,
+  // because the elapsed figure the preacher has been reading is the thing Stop
+  // throws away and `+5` re-aims.
+  //
+  // It is never WARNED, though, and that half is unchanged: a held timer is not
+  // running out, it is where the operator left it, and a frozen figure pulsing
+  // red says the opposite of what is true.
   //
   // ── WHY THE OPERATOR'S DONE MESSAGE IS STILL NOT READ HERE ────────────────
   //
