@@ -12,7 +12,7 @@
   // like an OBS/kiosk output, but rendered as a readable mobile confidence view.
   import { onMount, onDestroy } from 'svelte';
   import { acceptsStageMessage, roleOf } from './lib/channelroles.js';
-  import { startBeat, paintState } from './lib/outputHealth.js';
+  import { startBeat, paintState, BEAT_INTERVAL_MS } from './lib/outputHealth.js';
 
   // ── WHICH SCREEN THIS IS ────────────────────────────────────────────────────
   //
@@ -355,6 +355,45 @@
   let cdWarnMs = null; // the threshold chosen for THIS countdown, when one was
   let svcStart = null; // service-start epoch, for the elapsed zone
   let nowMs = 0;
+
+  // ── THE HOST'S CLOCK, AND WHETHER ANYBODY IS STILL ANSWERING (S5, S6) ─────
+  //
+  // `countdown_to` is an absolute epoch produced on the HOST. This page used to
+  // subtract its own `Date.now()` from it, so a tablet a minute out showed a
+  // minute of error on the figure a preacher paces a sermon against. The hub
+  // now answers every `beat` with its own epoch, so the correction rides a
+  // round trip that was already happening.
+  //
+  // A MEDIAN, not the last sample: one slow round trip is a latency
+  // measurement, not a clock change, and a single outlier must not be able to
+  // move what the preacher is reading. The offset is short by the return leg,
+  // which on a LAN is single-digit milliseconds against a figure displayed to
+  // the second — so it is not corrected for, and this comment is the honest
+  // statement of that rather than a claim of sub-second sync.
+  const HOST_SAMPLES = 5;
+  /** Three unanswered beats. Same grace the console gives a screen. */
+  const STALE_AFTER_MS = BEAT_INTERVAL_MS * 3;
+  let hostSamples = [];
+  let hostOffsetMs = 0;
+  let lastAckAt = null;
+  let beatingSince = null;
+  let stale = false;
+
+  /** Only a page that actually beats is owed an answer. Channel 0 sends none. */
+  $: expectsAck = channelId > 0;
+
+  function noteHostClock(at) {
+    if (typeof at !== 'number' || !Number.isFinite(at)) return;
+    const seen = Date.now();
+    lastAckAt = seen;
+    // Answered, so it is not stale — set here rather than waiting for the next
+    // one-second tick, because the pip is the thing being looked at.
+    stale = false;
+    hostSamples = [...hostSamples, at - seen].slice(-HOST_SAMPLES);
+    const sorted = [...hostSamples].sort((a, b) => a - b);
+    hostOffsetMs = sorted[Math.floor(sorted.length / 2)];
+    nowMs = Date.now() + hostOffsetMs;
+  }
   // ONE READER, shared with the wall and the console (docs/REBRAND.md §7). This was
   // its own subtraction, which was fine while the answer was a subtraction — and is
   // not, now that it has an exception. A preacher's own screen counting down through
@@ -877,6 +916,10 @@
       // and a panic control takes it down with everything else it says (§91).
       if (!acceptsStageMessage(myRole)) return;
       alert = (m.text || '').trim();
+    } else if (m.kind === 'beat_ack') {
+      // The hub's answer to this page's own beat. Carries the host clock and
+      // nothing else; it is the only inbound frame this page ASKED for.
+      noteHostClock(m.at);
     } else if (m.kind === 'stage_next') {
       next = m.label || m.text ? { label: m.label || '', text: m.text || '' } : null;
     } else if (m.kind === 'timer') {
@@ -908,7 +951,13 @@
   // preacher holding the phone cannot tell a page that is about to work from one
   // that never will. After a few failed attempts it says so plainly instead.
   let attempts = 0;
-  $: reach = connected ? 'live' : attempts > 3 ? "can't reach Relay — retrying" : 'connecting…';
+  $: reach = !connected
+    ? attempts > 3
+      ? "can't reach Relay — retrying"
+      : 'connecting…'
+    : stale
+      ? 'not answering'
+      : 'live';
 
   function connect(host) {
     if (closed) return;
@@ -1003,9 +1052,20 @@
       getState: () => paintState({ black: down === 'black', visible: shown, content: !!content }),
       getWs: () => ws,
     });
+    beatingSince = Date.now();
     const tick = () => {
-      clock = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      nowMs = Date.now(); // drives the countdown mirror
+      // ONE CORRECTED INSTANT drives the clock, the countdown mirror, the
+      // programme rail and the service-elapsed figure, so they cannot disagree
+      // with each other or with the wall.
+      nowMs = Date.now() + hostOffsetMs;
+      clock = new Date(nowMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      // A SOCKET IS NOT A SCREEN. `connected` is set on `onopen` and a half-open
+      // socket never fires `onclose`, so a phone that slept, roamed, or sat
+      // behind a timed-out NAT kept a green pip over frozen content. Silence
+      // alone cannot show that — the hub publishes only when something changes —
+      // but an unanswered beat can, because the page knows it asked.
+      const since = lastAckAt ?? beatingSince;
+      stale = expectsAck && since !== null && Date.now() - since > STALE_AFTER_MS;
     };
     tick();
     timer = setInterval(tick, 1000);
@@ -1028,7 +1088,7 @@
 <div class="sr">
   <header>
     <span class="brand">Relay · Stage</span>
-    <span class="status" class:on={connected}><i></i>{reach}</span>
+    <span class="status" class:on={connected && !stale}><i></i>{reach}</span>
     <button class="ctl-toggle" class:active={showZones} on:click={() => (showZones = !showZones)} aria-label="Choose what this screen shows">
       Zones
     </button>

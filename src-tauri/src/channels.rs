@@ -2715,6 +2715,50 @@ pub async fn run_kiosk_server(
                                             .and_then(PaintState::parse),
                                     ) {
                                         health.beat(ch, st, "kiosk", BeatGap::from_json(&v));
+                                        // ── AND THE SCREEN IS TOLD THE TIME ──
+                                        //
+                                        // Answered here, INSIDE the parse, so an
+                                        // unparseable beat draws no reply: an ack
+                                        // that arrived for anything would let a
+                                        // client tell a good frame from a bad one
+                                        // by whether the server spoke, which is a
+                                        // probe this read-only server does not owe
+                                        // anybody.
+                                        //
+                                        // Two findings wanted this one frame. The
+                                        // page cannot detect a half-open socket
+                                        // from silence, because the hub only
+                                        // publishes when something CHANGES and
+                                        // silence is the normal state of a quiet
+                                        // service — so the thing it is already
+                                        // sending every two seconds gets an
+                                        // answer, and three unanswered beats mean
+                                        // stale. And `countdown_to` is an absolute
+                                        // epoch produced on THIS machine while the
+                                        // stage page subtracts its own
+                                        // `Date.now()`, so a tablet a minute out
+                                        // showed a minute of error to the person
+                                        // preaching; the host clock rides the ack,
+                                        // and the round trip that carried it is
+                                        // what bounds how well the offset can be
+                                        // known.
+                                        //
+                                        // To the ONE client that beat, exactly as
+                                        // the hello reply is, rather than
+                                        // broadcast: a tick to every browser
+                                        // source and lobby TV in the building
+                                        // would be traffic bought for one page.
+                                        // It carries a number this server already
+                                        // knows and nothing any client said.
+                                        let out = format!(
+                                            r#"{{"kind":"beat_ack","at":{}}}"#,
+                                            crate::now_epoch_ms()
+                                        );
+                                        let _ = write
+                                            .send(tokio_tungstenite::tungstenite::Message::Text(
+                                                out,
+                                            ))
+                                            .await;
                                     }
                                 }
                                 if v.get("kind").and_then(|k| k.as_str()) == Some("hello") {
@@ -5432,6 +5476,19 @@ mod tests {
         // it, because it overrides what is on the screens rather than being what
         // is on them.
         ("screen_state", false),
+        // NOT A PUBLISHED FRAME AT ALL, AND THAT IS THE VERDICT.
+        //
+        // Every other row here answers "should a screen that joins late be
+        // shown this?". `beat_ack` does not reach the hub: it is written
+        // straight to the one socket whose `beat` prompted it, the same way the
+        // hello reply is, so there is nothing to retain and nobody to replay it
+        // to. Retaining it would be meaningless twice over — it carries a host
+        // timestamp that was true when a DIFFERENT client reported, and a late
+        // joiner gets its own within two seconds by beating itself.
+        //
+        // It is listed rather than excused because the scanner reads source
+        // literals, and a kind with no row is the finding this test exists for.
+        ("beat_ack", false),
     ];
 
     /// THE ENUMERATION MUST GROW WITH THE MODULE, OR IT IS NOT AN ENUMERATION.
@@ -6723,6 +6780,148 @@ mod tests {
             got.as_deref().unwrap_or("").contains("Offering"),
             "a stage tablet that rejoined mid-service came back with no programme \
              timer: {got:?}"
+        );
+    }
+
+    /// A SCREEN THAT REPORTS IS TOLD THE TIME, AND THAT IT WAS HEARD.
+    ///
+    /// Two open findings wanted the same frame, so they get one (plan S5, S6).
+    ///
+    /// **S5 — a socket is not a screen.** `Stage.svelte` set `connected` on
+    /// `onopen` and never re-evaluated it, so a phone that slept, roamed, or sat
+    /// behind a NAT that had timed out kept a green `live` pip over frozen
+    /// content. Absence of frames cannot detect that: the hub only publishes
+    /// when something changes, so silence is the normal state of a quiet
+    /// service. Something has to answer on a schedule, and the page is already
+    /// sending a `beat` every two seconds.
+    ///
+    /// **S6 — the countdown was computed against the phone's clock.**
+    /// `countdown_to` is an absolute epoch produced on the HOST, and the stage
+    /// page subtracts its own `Date.now()`. A tablet a minute out showed a
+    /// minute of error to the person preaching. The ack carries the host's
+    /// epoch, so the offset comes from the round trip that was already
+    /// happening — and the round trip's own duration is what bounds the
+    /// correction's accuracy.
+    ///
+    /// It is sent to the ONE client that beat, exactly as the hello reply is,
+    /// rather than broadcast: a tick to every browser source and lobby TV in
+    /// the building would be traffic bought for one page's benefit. It stays
+    /// inert and read-only — it carries a number this server already knows and
+    /// nothing a client said.
+    #[tokio::test]
+    async fn a_screen_that_beats_is_answered_with_the_host_clock() {
+        let port = free_port();
+        let hub = KioskHub::default();
+        tokio::spawn(run_kiosk_server(
+            log_only(),
+            hub.sender(),
+            hub.templates_handle(),
+            hub.clients_handle(),
+            hub.default_template_handle(),
+            hub.channel_roles_handle(),
+            hub.channel_looks_handle(),
+            hub.channel_templates_handle(),
+            hub.channel_shows_handle(),
+            hub.last_screen_handle(),
+            hub.last_transition_handle(),
+            hub.last_timers_handle(),
+            hub.last_background_handle(),
+            hub.screens_down_handle(),
+            hub.look_ids_handle(),
+            OutputHealth::default(),
+            port,
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
+            .await
+            .expect("connect");
+        let (mut write, mut read) = ws.split();
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"kind":"beat","channel":2,"state":"content"}"#.to_string(),
+            ))
+            .await
+            .expect("send beat");
+
+        let before = crate::now_epoch_ms();
+        let mut ack = None;
+        for _ in 0..HELLO_FRAMES {
+            let Ok(Some(Ok(msg))) =
+                tokio::time::timeout(std::time::Duration::from_secs(2), read.next()).await
+            else {
+                break;
+            };
+            let text = msg.into_text().unwrap_or_default();
+            if text.contains(r#""kind":"beat_ack""#) {
+                ack = Some(text);
+                break;
+            }
+        }
+        let after = crate::now_epoch_ms();
+
+        let ack = ack.expect("a screen reported and was told nothing back");
+        let v: serde_json::Value = serde_json::from_str(&ack).expect("beat_ack is not JSON");
+        let at = v
+            .get("at")
+            .and_then(|a| a.as_i64())
+            .expect("no host clock on the ack");
+        assert!(
+            at >= before && at <= after,
+            "the ack carried {at}, which is not a host time taken between \
+             {before} and {after} — a stage page correcting its clock against \
+             this would be corrected to the wrong one"
+        );
+    }
+
+    /// AND A MALFORMED BEAT IS STILL DROPPED, RATHER THAN ANSWERED.
+    ///
+    /// The ack must not become a way to make the server talk. `state` is parsed
+    /// against a closed enum and a beat that fails it touches no health and now
+    /// must also draw no reply — otherwise an unparseable beat would be
+    /// distinguishable from a parseable one by whether an answer came back,
+    /// which is a probe this read-only server does not owe anybody.
+    #[tokio::test]
+    async fn a_beat_that_does_not_parse_is_not_answered() {
+        let port = free_port();
+        let hub = KioskHub::default();
+        tokio::spawn(run_kiosk_server(
+            log_only(),
+            hub.sender(),
+            hub.templates_handle(),
+            hub.clients_handle(),
+            hub.default_template_handle(),
+            hub.channel_roles_handle(),
+            hub.channel_looks_handle(),
+            hub.channel_templates_handle(),
+            hub.channel_shows_handle(),
+            hub.last_screen_handle(),
+            hub.last_transition_handle(),
+            hub.last_timers_handle(),
+            hub.last_background_handle(),
+            hub.screens_down_handle(),
+            hub.look_ids_handle(),
+            OutputHealth::default(),
+            port,
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
+            .await
+            .expect("connect");
+        let (mut write, mut read) = ws.split();
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"kind":"beat","channel":2,"state":"sideways"}"#.to_string(),
+            ))
+            .await
+            .expect("send beat");
+
+        let answered =
+            tokio::time::timeout(std::time::Duration::from_millis(400), read.next()).await;
+        assert!(
+            answered.is_err(),
+            "an unparseable beat drew a reply: {answered:?}"
         );
     }
 

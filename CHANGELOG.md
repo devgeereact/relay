@@ -38,6 +38,14 @@ way out. And when the phone cannot reach Relay, it now says so, rather than
 saying "No next verse" — which is what Relay says when a reading has genuinely
 ended, and which could appear over a wall that had in fact just advanced.
 
+The preacher's screen now shows Relay's time, not the phone's. A countdown is
+sent as the moment it ends, and the phone worked out the minutes and seconds
+itself — so a tablet whose clock was a minute out showed a minute of error on
+the figure a sermon is paced against. The phone now takes the time from Relay.
+It also notices when Relay has stopped answering and says "not answering"
+instead of showing a live indicator over frozen content, which a sleeping or
+roaming phone could previously do for the rest of a service.
+
 Physical phone and tablet scanning remains to be verified.
 
 ### Lower thirds had nothing behind the words

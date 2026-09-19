@@ -152,3 +152,102 @@ describe('the stage page reports that it is painting', () => {
     expect(beats().length).toBe(after);
   });
 });
+
+// ── AND THE ANSWER IS WORTH SOMETHING (plan S5, S6) ────────────────────────
+//
+// The hub answers each `beat` with `{"kind":"beat_ack","at":<host epoch ms>}`,
+// to that one client. Two findings wanted the same frame.
+//
+// **S5 — a socket is not a screen.** `connected` was set on `onopen` and never
+// re-evaluated, so a phone that slept, roamed, or sat behind a NAT that had
+// timed out kept a green `live` pip over frozen content. Silence cannot detect
+// that on its own: the hub publishes only when something CHANGES, so no frames
+// is the normal state of a quiet service. An unanswered beat is different — the
+// page knows it asked.
+//
+// **S6 — the countdown was computed against the phone's clock.** `countdown_to`
+// is an absolute epoch produced on the host; the stage page subtracted its own
+// `Date.now()`. A tablet a minute out showed a minute of error to the person
+// preaching, on the figure they are pacing a sermon against.
+describe('what the phone does with the answer', () => {
+  /** A content frame carrying a countdown aimed by a host `skew` ms ahead of us. */
+  const countdownFrom = (skew, minutes) => ({
+    kind: 'content',
+    reference: 'Notices',
+    countdown_to: Date.now() + skew + minutes * 60_000,
+    countdown_from: Date.now() + skew,
+  });
+
+  const ack = (skew) => send({ kind: 'beat_ack', at: Date.now() + skew });
+
+  it('shows the host countdown, not the one the phone would compute alone', async () => {
+    vi.useFakeTimers();
+    await open(2);
+    // The phone is a minute BEHIND the host. Uncorrected it would read 6:00 on a
+    // five-minute countdown, and the preacher would pace a sermon against it.
+    const SKEW = 60_000;
+    ack(SKEW);
+    send(countdownFrom(SKEW, 5));
+    await vi.advanceTimersByTimeAsync(1000);
+    await tick();
+    // A second has passed since it was aimed, so 4:59 is the right answer and
+    // 5:59 is the bug. The band, not an exact string: this asserts the CLOCK
+    // was corrected, and must not fail on the tick that carried it.
+    expect(host.textContent).toMatch(/\b4:5\d\b|\b5:00\b/);
+    expect(host.textContent).not.toMatch(/\b5:5\d\b|\b6:00\b/);
+  });
+
+  it('is not thrown by one slow round trip', async () => {
+    // A single late ack is a latency sample, not a clock change. The offset is
+    // a median, so one outlier cannot move what the preacher is reading.
+    vi.useFakeTimers();
+    await open(2);
+    for (let i = 0; i < 4; i += 1) {
+      ack(60_000);
+      await vi.advanceTimersByTimeAsync(BEAT_INTERVAL_MS);
+    }
+    ack(600_000); // one wild sample
+    send(countdownFrom(60_000, 5));
+    await vi.advanceTimersByTimeAsync(1000);
+    await tick();
+    expect(host.textContent).toMatch(/\b4:5\d\b|\b5:00\b/);
+    // The wild sample would have put it nine minutes out. Scoped to the
+    // countdown's own label: an unscoped match also catches the wall clock,
+    // which legitimately reads 11:02.
+    expect(host.textContent).not.toMatch(/Countdown\s+1\d:/);
+  });
+
+  it('stops claiming to be live when its beats stop being answered', async () => {
+    vi.useFakeTimers();
+    await open(2);
+    ack(0);
+    await vi.advanceTimersByTimeAsync(BEAT_INTERVAL_MS);
+    await tick();
+    expect(host.textContent).toContain('live');
+    // Three intervals with the socket still nominally open and nobody answering.
+    await vi.advanceTimersByTimeAsync(BEAT_INTERVAL_MS * 4);
+    await tick();
+    expect(host.textContent).not.toContain('live');
+  });
+
+  it('comes back to live when the answers resume', async () => {
+    vi.useFakeTimers();
+    await open(2);
+    await vi.advanceTimersByTimeAsync(BEAT_INTERVAL_MS * 4);
+    await tick();
+    expect(host.textContent).not.toContain('live');
+    ack(0);
+    await tick();
+    expect(host.textContent).toContain('live');
+  });
+
+  it('does not call a page with no channel stale, because it never beat', async () => {
+    // An unidentified `stage.html` sends no beat by design, so it is owed no
+    // ack. Reporting it as stale would be a finding invented from an absence.
+    vi.useFakeTimers();
+    await open(null);
+    await vi.advanceTimersByTimeAsync(BEAT_INTERVAL_MS * 6);
+    await tick();
+    expect(host.textContent).not.toContain('not answering');
+  });
+});

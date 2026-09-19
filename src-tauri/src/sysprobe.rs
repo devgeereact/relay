@@ -260,10 +260,19 @@ mod tests {
             ("broadcast".into(), "255.255.255.255".parse().unwrap()),
             ("IPv6".into(), "::1".parse().unwrap()),
         ]);
-        assert_eq!(addresses, vec![
-            super::NetworkAddress { interface: "Ethernet".into(), address: "169.254.2.8".into() },
-            super::NetworkAddress { interface: "Wi-Fi".into(), address: "192.168.1.42".into() },
-        ]);
+        assert_eq!(
+            addresses,
+            vec![
+                super::NetworkAddress {
+                    interface: "Ethernet".into(),
+                    address: "169.254.2.8".into()
+                },
+                super::NetworkAddress {
+                    interface: "Wi-Fi".into(),
+                    address: "192.168.1.42".into()
+                },
+            ]
+        );
     }
 
     #[test]
