@@ -134,6 +134,25 @@ pub struct Timer {
     /// vanishes from the preacher's tablet mid-sermon with nothing to say why.
     #[serde(default)]
     pub started_in_rehearsal: bool,
+    /// WHICH SCREENS THIS TIMER IS FOR — `None` is every screen (RG-161).
+    ///
+    /// **A property of the timer rather than an argument to the broadcast**, and
+    /// that is the whole design. A congregation countdown leaves by three doors,
+    /// not one: `start_countdown` puts it up, `adjust_countdown` rebroadcasts it
+    /// on every Pause, Resume, Reset and ±1, and `show_timer` puts it back. A set
+    /// carried on the first call only would be worse than none at all — the
+    /// countdown would start on the streaming screen alone and leak onto every
+    /// screen in the building the moment somebody held it.
+    ///
+    /// So it is stamped once, by the creator, and read by `project_both`'s
+    /// caller, exactly as `scope`, `warn_ms` and `started_in_rehearsal` already
+    /// are. `Scope::Stage` timers never carry one: the stage frame is addressed
+    /// to the tablet by being the stage frame.
+    ///
+    /// `serde(default)` for an older or hand-built payload, which reads as every
+    /// screen — the same meaning a timer started before targeting existed has.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channels: Option<Vec<i64>>,
 }
 
 /// Why an adjustment was refused. Both are refusals an operator can act on, not
@@ -497,6 +516,7 @@ mod tests {
             until_ms: None,
             plan_item_id: None,
             started_in_rehearsal: false,
+            channels: None,
         }
     }
 
@@ -1161,6 +1181,7 @@ mod tests {
         let rehearsed = [
             reg.start(Timer {
                 started_in_rehearsal: true,
+                channels: None,
                 ..five(now, Scope::Stage)
             }),
             // A congregation timer started in a rehearsal is one of these too. The
@@ -1170,6 +1191,7 @@ mod tests {
             // held it.
             reg.start(Timer {
                 started_in_rehearsal: true,
+                channels: None,
                 ..five(now, Scope::Both)
             }),
         ];

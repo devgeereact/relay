@@ -766,6 +766,7 @@ mod tests {
             until_ms: None,
             plan_item_id: None,
             started_in_rehearsal: false,
+            channels: None,
         });
         let c = OutputContent {
             kind: Some("countdown".into()),
@@ -816,6 +817,7 @@ mod tests {
             until_ms: None,
             plan_item_id: None,
             started_in_rehearsal: false,
+            channels: None,
         });
         let c = OutputContent {
             kind: Some("countdown".into()),

@@ -72,6 +72,11 @@ describe('the store invents no words for a caller that supplies none', () => {
     // it: this test's claim is that the store INVENTS nothing, and `null` is what
     // "nobody chose a warning threshold" looks like. Loosening the equality to
     // let an unexamined field through would retire the claim to save the test.
+    //
+    // `channels` joined it the same way (RG-161), and is named here for the same
+    // reason. `null` is every screen, which is what a caller that named none
+    // means; `[]` would be no screen, which is the opposite. See
+    // `cuechannels.test.js`.
     expect(startArgs()).toEqual({
       minutes: 5,
       label: '',
@@ -79,6 +84,7 @@ describe('the store invents no words for a caller that supplies none', () => {
       templateId: null,
       warnMs: null,
       untilMs: null,
+      channels: null,
     });
   });
 
@@ -94,6 +100,7 @@ describe('the store invents no words for a caller that supplies none', () => {
       templateId: 7,
       warnMs: null,
       untilMs: null,
+      channels: null,
     });
   });
 });

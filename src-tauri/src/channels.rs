@@ -6404,6 +6404,7 @@ mod tests {
             until_ms: None,
             plan_item_id: None,
             started_in_rehearsal: false,
+            channels: None,
         }
     }
 

@@ -3451,6 +3451,7 @@ fn start_five(h: &tauri::AppHandle<tauri::test::MockRuntime>) {
         None,
         None,
         None,
+        None,
     )
     .expect("start a countdown");
 }
@@ -3758,6 +3759,7 @@ fn r7_a_re_aim_does_not_rename_or_re_skin_the_countdown() {
         None,
         None,
         None,
+        None,
     )
     .expect("start");
     settle();
@@ -3811,6 +3813,7 @@ fn r7_a_countdown_says_how_long_it_was_aimed_for() {
         2.0,
         "Service begins in".into(),
         "Welcome".into(),
+        None,
         None,
         None,
         None,
@@ -3920,7 +3923,7 @@ fn r0_a_picture_reaches_the_wall_and_disarms_the_passage() {
         db::insert_media(&conn, "image", "slide.png", "2026-09-15").expect("seed a media row")
     };
 
-    fire_media(h.clone(), h.state::<Db>(), media_id, None).expect("fire the picture");
+    fire_media(h.clone(), h.state::<Db>(), media_id, None, None).expect("fire the picture");
     settle();
 
     assert_eq!(
@@ -4806,6 +4809,114 @@ fn a_fire_that_names_no_screen_reaches_every_screen() {
     assert!(
         v["channels"].is_null(),
         "an untargeted fire carried a screen set: {frame}"
+    );
+}
+
+/// AND THE SAME QUESTION ASKED OF THE OTHER TWO CUE KINDS, WHICH ANSWERED WRONG.
+///
+/// The Planner's `Screens` row is not gated by cue type, so it renders for all
+/// five kinds. Scripture, song and announce passed the set through; **media and
+/// countdown did not**, because `fire_media` and `start_countdown` never took the
+/// argument at all and `OutputContent.channels` was left `None` by
+/// `..Default::default()`. An operator ticked one screen of three, read "Other
+/// screens keep what they are showing", and all three got it.
+///
+/// This is the fourth time in this repository that a guarantee has been kept on
+/// some doors and not on its twin, which is why the test names the KIND rather
+/// than the command: a sixth cue kind added next year fails here.
+#[test]
+fn a_media_cue_that_names_a_screen_carries_it_to_the_wire() {
+    let app = app();
+    let h = app.handle().clone();
+    let mut kiosk = qa::Kiosk::attach(&h);
+    let pic = seed_picture(&h);
+
+    fire_media(h.clone(), h.state::<Db>(), pic, None, Some(vec![4])).expect("fire the picture");
+    settle();
+
+    let frame = kiosk.next().expect("the fire reached no screen at all");
+    let v: serde_json::Value = serde_json::from_str(&frame).expect("valid JSON");
+    assert_eq!(v["kind"], "content");
+    assert_eq!(
+        v["channels"],
+        serde_json::json!([4]),
+        "a media cue's screen set was dropped between the command and the wire: {frame}"
+    );
+}
+
+/// AND A MEDIA CUE THAT NAMES NONE STILL REACHES EVERY SCREEN.
+///
+/// The half that must not regress. `None` is every screen and `[]` is no screen,
+/// and every media cue written before targeting existed carries neither.
+#[test]
+fn a_media_cue_that_names_no_screen_reaches_every_screen() {
+    let app = app();
+    let h = app.handle().clone();
+    let mut kiosk = qa::Kiosk::attach(&h);
+    let pic = seed_picture(&h);
+
+    fire_media(h.clone(), h.state::<Db>(), pic, None, None).expect("fire the picture");
+    settle();
+
+    let frame = kiosk.next().expect("the fire reached no screen at all");
+    let v: serde_json::Value = serde_json::from_str(&frame).expect("valid JSON");
+    assert!(
+        v["channels"].is_null(),
+        "an untargeted media cue carried a screen set: {frame}"
+    );
+}
+
+/// A COUNTDOWN KEEPS ITS SCREEN SET ACROSS A HOLD, WHICH IS WHY IT LIVES ON THE
+/// TIMER AND NOT ON THE CALL.
+///
+/// A countdown is broadcast three times by three commands: `start_countdown`,
+/// then `adjust_countdown` on every Pause, Resume, Reset and ±1, then
+/// `show_timer` when it is put back. Carrying the set only on the first would
+/// have been worse than not carrying it at all: the countdown would start on the
+/// streaming screen alone and leak onto every screen in the building the moment
+/// somebody paused it. So the set is a property of the timer, stamped once by
+/// its creator, exactly as `scope`, `warn_ms` and `started_in_rehearsal` already
+/// are.
+#[test]
+fn a_countdown_keeps_its_screens_when_it_is_held_and_released() {
+    let app = app();
+    let h = app.handle().clone();
+    let mut kiosk = qa::Kiosk::attach(&h);
+
+    start_countdown(
+        h.clone(),
+        h.state::<Db>(),
+        5.0,
+        "Service begins in".into(),
+        "Welcome".into(),
+        None,
+        None,
+        None,
+        Some(vec![4]),
+    )
+    .expect("start the countdown");
+    settle();
+
+    let frame = kiosk
+        .next()
+        .expect("the countdown reached no screen at all");
+    let v: serde_json::Value = serde_json::from_str(&frame).expect("valid JSON");
+    assert_eq!(
+        v["channels"],
+        serde_json::json!([4]),
+        "the countdown's screen set was dropped at the start: {frame}"
+    );
+
+    // AND THE HOLD. This is the assertion the design exists for.
+    adjust_countdown(h.clone(), None, Some(true)).expect("hold it");
+    settle();
+
+    let held = kiosk.next().expect("the hold reached no screen at all");
+    let v: serde_json::Value = serde_json::from_str(&held).expect("valid JSON");
+    assert_eq!(
+        v["channels"],
+        serde_json::json!([4]),
+        "holding the countdown leaked it onto every screen in the building: {held}"
     );
 }
 

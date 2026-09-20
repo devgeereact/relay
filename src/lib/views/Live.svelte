@@ -920,7 +920,7 @@
           flash('Media asset missing — re-add it from the Library.');
           return;
         }
-        await fireMedia(p.media_id, tpl, true); // keepPlan — this IS the plan's slide
+        await fireMedia(p.media_id, tpl, true, cueChannels); // keepPlan — this IS the plan's slide
       } else if (item.cue_type === 'countdown') {
         // THE CUE'S OWN WORDS, AND NO OTHERS. These two arguments used to fall
         // back to 'Service begins in' and 'Welcome' — the fourth copy of a pair of
@@ -937,6 +937,9 @@
           p.done ?? '',
           tpl,
           true, // keepPlan — this IS the plan's slide
+          null, // warnMs — the cue chooses none; the configured default applies
+          null, // untilMs — a plan cue is a LENGTH, never an appointment
+          cueChannels,
         );
       } else if (item.cue_type === 'song') {
         // Lyrics carry NO title/section on the live screen — and `fire_content`

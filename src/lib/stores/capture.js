@@ -1651,6 +1651,10 @@ templateId = null,
 keepPlan = false,
 warnMs = null,
 untilMs = null,
+// WHICH SCREENS (RG-161). `null` is every screen. The engine stamps it onto the
+// TIMER rather than onto this one broadcast, because `adjust_countdown` and
+// `show_timer` put the same countdown out again later — see `Timer::channels`.
+channels = null,
 ) {
 if (countdownRunning()) {
   throw new Error('A countdown is already running — clear the screen to start a new one.');
@@ -1659,7 +1663,7 @@ const call = await invoke();
 // `untilMs` is an absolute instant, worked out by `atClockTime` where the
 // machine's timezone and DST rules are actually known. When it is given it wins
 // over `minutes`; the engine stores it so Reset goes back to the appointment.
-await call('start_countdown', { minutes, label, doneMsg, templateId, warnMs, untilMs });
+await call('start_countdown', { minutes, label, doneMsg, templateId, warnMs, untilMs, channels });
 if (!keepPlan) leavePlan();
 }
 
@@ -2172,9 +2176,12 @@ await call('delete_media', { id });
 }
 /** Fire a media asset (image/video) to the output screens as a background.
  *  `templateId`, when set, is the cue's own Planner template override. */
-export async function fireMedia(id, templateId = null, keepPlan = false) {
+export async function fireMedia(id, templateId = null, keepPlan = false, channels = null) {
 const call = await invoke();
-await call('fire_media', { id, templateId });
+// WHICH SCREENS (RG-161). `null` is every screen; `[]` is no screen. This
+// argument was missing while `fireContent`'s and `manualFire`'s were not, so a
+// media cue ignored the `Screens` row the Planner renders for it.
+await call('fire_media', { id, templateId, channels });
 if (!keepPlan) leavePlan();
 }
 

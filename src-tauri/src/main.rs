@@ -3141,6 +3141,10 @@ fn start_countdown<R: tauri::Runtime>(
     template_id: Option<i64>,
     warn_ms: Option<i64>,
     until_ms: Option<i64>,
+    // WHICH SCREENS (RG-161). `None` is every screen. It is stamped onto the
+    // timer rather than used here, because this command is one of three that
+    // broadcast the same countdown — see `Timer::channels`.
+    channels: Option<Vec<i64>>,
 ) -> error::Result<()> {
     let mins = if minutes.is_finite() && minutes > 0.0 {
         minutes
@@ -3207,6 +3211,9 @@ fn start_countdown<R: tauri::Runtime>(
             // guarantee, not this one, and a rule that holds only where something
             // else already holds it is not a rule.
             started_in_rehearsal: channels::rehearsing(&app),
+            // The cue's screen set, stamped once. Every later broadcast of this
+            // countdown reads it back off the timer, so a Pause cannot widen it.
+            channels,
         });
         // Cloned out and the lock released before the broadcast below (rule 2).
         reg.get(id).ok_or_else(|| {
@@ -3461,6 +3468,11 @@ fn start_timer<R: tauri::Runtime>(
         // `timers::Timer::started_in_rehearsal` for why it is a property of the
         // timer rather than a question asked at the exit.
         started_in_rehearsal: channels::rehearsing(&app),
+        // NO SCREEN SET FROM THIS DOOR. `start_timer` makes the preacher's
+        // programme clocks, and a stage frame is addressed to the tablet by being
+        // the stage frame. A `Both` timer started here carries none either, which
+        // is every screen — the behaviour it has always had.
+        channels: None,
     });
     // THE STAGE TABLET IS TOLD, UNCONDITIONALLY — not "if this one was a stage
     // timer". `publish_timers` sends the whole stage-visible SET, so it is
@@ -3783,6 +3795,12 @@ fn countdown_content(
     let shown = timers::project_both(timer);
     channels::OutputContent {
         kind: Some("countdown".into()),
+        // OFF THE TIMER, NOT OFF THE CALL. This function has three callers —
+        // `start_countdown`, `adjust_countdown` and `show_timer` — and a screen
+        // set that lived on the argument would be correct at the first and lost
+        // at the other two, which is a countdown that leaks onto every screen in
+        // the building the moment somebody holds it.
+        channels: timer.channels.clone(),
         reference: shown.reference,
         countdown_to: Some(shown.countdown_to),
         countdown_from: Some(shown.countdown_from),
@@ -3869,6 +3887,12 @@ fn fire_media<R: tauri::Runtime>(
     db: tauri::State<'_, Db>,
     id: i64,
     template_id: Option<i64>,
+    // WHICH SCREENS (RG-161). `None` is every screen, which is what every media
+    // cue written before targeting existed carries. This argument was missing
+    // while `fire_content`'s twin three functions up already had it, so the
+    // Planner's `Screens` row ticked, said "Other screens keep what they are
+    // showing", and reached all of them.
+    channels: Option<Vec<i64>>,
 ) -> error::Result<()> {
     #[allow(clippy::type_complexity)]
     let (kind, filename, path, tid, tjson, tpinned): (
@@ -3910,6 +3934,7 @@ fn fire_media<R: tauri::Runtime>(
         &app,
         OutputContent {
             kind: Some("media".into()),
+            channels,
             media_url: Some(media_url(&ip, id, &path)),
             media_kind: Some(media_kind.to_string()),
             template_id: tid,
