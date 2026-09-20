@@ -1503,8 +1503,52 @@
     height: 100dvh; display: flex; flex-direction: column; color: var(--v-txt);
     font-family: var(--f-body);
     padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+
+    /* THIS PAGE'S OWN GREYS, DECLARED ONCE.
+       Sixteen `rgba(255,255,255,...)` declarations over ELEVEN alphas were spread
+       through the rules beneath this one, and the spread was not a hierarchy: .02,
+       .03 and .035 were one region wash written three ways, and .1, .14, .16 and
+       .18 were one control edge written four ways. Nobody can see the difference
+       between two of them side by side and nobody can hold eleven of them in step
+       by hand - `tokens.css` records five rules that drifted off a shared colour
+       in exactly that way, which is why the four promise colours publish a soft
+       and a line of their own.
+       TWO OF THE ELEVEN WERE NEAR-MISSES OF A SHARED TOKEN, so those alias it
+       rather than restating it: `--v-line` is rgba(255,255,255,.075) and this
+       sheet wrote .08 four times; `--v-line2` is rgba(255,255,255,.13) and this
+       sheet wrote .14 twice. No promise colour is involved anywhere in this block
+       and nothing here moves by more than .05 of alpha. */
+    --s-wash: rgba(255,255,255,.03);       /* a region's own fill: the rail, the figure row, Up Next, the programme rail, both panels */
+    --s-fill: rgba(255,255,255,.05);       /* a control at rest - one step brighter than the panel it sits on, which a search result was not */
+    --s-fill-press: rgba(255,255,255,.1);  /* the same control under a thumb */
+    --s-seam: var(--v-line);               /* the boundary BETWEEN two regions */
+    --s-seam-soft: rgba(255,255,255,.06);  /* between two cells of ONE region - quieter than the boundary around them, deliberately */
+    --s-edge: var(--v-line2);              /* a control's own edge */
+
+    /* Two corners, and they stay OFF the console's ladder on purpose:
+       `buttonshapes.test.js` already records why - every control here is a 44px+
+       touch target on a phone held at arm's length, which is a different ladder
+       from the console's 26/22 one. Naming a value is not moving it; both of
+       these are what shipped. */
+    --s-r-sm: 8px;                         /* a header toggle, a zone switch */
+    --s-r: 12px;                           /* a field, a thumb-sized button, a result row */
+
+    --s-gap: 12px;                         /* between the parts of one panel */
+    --s-gap-tight: 10px;                   /* between two controls on one row */
+    --s-off: .5;                           /* a control that cannot be used */
+    --s-tr-caps: .12em;                    /* this page's uppercase mono tracking, at any size */
+    --s-lh-prose: 1.4;                     /* a sentence with nothing clipping it */
+    --s-lh-bound: 1.3;                     /* a line inside a box whose height is already decided */
+    --s-ease: 140ms ease;                  /* see the motion note at the foot of this sheet */
   }
-  header { display: flex; align-items: center; gap: 12px; padding: 14px 18px; border-bottom: 1px solid rgba(255,255,255,.08); flex: 0 0 auto; }
+  header { display: flex; align-items: center; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--s-seam); flex: 0 0 auto; }
+  /* 16px HERE, AND 18px ON Prev/Next BELOW, ARE THE TWO HAND-TYPED SIZES LEFT ON
+     THIS PAGE, AND BOTH STAY. `tokens.css` has already made this judgement in
+     writing: 16, 18 and 22 "are genuinely one-control decisions rather than a
+     missing step ... left visible rather than rounded into a neighbouring step to
+     make a scanner quiet". This page is off the console's type ladder for the same
+     reason it is off its button ladder, so rounding the lockup into a card-heading
+     step would be a restyle of the lockup and not a tidy. */
   .brand { font-family: var(--f-head); font-weight: 700; font-size: 16px; color: var(--v-amber); }
   /* CONTRAST. This page is read on a phone, at arm's length, in a lit auditorium —
      by the preacher, mid-sermon. It is the least forgiving reading condition in the
@@ -1515,7 +1559,14 @@
      documents as REMOVED for failing AA; the console was fixed and the phone was
      left behind, because it hardcodes hexes instead of using the --v-* tokens.
 
-     #88888d is --v-faint: 5.61:1 here. Still quiet, and actually readable. */
+     --v-faint is #8c94a1: 6.02:1 here. Still quiet, and actually readable.
+
+     THIS LINE SAID `#88888d ... 5.61:1` AND NAMED A COLOUR THIS PAGE DOES NOT
+     PAINT. `tokens.css` lifted --v-faint to #8c94a1 with the measured matrix
+     beside it (--v-faint on void 6.02) and this comment was left behind. A note
+     naming a retired value is the same class of error as a stale count: it reads
+     as evidence, so the next person checking this page's contrast would have
+     checked the wrong number and found it correct. */
   .status { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-family: var(--f-mono); font-size:var(--v-fs-mono); color: var(--v-faint); }
   .status.on { color: var(--v-emerald); }
   .status i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
@@ -1534,7 +1585,7 @@
     border-bottom: 1px solid color-mix(in srgb, var(--v-amber) 34%, transparent);
     color: var(--v-amber);
     font-size: var(--v-fs-mono);
-    line-height: 1.4;
+    line-height: var(--s-lh-prose);
   }
   /* NOTHING LEAVES THE SCREEN (docs/REBRAND.md §5). The reading takes what is
      left and scrolls INSIDE itself, so the header — the connection state — and
@@ -1564,7 +1615,7 @@
      basis is a share of the frame and is a BASIS, never a height. */
   .rail { flex: 0 0 26%; max-width: 26%; min-width: 0; min-height: 0; overflow: hidden;
     container-type: size; display: flex; flex-direction: column;
-    border-left: 1px solid rgba(255,255,255,.08); background: rgba(255,255,255,.02); }
+    border-left: 1px solid var(--s-seam); background: var(--s-wash); }
   /* THE SAME EXCEPTION `.figrow.tall` MAKES, FACING SIDEWAYS. A countdown with no
      verse beneath it left three quarters of a platform monitor black and put the
      figures the room is actually watching into a quarter of the width. Still a
@@ -1609,7 +1660,7 @@
       calc(88cqw / (var(--ch, 2) * 0.62)),
       calc(58cqh / var(--rows, 3))
     ); }
-  .railrow + .railrow { border-top: 1px solid rgba(255,255,255,.06); }
+  .railrow + .railrow { border-top: 1px solid var(--s-seam-soft); }
   .railrow.warn { color: var(--v-red); }
   /* A finished countdown is the operator's own words, not a figure — prose, at a
      size that still fits the rail it is a share of. */
@@ -1628,7 +1679,7 @@
      15% gives the reading 54px back at 1080 and leaves the clock at a size no
      platform has ever struggled with (the figure is bounded below). */
   .figrow { flex: 0 0 15%; min-height: 0; overflow: hidden; container-type: size;
-    display: flex; border-top: 1px solid rgba(255,255,255,.08); background: rgba(255,255,255,.02); }
+    display: flex; border-top: 1px solid var(--s-seam); background: var(--s-wash); }
   /* A pre-service countdown is the whole reason anyone is looking at this page, and
      a countdown cue has a label and no body. The figures take the room the reading
      is not using — a different BASIS, never a height, and still clipped. */
@@ -1643,7 +1694,7 @@
   .fig { flex: 1 1 0; min-width: 0; min-height: 0; overflow: hidden;
     display: grid; grid-template-rows: auto auto; align-content: center;
     justify-items: center; gap: 2px; }
-  .fig + .fig { border-left: 1px solid rgba(255,255,255,.06); }
+  .fig + .fig { border-left: 1px solid var(--s-seam-soft); }
   /* ── ONE LABEL, EVERY REGION ────────────────────────────────────────────────
      ProPresenter's stage display is a set of labelled regions, and what makes it
      read as ONE instrument rather than five widgets is that every label is the
@@ -1697,7 +1748,7 @@
     /* The operator's own words to the preacher. `2.6vw` capped at 20px is a phone
        size on a platform monitor, on the row whose whole purpose is that somebody
        standing ten feet away reads it. */
-    font-family: var(--f-body); font-size: clamp(14px, 2.2cqw, 34px); line-height: 1.3; }
+    font-family: var(--f-body); font-size: clamp(14px, 2.2cqw, 34px); line-height: var(--s-lh-bound); }
   .notetxt { min-width: 0; overflow: hidden; }
   /* THE PROGRAMME ROW. `flex: 0 0 auto` with `flex-basis: auto`, like `.noterow`:
      it takes what its content needs and never competes with the reading, which is
@@ -1730,7 +1781,7 @@
     overflow: hidden;
     container-type: inline-size;
     display: flex; gap: 10px; padding: 8px 18px;
-    border-top: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.035); }
+    border-top: 1px solid var(--s-seam); background: var(--s-wash); }
   /* `min-width: 0` on the item, or a long label refuses to shrink and pushes the
      last timer off the end of a screen nobody is standing next to. */
   .tmr { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 2px; overflow: hidden; }
@@ -1791,6 +1842,19 @@
      programme is a rail nobody can tell from a complete one. */
   .tmore { flex: 0 1 auto; justify-content: center; }
   .tmore .tval.msg { color: var(--v-faint); }
+  /* HELD, IN THE FIGURE AS WELL AS IN THE WORD. `class:held` has been applied to
+     this row since wave 4 and styled NOWHERE, so a paused clock and a running one
+     were the same white digits and the whole difference was a small word beside
+     them - which is the thing a preacher mid-sentence is least likely to read.
+     It cannot be a hue: amber is ON AIR, cyan is a guess, amethyst is rehearsal,
+     and the red one rule below is this row's own running-out. So it is one step of
+     INK, and the direction is the argument: the bright `Held` above stays the
+     loudest thing in the cell and the frozen figure recedes behind it. --v-dim is
+     8.43:1 on this background, so nothing becomes hard to read, and dimming the
+     FIGURE is not the "quieter" this page already rejected for the WORD.
+     STATED BEFORE THE WARNING BELOW so that red still wins if a held timer is ever
+     allowed to warn as well. Today it cannot: `warn` is computed `!r.held && ...`. */
+  .tmr.held .tval { color: var(--v-dim); }
   /* THE LAST MINUTE, ON THE PREACHER'S OWN PROGRAMME. Same red and same rule as
      the congregation figure beneath the reading — `.fig.warn .figv` is the
      precedent and this reuses it rather than inventing a second warning.
@@ -1798,15 +1862,19 @@
      viewer who asked for no motion must still learn that the clock is running out. */
   .tmr.warn .tval { color: var(--v-red); }
   /* The zone panel — one instrument, no native dialog (rule 41). */
-  .zonepanel { flex: 0 0 auto; max-height: 46dvh; overflow-y: auto; padding: 14px 18px;
-    display: flex; flex-direction: column; gap: 10px;
-    border-top: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.03); }
-  .zonenote{ margin:0 0 10px; font-size:var(--v-fs-pr); line-height:1.4; color:var(--v-dim); }
-  .zonegrid { display: flex; flex-wrap: wrap; gap: 8px; }
+  .zonepanel { flex: 0 0 auto; max-height: 46dvh; overflow-y: auto; padding: 16px 18px;
+    display: flex; flex-direction: column; gap: var(--s-gap);
+    border-top: 1px solid var(--s-seam); background: var(--s-wash); }
+  /* The panel has a gap of its own, so this bottom margin was a second helping of
+     the same space, left from before the panel was a flex column. Both panels on
+     this page now open on the same padding and separate on the same gap; they were
+     14/10 and 16/12, which reads as two panels built by two people. */
+  .zonenote{ margin:0; font-size:var(--v-fs-pr); line-height:var(--s-lh-prose); color:var(--v-dim); }
+  .zonegrid { display: flex; flex-wrap: wrap; gap: var(--s-gap-tight); }
   .zonebtn { flex: 1 1 auto; min-height: 44px; padding: 0 14px; cursor: pointer;
     font-family: var(--f-mono); font-size:var(--v-fs-b1); font-weight: 700; letter-spacing: .08em;
-    color: var(--v-dim); background: rgba(255,255,255,.04);
-    border: 1px solid rgba(255,255,255,.14); border-radius: 8px; }
+    color: var(--v-dim); background: var(--s-fill);
+    border: 1px solid var(--s-edge); border-radius: var(--s-r-sm); }
   /* STEEL, NOT AMBER, and this is a colour-law fix rather than a taste one.
      DESIGN_SYSTEM §1 is explicit: "amber is never used for selected, active,
      primary or success. It is the tally light. A colour that is always lit cannot
@@ -1818,11 +1886,29 @@
      which is what a selected zone button is. The literals were the RETIRED amber
      (#ffb000) as well, so each of these declarations was already two oranges. */
   .zonebtn.on { color: var(--v-sel); border-color: var(--v-sel-line); background: var(--v-sel-soft); }
+  /* A DISABLED CONTROL THAT LOOKS IDENTICAL TO A LIVE ONE IS A BROKEN CONTROL, and
+     the markup above already says so in prose about the NOTE it renders. The
+     switches themselves had no disabled rule at all, so when the desk owns this
+     screen's layout the only thing separating "somebody else chose this" from
+     "this page has stopped responding to me" was a sentence the person holding the
+     phone had to stop and read. `cursor: default`, not `not-allowed`: nothing has
+     failed here, it is simply not this device's decision to make. */
+  .zonebtn:disabled { opacity: var(--s-off); cursor: default; }
   .zonefoot { margin: 0; font-family: var(--f-mono); font-size:var(--v-fs-mono); color: var(--v-faint); }
   /* A SHARE OF THE READING, not of the viewport. `3.5vw` capped at 20px put the
      reference of the passage a preacher is reading aloud at twenty pixels on a
      fifty-inch platform monitor, which is the size it is on a phone. */
-  .ref { font-family: var(--f-mono); font-size: clamp(13px, 2.6cqw, 40px); letter-spacing: .18em; text-transform: uppercase; color: var(--v-amber); }
+  /* ONE TRACKING FOR THIS PAGE'S CAPS. There were three uppercase mono lines here
+     in three different trackings - .18em on this reference, .12em on the header
+     toggles, .08em on a search result's citation - and the widest was on the
+     LARGEST type, which is backwards: caps need less tracking as they grow, not
+     more. .12em is what the toggles already used, it is still visibly tracked at
+     40px, and on this rule it can only ever make the line narrower, which is the
+     safe direction inside a box that scrolls.
+     `.next-ref` keeps its own .06em and is deliberately NOT folded in: that line is
+     `nowrap` with an ellipsis, so widening its tracking would spend characters of
+     the citation a preacher is being shown next. */
+  .ref { font-family: var(--f-mono); font-size: clamp(13px, 2.6cqw, 40px); letter-spacing: var(--s-tr-caps); text-transform: uppercase; color: var(--v-amber); }
   /* THE READING FILLS THE ROOM IT HAS.
      `clamp(26px, 7vw, 64px)` is a ceiling, and on the screen this page exists for
      it was the binding one: a 1920×1080 platform monitor gave a verse 64px of type
@@ -1926,7 +2012,7 @@
   .next { flex: 0 0 auto; max-height: 20%; overflow: hidden;
     container-type: inline-size;
     display: flex; align-items: baseline; gap: 14px; padding: 14px 20px;
-    border-top: 1px solid rgba(255,255,255,.08); background: rgba(255,255,255,.02); }
+    border-top: 1px solid var(--s-seam); background: var(--s-wash); }
   .next-lbl { color: var(--v-faint); flex: 0 0 auto; }
   .next-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   /* "The next item in smaller type beneath the reading" — SMALLER THAN THE READING,
@@ -1934,7 +2020,7 @@
      and both were a twelfth of the verse on a platform monitor. */
   .next-ref { font-family: var(--f-mono); font-size: clamp(12px, 1.4cqw, 22px); letter-spacing: .06em; color: var(--v-amber);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .next-text { font-family: var(--f-head); font-size: clamp(16px, 1.9cqw, 30px); color: var(--v-dim); line-height: 1.3;
+  .next-text { font-family: var(--f-head); font-size: clamp(16px, 1.9cqw, 30px); color: var(--v-dim); line-height: var(--s-lh-bound);
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   /* Landscape — a platform monitor, a lobby TV, a phone turned sideways — gets a
      wider measure, and the fit above re-reads it: more characters per line is
@@ -1950,26 +2036,48 @@
   @media (prefers-reduced-motion: reduce) { .status.on i { animation: none; } }
 
   /* Preacher control panel — a phone that DRIVES the wall. Touch-sized targets
-     (44px+), high contrast, and it never touches the mirror above it. */
+     (44px+), high contrast, and it never touches the mirror above it.
+
+     THE TWO HEADER TOGGLES WERE THE ONES THAT WERE NOT, and this comment has
+     claimed 44px+ over them since it was written. An 11px mono line with 7px of
+     padding and no floor is about 29px, on the one page in the product a preacher
+     operates alone, mid-sermon, one-handed. A floor is the fix; the padding stays
+     because it is the horizontal measure.
+     IT COSTS ROOM, AND THE ROOM COMES OFF THE READING. Every fixed row on this
+     page is taken from the reading zone. Measured in a real engine on the built
+     `stage.html`, the header goes 59.5px -> 73.0px: 13.5 PIXELS OF SCRIPTURE.
+     (It costs nothing at 390px WHILE the page is offline, because the reach line
+     wraps to three lines and is already the tallest thing in the row at 47.8px -
+     which is a measurement of that state, not a discount.) That is the right
+     trade, because a control a thumb misses is a control that is not there, but
+     it is a trade and not a free tidy, and it is the one change in this pass that
+     moves the layout. */
   .ctl-toggle { flex: 0 0 auto; font-family: var(--f-mono); font-size:var(--v-fs-mono); font-weight: 700;
-    letter-spacing: .12em; text-transform: uppercase; color: var(--v-dim); cursor: pointer;
-    background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.14);
-    border-radius: 8px; padding: 7px 12px; }
+    letter-spacing: var(--s-tr-caps); text-transform: uppercase; color: var(--v-dim); cursor: pointer;
+    background: var(--s-fill); border: 1px solid var(--s-edge);
+    border-radius: var(--s-r-sm); padding: 7px 12px; min-height: 44px;
+    display: inline-flex; align-items: center; justify-content: center; }
   /* Steel — see `.zonebtn.on`. A toggle that is switched on is not on air. */
   .ctl-toggle.active { color: var(--v-sel); border-color: var(--v-sel-line); background: var(--v-sel-soft); }
-  .ctl { flex: 0 0 auto; display: flex; flex-direction: column; gap: 12px; padding: 16px 18px;
-    border-top: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.02);
+  .ctl { flex: 0 0 auto; display: flex; flex-direction: column; gap: var(--s-gap); padding: 16px 18px;
+    border-top: 1px solid var(--s-seam); background: var(--s-wash);
     max-height: 60dvh; overflow-y: auto; }
-  .nav-row { display: flex; gap: 12px; }
+  .nav-row { display: flex; gap: var(--s-gap); }
+  /* 18px IS A THUMB SIZE AND IT STAYS - see the note beside `.brand`. This is the
+     label on a 52px target a preacher presses without looking at it, which is a
+     judgement about one control and not a step the ladder forgot to publish. */
   .nav-btn { flex: 1; min-height: 52px; font-family: var(--f-head); font-weight: 700; font-size: 18px;
-    color: var(--v-txt); background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.16);
-    border-radius: 12px; cursor: pointer; }
-  .nav-btn:active { background: rgba(255,255,255,.1); }
-  .nav-btn:disabled { opacity: .4; }
-  .search { display: flex; gap: 10px; }
+    color: var(--v-txt); background: var(--s-fill); border: 1px solid var(--s-edge);
+    border-radius: var(--s-r); cursor: pointer; }
+  .nav-btn:active { background: var(--s-fill-press); }
+  /* ONE DISABLED WEIGHT, THREE CONTROLS. Prev/Next faded to .4 and Go and a result
+     row to .5 - near-misses of each other inside one panel, and the .4 was the
+     least legible of the three on the surface read at arm's length. */
+  .nav-btn:disabled { opacity: var(--s-off); }
+  .search { display: flex; gap: var(--s-gap-tight); }
   .search input { flex: 1; min-height: 48px; padding: 0 16px; font-family: var(--f-body); font-size:var(--v-fs-h1);
-    color: var(--v-txt); background: var(--v-void); border: 1px solid rgba(255,255,255,.18);
-    border-radius: 12px; -webkit-appearance: none; }
+    color: var(--v-txt); background: var(--v-void); border: 1px solid var(--s-edge);
+    border-radius: var(--s-r); -webkit-appearance: none; }
   .search input::placeholder { color: var(--v-faint); }
   /* A FOCUS RING IS NEVER AMBER, and it may not be `outline:none` with a border
      standing in for it either (DESIGN_SYSTEM §5: never remove an outline without
@@ -1977,20 +2085,72 @@
      one surface in this product a preacher operates alone. */
   .search input:focus { outline: 2px solid var(--v-sel); outline-offset: 2px; border-color: var(--v-sel-line); }
   .go { flex: 0 0 auto; min-width: 56px; min-height: 48px; font-family: var(--f-mono); font-weight: 700;
-    font-size:var(--v-fs-h2); color: var(--v-void); background: var(--v-amber); border: none; border-radius: 12px; cursor: pointer; }
-  .go:disabled { opacity: .5; }
+    font-size:var(--v-fs-h2); color: var(--v-void); background: var(--v-amber); border: none; border-radius: var(--s-r); cursor: pointer; }
+  .go:disabled { opacity: var(--s-off); }
   .ctl-err { font-family: var(--f-mono); font-size:var(--v-fs-b1); color: var(--v-amber2); }
-  .results { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+  .results { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s-gap-tight); }
+  /* A RESULT ROW WAS THE SAME GREY AS THE PANEL BEHIND IT (both .03), so a list of
+     taps read as one washed block with hairlines ruled across it. It takes the
+     control fill now, like every other control in this panel - the one place in
+     this pass where a value moves for a reason you can see rather than for order. */
   .result { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; width: 100%; text-align: left;
-    padding: 12px 14px; background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.1);
-    border-radius: 12px; cursor: pointer; }
+    padding: 12px 14px; background: var(--s-fill); border: 1px solid var(--s-edge);
+    border-radius: var(--s-r); cursor: pointer; }
   /* Steel — see `.zonebtn.on`. A finger on a result has not put it on a wall;
      that is what `.go` and the fire path do, and `.go` keeps its amber fill
      because it IS the control that puts scripture in front of a congregation. */
   .result:active { background: var(--v-sel-soft); border-color: var(--v-sel-line); }
-  .result:disabled { opacity: .5; }
-  .r-ref { font-family: var(--f-mono); font-size:var(--v-fs-b1); letter-spacing: .08em; text-transform: uppercase; color: var(--v-amber); }
-  .r-text { font-family: var(--f-serif); font-size: var(--v-fs-ttl); color: var(--v-dim); line-height: 1.35;
+  .result:disabled { opacity: var(--s-off); }
+  .r-ref { font-family: var(--f-mono); font-size:var(--v-fs-b1); letter-spacing: var(--s-tr-caps); text-transform: uppercase; color: var(--v-amber); }
+  .r-text { font-family: var(--f-serif); font-size: var(--v-fs-ttl); color: var(--v-dim); line-height: var(--s-lh-bound);
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .no-results { font-family: var(--f-mono); font-size:var(--v-fs-b1); color: var(--v-faint); }
+
+  /* THE SAME RING, ON EVERY CONTROL THIS PAGE HAS.
+     `.search input:focus` above was the ONLY focus rule in this file. Everything
+     else a person can reach - the two header toggles, the zone switches, Prev,
+     Next, Go and every search result - had nothing at all marking where the focus
+     was, so this page could be tabbed through blind from a Bluetooth keyboard or a
+     switch, on the one surface in the product operated by somebody with no
+     operator beside them.
+     `:focus-visible`, NOT `:focus`: a thumb leaves no ring, which is what makes
+     this safe to add to a touch surface rather than putting a box round every tap.
+     It follows the input's own answer exactly - steel, a real outline, offset -
+     rather than inventing a second focus treatment (DESIGN_SYSTEM §5: never remove
+     an outline without replacing it with an equally visible one; the corollary is
+     that there should be only one).
+     LAST IN THE SHEET, deliberately: `.result:active` and this rule have the same
+     specificity, so a focused control that is also being pressed keeps its ring
+     only because order decides. */
+  .ctl-toggle:focus-visible,
+  .zonebtn:focus-visible,
+  .nav-btn:focus-visible,
+  .go:focus-visible,
+  .result:focus-visible {
+    outline: 2px solid var(--v-sel); outline-offset: 2px; border-color: var(--v-sel-line);
+  }
+
+  /* MOTION, AND ONLY ON THINGS A FINGER TOUCHES.
+     This sheet had no `transition` in it at all, so every control changed state in
+     a single frame, which reads as a redraw rather than as a response.
+     NOTHING ON THE MIRROR. Not the verse, not the reference, not a clock, not a
+     figure, not the message panel: a fade means that for the length of the fade
+     this page is showing something Relay was not asked to show, and this is the
+     screen somebody reads aloud from in front of a congregation.
+     NO LAYOUT PROPERTY IS LISTED HERE AND NONE MAY BE ADDED. Colour, fill, edge,
+     and opacity are the whole set - each is a repaint, none can move a box, and
+     none can change what a fit measured.
+     `outline-color` IS DELIBERATELY NOT IN THE LIST, and it was until it was
+     measured: a ring whose colour transitions starts at whatever colour it
+     inherited - the UA's own focus blue - and settles into --v-sel over 140ms.
+     Read 80ms into that, the ring computed rgb(102,162,247) against the token's
+     rgb(91,156,248). A focus ring that is briefly a colour this palette does not
+     publish is the same defect as a status line that is briefly wrong, on a
+     smaller scale. The ring now appears in one frame, in the right blue. */
+  @media (prefers-reduced-motion: no-preference) {
+    .ctl-toggle, .zonebtn, .nav-btn, .go, .result, .search input {
+      transition: background-color var(--s-ease), border-color var(--s-ease),
+                  color var(--s-ease), opacity var(--s-ease);
+    }
+  }
 </style>
