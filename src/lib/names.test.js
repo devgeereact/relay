@@ -289,8 +289,13 @@ const REGISTER = [
       'src/lib/stagetimerreach.test.js',
       'src/lib/stagezones.test.js',
       'src/lib/timers.test.js',
+      // Requirement 6 — Outputs → Preacher's screen names the zone in its mirror
+      // and the rows on the rail beneath it. That is the operator's word for a
+      // switch and for a clock, which is exactly what this register is for.
+      'src/lib/stagemirror.test.js',
       'src/lib/views/Live.svelte',
       'src/lib/views/ServicePlanner.svelte',
+      'src/lib/views/Channels.svelte',
       'src/lib/wayback.test.js',
       'src/lib/stagelayout.js',
       // Requirement 2b — the `programme` binding an operator picks in the template
