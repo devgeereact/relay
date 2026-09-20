@@ -53,6 +53,50 @@ pub struct DeviceInfo {
 // --- chunking parameters (see docs/SPEC.md §4 step 1: 200-500ms overlapping) ---
 pub const CHUNK_MS: u32 = 400;
 pub const HOP_MS: u32 = 200; // 50% overlap
+
+/// How many peak readings one chunk is described by, for the console's waveform.
+///
+/// ── WHY THERE IS AN ENVELOPE AT ALL ────────────────────────────────────────
+///
+/// The console drew ONE rms number per delivered chunk, and `start_capture`
+/// delivered every third one, so the "waveform" was a reading every ~600 ms
+/// joined up with straight lines. At a normal speaking rate that is about one
+/// point per word. It is a level history, and it was drawn and labelled as a
+/// waveform, which is the operator's complaint of 2026-09-20: *"this is not
+/// giving an original live audio wave"*. They were right, and the fault was
+/// never in the drawing.
+///
+/// SIXTEEN over 400 ms is 25 ms a reading, which is inside a syllable, and it
+/// costs sixteen floats on an event that already carries a struct. The event
+/// RATE is what freezes a webview, and that is governed separately (see
+/// `main.rs::start_capture`, which now sends every SECOND chunk so the readings
+/// cover the timeline exactly once at 50% overlap, rather than every third,
+/// which left two thirds of the audio undrawn).
+pub const CHUNK_PEAKS: usize = 16;
+
+/// The loudest sample in each of `n` equal slices of `samples`.
+///
+/// PEAK, not rms. An rms over 25 ms is already a smoothing, and smoothing twice
+/// is what produced a picture with no transients in it: a consonant, a plosive
+/// and a tap on the microphone all read as a gentle rise. The peak is the
+/// measurement a meter is expected to show, and it is the one that makes
+/// clipping visible at all.
+///
+/// Absolute value, so the envelope is drawn symmetrically about the centre line
+/// the way every audio tool draws one. A slice with no samples in it reads 0.0,
+/// which is a real answer: there was nothing there.
+pub fn envelope(samples: &[f32], n: usize) -> Vec<f32> {
+    if n == 0 {
+        return Vec::new();
+    }
+    (0..n)
+        .map(|i| {
+            let a = samples.len() * i / n;
+            let b = samples.len() * (i + 1) / n;
+            samples[a..b].iter().fold(0.0f32, |m, v| m.max(v.abs()))
+        })
+        .collect()
+}
 /// ABSOLUTE floor for the voice gate, on f32 samples in [-1, 1]. This is NOT the
 /// speech threshold — the real threshold is learned from the room's noise floor (see
 /// `Vad`). This only stops a dead or unplugged microphone from having its own dither
@@ -607,9 +651,14 @@ where
         describe_input(&opened)
     );
 
+    // WHEN DID AUDIO LAST ARRIVE? See `DEAD_INPUT_MS`. Started here rather than at
+    // `play()` so that the device's own start-up latency is inside the grace period.
+    let mut last_data = std::time::Instant::now();
+
     while !stop.load(Ordering::Relaxed) {
         match rx.recv_timeout(std::time::Duration::from_millis(100)) {
             Ok(samples) => {
+                last_data = std::time::Instant::now();
                 let cleaned = frontend.process(&samples);
                 if let Some((_, buf)) = rec.as_mut() {
                     buf.extend_from_slice(&cleaned.samples);
@@ -660,7 +709,36 @@ where
                     on_chunk(&ac);
                 }
             }
-            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                // A SILENT DEATH IS STILL A DEATH, AND UNTIL NOW NOTHING NOTICED.
+                //
+                // RG-117 taught the loop to exit when cpal REPORTS an error. On
+                // macOS an input that is unplugged, re-plugged or taken by another
+                // application frequently reports nothing at all: the stream object
+                // stays alive, its callback simply stops being called. The loop then
+                // times out for ever, every instrument reads normal, and the console
+                // goes on saying "Listening" over a microphone that is gone. That is
+                // rule 35 exactly — a status that reads the same when the thing
+                // behind it is broken.
+                //
+                // Reported through `note_stream_error`, so it takes the ONE path a
+                // dead input already had: the recording is written first, then
+                // `audio://error` reaches the operator, and the frontend clears
+                // `capturing` so the microphone control offers Start again.
+                if last_data.elapsed().as_millis() as u64 >= DEAD_INPUT_MS {
+                    note_stream_error(
+                        &stop,
+                        &runtime_err,
+                        format!(
+                            "no audio from {} for {} seconds — it may have been \
+                             unplugged or taken by another application",
+                            describe_input(&opened),
+                            DEAD_INPUT_MS / 1_000
+                        ),
+                    );
+                }
+                continue;
+            }
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
     }
@@ -729,6 +807,17 @@ fn write_wav_f32(path: &std::path::Path, samples: &[f32], rate: u32) -> std::io:
 /// A full queue DROPS, and drops are counted (`latency::note_dropped_audio`). It is
 /// never allowed to block: blocking here would stall the audio device's own
 /// callback, which is how a capture stream is killed outright.
+/// How long the loop will wait for ANY audio before calling the input dead.
+///
+/// A device callback is driven by the device's own clock, not by the signal, so a
+/// healthy input delivers buffers of digital silence while nobody is talking. No
+/// buffer at all for this long is not a quiet room; it is a device that has gone.
+///
+/// Four seconds because the wrong answer here is expensive in both directions: too
+/// short and a device that stutters once loses the microphone mid-sermon, too long
+/// and the operator preaches to an instrument that stopped listening.
+const DEAD_INPUT_MS: u64 = 4_000;
+
 const CAPTURE_QUEUE: usize = 512;
 
 /// Build a cpal input stream for `supported`, downmixing to mono and forwarding
@@ -1389,5 +1478,78 @@ mod gate {
             levels.len(),
             voiced as f32 / levels.len() as f32 * 100.0
         );
+    }
+}
+
+#[cfg(test)]
+mod envelope_tests {
+    use super::*;
+
+    /// A PEAK IS NOT AN AVERAGE, and this is the difference the operator saw.
+    ///
+    /// One loud sample inside an otherwise quiet 25 ms slice is a transient: a
+    /// consonant, a plosive, a knock on the stand. An rms over the same slice
+    /// hides it almost completely, which is how a level history came to be drawn
+    /// and labelled as a waveform.
+    #[test]
+    fn a_single_loud_sample_survives_its_slice() {
+        let mut buf = vec![0.02f32; 1600];
+        buf[800] = 0.9;
+        let env = envelope(&buf, CHUNK_PEAKS);
+        assert_eq!(env.len(), CHUNK_PEAKS);
+        let loud = env.iter().filter(|v| **v > 0.5).count();
+        assert_eq!(loud, 1, "the transient should land in exactly one slice");
+        // And the same buffer's rms cannot see it at all.
+        assert!(rms(&buf) < 0.05, "rms was {}", rms(&buf));
+    }
+
+    /// Symmetric about zero: an envelope is drawn both sides of the centre line,
+    /// so the sign of the loudest sample must not change the picture.
+    #[test]
+    fn the_envelope_is_the_absolute_value() {
+        let up = envelope(&[0.0, 0.7, 0.0, 0.1], 2);
+        let down = envelope(&[0.0, -0.7, 0.0, -0.1], 2);
+        assert_eq!(up, down);
+        assert_eq!(up, vec![0.7, 0.1]);
+    }
+
+    /// Silence reads as silence, not as an absence. A slice with nothing in it is
+    /// a real measurement of a room nobody was talking in.
+    #[test]
+    fn silence_reads_zero_and_the_shape_is_still_the_full_width() {
+        assert_eq!(envelope(&[0.0; 800], CHUNK_PEAKS), vec![0.0; CHUNK_PEAKS]);
+    }
+
+    /// Every sample is inside exactly one slice, so nothing the microphone heard
+    /// is dropped on the way to the picture and nothing is counted twice.
+    #[test]
+    fn the_slices_cover_the_whole_buffer_exactly_once() {
+        // 1000 samples into 16 slices does not divide evenly, which is the case
+        // that loses or repeats samples when the arithmetic is done with a stride.
+        let buf: Vec<f32> = (0..1000).map(|i| (i as f32) / 1000.0).collect();
+        let env = envelope(&buf, CHUNK_PEAKS);
+        assert_eq!(env.len(), CHUNK_PEAKS);
+        // The last slice holds the largest sample, the first the smallest.
+        assert_eq!(*env.last().unwrap(), buf[999]);
+        assert!(
+            env[0] < env[1] && env[1] < env[2],
+            "slices are not in order"
+        );
+        // Monotone input means each slice's peak is its own last sample.
+        for (i, v) in env.iter().enumerate() {
+            let b = buf.len() * (i + 1) / CHUNK_PEAKS;
+            assert_eq!(
+                *v,
+                buf[b - 1],
+                "slice {i} did not end where the next begins"
+            );
+        }
+    }
+
+    /// Asked for nothing, answers nothing, rather than dividing by zero.
+    #[test]
+    fn an_envelope_of_no_slices_is_empty() {
+        assert!(envelope(&[0.5, 0.5], 0).is_empty());
+        assert_eq!(envelope(&[], 4), vec![0.0; 4]);
     }
 }

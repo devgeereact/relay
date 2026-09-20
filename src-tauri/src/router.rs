@@ -803,7 +803,18 @@ mod tests {
             r.set_thresholds(Thresholds::from_sensitivity(s));
             // Every confidence, including a perfect 1.0, and every dial position.
             for conf in [0.51, 0.75, 0.95, 0.99, 1.0] {
-                for m in [DetectionMethod::Semantic, DetectionMethod::Ambiguous] {
+                // `Quoted` joined this list on 2026-09-20 and it is the one most
+                // likely to be argued with, because its evidence LOOKS strong: a
+                // contiguous run of a preacher's words that is verbatim in one
+                // verse. It is still not a spoken reference. A preacher quotes
+                // far more scripture than a congregation is shown, so the run
+                // length says which verse and says nothing whatever about
+                // whether anybody wants it on a wall.
+                for m in [
+                    DetectionMethod::Semantic,
+                    DetectionMethod::Ambiguous,
+                    DetectionMethod::Quoted,
+                ] {
                     assert_ne!(
                         r.decide("John 3:16", conf, m, 0),
                         RouteDecision::AutoFire,

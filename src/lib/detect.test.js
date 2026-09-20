@@ -9,7 +9,7 @@
 // whole time; Live.svelte rendered both kinds as "AI suggestion — 92% match". The
 // human in the loop was shown nothing to be a human in the loop WITH.
 import { describe, it, expect } from 'vitest';
-import { heard, methodKey, methodBadgeKey, methodNoteKey, showsConfidence, inLibrary } from './detect.js';
+import { heard, methodKey, methodBadgeKey, methodNoteKey, showsConfidence, inLibrary, evidenceIsASpan } from './detect.js';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -201,5 +201,50 @@ describe('a claim card says which KIND of claim it is', () => {
         ).toBe(true);
       }
     }
+  });
+});
+
+// ── QUOTED SCRIPTURE, AND THE PRESENTATION THAT WAS LYING ──────────────────
+//
+// The operator, 2026-09-20: *"It has to be exactly how it is in the scripture,
+// not scattered. THE LORD IS MY SHEPHERD, not THE . SHEPHERD . LORD."*
+//
+// Two defects sat behind that sentence. The matcher was a TF-IDF cosine, which
+// discards word order by construction, and the console rendered its evidence
+// (`terms.join(" · ")`) INSIDE QUOTATION MARKS, as `“lord · shepherd”`. The
+// second is the one these tests hold: whatever the matcher does, a word list
+// must never be dressed as a quotation.
+describe('quoted scripture is a different KIND of claim', () => {
+  const quoted = { method: 'quoted', matched_text: 'the lord is my shepherd', confidence: 0.6 };
+  const para = { method: 'semantic', matched_text: 'lord · shepherd', confidence: 0.6 };
+  const direct = { method: 'direct', matched_text: 'psalm twenty three', confidence: 0.95 };
+
+  it('is never counted as heard, so it can never auto-fire', () => {
+    // The whole of rule 10. A preacher quotes far more scripture than a
+    // congregation is shown, so reading a verse aloud is not asking for it.
+    expect(heard(quoted)).toBe(false);
+  });
+
+  it('shows no percentage, because a run length is not a probability', () => {
+    expect(showsConfidence(quoted)).toBe(false);
+  });
+
+  it('gets its own words, not the paraphrase ones', () => {
+    expect(methodKey(quoted)).toBe('live.quoted_scripture');
+    expect(methodBadgeKey(quoted)).toBe('live.badge_quoted');
+    expect(methodNoteKey(quoted)).toBe('live.note_quoted');
+    // And it must not have quietly taken the paraphrase's.
+    expect(methodKey(quoted)).not.toBe(methodKey(para));
+    expect(methodBadgeKey(quoted)).not.toBe(methodBadgeKey(para));
+  });
+
+  it('may be shown in quotation marks; a paraphrase may NOT', () => {
+    expect(evidenceIsASpan(quoted)).toBe(true);
+    expect(evidenceIsASpan(direct)).toBe(true);
+    // THE DEFECT. `“lord · shepherd”` is a quotation of something nobody said.
+    expect(evidenceIsASpan(para)).toBe(false);
+    expect(evidenceIsASpan({ method: 'ambiguous' })).toBe(false);
+    expect(evidenceIsASpan({ method: 'uncertain_book' })).toBe(false);
+    expect(evidenceIsASpan(null)).toBe(false);
   });
 });

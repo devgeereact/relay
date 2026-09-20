@@ -94,14 +94,30 @@ describe('finals and their timestamps are sliced in LOCKSTEP', () => {
   });
 
   it('the cap keeps the NEWEST lines, because the operator is reading now', () => {
+    // 400 rather than 40: the cap moved from 12 to 240 on 2026-09-20, because
+    // twelve lines is about seven minutes of a real service and the operator
+    // asked to be able to scroll back and read what was just said. A test that
+    // feeds fewer lines than the cap proves nothing about a cap.
     let t = { ...EMPTY };
-    for (let i = 1; i <= 40; i++) t = applyTranscript(t, { text: `line ${i}`, is_final: true }, `t${i}`);
+    for (let i = 1; i <= 400; i++) t = applyTranscript(t, { text: `line ${i}`, is_final: true }, `t${i}`);
 
-    expect(t.finals.at(-1)).toBe('line 40');
+    expect(t.finals.at(-1)).toBe('line 400');
     expect(t.finals).not.toContain('line 1');
-    // And it is genuinely bounded: a sermon is an hour long.
-    expect(t.finals.length).toBeLessThanOrEqual(12);
+    // And it is still genuinely bounded. An unbounded list on a surface that
+    // updates every few seconds is a leak with a nice view.
+    expect(t.finals.length).toBeLessThanOrEqual(240);
     expect(t.finals.length).toBeGreaterThan(1);
+  });
+
+  it('keeps enough of a real service to scroll back through', () => {
+    // MEASURED, not chosen: the service of 2026-09-20 closed 147 utterances in
+    // 5611 seconds, one every ~38 s. The old cap of 12 held about seven minutes
+    // of that, which is why the card ran out of history almost at once.
+    let t = { ...EMPTY };
+    for (let i = 1; i <= 147; i++) t = applyTranscript(t, { text: `line ${i}`, is_final: true }, `t${i}`);
+    expect(t.finals).toContain('line 1');
+    expect(t.finals.length).toBe(147);
+    expect(t.finalsAt.length).toBe(147);
   });
 
   it('a state restored without finalsAt degrades instead of crashing', () => {

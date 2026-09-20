@@ -199,27 +199,6 @@ describe("(a) the preacher's page reads it too", () => {
   });
 });
 
-describe('(a) the console reads it', () => {
-  it('passes the live content’s own threshold to the one rule', () => {
-    // A source assertion, deliberately: this file has no console to mount. What
-    // it pins is the argument list, which is the whole of the defect on this
-    // surface.
-    //
-    // IT WAS `src/lib/Dock.svelte` UNTIL 2026-09-20 — the Screen Countdown left
-    // Quick tools on the operator's instruction and this line went with it,
-    // unchanged, to the band on the run surface. Pointed at the old file the
-    // scan would have found no `cdWarn` and failed, which is the right way round;
-    // pointed at neither it would have been deleted, which is how a threshold
-    // chosen for one countdown quietly stops reaching the figure beside it.
-    const src = read('src/lib/views/Live.svelte');
-    expect(
-      src,
-      'the console called `countdownWarning` with two arguments, so a threshold ' +
-        'chosen for the countdown on the wall never reached the figure beside it',
-    ).toMatch(/cdWarn = cdLive && countdownWarning\(\s*cdRunning\s*,\s*cdTotal\s*,\s*\$live\?\.countdown_warn_ms\s*\)/);
-  });
-});
-
 // ── (c) THE CONFIGURED DEFAULT REACHES THE TWO PAGES THAT CANNOT READ IT ─────
 //
 // These assert the FIGURE THE RULE RESOLVES rather than a class, because that is

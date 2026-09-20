@@ -101,6 +101,13 @@ pub(crate) fn bare_app() -> tauri::App<tauri::test::MockRuntime> {
         .manage(channels::MediaTransport::default())
         .manage(channels::ScreensDown::default())
         .manage(servicelock::ServiceLock::default())
+        // AND THE PHRASE INDEX. A fresh install builds both from the same
+        // corpus in `setup`, so a fixture with one and not the other is an app in
+        // a state no church could be in — and `emit_detections` takes
+        // `state::<Phrases>()` on every window, which PANICS rather than failing
+        // with a readable message. Ten e2e tests found that within a minute of
+        // the index landing, which is the fixture doing its job.
+        .manage(Phrases(detection::PhraseIndex::build(&corpus)))
         .manage(Semantic(SemanticIndex::build(&corpus)))
         .manage(Context(Mutex::new(ContextMemory::default())))
         // mock_context, NOT generate_context!(): the real macro embeds Info.plist as a

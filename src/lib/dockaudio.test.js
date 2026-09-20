@@ -36,7 +36,7 @@ vi.mock('@tauri-apps/api/event', () => ({ listen: async () => () => {} }));
 
 const cap = await import('./stores/capture.js');
 const Dock = await import('./Dock.svelte');
-const { pushReading, waveSegments, waveStale, WAVE_SPAN_MS, WAVE_GAP_MS } = Dock;
+const { pushReading, pushEnvelope, readingKind, waveRuns, waveSegments, waveStale, WAVE_SPAN_MS, WAVE_GAP_MS, CLIP_AT } = Dock;
 const src = readFileSync(resolve(process.cwd(), 'src/lib/Dock.svelte'), 'utf8');
 
 let host;
@@ -109,7 +109,7 @@ describe('the waveform reads time, not deliveries', () => {
     // A resumed laptop or a corrected system time would otherwise place new
     // readings to the LEFT of old ones and draw the envelope inside out.
     const buf = pushReading(pushReading([], 5_000, 0.4), 1_000, 0.9);
-    expect(buf).toEqual([{ t: 1_000, v: 0.9 }]);
+    expect(buf).toEqual([{ t: 1_000, v: 0.9, kind: 'quiet' }]);
   });
 
   it('positions each reading at the time it was taken', () => {
@@ -542,5 +542,107 @@ describe('the transcript is timestamped, and says which line is still being said
     const style = src.slice(src.indexOf('  .trl.cur'), src.indexOf('  .trl.cur') + 220);
     expect(style).toMatch(/--v-sel/);
     expect(style).not.toMatch(/--v-amber|--v-cyan|--v-amethyst/);
+  });
+});
+
+// ── THE WAVEFORM IS A WAVEFORM NOW, AND IT HAS THREE COLOURS ───────────────
+//
+// The operator, 2026-09-20: *"Make the Live Audio wave be professional and
+// colour coded, as this is not giving an original live audio wave."* They were
+// right and the fault was not in the drawing. `start_capture` emitted every
+// THIRD chunk carrying ONE rms number, so the trace was a reading every ~600 ms
+// joined with straight lines: about one point per spoken word. It was a level
+// history labelled as a waveform.
+//
+// The backend now sends every SECOND chunk (so the readings cover the timeline
+// once, with no overlap and no gap) carrying `audio::CHUNK_PEAKS` peaks across
+// its 400 ms — one reading per 25 ms, which is inside a syllable.
+describe('one chunk is a shape, not a number', () => {
+  it('spreads a chunk’s peaks across the time the chunk covers', () => {
+    // All sixteen stamped at the arrival time would pile on one pixel and draw a
+    // vertical spike per delivery: a different wrong picture, not a right one.
+    const peaks = [0.1, 0.2, 0.3, 0.4];
+    const buf = pushEnvelope([], 10_000, peaks, false, 0.25, 400);
+    expect(buf.map((r) => r.v)).toEqual(peaks);
+    expect(buf.map((r) => r.t)).toEqual([9_700, 9_800, 9_900, 10_000]);
+  });
+
+  it('puts the newest reading at the present, not 25 ms ago', () => {
+    const buf = pushEnvelope([], 10_000, [0.1, 0.9], false, 0.5, 400);
+    expect(buf[buf.length - 1].t).toBe(10_000);
+  });
+
+  it('falls back to one reading when the engine sent no envelope', () => {
+    // An older backend, or a build without the peaks. The console must draw what
+    // it always drew rather than a flat line.
+    for (const none of [undefined, null, []]) {
+      const buf = pushEnvelope([], 10_000, none, true, 0.42, 400);
+      expect(buf).toEqual([{ t: 10_000, v: 0.42, kind: 'voice' }]);
+    }
+  });
+});
+
+describe('the colour is measured, never guessed', () => {
+  it('asks the VOICE GATE whether this is speech, and never a level', () => {
+    // Rule 12 (DECISIONS §19): nothing may compare a signal to an absolute level
+    // to decide what speech is. The same quiet reading is emerald or steel purely
+    // according to what the gate said about the chunk it came from.
+    expect(readingKind(0.04, true)).toBe('voice');
+    expect(readingKind(0.04, false)).toBe('quiet');
+    expect(readingKind(0.8, false)).toBe('quiet');
+  });
+
+  it('calls full scale clipping, whatever the gate thought', () => {
+    // The ONE absolute fact in audio: the sample had nowhere left to go. Saying
+    // so is not a threshold Relay invented.
+    expect(readingKind(1, true)).toBe('clip');
+    expect(readingKind(1, false)).toBe('clip');
+    expect(readingKind(CLIP_AT, false)).toBe('clip');
+    expect(readingKind(CLIP_AT - 0.01, true)).toBe('voice');
+  });
+
+  it('has no fourth colour, and amber is not among the three', () => {
+    // Amber is ON AIR (rule 18) and is never spent on a microphone. A "hot but
+    // not clipping" band would be exactly the absolute threshold rule 12 removed.
+    const kinds = new Set();
+    for (const v of [0, 0.3, 0.6, 0.9, 1]) for (const g of [true, false]) kinds.add(readingKind(v, g));
+    expect([...kinds].sort()).toEqual(['clip', 'quiet', 'voice']);
+  });
+});
+
+describe('a segment is drawn in runs of one colour', () => {
+  const pt = (x, v, kind) => ({ x, v, kind });
+
+  it('splits where the colour changes, not per reading', () => {
+    const runs = waveRuns([
+      pt(0, 0.1, 'quiet'), pt(0.1, 0.1, 'quiet'),
+      pt(0.2, 0.5, 'voice'), pt(0.3, 0.6, 'voice'),
+      pt(0.4, 1, 'clip'),
+    ]);
+    expect(runs.map((r) => r.kind)).toEqual(['quiet', 'voice', 'clip']);
+  });
+
+  it('repeats the boundary point so the shapes meet with no gap', () => {
+    // Four points, so BOTH runs have width and survive the one-point filter.
+    const runs = waveRuns([
+      pt(0, 0.1, 'quiet'), pt(0.3, 0.2, 'quiet'),
+      pt(0.6, 0.9, 'voice'), pt(0.9, 0.8, 'voice'),
+    ]);
+    expect(runs).toHaveLength(2);
+    // Two filled shapes that merely abut leave a hairline of background between
+    // them at every voicing change, which on a live trace is most of them.
+    expect(runs[runs.length - 1].pts[0]).toEqual(runs[0].pts[runs[0].pts.length - 1]);
+  });
+
+  it('draws nothing for a run of one point, which has no width', () => {
+    expect(waveRuns([pt(0.5, 0.4, 'voice')])).toEqual([]);
+    expect(waveRuns([])).toEqual([]);
+  });
+
+  it('a clip lasting 25 ms is red for 25 ms, not for the whole chunk', () => {
+    // The reason the split is inside a segment rather than per delivery.
+    const buf = pushEnvelope([], 10_000, [0.3, 0.3, 1, 0.3], true, 0.5, 400);
+    const runs = waveRuns(waveSegments(buf, 10_000)[0]);
+    expect(runs.map((r) => r.kind)).toEqual(['voice', 'clip', 'voice']);
   });
 });

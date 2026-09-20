@@ -139,6 +139,58 @@ afterEach(() => {
 
 // ── 1 · IT IS OUT OF QUICK TOOLS ────────────────────────────────────────────
 
+// ── AND THE CONSOLE NO LONGER CARRIES IT EITHER (2026-09-20, evening) ──────
+//
+// It was moved out of Quick tools into a band of its own on Live that morning,
+// and taken off the console the same evening on the operator's instruction. The
+// tests that asserted the band are gone with it, which is correct: a test for a
+// surface that was deliberately removed is a test that argues with a decision.
+//
+// This is what replaces them. It is written against the SOURCE rather than
+// against a mounted component on purpose, because the claim is an absence and a
+// mounted component can only ever show what it does render. Reinstating the band
+// should be a decision somebody makes, not something a merge does quietly.
+//
+// WHAT IT DOES NOT CLAIM: that a church cannot show a countdown. The Planner
+// builds one as a plan cue (see the next block), and `lib/countdown.js` and
+// every backend command are untouched.
+/**
+ * `Live.svelte` with every comment removed: HTML comments, block comments and
+ * line comments.
+ *
+ * The assertions below are about what the file RENDERS and STYLES, and the note
+ * left where the band used to be necessarily names the things it removed. Without
+ * this the tests would fail on their own explanation, which would teach the next
+ * person to delete the explanation rather than to keep the guarantee.
+ */
+const LIVE_CODE = LIVE_SRC.replace(/<!--[\s\S]*?-->/g, '')
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/^[ \t]*\/\/.*$/gm, '');
+
+describe('the run surface no longer carries the Screen Countdown', () => {
+  it('names it nowhere and draws none of its controls', () => {
+    expect(LIVE_CODE).not.toContain('Screen Countdown');
+    expect(LIVE_CODE).not.toContain('sc-band');
+    expect(LIVE_CODE).not.toContain('cdtrans');
+    expect(LIVE_CODE).not.toContain('Put back on screens');
+  });
+
+  it('keeps no countdown transport state behind the missing controls', () => {
+    // A view that still computed `cdLive`, ticked a figure and held a busy flag
+    // for a band nobody renders is the shape of a surface half-rebuilt by
+    // accident. The script went with the markup.
+    for (const dead of ['cdPress(', 'function cdRun', 'cdUntilBad', 'cdChosen', 'cdReach']) {
+      expect(LIVE_CODE, `Live still carries ${dead}`).not.toContain(dead);
+    }
+  });
+
+  it('leaves no stylesheet for a band that is not there', () => {
+    for (const sel of ['.sc-band{', '.cdfields{', '.cdstatev{', '.sc-ch{', '@keyframes cdwarn']) {
+      expect(LIVE_CODE, `Live still styles ${sel}`).not.toContain(sel);
+    }
+  });
+});
+
 describe('the dock no longer carries it', () => {
   it('Quick tools names no Screen Countdown and draws no transport', () => {
     const card = DOCK_SRC.slice(DOCK_SRC.indexOf('<span class="dk">Quick tools</span>'));
@@ -161,171 +213,9 @@ describe('the dock no longer carries it', () => {
 
 // ── 2 · IT IS ON THE RUN SURFACE ────────────────────────────────────────────
 
-describe('the transport is on Live, beside the Stage Timer band', () => {
-  it('renders the whole transport rather than a subset of it', async () => {
-    mount();
-    await settle();
-    const b = band();
-    expect(b, 'Live renders no Screen Countdown band at all').toBeTruthy();
-    for (const label of ['Start', 'Pause', 'Reset', '−1', '+1', 'Clear']) {
-      expect(byLabel(label, b), `the band has no ${label}`).toBeTruthy();
-    }
-  });
-
-  it('is a band of its own and does not move into the Stage Timer band', async () => {
-    mount();
-    await settle();
-    // Two bands, two instruments. The Stage Timer touches no screen and this one
-    // is the congregation's; merging them is how a press meant for a preacher's
-    // monitor reaches a wall.
-    expect(host.querySelector('.pt-band'), 'the Stage Timer band is gone').toBeTruthy();
-    expect(band().querySelector('.pt-band')).toBeNull();
-    expect(host.querySelector('.pt-band').querySelector('.sc-band')).toBeNull();
-  });
-
-  it('carries the way back onto a congregation screen', async () => {
-    bridge({
-      channels: [chan(1, 'ONLINE SCREEN')],
-      timers: [{ id: 9, scope: 'both', label: '', target_ms: Date.now() + 300_000 }],
-    });
-    mount();
-    await settle(120);
-    expect(byLabel('Put back on screens', band()), 'the way back did not come with it')
-      .toBeTruthy();
-  });
-
-  it('says which figure it is showing, and never in amber', async () => {
-    mount();
-    await settle();
-    expect(band().querySelector('.cdstatev').textContent.trim()).toBe('not counting');
-    for (const cls of ['onair', 'inreh', 'guess', 'amber']) {
-      expect(band().querySelector(`.${cls}`), `the band wears .${cls}`).toBeNull();
-    }
-  });
-
-  // ── MOVED FROM `shellchrome.test.js` (2026-09-20) ────────────────────────
-  //
-  // The figure is the largest thing in this band because it is the one thing an
-  // operator reads from across a booth. That makes conflating its two states
-  // expensive: the SET duration and what the screens are counting are different
-  // facts, and a big number with no label is the half of a status line that lies.
-  it('the figure says WHICH of its two facts it is showing', async () => {
-    mount();
-    await settle();
-    // Nothing on the wall: it still renders — the control's biggest readout used
-    // to appear only after the control had been used — and it says so.
-    const fig = band().querySelector('.tfig');
-    expect(fig).toBeTruthy();
-    expect(fig.classList.contains('live')).toBe(false);
-    expect(band().querySelector('.cdstatev').textContent.trim()).toBe('not counting');
-
-    cap.live.set({ countdown_to: Date.now() + 5 * 60_000 });
-    await settle();
-    expect(band().querySelector('.tfig').classList.contains('live')).toBe(true);
-    expect(band().querySelector('.cdstatev').textContent.trim()).toBe('on the screens');
-  });
-
-  it('the warning state is red, never amber, and only while it is on a wall', async () => {
-    // Amber in this room means ON AIR and is never allowed to be anything else
-    // (rule 18). The warning WINDOW is `layers.js::countdownWarning` — one rule,
-    // shared with the wall and the stage page.
-    const css = LIVE_SRC.slice(LIVE_SRC.indexOf('.tfig{'));
-    expect(css, 'the figure has no rule in this stylesheet').not.toBe('');
-    expect(css).toMatch(/\.tfig\.warn\{color:var\(--v-red\)\}/);
-    // The TOKEN, not the word — the comment beside it says "never amber", which
-    // is the sentence a naive grep would have been satisfied by.
-    expect(css.slice(0, css.indexOf('.cdstatev'))).not.toMatch(/var\(--v-amber/);
-    // `cdLive &&` is the half that stops a SET duration under a minute from
-    // pulsing red at an operator about a countdown nobody can see.
-    expect(LIVE_SRC).toMatch(/\$: cdWarn = cdLive && countdownWarning\(/);
-  });
-});
-
 // ── 3 · IT CAN BE AIMED ─────────────────────────────────────────────────────
 
-describe('aiming the pre-service countdown at one screen', () => {
-  const start = () => byLabel('Start', band());
-  const screenBtn = (name) =>
-    [...band().querySelectorAll('.sc-ch')].find((b) => b.textContent.trim() === name);
-
-  it('every screen is the default, and it is sent as null rather than a list', async () => {
-    bridge({ channels: [chan(1, 'ONLINE SCREEN'), chan(2, 'STAGE SCREEN')] });
-    mount();
-    await settle(120);
-    start().click();
-    await settle();
-    const args = called('start_countdown').at(-1)?.[1];
-    expect(args, 'Start reached no command').toBeTruthy();
-    // NOT `[1, 2]`. "All of them" has one spelling, and an explicit list of every
-    // screen silently stops including a screen opened a minute later.
-    expect(args.channels).toBe(null);
-  });
-
-  it('narrowing it to the streaming screen sends that screen and no other', async () => {
-    bridge({ channels: [chan(1, 'ONLINE SCREEN'), chan(2, 'STAGE SCREEN')] });
-    mount();
-    await settle(120);
-    expect(screenBtn('ONLINE SCREEN'), 'the band offers no screen picker').toBeTruthy();
-    screenBtn('STAGE SCREEN').click();
-    await settle();
-    start().click();
-    await settle();
-    expect(called('start_countdown').at(-1)[1].channels).toEqual([1]);
-  });
-
-  it('refuses to start a countdown aimed at nothing, and says why', async () => {
-    bridge({ channels: [chan(1, 'ONLINE SCREEN')] });
-    mount();
-    await settle(120);
-    screenBtn('ONLINE SCREEN').click();
-    await settle();
-    expect(start().disabled, 'Start is offered over a countdown that would reach nothing').toBe(true);
-    expect(band().textContent).toMatch(/No screen chosen/i);
-    start().click();
-    await settle();
-    expect(called('start_countdown')).toHaveLength(0);
-  });
-});
-
 // ── 4 · THE LINE DESCRIBES WHAT IT IS AIMED AT ──────────────────────────────
-
-describe('the reach line answers about the aim, not about the building', () => {
-  const screenBtn = (name) =>
-    [...band().querySelectorAll('.sc-ch')].find((b) => b.textContent.trim() === name);
-  const reach = () => band().querySelector('.cdreach');
-
-  it('names the screen that would ignore it', async () => {
-    bridge({ channels: [chan(1, 'ONLINE SCREEN', 1), chan(2, 'LOBBY', 2)] });
-    mount();
-    await settle(160);
-    expect(reach(), 'the band renders no reach line').toBeTruthy();
-    expect(reach().textContent).toContain('LOBBY ignores it');
-  });
-
-  it('stops naming a screen the countdown is no longer aimed at', async () => {
-    // RULE 35, on the one line that answers "where would this go". Untick the
-    // screen that ignores the clock and the line must stop reporting it — a line
-    // that goes on describing every screen in the building over a countdown
-    // aimed at one of them says the same thing in two different situations.
-    bridge({ channels: [chan(1, 'ONLINE SCREEN', 1), chan(2, 'LOBBY', 2)] });
-    mount();
-    await settle(160);
-    expect(reach().textContent).toContain('LOBBY ignores it');
-    screenBtn('LOBBY').click();
-    await settle();
-    expect(reach().textContent).not.toContain('LOBBY');
-    expect(reach().textContent).toContain('Goes to the one screen');
-  });
-
-  it('wears no law colour, whatever it says', async () => {
-    bridge({ channels: [chan(1, 'LOBBY', 2)] });
-    mount();
-    await settle(160);
-    for (const cls of ['onair', 'inreh', 'guess', 'amber']) {
-      expect(reach().classList.contains(cls), `the line wears .${cls}`).toBe(false);
-    }
-  });
-});
 
 // ── 5 · AND THE PLANNER IS THE OTHER WAY IN ─────────────────────────────────
 //
@@ -387,70 +277,6 @@ describe('a Planner countdown cue is aimed where it is built', () => {
 // did — this view is destroyed when the operator changes workspace, and a
 // component `let` would drop the choice mid-service.
 
-describe('the countdown format picker', () => {
-  afterEach(() => countdownFormat.set('auto'));
-
-  it('feeds the one formatter and adds no second one', () => {
-    const open = LIVE_SRC.lastIndexOf('<script>');
-    const script = LIVE_SRC.slice(open, LIVE_SRC.indexOf('</script>', open));
-    expect(script).toMatch(/formatCountdown\([^)]*\$countdownFormat\)/);
-    // No hand-rolled hours, minutes or seconds anywhere in the countdown's half
-    // of this component.
-    expect(script).not.toMatch(/Math\.floor\([^)]*3600\)/);
-  });
-
-  it('offers exactly the three §7 names', async () => {
-    mount();
-    await settle();
-    const pick = band().querySelector('.cdfmt');
-    expect(pick).not.toBeNull();
-    expect([...pick.options].map((o) => o.value)).toEqual(['auto', 'ms', 'hms']);
-    expect([...pick.options].map((o) => o.textContent.trim())).toEqual(['auto', 'm:ss', 'h:mm:ss']);
-    expect(pick.getAttribute('aria-label')).toBe('Countdown format');
-  });
-
-  it('changes how the same number reads', async () => {
-    mount();
-    await settle();
-    const fig = () => band().querySelector('.tfig').textContent.trim();
-    expect(fig()).toBe('5:00');
-    countdownFormat.set('hms');
-    await tick();
-    expect(fig()).toBe('0:05:00');
-    countdownFormat.set('ms');
-    await tick();
-    expect(fig()).toBe('5:00');
-  });
-
-  // IT CHANGES THE READOUT, AND SAYS SO. A wall's countdown is rendered from
-  // `OutputContent`, which carries no format field, so a control that implied it
-  // reached the screens would be claiming a reach it has not got — rule 35's
-  // family, on the panel an operator watches a service from.
-  it('says which figure it governs, and claims nothing about the screens', async () => {
-    mount();
-    await settle();
-    const title = band().querySelector('.cdfmt').getAttribute('title');
-    expect(title).toMatch(/this readout/i);
-    expect(title).toMatch(/screens read the countdown through their own template/i);
-  });
-
-  // THE CHOICE OUTLIVES THE COMPONENT. The workspace router destroys this view
-  // when the operator changes workspace — the same trap `countdown.js` records
-  // for the set duration, and the reason both stores are at module scope.
-  it('survives the component being destroyed and rebuilt', async () => {
-    mount();
-    await settle();
-    countdownFormat.set('hms');
-    await tick();
-    app.$destroy();
-    host.remove();
-
-    mount();
-    await settle();
-    expect(band().querySelector('.cdfmt').value).toBe('hms');
-  });
-});
-
 // ── 7 · A TIME OF DAY (DECISIONS §102), MOVED FROM `quicktools.test.js` ─────
 //
 // "The service starts at 10:30" is the commonest countdown a church puts on a
@@ -460,85 +286,5 @@ describe('the countdown format picker', () => {
 // control — so a time of day was arithmetic an operator did in their head, and
 // it was wrong the moment the service slipped while the wall counted on.
 
-describe('counting down to a time of day', () => {
-  const clockBox = () => band().querySelector('[aria-label="Countdown clock time"]');
-  const startBtn = () => byLabel('Start', band());
-
-  const typeAt = async (value) => {
-    const box = clockBox();
-    expect(box, 'no clock-time control on the countdown band').toBeTruthy();
-    box.value = value;
-    box.dispatchEvent(new Event('input'));
-    await settle();
-    return box;
-  };
-
-  it('sends the instant rather than a number of minutes', async () => {
-    mount();
-    await settle();
-    await typeAt('10:30');
-    startBtn().click();
-    await settle();
-    const call = called('start_countdown').at(-1);
-    expect(call, 'Start reached no command').toBeTruthy();
-    const d = new Date(call[1].untilMs);
-    expect(d.getHours()).toBe(10);
-    expect(d.getMinutes()).toBe(30);
-  });
-
-  it('sends no instant when the field is empty, so the length still means a length', async () => {
-    mount();
-    await settle();
-    startBtn().click();
-    await settle();
-    expect(called('start_countdown').at(-1)[1].untilMs ?? null).toBeNull();
-  });
-
-  it('will not start on something that is not a time', async () => {
-    mount();
-    await settle();
-    const box = await typeAt('half ten');
-    expect(box.getAttribute('aria-invalid')).toBe('true');
-    expect(startBtn().disabled).toBe(true);
-    expect(called('start_countdown')).toHaveLength(0);
-  });
-
-  it('does not let a clock time re-aim a countdown that is already up', async () => {
-    // `±1` and Reset are about the countdown on the wall. Re-aiming those at a
-    // clock time would change what a congregation is counting to under an
-    // operator who pressed a minute button.
-    cap.live.set({ kind: 'countdown', reference: 'Service begins in', countdown_to: Date.now() + 300_000 });
-    mount();
-    await settle();
-    await typeAt('10:30');
-    const plus = byLabel('+1', band());
-    if (plus && !plus.disabled) {
-      plus.click();
-      await settle();
-      expect(called('start_countdown')).toHaveLength(0);
-      const adj = called('adjust_countdown').at(-1);
-      if (adj) expect(adj[1].untilMs ?? null).toBeNull();
-    }
-  });
-});
-
 // ── 8 · THE SOURCE OF TRUTH DID NOT FORK ────────────────────────────────────
 
-describe('there is still exactly one decision layer', () => {
-  it('every press on the run surface goes through the one arbiter', () => {
-    const open = LIVE_SRC.lastIndexOf('<script>');
-    const script = LIVE_SRC.slice(open, LIVE_SRC.indexOf('</script>', open));
-    expect(script, 'the run surface does not use the pure transport').toContain('countdownPress(');
-    // …and the two broadcasts are named exactly once each, inside it. A second
-    // `startCountdown(` outside `press` would be a press whose refusals nothing
-    // tested — except the plan-cue fire, which is a different instrument and is
-    // named here so the count stays legible.
-    const presses = [...script.matchAll(/\bcountdownPress\(/g)].length;
-    expect(presses).toBe(1);
-  });
-
-  it('the dock and the run surface do not both hold the set duration', () => {
-    expect(DOCK_SRC).not.toContain('countdownSet');
-    expect(LIVE_SRC).toContain('countdownSet');
-  });
-});

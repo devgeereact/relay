@@ -255,7 +255,6 @@ const REGISTER = [
       'src/lib/screencountdown.test.js',
       'src/lib/stagezones.test.js',
       'src/lib/templateKind.js',
-      'src/lib/timerwords.test.js',
       'src/lib/views/Live.svelte',
       'src/lib/wayback.test.js',
       'src/lib/stagelayout.js',
@@ -296,7 +295,6 @@ const REGISTER = [
       'src/lib/views/Live.svelte',
       'src/lib/views/ServicePlanner.svelte',
       'src/lib/views/Channels.svelte',
-      'src/lib/wayback.test.js',
       'src/lib/stagelayout.js',
       // Requirement 2b — the `programme` binding an operator picks in the template
       // editor's binding list, and the layer the three stage starters carry. It is

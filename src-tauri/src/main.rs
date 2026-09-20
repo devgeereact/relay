@@ -82,6 +82,11 @@ struct Routing(Mutex<Router>);
 /// The semantic (paraphrase) index, built once from the corpus at startup.
 struct Semantic(SemanticIndex);
 
+/// The contiguous-phrase index. Built from the same corpus as `Semantic` and
+/// answering the opposite question: not "which verse means this" but "which
+/// verse did the preacher just READ ALOUD". See `detection::PhraseIndex`.
+struct Phrases(detection::PhraseIndex);
+
 /// "Current passage" state for resolving bare verse references ("verse 4").
 #[derive(Default)]
 struct Context(Mutex<ContextMemory>);
@@ -130,6 +135,14 @@ struct ChunkEvent {
     rms: f32,
     is_voice: bool,
     samples: usize,
+    /// THE SHAPE OF THE SOUND, not just how much of it there was.
+    ///
+    /// `audio::CHUNK_PEAKS` readings across this chunk's 400 ms, so the console
+    /// can draw a real envelope instead of joining one level per delivery with a
+    /// straight line. Peaks of the CLEANED stream, which is what the voice gate
+    /// and whisper are given, so a peak at 1.0 here is the signal Relay is
+    /// actually working from being clipped, after gain, and is worth a colour.
+    peaks: Vec<f32>,
 }
 
 fn main() {
@@ -211,6 +224,7 @@ fn main() {
                     })
                     .collect()
             };
+            app.manage(Phrases(detection::PhraseIndex::build(&corpus)));
             app.manage(Semantic(SemanticIndex::build(&corpus)));
             app.manage(Context(Mutex::new(ContextMemory::default())));
 
@@ -653,6 +667,19 @@ const SEMANTIC_SUGGESTIONS_MAX: usize = 3;
 /// the list when scores are close. 0.60 measured +12 points of reachable recall
 /// on modern-wording retellings for about one extra row.
 const SEMANTIC_RELATIVE_FLOOR: f32 = 0.60;
+
+/// How many quoted verses one window may offer. A preacher reading a passage
+/// aloud quotes several verses in one breath, and the run surface is read in a
+/// dark booth by a volunteer — so the list is capped where it stays readable.
+const QUOTED_SUGGESTIONS_MAX: usize = 3;
+
+/// An ordering number for a quoted run. NOT a probability, and never rendered as
+/// a percentage (rule 18): it exists so `pipeline::better` can put a twelve-word
+/// quotation above a five-word one, and for nothing else. The evidence a person
+/// judges this by is the PHRASE, which is carried beside it.
+fn quoted_confidence(run: usize) -> f32 {
+    (0.60 + 0.03 * run.saturating_sub(detection::MIN_RUN_WORDS) as f32).min(0.95)
+}
 
 /// Which paraphrase hits are worth an operator's attention.
 ///
@@ -1176,6 +1203,7 @@ fn emit_detections<R: tauri::Runtime>(
     let routing = handle.state::<Routing>();
     let ctx = handle.state::<Context>();
     let sem = handle.state::<Semantic>();
+    let phrases = handle.state::<Phrases>();
 
     // Compute everything UNDER the locks, but collect the emits/broadcasts and
     // fire them AFTER releasing — never hold a lock across handle.emit /
@@ -1289,6 +1317,45 @@ fn emit_detections<R: tauri::Runtime>(
                 score.min(0.95),
                 DetectionMethod::Semantic,
                 Some(terms.join(" · ")),
+            ));
+        }
+        // ── QUOTED SCRIPTURE ──────────────────────────────────────────────
+        //
+        // A contiguous run of the preacher's own words that is verbatim in one
+        // verse. This is the operator's instruction of 2026-09-20 — *"it has to
+        // be three words together as in the scripture"* — and it exists because
+        // the paraphrase row above renders `terms.join(" · ")` inside quotation
+        // marks, so a verse justified by `lord` and `shepherd`, in neither order,
+        // reached the run surface dressed as a quotation.
+        //
+        // THE ANCHOR IS RULE 40, AND IT IS APPLIED IN TWO STRENGTHS, because the
+        // two kinds of evidence are not equal:
+        //
+        //   * A BOOK THIS WINDOW NAMED restricts. The words said it, so nothing
+        //     outside it is a candidate.
+        //   * THE PASSAGE ON SCREEN only re-ranks. Memory is what Relay has when
+        //     the words do not say, and a quotation IS the words saying — a
+        //     preacher reading Proverbs who quotes Isaiah is quoting Isaiah.
+        //     Restricting on memory would hide it; preferring merely puts the
+        //     likelier reading first.
+        //
+        // Measured on the service of 2026-09-20: "Verse 7 says, Be not wise in
+        // your own eyes" names no book at all, and that phrase is verbatim in
+        // Romans 12:16 as well as in the Proverbs 3 the preacher was reading.
+        let quoted_in = anchor.as_ref().map(|r| r.book.as_str());
+        let mut quoted = phrases.0.quoted(text, quoted_in, QUOTED_SUGGESTIONS_MAX);
+        if quoted_in.is_none() {
+            if let Some(on_screen) = context.current().map(|r| r.book.clone()) {
+                quoted.sort_by_key(|h| h.r.book != on_screen);
+            }
+        }
+        for h in quoted {
+            candidates.push(Cand::single(
+                h.r,
+                quoted_confidence(h.run),
+                DetectionMethod::Quoted,
+                // THE PHRASE, not a word list. The whole point.
+                Some(h.phrase),
             ));
         }
         if direct_empty {
@@ -5311,6 +5378,16 @@ async fn start_capture(
     let emitter = app.clone();
     let quality_emitter = app.clone();
     let err_emitter = app.clone();
+    // DISCONNECTED USED TO BE THE ONE SILENT ANSWER ON THIS PATH, and it is the
+    // worst of the three. FULL is a backlog and is counted; OK is the normal case;
+    // DISCONNECTED means the whisper worker is gone — it failed to create its
+    // state, or the engine it belonged to was replaced underneath a running
+    // capture — and every chunk from here to the end of the service falls on the
+    // floor. The level meter still moves, the console still says Listening, and
+    // not one word is ever transcribed again. Reported ONCE, on the same channel
+    // as a dead microphone, because to an operator it is the same news.
+    let stt_gone = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stt_dead_emitter = app.clone();
     // Throttle the level-meter event: chunks arrive ~5/sec but the UI only needs
     // a couple updates/sec. Flooding the webview with events is a real freeze
     // risk. STT still gets EVERY chunk.
@@ -5324,7 +5401,14 @@ async fn start_capture(
         device,
         move |chunk| {
             let n = chunk_n.fetch_add(1, Ordering::Relaxed);
-            if n.is_multiple_of(3) {
+            // EVERY SECOND CHUNK, not every third. Chunks are 400 ms on a 200 ms
+            // hop, so every second one covers the timeline exactly once with no
+            // overlap and no gap; every third left two thirds of the audio out of
+            // the console's picture entirely, which is why no drawing could make
+            // that picture a waveform. The event RATE is unchanged in the way that
+            // matters — ~2.5/s against ~1.7/s — while the readings it carries go
+            // from one per 600 ms to one per 25 ms.
+            if n.is_multiple_of(2) {
                 let _ = emitter.emit(
                     "audio://chunk",
                     ChunkEvent {
@@ -5333,6 +5417,7 @@ async fn start_capture(
                         rms: chunk.rms,
                         is_voice: chunk.is_voice,
                         samples: chunk.samples.len(),
+                        peaks: audio::envelope(&chunk.samples, audio::CHUNK_PEAKS),
                     },
                 );
             }
@@ -5344,8 +5429,19 @@ async fn start_capture(
                 // heard is a worse thing than a shed partial, and both have to be
                 // visible. DISCONNECTED is an engine that has been unloaded and is
                 // not a gap in anything.
-                if let Err(std::sync::mpsc::TrySendError::Full(_)) = tx.try_send(chunk.clone()) {
-                    latency::note_dropped_audio();
+                match tx.try_send(chunk.clone()) {
+                    Err(std::sync::mpsc::TrySendError::Full(_)) => latency::note_dropped_audio(),
+                    Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
+                        if !stt_gone.swap(true, Ordering::Relaxed) {
+                            let msg = "speech recognition has stopped — the transcript \
+                                       and automatic scripture detection are not running. \
+                                       Stop and start the microphone to bring them back."
+                                .to_string();
+                            eprintln!("audio: {msg}");
+                            let _ = stt_dead_emitter.emit("audio://error", msg);
+                        }
+                    }
+                    Ok(()) => {}
                 }
             }
         },

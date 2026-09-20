@@ -38,7 +38,7 @@
   // `methodKey` and — the important one — `showsConfidence`, which encodes the
   // rule that ONLY a heard reference may display a percentage. This screen must
   // not re-derive that rule; a second copy is a second thing to get wrong.
-  import { heard, methodKey, showsConfidence } from './detect.js';
+  import { heard, methodKey, showsConfidence, evidenceIsASpan } from './detect.js';
   import { capture, transcript } from './stores/capture.js';
   import { describeGate } from './gate.js';
 
@@ -67,8 +67,12 @@
   // The paraphrase evidence arrives as "word · word · word" (main.rs joins the
   // terms `top_k_explained` returned). Split it back out so each one can be a
   // chip the operator can actually scan.
+  // A QUOTED match carries a contiguous phrase, not a term list, so it is shown
+  // the way `direct` is: as words somebody actually said, in order. Splitting it
+  // on `·` would find nothing and silently fall through to an empty chip list.
+  $: isSpan = evidenceIsASpan(detection);
   $: terms =
-    !isDirect && detection?.matched_text
+    !isSpan && detection?.matched_text
       ? detection.matched_text.split('·').map((s) => s.trim()).filter(Boolean)
       : [];
 
@@ -238,6 +242,12 @@
             {#if isDirect && detection.matched_text}
               <p class="ins-p">
                 Relay read this reference in what was said:
+              </p>
+              <p class="ins-quote">“{detection.matched_text}”</p>
+            {:else if isSpan && detection.matched_text}
+              <p class="ins-p">
+                These words were read aloud, in this order, and they are in this verse
+                word for word. No reference was spoken:
               </p>
               <p class="ins-quote">“{detection.matched_text}”</p>
             {:else if terms.length}

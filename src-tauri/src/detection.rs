@@ -30,6 +30,20 @@ pub enum DetectionMethod {
     /// a distance in an arbitrary vector space, NOT a probability. May never
     /// auto-fire; see `router.rs`.
     Semantic,
+    /// A CONTIGUOUS RUN OF WORDS the speaker said that is verbatim in one verse.
+    ///
+    /// Its "confidence" is derived from the run LENGTH, which is a count and not
+    /// a probability either — so, like `Semantic`, no threshold on it means
+    /// anything and it may never auto-fire. What separates it from `Semantic` is
+    /// what it can show: a phrase an operator can read and agree with in the
+    /// second they have, rather than a list of words that appear in the verse
+    /// somewhere. See `PhraseIndex`.
+    ///
+    /// It is NOT `Direct` and the distinction is the whole of rule 10. Relay
+    /// heard scripture being READ; it did not hear a reference. Quoting a verse
+    /// is not asking for it to go on a wall, and a preacher quotes far more
+    /// verses than a congregation is shown.
+    Quoted,
     /// A reference that parsed but is genuinely ambiguous ("Revelation 22"
     /// → 22:1 or 2:2). Confidence is a hardcoded placeholder, not measured.
     /// May never auto-fire.
@@ -135,6 +149,7 @@ impl DetectionMethod {
             "ambiguous" => DetectionMethod::Ambiguous,
             "uncertain_book" => DetectionMethod::UncertainBook,
             "uncertain_number" => DetectionMethod::UncertainNumber,
+            "quoted" => DetectionMethod::Quoted,
             _ => DetectionMethod::Semantic,
         }
     }
@@ -170,7 +185,12 @@ impl DetectionMethod {
             | DetectionMethod::Ambiguous
             | DetectionMethod::UncertainBook
             | DetectionMethod::UncertainNumber => "direct",
-            DetectionMethod::Semantic => "semantic",
+            // `Quoted` persists as `semantic` for the reason `Ambiguous`
+            // persists as `direct`: the column records HOW it was found, and no
+            // reference was spoken. `detections.method` is constrained to two
+            // values and widening it would need a migration to record a
+            // distinction the router already enforces in the only place it acts.
+            DetectionMethod::Semantic | DetectionMethod::Quoted => "semantic",
         }
     }
 }
@@ -6297,5 +6317,794 @@ mod language_report_tests {
                 l.code
             );
         }
+    }
+}
+
+// ── READING ON: the preacher has moved to the next verse without saying so ──
+//
+// An operator puts a passage up and the preacher reads through it. Today the only
+// way the screen follows is the operator pressing Next, or the preacher SAYING
+// "verse two" (`detect_passage_nav`, which already works). This is the third case,
+// and the common one: they simply read on.
+//
+// ## Why this is not rule 10 being bent
+//
+// Rule 10 caps `Semantic` at Suggest because a TF-IDF cosine over 31,000 verses is
+// not a probability. This asks a much smaller question: of the two verses that
+// come NEXT in a passage an operator has already approved and put on a wall, do
+// the words just spoken belong to one of them? It cannot start a passage, cannot
+// leave one, and cannot go backwards. It is not the AI choosing what to show; it
+// is the AI keeping up with a reading somebody already chose.
+//
+// ## What the numbers actually said
+//
+// Tuned against the two real readings in service 24 (2026-09-20) and the bundled
+// KJV, not guessed:
+//
+// ```text
+//   case                 6 words   12     20    all    first advance
+//   Romans 8:28->29        +0.00  +0.43  +1.00  +1.00   after 12 words
+//   Romans 8:29->30        -0.38  +0.00  +0.40  +0.60   after 20 words
+//   Numbers 10:29->30      -1.00  -1.00  +0.00  +0.25   only at the end
+//   Numbers 10:30->31      -0.60  -0.14  +0.50  +1.00   after 20 words
+//   Numbers 10:31->32      -1.00  -0.50  +0.00  +0.14   never
+// ```
+//
+// **Three things follow, and all three are in the design rather than in a hope.**
+//
+// It NEVER advances while the current verse is still being read: every such case
+// scored -1.00. The failure mode is silence, and silence is the only failure mode
+// worth having here — the operator presses Next exactly as they do today.
+//
+// It advances LATE, twelve to twenty words in, three to six seconds behind. That
+// is structural: an eight-second window holds all of the verse being left and only
+// the opening of the one being entered. Nothing about the threshold changes it;
+// whole-sentence input would.
+//
+// And one case in five never advances at all. Numbers 10:32 is "goodness" and
+// "lord" once stopwords are gone. There is nothing there to match, so no number
+// reaches it. Narrative verses do this; Romans does not.
+//
+// ## The first attempt, and why it is not this one
+//
+// Scoring the WHOLE window against each candidate fails: the current verse is
+// entirely present and the next one barely, so the next verse loses three times in
+// five even when the preacher has plainly moved on. Only the NEWEST words
+// discriminate, which is why `RECENCY` exists.
+
+/// Words too common in the KJV to distinguish one verse from another.
+///
+/// Not a general stopword list — a list for THIS corpus. "shall", "thou", "thee",
+/// "unto" and "hath" are on it because they appear in thousands of verses and
+/// carry no evidence about which one is being read.
+// ── READ-ON IS BUILT AND TESTED AND IS NOT WIRED TO ANYTHING YET ───────────
+//
+// `read_on` answers "has the preacher stopped reading the verse on the screen
+// and started reading the next one", and it does it well enough to ship: see
+// `read_on_tests`, and the tuning table in the module note. What it does NOT yet
+// have is a caller. Advancing a passage by itself touches the fire path, needs a
+// hold so the operator's own Next is never undone a moment later, and needs an
+// `e2e.rs` case driving the real commands — none of which is written.
+//
+// `allow(dead_code)` RATHER THAN DELETING IT, and rather than wiring it in a
+// hurry to make clippy quiet. The measurement it encodes came off two real
+// readings in a real service and is the expensive part; the wiring is an
+// afternoon. This comment is here so the next person finds a stated absence
+// instead of guessing whether the feature is live — which, on the fire path, is
+// the difference between reading the code and trusting it.
+#[allow(dead_code)]
+const READ_ON_STOPWORDS: &[&str] = &[
+    "the", "and", "of", "to", "in", "that", "is", "was", "he", "for", "it", "with", "as", "his",
+    "on", "be", "at", "by", "this", "had", "not", "are", "but", "from", "or", "have", "an", "they",
+    "which", "one", "you", "were", "all", "her", "she", "there", "would", "their", "we", "him",
+    "been", "has", "when", "who", "will", "no", "more", "if", "out", "so", "up", "said", "what",
+    "its", "about", "into", "them", "then", "unto", "shall", "thou", "thee", "thy", "ye", "hath",
+    "also", "her", "my", "me", "us", "our", "your",
+];
+
+/// How many of the newest content words decide it.
+///
+/// The measurement above is what sets this. Scoring the whole window lets the
+/// verse being LEFT win on sheer presence, because all of it is in the window and
+/// only the opening of the next one is.
+#[allow(dead_code)]
+const RECENCY: usize = 8;
+
+/// How far ahead the next verse must be before the screen moves.
+///
+/// Zero would advance on a tie, and a tie is exactly what the middle of a verse
+/// looks like. 0.15 is the smallest figure that cleared every still-reading case
+/// in the measurement above, all of which scored -1.00 — so this is not a fence
+/// sitting next to the data, it is a fence a long way from it.
+#[allow(dead_code)]
+const READ_ON_MARGIN: f32 = 0.15;
+
+/// The content words of a line, in order, for read-on scoring.
+#[allow(dead_code)]
+fn read_on_tokens(text: &str) -> Vec<String> {
+    normalize(text)
+        .split_whitespace()
+        .filter(|t| t.chars().count() >= 3 && !READ_ON_STOPWORDS.contains(t))
+        .map(|t| t.to_string())
+        .collect()
+}
+
+/// Of the words just spoken, how many belong to this verse?
+///
+/// The denominator is what was HEARD, not the verse. Asking "how much of this
+/// verse has been said" rewards a verse already finished; asking "how much of what
+/// was just said is this verse" is the question an advance actually turns on.
+#[allow(dead_code)]
+fn read_on_score(candidate: &str, recent: &[String]) -> f32 {
+    if recent.is_empty() {
+        return 0.0;
+    }
+    let cand: std::collections::HashSet<String> = read_on_tokens(candidate).into_iter().collect();
+    if cand.is_empty() {
+        return 0.0;
+    }
+    let hits = recent.iter().filter(|t| cand.contains(*t)).count();
+    hits as f32 / recent.len() as f32
+}
+
+/// Has the preacher moved on? Returns the verse to advance TO.
+///
+/// `candidates` are the verses that may be moved to, in order, with their text —
+/// the caller supplies at most the next two, and never anything outside the
+/// passage. This function cannot reach further than it is given, which is what
+/// keeps the bound a property of the code rather than of a comment.
+#[allow(dead_code)]
+pub fn read_on(
+    heard: &str,
+    current_text: &str,
+    candidates: &[(VerseRef, String)],
+) -> Option<VerseRef> {
+    let all = read_on_tokens(heard);
+    if all.is_empty() {
+        return None;
+    }
+    let recent: Vec<String> = all.iter().rev().take(RECENCY).rev().cloned().collect();
+    let here = read_on_score(current_text, &recent);
+    let (best, score) = candidates
+        .iter()
+        .map(|(r, t)| (r, read_on_score(t, &recent)))
+        .max_by(|a, b| a.1.total_cmp(&b.1))?;
+    (score > 0.0 && score - here >= READ_ON_MARGIN).then(|| best.clone())
+}
+
+#[cfg(test)]
+mod read_on_tests {
+    use super::*;
+
+    const R28: &str = "And we know that all things work together for good to them that love God, to them who are the called according to {his} purpose.";
+    const R29: &str = "For whom he did foreknow, he also did predestinate {to be} conformed to the image of his Son, that he might be the firstborn among many brethren.";
+    const R30: &str = "Moreover whom he did predestinate, them he also called: and whom he called, them he also justified: and whom he justified, them he also glorified.";
+    const N32: &str = "And it shall be, if thou go with us, yea, it shall be, that what goodness the LORD shall do unto us, the same will we do unto thee.";
+
+    fn vr(book: &str, chapter: i64, verse: i64) -> VerseRef {
+        VerseRef {
+            book: book.into(),
+            chapter,
+            verse,
+        }
+    }
+    fn cands(list: &[(i64, &str)]) -> Vec<(VerseRef, String)> {
+        list.iter()
+            .map(|(v, t)| (vr("Romans", 8, *v), (*t).to_string()))
+            .collect()
+    }
+
+    /// What the decoder's window actually holds part-way through a hand-over: the
+    /// last eight words of the verse still on the screen, then `words` words of the
+    /// one being read now.
+    fn window_after(current: &str, next: &str, words: usize) -> String {
+        let tail: Vec<&str> = current.split_whitespace().collect();
+        let tail = tail[tail.len().saturating_sub(8)..].join(" ");
+        let head = next
+            .split_whitespace()
+            .take(words)
+            .collect::<Vec<_>>()
+            .join(" ");
+        format!("{tail} {head}")
+    }
+
+    /// THE ONE THAT MATTERS MOST, and it is a refusal.
+    ///
+    /// While the preacher is still reading the verse on the screen, nothing moves.
+    /// Every still-reading case in the tuning scored -1.00, and this is that
+    /// measurement turned into a test: the failure mode of this whole feature must
+    /// be silence, because the operator's Next already works and a wrong verse
+    /// does not undo itself.
+    #[test]
+    fn nothing_moves_while_the_current_verse_is_still_being_read() {
+        let c = cands(&[(29, R29), (30, R30)]);
+        assert_eq!(read_on(R28, R28, &c), None);
+        // Even most of the way through it.
+        let half = R28
+            .split_whitespace()
+            .take(14)
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert_eq!(read_on(&half, R28, &c), None);
+    }
+
+    /// AND THE ADVANCE ITSELF, at the point the measurement said it happens.
+    #[test]
+    fn it_advances_once_enough_of_the_next_verse_has_been_heard() {
+        let c = cands(&[(29, R29), (30, R30)]);
+        // Twelve words in — the figure the tuning recorded for this reading.
+        let heard = window_after(R28, R29, 12);
+        assert_eq!(read_on(&heard, R28, &c).map(|r| r.verse), Some(29));
+    }
+
+    /// IT CANNOT REACH PAST WHAT IT WAS GIVEN.
+    ///
+    /// The bound is a property of the call, not of a comment: the caller hands it
+    /// the verses that may be moved to, so a passage's end and "never backwards"
+    /// are enforced by there being nothing else in the list.
+    #[test]
+    fn it_can_only_move_to_a_verse_it_was_offered() {
+        // The words of verse 30 are ringing, but only 29 is on offer.
+        let only_29 = cands(&[(29, R29)]);
+        let heard = R30;
+        let got = read_on(heard, R28, &only_29);
+        assert!(
+            got.is_none() || got.unwrap().verse == 29,
+            "it reached a verse that was not a candidate"
+        );
+        // And with nothing on offer it does nothing at all — the end of a passage.
+        assert_eq!(read_on(R29, R28, &[]), None);
+    }
+
+    /// A VERSE MADE OF STOPWORDS CANNOT BE HEARD, AND THAT IS RECORDED.
+    ///
+    /// Numbers 10:32 is "goodness" and "lord" once the common words are gone. The
+    /// tuning said it never advances and this pins that, so the next person reads a
+    /// known limit rather than finding it in a service. It is not a bug to be
+    /// fixed by lowering the margin: lowering it far enough to catch this would
+    /// advance on a tie, and the middle of a verse looks exactly like a tie.
+    #[test]
+    fn a_verse_that_is_almost_all_common_words_is_a_known_miss() {
+        let c = vec![(vr("Numbers", 10, 32), N32.to_string())];
+        const N31: &str = "And he said, Leave us not, I pray thee; forasmuch as thou knowest \
+                           how we are to encamp in the wilderness, and thou mayest be to us \
+                           instead of eyes.";
+        // Built the way a real window is: the tail of the verse being read, then
+        // the first words of the next one. Scored against N32's own words alone it
+        // WOULD advance, and that difference is the point — the current verse's
+        // tail is part of the evidence, not noise to be stripped out before asking.
+        let heard = window_after(N31, N32, 14);
+        assert_eq!(read_on(&heard, N31, &c), None);
+    }
+
+    /// Sermon prose about a verse is not the verse being read.
+    #[test]
+    fn expounding_a_verse_is_not_reading_the_next_one() {
+        let c = cands(&[(29, R29), (30, R30)]);
+        let heard = "so what Paul is telling us this morning is that God is working, \
+                     he is working right now in your situation, whatever it looks like";
+        assert_eq!(read_on(heard, R28, &c), None);
+    }
+
+    /// Silence, or a window with nothing in it, moves nothing.
+    #[test]
+    fn an_empty_window_moves_nothing() {
+        let c = cands(&[(29, R29)]);
+        assert_eq!(read_on("", R28, &c), None);
+        assert_eq!(read_on("the and of to", R28, &c), None);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// QUOTED SCRIPTURE · A CONTIGUOUS PHRASE, NOT A BAG OF WORDS
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// `SemanticIndex` answers "which verse MEANS this", and it answers it with a
+// TF-IDF cosine, which discards word order by construction. That is the right
+// instrument for a preacher RETELLING a story ("he ended up feeding pigs"), and
+// the wrong one for a preacher QUOTING. Its evidence reaches the console as
+// `terms.join(" · ")` and is rendered inside quotation marks, so a verse whose
+// whole justification was the words `lord` and `shepherd`, in neither order and
+// nowhere near each other, appeared on the run surface as
+//
+//     “lord · shepherd”
+//
+// dressed as a quotation. The operator's instruction, 2026-09-20: *"it has to be
+// three words together as in the scripture"*. This module is that sentence.
+//
+// ── WHY IT IS A SEPARATE INDEX AND NOT A TIGHTER SEMANTIC ─────────────────
+//
+// Because the two questions want opposite tokenizers. `tokenize` drops stopwords
+// and two-letter words, which is correct for a cosine and fatal for a quotation:
+// "the lord is my shepherd" reduces to `[lord, shepherd]` and "seek ye first"
+// to `[seek, first]`. The very phrases the operator named are the ones a
+// content-word index cannot see. So a phrase index keeps EVERY word.
+//
+// ── MEASURED, on the full KJV and on one real 93-minute service ────────────
+//
+// Uniqueness of an n-gram over all words (31,102 verses):
+//
+//     3 words   418,590 distinct   78.1% unique to a single verse
+//     4 words   573,762 distinct   88.1%
+//     5 words   625,020 distinct   92.9%
+//
+// Run over all 816 transcript windows of the service of 2026-09-20, taking the
+// longest contiguous run each window shares with any verse:
+//
+//     run >= 3    300 fires   unusable
+//     run >= 4     67 fires   one every 1.4 min, heavy noise ("was a good man")
+//     run >= 5     24 fires   ~16 correct
+//     run >= 5 and rarity      13 fires   11 correct
+//
+// ONE SERVICE IS ONE SAMPLE. These constants are configuration shaped by a
+// measurement, not laws, and the honest statement of their status is that they
+// have been fitted to a single morning of one preacher in one language.
+//
+// ── WHAT IT MAY DO ─────────────────────────────────────────────────────────
+//
+// Suggest. Never fire. A quoted phrase is strong evidence about WHICH VERSE and
+// no evidence at all that the operator wants it on a wall, and rule 10 is not
+// about how good the evidence is: only what Relay HEARD AS A REFERENCE may reach
+// a congregation unattended. `DetectionMethod::Quoted` is capped in `router.rs`
+// beside `Semantic`.
+
+/// How many words make the index's unit. Short enough that a three-word
+/// quotation is findable at all, which is the whole requirement.
+const PHRASE_GRAM: usize = 3;
+
+/// A gram this common is a phrase of the language, not a phrase of a verse, and
+/// looking it up would cost more than it could ever return. "and it came to"
+/// is in hundreds of verses.
+const MAX_GRAM_VERSES: usize = 8;
+
+/// The shortest run of words that may be offered as a quotation.
+///
+/// FIVE, measured (see the module note): at four the service produced a
+/// suggestion every 1.4 minutes, most of them ordinary English that happens to
+/// appear somewhere in a 790,000-word book. The cost of the wrong value here is
+/// paid by a volunteer in a dark booth, so it is set where the list is short
+/// enough to read.
+pub const MIN_RUN_WORDS: usize = 5;
+
+/// A run this long is its own corroboration and needs no rarity check.
+/// "moreover it is required in stewards that a man be found" is twelve words and
+/// nobody says that by accident.
+const SELF_EVIDENT_RUN: usize = 7;
+
+/// Below `SELF_EVIDENT_RUN`, the run must contain at least one word this rare —
+/// present in at most this fraction of verses. 0.5% of the KJV is ~155 verses.
+///
+/// This is the same idea as `RARE_DF_FRACTION` one door along, at a different
+/// value because it is doing a different job: there a single rare word stands in
+/// for missing corroboration, here it separates a five-word quotation from five
+/// words of ordinary speech. Measured: it removes "the poor out of the",
+/// "for the fruit of the" and "is it in the world" while keeping
+/// "wisdom is the principal thing" and "a solitary place and there".
+const PHRASE_RARE_FRACTION: f32 = 0.005;
+
+/// One verse whose words the speaker said, in order.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PhraseHit {
+    /// The verse those words are in.
+    pub r: VerseRef,
+    /// How many words ran together. The ranking key, and the operator-facing
+    /// measure of how much of the verse was actually said.
+    pub run: usize,
+    /// THE WORDS THEMSELVES, as the window had them, in order.
+    ///
+    /// This is what reaches `matched_text`, and it is the point of the whole
+    /// module: the field means "the span this was parsed from" everywhere else in
+    /// this file, and for a paraphrase it was being filled with a word list.
+    pub phrase: String,
+}
+
+/// Every contiguous word-run the KJV shares with a sentence, found by a sorted
+/// gram table rather than by scanning 31,102 verses.
+///
+/// Built once at startup beside `SemanticIndex` and never mutated.
+pub struct PhraseIndex {
+    /// (gram hash, verse index), sorted by hash. A `Vec` and a binary search
+    /// rather than a `HashMap`: iteration order has bitten this file twice
+    /// (see `cosine`), the table is built once, and 730,000 pairs cost ~9 MB
+    /// here against tens of megabytes as a map of string tuples.
+    grams: Vec<(u64, u32)>,
+    /// Word ids for every verse, concatenated. Comparing ids rather than
+    /// `String`s is what makes extending a run free.
+    flat: Vec<u32>,
+    /// Where each verse starts in `flat`; has one extra entry so the last
+    /// verse's end needs no special case.
+    starts: Vec<u32>,
+    refs: Vec<VerseRef>,
+    /// word → id, and how many verses that word appears in.
+    ids: HashMap<String, u32>,
+    df: Vec<u32>,
+}
+
+/// Every word, lowercased, in order. NOT `tokenize`: stopwords and two-letter
+/// words are exactly what makes a quotation a quotation.
+fn phrase_words(text: &str) -> Vec<String> {
+    text.split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(|w| w.to_ascii_lowercase())
+        .collect()
+}
+
+/// FNV-1a over three word ids. Deterministic across processes and builds, unlike
+/// anything seeded from `RandomState`.
+fn gram_hash(a: u32, b: u32, c: u32) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for id in [a, b, c] {
+        for byte in id.to_le_bytes() {
+            h ^= byte as u64;
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    h
+}
+
+impl PhraseIndex {
+    /// Build from the same `(reference, text)` corpus `SemanticIndex` takes.
+    pub fn build(corpus: &[(VerseRef, String)]) -> Self {
+        let mut ids: HashMap<String, u32> = HashMap::new();
+        let mut df: Vec<u32> = Vec::new();
+        let mut flat: Vec<u32> = Vec::new();
+        let mut starts: Vec<u32> = Vec::with_capacity(corpus.len() + 1);
+        let mut refs: Vec<VerseRef> = Vec::with_capacity(corpus.len());
+        let mut grams: Vec<(u64, u32)> = Vec::new();
+
+        for (vi, (r, text)) in corpus.iter().enumerate() {
+            starts.push(flat.len() as u32);
+            refs.push(r.clone());
+            let words = phrase_words(text);
+            let mut seen: std::collections::HashSet<u32> = std::collections::HashSet::new();
+            let first = flat.len();
+            for w in words {
+                let next = ids.len() as u32;
+                let id = *ids.entry(w).or_insert(next);
+                if id as usize >= df.len() {
+                    df.push(0);
+                }
+                if seen.insert(id) {
+                    df[id as usize] += 1;
+                }
+                flat.push(id);
+            }
+            let n = flat.len() - first;
+            for i in 0..n.saturating_sub(PHRASE_GRAM - 1) {
+                let s = first + i;
+                grams.push((gram_hash(flat[s], flat[s + 1], flat[s + 2]), vi as u32));
+            }
+        }
+        starts.push(flat.len() as u32);
+        grams.sort_unstable();
+        PhraseIndex {
+            grams,
+            flat,
+            starts,
+            refs,
+            ids,
+            df,
+        }
+    }
+
+    fn verse_words(&self, vi: usize) -> &[u32] {
+        let a = self.starts[vi] as usize;
+        let b = self.starts[vi + 1] as usize;
+        &self.flat[a..b]
+    }
+
+    /// Verses holding this gram. Empty when it is too common to be evidence.
+    fn verses_with(&self, h: u64) -> &[(u64, u32)] {
+        let lo = self.grams.partition_point(|(g, _)| *g < h);
+        let hi = self.grams.partition_point(|(g, _)| *g <= h);
+        let slice = &self.grams[lo..hi];
+        if slice.len() > MAX_GRAM_VERSES {
+            &[]
+        } else {
+            slice
+        }
+    }
+
+    /// Is any word of this run rare enough to stand as evidence on its own?
+    fn has_a_rare_word(&self, run: &[u32]) -> bool {
+        let cap = ((self.refs.len() as f32 * PHRASE_RARE_FRACTION) as u32).max(1);
+        run.iter().any(|id| {
+            self.df
+                .get(*id as usize)
+                .copied()
+                .is_some_and(|d| d > 0 && d <= cap)
+        })
+    }
+
+    /// The longest runs `heard` shares with any verse, longest first.
+    ///
+    /// `book` narrows the answer to one book when the words or the context have
+    /// named one. THAT IS RULE 40 IN THIS MODULE: the preacher who said
+    /// "Verse 7 says, Be not wise in your own eyes" while reading Proverbs 3 was
+    /// quoting a phrase that is verbatim in Romans 12:16 as well, and the longest
+    /// run alone answers Romans. When the words say, the words win.
+    pub fn quoted(&self, heard: &str, book: Option<&str>, k: usize) -> Vec<PhraseHit> {
+        let words = phrase_words(heard);
+        if words.len() < MIN_RUN_WORDS {
+            return Vec::new();
+        }
+        let q: Vec<u32> = words
+            .iter()
+            .map(|w| self.ids.get(w).copied().unwrap_or(u32::MAX))
+            .collect();
+
+        // verse index → (run length, where it started in the window)
+        let mut best: HashMap<u32, (usize, usize)> = HashMap::new();
+        for i in 0..q.len().saturating_sub(PHRASE_GRAM - 1) {
+            if q[i] == u32::MAX || q[i + 1] == u32::MAX || q[i + 2] == u32::MAX {
+                continue;
+            }
+            let h = gram_hash(q[i], q[i + 1], q[i + 2]);
+            for (_, vi) in self.verses_with(h) {
+                if let Some(b) = book {
+                    if !self.refs[*vi as usize].book.eq_ignore_ascii_case(b) {
+                        continue;
+                    }
+                }
+                let vw = self.verse_words(*vi as usize);
+                for j in 0..vw.len().saturating_sub(PHRASE_GRAM - 1) {
+                    if vw[j..j + PHRASE_GRAM] != q[i..i + PHRASE_GRAM] {
+                        continue;
+                    }
+                    let mut n = PHRASE_GRAM;
+                    while i + n < q.len() && j + n < vw.len() && q[i + n] == vw[j + n] {
+                        n += 1;
+                    }
+                    let e = best.entry(*vi).or_insert((0, 0));
+                    if n > e.0 {
+                        *e = (n, i);
+                    }
+                }
+            }
+        }
+
+        let mut hits: Vec<PhraseHit> = best
+            .into_iter()
+            .filter(|(_, (n, i))| {
+                *n >= MIN_RUN_WORDS
+                    && (*n >= SELF_EVIDENT_RUN || self.has_a_rare_word(&q[*i..*i + *n]))
+            })
+            .map(|(vi, (n, i))| PhraseHit {
+                r: self.refs[vi as usize].clone(),
+                run: n,
+                phrase: words[i..i + n].join(" "),
+            })
+            .collect();
+        // Longest run first. Ties broken by the reference so two runs of equal
+        // length cannot swap places between calls — the same determinism rule
+        // `cosine` learned the hard way.
+        hits.sort_by(|a, b| {
+            b.run.cmp(&a.run).then_with(|| {
+                (&a.r.book, a.r.chapter, a.r.verse).cmp(&(&b.r.book, b.r.chapter, b.r.verse))
+            })
+        });
+        hits.truncate(k);
+        hits
+    }
+}
+
+#[cfg(test)]
+mod phrase_tests {
+    use super::*;
+
+    fn vr(book: &str, chapter: i64, verse: i64) -> VerseRef {
+        VerseRef {
+            book: book.into(),
+            chapter,
+            verse,
+        }
+    }
+
+    /// Real KJV text, braces and all — the `{is}` of Psalms 23:1 is a supplied
+    /// word the translators italicised, and the preacher says it out loud.
+    fn corpus() -> Vec<(VerseRef, String)> {
+        vec![
+            (vr("Psalms", 23, 1), "[A Psalm of David.] The LORD {is} my shepherd; I shall not want.".into()),
+            (vr("Matthew", 6, 33), "But seek ye first the kingdom of God, and his righteousness; and all these things shall be added unto you.".into()),
+            (vr("Proverbs", 3, 7), "Be not wise in thine own eyes: fear the LORD, and depart from evil.".into()),
+            (vr("Romans", 12, 16), "Be of the same mind one toward another. Mind not high things, but condescend to men of low estate. Be not wise in your own conceits.".into()),
+            (vr("1 Corinthians", 4, 2), "Moreover it is required in stewards, that a man be found faithful.".into()),
+            (vr("Hebrews", 10, 25), "Not forsaking the assembling of ourselves together, as the manner of some {is}; but exhorting {one another}: and so much the more, as ye see the day approaching.".into()),
+            (vr("Genesis", 1, 1), "In the beginning God created the heaven and the earth.".into()),
+        ]
+    }
+
+    /// THE OPERATOR'S OWN EXAMPLE, 2026-09-20.
+    #[test]
+    fn the_lord_is_my_shepherd_is_found_as_one_phrase() {
+        let idx = PhraseIndex::build(&corpus());
+        let hits = idx.quoted(
+            "and david said the lord is my shepherd i shall not want",
+            None,
+            3,
+        );
+        assert_eq!(hits.first().map(|h| h.r.clone()), Some(vr("Psalms", 23, 1)));
+        // AND THE EVIDENCE IS THE WORDS, IN ORDER. This is the half the console
+        // was getting wrong: `lord · shepherd` rendered inside quotation marks.
+        assert_eq!(hits[0].phrase, "the lord is my shepherd i shall not want");
+    }
+
+    /// The operator's second example. Three words together, not `seek · first`.
+    #[test]
+    fn seek_ye_first_is_found_although_every_word_but_two_is_a_stopword() {
+        let idx = PhraseIndex::build(&corpus());
+        let hits = idx.quoted(
+            "he told us to seek ye first the kingdom of god this morning",
+            None,
+            3,
+        );
+        assert_eq!(
+            hits.first().map(|h| h.r.clone()),
+            Some(vr("Matthew", 6, 33))
+        );
+        assert!(
+            hits[0]
+                .phrase
+                .starts_with("seek ye first the kingdom of god"),
+            "phrase was {:?}",
+            hits[0].phrase
+        );
+    }
+
+    /// THE DEFECT ITSELF, stated as a test. The same words in the wrong order are
+    /// not a quotation, and the TF-IDF path cannot tell the difference.
+    #[test]
+    fn the_same_words_scattered_are_not_a_quotation() {
+        let idx = PhraseIndex::build(&corpus());
+        assert!(idx
+            .quoted("shepherd my is lord the want not shall i", None, 3)
+            .is_empty());
+        assert!(idx
+            .quoted("the shepherd spoke and the lord was there", None, 3)
+            .is_empty());
+    }
+
+    /// RULE 40 IN THIS MODULE. "Be not wise in your own eyes" is verbatim in
+    /// Romans 12:16, and the preacher reading Proverbs 3 meant Proverbs 3:7.
+    /// Verified by removing the book filter and watching Romans win.
+    #[test]
+    fn a_book_the_words_named_beats_a_longer_run_somewhere_else() {
+        let idx = PhraseIndex::build(&corpus());
+        let heard = "verse seven says be not wise in your own eyes fear the lord";
+        let loose = idx.quoted(heard, None, 3);
+        assert_eq!(
+            loose.first().map(|h| h.r.clone()),
+            Some(vr("Romans", 12, 16)),
+            "without the anchor the longest run is Romans — that is the trap"
+        );
+        let anchored = idx.quoted(heard, Some("Proverbs"), 3);
+        assert_eq!(
+            anchored.first().map(|h| h.r.clone()),
+            Some(vr("Proverbs", 3, 7))
+        );
+        assert!(
+            anchored.iter().all(|h| h.r.book == "Proverbs"),
+            "the anchor must exclude, not merely re-rank"
+        );
+    }
+
+    /// Ordinary speech does not become scripture by sharing four words with it.
+    #[test]
+    fn a_run_shorter_than_the_floor_is_not_offered() {
+        let idx = PhraseIndex::build(&corpus());
+        // "in the beginning god" is four words of Genesis 1:1 and stops there.
+        assert!(idx
+            .quoted(
+                "right in the beginning god was moving in this church",
+                None,
+                3
+            )
+            .is_empty());
+    }
+
+    /// Longest run first, and the ranking is stable.
+    #[test]
+    fn the_longest_run_is_offered_first_and_the_order_never_moves() {
+        let idx = PhraseIndex::build(&corpus());
+        let heard = "moreover it is required in stewards that a man be found faithful \
+                     and not forsaking the assembling of ourselves together";
+        let first = idx.quoted(heard, None, 5);
+        assert!(first.len() >= 2, "expected both verses, got {first:?}");
+        assert!(first[0].run >= first[1].run);
+        for _ in 0..5 {
+            assert_eq!(idx.quoted(heard, None, 5), first);
+        }
+    }
+
+    /// Silence, and a window with no verse in it at all.
+    #[test]
+    fn nothing_heard_offers_nothing() {
+        let idx = PhraseIndex::build(&corpus());
+        assert!(idx.quoted("", None, 3).is_empty());
+        assert!(idx
+            .quoted(
+                "good morning everybody welcome to the service today",
+                None,
+                3
+            )
+            .is_empty());
+    }
+}
+
+#[cfg(test)]
+mod phrase_bench {
+    use super::*;
+
+    /// WHAT THE SHIPPED CODE FINDS IN A REAL SERVICE.
+    ///
+    /// The constants in this module were tuned against a model of this algorithm
+    /// written in another language, which is a measurement of the model and not
+    /// of the product. This runs the REAL index over a real transcript and prints
+    /// what an operator would have been offered.
+    ///
+    ///     RELAY_PHRASE_WAV=/path/to/transcript.txt \
+    ///       cargo test phrase_bench -- --ignored --nocapture
+    ///
+    /// One line per transcript window. Needs the bundled KJV, so it builds the
+    /// whole 31,102-verse index; that is the point, because `MAX_GRAM_VERSES` and
+    /// `PHRASE_RARE_FRACTION` mean nothing on a seven-verse fixture.
+    #[test]
+    #[ignore]
+    fn what_a_real_service_would_have_been_offered() {
+        let path =
+            std::env::var("RELAY_PHRASE_WAV").unwrap_or_else(|_| "/tmp/service24.txt".to_string());
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            println!("no transcript at {path}; set RELAY_PHRASE_WAV");
+            return;
+        };
+        let kjv: serde_json::Value =
+            // `trim_start_matches` the BOM: the bundled KJV carries one, and
+            // serde_json rejects it as "expected value" at line 1 column 1.
+            serde_json::from_str(include_str!("../data/kjv.json").trim_start_matches('\u{feff}'))
+                .expect("kjv");
+        let mut corpus: Vec<(VerseRef, String)> = Vec::new();
+        for book in kjv.as_array().expect("books") {
+            let abbrev = book["abbrev"].as_str().unwrap_or("?").to_string();
+            for (ci, chapter) in book["chapters"]
+                .as_array()
+                .expect("chapters")
+                .iter()
+                .enumerate()
+            {
+                for (vi, verse) in chapter.as_array().expect("verses").iter().enumerate() {
+                    corpus.push((
+                        VerseRef {
+                            book: abbrev.clone(),
+                            chapter: ci as i64 + 1,
+                            verse: vi as i64 + 1,
+                        },
+                        verse.as_str().unwrap_or("").to_string(),
+                    ));
+                }
+            }
+        }
+        println!("index over {} verses", corpus.len());
+        let built = std::time::Instant::now();
+        let idx = PhraseIndex::build(&corpus);
+        println!("built in {:?}", built.elapsed());
+
+        let mut fires = 0usize;
+        let t0 = std::time::Instant::now();
+        let mut windows = 0usize;
+        for line in text.lines() {
+            windows += 1;
+            for h in idx.quoted(line, None, 3) {
+                fires += 1;
+                println!(
+                    "  [{}] {} {}:{}  “{}”",
+                    h.run, h.r.book, h.r.chapter, h.r.verse, h.phrase
+                );
+            }
+        }
+        println!(
+            "{fires} offers over {windows} windows · {:?} total · {:?}/window",
+            t0.elapsed(),
+            t0.elapsed() / windows.max(1) as u32
+        );
     }
 }

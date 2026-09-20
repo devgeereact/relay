@@ -31,6 +31,11 @@ export const heard = (d) => d?.method === 'direct';
  */
 export function methodKey(d) {
   if (d?.method === 'semantic') return 'live.paraphrase_a_guess';
+  // `quoted` — a contiguous run of the preacher's own words, verbatim in this
+  // verse. Strong evidence about WHICH verse and none at all that anybody wants
+  // it on a wall, so it is not `direct` and never will be: a preacher quotes far
+  // more scripture than a congregation is shown. See detection.rs::PhraseIndex.
+  if (d?.method === 'quoted') return 'live.quoted_scripture';
   if (d?.method === 'ambiguous') return 'live.ambiguous_reference';
   // `uncertain_book` — the chapter and verse were heard, the BOOK was not. Either
   // an edit-distance repair of a misheard word, or an everyday word that happens
@@ -60,6 +65,7 @@ export function methodKey(d) {
  */
 export function methodBadgeKey(d) {
   if (d?.method === 'semantic') return 'live.badge_paraphrase';
+  if (d?.method === 'quoted') return 'live.badge_quoted';
   if (d?.method === 'ambiguous') return 'live.badge_ambiguous';
   if (d?.method === 'uncertain_book') return 'live.badge_book_uncertain';
   return 'live.badge_heard';
@@ -78,6 +84,7 @@ export function methodBadgeKey(d) {
  */
 export function methodNoteKey(d) {
   if (d?.method === 'semantic') return 'live.not_a_spoken_reference';
+  if (d?.method === 'quoted') return 'live.note_quoted';
   if (d?.method === 'ambiguous') return 'live.note_ambiguous';
   if (d?.method === 'uncertain_book') return 'live.note_book_uncertain';
   return null;
@@ -113,3 +120,25 @@ export const showsConfidence = (d) => heard(d);
  * a guess. This can only ever add a warning where the backend explicitly said so.
  */
 export const inLibrary = (d) => d?.in_library !== false;
+
+/**
+ * Is this detection's evidence a CONTIGUOUS SPAN of what was said?
+ *
+ * `direct` carries the words the reference was parsed from ("proverbs chapter
+ * six verse sixteen") and `quoted` carries a run of scripture read aloud. Both
+ * are things a person said, in the order they said them, so both may be shown
+ * inside quotation marks.
+ *
+ * `semantic` may not. Its evidence is `terms.join(" · ")` — the words that
+ * contributed most to a TF-IDF cosine, in weight order, from anywhere in the
+ * verse. Rendered inside quotation marks it read as
+ *
+ *     “lord · shepherd”
+ *
+ * which is a quotation of something nobody said. The operator's instruction of
+ * 2026-09-20 was that the evidence has to be the words together as they are in
+ * the scripture; where it genuinely is not, it must stop dressing as though it
+ * were. Same principle as `showsConfidence`: a presentation that lies about what
+ * kind of thing it is showing is worse than showing nothing.
+ */
+export const evidenceIsASpan = (d) => d?.method === 'direct' || d?.method === 'quoted';

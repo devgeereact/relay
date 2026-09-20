@@ -101,20 +101,19 @@ const SURFACES = [
     colour: /\.tmr\.warn \.tval \{ color: var\(--v-red\); \}/,
     glow: /\.tmr\.warn \.tval \{ text-shadow: [^}]*\}/,
   },
-  {
-    // IT WAS `src/lib/Dock.svelte` UNTIL 2026-09-20. The Screen Countdown left
-    // Quick tools on the operator's instruction and is now a band on the run
-    // surface; the figure, the red and the blink came with it unchanged. This
-    // entry follows the control rather than the file, which is the whole point of
-    // a register of surfaces — pointed at the old path it would have gone on
-    // passing over a stylesheet that no longer has a countdown in it.
-    name: "the console's countdown band",
-    file: 'src/lib/views/Live.svelte',
-    // Live's stylesheet is written without the spaces the dock's used.
-    colour: /\.tfig\.warn\{color:var\(--v-red\)\}/,
-    // No glow, deliberately — see this file's header.
-    glow: null,
-  },
+  // THE CONSOLE'S COUNTDOWN BAND IS NOT A SURFACE ANY MORE (2026-09-20, evening).
+  //
+  // It moved from `Dock.svelte` to `Live.svelte` that morning and was removed
+  // from the console that evening on the operator's instruction, taking `.tfig`,
+  // its red and the `cdwarn` blink with it. The entry is DELETED rather than
+  // repointed, because there is no third file holding this control: repointing it
+  // at the Planner would assert a warning colour on a surface that shows no
+  // running countdown at all, and pointing it anywhere else would pass over a
+  // stylesheet with no countdown in it, which is the failure the note it replaces
+  // was written to prevent.
+  //
+  // The three surfaces below are the ones a congregation or a preacher can see,
+  // and they are untouched.
 ];
 
 describe('the countdown warning survives a viewer who asked for no motion', () => {

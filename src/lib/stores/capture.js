@@ -93,7 +93,7 @@ import { setSafeMode, safeMode } from '../boot/boot.js';
  * sidebar and was re-rendering the entire shell dozens of times a second, for
  * data it does not use. Only the Settings meter subscribes here.
  */
-export const meter = writable({ level: 0, isVoice: false });
+export const meter = writable({ level: 0, isVoice: false, peaks: [] });
 
 export const capture = writable({
   available: false, // Tauri backend attached?
@@ -459,7 +459,25 @@ export const liveTemplateOverride = derived([live, templates], ([$l, $tpls]) =>
  *  resolution the real output window uses, so the console program pane matches. */
 export const liveTemplatePinned = derived(live, ($l) => !!$l?.template_pinned);
 
-const MAX_FINALS = 12;
+/**
+ * How many closed transcript lines are kept.
+ *
+ * IT WAS 12, AND 12 IS THE REASON THE TRANSCRIPT CARD LOOKED EMPTY. The dock
+ * capped its own render at 40 lines and that cap could never bite, because the
+ * store never held more than twelve. Measured on the service of 2026-09-20: 147
+ * closed utterances across 5611 seconds, one about every 38 seconds, so twelve
+ * lines is roughly seven minutes of a service and four of them fill a 152px
+ * card. An operator scrolling back "to read what was said in the past few
+ * minutes" reached the top almost at once.
+ *
+ * 240 is about two and a half hours at that rate, which is longer than any
+ * service Relay has run, and it is bounded rather than unbounded on purpose: an
+ * uncapped list on a surface that updates every few seconds is a leak with a
+ * nice view. The cost is strings — the whole 93-minute service was 816 lines and
+ * under 200 kB of text — and the array is rebuilt per line either way, which is
+ * what the slice was already doing at 12.
+ */
+const MAX_FINALS = 240;
 const MAX_DETECTIONS = 6;
 
 /**
@@ -1098,6 +1116,26 @@ try {
 }
 }
 
+/**
+ * Drop the three capture listeners if they are attached. Safe to call when they
+ * are not. Used by `stopCapture` and, because capture can also end without any
+ * command being issued, by `startCapture` on its way in.
+ */
+function detachCaptureListeners() {
+  if (unlistenAudio) {
+    unlistenAudio();
+    unlistenAudio = null;
+  }
+  if (unlistenStt) {
+    unlistenStt();
+    unlistenStt = null;
+  }
+  if (unlistenDetect) {
+    unlistenDetect();
+    unlistenDetect = null;
+  }
+}
+
 /** Start capture from `device` (name string, or null for the default input). */
 export async function startCapture(device) {
 const call = await invoke();
@@ -1110,13 +1148,26 @@ try {
 }
 await call('start_capture', { device: device ?? null });
 
+// DETACH BEFORE ATTACHING. `stopCapture` is not the only way capture ends: a
+// device that dies mid-service arrives as `audio://error`, which clears
+// `capturing` so the operator can press the microphone again — and it tears
+// nothing down, because it is an event, not a command. Without this, the second
+// Start overwrote three live handles and every transcript event was then
+// delivered TWICE, to two listeners, for the rest of the service. Idempotent, so
+// the ordinary Stop-then-Start path is unchanged.
+detachCaptureListeners();
+
 // Last language pushed to `capture` — guards against re-notifying subscribers
 // on every transcript when the detected language hasn't changed.
 let lastLang = null;
 // The hot path. Goes to `meter`, never to `capture` — see the note on `meter`.
 unlistenAudio = await listen('audio://chunk', (e) => {
-  const { rms, is_voice } = e.payload;
-  meter.set({ level: rms, isVoice: is_voice });
+  const { rms, is_voice, peaks } = e.payload;
+  // `peaks` is the chunk's own envelope, sixteen readings across its 400 ms
+  // (`audio::CHUNK_PEAKS`). It rides on the event that was already being sent
+  // rather than on one of its own. An older backend sends none, so the console
+  // must still work from `level` alone — hence a default rather than a guard.
+  meter.set({ level: rms, isVoice: is_voice, peaks: Array.isArray(peaks) ? peaks : [] });
 });
 unlistenStt = await listen('stt://transcript', (e) => {
   const { text, is_final, language, trace_id } = e.payload;
@@ -1204,23 +1255,12 @@ try {
 // before any local teardown claims the microphone is off.
 if (call) await call('stop_capture');
 
-if (unlistenAudio) {
-  unlistenAudio();
-  unlistenAudio = null;
-}
-if (unlistenStt) {
-  unlistenStt();
-  unlistenStt = null;
-}
-if (unlistenDetect) {
-  unlistenDetect();
-  unlistenDetect = null;
-}
+detachCaptureListeners();
 capture.update((s) => ({ ...s, capturing: false }));
 // The live level lives on the `meter` store, not `capture` — resetting
 // capture.level/isVoice (which nothing reads) left the input bars frozen lit at
 // the last value after Stop. Reset the store that actually drives them.
-meter.set({ level: 0, isVoice: false });
+meter.set({ level: 0, isVoice: false, peaks: [] });
 transcript.update((t) => ({ ...t, partial: '' }));
 }
 

@@ -34,17 +34,94 @@
    * would begin at the first reading inside the window and the left-hand edge
    * would be a made-up zero rather than the real signal running off the side.
    */
-  export function pushReading(buf, t, v, spanMs = WAVE_SPAN_MS) {
+  export function pushReading(buf, t, v, spanMs = WAVE_SPAN_MS, kind = 'quiet') {
     const last = buf.length ? buf[buf.length - 1] : null;
     // A clock that went backwards (a resumed laptop, a corrected system time)
     // would otherwise place new readings to the LEFT of old ones and draw the
     // envelope inside out. Start again rather than draw a lie.
     const base = last && last.t > t ? [] : buf;
-    const out = [...base, { t, v: Math.max(0, Math.min(1, v)) }];
+    const out = [...base, { t, v: Math.max(0, Math.min(1, v)), kind }];
     const cut = t - spanMs;
     let i = 0;
     while (i + 1 < out.length && out[i + 1].t <= cut) i++;
     return out.slice(i);
+  }
+
+  /**
+   * WHAT COLOUR IS THIS READING?
+   *
+   * Three answers and no fourth, and every one of them is a measurement rather
+   * than a comparison against a level Relay chose:
+   *
+   *   `clip`  a sample at or past full scale. Clipping is the one absolutely
+   *           defined fault in audio — the sample had nowhere left to go — so
+   *           saying it is not a violation of rule 12 (DECISIONS §19). It is red
+   *           because red means act now: move the gain, nothing else will fix it.
+   *   `voice` the VOICE GATE'S OWN ANSWER, `is_voice`, carried on the same event.
+   *           Not a threshold applied here. Rule 12 forbids the console deciding
+   *           what counts as speech, and this asks the gate instead of guessing.
+   *   `quiet` everything else, in the card's steel. A quiet room is not a fault.
+   *
+   * AMBER IS ABSENT ON PURPOSE. Amber means ON AIR (rule 18) and is never spent
+   * on a microphone, so there is no "hot but not clipping" band: the honest line
+   * between "fine" and "broken" here is full scale, and inventing a warning
+   * level would be inventing exactly the absolute threshold rule 12 removed.
+   */
+  export const CLIP_AT = 0.999;
+  export function readingKind(v, isVoice) {
+    if (v >= CLIP_AT) return 'clip';
+    return isVoice ? 'voice' : 'quiet';
+  }
+
+  /**
+   * Append ONE CHUNK'S WHOLE ENVELOPE, spread across the time it covers.
+   *
+   * The chunk arrived at `endT` and is `chunkMs` long, so its first peak is
+   * `chunkMs` older than its last. Stamping all sixteen at the arrival time
+   * would pile them on one pixel and draw a vertical spike per delivery, which
+   * is a different wrong picture from the one this replaces.
+   *
+   * Falls back to a single reading when the backend sent no peaks, so a console
+   * running against an older engine draws what it always drew instead of a flat
+   * line.
+   */
+  export function pushEnvelope(buf, endT, peaks, isVoice, level, chunkMs = 400, spanMs = WAVE_SPAN_MS) {
+    if (!Array.isArray(peaks) || peaks.length === 0) {
+      return pushReading(buf, endT, level ?? 0, spanMs, readingKind(level ?? 0, isVoice));
+    }
+    let out = buf;
+    const step = chunkMs / peaks.length;
+    for (let i = 0; i < peaks.length; i++) {
+      const v = peaks[i];
+      // The slice's own END, so the newest reading lands at `endT` exactly and
+      // the trace's right-hand edge is the present rather than 25 ms ago.
+      const t = endT - (peaks.length - 1 - i) * step;
+      out = pushReading(out, t, v, spanMs, readingKind(v, isVoice));
+    }
+    return out;
+  }
+
+  /**
+   * One segment split into RUNS OF ONE COLOUR, so a chunk that clipped halfway
+   * through is red only where it clipped.
+   *
+   * Each run repeats the previous run's last point, so the filled shapes meet
+   * rather than leaving a hairline of background between them.
+   */
+  export function waveRuns(seg) {
+    const runs = [];
+    for (const p of seg) {
+      const last = runs[runs.length - 1];
+      if (!last || last.kind !== (p.kind ?? 'quiet')) {
+        const run = { kind: p.kind ?? 'quiet', pts: [] };
+        if (last) run.pts.push(last.pts[last.pts.length - 1]);
+        run.pts.push(p);
+        runs.push(run);
+      } else {
+        last.pts.push(p);
+      }
+    }
+    return runs.filter((r) => r.pts.length > 1);
   }
 
   /**
@@ -67,7 +144,7 @@
         cur = [];
         segs.push(cur);
       }
-      cur.push({ x: 1 - (now - r.t) / spanMs, v: Math.max(0, Math.min(1, r.v)) });
+      cur.push({ x: 1 - (now - r.t) / spanMs, v: Math.max(0, Math.min(1, r.v)), kind: r.kind ?? 'quiet' });
       prev = r;
     }
     return segs.filter((s) => s.length);
@@ -160,7 +237,20 @@
   // drifted them the moment the rolling cap froze `finals.length` — every line
   // then carried the timestamp of a different line. Pairing by index across the
   // FULL arrays and slicing the pairs cannot reproduce that.
-  const TR_LINES = 40;
+  // HOW FAR BACK THE CARD LETS AN OPERATOR SCROLL.
+  //
+  // It was 40 and it never once bit: `capture.js` kept twelve, so the card could
+  // show at most twelve however many it was willing to draw. Both numbers moved
+  // on the operator's instruction of 2026-09-20 — *"use all the space it has
+  // first, and the operator can scroll to read what was said in the past few
+  // minutes for quick recall"* — and this one is the smaller of the two on
+  // purpose: the store is the history, this is what one card will paint at once,
+  // and painting a whole service into a 152px box costs an operator nothing but
+  // costs the webview a layout pass per line, several times a minute.
+  //
+  // 120 is about 75 minutes at the rate a real service produced (one closed line
+  // every ~38 s), which is further back than "the past few minutes" ever means.
+  const TR_LINES = 120;
   $: tlines = $transcript.finals
     .map((t, i) => ({ t, at: $transcript.finalsAt?.[i] ?? '' }))
     .slice(-TR_LINES);
@@ -311,7 +401,7 @@
 
   function onReading(m) {
     const now = Date.now();
-    waveBuf = pushReading(waveBuf, now, m?.level ?? 0);
+    waveBuf = pushEnvelope(waveBuf, now, m?.peaks, !!m?.isVoice, m?.level ?? 0);
     signalSince = now;
     // Repaint immediately when the loop is not running, so a reading taken with
     // the microphone stopped (the reset `stopCapture` performs) still lands.
@@ -369,32 +459,43 @@
     const mid = ch / 2;
     cx.clearRect(0, 0, cw, ch);
 
-    const g = cx.createLinearGradient(0, 0, cw, 0);
-    g.addColorStop(0, 'rgba(63,207,106,.10)');
-    g.addColorStop(0.72, 'rgba(63,207,106,.34)');
-    g.addColorStop(1, 'rgba(63,207,106,.62)');
+    // THE THREE COLOURS, and `readingKind` is the one place that chooses between
+    // them. Steel is the card's own ink; emerald is the same emerald the VOICE
+    // chip in this head uses, so the trace and the chip cannot disagree; red is
+    // clipping. No amber anywhere: amber is ON AIR (rule 18).
+    const INK = {
+      quiet: { fill: 'rgba(148,158,176,.22)', line: 'rgba(148,158,176,.62)' },
+      voice: { fill: 'rgba(63,207,106,.30)', line: 'rgba(63,207,106,.88)' },
+      clip: { fill: 'rgba(233,84,84,.38)', line: 'rgba(233,84,84,.95)' },
+    };
 
-    // ONE mirrored envelope per segment rather than a bar per reading: a trace
+    // ONE mirrored envelope per COLOUR RUN rather than a bar per reading: a trace
     // reads as a signal, a picket fence reads as a chart. A segment BREAK is
     // audio nobody measured, and it is drawn as a break — see `waveSegments`.
+    // Within a segment the shape is split where the colour changes, so a chunk
+    // that clipped for 25 ms is red for 25 ms and not for its whole 400.
     for (const seg of waveSegments(waveBuf, Date.now())) {
-      const px = (p) => p.x * cw;
-      const up = (p) => mid - p.v * mid * 0.94;
-      const dn = (p) => mid + p.v * mid * 0.94;
-      cx.beginPath();
-      cx.moveTo(px(seg[0]), up(seg[0]));
-      for (let i = 1; i < seg.length; i++) {
-        const a = seg[i - 1];
-        const b = seg[i];
-        cx.quadraticCurveTo((px(a) + px(b)) / 2, up(a), px(b), up(b));
+      for (const run of waveRuns(seg)) {
+        const pts = run.pts;
+        const px = (p) => p.x * cw;
+        const up = (p) => mid - p.v * mid * 0.94;
+        const dn = (p) => mid + p.v * mid * 0.94;
+        cx.beginPath();
+        cx.moveTo(px(pts[0]), up(pts[0]));
+        for (let i = 1; i < pts.length; i++) {
+          const a = pts[i - 1];
+          const b = pts[i];
+          cx.quadraticCurveTo((px(a) + px(b)) / 2, up(a), px(b), up(b));
+        }
+        for (let i = pts.length - 1; i >= 0; i--) cx.lineTo(px(pts[i]), dn(pts[i]));
+        cx.closePath();
+        const ink = INK[run.kind] ?? INK.quiet;
+        cx.fillStyle = ink.fill;
+        cx.fill();
+        cx.strokeStyle = ink.line;
+        cx.lineWidth = 1.1;
+        cx.stroke();
       }
-      for (let i = seg.length - 1; i >= 0; i--) cx.lineTo(px(seg[i]), dn(seg[i]));
-      cx.closePath();
-      cx.fillStyle = g;
-      cx.fill();
-      cx.strokeStyle = 'rgba(63,207,106,.85)';
-      cx.lineWidth = 1.1;
-      cx.stroke();
     }
 
     cx.strokeStyle = 'rgba(232,234,238,.09)';
@@ -1223,6 +1324,20 @@
      apart by a steel left edge rather than only by a colour — an operator
      glancing across the dock has to find the live line without reading it. */
   .tbody { overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+  /* THE LINES SIT AT THE BOTTOM AND GROW UPWARD, the way a transcript is read and
+     the way every terminal in this genre behaves. Without it a service that has
+     produced four closed lines strands them at the top of the card under 100px of
+     nothing, which is what the operator meant on 2026-09-20 by the card not using
+     the space it has.
+
+     `margin-top:auto` ON THE FIRST ROW, NOT `justify-content:flex-end` ON THE
+     CONTAINER. They look equivalent and are not: a scrolling flex column that is
+     justified to the end pushes its first children ABOVE the scroll origin, where
+     no engine will let you scroll back to them — so the fix for a short pane
+     would silently take the history off a full one, which is the other half of
+     the same instruction. An auto margin absorbs the free space instead, and when
+     there is none left it contributes nothing and the pane scrolls normally. */
+  .tbody > :first-child { margin-top: auto; }
   .trl {
     margin: 0; display: flex; gap: 8px; padding: 3px 5px;
     border-radius: var(--v-r-sm); border-left: 2px solid transparent;

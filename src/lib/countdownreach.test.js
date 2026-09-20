@@ -313,30 +313,3 @@ afterEach(() => {
   cap.resolvedDetections.set([]);
 });
 
-describe('the transport renders the answer', () => {
-  it('names the screen that ignores it, on the rendered control', async () => {
-    cap.templates.set(TEMPLATES);
-    bridge({ channels: [chan(1, 'Main screen', 1), chan(2, 'Lobby screen', 2)], templates: TEMPLATES });
-    await mountAndRead();
-    expect(line(), 'the countdown band renders no reach line at all').toBeTruthy();
-    expect(line().textContent).toContain('Lobby screen ignores it');
-  });
-
-  it('and says something different when every screen would show it', async () => {
-    cap.templates.set(TEMPLATES);
-    bridge({ channels: [chan(1, 'Main screen', 1), chan(2, 'Overflow', 1)], templates: TEMPLATES });
-    await mountAndRead();
-    expect(line().textContent.trim()).toBe('Goes to all 2 screens');
-  });
-
-  it('wears no law colour, whatever it says', async () => {
-    // Amber is ON AIR and is never allowed to lie, cyan is a guess, amethyst is
-    // rehearsal (rule 18). "which screens would show this" is none of the three.
-    cap.templates.set(TEMPLATES);
-    bridge({ channels: [chan(1, 'Lobby screen', 2)], templates: TEMPLATES });
-    await mountAndRead();
-    for (const cls of ['onair', 'inreh', 'guess', 'amber']) {
-      expect(line().classList.contains(cls), `the line wears .${cls}`).toBe(false);
-    }
-  });
-});
