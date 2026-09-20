@@ -47,6 +47,16 @@
     planChannelsOf,
     sectionBands,
   } from '../plan.js';
+  // Picking cues out of the running order, and the words on a control that
+  // deletes them. One door for all three modifier combinations; see the module.
+  import {
+    selectionAfterClick,
+    selectionAfterRemoval,
+    deleteLabel,
+    deletedMessage,
+    addedMessage,
+    orderWithDuplicateInPlace,
+  } from '../planselect.js';
   // THE SHARED URL BUILDER, and it has to be shared. `main.rs::media_url` builds
   // this for every output screen and `bundledbackgrounds.js` mirrors that rule for
   // the surfaces that show the file itself — the Library's media pane, and now
@@ -110,6 +120,14 @@
   let openPlan = null;
   let items = [];
   let selId = null; // cue loaded in the inspector
+  // MULTI-SELECT, so a run of cues can go at once (Requirement 8). `picked` is
+  // what a bulk action is about and `anchor` is where a Shift-range extends FROM;
+  // both are ordinary ids, and `planselect.selectionAfterClick` is the one place
+  // that decides what a click does to them. `selId` stays what it always was —
+  // the cue the inspector is showing — because the panel is about ONE cue and
+  // saying otherwise would make its Template and Screens controls ambiguous.
+  let picked = [];
+  let anchor = null;
 
   /**
    * The lengths a cue may ask for, in minutes. A fixed list rather than a text
@@ -142,6 +160,14 @@
   }
   let leftMode = 'cues'; // 'cues' | 'add'
   let inspTab = 'general'; // 'general' | 'slides' | 'notes'
+  // HOW MANY CUES THIS VISIT TO THE ADD PANEL HAS PUT IN THE PLAN.
+  //
+  // The add path's friction is the toggle and the search, not the commit — and
+  // the reason an operator toggles BACK is to check that the clicks landed. The
+  // count and the name of the last one are what answer that without leaving the
+  // panel, and the way back out is one button beside them rather than a hunt for
+  // the segmented control at the top of the pane.
+  let added = 0;
 
   // one search (add mode) — scripture + songs + media together
   let addQ = '';
@@ -254,8 +280,15 @@
     // reading "Click again" about a plan nobody is looking at is a control whose
     // words have stopped describing its state.
     disarmPlanDelete();
+    disarmCueDelete();
     openPlan = p;
     selId = null;
+    // A selection is about a plan, so it does not survive opening another one —
+    // and neither does an armed delete, which would otherwise be pointing at a
+    // cue that is no longer on screen.
+    picked = [];
+    anchor = null;
+    added = 0;
     leftMode = 'cues';
     inspTab = 'general';
     msg = '';
@@ -322,6 +355,13 @@
       await addPlanItem(openPlan.id, built.cue_type, built.label, built.payload);
       await loadItems();
       await refresh();
+      // SAY WHAT LANDED. The add path's measured friction is the toggle and the
+      // search, not the commit — but a commit with no acknowledgement is WHY an
+      // operator toggles back to the running order to check, which is the toggle
+      // friction arriving by another route. One click, one named cue, said in the
+      // panel the click happened in (`.sp-addnote`, not the pane head).
+      msg = addedMessage(built.label);
+      added += 1;
     });
   }
   const addVerse = (v) => commitCue(verseCue(v));
@@ -375,14 +415,95 @@
     });
   }
 
-  async function remove(id, ev) {
-    ev.stopPropagation();
+  // ── DELETING, FROM THE ROW IT IS ABOUT (Requirement 8) ────────────────────
+  //
+  // A cue could only be removed from the INSPECTOR, so taking three cues out was
+  // three select-then-travel round trips across the desk. The operator's line:
+  // *"do not hide destructive deletion behind ambiguity, but do not add friction
+  // that slows a live operator either."*
+  //
+  // NOT AMBIGUOUS — the control names the cue when there is one and counts them
+  // when there are several (`planselect.deleteLabel`), and the arming step is a
+  // state the BUTTON reports rather than a dialog appearing somewhere else.
+  // RULE 41 rules out the shortcut: Tauri's webview does not implement
+  // `confirm()`, so a two-step delete guarded by one deletes NOTHING and reports
+  // success. Same in-app arm/confirm as the plan rail above and `TemplateGallery`.
+  //
+  // NOT SLOW — one press arms, the second within 3s does it, and the arm is keyed
+  // by what it is about so it can never fire on the wrong cue. It also times out:
+  // an arm left standing is a destructive control one stray press away from
+  // firing, minutes later, about a cue nobody is looking at.
+  let cueDelArm = null; // an id, or the string 'picked' for the whole selection
+  let cueDelArmT;
+  function disarmCueDelete() {
+    clearTimeout(cueDelArmT);
+    cueDelArm = null;
+  }
+  function armCueDelete(key) {
+    cueDelArm = key;
+    clearTimeout(cueDelArmT);
+    cueDelArmT = setTimeout(() => (cueDelArm = null), 3000);
+  }
+
+  /**
+   * Take `ids` out of the plan. The ONE door, so the row control, the bulk
+   * control and the inspector's Delete cannot arrive at three different answers
+   * about what happens to the selection afterwards.
+   *
+   * The removals run in sequence rather than in parallel: `reorder_plan` and
+   * `remove_plan_item` both rewrite positions, and a plan is small enough that
+   * the wait is invisible while a half-applied batch is not.
+   */
+  async function removeCues(ids) {
+    const list = (ids ?? []).filter((n) => n != null);
+    if (!list.length) return;
+    const label = list.length === 1 ? items.find((i) => i.id === list[0])?.label ?? '' : '';
+    // Decided BEFORE the delete, against the order the operator was looking at.
+    const land = selectionAfterRemoval(items, list);
+    disarmCueDelete();
     await act(async () => {
-      await removePlanItem(id);
-      if (selId === id) selId = items[0]?.id ?? null;
+      for (const id of list) await removePlanItem(id);
+      picked = [];
+      anchor = null;
+      selId = land;
       await loadItems();
       await refresh();
+      msg = deletedMessage(list.length, label);
     });
+  }
+  function remove(id, ev) {
+    ev?.stopPropagation?.();
+    return removeCues([id]);
+  }
+
+  /**
+   * A click on a cue row. The ONE place a click reaches the picked set.
+   *
+   * `selId` is set on EVERY click, including the modified ones: the inspector is
+   * about one cue and it should be about the one last touched, so an operator
+   * building a run can still read what they are picking. The picked set is what
+   * a bulk action is about, and `planselect.selectionAfterClick` decides it.
+   *
+   * ⌘ on macOS and Ctrl elsewhere, both accepted rather than branched on the
+   * platform — a laptop with an external Windows keyboard is a real church, and
+   * neither key means anything else on this row.
+   */
+  function pick(id, ev) {
+    const additive = Boolean(ev?.metaKey || ev?.ctrlKey);
+    const range = Boolean(ev?.shiftKey);
+    const next = selectionAfterClick({ picked, anchor, items, id, additive, range });
+    picked = next.picked;
+    anchor = next.anchor;
+    selId = id;
+    // A new selection is a new subject, so an arm aimed at the old one stands
+    // down rather than waiting to be confirmed by a press meant for something else.
+    if (cueDelArm !== null) disarmCueDelete();
+  }
+  /** Put the selection down without touching the plan. */
+  function clearPicked() {
+    picked = [];
+    anchor = null;
+    disarmCueDelete();
   }
   async function move(id, dir, ev) {
     ev.stopPropagation();
@@ -614,11 +735,29 @@
       await loadItems();
     });
   }
-  /** Copy a cue in place — the quickest way to a second cue of the same shape. */
+  /**
+   * Copy a cue IN PLACE — beside the one it was copied from.
+   *
+   * This comment has always said "in place" and the code has always appended to
+   * the end of the plan. On a fourteen-cue running order that is a cue appearing
+   * somewhere the operator is not looking, in whatever section the plan happens
+   * to finish in, which then has to be dragged back up past everything.
+   *
+   * `add_plan_item` appends and there is no command that inserts, so the fix is
+   * the reorder that already exists: add, then hand `reorder_plan` the order with
+   * the new id lifted out of the tail and dropped in after its original.
+   * `planselect.orderWithDuplicateInPlace` owns the arithmetic and refuses to
+   * guess when either id is missing — a reorder built from a guess persists.
+   *
+   * The copy's SECTION then comes out right by construction: `add_plan_item`
+   * takes no `section_title`, and `sectionsOf` reads an empty one as "still in the
+   * section above".
+   */
   async function duplicateCue() {
     if (!selCue) return;
+    const sourceId = selCue.id;
     await act(async () => {
-      await addPlanItem(
+      const newId = await addPlanItem(
         openPlan.id,
         selCue.cue_type,
         selCue.label,
@@ -626,6 +765,14 @@
         selCue.template_id,
       );
       await loadItems();
+      const order = orderWithDuplicateInPlace(items.map((i) => i.id), sourceId, newId);
+      // Only when it actually moves something. A `reorder_plan` that rewrites the
+      // order it was already in is a write nobody asked for.
+      if (order.length && order.join() !== items.map((i) => i.id).join()) {
+        await reorderPlan(openPlan.id, order);
+        await loadItems();
+      }
+      if (newId != null) selId = newId;
       await refresh();
     });
   }
@@ -838,7 +985,7 @@
       {#if openPlan}
         <div class="r-seg sp-toolseg">
           <button class:on={leftMode === 'cues'} on:click={() => (leftMode = 'cues')}>Running order</button>
-          <button class:on={leftMode === 'add'} on:click={() => { leftMode = 'add'; if (!addQ.trim()) { addMedia = allMedia.slice(0, 8); addAnnounce = allAnnounce.slice(0, 8); } }}>＋ Add cue</button>
+          <button class:on={leftMode === 'add'} on:click={() => { leftMode = 'add'; added = 0; msg = ''; if (!addQ.trim()) { addMedia = filterMedia(allMedia, ''); addAnnounce = filterAnnouncements(allAnnounce, ''); } }}>＋ Add cue</button>
         </div>
         <button class="r-btn ghost sm" disabled={!items.length} on:click={addSection}>＋ Section</button>
       {/if}
@@ -894,17 +1041,20 @@
               {#each sec.items as c (c.id)}
                 {@const n = items.findIndex((i) => i.id === c.id)}
                 <div class="sp-row" class:sel={c.id === selId} class:dragging={dragId === c.id}
-                  class:inband={Boolean(band)}
+                  class:inband={Boolean(band)} class:picked={picked.includes(c.id)}
                   style={band ? `--sec-ink:${band.ink}` : ''}
-                  on:click={() => (selId = c.id)} role="button" tabindex="0"
-                  aria-pressed={c.id === selId}
+                  on:click={(e) => pick(c.id, e)} role="button" tabindex="0"
+                  aria-pressed={c.id === selId || picked.includes(c.id)}
                   on:keydown={(e) => {
                     // A role="button" must answer to Enter AND Space; this one only
                     // took Enter, so it was focusable but half-operable. preventDefault
                     // on Space, or the page scrolls under the operator instead.
+                    // The MODIFIERS come through here too, so a keyboard operator
+                    // can build the same run a mouse can — the event carries
+                    // `shiftKey`/`metaKey` whichever device produced it.
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault();
-                      selId = c.id;
+                      pick(c.id, e);
                     }
                   }}>
                   <!-- The grip is a real control, not a decoration with a cursor.
@@ -918,7 +1068,7 @@
                     type="button"
                     aria-label="Reorder {c.label} — drag, or use arrow up and arrow down"
                     on:pointerdown={(e) => onGripDown(c.id, e)}
-                    on:click|stopPropagation={() => (selId = c.id)}
+                    on:click|stopPropagation={(e) => pick(c.id, e)}
                     on:keydown|stopPropagation={(e) => {
                       if (e.key === 'ArrowUp' && n > 0) { e.preventDefault(); move(c.id, -1, e); }
                       else if (e.key === 'ArrowDown' && n < items.length - 1) { e.preventDefault(); move(c.id, 1, e); }
@@ -943,6 +1093,28 @@
                     {/if}
                   </span>
                   <span class="sp-dur r-mono">{fmtDuration(c.duration_sec)}</span>
+                  <!-- DELETE, ON THE ROW IT IS ABOUT. Two presses, never a native
+                       `confirm()` (rule 41 — the Tauri webview returns false
+                       without showing anything, so a delete guarded by one deletes
+                       nothing and reports success). The ACCESSIBLE NAME names the
+                       cue and states which press this is, so the control is never
+                       a bare glyph and never ambiguous about what it will take.
+                       `stopPropagation` so arming a delete does not also re-pick
+                       the row and throw away a selection the operator built. -->
+                  <button
+                    class="sp-del r-focus"
+                    class:arm={cueDelArm === c.id}
+                    type="button"
+                    aria-label={deleteLabel(1, c.label, cueDelArm === c.id)}
+                    title={deleteLabel(1, c.label, cueDelArm === c.id)}
+                    on:click|stopPropagation={() => (cueDelArm === c.id ? removeCues([c.id]) : armCueDelete(c.id))}
+                    on:keydown|stopPropagation>
+                    {#if cueDelArm === c.id}
+                      <span class="sp-delarm r-mono" aria-hidden="true">AGAIN</span>
+                    {:else}
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M5 5l14 14M19 5L5 19"/></svg>
+                    {/if}
+                  </button>
                 </div>
               {/each}
             {/each}
@@ -1034,6 +1206,54 @@
       {/if}
     {/if}
 
+    <!-- WHAT THE ADD PANEL HAS PUT IN THE PLAN, AND THE WAY BACK.
+         The measured friction on the add path is the toggle and the search, not
+         the commit — one click per result row already adds a cue. But a commit
+         with no acknowledgement is exactly WHY an operator toggles back to the
+         running order to check, which is the toggle friction arriving by another
+         route. This says what landed and how many, in the panel the click
+         happened in, and puts the way out beside it rather than back up at the
+         segmented control. Nothing here adds friction to the commit: it appears
+         after the first add and is never in the way of the second. -->
+    {#if openPlan && leftMode === 'add' && added}
+      <div class="rw-panefoot sp-addnote">
+        <span class="sp-msg r-mono" role="status">{msg}</span>
+        <span class="rw-spring"></span>
+        <span class="sp-hm r-mono">{added} added</span>
+        <button class="r-btn primary sm" on:click={() => { leftMode = 'cues'; msg = ''; }}>
+          Done — see the running order
+        </button>
+      </div>
+    {/if}
+
+    <!-- THE CAVEAT. Outside every `{#if}` above, so it is on screen while a plan
+         is loading, while none is open, in both left modes and on an empty plan —
+         and outside the scroller, so a long running order cannot push it off. It
+         is the sentence that says what this whole workspace is, and the two
+         places it lived before could each hide it: a toolbar note with a
+         `display:none` below 1240px, then a page standfirst that cost two rows of
+         a desk. A caveat that can disappear is not a caveat. -->
+    <!-- THE SELECTION BAR, above the caveat and outside the scroller for the same
+         reason the caveat is: an action about cues that may have scrolled out of
+         sight has to stay where the operator can see how many it is about. It is
+         only mounted when MORE THAN ONE cue is picked — a single pick is what a
+         plain click has always done, and putting a bulk control over it would be
+         a destructive button that is permanently on screen meaning something
+         different depending on state nobody can read. -->
+    {#if openPlan && leftMode === 'cues' && picked.length > 1}
+      <div class="rw-panefoot sp-picked">
+        <span class="sp-pickedn r-mono">{picked.length} cues selected</span>
+        <span class="rw-spring"></span>
+        <button class="r-btn ghost sm" on:click={clearPicked}>Clear selection</button>
+        <!-- Two presses, and the label states which one this is and what it will
+             take. Never a native `confirm()` — rule 41. -->
+        <button class="r-btn ghost sm sp-raildel" class:arm={cueDelArm === 'picked'}
+          on:click={() => (cueDelArm === 'picked' ? removeCues(picked) : armCueDelete('picked'))}>
+          {deleteLabel(picked.length, '', cueDelArm === 'picked')}
+        </button>
+      </div>
+    {/if}
+
     <!-- THE CAVEAT. Outside every `{#if}` above, so it is on screen while a plan
          is loading, while none is open, in both left modes and on an empty plan —
          and outside the scroller, so a long running order cannot push it off. It
@@ -1043,8 +1263,8 @@
          a desk. A caveat that can disappear is not a caveat. -->
     <div class="rw-panefoot sp-caveat">
       <p>
-        {#if leftMode === 'cues'}Drag <b>⠿</b> to reorder. {/if}Build only — nothing here
-        reaches an output. Run it in <b>Live</b>.
+        {#if leftMode === 'cues'}Drag <b>⠿</b> to reorder. Shift-click for a run, ⌘/Ctrl-click to
+          pick several. {/if}Build only — nothing here reaches an output. Run it in <b>Live</b>.
       </p>
     </div>
   </section>
@@ -1483,6 +1703,48 @@
   .sp-dur{ flex:0 0 auto; font-family:var(--f-mono); font-size:var(--v-fs-cap); color:var(--v-faint);
     font-variant-numeric:tabular-nums; }
   .sp-drop{ padding:22px; text-align:center; font-size:var(--v-fs-b2); color:var(--v-faint); }
+
+  /* THE ROW'S DELETE. Always present, never hidden behind a hover: "do not hide
+     destructive deletion behind ambiguity" cuts both ways, and a control that
+     only exists while the pointer is over it is a control a keyboard operator has
+     to discover. It is QUIET at rest — the same metadata ink as the duration
+     beside it — and rose the moment it is reached for, which is where the
+     destructive colour belongs (it is genuinely destructive, so this is the one
+     promise colour this pane is entitled to).
+
+     ARMED it stops being a glyph and says AGAIN, in words, at the same width, so
+     the row does not reflow between the two presses an operator is making in
+     quick succession. The accessible name carries the whole sentence either way
+     ("Delete “Welcome” — click again"), because the glyph never could. */
+  .sp-del{ flex:0 0 auto; display:grid; place-items:center; min-width:22px; height:18px;
+    padding:0 4px; background:transparent; border:1px solid transparent;
+    border-radius:var(--v-r-sm); color:var(--v-500); cursor:pointer;
+    transition:color var(--v-dur) var(--v-ease), background var(--v-dur) var(--v-ease),
+      border-color var(--v-dur) var(--v-ease); }
+  .sp-row:hover .sp-del{ color:var(--v-faint); }
+  .sp-del:hover{ color:var(--v-red); border-color:var(--v-red-line); background:var(--v-red-soft); }
+  .sp-del:focus-visible{ outline:2px solid var(--v-sel); outline-offset:1px; color:var(--v-red); }
+  .sp-del.arm{ color:var(--v-red); border-color:var(--v-red); background:var(--v-red-soft); }
+  .sp-delarm{ font-size:var(--v-fs-cap); font-weight:700; letter-spacing:.04em; }
+
+  /* A PICKED ROW is steel — the thing you are working on — and it is a FILL plus
+     a left mark rather than a colour alone, so a run of picked cues is a
+     continuous block an operator can see the ends of. It is deliberately the same
+     family as `.sel` and not a sixth colour: selection and multi-selection are the
+     same idea at two sizes, and the running order already spends its one free
+     accent on the section band. */
+  .sp-row.picked{ background:var(--v-sel-soft); border-color:var(--v-sel-line); }
+  .sp-row.picked.sel{ border-color:var(--v-sel); }
+  .sp-row.inband.picked{ border-left-color:var(--sec-ink); }
+
+  /* The bar that appears once more than one cue is picked. A pane FOOTER, outside
+     the scroller, for the same reason the caveat is: an action about cues that
+     may have scrolled out of sight must stay where the count can be read. */
+  .sp-picked{ flex-direction:row; align-items:center; gap:8px; padding:7px 12px; }
+  .sp-pickedn{ font-size:var(--v-fs-cap); color:var(--v-txt); font-weight:600; }
+  /* The add panel's acknowledgement, same shape. */
+  .sp-addnote{ flex-direction:row; align-items:center; gap:8px; padding:7px 12px; }
+  .sp-addnote .sp-msg{ max-width:none; }
 
   /* A section heading: a NUMBER, a caption and a hairline that runs to the right
      edge. It was a sticky bar with an amber rule down its left side — amber, on a
