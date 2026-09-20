@@ -63,7 +63,7 @@ describe('the programme rail caps its figure against the rail', () => {
     // no measurement — which is what this bug would look like the second time.
     expect(SRC).toMatch(/progH\[i\]\s*=\s*h/);
     expect(SRC).toMatch(/clientHeight/);
-    expect(SRC).toMatch(/railHeightVar\(progH\[i\]\)/);
+    expect(SRC).toMatch(/railRoomVars\(progH\[i\], progHeadH\[i\]\)/);
   });
 
   it('an unmeasured rail OMITS the declaration rather than setting it to zero', () => {
@@ -78,5 +78,91 @@ describe('the programme rail caps its figure against the rail', () => {
     expect(fn.slice(0, 120)).toMatch(/:\s*''/);
     // And the fallback it falls back TO is a real size, not another zero.
     expect(rule('.lp-val')).toMatch(/var\(--lp-h,\s*\d+px\)/);
+  });
+});
+
+// ── AND THE SECOND HALF OF THE SAME BUG, WHICH THE RULE ABOVE COULD NOT SEE ──
+//
+// Capping the figure against the rail stopped it exceeding the rail. It reserved
+// nothing for the LABEL above it, and the two only fit at 16:9 by arithmetic
+// accident: `.lp-lbl` is `clamp(9px, …)`, so below a certain rail the label stops
+// shrinking while the figure keeps going at its share, their sum passes the rail
+// height, and `overflow: hidden` cuts the digits through the middle again.
+//
+// Measured in a real engine, three timers on the seeded stage template:
+//
+//   1920x1080  rail 75.59  head 21.12 + gap 7.68 + figure 47.12 = 75.92   fits
+//    854x480   rail 33.59  head  9.90 + gap 3.42 + figure 21.08 = 34.39   SLICED
+//    900x300   rail 21.00  head  9.90 + gap 3.60 + figure 13.02 = 26.52   SLICED
+//
+// At 900x300 the figure box was squeezed to 7.51px against a 13.02px line — 42%
+// of every digit gone, `1:29:37` painting as `1.29.37`.
+//
+// **The rule above is green through all of that**, and that is the lesson worth
+// keeping: it pins the UNIT (`var(--lp-h)`, never `cqh`) and not the OUTCOME, so
+// it cannot see a cap that uses the right unit and the wrong number. The
+// arithmetic now lives in `timers.js` where it can be tested against numbers.
+import { programmeRoom, MIN_FIGURE_PX, BARE_BELOW_PX } from './timers.js';
+
+describe('the figure gets the room the label is not using', () => {
+  it('an unmeasured rail yields NOTHING, so the stylesheet fallback applies', () => {
+    // Not zero. A property set to `0px` IS set, so `var(--lp-room, …)` could
+    // never reach its fallback and the figure would be invisible for the frame
+    // before the first measurement.
+    expect(programmeRoom(0, 0)).toBeNull();
+    expect(programmeRoom(undefined, undefined)).toBeNull();
+    expect(programmeRoom(-5, 10)).toBeNull();
+  });
+
+  it('reserves what the label measured, rather than a share of the rail', () => {
+    // The 1920x1080 case: 75.59 rail, 21.12 head. The old cap gave the figure
+    // 0.62 x 75.59 = 46.87 and got away with it; this gives 54 and is right for
+    // a reason rather than by luck.
+    expect(programmeRoom(75.59, 21.12)).toEqual({ rail: 76, bare: false, figure: 55 });
+  });
+
+  it('the label stands down when the rail cannot hold both', () => {
+    // 900x300, the composite region that sliced every digit.
+    expect(programmeRoom(21, 9.9)).toEqual({ rail: 21, bare: true, figure: 21 });
+    // 640x360.
+    expect(programmeRoom(25.2, 9.9)).toEqual({ rail: 25, bare: true, figure: 25 });
+  });
+
+  it('and stays when it can — 854x480 was the size that used to slice', () => {
+    const r = programmeRoom(33.59, 9.9);
+    expect(r.bare).toBe(false);
+    expect(r.figure).toBe(24);
+    expect(r.figure).toBeLessThanOrEqual(r.rail - 9);
+  });
+
+  it('never returns a figure under the reading floor', () => {
+    // A label that somehow measures nearly the whole rail must not starve the
+    // figure to nothing — it yields the floor, and the caller lets it overflow
+    // rather than painting something unreadable and calling it a clock.
+    expect(programmeRoom(40, 39).figure).toBe(MIN_FIGURE_PX);
+    expect(programmeRoom(40, 1000).figure).toBe(MIN_FIGURE_PX);
+  });
+
+  it('THE OSCILLATION GUARD — the bare decision ignores the head entirely', () => {
+    // This is the one that matters. The first version of this decided from the
+    // measured head, which is a feedback loop: hiding the head makes it measure
+    // 0, which makes the condition that hid it false, which brings it back. It
+    // flickered on every update and I watched it do so.
+    //
+    // So for ANY head measurement, including the 0 a hidden head reports, the
+    // answer for a given rail must be the same.
+    for (const rail of [10, 21, 25.2, 29.9, 30, 33.59, 75.59, 200]) {
+      const answers = [0, 1, 9.9, 21.12, 999].map((h) => programmeRoom(rail, h)?.bare);
+      expect(new Set(answers).size, `rail ${rail} changed its mind about the label`).toBe(1);
+    }
+  });
+
+  it('the threshold is where a label and a readable figure stop both fitting', () => {
+    // The rail is rounded to whole pixels before the comparison, deliberately —
+    // a sub-pixel difference is not a reason for a label to appear or vanish, and
+    // a rail measured at 29.99 and 30.01 on consecutive frames must not flicker.
+    expect(programmeRoom(BARE_BELOW_PX - 1, 0).bare).toBe(true);
+    expect(programmeRoom(BARE_BELOW_PX, 0).bare).toBe(false);
+    expect(programmeRoom(BARE_BELOW_PX - 0.01, 0)).toEqual(programmeRoom(BARE_BELOW_PX + 0.01, 0));
   });
 });

@@ -219,3 +219,63 @@ export function programmeCells(rows, capacity) {
   const keep = Math.max(1, cap - 1);
   return [...list.slice(0, keep), { more: list.length - keep }];
 }
+
+/**
+ * The reading floor for a programme figure, in px.
+ *
+ * `.lp-val`'s own clamp bottoms out at 12px, and a clock squeezed under that has
+ * stopped being an instrument. 16 leaves a little above the floor rather than
+ * sitting on it.
+ */
+export const MIN_FIGURE_PX = 16;
+
+/**
+ * The rail below which the label cannot have a share at all.
+ *
+ * `.lp-lbl` bottoms out at 9px with `line-height: 1.1`, so a head costs about
+ * 10px however short the rail gets, plus the gap under it. Below that plus
+ * `MIN_FIGURE_PX` there is not room for both.
+ */
+export const BARE_BELOW_PX = 30;
+
+/**
+ * HOW MUCH HEIGHT THE FIGURE MAY TAKE, and whether the label may be there at all.
+ *
+ * The cap used to be a fraction of the rail, and a fraction reserves nothing for
+ * the label above it. It happened to hold at 16:9 because the label was still
+ * scaling there; it stopped the moment `.lp-lbl`'s `clamp(9px, …)` floor bit,
+ * which is every rail shorter than about 36px — a small composite region, or any
+ * output below 1024x576. The digits were then cut through the middle by the
+ * `overflow: hidden` that is meant to be the last resort. Measured at 900x300:
+ * head 9.90 + gap 3.60 + figure 13.02 into a 21.00 rail, and 42% of every digit
+ * gone. What is left of a sliced clock still reads as a valid time (RG-147).
+ *
+ * **Below the floor the LABEL stands down, never the figure.** That follows the
+ * rail's own law: the label takes what it can and ellipses, the figure is never
+ * the thing that gets cut. A name over an unreadable clock tells a preacher
+ * nothing; a clock with no name still says how long is left.
+ *
+ * **The bare decision is taken from the RAIL alone, never from the measured
+ * head**, and that is the correctness of it rather than a simplification.
+ * Deciding from the head is a feedback loop: hide the head, it measures 0, the
+ * condition that hid it is no longer true, it returns, it measures 10 again. The
+ * first version of this did exactly that and oscillated on every update. The
+ * rail's height is an input this function cannot affect.
+ *
+ * The measured head is still used, but only to size the figure once the label is
+ * staying — where it is a fact about what is on screen rather than a prediction
+ * about what will be.
+ *
+ * An unmeasured rail returns `null`, so the caller omits the declaration
+ * entirely and the stylesheet's own fallback applies. Returning zero would be
+ * worse than returning nothing: a custom property set to `0px` IS set, so
+ * `var(--lp-room, …)` could never reach its fallback and the figure would be
+ * invisible for the frame before the first measurement.
+ */
+export function programmeRoom(railPx, headPx) {
+  const rail = Math.round(Number(railPx) || 0);
+  if (rail <= 0) return null;
+  if (rail < BARE_BELOW_PX) return { rail, bare: true, figure: rail };
+  const head = Math.max(0, Number(headPx) || 0);
+  return { rail, bare: false, figure: Math.round(Math.max(rail - head, MIN_FIGURE_PX)) };
+}

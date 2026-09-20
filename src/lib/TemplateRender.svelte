@@ -75,7 +75,13 @@
   // `timers.js` is the one place the Stage Timer set becomes rows, so this
   // renderer and the preacher's phone cannot disagree about the same clock;
   // `stagealert.js` is the one table that says how big a Stage Message is.
-  import { programmeRows, programmeCh, programmeCapacity, programmeCells } from './timers.js';
+  import {
+    programmeRows,
+    programmeCh,
+    programmeCapacity,
+    programmeCells,
+    programmeRoom,
+  } from './timers.js';
   import { alertStep } from './stagealert.js';
 
   export let template = {};
@@ -1472,11 +1478,22 @@
   let progEls = [];
   let progW = [];
   let progH = [];
+  let progHeadH = [];
   function measureProgramme() {
     let moved = false;
     for (let i = 0; i < progEls.length; i += 1) {
       const w = progEls[i] ? progEls[i].clientWidth | 0 : 0;
       const h = progEls[i] ? progEls[i].clientHeight | 0 : 0;
+      // AND WHAT THE LABEL ABOVE THE FIGURE IS ACTUALLY TAKING. `--lp-h` alone
+      // was not enough: capping the figure at a SHARE of the rail reserves
+      // nothing for the head, and the two only fit at 16:9 by arithmetic
+      // accident. `.lp-lbl` is `clamp(9px, …)`, so below a certain rail the
+      // label stops shrinking while the figure keeps going, their sum passes
+      // the rail height, and `overflow: hidden` cuts the digits through the
+      // middle. Measured at 900x300: head 9.90 + gap 3.60 + figure 13.02 into
+      // a 21.00 rail, and 42% of every digit gone.
+      const head = progEls[i] ? progEls[i].querySelector('.lp-head') : null;
+      const hh = head ? Math.ceil(head.getBoundingClientRect().height) : 0;
       if (progW[i] !== w) {
         progW[i] = w;
         moved = true;
@@ -1485,10 +1502,15 @@
         progH[i] = h;
         moved = true;
       }
+      if (progHeadH[i] !== hh) {
+        progHeadH[i] = hh;
+        moved = true;
+      }
     }
     if (moved) {
       progW = progW;
       progH = progH;
+      progHeadH = progHeadH;
     }
   }
   afterUpdate(measureProgramme);
@@ -1507,7 +1529,41 @@
    * honest reading of an absence that `programmeCapacity` gives a width of 0.
    */
   const railHeightVar = (px) => (Number(px) > 0 ? `--lp-h:${Math.round(px)}px;` : '');
-  $: remainingMs = countdownRemainingMs(content, now);
+  /**
+   * WHAT IS LEFT FOR THE FIGURE once the label above it has taken its share, and
+   * whether the label may have a share at all.
+   *
+   * The cap used to be a fraction of the rail, and a fraction reserves nothing.
+   * It happened to hold at 16:9 because the label was still scaling there; it
+   * stopped holding the moment `.lp-lbl`'s `clamp(9px, …)` floor bit, which is
+   * every rail shorter than about 36px — a small composite region, or any output
+   * below 1024x576. The digits were then cut through the middle by the
+   * `overflow: hidden` that is supposed to be the last resort, and what is left
+   * of a sliced clock still reads as a valid time (RG-147).
+   *
+   * **Below the floor the LABEL stands down, not the figure**, and that follows
+   * the rail's own law one rule up: the label takes what it can and ellipses,
+   * the figure is never the thing that gets cut. A name with an unreadable clock
+   * under it tells a preacher nothing; a clock with no name still tells him how
+   * long is left, and the rail is only ever showing what the operator put on it.
+   *
+   * `MIN_FIGURE_PX` is the reading floor, not a taste: `.lp-val`'s own clamp
+   * bottoms out at 12px, and a figure that has been squeezed under it has
+   * already stopped being an instrument.
+   */
+  /**
+   * The rail's own height, and what is left for the figure once the label above
+   * it has taken its share. `programmeRoom` owns the arithmetic — it is a
+   * decision, and decisions live in the pure module where they can be tested
+   * against numbers rather than against a regex.
+   */
+  const railRoomVars = (railPx, headPx) => {
+    const room = programmeRoom(railPx, headPx);
+    if (!room) return '';
+    return room.bare
+      ? `--lp-h:${room.rail}px; --lp-bare:1;`
+      : `--lp-h:${room.rail}px; --lp-room:${room.figure}px;`;
+  }; $: remainingMs = countdownRemainingMs(content, now);
   // Only ever true when it genuinely ran out. A countdown held at 0:00 cannot exist
   // (`adjust_countdown` refuses a target under a second), but saying so here keeps
   // the done message off a screen that is merely paused.
@@ -2170,7 +2226,7 @@
         <div
           class="lprog"
           bind:this={progEls[i]}
-          style="{boxStyle(L)} --tmrs:{cells.length}; --tch:{progCh}; {railHeightVar(progH[i])} color:{L.color || '#fff'}; font-family:{fontFamOf(L.font)}; opacity:{L.opacity == null ? 1 : L.opacity};"
+          style="{boxStyle(L)} --tmrs:{cells.length}; --tch:{progCh}; {railRoomVars(progH[i], progHeadH[i])} color:{L.color || '#fff'}; font-family:{fontFamOf(L.font)}; opacity:{L.opacity == null ? 1 : L.opacity};"
           aria-label="Programme">
           {#each cells as t, j (j)}
             {#if t.more}
@@ -2327,6 +2383,13 @@
     flex: 0 0 auto;
     opacity: 1;
   }
+  /* THE RAIL IS TOO SHORT FOR BOTH, SO THE NAME GOES AND THE CLOCK STAYS.
+     Set from `railRoomVars` once the measured head would leave the figure under
+     its reading floor. `display: none` and not `visibility: hidden`, because the
+     point is to give the height back. */
+  .lprog[style*='--lp-bare'] .lp-head {
+    display: none;
+  }
   .lp-val {
     font-variant-numeric: tabular-nums;
     font-weight: 700;
@@ -2346,7 +2409,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: min(clamp(12px, calc(92cqw / var(--tmrs) / var(--tch, 6) / 0.62), 64px), calc(var(--lp-h, 100px) * 0.62));
+    font-size: min(clamp(12px, calc(92cqw / var(--tmrs) / var(--tch, 6) / 0.62), 64px), var(--lp-room, calc(var(--lp-h, 100px) * 0.62)));
   }
   /* THE ONE PROSE CELL ON THIS RAIL, and it is the rail talking about itself.
      Digits sized for `MM:SS` would set `+3 more` at the size of a clock and clip
@@ -2362,7 +2425,7 @@
     letter-spacing: 0;
     line-height: 1.15;
     opacity: 0.62;
-    font-size: min(clamp(10px, calc(92cqw / var(--tmrs) / 11 / 0.5), 30px), calc(var(--lp-h, 100px) * 0.4));
+    font-size: min(clamp(10px, calc(92cqw / var(--tmrs) / 11 / 0.5), 30px), var(--lp-room, calc(var(--lp-h, 100px) * 0.4)));
   }
   /* THE LAST MINUTE, ON THE PREACHER'S OWN PROGRAMME. The same red and the same
      rule as the stage page (`.tmr.warn .tval`), stated UNCONDITIONALLY and
