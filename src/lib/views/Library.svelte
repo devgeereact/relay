@@ -37,6 +37,8 @@
   import MediaLibrary from './library/MediaLibrary.svelte';
   import Announcements from './library/Announcements.svelte';
   import ImportReview from './library/ImportReview.svelte';
+  import BulkImport from './library/BulkImport.svelte';
+  import { BULK_THRESHOLD, describeRun } from '../bulkimport.js';
   import Collections from './library/Collections.svelte';
   import { COLLECTIONS, collectionOf } from './library/collections.js';
   import {
@@ -293,6 +295,15 @@
   let reviewSongs = [];
   let reviewing = false;
 
+  // ── A WHOLE LIBRARY IS NOT A BIG VERSION OF A HANDFUL ─────────────────────
+  //
+  // A ProPresenter 7 export is 726 `.pro` files. The pre-save review above is the
+  // right product for two or three of them and is not a plan for 726 — see the
+  // long note at the top of `library/BulkImport.svelte` for the trade, and
+  // `bulkimport.js` for the runner. Held here (rather than passed straight to the
+  // panel) so the decision is visible in one place beside `reviewing`.
+  let bulkFiles = [];
+
   // pane actions passed on (re)mount
   let announceAction = false; // true when New → draft announcement
 
@@ -371,48 +382,81 @@
   async function onFiles(e) {
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
+    // Cleared FIRST, so picking the same folder twice in a row still fires a
+    // change event. The `File` handles below stay readable afterwards.
+    e.target.value = '';
     importing = true;
     importMsg = '';
-    const parsed = []; // lyric songs → pre-save review
+
+    // ROUTE BEFORE READING. This loop used to `await fileToBase64(file)` for every
+    // lyric file it saw, which at 726 files builds 726 base64 strings in the
+    // webview before anything is decided — four simultaneous copies each, per the
+    // note on `fileToBase64`. Sorting is free; reading is not.
+    const lyric = []; // → the pre-save review, or the bulk runner
     const media = []; // pictures, video, documents → the look below
-    try {
-      for (const file of files) {
-        const ext = EXT_OF(file.name);
-        const kind = IMG.includes(ext)
-          ? 'image'
-          : VID.includes(ext)
-            ? 'video'
-            : DOC.includes(ext)
-              ? 'document'
-              : null;
-        if (PRO.includes(ext) || TXT.includes(ext)) {
-          const got = await parseImport(file.name, await fileToBase64(file));
-          parsed.push(...got);
-        } else if (kind) {
-          media.push({
-            file,
-            kind,
-            ext,
-            name: STEM_OF(file.name),
-            // A document has no frame to show, so it gets no object URL rather
-            // than an <img> that will never paint.
-            url: kind === 'document' ? null : URL.createObjectURL(file),
-          });
-        } else {
-          importMsg = `Skipped .${ext} (unsupported)`;
-        }
+    for (const file of files) {
+      const ext = EXT_OF(file.name);
+      const kind = IMG.includes(ext)
+        ? 'image'
+        : VID.includes(ext)
+          ? 'video'
+          : DOC.includes(ext)
+            ? 'document'
+            : null;
+      if (PRO.includes(ext) || TXT.includes(ext)) {
+        lyric.push(file);
+      } else if (kind) {
+        media.push({
+          file,
+          kind,
+          ext,
+          name: STEM_OF(file.name),
+          // A document has no frame to show, so it gets no object URL rather
+          // than an <img> that will never paint.
+          url: kind === 'document' ? null : URL.createObjectURL(file),
+        });
+      } else {
+        importMsg = `Skipped .${ext} (unsupported)`;
       }
-      if (parsed.length) {
-        // Lyrics go through the pre-save review (edit before committing).
-        reviewSongs = parsed;
-        reviewing = true;
-      }
-      if (media.length) mediaReview = media;
-    } catch (err) {
-      errMsg = humanError(err);
     }
+
+    if (lyric.length >= BULK_THRESHOLD) {
+      // The panel owns the run from here: it reads one file at a time, commits in
+      // batches, and can be stopped. Nothing is read on this line.
+      bulkFiles = lyric;
+    } else if (lyric.length) {
+      const parsed = [];
+      try {
+        for (const file of lyric) {
+          parsed.push(...(await parseImport(file.name, await fileToBase64(file))));
+        }
+        if (parsed.length) {
+          // Lyrics go through the pre-save review (edit before committing).
+          reviewSongs = parsed;
+          reviewing = true;
+        }
+      } catch (err) {
+        errMsg = humanError(err);
+      }
+    }
+    if (media.length) mediaReview = media;
     importing = false;
-    e.target.value = '';
+  }
+
+  /**
+   * The bulk run is over and the operator has read the report.
+   *
+   * A run that was REFUSED goes to the error line and not the success line — they
+   * are two different elements in two different colours for exactly this reason,
+   * and `describeRun` leads with the refusal when there was one.
+   */
+  function onBulkDone(ev) {
+    const report = ev.detail || {};
+    bulkFiles = [];
+    const said = describeRun(report);
+    if (report.error) errMsg = said;
+    else importMsg = said;
+    goTab('lyrics');
   }
 
   function onReviewDone(ev) {
@@ -622,7 +666,9 @@
   </div>
 {/if}
 
-{#if reviewing}
+{#if bulkFiles.length}
+  <BulkImport files={bulkFiles} on:done={onBulkDone} />
+{:else if reviewing}
   <ImportReview songs={reviewSongs} on:done={onReviewDone} on:cancel={() => (reviewing = false)} />
 {:else}
   <!-- ── ONE ROW OF CHROME, NOT FOUR (REBRAND §10) ────────────────────────────

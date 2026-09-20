@@ -5880,3 +5880,59 @@ both roles, including the `main`-role screen wearing the stage template.
 `stagealerttemplate.test.js` holds *"and it does not come back with the next verse (RG-156)"*,
 and `stagealertpanic.test.js` holds the two `output.html` cases beside the phone's, so both
 surfaces are asserted in one file and neither can be tidied into the other later.
+---
+
+## 105. A whole song library is a different import from a handful, and the report is the product (2026-09-20)
+
+**The case.** A real ProPresenter 7 export was measured: **726 `.pro` files**, 14,364 RTF
+blocks, `JESUS.pro` alone carrying 332 — and **about forty files carrying exactly one
+block**. Every part of the existing import path is correct for two or three files and none
+of it survives 726.
+
+**Three things break at that size, and each has its own answer.**
+
+*Memory.* `onFiles` read every picked file to base64 before it decided anything, and
+`capture.js::fileToBase64` documents the four simultaneous copies each of those costs. 726
+of them is the operating system killing Relay on a church laptop with nothing in any log.
+The file list is now **sorted before any byte is read**, and the bulk runner
+(`src/lib/bulkimport.js`) reads ONE file, hands it across, drops it, and commits in batches
+of 25. Pinned as an ordering in `bulkimport.test.js` and as a count-at-a-moment in
+`bulkimportwiring.test.js` — one file read against forty picked.
+
+*Stopping.* A twenty-minute run is stoppable at the next file boundary. **The part-filled
+batch is committed rather than discarded**, so the number on the screen is the number in the
+Library. Discarding it would leave an operator with "read 312, saved 300" and no way to tell
+which twelve went missing.
+
+*A failed commit is not a skipped file.* `save_reviewed_songs` is on the service lock's
+protected list, so the first refusal is the answer for every batch after it. It **aborts**,
+in the sentence `errors.js` gives it. A file that yields nothing does the opposite: it is
+collected, named, and the run carries on.
+
+**The review step is the decision worth recording.** `ImportReview.svelte` builds an
+editable copy of every song and every slide and asks the operator to fix things before
+anything lands. At 726 files that is ~14,000 slides of editable state and 726 accordion rows,
+and nobody reads them. **A review nobody performs is worse than no review**, because the
+Library then holds content the product believes was checked. So above 20 lyric files the
+trade reverses: commit, then **a report that names the files a human still has to open**.
+That is only honest because the commit is reversible where the operator already works — a
+song can be edited or deleted, and re-importing replaces by title.
+
+**The report is the point, not the progress bar.** It names the files that came in with a
+single slide, because a one-line chorus and a file that barely parsed are indistinguishable
+once they are in the Library and about forty of the 726 are in that state; the files nothing
+could be read from; and the titles that arrived from more than one file, since
+`save_reviewed_songs` dedupes by title and the last file read silently wins. It also says
+out loud that **titles come from file names and slides are numbered `Slide N`, so no
+arrangements were imported** — `proimport.rs` cannot see ProPresenter's section names, and an
+operator not told that reads it as a bug.
+
+**Not a dialog.** The panel is an ordinary region in the Library workspace. A
+`[role="dialog"]` would make `shortcuts.js` stand down and take the operator's `Esc` and
+`Clear screens` for twenty minutes over a shell that may have a live microphone in it
+(rule 44). Pinned by `bulkimportui.test.js`.
+
+**What this does NOT do.** It does not decode the export's protobuf config files (`Library`
+playlists, `Media`, `Stage`, `Theme`, `Timers`) — `proimport.rs` says plainly that it does
+not parse protobuf, so playlists do not become service plans. And nobody has yet run it
+against the real 726-file library.
