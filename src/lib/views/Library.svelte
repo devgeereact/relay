@@ -287,6 +287,7 @@
   });
   let reload = 0; // bump to remount the active pane after an import
   let fileInput;
+  let folderInput;
   let importing = false;
   let importMsg = '';
   let showNew = false;
@@ -352,7 +353,13 @@
   let mediaReview = []; // [{ file, kind, name, ext, url }] while the sheet is open
   let mediaBusy = false;
 
-  const EXT_OF = (name) => (name.split('.').pop() || '').toLowerCase();
+  // `split('.').pop()` on a name with NO dot returns the whole name, so
+  // `EXT_OF('Timers')` is `'timers'` and a ProPresenter library's own
+  // configuration files were reported as `Skipped .timers (unsupported)` —
+  // an extension nobody has, named after the file. Harmless while every file was
+  // hand-picked; a dozen of them arrive with a folder.
+  const HAS_EXT = (name) => /\.[^.]+$/.test(name);
+  const EXT_OF = (name) => (HAS_EXT(name) ? name.split('.').pop().toLowerCase() : '');
   const STEM_OF = (name) => name.replace(/\.[^.]*$/, '');
 
   function closeMediaReview() {
@@ -394,7 +401,26 @@
     // note on `fileToBase64`. Sorting is free; reading is not.
     const lyric = []; // → the pre-save review, or the bulk runner
     const media = []; // pictures, video, documents → the look below
+    // WHAT A FOLDER BRINGS WITH IT, and why a hand-picked set never needed this.
+    //
+    // A directory pick hands over everything underneath it, not a chosen list, so
+    // the junk arrives too. A real ProPresenter library is the case this exists
+    // for: 726 `.pro` files, and beside them a `__MACOSX` directory of AppleDouble
+    // stubs named `._Something.pro` — 4 KB of resource fork that carries the same
+    // extension, parses to nothing, and would be reported as 726 files that came
+    // in empty. `.DS_Store` and the library's own extensionless config files
+    // (`Library`, `Media`, `Stage`, `Timers`) arrive the same way.
+    //
+    // Skipped SILENTLY, unlike an unsupported extension below, and the difference
+    // is the operator's attention: they chose those files by choosing the folder,
+    // they did not choose them one by one, and a list of 726 skipped stubs is a
+    // report nobody reads. What they came in for is counted instead.
+    let junk = 0;
     for (const file of files) {
+      if (file.name.startsWith('._') || file.name.startsWith('.')) {
+        junk += 1;
+        continue;
+      }
       const ext = EXT_OF(file.name);
       const kind = IMG.includes(ext)
         ? 'image'
@@ -415,9 +441,17 @@
           // than an <img> that will never paint.
           url: kind === 'document' ? null : URL.createObjectURL(file),
         });
+      } else if (!ext) {
+        // No extension at all. A ProPresenter library's own configuration files
+        // look exactly like this — `Library`, `Media`, `Stage`, `Timers` — and
+        // there are a dozen of them beside the songs.
+        junk += 1;
       } else {
         importMsg = `Skipped .${ext} (unsupported)`;
       }
+    }
+    if (junk && !lyric.length && !media.length) {
+      importMsg = `Nothing importable in that folder — ${junk} file${junk === 1 ? '' : 's'} skipped`;
     }
 
     if (lyric.length >= BULK_THRESHOLD) {
@@ -719,6 +753,20 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M8 11l4 4 4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
         {importing ? 'Importing…' : 'Import'}
       </button>
+      <!-- A WHOLE LIBRARY IS A FOLDER, NOT A SELECTION.
+           `Import` has always taken many files at once; what it could not take is
+           a directory, and a ProPresenter library is 726 files inside one. Asking
+           an operator to select 726 entries in a dialog is asking them not to
+           bother. Same handler, same routing, same bulk runner — the only
+           difference is which door the files came through. -->
+      <button
+        class="r-btn ghost sm"
+        on:click={() => folderInput.click()}
+        disabled={!$capture.available || importing}
+        title="Import every song in a folder, including a whole ProPresenter library">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+        {importing ? 'Importing…' : 'Import folder'}
+      </button>
       <div class="lib-newwrap">
         <button class="r-btn primary sm" aria-haspopup="menu" aria-expanded={showNew} on:click={() => (showNew = !showNew)}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
@@ -754,6 +802,17 @@
         {/if}
       </div>
       <input type="file" multiple accept={ACCEPT} bind:this={fileInput} on:change={onFiles} style="display:none" />
+      <!-- NO `accept` ON THE DIRECTORY INPUT, deliberately. A directory pick
+           chooses a folder, not files, so an accept list filters nothing and only
+           risks a browser greying out the folder itself. `onFiles` does the
+           sorting, which is where it already happened. -->
+      <input
+        type="file"
+        multiple
+        webkitdirectory
+        bind:this={folderInput}
+        on:change={onFiles}
+        style="display:none" />
     </div>
   </div>
 
