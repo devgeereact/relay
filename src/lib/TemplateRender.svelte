@@ -1452,20 +1452,61 @@
   // A width of 0 is what an element reports before it has been laid out, and
   // `programmeCapacity` reads that as unmeasured rather than as a box one cell
   // wide. That is the honest reading of an absence and it is stated there, once.
+  //
+  // AND ITS HEIGHT, for a reason that cost a sliced clock to find. `.lprog` is
+  // `container-type: inline-size`, which contains the INLINE axis and nothing
+  // else — so a `cqh` inside it does not measure the rail, it measures the small
+  // viewport. The cap that was meant to stop a figure growing taller than the box
+  // it sits in resolved to 670px on a 76px rail and did nothing at all, and the
+  // digits took the clamp ceiling and were cut off along the bottom by the
+  // `overflow: hidden` that was supposed to be the last resort.
+  //
+  // `Stage.svelte` does not have this bug and the difference is instructive: its
+  // rail caps against `--progmax`, a `dvh` figure it sets itself, precisely
+  // because its own container is `inline-size` too (`:1719-1722`). A measured
+  // pixel height is the same answer without a second unit to reason about.
+  //
+  // An unmeasured height is 0 and reads as UNMEASURED, never as a rail of no
+  // height — the same honest reading of an absence that `programmeCapacity`
+  // gives a width of 0, stated there once and followed here.
   let progEls = [];
   let progW = [];
+  let progH = [];
   function measureProgramme() {
     let moved = false;
     for (let i = 0; i < progEls.length; i += 1) {
       const w = progEls[i] ? progEls[i].clientWidth | 0 : 0;
+      const h = progEls[i] ? progEls[i].clientHeight | 0 : 0;
       if (progW[i] !== w) {
         progW[i] = w;
         moved = true;
       }
+      if (progH[i] !== h) {
+        progH[i] = h;
+        moved = true;
+      }
     }
-    if (moved) progW = progW;
+    if (moved) {
+      progW = progW;
+      progH = progH;
+    }
   }
   afterUpdate(measureProgramme);
+  /**
+   * The measured rail height, as a CSS declaration, or NOTHING when it has not
+   * been measured yet.
+   *
+   * Nothing, and not `0px`, and the difference is the whole point. A custom
+   * property set to zero IS set, so `var(--lp-h, 100px)` would never reach its
+   * fallback and `min(clamp(12px, …), calc(0px * 0.62))` is `0px` — the figure
+   * would be invisible on the first paint, before `afterUpdate` has run, and
+   * appear a frame later. Measured in a real engine: setting `--lp-h: 0px` on a
+   * painted rail takes the digits from 47.12px to 0px.
+   *
+   * Omitting the declaration lets the fallback do its job, which is the same
+   * honest reading of an absence that `programmeCapacity` gives a width of 0.
+   */
+  const railHeightVar = (px) => (Number(px) > 0 ? `--lp-h:${Math.round(px)}px;` : '');
   $: remainingMs = countdownRemainingMs(content, now);
   // Only ever true when it genuinely ran out. A countdown held at 0:00 cannot exist
   // (`adjust_countdown` refuses a target under a second), but saying so here keeps
@@ -2129,7 +2170,7 @@
         <div
           class="lprog"
           bind:this={progEls[i]}
-          style="{boxStyle(L)} --tmrs:{cells.length}; --tch:{progCh}; color:{L.color || '#fff'}; font-family:{fontFamOf(L.font)}; opacity:{L.opacity == null ? 1 : L.opacity};"
+          style="{boxStyle(L)} --tmrs:{cells.length}; --tch:{progCh}; {railHeightVar(progH[i])} color:{L.color || '#fff'}; font-family:{fontFamOf(L.font)}; opacity:{L.opacity == null ? 1 : L.opacity};"
           aria-label="Programme">
           {#each cells as t, j (j)}
             {#if t.more}
@@ -2305,7 +2346,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: min(clamp(12px, calc(92cqw / var(--tmrs) / var(--tch, 6) / 0.62), 64px), 62cqh);
+    font-size: min(clamp(12px, calc(92cqw / var(--tmrs) / var(--tch, 6) / 0.62), 64px), calc(var(--lp-h, 100px) * 0.62));
   }
   /* THE ONE PROSE CELL ON THIS RAIL, and it is the rail talking about itself.
      Digits sized for `MM:SS` would set `+3 more` at the size of a clock and clip
@@ -2321,7 +2362,7 @@
     letter-spacing: 0;
     line-height: 1.15;
     opacity: 0.62;
-    font-size: min(clamp(10px, calc(92cqw / var(--tmrs) / 11 / 0.5), 30px), 40cqh);
+    font-size: min(clamp(10px, calc(92cqw / var(--tmrs) / 11 / 0.5), 30px), calc(var(--lp-h, 100px) * 0.4));
   }
   /* THE LAST MINUTE, ON THE PREACHER'S OWN PROGRAMME. The same red and the same
      rule as the stage page (`.tmr.warn .tval`), stated UNCONDITIONALLY and
