@@ -53,6 +53,22 @@
   // (DECISIONS §90), so a hand-rolled copy here would render every seeded
   // background as a broken-image box in a preview that claims to be the wall.
   import { mediaUrl } from '../bundledbackgrounds.js';
+  // THE TWO BLOCKS THAT CAME OUT OF THIS FILE. The add panel's local filter and
+  // its four payload builders, and the pointer drag's paint arithmetic. Both were
+  // already self-contained and both were untestable where they were: a payload
+  // literal five lines deep in an async handler, and a neighbour's offset three
+  // lines deep in a pointermove handler that needs a laid-out list and a mouse.
+  // `plannerblocks.test.js` holds them, and holds that this file still calls them
+  // rather than keeping a second copy of the rules.
+  import {
+    filterMedia,
+    filterAnnouncements,
+    verseCue,
+    mediaCuePayload,
+    announceCuePayload,
+    countdownCuePayload,
+  } from '../planneradd.js';
+  import { dragFrame } from '../plannerdrag.js';
   import {
     capture,
     templates,
@@ -270,8 +286,10 @@
     if (!q) {
       addVerses = [];
       addSongs = [];
-      addMedia = allMedia.slice(0, 8); // recent media when the box is empty
-      addAnnounce = allAnnounce.slice(0, 8);
+      // Recent, not empty — the panel opens before anybody types. `planneradd.js`
+      // owns the rule and the limit so an empty box can never become no results.
+      addMedia = filterMedia(allMedia, '');
+      addAnnounce = filterAnnouncements(allAnnounce, '');
       return;
     }
     // try/finally so a failed search always releases the spinner — otherwise the
@@ -281,48 +299,33 @@
       const [v, s] = await Promise.all([searchScripture(q), searchSongs(q)]);
       addVerses = v;
       addSongs = s;
-      const ql = q.toLowerCase();
-      addMedia = allMedia.filter((m) => m.filename.toLowerCase().includes(ql));
-      addAnnounce = allAnnounce.filter(
-        (a) => a.title.toLowerCase().includes(ql) || a.body.toLowerCase().includes(ql),
-      );
+      addMedia = filterMedia(allMedia, q);
+      addAnnounce = filterAnnouncements(allAnnounce, q);
     } catch (e) {
       err = humanError(e);
     } finally {
       addSearching = false;
     }
   }
-  async function addVerse(v) {
-    const payload = {
-      book: v.book,
-      chapter: v.chapter,
-      verse: v.verse,
-      reference: v.reference,
-      text: v.text,
-      translation: v.translation,
-    };
+  /**
+   * ONE DOOR ONTO `add_plan_item`, taking a built cue.
+   *
+   * The four result kinds each spelled their own `addPlanItem(plan, type, label,
+   * payload)` call, so the type, the label and the payload were three arguments a
+   * call site could pair wrongly. `planneradd.js` builds all three together and
+   * this hands them over in one shape, which is also what the drop path uses —
+   * a fifth way in that cannot disagree with the other four.
+   */
+  async function commitCue(built) {
     await act(async () => {
-      await addPlanItem(openPlan.id, 'scripture', v.reference, payload);
+      await addPlanItem(openPlan.id, built.cue_type, built.label, built.payload);
       await loadItems();
       await refresh();
     });
   }
-  async function addMediaCue(m) {
-    const payload = { media_id: m.id, kind: m.kind, filename: m.filename };
-    await act(async () => {
-      await addPlanItem(openPlan.id, 'media', m.filename, payload);
-      await loadItems();
-      await refresh();
-    });
-  }
-  async function addAnnounceCue(a) {
-    const payload = { announce_id: a.id, title: a.title, body: a.body };
-    await act(async () => {
-      await addPlanItem(openPlan.id, 'announce', a.title || 'Announcement', payload);
-      await loadItems();
-      await refresh();
-    });
-  }
+  const addVerse = (v) => commitCue(verseCue(v));
+  const addMediaCue = (m) => commitCue(mediaCuePayload(m));
+  const addAnnounceCue = (a) => commitCue(announceCuePayload(a));
   // THE WORDS BESIDE THE CLOCK ARE THE OPERATOR'S, AND THIS IS WHERE THEY ARE
   // TYPED. Both fields were written here as constants — 'Service begins in' and
   // 'Welcome' — with no control anywhere in Relay to edit them, so every church
@@ -334,15 +337,14 @@
   let cdAddLabel = '';
   let cdAddDone = '';
   async function addCountdownCue() {
-    const m = Number(cdAddMin) || 5;
-    const payload = { minutes: m, label: cdAddLabel.trim(), done: cdAddDone.trim() };
+    const built = countdownCuePayload(cdAddMin, cdAddLabel, cdAddDone);
     await act(async () => {
-      await addPlanItem(openPlan.id, 'countdown', `Countdown · ${m} min`, payload);
+      await addPlanItem(openPlan.id, built.cue_type, built.label, built.payload);
       // A countdown is the one cue type whose length is known at build time, so it
       // seeds its own duration instead of making the operator retype it.
       await loadItems();
       const added = items[items.length - 1];
-      if (added) await setPlanDuration(added.id, m * 60);
+      if (added) await setPlanDuration(added.id, built.seconds);
       await loadItems();
       await refresh();
     });
@@ -435,16 +437,13 @@
   function onDragMove(e) {
     if (!drag) return;
     drag.dy = e.clientY - drag.y0;
-    const shift = Math.round(drag.dy / drag.h);
+    // The ARITHMETIC is `plannerdrag.dragFrame`; this writes the styles. A still
+    // row comes back as exactly 0 and its style is CLEARED rather than set to
+    // `translateY(0px)` — the each block is keyed, so a leftover inline transform
+    // would paint the new order shifted by a row.
+    const frame = dragFrame(drag.rows.length, drag.from, drag.h, drag.dy);
     drag.rows.forEach((r, i) => {
-      if (i === drag.from) {
-        r.style.transform = `translateY(${drag.dy}px)`;
-        return;
-      }
-      let t = 0;
-      if (shift > 0 && i > drag.from && i <= drag.from + shift) t = -drag.h;
-      if (shift < 0 && i < drag.from && i >= drag.from + shift) t = drag.h;
-      r.style.transform = t ? `translateY(${t}px)` : '';
+      r.style.transform = frame[i] ? `translateY(${frame[i]}px)` : '';
     });
   }
 
