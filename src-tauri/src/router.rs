@@ -363,6 +363,43 @@ impl Router {
                     return RouteDecision::Drop;
                 }
             }
+            // ONE SENTENCE HEARD TWO WAYS — 2026-09-20, live, on a congregation's
+            // screens.
+            //
+            // The window decoded one utterance 3.2 seconds apart and disagreed with
+            // itself about the book: `Numbers 10:29` at 0.88, then `Genesis 10:29`
+            // at 0.88. The preacher said Numbers; the operator walked Numbers 10:30
+            // to 10:32 by hand straight after, which is how we know.
+            //
+            // **Nothing above could see it.** The cooldown a few lines up is keyed
+            // per REFERENCE, and those are two different references — the blind spot
+            // rule 29 records for two verses in one window, in a new shape: one
+            // sentence across two windows. `decide_live`'s corroboration cannot see
+            // it either, because that rule waits for a second pass to AGREE and this
+            // second pass did not disagree, it asserted a different book just as
+            // confidently.
+            //
+            // **And no threshold could have saved it**, which is why this is a rule
+            // and not a number. Both readings scored 0.88 while six CORRECT fires
+            // that same morning scored 0.55; raising the bar discards the six and
+            // keeps this one. Rule 10, in the costume it keeps returning in.
+            //
+            // The chapter and the verse agreeing while the book does not, inside the
+            // cooldown, is treated as what it almost always is. The second reading
+            // is OFFERED, never fired — not dropped, because the operator may want
+            // it and a silent discard is a different lie. A genuine second citation
+            // outside the cooldown is untouched, and so is any other verse.
+            if let Some((book, chapter_verse)) = key.rsplit_once(' ') {
+                let heard_another_way = self.fired_at.iter().any(|(fired, at)| {
+                    now_ms.saturating_sub(*at) < self.debounce_ms
+                        && fired
+                            .rsplit_once(' ')
+                            .is_some_and(|(b, cv)| cv == chapter_verse && b != book)
+                });
+                if heard_another_way {
+                    return RouteDecision::Suggest;
+                }
+            }
             self.note_fired(key, now_ms);
             // Remember WHAT we put on screen, so a later "undo" is a proportional
             // correction rather than a blind nudge.
@@ -651,6 +688,108 @@ mod tests {
         assert_eq!(
             r.decide("Psalms 23:1", 0.30, DIRECT, 200),
             RouteDecision::Drop
+        );
+    }
+
+    /// ONE SENTENCE, DECODED TWICE, INTO TWO DIFFERENT BOOKS — 2026-09-20, live.
+    ///
+    /// The rolling window decoded the same utterance 3.2 seconds apart:
+    ///
+    /// ```text
+    /// 375.4  "Numbers chapter 10. I'll read verse 29."            -> Numbers 10:29  0.88  AUTO
+    /// 378.6  "Genesis 10, I'll read verse 29. It's the New King"  -> Genesis 10:29  0.88  AUTO
+    /// ```
+    ///
+    /// The preacher said Numbers. The operator then walked Numbers 10:30, 10:31
+    /// and 10:32 by hand, which is the corroboration. **Genesis 10:29 reached the
+    /// congregation's screens and nobody said it.**
+    ///
+    /// Nothing in the router could see it. The debounce is keyed per REFERENCE and
+    /// those are two different references — the same blind spot rule 29 records for
+    /// two verses sharing one window, in a new shape: not two verses in one window,
+    /// but one sentence in two windows. Corroboration (`decide_live`) cannot catch
+    /// it either: that rule holds a reference until a second pass AGREES, and this
+    /// second pass did not disagree, it asserted a different book at the same
+    /// confidence.
+    ///
+    /// **And confidence could never have separated them.** Both scored 0.88, while
+    /// six CORRECT fires that morning scored 0.55. Raising the bar would have
+    /// discarded the six and kept this one — rule 10, in the costume it keeps
+    /// coming back in.
+    ///
+    /// So the chapter and verse agreeing while the book does not, inside the
+    /// cooldown, is treated as what it almost always is: one utterance heard two
+    /// ways. The second is offered, never fired. It is NOT dropped — the operator
+    /// may want it, and a silent discard would be a different lie.
+    #[test]
+    fn a_second_book_at_the_same_chapter_and_verse_is_offered_never_fired() {
+        let mut r = Router::default();
+        assert_eq!(
+            r.decide("Numbers 10:29", 0.88, DIRECT, 375_400),
+            RouteDecision::AutoFire,
+            "the first reading of the sentence must still reach the screen"
+        );
+        assert_eq!(
+            r.decide("Genesis 10:29", 0.88, DIRECT, 378_600),
+            RouteDecision::Suggest,
+            "the same chapter and verse in a different book, 3.2s later, auto-fired"
+        );
+    }
+
+    /// The half that must not regress, in four directions.
+    #[test]
+    fn the_second_book_rule_is_narrow() {
+        let mut r = Router::default();
+
+        // 1. A DIFFERENT verse in a different book is untouched. This is the
+        //    ordinary case of a preacher moving between books and it must not slow.
+        assert_eq!(
+            r.decide("Numbers 10:29", 0.9, DIRECT, 0),
+            RouteDecision::AutoFire
+        );
+        assert_eq!(
+            r.decide("Genesis 1:1", 0.9, DIRECT, 1_000),
+            RouteDecision::AutoFire,
+            "an unrelated verse was held back"
+        );
+
+        // 2. OUTSIDE the cooldown it is two real citations, not one utterance.
+        let mut r = Router::default();
+        assert_eq!(
+            r.decide("Numbers 10:29", 0.9, DIRECT, 0),
+            RouteDecision::AutoFire
+        );
+        assert_eq!(
+            r.decide("Genesis 10:29", 0.9, DIRECT, 60_000),
+            RouteDecision::AutoFire,
+            "a genuine second citation a minute later was held back"
+        );
+
+        // 3. The SAME reference still Drops rather than Suggests. The existing
+        //    debounce owns that case and this rule must not take it over: a repeat
+        //    is already on the screen, and offering it again is noise.
+        let mut r = Router::default();
+        assert_eq!(
+            r.decide("Numbers 10:29", 0.9, DIRECT, 0),
+            RouteDecision::AutoFire
+        );
+        assert_eq!(
+            r.decide("Numbers 10:29", 0.9, DIRECT, 1_000),
+            RouteDecision::Drop,
+            "the same-verse debounce changed behaviour"
+        );
+
+        // 4. A numbered book is split correctly. `1 Corinthians 13:4` must yield
+        //    the book `1 Corinthians`, not `1`.
+        let mut r = Router::default();
+        assert_eq!(
+            r.decide("1 Corinthians 13:4", 0.9, DIRECT, 0),
+            RouteDecision::AutoFire
+        );
+        assert_eq!(
+            r.decide("2 Corinthians 13:4", 0.9, DIRECT, 2_000),
+            RouteDecision::Suggest,
+            "a numbered book was split on the wrong space"
         );
     }
 
