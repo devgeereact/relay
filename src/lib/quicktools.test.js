@@ -31,11 +31,20 @@
 // coming back to Live. That reasoning is kept at `views/Live.svelte`, above
 // `cdPress`, where somebody weighing it again will be standing.
 //
-// `docs/REBRAND.md` §2 names the card's contents: the countdown, the **name
+// `docs/REBRAND.md` §2 named the card's contents: the countdown, the **name
 // band**, and the **Stage Message**, with `Load whole plan` in its header.
-// (§2 still carries the older wording for that third block; the name that ships
-// is the one in `names.test.js`. §2's list is now one longer than the card, and
-// the instruction above is why — the spec is the older document here.)
+// §2 has since been brought into line and now describes TWO blocks, so the
+// sentence that used to stand here — "§2's list is now one longer than the card
+// … the spec is the older document" — is no longer true and has been removed
+// rather than left to read as a live discrepancy. A note in a test that
+// describes a disagreement somebody has already settled sends the next reader
+// to reconcile two documents that already agree.
+//
+// One residue, named rather than fixed here because it is a phase brief and not
+// the spec: `docs/REBRAND.md`'s `W1 · Live` brief still reads
+// `Quick tools (countdown · name band · word to the preacher)` — three things,
+// and the pre-rename name for the third. The name that ships is the one in
+// `names.test.js`.
 //
 // WHERE THE CARD CAME FROM. Relay had the countdown and a single `To preacher`
 // row. The lower thirds and the `stage_alert` frame kind already existed (phases
