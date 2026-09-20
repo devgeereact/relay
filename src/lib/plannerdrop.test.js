@@ -612,3 +612,37 @@ describe('a real drop on a mounted Planner', () => {
     expect(host.querySelector('.sp-drop').textContent).toMatch(/drop a picture or a video/i);
   });
 });
+
+// ── THE HALF THAT LIVES OUTSIDE THE WEBVIEW ─────────────────────────────────
+//
+// Everything above proves the page handles a drop correctly. None of it proves
+// the page is ever GIVEN one, and in the packaged app it would not have been.
+//
+// Tauri owns the window before the webview does. Its native drag-drop handler is
+// ON by default, and while it is on it swallows the OS drag: the webview never
+// sees `dragover`, never sees `drop`, and `dataTransfer.files` never arrives. The
+// page would have looked exactly like this file says it behaves, and done
+// nothing, on a Sunday, in a packaged build — which is rule 17's shape in a
+// different costume: invisible in `tauri dev` reasoning and invisible in jsdom,
+// visible only in the one build handed to a church.
+//
+// The switch is `app.windows[].dragDropEnabled`, renamed from v1's
+// `fileDropEnabled`. `false` stands the native handler down and lets HTML5 drag
+// and drop reach the page.
+//
+// So the feature is two doors, and this is the second one. A future tidy-up of
+// `tauri.conf.json` that removes a key "nothing reads" takes the drop with it,
+// silently, and no other test in this repository would notice.
+describe('the window actually hands the drop to the page', () => {
+  it('the native drag-drop handler is stood down for the main window', () => {
+    const conf = JSON.parse(
+      readFileSync(resolve(__dirname, '../../src-tauri/tauri.conf.json'), 'utf8'),
+    );
+    const windows = conf?.app?.windows ?? [];
+    expect(windows.length, 'the main window is gone from the config').toBeGreaterThan(0);
+    expect(
+      windows[0].dragDropEnabled,
+      'Tauri would swallow the OS drag and `dataTransfer.files` would never reach the Planner',
+    ).toBe(false);
+  });
+});
