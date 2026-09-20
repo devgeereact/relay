@@ -2581,12 +2581,13 @@ pub struct SemanticIndex {
     /// Built from the SAME stemmed tokens as `docs`, so a story and its verses
     /// live in one vocabulary. See `PASSAGE_LEN` and `top_k_explained`.
     passages: Vec<(usize, usize, HashMap<String, f32>)>,
-    /// Stems rare enough to stand as evidence ALONE — see `RARE_DF_FRACTION`
-    /// and DECISIONS.md §25. Held as a set, computed once at build time from
-    /// document frequency, because the query path must not re-derive `df` from
-    /// a float `idf`.
-    rare_terms: std::collections::HashSet<String>,
 }
+
+// THE `rare_terms` SET IS GONE (2026-09-20). It held the stems rare enough to
+// stand as evidence ON THEIR OWN, and nothing needs that question answered any
+// more — see `MIN_EVIDENCE_TERMS`. Deleted rather than left computed and unread:
+// a set built at startup for a rule that no longer exists is how a reader comes
+// to believe the rule is still there.
 
 /// Modern English → KJV vocabulary, baked in (`include_str!`) so it stays
 /// offline. See `data/kjv_gloss.json` for why this exists and what it is not.
@@ -2719,15 +2720,6 @@ impl SemanticIndex {
                 }
             }
         }
-        // Rarity is decided HERE, from the raw document frequencies, while they
-        // still exist — `idf` is a float and recovering `df` back out of it is
-        // not something the query path should be doing.
-        let rare_cutoff = (n * RARE_DF_FRACTION).max(1.0);
-        let rare_terms: std::collections::HashSet<String> = df
-            .iter()
-            .filter(|(_, d)| **d <= rare_cutoff)
-            .map(|(t, _)| t.clone())
-            .collect();
         let idf: HashMap<String, f32> = df
             .into_iter()
             .map(|(t, d)| (t, (n / d).ln() + 1.0))
@@ -2776,7 +2768,6 @@ impl SemanticIndex {
             docs,
             surface,
             passages,
-            rare_terms,
         }
     }
 
@@ -2939,7 +2930,11 @@ impl SemanticIndex {
         // bends to it — but never below TWO, whatever was said. A single shared
         // word is a coincidence with a good score at any query length, and
         // `evidence_floor` exists to forbid exactly that.
-        let required = MIN_EVIDENCE_TERMS.min(qvec.len()).max(2);
+        // THREE SHARED WORDS, FLAT. No bend for a short query, no exception for
+        // a rare one. See `MIN_EVIDENCE_TERMS` for the measurement that removed
+        // both on 2026-09-20; between them they were 71% of everything this
+        // matcher offered across a real service.
+        let required = MIN_EVIDENCE_TERMS;
         scored
             .into_iter()
             .filter_map(|(i, s)| {
@@ -2948,12 +2943,11 @@ impl SemanticIndex {
                 // a fact about the index's vocabulary, and `surface` deliberately
                 // maps several stems onto one word.
                 let stems = top_terms(&qvec, dvec, EXPLAIN_TERMS);
-                // NARROW TO WHAT CAN BE JUSTIFIED. `required` is the bar — see
-                // above — so a candidate is corroborated rather than merely
-                // confident. A SINGLE word clears it only when that word is rare
-                // enough to be evidence by itself ("swine", "ossifrage") — never
-                // a common one ("lord"). DECISIONS.md §25.
-                if stems.len() < required && !stems.iter().any(|t| self.rare_terms.contains(t)) {
+                // NARROW TO WHAT CAN BE JUSTIFIED. `required` is the bar, and
+                // NOTHING is exempt from it any more: a candidate is offered
+                // because several independent words back it, or it is not
+                // offered at all. DECISIONS.md §33, reversed 2026-09-20.
+                if stems.len() < required {
                     return None;
                 }
                 let why: Vec<String> = stems
@@ -3067,20 +3061,42 @@ const EXPLAIN_TERMS: usize = 6;
 /// was said is defensible on its face; one sharing two is a coincidence with a
 /// good score, and no operator can weigh it in the second they have.
 ///
-/// ONE EXCEPTION, and it is `RARE_DF_FRACTION`: a single word that is rare
-/// enough IS corroboration, because there is nothing else in the corpus it
-/// could have come from. See DECISIONS.md §25.
-const MIN_EVIDENCE_TERMS: usize = 3;
-
-/// How rare a stem must be to stand as evidence ON ITS OWN: it may appear in at
-/// most this fraction of the corpus (floored at one document, so the rule still
-/// means something on the tiny corpora the tests build).
+/// ── NO EXCEPTIONS, AS OF 2026-09-20 (DECISIONS.md §33, reversed) ──────────
 ///
-/// 0.1% of the full KJV is ~31 of 31,102 verses. "swine" (~30 verses) and
-/// "ossifrage" (2) clear it; "lord" (~7,800) is nowhere near. That is exactly
-/// the line this is meant to draw — a word that names one story, versus a word
-/// that names half the Bible.
-const RARE_DF_FRACTION: f32 = 0.001;
+/// There used to be two ways past this bar, and together they were most of what
+/// this matcher offered. `RARE_DF_FRACTION` let a SINGLE rare word through, on
+/// the argument that there was nowhere else in the corpus it could have come
+/// from; and `required` bent down to 2 for a short query, on the argument that a
+/// short query cannot corroborate itself three ways.
+///
+/// Both arguments are reasonable and both were wrong, and the operator found it
+/// before any instrument here did: *"it is still suggesting just one word ...
+/// we will have too much going on the preview and miss the right verse."*
+///
+/// MEASURED over all 816 transcript windows of the service of 2026-09-20 and
+/// over both benchmarks. `@3` is listed because `SEMANTIC_SUGGESTIONS_MAX` is 3,
+/// so it is the last rank an operator can ever see:
+///
+///                            offers  1-word   @1    @3    @5   story@1  modern@1
+///   3 terms, or one rare        638     287   69%   81%   88%     84%       59%
+///   3 terms, no rare word       302       0   75%    —    81%      —         —
+///   3 terms, neither            186       0   75%   81%   81%     88%       71%
+///   4 terms, neither            175       0   62%    —    69%      —         —
+///
+/// Seven offers a minute became two, every survivor is corroborated, and NOTHING
+/// AN OPERATOR CAN SEE GOT WORSE: recall@3 is 13/16 either way and recall@1 went
+/// UP. The @5 column is the whole cost, and it is two ranks no console renders.
+///
+/// The rare-word rule was not buying the recall it was defended with: a one-word
+/// match was taking rank 1 in front of a properly corroborated verse, which is
+/// the same failure the evidence filter was moved before `truncate(k)` to fix.
+///
+/// The old note claimed the KJV gloss "cannot work at all" without the single
+/// rare word, because a modern retelling reaches its verse through one rare KJV
+/// noun ("pigs" → "swine"). That is the `modern` column, and it is the biggest
+/// single improvement in the table: 59% → 71%. A real retelling is a sentence,
+/// and a sentence corroborates itself.
+const MIN_EVIDENCE_TERMS: usize = 3;
 
 /// The shared terms that contributed most to a cosine — the "why" of a paraphrase.
 ///
@@ -4221,10 +4237,17 @@ mod tests {
         assert!(hits[0].1 > 0.2, "similarity too low: {}", hits[0].1);
     }
 
+    /// A WHOLE SENTENCE, not two words. Since 2026-09-20 this matcher requires
+    /// three shared words with no exception, so "the lord is my shepherd" —
+    /// which is `lord` and `shepherd` once the stopwords are gone — is no longer
+    /// its job. It is `PhraseIndex`'s, which finds it as a five-word quotation
+    /// and can quote it back. The division is deliberate: one index answers
+    /// "which verse did he READ", this one answers "which verse does he MEAN",
+    /// and a two-word probe was only ever testing the first through the second.
     #[test]
     fn semantic_picks_shepherd_for_shepherd_query() {
         let idx = seed_index();
-        let hits = idx.top_k("the lord is my shepherd", 1);
+        let hits = idx.top_k("the lord is my shepherd and i shall not want", 1);
         assert_eq!(hits[0].0.reference_book_chapter_verse(), "Psalms 23:1");
     }
 
@@ -4254,7 +4277,14 @@ mod tests {
             ),
         ];
         let idx = SemanticIndex::build(&corpus);
-        let hits = idx.top_k("he ended up feeding pigs", 1);
+        // A RETELLING, not a probe. "pigs" is still the word that does it — it
+        // appears nowhere in the KJV and only the gloss turns it into "swine" —
+        // but three shared words are required with no exception since
+        // 2026-09-20, and a preacher telling this story says a sentence.
+        let hits = idx.top_k(
+            "he was so hungry he would have filled his belly with what the pigs were eating",
+            1,
+        );
         assert_eq!(hits.len(), 1, "modern wording found nothing");
         assert_eq!(hits[0].0.reference_book_chapter_verse(), "Luke 15:16");
     }
@@ -4289,8 +4319,12 @@ mod tests {
             idx.top_k("ship", 1).is_empty(),
             "the index was glossed — document frequencies are now wrong"
         );
-        // ...while the modern query still finds the modern text unaided.
-        assert!(!idx.top_k("boat", 1).is_empty());
+        // ...while the modern query still finds the modern text unaided. A whole
+        // clause rather than the bare word, because three shared words are now
+        // required with no exception — which does not weaken what this test
+        // claims: `boat` is still the word doing the work, and `ship` still
+        // reaches nothing.
+        assert!(!idx.top_k("the waves beat into the boat", 1).is_empty());
     }
 
     /// Identical input must produce a bit-identical score, every time.
@@ -4332,7 +4366,8 @@ mod tests {
     #[test]
     fn a_paraphrase_can_explain_itself_in_words() {
         let idx = seed_index();
-        let hits = idx.top_k_explained("the lord is my shepherd", 1);
+        const SAID: &str = "the lord is my shepherd and i shall not want";
+        let hits = idx.top_k_explained(SAID, 1);
         let (r, _score, terms) = &hits[0];
         assert_eq!(r.reference_book_chapter_verse(), "Psalms 23:1");
         assert!(
@@ -4342,10 +4377,7 @@ mod tests {
         // Only words the query and the verse actually SHARE — an "explanation"
         // listing words that were not in the sermon would be a fabricated one.
         for t in terms {
-            assert!(
-                "the lord is my shepherd".contains(t.as_str()),
-                "{t:?} was never spoken"
-            );
+            assert!(SAID.contains(t.as_str()), "{t:?} was never spoken");
         }
     }
 
@@ -4394,7 +4426,7 @@ mod tests {
             ),
         ];
         let idx = SemanticIndex::build(&corpus);
-        let hits = idx.top_k_explained("lord shepherd", 1);
+        let hits = idx.top_k_explained("the lord is my shepherd i shall not want", 1);
         assert_eq!(hits[0].0.reference_book_chapter_verse(), "Psalms 23:1");
         assert_eq!(
             hits[0].2.first().map(String::as_str),
@@ -5040,7 +5072,10 @@ mod query_repair {
     #[test]
     fn a_misheard_word_now_finds_its_verse() {
         let i = idx();
-        let hits = i.top_k("the goden calf", 2);
+        // "goden" is the misheard word and is still what this test is about; the
+        // sentence around it is there because three shared words are required
+        // with no exception since 2026-09-20.
+        let hits = i.top_k("and they made it a goden calf", 2);
         assert_eq!(hits[0].0.book, "Exodus");
     }
 
@@ -5130,7 +5165,7 @@ mod evidence_floor {
 
     /// A single COMMON word is still a coincidence with a good score, and is
     /// still refused. This is the half of the old one-word rule that survives
-    /// DECISIONS.md §25.
+    /// DECISIONS.md §33.
     ///
     /// A LITERAL 2, not `MIN_EVIDENCE_TERMS`. Asserting against the constant
     /// under test is tautological — it passes at any value, including the old
@@ -5149,18 +5184,36 @@ mod evidence_floor {
         );
     }
 
-    /// The other half of §25: a word rare enough IS corroboration, because
-    /// there is nowhere else in the corpus it could have come from. Without
-    /// this the KJV gloss cannot work at all — a modern retelling reaches its
-    /// verse through exactly one rare KJV noun ("pigs" → "swine").
+    /// THE OTHER HALF OF §33 IS REVERSED, AND THIS IS THE TEST THAT SAYS SO.
+    ///
+    /// A rare word used to be corroboration on its own, because there was
+    /// nowhere else in the corpus it could have come from. It was measured out
+    /// on 2026-09-20: see `MIN_EVIDENCE_TERMS`. "Ossifrage" is still in exactly
+    /// one verse and that is still true; what changed is that being the only
+    /// place a word appears is a fact about the BIBLE, not evidence that the
+    /// preacher was talking about that verse. A one-word offer is not something
+    /// an operator can agree or disagree with in the second they have.
+    ///
+    /// Written as the inverse of the test it replaces, so the two cannot both
+    /// be in the file.
     #[test]
-    fn a_rare_single_shared_word_is_evidence_enough() {
-        // "ossifrage" appears in exactly ONE verse in the corpus.
-        let hits = idx().top_k_explained("ossifrage", 5);
-        assert_eq!(hits.len(), 1, "a rare one-word match was dropped");
-        assert_eq!(hits[0].0.book, "Leviticus");
-        // And the operator is shown the word that did it, not a bare score.
-        assert_eq!(hits[0].2, vec!["ossifrage".to_string()]);
+    fn a_rare_single_shared_word_is_no_longer_evidence_enough() {
+        assert!(
+            idx().top_k_explained("ossifrage", 5).is_empty(),
+            "a one-word match was offered"
+        );
+        // The SAME rare word in a sentence that corroborates it three ways IS
+        // offered, so what was removed is the exception and not the word.
+        let hits = idx().top_k_explained("the ossifrage and the eagle and the osprey", 5);
+        assert_eq!(
+            hits.first().map(|h| h.0.book.clone()),
+            Some("Leviticus".into())
+        );
+        assert!(
+            hits[0].2.len() >= 3,
+            "offered on thin evidence: {:?}",
+            hits[0].2
+        );
     }
 
     #[test]

@@ -230,11 +230,33 @@ export function applyTranscript(t, { text, is_final }, at) {
   if (!is_final) return { ...t, partial: text };
   return {
     partial: '',
-    finals: [...t.finals, text].slice(-MAX_FINALS),
+    // EVERY CLOSED LINE OF THE SESSION IS KEPT. There is no cap, and there is
+    // no `.slice(-N)` here any more.
+    //
+    // It was 12, briefly 240, and the operator's instruction of 2026-09-20 is
+    // plainer than either: *"I want all transcript to be kept, not just what you
+    // hear before another minute ... keep all, starting from different seconds
+    // and minute and hour."* Each line carries its own wall-clock stamp in
+    // `finalsAt`, so the history reads back by hour, minute and second with
+    // nothing further needed.
+    //
+    // WHY THIS IS SAFE UNBOUNDED, measured rather than assumed: the service of
+    // 2026-09-20 closed 147 utterances over 5611 seconds and 816 rows across the
+    // whole session, under 200 kB of text. The cap existed to protect a surface
+    // that updates several times a minute, and the real cost was never the array
+    // — it was the RENDER, because a keyed `{#each}` lays out every row it is
+    // given. `Dock.svelte`'s `TR_LINES` caps what is PAINTED and grows as the
+    // operator scrolls, so the store holds the service and the card still lays
+    // out a screenful.
+    //
+    // The record is the backend's regardless: `persist_transcript` writes every
+    // final line to `transcripts`, which is what History reads back. This is the
+    // console's working memory for one session, not the archive.
+    finals: [...t.finals, text],
     // `?? []` because a session restored from an older build has no `finalsAt`,
     // and a missing timestamp must degrade to an unlabelled line, never to a crash
     // on the surface an operator is watching to decide whether Relay has gone deaf.
-    finalsAt: [...(t.finalsAt ?? []), at].slice(-MAX_FINALS),
+    finalsAt: [...(t.finalsAt ?? []), at],
   };
 }
 
@@ -459,25 +481,6 @@ export const liveTemplateOverride = derived([live, templates], ([$l, $tpls]) =>
  *  resolution the real output window uses, so the console program pane matches. */
 export const liveTemplatePinned = derived(live, ($l) => !!$l?.template_pinned);
 
-/**
- * How many closed transcript lines are kept.
- *
- * IT WAS 12, AND 12 IS THE REASON THE TRANSCRIPT CARD LOOKED EMPTY. The dock
- * capped its own render at 40 lines and that cap could never bite, because the
- * store never held more than twelve. Measured on the service of 2026-09-20: 147
- * closed utterances across 5611 seconds, one about every 38 seconds, so twelve
- * lines is roughly seven minutes of a service and four of them fill a 152px
- * card. An operator scrolling back "to read what was said in the past few
- * minutes" reached the top almost at once.
- *
- * 240 is about two and a half hours at that rate, which is longer than any
- * service Relay has run, and it is bounded rather than unbounded on purpose: an
- * uncapped list on a surface that updates every few seconds is a leak with a
- * nice view. The cost is strings — the whole 93-minute service was 816 lines and
- * under 200 kB of text — and the array is rebuilt per line either way, which is
- * what the slice was already doing at 12.
- */
-const MAX_FINALS = 240;
 const MAX_DETECTIONS = 6;
 
 /**

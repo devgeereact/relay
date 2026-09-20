@@ -250,10 +250,34 @@
   //
   // 120 is about 75 minutes at the rate a real service produced (one closed line
   // every ~38 s), which is further back than "the past few minutes" ever means.
-  const TR_LINES = 120;
-  $: tlines = $transcript.finals
-    .map((t, i) => ({ t, at: $transcript.finalsAt?.[i] ?? '' }))
-    .slice(-TR_LINES);
+  // ── HOW MUCH OF THE TRANSCRIPT IS PAINTED, AND WHY IT IS NOT ALL OF IT ────
+  //
+  // `capture.js` keeps EVERY closed line of the session now, with no cap, on the
+  // operator's instruction of 2026-09-20. This is the other half of that: a keyed
+  // `{#each}` lays out every row it is handed, and handing it a whole service
+  // costs a layout pass over ~800 rows several times a minute for a 152px box
+  // that can show about eight.
+  //
+  // So the card paints a WINDOW of the newest lines and grows it when the
+  // operator scrolls near the top — which is the only moment more of them can be
+  // seen. `TR_PAGE` more each time, never fewer, and it is reset when capture
+  // starts a new service rather than creeping upward for the life of the install.
+  //
+  // The window is a render budget and NOT a limit on the history: the store has
+  // the whole session and `transcripts` has the record. Nothing is lost by
+  // scrolling slightly further than the window, because reaching the top is what
+  // extends it.
+  const TR_PAGE = 120;
+  let trShown = TR_PAGE;
+  $: allLines = $transcript.finals.map((t, i) => ({
+    t,
+    at: $transcript.finalsAt?.[i] ?? '',
+  }));
+  $: tlines = allLines.slice(-trShown);
+  // A NEW SERVICE STARTS THE WINDOW AGAIN. `finals` is emptied when a session is
+  // reset, and a window left at several thousand would then be a budget nobody
+  // set for a card with four lines in it.
+  $: if (allLines.length < trShown - TR_PAGE) trShown = TR_PAGE;
 
   // ── THE PANE FOLLOWS THE PREACHER, UNLESS THE OPERATOR IS READING BACK ─────
   //
@@ -271,6 +295,13 @@
   function onTrScroll() {
     if (!trBody) return;
     trStuck = trBody.scrollHeight - trBody.scrollTop - trBody.clientHeight <= TR_SLACK;
+    // READING BACK PAST THE WINDOW EXTENDS IT. The operator is at the top of what
+    // has been painted and there is more session behind it, so paint more. It
+    // only ever grows, and only while there is something to grow into, so this
+    // cannot loop against its own `afterUpdate`.
+    if (trBody.scrollTop <= TR_SLACK && trShown < allLines.length) {
+      trShown += TR_PAGE;
+    }
   }
   afterUpdate(() => {
     if (trStuck && trBody) trBody.scrollTop = trBody.scrollHeight;

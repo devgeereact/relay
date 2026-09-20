@@ -93,20 +93,38 @@ describe('finals and their timestamps are sliced in LOCKSTEP', () => {
     }
   });
 
-  it('the cap keeps the NEWEST lines, because the operator is reading now', () => {
-    // 400 rather than 40: the cap moved from 12 to 240 on 2026-09-20, because
-    // twelve lines is about seven minutes of a real service and the operator
-    // asked to be able to scroll back and read what was just said. A test that
-    // feeds fewer lines than the cap proves nothing about a cap.
+  it('KEEPS EVERY LINE — there is no cap, and the first one survives', () => {
+    // The cap was 12, then 240, and then nothing: *"I want all transcript to be
+    // kept, not just what you hear before another minute"* (operator,
+    // 2026-09-20). 400 lines is more than twice a real service produced.
     let t = { ...EMPTY };
     for (let i = 1; i <= 400; i++) t = applyTranscript(t, { text: `line ${i}`, is_final: true }, `t${i}`);
 
     expect(t.finals.at(-1)).toBe('line 400');
-    expect(t.finals).not.toContain('line 1');
-    // And it is still genuinely bounded. An unbounded list on a surface that
-    // updates every few seconds is a leak with a nice view.
-    expect(t.finals.length).toBeLessThanOrEqual(240);
-    expect(t.finals.length).toBeGreaterThan(1);
+    // THE ASSERTION THAT MATTERS, and it is the inverse of the one it replaces:
+    // the very first thing said this morning is still there at the end.
+    expect(t.finals[0]).toBe('line 1');
+    expect(t.finals.length).toBe(400);
+  });
+
+  it('every kept line still carries its own hour, minute and second', () => {
+    // *"keep all, starting from different seconds and minute and hour."* The
+    // stamps are paired by INDEX across two arrays, which is how they drifted
+    // once before when the cap shifted one array and not the other. With no cap
+    // there is no shift, and this proves the pairing over a whole service.
+    let t = { ...EMPTY };
+    for (let i = 1; i <= 300; i++) {
+      const at = `${String(9 + Math.floor(i / 120)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}:07`;
+      t = applyTranscript(t, { text: `line ${i}`, is_final: true }, at);
+    }
+    expect(t.finalsAt.length).toBe(t.finals.length);
+    expect(t.finalsAt[0]).toBe('09:01:07');
+    expect(t.finalsAt.at(-1)).toBe('11:00:07');
+    // Pairwise, not by length: line N must carry line N's stamp.
+    for (let i = 0; i < t.finals.length; i++) {
+      const n = Number(t.finals[i].split(' ')[1]);
+      expect(t.finalsAt[i].slice(3, 5)).toBe(String(n % 60).padStart(2, '0'));
+    }
   });
 
   it('keeps enough of a real service to scroll back through', () => {

@@ -1129,6 +1129,61 @@ Pinned by `a_common_single_shared_word_is_not_offered_as_a_paraphrase` and
 `a_rare_single_shared_word_is_evidence_enough`, both **mutation-verified**: removing the
 rarity exception fails the second, and treating every term as rare fails the first.
 
+### REVERSED, 2026-09-20. Three shared words, and nothing is exempt.
+
+**The operator found this before any instrument here did**, watching a real service:
+*"it is still suggesting just one word ... in a paragraph of words find three to four
+words that match and suggest them, not just one word only, else we will have too much
+going on the preview and missing the right verse before the operator reads through."*
+
+Two doors led past the bar and together they were most of what this matcher offered.
+The rarity exception above is the first. The second was never written down at all:
+`required` bent down to **2** for a short query, on the reasonable-sounding grounds that
+a short query cannot corroborate itself three ways.
+
+Measured across all **816 transcript windows** of the service of 2026-09-20, against
+both benchmarks. `@3` matters because `SEMANTIC_SUGGESTIONS_MAX` is 3, so it is the
+last rank an operator can ever see:
+
+| rule | offers | one-word | @1 | @3 | @5 | story@1 | modern@1 |
+|---|---|---|---|---|---|---|---|
+| 3 terms, **or** one rare (this section, as decided) | 638 | 287 | 69% | 81% | 88% | 84% | 59% |
+| 3 terms, no rare exception | 302 | 0 | 75% | — | 81% | — | — |
+| **3 terms, neither exception** | **186** | **0** | **75%** | **81%** | 81% | **88%** | **71%** |
+| 4 terms, neither | 175 | 0 | 62% | — | 69% | — | — |
+
+**Seven offers a minute became two, and nothing an operator can see got worse.**
+recall@3 is 13/16 either way and recall@1 went *up*, 11/16 to 12/16. The whole cost is
+recall@5, which is two ranks no console renders.
+
+**The argument this section makes for the gloss turns out to be measurably false**, and
+that is the part worth keeping. The claim was that a flat floor "makes the gloss inert",
+because a modern retelling reaches its verse through exactly one rare KJV noun. The
+`modern@1` column is that claim's own test, and it is the single biggest improvement in
+the table: **59% → 71%**. The reason is in the example the section chose: "he ended up
+feeding pigs" is a *probe*, not a sentence. A preacher retelling that story says *"he was
+so hungry he would have filled his belly with what the pigs were eating"*, and a sentence
+corroborates itself. What the rare-word rule was actually buying was a one-word match
+taking rank 1 in front of a properly corroborated verse.
+
+**What replaces it, and what did not change.** The bar is a flat `MIN_EVIDENCE_TERMS`
+(3) with no exception and no bend. `RARE_DF_FRACTION` and the `rare_terms` set are
+deleted rather than left computed and unread. Nothing here changes what *fires*:
+`Semantic` is still capped at `Suggest` (rule 10), and `Quoted` — the contiguous-phrase
+method added the same day, which is what now answers a short exact quotation like "the
+lord is my shepherd" — is capped beside it.
+
+`a_rare_single_shared_word_is_evidence_enough` is replaced by its own inverse,
+`a_rare_single_shared_word_is_no_longer_evidence_enough`, so the two cannot both be in
+the file. The recall ratchet in `eval.rs` now asserts **@3 as well as @5**; lowering the
+@5 floor without adding @3 would have turned a ratchet into a ratchet with a hole in it.
+
+**A note on the citations.** Six comments in `detection.rs` and `eval.rs` cited this
+rule as **§25**, which is *One vocabulary, one wiring hub* and has nothing to do with
+paraphrase evidence. Corrected to §33 on 2026-09-20. Per CLAUDE.md, a citation that
+resolves to the wrong decision is worse than one resolving to nothing: the dead one
+announces that it needs checking, and this one read as evidence.
+
 ---
 
 ## 34. A reference cut off mid-sentence is not a reference (2026-08-03)

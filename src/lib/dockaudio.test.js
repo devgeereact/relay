@@ -646,3 +646,56 @@ describe('a segment is drawn in runs of one colour', () => {
     expect(runs.map((r) => r.kind)).toEqual(['voice', 'clip', 'voice']);
   });
 });
+
+// ── THE TRANSCRIPT KEEPS THE WHOLE SERVICE, AND PAINTS A WINDOW OF IT ──────
+//
+// *"I want all transcript to be kept, not just what you hear before another
+// minute ... keep all, starting from different seconds and minute and hour."*
+// (operator, 2026-09-20). `capture.js` now keeps every closed line with no cap.
+//
+// This is the other half. A keyed `{#each}` lays out every row it is handed, and
+// handing it a whole service costs a layout pass over ~800 rows several times a
+// minute for a box that shows about eight. So the card paints a WINDOW of the
+// newest lines and grows it when the operator scrolls near the top, which is the
+// only moment more of them can be seen.
+describe('the transcript card paints a window, and the window grows', () => {
+  const DOCK = readFileSync(resolve(process.cwd(), 'src/lib/Dock.svelte'), 'utf8');
+  const CODE = DOCK.replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^[ \t]*\/\/.*$/gm, '');
+
+  it('renders the NEWEST lines, never the oldest', () => {
+    // A window taken off the front would show the start of the service for ever
+    // while the preacher talked.
+    expect(CODE).toContain('allLines.slice(-trShown)');
+  });
+
+  it('extends the window when the operator reaches the top of it', () => {
+    // Without this the cap is simply a shorter cap, and scrolling back stops at
+    // a wall with more session behind it and no way to reach it.
+    expect(CODE).toMatch(/trShown \+= TR_PAGE/);
+    expect(CODE).toMatch(/trShown < allLines\.length/);
+  });
+
+  it('never shrinks the window mid-service', () => {
+    // The only assignment that lowers it is the new-service reset below. A
+    // window that shrank while the operator was reading would take the line
+    // they were looking at off the screen.
+    const lowers = [...CODE.matchAll(/trShown\s*(=|-=)\s*([^;\n]+)/g)].map((m) => m[0]);
+    expect(lowers.every((l) => /TR_PAGE/.test(l))).toBe(true);
+  });
+
+  it('starts again for a new service rather than creeping up for ever', () => {
+    expect(CODE).toMatch(/allLines\.length < trShown - TR_PAGE/);
+  });
+
+  it('does not reintroduce a cap on the STORE', () => {
+    // The store is the session's memory; this file may cap what it PAINTS and
+    // must never cap what is kept.
+    const CAP = readFileSync(resolve(process.cwd(), 'src/lib/stores/capture.js'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^[ \t]*\/\/.*$/gm, '');
+    expect(CAP).not.toMatch(/finals: \[[^\]]*\]\.slice\(/);
+    expect(CAP).not.toMatch(/finalsAt: \[[^\]]*\]\.slice\(/);
+  });
+});

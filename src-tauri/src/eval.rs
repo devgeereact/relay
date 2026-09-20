@@ -344,7 +344,7 @@ mod tests {
 ///
 /// Raising the evidence floor to 3 (see `MIN_EVIDENCE_TERMS`) took it to **75%**
 /// and removed both. Merging in the gloss expansion and the rare-single-word
-/// exception (DECISIONS.md §25/§33) moved the honest baseline again — see
+/// exception (DECISIONS.md §33) moved the honest baseline again — see
 /// `paraphrase_recall_does_not_regress` for the current measured numbers and why.
 ///
 /// ## What it does NOT claim
@@ -497,6 +497,19 @@ mod paraphrase {
             n,
             100.0 * at5 as f32 / n as f32
         );
+        // @3 as well as @1 and @5, because THREE is what an operator sees:
+        // `SEMANTIC_SUGGESTIONS_MAX` is 3, so recall@5 measures two rows that
+        // never reach a console.
+        let at3 = rows
+            .iter()
+            .filter(|(_, _, r)| r.map(|x| x < 3).unwrap_or(false))
+            .count();
+        println!(
+            "  recall@3 {}/{} ({:.0}%)  <- what the console can show",
+            at3,
+            n,
+            100.0 * at3 as f32 / n as f32
+        );
         println!("  TF-IDF is lexical. The ceiling is vocabulary, not tuning.\n");
     }
 
@@ -504,7 +517,7 @@ mod paraphrase {
     /// below what was measured when the evidence floor was raised to 3.
     ///
     /// RE-MEASURED after merging in the gloss expansion and the rare-single-word
-    /// evidence exception (DECISIONS.md §25/§33): `expand_with_gloss` now runs on
+    /// evidence exception (DECISIONS.md §33): `expand_with_gloss` now runs on
     /// every query, which shifts scores enough that "god loved the world so much
     /// that he gave his only son" now ranks 1 John 4:9 fractionally above John
     /// 3:16 (0.477 vs 0.465 — the two verses are genuinely near-duplicate in
@@ -512,7 +525,26 @@ mod paraphrase {
     /// because the gloss expansion also newly resolves a previously-missed case.
     /// Net honest baseline, not a regression papered over.
     ///
-    /// Deliberately a floor and not an equality: an embedder landing behind this
+    /// ── RE-MEASURED AGAIN, 2026-09-20, AND THE @5 FLOOR CAME DOWN ───────────
+    ///
+    /// §33 was reversed: a single rare word is no longer evidence on its own and
+    /// a short query no longer bends the bar to two. That moved this benchmark
+    ///
+    ///     recall@1  11/16 → 12/16      recall@3  13/16 → 13/16 (unchanged)
+    ///     recall@5  14/16 → 13/16
+    ///
+    /// and the reason it is ACCEPTED rather than reverted is `@3`: the console
+    /// offers at most `SEMANTIC_SUGGESTIONS_MAX` = 3 paraphrase rows, so ranks 4
+    /// and 5 are not a surface anybody has. Every rank an operator can actually
+    /// see either held or improved, while the offers made across a real
+    /// 93-minute service fell from 638 to 186 and the 287 backed by a single
+    /// word became none. See `detection::MIN_EVIDENCE_TERMS` for the full table.
+    ///
+    /// SO @3 IS ASSERTED HERE TOO, and it is the floor that matters. Lowering the
+    /// @5 floor without adding @3 would have turned a ratchet into a ratchet with
+    /// a hole in it.
+    ///
+    /// Deliberately floors and not equalities: an embedder landing behind this
     /// seam should make the test pass by a mile, not have to be edited.
     #[test]
     fn paraphrase_recall_does_not_regress() {
@@ -525,12 +557,21 @@ mod paraphrase {
             .filter(|(_, _, r)| r.map(|x| x < 5).unwrap_or(false))
             .count();
         assert!(
-            at1 * 100 / n >= 68,
-            "paraphrase recall@1 fell to {at1}/{n} — was 11/16 (69%)"
+            at1 * 100 / n >= 75,
+            "paraphrase recall@1 fell to {at1}/{n} — was 12/16 (75%)"
+        );
+        let at3 = rows
+            .iter()
+            .filter(|(_, _, r)| r.map(|x| x < 3).unwrap_or(false))
+            .count();
+        assert!(
+            at3 * 100 / n >= 81,
+            "paraphrase recall@3 fell to {at3}/{n} — was 13/16 (81%). This is the \
+             LAST RANK THE CONSOLE SHOWS; see this test's note."
         );
         assert!(
-            at5 * 100 / n >= 87,
-            "paraphrase recall@5 fell to {at5}/{n} — was 14/16 (88%)"
+            at5 * 100 / n >= 81,
+            "paraphrase recall@5 fell to {at5}/{n} — was 13/16 (81%)"
         );
     }
 

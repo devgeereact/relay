@@ -134,6 +134,7 @@
   import { whyDisabled, ENGINE_OFF, BUSY } from '../ui/whydisabled.js';
   import IconButton from '../ui/IconButton.svelte';
   import { describeScreen } from '../outputHealth.js';
+  import { transportMode, fallsThroughToPlan } from '../transportmode.js';
   import { describeMediaClock, mediaIdFromUrl } from '../mediaclock.js';
   import { mediaTransport, setMediaTransport, sendStageMedia, stageMedia } from '../stores/capture.js';
   import { programmeScreen, describeStageReach, describeCountdownReach } from '../channelroles.js';
@@ -300,7 +301,17 @@
   //
   // Now it matches the sentence above it: verse mode means something that did not
   // come from the plan is genuinely IN FRONT OF PEOPLE.
-  $: mode = openPlan && items.length && !($live && !$screenBlack && !planOnAir) ? 'slide' : 'verse';
+  //
+  // THE RULE ITSELF IS `transportmode.js`, not this line. It governs the key an
+  // operator presses more than any other, and inside a view it could only be
+  // tested by mounting the whole run surface. Both of the defects it records
+  // were reported by an operator rather than caught by an instrument.
+  $: mode = transportMode({
+    live: $live,
+    screenBlack: $screenBlack,
+    planOnAir,
+    planLength: openPlan ? items.length : 0,
+  });
 
   // Named so the plan picker's error state has something to retry with (RG-95).
   async function loadPlans() {
@@ -999,12 +1010,18 @@
   // middle of a sermon. It now always says what happened.
   async function step(dir) {
     if (mode === 'slide') return stepLive(dir);
+    let outcome;
     try {
-      const notice = navNotice(await navVerse(dir > 0 ? 'next' : 'back'));
-      if (notice) flash(notice);
+      outcome = await navVerse(dir > 0 ? 'next' : 'back');
     } catch (e) {
-      flash(humanError(e));
+      return flash(humanError(e));
     }
+    // WHEN THERE WAS NO PASSAGE AFTER ALL, STEP THE PLAN. The whole rule,
+    // including why the END of a passage deliberately does not, is in
+    // `transportmode.js::fallsThroughToPlan`.
+    if (fallsThroughToPlan(outcome, openPlan ? items.length : 0)) return stepLive(dir);
+    const notice = navNotice(outcome);
+    if (notice) flash(notice);
   }
 
   async function stepLive(dir) {
