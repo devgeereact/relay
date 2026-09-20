@@ -71,6 +71,12 @@
   // a countdown that is being HELD.
   import { countdownRemainingMs, countdownIsPaused, countdownTotalMs } from './countdown.js';
   import { applySink, getAudioOutput, onAudioOutputChange } from './audioOutput.js';
+  // THE PROGRAMME RAIL AND THE ALERT'S SIZING — both shared, neither re-derived.
+  // `timers.js` is the one place the Stage Timer set becomes rows, so this
+  // renderer and the preacher's phone cannot disagree about the same clock;
+  // `stagealert.js` is the one table that says how big a Stage Message is.
+  import { programmeRows, programmeCh, programmeCapacity, programmeCells } from './timers.js';
+  import { alertStep } from './stagealert.js';
 
   export let template = {};
   export let content = null; // { reference, text, translation }
@@ -97,6 +103,26 @@
    * would put it on the one surface an operator shows people.
    */
   export let stageMessage = '';
+  /**
+   * THE STAGE TIMERS — supplied by the page, never by the content, exactly like
+   * `stageMessage` above and for the same reason.
+   *
+   * Rows as the `timer` hub frame carries them. The page has already decided
+   * whether this screen may be shown them: only a channel whose role is `stage`.
+   * A field on `OutputContent` would be broadcast to every screen in the
+   * building, and "Sermon · 4:12 left" behind a preacher is the running order in
+   * front of the whole congregation — which is the reason `r6-contracts.test.js`
+   * recorded `timer: false` for this page in the first place, and the reason the
+   * reversal is gated on the role rather than on the frame.
+   *
+   * It renders a SET, which is what distinguishes it from a `countdown` layer:
+   * that is one congregation clock riding on the fired content, this is however
+   * many Stage Timers are running, each with its own label and its own warning.
+   *
+   * Empty on the console previews and in the Templates editor, deliberately —
+   * neither is a stage screen.
+   */
+  export let programme = [];
   /**
    * How deep this render is inside a composite. 0 is the screen itself.
    *
@@ -970,6 +996,12 @@
       // asks for that to be re-taken. See `recheck`.
       ro = new ResizeObserver(() => {
         recheck = true;
+        // THE RAIL IS RE-MEASURED TOO. A resize moves the box a programme layer
+        // sits in, and nothing else on this path would notice: `afterUpdate`
+        // only runs when Svelte has something to update, and a window that got
+        // narrower is not a state change. Without this the rail keeps the
+        // capacity it was born with for the life of the page.
+        measureProgramme();
         scheduleFit();
       });
       ro.observe(stageEl);
@@ -1365,7 +1397,15 @@
   $: countdownHeld = countdownIsPaused(content);
   let now = 0;
   let cdTimer = null;
-  $: if (countdownTo && !countdownHeld) startClock();
+  // A RUNNING STAGE TIMER TICKS THIS CLOCK TOO — and a HELD one does not.
+  //
+  // The rail exists with no content on screen, so the countdown's own condition
+  // could not reach it. The exclusion of held rows is the same discipline the
+  // line above keeps: a timer firing four times a second to recompute a number
+  // that cannot change is the wrong thing on a machine that is also decoding
+  // speech.
+  $: programmeTicking = progSet.some((t) => !countdownIsPaused(t));
+  $: if ((countdownTo && !countdownHeld) || programmeTicking) startClock();
   else stopClock();
   function startClock() {
     if (cdTimer) return;
@@ -1384,6 +1424,48 @@
   // not survivable now that it has an exception: a copy that has never heard of
   // `countdown_paused_ms` goes on counting down while the other two hold, and this
   // copy is the congregation's.
+  // ── THE PROGRAMME RAIL ──────────────────────────────────────────────────────
+  //
+  // `now` is the same 250ms clock the countdown ticks on, so the two figures on
+  // one screen can never be a quarter-second apart from each other. Before the
+  // clock has started it is 0, and a rail dated to the epoch would read as every
+  // timer having run out decades ago — hence the fallback.
+  // THE ALERT, trimmed once. A message of spaces is not a message, and both
+  // surfaces that can hand one over already trim - this is the renderer refusing
+  // to paint a full-bleed red panel over a string nobody typed.
+  $: stageAlert = (stageMessage || '').trim();
+  $: progSet = Array.isArray(programme) ? programme : [];
+  $: progNow = now || (typeof Date !== 'undefined' ? Date.now() : 0);
+  $: progRows = programmeRows(progSet, progNow);
+  $: progCh = programmeCh(progRows);
+  // ── AND THE OVERFLOW RULE MEASURES THE BOX, NOT THE WINDOW ──────────────────
+  //
+  // `Stage.svelte` reads `innerWidth` and says at the line why it is allowed to:
+  // its rail spans the frame, and measuring the box there would mean a forced
+  // layout on the one page whose job is to be still. Neither half of that holds
+  // here. A template renders inside a REGION and a region is not the viewport —
+  // the same rail may be 1600px across on a wall-sized stage display and 300px
+  // across in a corner of a composite, and a window measurement would give both
+  // the same fourteen cells. So each rail is measured, once per update, in
+  // `afterUpdate` (never in a reactive block — rule 1).
+  //
+  // A width of 0 is what an element reports before it has been laid out, and
+  // `programmeCapacity` reads that as unmeasured rather than as a box one cell
+  // wide. That is the honest reading of an absence and it is stated there, once.
+  let progEls = [];
+  let progW = [];
+  function measureProgramme() {
+    let moved = false;
+    for (let i = 0; i < progEls.length; i += 1) {
+      const w = progEls[i] ? progEls[i].clientWidth | 0 : 0;
+      if (progW[i] !== w) {
+        progW[i] = w;
+        moved = true;
+      }
+    }
+    if (moved) progW = progW;
+  }
+  afterUpdate(measureProgramme);
   $: remainingMs = countdownRemainingMs(content, now);
   // Only ever true when it genuinely ran out. A countdown held at 0:00 cannot exist
   // (`adjust_countdown` refuses a target under a second), but saying so here keeps
@@ -1540,7 +1622,25 @@
   // shape left standing with no words in it is furniture on a congregation's
   // screen. A backdrop earns its place there because a church puts one up
   // deliberately and minutes before the first fire; an empty band does not.
-  $: stackLayers = content ? layerViews : layerViews.filter(({ L }) => L.type === 'backdrop');
+  // ── THE PROGRAMME LAYERS COME OUT OF THE STACK ──────────────────────────────
+  //
+  // Two reasons, and the second is the one that matters.
+  //
+  // They are not TEXT: `layerText` answers '' for this bind (deliberately —
+  // `layers.js::boundValue` says why), so left in the stack a programme layer
+  // would draw an empty `.ltext` box and enter the fit loop measuring nothing.
+  //
+  // And they must draw when there is NO CONTENT. The gate above this stack
+  // states a rule about a cleared wall — furniture on a congregation's screen
+  // with nothing to say — and a Stage Timer is the case that rule is not about:
+  // it runs during the notices, before the first verse of the service exists,
+  // and it survives a panic control because `Stage.svelte` survives one
+  // (DECISIONS §91: a panic control takes back every sentence anybody put on a
+  // screen, and stops none of the clocks). The two stage surfaces have to agree
+  // about that or a church with one of each gets two answers.
+  $: programmeLayers = layerViews.filter(({ L }) => L.bind === 'programme');
+  $: stackLayers = (content ? layerViews : layerViews.filter(({ L }) => L.type === 'backdrop'))
+    .filter(({ L }) => L.bind !== 'programme');
 
   // Per-text-layer auto-fit. Each layer's text is sized to BEST FIT its own box —
   // it scales DOWN when there is a lot of text and UP when there is little, and it
@@ -2015,6 +2115,75 @@
   {/if}
   {/if}
   {/if}
+
+  <!-- == THE PROGRAMME RAIL == OUTSIDE THE CONTENT GATE, ON PURPOSE.
+       A Stage Timer runs during the notices and survives a panic control
+       (DECISIONS §91), so it cannot live inside a block whose rule is "a cleared
+       wall shows NOTHING". It draws only where a template asks for it and only
+       where the PAGE has handed rows over, which it does for a `stage`-role
+       screen and for nothing else. -->
+  {#if progRows.length}
+    {#each programmeLayers as { L }, i (L.id)}
+      {#if L.visible !== false}
+        {@const cells = programmeCells(progRows, programmeCapacity(progW[i]))}
+        <div
+          class="lprog"
+          bind:this={progEls[i]}
+          style="{boxStyle(L)} --tmrs:{cells.length}; --tch:{progCh}; color:{L.color || '#fff'}; font-family:{fontFamOf(L.font)}; opacity:{L.opacity == null ? 1 : L.opacity};"
+          aria-label="Programme">
+          {#each cells as t, j (j)}
+            {#if t.more}
+              <!-- THE RAIL SAYING WHAT IT COULD NOT SHOW. Not a timer, so it
+                   carries no `data-timer-id` and nothing counts it as one. -->
+              <div class="lp-cell lp-more"><span class="lp-val lp-msg">+{t.more} more</span></div>
+            {:else}
+              <div class="lp-cell" class:warn={t.warn} class:held={t.held} data-timer-id={t.id}>
+                {#if t.label || t.held}
+                  <span class="lp-head">
+                    {#if t.label}<span class="lp-lbl">{t.label}</span>{/if}
+                    {#if t.held}<span class="lp-state">Held</span>{/if}
+                  </span>
+                {/if}
+                <!-- ALWAYS A FIGURE, NEVER PROSE - `--tch` budgets this column
+                     from the widest rendered string on the rail, so an
+                     operator's done message here would size every column to its
+                     own length. Those words land on the congregation countdown
+                     instead. -->
+                <span class="lp-val">{t.v}</span>
+              </div>
+            {/if}
+          {/each}
+        </div>
+      {/if}
+    {/each}
+  {/if}
+
+  <!-- == THE STAGE MESSAGE == THE WHOLE SCREEN, NOT A LAYER.
+       Requirement 5: *an unmistakable flashing state: full-bleed or near-full-
+       bleed, high contrast, sustained for the alert duration, visible to someone
+       glancing up from a distance in bright light. A subtle tint or a small badge
+       is not acceptable.*
+
+       Rendered here rather than through a `stage_message` layer because a
+       template designed before Stage Messages existed is exactly the screen this
+       has to reach - an alert the designer had to opt into is an alert that is
+       missing from the one screen nobody remembered to update. A template MAY
+       still carry the layer; the panel covers it, which is the right order.
+
+       It is outside the content gate for the same reason the rail is: a Stage
+       Message over a cleared screen is still a Stage Message. It comes down when
+       the page stops handing one over, which `Output.svelte` does on a role
+       change and on both panic controls (DECISIONS §91). -->
+  {#if stageAlert}
+    <div class="lalert {alertStep(stageAlert)}" role="status" aria-live="assertive">
+      <!-- SHOWN ONLY UNDER REDUCED MOTION (see the stylesheet). With the pulse
+           running, the panel identifies itself by behaving like nothing else on a
+           platform; without it, the label and the frame are what stop a flat red
+           rectangle reading as part of the set. -->
+      <span class="lalert-lbl">Stage Message</span>
+      <span class="lalert-txt">{stageAlert}</span>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -2051,6 +2220,210 @@
     position: absolute;
     box-sizing: border-box;
   }
+  /* == THE PROGRAMME RAIL ==================================================
+     The Stage Timer set, inside whatever box the template's programme layer
+     names. The rules are `Stage.svelte`'s `.progrow` family, restated for a box
+     that is NOT the frame - which is the one real difference between the two
+     surfaces and the reason the sizing reads `cqw` against this element rather
+     than against the page.
+
+     ITS OWN CONTAINER, so `cqw` below is a share of THE RAIL and not of the
+     screen. A rail in a 300px corner of a composite and a rail across a
+     wall-sized stage display then set their digits from their own width, which
+     is the whole of requirement 2b's "measure the container, not the window". */
+  .lprog {
+    position: absolute;
+    box-sizing: border-box;
+    container-type: inline-size;
+    display: flex;
+    gap: 1cqw;
+    align-items: stretch;
+    overflow: hidden;
+    z-index: 3;
+  }
+  /* `min-width: 0` on the item, or a long label refuses to shrink and pushes the
+     last timer off the end of a screen nobody is standing next to. */
+  .lp-cell {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 0.4cqw;
+    overflow: hidden;
+  }
+  /* A LABEL-LESS TIMER IS DIGITS ALONE - the head is not rendered at all rather
+     than rendered empty, so the cell closes up instead of leaving a gap the
+     height of a word. The label takes what it can and ellipses; the state word is
+     never the thing that gets cut. */
+  .lp-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.6cqw;
+    min-width: 0;
+  }
+  .lp-lbl,
+  .lp-state {
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    line-height: 1.1;
+    font-size: clamp(9px, calc(30cqw / var(--tmrs) / 10), 22px);
+  }
+  .lp-lbl {
+    opacity: 0.62;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+  /* HELD IS A REAL THIRD STATE AND IT READS AS ONE. It is not a colour from the
+     law: amber means ON AIR, cyan means a guess, amethyst means rehearsal, and a
+     clock somebody paused is none of those. It is the layer's own ink at full
+     strength - the operator did this deliberately, and the preacher is entitled
+     to know a clock has stopped rather than broken. */
+  .lp-state {
+    flex: 0 0 auto;
+    opacity: 1;
+  }
+  .lp-val {
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    line-height: 1;
+    /* The width a figure may take is its share of the rail divided by the
+       characters IT ACTUALLY HAS. `--tch` is the row's own longest rendered
+       figure (`programmeCh`), which is why `1:30:13` cannot be sliced into a
+       shorter time that still reads as a valid one (RG-147), and `0.62` is the
+       mono advance. Capped against the rail's own height so one timer on a wide
+       box does not become taller than the box it is in.
+
+       AND IT ELLIPSISES RATHER THAN SLICING. A fit that cannot report is rule
+       37's defect; a sliced clock is a lie the one person reading it cannot
+       detect, and an ellipsis says the figure did not fit instead of showing a
+       shorter one that looks correct. */
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: min(clamp(12px, calc(92cqw / var(--tmrs) / var(--tch, 6) / 0.62), 64px), 62cqh);
+  }
+  /* THE ONE PROSE CELL ON THIS RAIL, and it is the rail talking about itself.
+     Digits sized for `MM:SS` would set `+3 more` at the size of a clock and clip
+     it. Quiet, because it is bookkeeping about bookkeeping - but present,
+     because a rail that silently drops half the programme is a rail nobody can
+     tell from a complete one. */
+  .lp-more {
+    flex: 0 1 auto;
+    justify-content: center;
+  }
+  .lp-msg {
+    font-variant-numeric: normal;
+    letter-spacing: 0;
+    line-height: 1.15;
+    opacity: 0.62;
+    font-size: min(clamp(10px, calc(92cqw / var(--tmrs) / 11 / 0.5), 30px), 40cqh);
+  }
+  /* THE LAST MINUTE, ON THE PREACHER'S OWN PROGRAMME. The same red and the same
+     rule as the stage page (`.tmr.warn .tval`), stated UNCONDITIONALLY and
+     outside every motion query: a viewer who asked for no motion must still
+     learn that the clock is running out. It is a claim about TIME and none of
+     the three law colours - amber is ON AIR, cyan is a guess, amethyst is
+     rehearsal. A timer that has run OUT wears the same red and counts upward;
+     being over is the far end of the same claim, not a second colour. A HELD row
+     wears neither: it is not running out, it is where the operator left it. */
+  .lp-cell.warn .lp-val {
+    color: #f4515b;
+  }
+
+  /* == THE STAGE MESSAGE ===================================================
+     Requirement 5. The presentation `Stage.svelte` gives the preacher's phone,
+     on the template path, so a stage TV and a stage tablet in the same room say
+     the same thing in the same way.
+
+     NEAR-FULL-BLEED AND ABOVE EVERYTHING. `absolute` rather than the phone's
+     `fixed`, because this renderer also draws the Templates editor preview and a
+     console pane: `fixed` would escape the box and paint over the operator's
+     own chrome. `.stage` is `position: absolute; inset: 0` on an output page, so
+     on the screen this IS the screen. */
+  .lalert {
+    position: absolute;
+    inset: 0;
+    z-index: 60;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2cqh;
+    padding: 4cqw;
+    text-align: center;
+    font-weight: 700;
+    line-height: 1.15;
+    color: #fff;
+    text-shadow: 0 0.02em 0.06em rgba(0, 0, 0, 0.75);
+    background: #c8121c;
+    overflow: hidden;
+  }
+  /* THREE STEPS, AND THE FIRST IS docs/REBRAND.md §5's FIGURE UNCHANGED. A
+     message an operator types in a hurry is longer than a phrase, and at 8.5cqw
+     a three-sentence one runs off the bottom of a box that clips. The table is
+     `stagealert.js`; there is no step here that it cannot answer, and
+     `stagealerttemplate.test.js` holds both halves of that. */
+  .lalert.xl .lalert-txt { font-size: 8.5cqw; }
+  .lalert.lg .lalert-txt { font-size: 6cqw; }
+  .lalert.md .lalert-txt { font-size: 4.2cqw; }
+  .lalert-txt {
+    max-width: 100%;
+    overflow: hidden;
+  }
+  /* THE LABEL IS THE REDUCED-MOTION ANSWER'S FIRST HALF, so it is hidden while
+     the pulse is running - the panel then looks exactly like the phone's, which
+     is the point of building the same presentation twice. */
+  .lalert-lbl {
+    display: none;
+    font-size: min(2.2cqw, 3cqh);
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    opacity: 0.9;
+  }
+  /* THE PULSE IS THE POINT: a platform is a bright place and a flat red panel
+     reads as part of the set. Same colours and same cycle as the phone. */
+  @media (prefers-reduced-motion: no-preference) {
+    .lalert {
+      animation: stagealert 1.4s ease-in-out infinite;
+    }
+  }
+  @keyframes stagealert {
+    0%, 100% { background: #c8121c; }
+    50% { background: #7a0a11; }
+  }
+  /* == AND REDUCED MOTION GETS AN ANSWER, NOT THE PULSE'S ABSENCE ==========
+     The phone has a `no-preference` branch and NO `reduce` counterpart, so under
+     reduced motion its alert is a flat red panel - the exact thing its own
+     stylesheet says the pulse exists to avoid. Falling silent is not a decision,
+     it is the absence of one.
+
+     So this branch answers with the two things a still image can carry that a
+     red rectangle cannot: a hard-edged high-contrast hazard frame, which no
+     stage set has, and the panel NAMING ITSELF. Sustained for as long as the
+     message is up, unmistakable from across a platform, and not a brightness
+     pulse under another word - nothing here animates, filters or fades. */
+  @media (prefers-reduced-motion: reduce) {
+    .lalert {
+      border: 2.4cqh solid transparent;
+      border-image: repeating-linear-gradient(
+          135deg,
+          #fff 0,
+          #fff 2.2cqw,
+          #1a0205 2.2cqw,
+          #1a0205 4.4cqw
+        )
+        24;
+    }
+    .lalert-lbl {
+      display: block;
+    }
+  }
+
   /* THE REGION IS ITS OWN CONTAINER — the whole point of a composite. `cqw`
      inside this box is a share of the BOX's width, so the template rendered in
      it scales to the region exactly as it would to a screen of that width. */

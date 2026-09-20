@@ -206,6 +206,26 @@
   // and a lobby TV would be which layers that TV's template happens to have.
   let roles = {};
   let stageMessage = '';
+  // ── THE STAGE TIMERS ────────────────────────────────────────────────────────
+  //
+  // `r6-contracts.test.js` recorded `timer: false` for this page, with a reason
+  // that is still true word for word: *"Sermon · 4:12 left" behind a preacher is
+  // the running order in front of the whole building.* That sentence is about a
+  // CONGREGATION screen. A screen holding `role === 'stage'` is not one
+  // (DECISIONS §89), which is why this is now a role gate rather than an absence
+  // and why the safety argument survives whole.
+  //
+  // THE SET IS HELD, THE RENDER IS GATED - and the difference from `stageMessage`
+  // above is deliberate rather than sloppy. A Stage Message is a private sentence
+  // and is refused at the door, never assigned on a screen that may not have it.
+  // The programme is the same frame the hub sends every client, so holding it
+  // buys the page nothing it did not already receive, and gating the RENDER is
+  // what makes the guarantee ORDERING-PROOF: `channel_roles` happens to precede
+  // the retained `timer` frame on hello today, and a refusal at the door would
+  // silently depend on that staying true for the rest of the service.
+  //
+  // One derived value feeds the one prop, so there is a single door (rule 36).
+  let stageTimerSet = [];
 
   // ── THE OPERATOR TOOK THIS SCREEN OUT OF THE WALL ───────────────────────────
   //
@@ -272,6 +292,15 @@
   $: shownBackdrop = downMode ? null : backdrop;
   $: shownBlack = black || downMode === 'black';
   $: myRole = roleOf(roles, channelId);
+  // ONLY A STAGE, and only a screen the operator has left in the wall. The second
+  // half is the same reasoning as `shownContent` and `shownBackdrop` above: a
+  // screen that has been taken down paints nothing, and a programme rail left
+  // standing on it would be half taken down.
+  $: shownProgramme = acceptsStageMessage(myRole) && !downMode ? stageTimerSet : [];
+  // AND THE MESSAGE GOES DOWN WITH THE SCREEN TOO, for the same reason and by the
+  // same mechanism - derived, never written, so coming back up has something to
+  // come back to.
+  $: shownStageMessage = downMode ? '' : stageMessage;
   /**
    * The role map has changed. ONE writer, called from both doors, because a
    * screen that stops being a stage must lose the message AT ONCE: an operator
@@ -289,6 +318,33 @@
   function applyRoles(next) {
     roles = next && typeof next === 'object' ? next : {};
     if (!acceptsStageMessage(roleOf(roles, channelId))) stageMessage = '';
+    // The programme needs no line here: `shownProgramme` is derived from
+    // `myRole`, so a screen that stops being the stage loses the rail in the same
+    // reactive pass, before anything paints. The Stage Message cannot be handled
+    // that way - see the note at `stageTimerSet` for the difference.
+  }
+
+  /**
+   * A PANIC CONTROL TAKES THE STAGE MESSAGE WITH IT - DECISIONS §91.
+   *
+   * `Stage.svelte` clears its own `alert` on exactly these two kinds and says at
+   * the line why: the panel IS the screen, so a survivor meant an operator
+   * pressed `B`, whose whole meaning is *every output goes opaque black*, and the
+   * preacher's screen stayed the brightest thing in the room under a control the
+   * console had just reported succeeding.
+   *
+   * This page used to keep the text and merely stop rendering it - the layer
+   * stack went away with `content` and nothing reset the state - so the next
+   * verse fired painted a private word nobody had re-sent (RG-156). It reset
+   * nothing because nothing on this page was full-bleed; the alert panel is, so
+   * the reset is now load-bearing rather than tidy.
+   *
+   * ONE WRITER, called from both kinds, because the harsher control must never do
+   * less than the milder one. A rail of Stage Timers is deliberately NOT touched:
+   * §91's line is between a thing that SAYS something and a thing that COUNTS.
+   */
+  function takeDownStageMessage() {
+    stageMessage = '';
   }
 
   // ── THE OPERATOR'S TRANSITION OVERRIDE, SNAPSHOTTED (DECISIONS §84) ──────────
@@ -699,6 +755,27 @@
       // frame cannot say "there is none now" and a screen that missed it would
       // carry the picture for the rest of the service.
       applyBackdrop(m.media_url, m.media_kind);
+    } else if (m.kind === 'timer') {
+      // THE WHOLE SET, OR NOTHING. A frame whose `timers` is missing or is not a
+      // list is read as an empty programme rather than thrown on: this page has
+      // no backend and cannot verify who is on the other end of its socket
+      // (docs/SECURITY.md T4), and one throw inside `applyMessage` would kill
+      // every frame after it - the reading included - for the rest of the
+      // service. The same words, and the same reason, as `Stage.svelte`'s branch.
+      //
+      // Deliberately NOT cleared by `clear` or `black` below: the congregation's
+      // timers go with the congregation's screens and the preacher's programme
+      // stays, because the programme is not something a congregation was ever
+      // looking at (DECISIONS §91).
+      stageTimerSet = Array.isArray(m.timers) ? m.timers : [];
+      // AND THE CONFIGURED WARNING WINDOW RIDES WITH THE SET. This is the frame
+      // that can reach a stage screen FIRST - a Stage Timer runs during the
+      // notices, before anything has been fired - so reading it here is what
+      // stops the rail warning at a figure nothing on the machine holds
+      // (RG-149(c)). The twin of the `countdown_warn_default_ms` line in the
+      // content branch above; a guarantee kept on one of two doors is the
+      // mistake this file counts seven times.
+      applyWarnDefault(m.warn_default_ms);
     } else if (m.kind === 'clear') {
       // A PANIC CONTROL NEVER TRANSITIONS. `clear` and `black` do not touch
       // `appliedTransition`, and `TemplateRender` has no `out:` transition at all
@@ -709,8 +786,10 @@
       // AND IT TAKES THE BACKGROUND. `Clear screens` means everything, and the
       // background is part of everything.
       backdrop = null;
+      takeDownStageMessage();
     } else if (m.kind === 'black') {
       black = true;
+      takeDownStageMessage();
       // On a band channel, blacking out means the band goes away — the camera
       // must not be covered.
       if (isBand) visible = false;
@@ -986,7 +1065,8 @@
   content={shownContent}
   backdrop={shownBackdrop}
   audio={isDesktop}
-  stageMessage={stageMessage}
+  stageMessage={shownStageMessage}
+  programme={shownProgramme}
   transitionOverride={appliedTransition} />
 <!-- BLACKOUT NEVER BLACKS OUT A LOWER THIRD. On a keyed channel "black" would
      paint an opaque rectangle over the live camera — the opposite of what the

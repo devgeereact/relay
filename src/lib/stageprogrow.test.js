@@ -239,7 +239,17 @@ describe('RG-154 — the height cap measures something that exists', () => {
 
 describe('RG-148 — the stage row wears the one warning rule', () => {
   it('reads the threshold rather than inventing a fourth one', () => {
-    const src = fs.readFileSync(path.join(ROOT, 'src/Stage.svelte'), 'utf8');
+    // THE RULE DID NOT MOVE; THE FILE DID. The derivation this asserts against was
+    // `Stage.svelte`'s reactive block until `output.html` gained a programme rail
+    // of its own (requirement 2b), at which point keeping it in a component would
+    // have meant a second copy of exactly this expression in `TemplateRender` —
+    // which is the defect this case exists to prevent, one surface along. Both
+    // files are read, so the assertion still fails if the three-argument call
+    // disappears from the product, and cannot pass because it was quietly moved
+    // somewhere nobody is looking.
+    const src =
+      fs.readFileSync(path.join(ROOT, 'src/Stage.svelte'), 'utf8') +
+      fs.readFileSync(path.join(ROOT, 'src/lib/timers.js'), 'utf8');
     // The per-timer override is the whole point: `warn_ms` rides every timer
     // frame and had no reader on this page. Three arguments, one rule.
     expect(src).toMatch(/countdownWarning\(\s*r\.ms\s*,\s*countdownTotalMs\(\s*t\s*\)\s*,\s*t\?\.warn_ms\s*\)/);

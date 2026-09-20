@@ -152,6 +152,11 @@ const REGISTER = [
       // (DECISIONS §89, and the reversal recorded in `r6-contracts.test.js`).
       'src/lib/stagepageidentity.test.js',
       'src/lib/stageremote.test.js',
+      // Requirement 5 — the renderer now paints the alert itself, full-bleed, and
+      // NAMES it: the label is the reduced-motion half of making a still red panel
+      // unmistakable, so this is a real surface a preacher reads, not prose.
+      'src/lib/TemplateRender.svelte',
+      'src/lib/stagealerttemplate.test.js',
     ],
     // Wave 5 Track C adds a `stage_message` text binding labelled with this same
     // string. Registered ahead of it so the merge lands green rather than red on
@@ -276,6 +281,11 @@ const REGISTER = [
       'src/lib/views/ServicePlanner.svelte',
       'src/lib/wayback.test.js',
       'src/lib/stagelayout.js',
+      // Requirement 2b — the `programme` binding an operator picks in the template
+      // editor's binding list, and the layer the three stage starters carry. It is
+      // a label in a dropdown, which is exactly the surface this register is for.
+      'src/lib/layers.js',
+      'src/lib/progtimertemplate.test.js',
     ],
     // `'Congregation timer'` stays permitted: it is accurate prose in `timers.rs`
     // and `main.rs` describing a SCOPE, not a control anybody reads a label on.

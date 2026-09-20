@@ -60,6 +60,20 @@ export const BINDINGS = [
   // (DECISIONS §35) — and `boundValue` therefore returns nothing for it, the same
   // answer it gives the ticking binds below.
   { key: 'stage_message', label: 'Stage Message' },
+  // THE PROGRAMME RAIL — the Stage Timers, as a SET rather than as a figure.
+  //
+  // This is what separates it from `countdown`, which is one congregation clock
+  // riding on the fired content: a programme layer draws however many Stage
+  // Timers are running, each with its label, and says so when the box is too
+  // narrow to show them all. Like `stage_message` above it the value does NOT
+  // ride on the content — it is its own hub frame (`timer`), held by the page,
+  // and `boundValue` returns nothing for it.
+  //
+  // The page decides whether this screen may be shown one, on the same fact and
+  // for the same reason: only a channel whose role is `stage`. "Sermon · 4:12
+  // left" behind a preacher is the running order in front of the whole building,
+  // which is why the refusal on a congregation screen is the half worth testing.
+  { key: 'programme', label: 'Stage Timers (monitors only)' },
   { key: 'elapsed', label: 'Service timer (elapsed)' },
   { key: 'remaining', label: 'Service timer (remaining)' },
   { key: 'static', label: 'Fixed text' },
@@ -700,6 +714,12 @@ export function boundValue(layer, content) {
     case 'elapsed':
     case 'remaining':
       return ''; // computed live in the renderer (ticks), not from content
+    case 'programme':
+      // A SET, NOT A STRING, and not from content either. The rows arrive on the
+      // `timer` hub frame and the renderer draws them itself; a text value here
+      // would be a rail flattened into one line, and putting them on `content`
+      // would broadcast the running order to every screen in the building.
+      return '';
     case 'stage_message':
       // NOT FROM CONTENT, AND THAT IS THE GUARANTEE. Reading it off `content`
       // here is exactly how a private message would reach a congregation screen:
@@ -989,7 +1009,12 @@ function stageDisplay() {
         makeLayer('text', { name: 'Reference', bind: 'reference', x: 6, y: 63, w: 88, h: 7, size: 2.4, color: 'theme:reference', font: 'theme:font', align: 'left', valign: 'middle', transform: 'uppercase', letterSpacing: 0.06 }),
         makeLayer('text', { name: 'Up Next label', bind: 'static', text: 'Up Next', x: 6, y: 74, w: 40, h: 5, size: 1.5, color: 'theme:accent', font: 'theme:font', align: 'left', valign: 'middle', transform: 'uppercase', letterSpacing: 0.14 }),
         makeLayer('text', { name: 'Up Next (reference)', bind: 'next_reference', x: 6, y: 79, w: 88, h: 5, size: 1.8, color: 'theme:reference', font: 'theme:font', align: 'left', valign: 'middle' }),
-        makeLayer('text', { name: 'Up Next (verse)', bind: 'next', x: 6, y: 84, w: 88, h: 13, size: 2.2, color: 'theme:verse', font: 'theme:font', align: 'left', valign: 'top', opacity: 0.8 }),
+        makeLayer('text', { name: 'Up Next (verse)', bind: 'next', x: 6, y: 84, w: 88, h: 9, size: 2.2, color: 'theme:verse', font: 'theme:font', align: 'left', valign: 'top', opacity: 0.8 }),
+        // THE PROGRAMME, across the foot of the screen — the same place the
+        // preacher's phone puts it, so an operator who has seen one recognises
+        // the other. It paints nothing at all while no Stage Timer is running,
+        // so a church that never starts one loses no room to it.
+        makeLayer('text', { name: 'Programme', bind: 'programme', x: 0, y: 93, w: 100, h: 7, size: 2.2, color: 'theme:verse', font: 'theme:font' }),
       ],
       align: 'left',
     },
@@ -1009,7 +1034,8 @@ function confidenceMonitor() {
         makeLayer('text', { name: 'Clock', bind: 'clock', x: 66, y: 4, w: 30, h: 8, size: 2.2, color: 'theme:accent', font: 'theme:font', align: 'right', valign: 'middle' }),
         makeLayer('text', { name: 'Verse', bind: 'verse', x: 8, y: 20, w: 84, h: 48, size: 5.2, color: 'theme:verse', font: 'theme:font', align: 'center', valign: 'middle' }),
         makeLayer('text', { name: 'Reference', bind: 'reference', x: 8, y: 69, w: 84, h: 7, size: 2.6, color: 'theme:reference', font: 'theme:font', align: 'center', valign: 'middle' }),
-        makeLayer('text', { name: 'Stage Note', bind: 'note', x: 8, y: 88, w: 84, h: 9, size: 2, color: 'theme:accent', font: 'theme:font', align: 'center', valign: 'middle', italic: true }),
+        makeLayer('text', { name: 'Stage Note', bind: 'note', x: 8, y: 80, w: 84, h: 9, size: 2, color: 'theme:accent', font: 'theme:font', align: 'center', valign: 'middle', italic: true }),
+        makeLayer('text', { name: 'Programme', bind: 'programme', x: 0, y: 91, w: 100, h: 8, size: 2.2, color: 'theme:verse', font: 'theme:font' }),
       ],
       align: 'center',
     },
@@ -1033,7 +1059,8 @@ function preacherView() {
         makeLayer('text', { name: 'Reference', bind: 'reference', x: 6, y: 61, w: 88, h: 7, size: 2.8, color: 'theme:reference', font: 'theme:font', align: 'center', valign: 'middle', transform: 'uppercase', letterSpacing: 0.05 }),
         makeLayer('text', { name: 'Up Next label', bind: 'static', text: 'Up Next', x: 6, y: 72, w: 88, h: 5, size: 1.5, color: 'theme:accent', font: 'theme:font', align: 'center', valign: 'middle', transform: 'uppercase', letterSpacing: 0.14 }),
         makeLayer('text', { name: 'Up Next (verse)', bind: 'next', x: 6, y: 77, w: 88, h: 12, size: 2.4, color: 'theme:verse', font: 'theme:font', align: 'center', valign: 'top', opacity: 0.8 }),
-        makeLayer('text', { name: 'Stage Note', bind: 'note', x: 6, y: 90, w: 88, h: 8, size: 2, color: 'theme:accent', font: 'theme:font', align: 'center', valign: 'middle', italic: true }),
+        makeLayer('text', { name: 'Stage Note', bind: 'note', x: 6, y: 89, w: 88, h: 6, size: 2, color: 'theme:accent', font: 'theme:font', align: 'center', valign: 'middle', italic: true }),
+        makeLayer('text', { name: 'Programme', bind: 'programme', x: 0, y: 94, w: 100, h: 6, size: 2.2, color: 'theme:verse', font: 'theme:font' }),
       ],
       align: 'center',
     },

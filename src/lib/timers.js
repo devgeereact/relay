@@ -16,7 +16,12 @@
  * It is the mirror of `timers::project_both` in Rust: one rule, stated once on
  * each side of the bridge and never twice on one.
  */
-import { countdownRemainingMs, countdownIsPaused } from './countdown.js';
+import { countdownRemainingMs, countdownIsPaused, countdownTotalMs } from './countdown.js';
+// The FORMATTER and the warning rule, not a second copy of either: `layers.js`
+// owns both and `Stage.svelte` already read them from there. A rail that spelled
+// its own `MM:SS` would be the surface that disagrees with the wall about the
+// same figure (docs/REBRAND.md §7).
+import { formatCountdown, countdownWarning } from './layers.js';
 
 /**
  * The STAGE TIMERS — the preacher's monitor — and nothing else.
@@ -86,4 +91,131 @@ export function timerIsHeld(t) {
 export function timerRemainingMs(t, nowMs, { past = false } = {}) {
   if (!t) return null;
   return countdownRemainingMs(timerAsContent(t), nowMs, { past });
+}
+
+// ── THE PROGRAMME SET, DERIVED ONCE (requirement 2b) ─────────────────────────
+//
+// Everything above answers about ONE timer. The four functions below answer
+// about the SET — which rows there are, how wide their column has to be, how
+// many of them will fit, and what the rail says about the ones it could not
+// show. They were `Stage.svelte`'s reactive block and nothing else's, which was
+// correct for exactly as long as one surface rendered a rail.
+//
+// Two now do. `output.html` with a `stage`-role channel and a template carrying
+// a `programme` layer is the other supported route to a preacher's screen
+// (DECISIONS §89), and the alternative to this module was a second copy of the
+// arithmetic inside `TemplateRender` — which is how the two surfaces would come
+// to disagree about the same clock, in the same room, in front of the one person
+// who cannot look away from either. `outputHealth.js::describeScreen` serving
+// Live and Outputs from one pure helper is the precedent.
+//
+// ── THE SHAPE THESE READ IS THE WIRE'S, NOT THE REGISTRY'S ───────────────────
+//
+// `stageTimers` and `timerRemainingMs` above take a REGISTRY row (`target_ms`,
+// `paused_ms`, `scope`) and project it with `timerAsContent`. These take a row
+// as `channels::timer_frame_json` puts it on the wire, which is already in the
+// content shape (`countdown_to`, `countdown_paused_ms`) — deliberately, and the
+// Rust side says why at the function: naming those fields anything else would
+// mean a stage page doing its own subtraction. So there is no projection here
+// and there must not be one; `countdownRemainingMs` is still the one reader.
+
+/**
+ * THE ROWS A PROGRAMME RAIL DRAWS, in the order they were given.
+ *
+ * A timer that names no deadline is not a row: null rather than zero, for the
+ * reason `timerRemainingMs` states — a row printing 0:00 over a timer whose
+ * target never arrived reads exactly like one that has just run out.
+ *
+ * `v` is the RENDERED string and carries its own sign, because past zero the
+ * rail answers how far over (RG-153) and `+4:37` is one character wider than the
+ * `0:00` it replaces. `programmeCh` budgets the column from this string for
+ * exactly that reason.
+ *
+ * `warn` is never true for a HELD row. A held timer is not running out, it is
+ * where the operator left it, and a frozen figure pulsing red says the opposite
+ * of what is true.
+ *
+ * @param {Array} timers rows as the `timer` hub frame carries them
+ * @param {number} nowMs
+ */
+export function programmeRows(timers, nowMs) {
+  const list = Array.isArray(timers) ? timers : [];
+  return list
+    .map((t) => ({
+      t,
+      id: t?.id,
+      label: (t?.label || '').trim(),
+      held: countdownIsPaused(t),
+      ms: countdownRemainingMs(t, nowMs, { past: true }),
+    }))
+    .filter((r) => r.ms != null)
+    .map(({ t, ...r }) => ({
+      ...r,
+      v: r.ms <= 0 ? `+${formatCountdown(-r.ms)}` : formatCountdown(r.ms),
+      warn:
+        !r.held && (r.ms <= 0 || countdownWarning(r.ms, countdownTotalMs(t), t?.warn_ms)),
+    }));
+}
+
+/**
+ * The column budget in characters — the widest RENDERED figure on the rail,
+ * floored at four, the width of `0:00`.
+ *
+ * One size for every row, so the figures stay one size and the longest of them
+ * still cannot be clipped. A flat six was what this was for as long as the rail
+ * existed, and `formatCountdown` emits seven past an hour: `1:30:13` painted
+ * 215.3px into a 199px `overflow: hidden` box and read as `1:30:1` (RG-147).
+ * What is left of a clipped clock reads as a valid time, which is the part that
+ * matters — a preacher glancing down cannot tell it from a correct one.
+ */
+export function programmeCh(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  return list.reduce((n, r) => Math.max(n, String(r?.v ?? '').length), 4);
+}
+
+/**
+ * THE RAIL'S FLOOR — the width below which a cell cannot be read from a platform.
+ *
+ * 132px is arithmetic, not taste: a cell's figure is a share of the rail divided
+ * by the cell count, so 132px puts `MM:SS` at about 32px, a little above the
+ * reading's own 26px floor. Below that the digits are inside the box and nobody
+ * across a platform can read them.
+ */
+export const MIN_TIMER_PX = 132;
+
+/**
+ * How many cells fit in `px`.
+ *
+ * AN UNMEASURED BOX IS NOT A BOX OF ZERO. A width of 0 is what an element
+ * reports before it has been laid out, and answering "one cell" to that would
+ * collapse the rail on its first frame and then quietly leave it collapsed on
+ * any surface that never re-measures. 1024 is the same assumption
+ * `Stage.svelte` has always started from, said once, here.
+ */
+export function programmeCapacity(px, minPx = MIN_TIMER_PX) {
+  const w = Number(px);
+  const min = Number(minPx) > 0 ? Number(minPx) : MIN_TIMER_PX;
+  return Math.max(1, Math.floor((Number.isFinite(w) && w > 0 ? w : 1024) / min));
+}
+
+/**
+ * The cells to draw, with the count of the ones that did not fit.
+ *
+ * The last slot is spent on the count when there is one, so the count cannot
+ * itself be the thing that gets pushed off the end — and at least one clock
+ * always survives, because a rail that says "6 more" and shows nothing has told
+ * the preacher he cannot have the thing he is looking at.
+ *
+ * A rail that cannot show every timer must SAY SO. `.tmr { flex: 1 1 0 }` with
+ * no floor divided the row by however many timers were in it: six timers on a
+ * phone in portrait is six columns of about sixty pixels, every clock
+ * illegible, and nothing anywhere saying the rail had given up — rule 35, one
+ * rail along.
+ */
+export function programmeCells(rows, capacity) {
+  const list = Array.isArray(rows) ? rows : [];
+  const cap = Math.max(1, Math.floor(Number(capacity) || 1));
+  if (list.length <= cap) return list;
+  const keep = Math.max(1, cap - 1);
+  return [...list.slice(0, keep), { more: list.length - keep }];
 }

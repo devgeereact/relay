@@ -155,14 +155,38 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       // A congregation screen with no template of its own and no content look either
       // must still end its chain somewhere other than the bundled Classic Serif.
       default_template: true,
-      // THE STAGE TIMERS — `false`, and this is the same guarantee as
-      // `stage_next` and `stage_alert` above rather than a new one. A programme
-      // timer is the operator's bookkeeping for one person on a platform: "Sermon ·
-      // 4:12 left" behind a preacher is the running order in front of the whole
-      // building. The congregation's own countdown is a different thing entirely
-      // and reaches this page as ordinary `content` with the four `countdown_*`
-      // fields on it, which is why nothing is lost by refusing this one.
-      timer: false,
+      // THE STAGE TIMERS — `true` AS OF REQUIREMENT 2b, AND THE OLD REASON IS
+      // KEPT BECAUSE IT IS STILL TRUE.
+      //
+      // What this row used to say, in the one name `names.test.js` now enforces
+      // for it: *a Stage Timer is the operator's bookkeeping for one person on a
+      // platform: "Sermon · 4:12 left" behind a preacher is the running order in
+      // front of the whole building.* Every word of that survives — it is a
+      // statement about a CONGREGATION screen, and nothing about this reversal
+      // makes a congregation screen show one.
+      //
+      // What changed is that this page stopped being only a congregation screen.
+      // `output.html?channel=N` on a channel holding the `stage` role is the other
+      // supported route to a preacher's screen (DECISIONS §89), and it is the
+      // route `Outputs → Screens → Copy URL` hands out — so a church that wired
+      // its confidence monitor from the obvious link watched a Stage Timer count
+      // down on the console and send it to nobody, while `stage.html` beside it
+      // showed the rail. One frame, two clients, opposite answers, decided by
+      // which link somebody copied.
+      //
+      // So the refusal moved from an ABSENCE to a DECISION the page takes out
+      // loud, exactly as `stage_alert` two rows down did before it and for the
+      // same reason: an omission is a fine guarantee right up until somebody has a
+      // reason to end it. The page holds the set and hands it to `TemplateRender`
+      // only when its own channel's role is `stage`; the renderer draws it only
+      // where the template carries a `programme` layer.
+      //
+      // `true` here now means "has a branch", which on its own is weaker than what
+      // the `false` used to mean. `src/lib/progtimertemplate.test.js` holds the
+      // rest by driving the real page — including the case that matters more than
+      // the feature, which is that a `main`-role screen wearing the very same
+      // stage template paints no rail at all.
+      timer: true,
       // THE STANDING BACKGROUND — the church's own picture, behind everything.
       // This is a congregation screen and the backdrop is congregation furniture,
       // so of course it is handled here. What the branch does on `clear` and

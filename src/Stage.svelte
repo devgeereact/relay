@@ -12,6 +12,10 @@
   // like an OBS/kiosk output, but rendered as a readable mobile confidence view.
   import { onMount, onDestroy } from 'svelte';
   import { acceptsStageMessage, roleOf } from './lib/channelroles.js';
+  // THE PROGRAMME RAIL'S ARITHMETIC, shared with the template path. One rule for
+  // which rows there are, how wide the column is, how many fit and what the rail
+  // says about the ones it could not show — see `timers.js` for why it is not two.
+  import { programmeRows, programmeCh, programmeCapacity, programmeCells } from './lib/timers.js';
   import { startBeat, paintState, BEAT_INTERVAL_MS } from './lib/outputHealth.js';
   // ONE LIST OF ZONES, shared with the desk that assigns them. A second copy
   // here would be a desk offering a zone this page does not draw.
@@ -527,21 +531,16 @@
   // digits on a CONGREGATION countdown and on the mirror above this row, and this
   // rail answers the only question a preacher asks it past zero, which is how far
   // over. `+4:37` escalates as the minutes pass. `WRAP UP` does not.
-  $: programme = stageTimers
-    .map((t) => ({
-      t,
-      id: t?.id,
-      label: (t?.label || '').trim(),
-      held: countdownIsPaused(t),
-      ms: countdownRemainingMs(t, nowMs, { past: true }),
-    }))
-    .filter((r) => r.ms != null)
-    .map(({ t, ...r }) => ({
-      ...r,
-      v: r.ms <= 0 ? `+${formatCountdown(-r.ms)}` : formatCountdown(r.ms),
-      warn:
-        !r.held && (r.ms <= 0 || countdownWarning(r.ms, countdownTotalMs(t), t?.warn_ms)),
-    }));
+  //
+  // ── AND IT IS NO LONGER THIS PAGE'S RULE ALONE (requirement 2b) ───────────
+  //
+  // The derivation moved to `lib/timers.js::programmeRows` unchanged, because a
+  // second surface now draws this rail: `output.html` on a `stage`-role channel,
+  // through a `programme` layer in its template (DECISIONS §89). Everything above
+  // is the reasoning behind that function and stays here beside the rail it
+  // describes; what left is the arithmetic, so the two surfaces cannot come to
+  // different conclusions about the same clock in the same room.
+  $: programme = programmeRows(stageTimers, nowMs);
   // THE ROW IS SIZED FROM THE TEXT IT IS ACTUALLY PAINTING.
   //
   // `.tval` budgeted a flat SIX characters and `formatCountdown` emits seven once a
@@ -561,7 +560,7 @@
   // three days ago. A budget derived from the remaining milliseconds would be a
   // character short of every one of them; this one is handed the sign because the
   // sign is part of the value.
-  $: progCh = programme.reduce((n, r) => Math.max(n, r.v.length), 4);
+  $: progCh = programmeCh(programme);
 
   // ── THE RAIL'S FLOOR ───────────────────────────────────────────────────────
   //
@@ -602,20 +601,13 @@
   // moment, and `relay.stage.zones` is untouched by it.
   $: panelOpen = showZones || showCtl;
 
-  const MIN_TIMER_PX = 132;
   let frameW = 1024;
-  $: capacity = Math.max(1, Math.floor((Number(frameW) || 1024) / MIN_TIMER_PX));
+  $: capacity = programmeCapacity(frameW);
   // The last slot is spent on the count when there is one, so the count cannot
   // itself be the thing that gets pushed off the end. At least one clock always
   // survives — a rail that says "6 more" and shows nothing is a rail that has told
   // the preacher he cannot have the thing he is looking at.
-  $: progCells =
-    programme.length <= capacity
-      ? programme
-      : (() => {
-          const keep = Math.max(1, capacity - 1);
-          return [...programme.slice(0, keep), { more: programme.length - keep }];
-        })();
+  $: progCells = programmeCells(programme, capacity);
 
   // SERVICE ELAPSED — counts up from the epoch the fired content carries. There is
   // no epoch when no service is recording, and an absence is shown as an absence:
