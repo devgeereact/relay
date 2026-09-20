@@ -7,8 +7,10 @@
 //
 //   · does anything render the transport at all?
 //   · do ALL five presses go through the one arbiter, or is there a second path?
-//   · can the button labelled "Clear", one panel from the red panic control, reach
-//     `clear_screens`?
+//   · can the button labelled "Clear" reach `clear_screens`? (It sat one panel
+//     from the red panic control until 2026-09-20, and the question is the same
+//     one band lower down the run surface: two controls with the same word in
+//     them, one of which blanks a congregation.)
 //   · does re-aiming a running countdown change the number and NOTHING ELSE —
 //     not its label, not its done message, and above all not which template the
 //     screens are wearing (DECISIONS §29)?
@@ -25,23 +27,36 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a) => invoke(...a) }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: async () => () => {} }));
 
 const cap = await import('./stores/capture.js');
-const src = readFileSync(resolve(process.cwd(), 'src/lib/Dock.svelte'), 'utf8');
+
+// ── WHICH FILE HOLDS THE TRANSPORT (2026-09-20) ─────────────────────────────
+//
+// It was `Dock.svelte` until the operator asked for the Screen Countdown out of
+// Quick tools; it is now the band on Live's run surface. Both files are read
+// here, because this file asks two different questions: the countdown scanners
+// follow the CONTROL, and the Stage Message ones at the bottom are about the
+// dock and stayed there.
+//
+// A scanner left pointed at the old file would not have failed — it would have
+// found no `press(` and no `cdtrans` and reported nothing, which is the failure
+// mode `ipc.test.js` records twice and `countdownwarnmotion.test.js` records
+// once more. The tests below assert that each scanner can still SEE what it is
+// judging, for exactly that reason.
+const src = readFileSync(resolve(process.cwd(), 'src/lib/views/Live.svelte'), 'utf8');
+const dockSrc = readFileSync(resolve(process.cwd(), 'src/lib/Dock.svelte'), 'utf8');
 
 /**
  * THE COMPONENT'S OWN SCRIPT — not whichever `<script>` happens to come first.
  *
  * These scanners sliced `src.slice(0, src.indexOf('</script>'))`, which was the
- * instance script for exactly as long as `Dock.svelte` had only one. It now opens
- * with a `<script context="module">` (the format picker's choice has to survive
- * the shell destroying this component on Full screen, the same reason
- * `countdown.js` keeps the set duration at module scope), and both scanners
- * quietly narrowed to that block instead — where `press` does not live. They went
- * on passing nothing rather than failing, which is the exact failure mode
- * `ipc.test.js` records twice: a scanner that narrows looks exhaustive while
- * checking less than it claims.
+ * instance script for exactly as long as the component had only one. Both the
+ * dock and `views/Live.svelte` open with a `<script context="module">`, and both
+ * scanners quietly narrowed to that block instead — where `cdPress` does not
+ * live. They went on passing nothing rather than failing, which is the exact
+ * failure mode `ipc.test.js` records twice: a scanner that narrows looks
+ * exhaustive while checking less than it claims.
  *
  * `instanceScript()` finds the LAST `<script` that is not a module script, and
- * the test below holds it to that — so the next block added here cannot make
+ * the test below holds it to that — so the next block added there cannot make
  * these two checks vacuous in silence.
  */
 function instanceScript() {
@@ -51,8 +66,8 @@ function instanceScript() {
 }
 
 it('the scanner below reads the component script, not the module one', () => {
-  // The thing it is FOR: `press` is in the instance script and nowhere else.
-  expect(instanceScript()).toContain('function press(');
+  // The thing it is FOR: `cdPress` is in the instance script and nowhere else.
+  expect(instanceScript()).toContain('function cdPress(');
   // And it really is a narrower slice than the file, so a passing scan means
   // something was found rather than everything was searched.
   expect(instanceScript().length).toBeLessThan(src.length);
@@ -68,10 +83,12 @@ beforeEach(() => {
 });
 
 describe('the transport is rendered, and its presses go through the one arbiter', () => {
-  it('the dock draws Start · Reset · ±1 · Clear', () => {
-    const bar = src.slice(src.indexOf('cdtrans'), src.indexOf('</div>', src.indexOf('cdtrans')));
+  it('the run surface draws Start · Reset · ±1 · Clear', () => {
+    const at = src.indexOf('cdtrans');
+    expect(at, 'the transport row is not in this file').toBeGreaterThan(-1);
+    const bar = src.slice(at, src.indexOf('</span>', at));
     for (const label of ['start', 'reset', 'minus', 'plus', 'clear']) {
-      expect(bar).toContain(`press('${label}')`);
+      expect(bar).toContain(`cdPress('${label}')`);
     }
   });
 
@@ -84,15 +101,26 @@ describe('the transport is rendered, and its presses go through the one arbiter'
   // The whole point of the pure module. A second path — an `on:click` that called
   // `startCountdown` or `adjustCountdown` straight — would be a press whose
   // refusals nothing tested.
-  it('there is no second path to a screen: every broadcast comes from `press`', () => {
+  //
+  // ONE ALLOWANCE THAT IS NOT A SECOND PATH, and it is named rather than counted
+  // around: `fireSlide` calls `startCountdown` for a plan's COUNTDOWN CUE. That
+  // is a different instrument — a cue built in the Planner, with its own words
+  // and its own screen set, fired by the transport that walks a plan — and it has
+  // never gone through this arbiter on any surface. So the count below is two for
+  // `startCountdown` and one for `adjustCountdown`, and a THIRD start would fail
+  // here, which is the guarantee.
+  it('there is no second path to a screen: every transport broadcast comes from `cdPress`', () => {
     const script = instanceScript();
-    const body = script.slice(script.indexOf('function press('));
+    const body = script.slice(script.indexOf('function cdPress('));
     expect(body).toMatch(/startCountdown\(/);
     expect(body).toMatch(/adjustCountdown\(/);
-    // …and those are the ONLY places either is named outside the import list.
-    const afterImports = script.slice(script.indexOf("from './countdown.js'"));
-    expect([...afterImports.matchAll(/\bstartCountdown\(/g)].length).toBe(1);
-    expect([...afterImports.matchAll(/\badjustCountdown\(/g)].length).toBe(1);
+    expect([...script.matchAll(/\bstartCountdown\(/g)].length,
+      'a third caller of startCountdown — the transport has grown a second path, or the plan cue has',
+    ).toBe(2);
+    expect([...script.matchAll(/\badjustCountdown\(/g)].length).toBe(1);
+    // And the other one really is the plan cue rather than a stray transport call.
+    const cue = script.slice(script.indexOf('async function fireSlide('));
+    expect(cue.slice(0, cue.indexOf('\n  }'))).toMatch(/startCountdown\(/);
   });
 
   // A control called "Clear", one panel away from the red one that blanks a wall,
@@ -103,6 +131,15 @@ describe('the transport is rendered, and its presses go through the one arbiter'
     expect(countdownPress('clear', 9 * 60_000, 120_000).broadcastMs).toBe(null);
     // and it says so where an operator will read it
     expect(src).toMatch(/It does not clear the screens\./);
+  });
+
+  // THE BAND DID NOT LEAVE A COPY BEHIND. Removing a control from one surface and
+  // adding it to another is two edits, and this repository's recurring bug is the
+  // second one landing while the first does not — two transports, both live, one
+  // of them reading state the other moved.
+  it('and the dock has no transport of its own any more', () => {
+    expect(dockSrc).not.toContain('cdtrans');
+    expect(dockSrc).not.toContain('countdownPress');
   });
 });
 
@@ -295,7 +332,8 @@ describe('the Stage Message survives the dock being destroyed', () => {
     await cap.sendStageAlert('Five minutes left');
     const { get } = await import('svelte/store');
     expect(get(cap.stageAlert)).toBe('Five minutes left');
-    expect(src).toMatch(/disabled=\{busy \|\| !\$stageAlert\}/);
+    // THE DOCK, not the run surface: the Stage Message stayed in Quick tools.
+    expect(dockSrc).toMatch(/disabled=\{busy \|\| !\$stageAlert\}/);
     await cap.sendStageAlert(null);
     expect(get(cap.stageAlert)).toBe(null);
   });
@@ -323,22 +361,23 @@ describe('the Stage Message survives the dock being destroyed', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 describe('the transport can hold the countdown', () => {
   it('draws Pause and Resume as two separate presses, not one toggle', () => {
-    const bar = src.slice(src.indexOf('cdtrans'), src.indexOf('</div>', src.indexOf('press(\'clear\')')));
-    expect(bar).toContain("press('pause')");
-    expect(bar).toContain("press('resume')");
+    const at = src.indexOf('cdtrans');
+    expect(at, 'the transport row is not in this file').toBeGreaterThan(-1);
+    const bar = src.slice(at, src.indexOf('</span>', src.indexOf("cdPress('clear')")));
+    expect(bar).toContain("cdPress('pause')");
+    expect(bar).toContain("cdPress('resume')");
     // Which one is offered is read from the CONTENT on the wall.
     expect(bar).toMatch(/\{#if cdPaused\}/);
     // No toggle: neither button computes its own instruction from a local flag.
-    expect(bar).not.toMatch(/press\(cdPaused \?/);
+    expect(bar).not.toMatch(/cdPress\(cdPaused \?/);
   });
 
   it('the hold goes through the one arbiter — there is no second path to it', () => {
     const script = instanceScript();
-    const body = script.slice(script.indexOf('function press('));
+    const body = script.slice(script.indexOf('function cdPress('));
     expect(body).toMatch(/pauseCountdown\(r\.pause\)/);
     // …and that is the only place it is named outside the import list.
-    const afterImports = script.slice(script.indexOf("from './countdown.js'"));
-    expect([...afterImports.matchAll(/\bpauseCountdown\(/g)].length).toBe(1);
+    expect([...script.matchAll(/\bpauseCountdown\(/g)].length).toBe(1);
   });
 
   it('every button on the row is told whether it is held, so +1 cannot release it', () => {

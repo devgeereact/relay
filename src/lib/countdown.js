@@ -404,3 +404,84 @@ export function wayBack(timers, content) {
   const timer = both[both.length - 1];
   return { state: isCountdownContent(content) ? 'showing' : 'offered', timer };
 }
+
+/**
+ * ══ HOW THE CONSOLE'S READOUT READS (docs/REBRAND.md §7) ════════════════════
+ *
+ * `auto` | `ms` | `hms`, the three `layers.js::formatCountdown` already takes. The
+ * picker feeds THAT function; there is no second copy of the arithmetic here, and
+ * there must never be one.
+ *
+ * **WHAT IT DOES NOT REACH, said plainly: the screens.** A wall's countdown is
+ * rendered by `TemplateRender` from `OutputContent`, which carries no format
+ * field, so this changes the notation of the CONSOLE'S readout of the same number
+ * and nothing else. The control says so where an operator can read it (rule 35's
+ * family) and the backend half is still owed.
+ *
+ * AT MODULE SCOPE FOR THE SAME REASON `countdownSet` IS. It lived in
+ * `Dock.svelte`'s module script while the transport lived in the dock, and moved
+ * here with the transport (2026-09-20): the run surface is `{#if tab === 'live'}`
+ * in the workspace router, so changing workspace destroys it, and a component
+ * `let` would silently drop an operator's choice mid-service. A store exported
+ * from a COMPONENT was always the odd shape — the decision layer is this module,
+ * and the preference is a decision.
+ */
+export const countdownFormat = writable('auto');
+
+/**
+ * ══ WHICH SCREENS A COUNTDOWN IS AIMED AT ═══════════════════════════════════
+ *
+ * `chosen` is the operator's answer and `rows` is what `list_output_channels`
+ * said. `null` means every screen and is NOT the same as a list naming every
+ * screen: "all of them" has one spelling, and an explicit list silently stops
+ * including a screen opened a minute later. That distinction is `start_countdown`'s
+ * own (`Timer::channels`), and this is the one place the console spells it.
+ *
+ * It answers with the ROWS rather than with ids, because the only caller needs
+ * rows: `describeCountdownReach` resolves each screen's template to decide
+ * whether that screen would show a clock at all, and handing it every screen in
+ * the building over a countdown aimed at one of them is the status line rule 35
+ * is about.
+ *
+ * An id the operator chose that no longer names a screen simply drops out. A
+ * screen can be deleted in Outputs while this band is mounted, and a band that
+ * reported a screen the engine has never heard of would be claiming a reach it
+ * has not got.
+ *
+ * @param {number[]|null} chosen ids the operator ticked, or null for every screen
+ * @param {Array} rows           channel rows as `list_output_channels` returns them
+ * @returns {Array} the rows this countdown would be sent to
+ */
+export function aimedScreens(chosen, rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  if (!Array.isArray(chosen)) return list;
+  const ids = new Set(chosen.map((n) => Number(n)));
+  return list.filter((c) => ids.has(Number(c?.id)));
+}
+
+/**
+ * Tick or untick one screen, starting from "every screen" when nothing is set.
+ *
+ * The same rule `ServicePlanner.svelte::toggleCueChannel` keeps on a plan cue,
+ * stated once here so the console band and the Planner cannot come to different
+ * conclusions about what "all of them" means. Ticking the last one back on
+ * returns to `null` rather than to a list of every id, for the reason above.
+ *
+ * Untickng the LAST screen answers `[]` — a real answer meaning "no screen" —
+ * rather than quietly wrapping round to every screen. A control that did the
+ * opposite of what it says at one end of its range is worse than one that
+ * reaches a state the caller must then refuse, and refusing it is the caller's
+ * job: `Start` is disabled and says why.
+ *
+ * @param {number[]|null} chosen the current answer
+ * @param {number} id            the screen that was pressed
+ * @param {Array} rows           every screen there is
+ * @returns {number[]|null} the new answer
+ */
+export function toggleScreen(chosen, id, rows) {
+  const all = (Array.isArray(rows) ? rows : []).map((c) => Number(c?.id));
+  const from = Array.isArray(chosen) ? chosen.map(Number) : all;
+  const target = Number(id);
+  const next = from.includes(target) ? from.filter((n) => n !== target) : [...from, target];
+  return all.length > 0 && next.length === all.length ? null : next;
+}

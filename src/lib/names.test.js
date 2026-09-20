@@ -241,14 +241,22 @@ const REGISTER = [
     // `formatCountdown` and report every lowercase use as a second label.
     concept: 'the countdown a CONGREGATION watches — `countdown` content, every screen',
     name: 'Screen Countdown',
+    // `src/lib/Dock.svelte` LEFT THIS LIST ON 2026-09-20. The control moved out of
+    // Quick tools on the operator's instruction and onto the run surface, so the
+    // dock stopped saying the name and `views/Live.svelte` started. The register
+    // follows the label, which is what the staleness check below is for — a file
+    // left here after the name leaves it is a register describing a product that
+    // no longer exists.
     allowed: [
-      'src/lib/Dock.svelte',
       'src/lib/countdownreach.test.js',
       'src/lib/layers.js',
       'src/lib/layers.test.js',
       'src/lib/quicktools.test.js',
+      'src/lib/screencountdown.test.js',
       'src/lib/stagezones.test.js',
       'src/lib/templateKind.js',
+      'src/lib/timerwords.test.js',
+      'src/lib/views/Live.svelte',
       'src/lib/wayback.test.js',
       'src/lib/stagelayout.js',
     ],
@@ -270,6 +278,10 @@ const REGISTER = [
       'src/lib/liverackfit.test.js',
       'src/lib/programmetimer.test.js',
       'src/lib/progtimerjoin.test.js',
+      // It names the Stage Timer to say what the Screen Countdown band sits
+      // BESIDE, and to assert that the two did not merge — one reaches a
+      // preacher's monitor and one reaches a congregation.
+      'src/lib/screencountdown.test.js',
       'src/lib/stageprogrow.test.js',
       'src/lib/stagelayout.test.js',
       'src/lib/stagetimerhold.test.js',
@@ -544,7 +556,7 @@ describe('the scanner itself', () => {
     expect(filesWith(files, 'Stage Message')).toContain('src/lib/Dock.svelte');
     expect(filesWith(files, 'Stage Note')).toContain('src/lib/views/ServicePlanner.svelte');
     expect(filesWith(files, 'Up Next')).toContain('src/Stage.svelte');
-    expect(filesWith(files, 'Screen Countdown')).toContain('src/lib/Dock.svelte');
+    expect(filesWith(files, 'Screen Countdown')).toContain('src/lib/views/Live.svelte');
     expect(filesWith(files, 'Stage Timer')).toContain('src/lib/views/Live.svelte');
   });
 

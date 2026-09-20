@@ -1,9 +1,10 @@
-// THE WARNING FLASH, ON ALL THREE SURFACES THAT SHOW ONE.
+// THE WARNING FLASH, ON EVERY SURFACE THAT SHOWS ONE.
 //
 // Wave 3 track D's third task is "assert the flash, do not rebuild it": the
 // `cdwarn` keyframes already exist on the wall (`TemplateRender.svelte`), the
-// preacher's page (`Stage.svelte`) and the dock's countdown figure
-// (`Dock.svelte`). Nothing pinned them. This file does, and the guarantee it
+// preacher's page and his programme rail (`Stage.svelte`), and the console's own
+// countdown figure — which was `Dock.svelte`'s until 2026-09-20 and is now the
+// Screen Countdown band in `views/Live.svelte`. Nothing pinned them. This file does, and the guarantee it
 // pins is not "there is an animation" — it is the one an animation can break:
 //
 //   · a viewer who asked for no motion still learns that the countdown is
@@ -14,11 +15,11 @@
 //
 // One correction to the plan, recorded here because it is the kind of claim that
 // gets copied forward. The plan says all three carry "a `prefers-reduced-motion`
-// glow fallback each". Two do. The dock does not, deliberately: its own comment
-// says "a viewer who asked for no motion still gets the colour, which is the
-// information", and a 178px card in the chrome is not a wall seen from the back
-// of a room. So the dock is asserted on the colour, which is its actual answer,
-// rather than on a glow it was never given.
+// glow fallback each". Not all of them do. The CONSOLE's does not, deliberately:
+// its own comment says "a viewer who asked for no motion still gets the RED,
+// which is the information", and a figure an operator is sitting in front of is
+// not a wall seen from the back of a room. So it is asserted on the colour, which
+// is its actual answer, rather than on a glow it was never given.
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -57,15 +58,21 @@ function mediaBlocks(css, query) {
 
 const inside = (blocks, idx) => blocks.some(([a, b]) => idx > a && idx < b);
 
-/** Every index at which `needle` occurs. */
-function everyIndexOf(css, needle) {
-  const out = [];
-  let at = css.indexOf(needle);
-  while (at !== -1) {
-    out.push(at);
-    at = css.indexOf(needle, at + 1);
-  }
-  return out;
+/**
+ * Every index at which `re` matches.
+ *
+ * A REGEX RATHER THAN `indexOf`, and the difference is not cosmetic. This was
+ * `indexOf('animation: cdwarn')` — one literal, one space — and three of the four
+ * surfaces happen to be written with that space. The fourth (Live's stylesheet,
+ * which sets declarations without them) would have been reported as having NO
+ * pulse at all, and the honest reading of that failure is not "the surface is
+ * broken" but "the scanner cannot see it". A scanner that quietly narrows passes
+ * everything, and this one would have failed loudly — which is luck, because the
+ * same literal in the `inside()` check above could as easily have matched zero
+ * spots and satisfied a `for` loop over nothing.
+ */
+function everyIndexOf(css, re) {
+  return [...css.matchAll(re)].map((m) => m.index);
 }
 
 const SURFACES = [
@@ -95,9 +102,16 @@ const SURFACES = [
     glow: /\.tmr\.warn \.tval \{ text-shadow: [^}]*\}/,
   },
   {
-    name: 'the dock',
-    file: 'src/lib/Dock.svelte',
-    colour: /\.tfig\.warn \{ color: var\(--v-red\); \}/,
+    // IT WAS `src/lib/Dock.svelte` UNTIL 2026-09-20. The Screen Countdown left
+    // Quick tools on the operator's instruction and is now a band on the run
+    // surface; the figure, the red and the blink came with it unchanged. This
+    // entry follows the control rather than the file, which is the whole point of
+    // a register of surfaces — pointed at the old path it would have gone on
+    // passing over a stylesheet that no longer has a countdown in it.
+    name: "the console's countdown band",
+    file: 'src/lib/views/Live.svelte',
+    // Live's stylesheet is written without the spaces the dock's used.
+    colour: /\.tfig\.warn\{color:var\(--v-red\)\}/,
     // No glow, deliberately — see this file's header.
     glow: null,
   },
@@ -121,7 +135,7 @@ describe('the countdown warning survives a viewer who asked for no motion', () =
       });
 
       it('gives the pulse only where motion was welcome', () => {
-        const spots = everyIndexOf(css, 'animation: cdwarn');
+        const spots = everyIndexOf(css, /animation:\s*cdwarn/g);
         expect(spots.length, `no cdwarn animation in ${s.file}`).toBeGreaterThan(0);
         for (const at of spots) {
           expect(

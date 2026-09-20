@@ -39,9 +39,26 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a) => invoke(...a) }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: async () => () => {} }));
 
 const cap = await import('./stores/capture.js');
+const { setSession } = await import('./session.js');
 const { isCountdownContent, wayBack } = await import('./countdown.js');
-const Dock = (await import('./Dock.svelte')).default;
-const src = readFileSync(resolve(process.cwd(), 'src/lib/Dock.svelte'), 'utf8');
+// ── WHICH SURFACE CARRIES THE WAY BACK (2026-09-20) ─────────────────────────
+//
+// It was inside the dock's Countdown block, and the 2026-09-17 note beside it
+// said why: the dock is in the SHELL and renders on every workspace, so a way
+// back onto a congregation screen that an operator has to change workspace to
+// reach is a way back they will not find during a service.
+//
+// The operator then asked for the Screen Countdown out of Quick tools, and the
+// way back went with the instrument rather than being stranded in a card that no
+// longer has a countdown in it. The 2026-09-17 argument is not wrong and is now
+// the recorded price of the move — `views/Live.svelte`, above `cdPress`.
+//
+// WHAT DID NOT CHANGE is everything this file is about: `showTimer` is still the
+// one door, it still creates nothing, the offer is still decided by `wayBack`
+// from two facts, and a failed read still says so instead of falling silent.
+const Live = (await import('./views/Live.svelte')).default;
+const src = readFileSync(resolve(process.cwd(), 'src/lib/views/Live.svelte'), 'utf8');
+const dockSrc = readFileSync(resolve(process.cwd(), 'src/lib/Dock.svelte'), 'utf8');
 
 /** A registry row in the shape `list_timers` hands back (`TimerView`). */
 const timer = (over = {}) => ({
@@ -66,7 +83,7 @@ let app;
 function mount() {
   host = document.createElement('div');
   document.body.appendChild(host);
-  app = new Dock({ target: host, props: {} });
+  app = new Live({ target: host, props: {} });
   return host;
 }
 
@@ -80,14 +97,14 @@ async function settle(ms = 10) {
 /**
  * MOUNT, AND WAIT UNTIL THE REGISTRY HAS ACTUALLY BEEN READ.
  *
- * The dock reads `list_timers` on mount and then every two seconds, and in THIS
- * ENVIRONMENT the mount-time read does not reach the mocked bridge: `capture.js`
+ * The run surface reads `list_timers` on mount and then every two seconds, and in
+ * THIS ENVIRONMENT the mount-time read does not reach the mocked bridge: `capture.js`
  * resolves the Tauri core through a dynamic `import()`, and when several wrappers
  * issue one in the same mount, only the first is served the mocked module — the
  * rest get the real one and throw `window.__TAURI_INTERNALS__ is undefined`. That
  * is an artefact of the test runner and not of the product (in the app the module
  * is already loaded), but it is worth writing down: it is also why nothing has
- * ever asserted the dock's OWN mount-time `loadTemplates` call.
+ * ever asserted the surface's OWN mount-time `loadTemplates` call.
  *
  * So the poll is what these tests watch, advanced with fake timers rather than
  * waited out in real seconds. `shouldAdvanceTime` keeps the microtask queue real,
@@ -108,24 +125,44 @@ const byLabel = (text) =>
   [...host.querySelectorAll('button')].find((b) => b.textContent.trim() === text);
 const putBack = () => byLabel('Put back on screens');
 
-/** `list_timers` answers `rows`; everything else the dock asks on mount answers null. */
+/** `list_timers` answers `rows`; the rest of what the surface asks on mount is
+ *  answered with the empty shape each reader expects, so nothing this file is
+ *  not about renders an error over the band it is watching. */
 function registry(rows) {
-  invoke.mockImplementation(async (cmd) => (cmd === 'list_timers' ? rows : null));
+  invoke.mockImplementation(async (cmd) => {
+    if (cmd === 'list_timers') return rows;
+    if (cmd === 'list_output_channels') return [];
+    if (cmd === 'list_templates') return [];
+    if (cmd === 'list_plans') return [];
+    if (cmd === 'list_books') return [{ book: 'Psalms', chapters: 150 }];
+    if (cmd === 'rehearsal') return false;
+    if (cmd === 'get_sensitivity') return 50;
+    return null;
+  });
 }
 
 beforeEach(() => {
   invoke.mockReset();
-  invoke.mockResolvedValue(null);
+  registry([]);
   cap.live.set(null);
   cap.stageAlert.set(null);
-  cap.capture.update((s) => ({ ...s, available: true }));
+  cap.detections.set([]);
+  cap.resolvedDetections.set([]);
+  cap.liveCue.set({ cueId: null, slide: 0, onAir: false });
+  cap.channelHealth.set({});
+  cap.readErrors.set({});
+  cap.capture.update((s) => ({ ...s, available: true, stt: { ...s.stt, loaded: true } }));
   cap.templates.set([]);
+  setSession({ planId: null });
 });
 
 afterEach(() => {
   app?.$destroy();
   host?.remove();
   app = host = null;
+  cap.detections.set([]);
+  cap.resolvedDetections.set([]);
+  cap.readErrors.set({});
 });
 
 // ── THE PURE HALF ───────────────────────────────────────────────────────────
@@ -193,7 +230,7 @@ describe('what the block may say about the way back', () => {
 });
 
 // ── THE RENDERED HALF — the only half RG-152 was about ──────────────────────
-describe('the control in the dock’s Countdown block', () => {
+describe('the control in the Screen Countdown band', () => {
   it('reaches show_timer with the timer’s own id', async () => {
     registry([timer({ id: 12 })]);
     cap.live.set(A_VERSE);
@@ -255,9 +292,15 @@ describe('the control in the dock’s Countdown block', () => {
   // RULE 35, asked the way that rule asks it: what does this block say when the
   // thing behind it is broken? Not the same as when everything is fine.
   it('says the read failed rather than falling silent like an empty registry', async () => {
-    invoke.mockImplementation(async (cmd) => {
+    // THROUGH `registry`, not a bare implementation. The run surface has other
+    // readers, and answering `null` to all of them paints their own empty and
+    // error states over the band this test is watching — the assertion then fails
+    // for a reason that has nothing to do with the registry.
+    registry([]);
+    const base = invoke.getMockImplementation();
+    invoke.mockImplementation(async (cmd, args) => {
       if (cmd === 'list_timers') throw new Error('the timer registry is poisoned');
-      return null;
+      return base(cmd, args);
     });
     cap.live.set(A_VERSE);
     await mountAndRead();
@@ -277,44 +320,49 @@ describe('the control in the dock’s Countdown block', () => {
   });
 
   it('reports a refused put-back instead of claiming the countdown is back', async () => {
-    invoke.mockImplementation(async (cmd) => {
-      if (cmd === 'list_timers') return [timer()];
+    registry([timer()]);
+    const base = invoke.getMockImplementation();
+    invoke.mockImplementation(async (cmd, args) => {
       if (cmd === 'show_timer') throw new Error('That timer is not running.');
-      return null;
+      return base(cmd, args);
     });
     cap.live.set(A_VERSE);
     await mountAndRead();
     putBack().click();
     await settle();
-    expect(host.querySelector('.derr')?.textContent ?? '').toContain('not running');
+    // `.pt-err` is the band's own error line — the same class the Stage Timer
+    // band above it uses, which is the point: one voice for "this control failed"
+    // on one surface. It was `.derr` while the transport lived in the dock.
+    const errs = [...host.querySelectorAll('.sc-band .pt-err')].map((e) => e.textContent).join(' ');
+    expect(errs).toContain('not running');
     // And it is still offered, because nothing went back on any screen.
     expect(putBack()).toBeTruthy();
   });
 });
 
 describe('where it lives', () => {
-  it('is inside the Screen Countdown block, not a fourth thing in Quick tools', () => {
-    const card = src.slice(src.indexOf('<span class="dk">Quick tools</span>'));
-    const block = card.slice(
-      card.indexOf('<div class="qblock tmr">'),
-      card.indexOf('<span class="r-lbl">Name band</span>'),
-    );
-    expect(block).toContain('Put back on screens');
-    // `quicktools.test.js` pins the card at three blocks on an operator
-    // instruction, and this control is inside one of the three rather than a
-    // fourth beside them.
-    const body = card.slice(0, card.indexOf('<span class="dk">Controls</span>'));
-    expect(body.match(/<div class="qblock/g) ?? []).toHaveLength(3);
+  it('is inside the Screen Countdown band, not a thing of its own on the surface', () => {
+    const at = src.indexOf('<div class="sc-band">');
+    expect(at, 'there is no Screen Countdown band on the run surface').toBeGreaterThan(-1);
+    const band = src.slice(at, src.indexOf('<!-- ══════ THE SLIDE GRID', at));
+    expect(band).toContain('Put back on screens');
+    // It rides with the transport it belongs to rather than becoming a third band
+    // beside the Stage Timer and the countdown. One instrument, one band.
+    expect(src.match(/<div class="sc-band">/g) ?? []).toHaveLength(1);
   });
 
   // The Controls card never scrolls, because an operator may never have to scroll
-  // to reach `Clear screens`. Nothing here is in that card.
+  // to reach `Clear screens`. That card is in the SHELL — `Dock.svelte` — and
+  // this control is on a different surface entirely now, which is a stronger
+  // guarantee than the one this test used to make and is asserted as such.
   it('adds nothing to the Controls card', () => {
     // MARKUP ONLY. The stylesheet below it explains the row's height budget and
     // names the control while doing so, and a scanner that reads the prose about
     // a rule instead of the rule passes and fails for the wrong reasons.
-    const markup = src.slice(0, src.indexOf('<style>'));
+    const markup = dockSrc.slice(0, dockSrc.indexOf('<style>'));
     const controls = markup.slice(markup.indexOf('<span class="dk">Controls</span>'));
     expect(controls).not.toContain('Put back on screens');
+    // …and neither does anything else in the dock.
+    expect(markup).not.toContain('Put back on screens');
   });
 });

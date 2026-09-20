@@ -1,6 +1,8 @@
 // THE TIMER RUNS BARE — who supplies the words beside the clock.
 //
-// `Dock.svelte` hard-coded them. Every countdown an operator started from the
+// `Dock.svelte` hard-coded them (the transport has since moved to
+// `views/Live.svelte`; the defect and the fix are unchanged). Every countdown an
+// operator started from the
 // console said "Service begins in", and "Welcome" at zero, and no interface
 // anywhere in Relay could type anything else. The words are PAYLOAD, not
 // template: they ride in `content.reference` (`main::start_countdown`) and a
@@ -105,11 +107,18 @@ describe('the store invents no words for a caller that supplies none', () => {
   });
 });
 
-// ── 2 · THE DOCK ────────────────────────────────────────────────────────────
+// ── 2 · THE CONSOLE ─────────────────────────────────────────────────────────
 //
-// Reintroduce by putting the two constants back at `Dock.svelte`'s `press`:
+// Reintroduce by putting the two constants back at `views/Live.svelte`'s `cdPress`:
 //   startCountdown(r.broadcastMs / 60_000, 'Service begins in', 'Welcome')
-describe('the dock starts a bare timer', () => {
+//
+// IT WAS THE DOCK'S `press` UNTIL 2026-09-20. The Screen Countdown left Quick
+// tools on the operator's instruction and the transport is now the band on Live's
+// run surface. What this case asks is unchanged and is about the CONSOLE rather
+// than about a card: the surface that starts a countdown has no field for words,
+// so it must supply none. A fallback here would put two sentences on a wall that
+// nobody in the building chose — which is what it did for months.
+describe('the console starts a bare timer', () => {
   let host;
   let app;
 
@@ -117,11 +126,21 @@ describe('the dock starts a bare timer', () => {
     invoke.mockReset();
     invoke.mockImplementation((cmd) => {
       if (cmd === 'list_templates') return Promise.resolve([]);
+      if (cmd === 'list_output_channels') return Promise.resolve([]);
+      if (cmd === 'list_timers') return Promise.resolve([]);
+      if (cmd === 'list_plans') return Promise.resolve([]);
+      if (cmd === 'list_books') return Promise.resolve([{ book: 'Psalms', chapters: 150 }]);
+      if (cmd === 'rehearsal') return Promise.resolve(false);
+      if (cmd === 'get_sensitivity') return Promise.resolve(50);
       return Promise.resolve(null);
     });
     cap.live.set(null);
     cap.stageAlert.set(null);
-    cap.capture.update((s) => ({ ...s, available: true }));
+    cap.detections.set([]);
+    cap.resolvedDetections.set([]);
+    cap.liveCue.set({ cueId: null, slide: 0, onAir: false });
+    cap.channelHealth.set({});
+    cap.capture.update((s) => ({ ...s, available: true, stt: { ...s.stt, loaded: true } }));
     cap.templates.set([]);
   });
 
@@ -129,17 +148,21 @@ describe('the dock starts a bare timer', () => {
     app?.$destroy();
     host?.remove();
     app = host = null;
+    cap.detections.set([]);
+    cap.resolvedDetections.set([]);
   });
 
   itMounted('Start asks for digits alone — the console has no words to give', async () => {
-    const Dock = (await import('./Dock.svelte')).default;
+    const Live = (await import('./views/Live.svelte')).default;
     host = document.createElement('div');
     document.body.appendChild(host);
-    app = new Dock({ target: host, props: {} });
+    app = new Live({ target: host, props: {} });
     await settle();
 
-    const start = [...host.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Start');
-    expect(start, 'the dock draws a Start button').toBeTruthy();
+    const band = host.querySelector('.sc-band');
+    expect(band, 'the run surface draws no Screen Countdown band').toBeTruthy();
+    const start = [...band.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Start');
+    expect(start, 'the band draws a Start button').toBeTruthy();
     expect(start.disabled).toBe(false);
     start.click();
     await settle();

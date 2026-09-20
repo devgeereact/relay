@@ -57,6 +57,12 @@
     addedMessage,
     orderWithDuplicateInPlace,
   } from '../planselect.js';
+  // ONE RULE FOR "WHICH SCREENS", SHARED WITH THE CONSOLE BAND. The inspector's
+  // `toggleCueChannel` and the countdown add block below both mean the same thing
+  // by ticking a screen, including what happens when the last one is ticked back
+  // on, and Live's Screen Countdown band means it too. Stated once, in the pure
+  // module, rather than three times.
+  import { toggleScreen } from '../countdown.js';
   // THE SHARED URL BUILDER, and it has to be shared. `main.rs::media_url` builds
   // this for every output screen and `bundledbackgrounds.js` mirrors that rule for
   // the surfaces that show the file itself — the Library's media pane, and now
@@ -393,6 +399,29 @@
   let cdAddMin = 5;
   let cdAddLabel = '';
   let cdAddDone = '';
+  // ── AND WHICH SCREENS, AT THE MOMENT IT IS BUILT (2026-09-20) ────────────
+  //
+  // The inspector's `Screens` row has been able to aim any cue since RG-161, and
+  // it still can — this changes nothing about that door. What it adds is the
+  // question being asked where the answer is known: a pre-service countdown is
+  // aimed at the streaming screen, and the operator knows that while they are
+  // typing the length, not after hunting for a row in an inspector they have to
+  // select the new cue to see.
+  //
+  // The operator's instruction of 2026-09-20 asked for the Screen Countdown out
+  // of Quick tools and *"only where it is actually needed: the pre-service
+  // countdown for the service going online"*. This is the half of that which is
+  // a Tuesday job; the console band on Live is the half that is a Sunday one.
+  //
+  // `null` is every screen and is the default, for the same reason it is on the
+  // inspector row and in the console band: "all of them" has one spelling, and a
+  // list naming every screen silently stops including a screen added later.
+  /** @type {number[]|null} */
+  let cdAddChannels = null;
+  /** The rule is `countdown.js`'s, shared with the console band and the row below. */
+  function toggleCdAddChannel(id) {
+    cdAddChannels = toggleScreen(cdAddChannels, id, screens);
+  }
   async function addCountdownCue() {
     const built = countdownCuePayload(cdAddMin, cdAddLabel, cdAddDone);
     await act(async () => {
@@ -401,7 +430,17 @@
       // seeds its own duration instead of making the operator retype it.
       await loadItems();
       const added = items[items.length - 1];
+      // `built.seconds` and not `m * 60`: the payload builder owns the arithmetic
+      // now (`planneradd.js`), so the cue's length and its stated duration come
+      // from one place rather than from two that agree today.
       if (added) await setPlanDuration(added.id, built.seconds);
+      // THE AIM IS A SECOND WRITE, NOT A THIRD DOOR. `addPlanItem` cannot express
+      // a screen set, so the cue is created and then aimed through the SAME
+      // `setPlanChannels` the inspector row uses — one command, two surfaces, so
+      // the two cannot come to different conclusions about what `null` means.
+      // Skipped entirely when the answer is "every screen", because that is what
+      // a cue with no `channels_json` already says.
+      if (added && cdAddChannels) await setPlanChannels(added.id, cdAddChannels);
       await loadItems();
       await refresh();
     });
@@ -830,15 +869,19 @@
       await loadItems();
     });
   }
-  /** Tick or untick one screen, starting from "every screen" if nothing is set. */
+  /**
+   * Tick or untick one screen, starting from "every screen" if nothing is set.
+   *
+   * THE RULE IS `countdown.js`'S, not this function's — including the part that
+   * matters most, which is going back to NULL when every screen is ticked again:
+   * "all of them" has one spelling, and an explicit list of every screen would
+   * silently stop including a screen added later. It was written here first and
+   * moved on 2026-09-20, when the countdown add block above and Live's Screen
+   * Countdown band both needed it; three copies of that rule is three chances for
+   * one of them to mean something else by a tick.
+   */
   function toggleCueChannel(id) {
-    const from = cueChannels ?? screens.map((c) => c.id);
-    const next = from.includes(id) ? from.filter((n) => n !== id) : [...from, id];
-    // Back to NULL when every screen is ticked again: "all of them" has one
-    // spelling, and an explicit list of every screen would silently stop
-    // including a screen added later.
-    const all = screens.length > 0 && next.length === screens.length;
-    return saveChannels(all ? null : next);
+    return saveChannels(toggleScreen(cueChannels, id, screens));
   }
 
   async function saveTimer(ev) {
@@ -1324,6 +1367,38 @@
             <input id="sp-cddone" class="r-input sp-cdw" maxlength="60" bind:value={cdAddDone}
               placeholder="Optional — e.g. Welcome" />
             <p class="sp-fhelp sp-cdhelp">Leave both blank for a timer that shows the digits alone.</p>
+            <!-- ── AND WHICH SCREENS (2026-09-20) ────────────────────────────
+                 A pre-service countdown usually belongs on one screen — the
+                 stream — and the operator knows which one while they are
+                 building the cue. The inspector's `Screens` row still aims any
+                 cue and this does not replace it; it asks the question where the
+                 answer is known, through the same `setPlanChannels`.
+
+                 EVERY SCREEN IS THE DEFAULT and is shown as a real choice, not
+                 as nothing ticked. A screen a cue does NOT name keeps showing
+                 whatever it already had, so this narrows what the cue reaches
+                 and can never blank one. -->
+            {#if screens.length}
+              <div class="r-lbl sp-cdwlbl">Screens</div>
+              <div class="sp-cdchset" role="group" aria-label="Screens for this countdown">
+                {#each screens as c (c.id)}
+                  <button
+                    class="r-btn ghost sm sp-cdch"
+                    class:on={(cdAddChannels ?? screens.map((x) => x.id)).includes(c.id)}
+                    aria-pressed={(cdAddChannels ?? screens.map((x) => x.id)).includes(c.id)}
+                    on:click={() => toggleCdAddChannel(c.id)}>{c.name}</button>
+                {/each}
+              </div>
+              <p class="sp-fhelp sp-cdhelp">
+                {#if cdAddChannels == null}
+                  Every screen.
+                {:else if cdAddChannels.length === 0}
+                  No screen — this cue would reach nothing.
+                {:else}
+                  Other screens keep what they are showing.
+                {/if}
+              </p>
+            {/if}
           </div>
           <div class="sp-results">
             {#if addSearching}
@@ -2055,6 +2130,13 @@
      set rather than an action, so `on` is its whole visual job. */
   .sp-ch.on{ background:var(--v-sel); color:var(--v-txt); }
   .sp-chset{ display:flex; flex-wrap:wrap; gap:4px; }
+  /* The add block's own screen choice. The SAME shape as the inspector row's
+     above — one ghost button per screen, `.on` for ticked — because it is the
+     same question, asked earlier; two shapes for one question is how an operator
+     comes to believe they are two settings. */
+  .sp-cdchset{ display:flex; flex-wrap:wrap; gap:4px; margin:2px 0 0; }
+  .sp-cdch{ max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .sp-cdch.on{ background:var(--v-sel); color:var(--v-txt); }
   .sp-chrow{ align-items:flex-start; }
   .sp-chnote{ display:block; margin-top:4px; font-size:var(--v-fs-cap); }
     .sp-tmrsel{ max-width:172px; }
