@@ -13,9 +13,16 @@
   // and every card changes with it, by construction.
   //
   // Card chrome, per the reference: a select checkbox top-left, a favourite
-  // star top-right, and a footer with the verse number, its reference and a
-  // kebab menu. The tally ring is amber and means one thing — the congregation
-  // is looking at this.
+  // star top-right, and a footer with the SLIDE ORDINAL, its reference and a
+  // kebab menu. That ordinal is `slideNo` — the card's position in the deck, not
+  // the verse number, and this comment claimed the verse number for a long time.
+  // `Browse.svelte` renumbers by index deliberately (see the note there): a verse
+  // number drifts the moment anything is inserted, filtered or sorted, and then
+  // two slides on screen wear the same number. It is zero-padded to two digits
+  // because that is how Live prints its own stage-guide ordinal (`.sg-n`), as do
+  // the Planner and the import review — one house style, pinned by
+  // `decknumbering.test.js`. The tally ring is amber and means one thing — the
+  // congregation is looking at this.
   import TemplateRender from '../../TemplateRender.svelte';
   import { safeMode } from '../../boot/boot.js';
 
@@ -257,7 +264,7 @@
         on:click={() => primary(v)}
         on:dblclick={() => selects && onOpen(v)}
         on:keydown={rowKey(v)}>
-        <span class="vd-n r-mono">{v.slideNo}</span>
+        <span class="vd-n r-mono">{String(v.slideNo).padStart(2, '0')}</span>
         {#if v.media}
           <span class="vd-rthumb">
             {#if v.mediaKind === 'video'}
@@ -447,7 +454,7 @@
         {/if}
 
         <footer class="vd-foot">
-          <span class="vd-n r-mono">{v.slideNo}</span>
+          <span class="vd-n r-mono">{String(v.slideNo).padStart(2, '0')}</span>
           <!-- THE SECTION KEY (REBRAND §10). Printed on the slide it fires, and
                only on the slide it fires: a section that reflowed into three
                slides shows the key once, on the first, because that is what the
