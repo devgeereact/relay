@@ -83,8 +83,24 @@ Six workspaces on one desk: **Live · Library · Planner · Templates · Outputs
 dock row beneath (Live audio · Live transcript · **Quick tools** · Controls), and a status bar.
 
 - **Live** is the run surface: search rail, Preview / TAKE / Program, slide grid, AI detection column.
-- **Quick tools** (was "Playlist") holds the three things that change during a service: the
-  **countdown**, the **name band**, and **word to the preacher**. `Load whole plan` stays in its header.
+- **Quick tools** (was "Playlist") holds the things that change during a service: the **name band**
+  and the **Stage Message**. `Load whole plan` stays in its header. **It held three, and the
+  argument for three is not what changed.** The three were one instrument on purpose (one card,
+  one head, one field shape, one button row, because three degrees of finish stacked in one 200px
+  column is what an operator is actually looking at), and that argument is about how the blocks
+  in this card relate to each other, never about how many of them there are. Two are one instrument
+  on exactly the same terms.
+- **The countdown left this card on 2026-09-20, on the operator's instruction**, and the reason is
+  not a design one: the other two change something on every workspace, and the countdown only ever
+  changed a congregation screen, which is a thing an operator is on Live to do. It is now the
+  **Screen Countdown** band on Live's run surface, under the Stage Timer, with its whole transport.
+  **The price is real and is recorded rather than argued away**: the dock renders on every workspace
+  and Live does not, so an operator changing a template in Templates can no longer re-aim a
+  countdown without coming back to Live. That was the 2026-09-17 reasoning for putting it here, and
+  it is kept at `views/Live.svelte` above `cdPress`, where somebody weighing it again will be
+  standing. `quicktools.test.js` asserts the two, `screencountdown.test.js` asserts the arrival.
+- **Names.** The third block shipped as the **Stage Message**; this section called it *word to the
+  preacher* and the name that ships is the one `names.test.js` enforces.
 - **Single click sends to Program, double click previews.** A 190 ms timer on the single press so a
   double never fires both.
 - **Nothing clears the programme.** Switching workspace, loading a plan, editing a template: the

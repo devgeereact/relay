@@ -5800,3 +5800,83 @@ still visible there AND that the labels are visible in their new home.
 **What this does NOT do.** A layout cannot be assigned by a cue, and a preview of one does
 not exist — an operator picks zones by name and sees the result on the device. Both belong
 with phase 5's cue work rather than here.
+
+## 104. A stage-role screen is not a congregation screen, and a refusal by absence becomes a decision the page takes out loud (2026-09-20)
+
+`r6-contracts.test.js` recorded `timer: false` for `src/Output.svelte` with a reason that is
+still true word for word: *"Sermon · 4:12 left" behind a preacher is the running order in
+front of the whole building.* That sentence is a statement about a CONGREGATION screen, and
+nothing in this decision makes a congregation screen show a programme rail. What changed is
+that `output.html` stopped being only a congregation screen.
+
+**Two addresses put a screen in front of a preacher and only one of them painted the rail.**
+`stage.html?channel=N` is built by `channelroles.js::stageRemoteUrl` and surfaced as Outputs →
+Sharing. `output.html?channel=N` is built by `outputurl.js` and is what **Outputs → Screens →
+Copy URL** hands out, which is the link CLAUDE.md tells operators to use, because only a
+channel-keyed source follows a template swap. §89 already made the second of those a supported
+route to a preacher's screen. So a church that wired its confidence monitor from the obvious
+link watched a Stage Timer count down on the console and send it to nobody, while `stage.html`
+beside it showed the rail. One frame, two clients, opposite answers, decided by which link
+somebody had copied.
+
+**The gate is the ROLE, which is what keeps the safety argument whole.** `Output.svelte:299`
+holds `shownProgramme = acceptsStageMessage(myRole) && !downMode ? stageTimerSet : []`. The
+page keeps the set either way and hands it to `TemplateRender` only when its own channel holds
+the `stage` role; the renderer draws it only where the template carries a `programme` layer. A
+`main`-role screen wearing the very same stage template paints no rail at all, and that case
+matters more than the feature does.
+
+**It reuses the Stage Message's own predicate, deliberately.**
+`channelroles.js::acceptsStageMessage` is the one answer to *may this screen be shown
+something meant for one person*, and a second predicate beside it would be two answers to one
+question, drifting apart on the schedule this repository has now recorded four times. A
+programme rail and a word to the preacher are the same kind of thing: the operator's
+bookkeeping for the platform, not for the room. Only `stage` qualifies, and no role is not a
+stage, so a lobby TV and a streaming feed are refused by the default rather than by a list
+somebody has to remember to extend.
+
+**A screen the operator has taken out of the wall paints neither.** `!downMode` sits on the
+same line for the reason `shownContent` and `shownBackdrop` give above it: a screen taken down
+with a rail left standing has been half taken down, which is the state `downMode` exists to
+make impossible. Derived, never written, so putting the screen back has something to come back
+to.
+
+**`true` in the verdict table is weaker than the `false` it replaced, and that is named rather
+than glossed.** It now means only *this page has a branch*. The rest is held by
+`progtimertemplate.test.js`, which drives the real page for both roles, because a table that
+reads source text cannot say what a page paints. The old reasoning is kept in the row verbatim
+instead of being replaced, because it is still exactly why a `main` screen shows nothing.
+
+**And a panic control now takes the Stage Message off this page.** `output.html` used to keep
+the text and merely stop rendering it: the layer stack sits inside `{#if content}` and the
+page passes `content={visible ? content : null}`, so `clear` HID the message and the next
+verse fired painted a private word nobody had re-sent. `black` did not even hide it the same
+way, leaving it rendered underneath an opaque cover, so whatever lifted the cover showed it
+again. `takeDownStageMessage` at `Output.svelte:346` is called from both branches, at `:789`
+and `:792`. ONE WRITER, because the harsher control must never do less than the milder one.
+
+**A rail of Stage Timers is deliberately NOT taken down with it**, and the line is §91's: a
+panic control silences a room, it does not stop the clocks. A Stage Message SAYS something and
+a timer COUNTS, and only the first is a sentence the operator has taken back.
+
+**Three things were rejected.** A blanket `$:` that re-clears the message whenever the role is
+not `stage` reads as belt and braces and is worse than either half alone: it makes the
+acceptance check redundant, so removing that check would break no test, and the message would
+still be ASSIGNED for an instant before the reactive pass took it away, which on a
+congregation screen is a flash of something private. Each path guards its own case, once.
+Reversing the refusal for every screen was never on the table. And devolving it to the
+template, letting a `programme` layer decide for itself, was refused on §98's line: which
+screen is a stage is the operator's fact, and what a template draws is the designer's.
+
+**What this does NOT do.** It opens no second door to the rail. `channels::stage_alert` still
+publishes to the kiosk hub and emits no Tauri event, so a stage screen wired as a native
+window receives neither the message nor the timers; that limit is unchanged and stays on the
+record (`docs/qa/RELAY_GAP.md` RG-156). It is not a security boundary and is not claimed as
+one, on §89's own terms: the LAN is trusted by decision (§35, `docs/SECURITY.md` T4) and
+anybody may type `?channel=2`. It closes an accident, not a hole.
+
+**Evidence.** `progtimertemplate.test.js` drives the real page and asserts what it paints for
+both roles, including the `main`-role screen wearing the stage template.
+`stagealerttemplate.test.js` holds *"and it does not come back with the next verse (RG-156)"*,
+and `stagealertpanic.test.js` holds the two `output.html` cases beside the phone's, so both
+surfaces are asserted in one file and neither can be tidied into the other later.
