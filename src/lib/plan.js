@@ -64,16 +64,36 @@
  * the colour mean something else on the surface an operator reads on a Sunday,
  * and the Planner's rows are rendered beside Live's in the same session.
  *
- * `colourlaw.test.js` holds the floor, and it is worth knowing exactly how much
- * of it, because the wave-4 plan overstated this and the overstatement is the
- * dangerous direction. Its sweep over every `TYPE` entry (`:60-66`) is a
- * SUBSTRING match on the token text, so `var(--v-col-scripture)` sails through
- * it — the indirection is invisible to the scanner even though it resolves to
- * amber. What actually catches a ramp is the identity assertion at `:98`, and
- * that covers `song` and `slideAccent('C')` and nothing else. So a ramp built
- * from `--v-col-*` and left off `song` would pass the whole file while painting
- * ON AIR amber on an auto-detect cue. **The test is not the reason to refuse
- * this; the meaning of the colour is.** Nothing in this wave amends that file.
+ * `colourlaw.test.js` holds the floor, and the paragraph that used to sit here
+ * described a hole in it that has since been closed — the description is kept
+ * because the hole is worth understanding. Its sweep over every `TYPE` entry was
+ * a SUBSTRING match on the token text, so `var(--v-col-scripture)` sailed
+ * through: the indirection was invisible to the scanner even though it resolves
+ * to amber. What actually caught a ramp was the identity assertion, and that
+ * covered `song` and `slideAccent('C')` and nothing else. A ramp built from
+ * `--v-col-*` and left off `song` would have passed the whole file while painting
+ * ON AIR amber on an auto-detect cue.
+ *
+ * **It does not sail through any more.** On 2026-09-20 `promiseIn` was made to
+ * RESOLVE: it reads `tokens.css` and `app.css`, follows a `var()` chain to its
+ * literal, and reports the whole path — `--v-col-scripture → --v-amber (ON AIR)`.
+ * A third sweep reads every `var(--…)` in the CODE of this file, so a table added
+ * later is covered on arrival rather than when somebody remembers to list it.
+ * Both were watched to fail by pointing `TYPE.media` at `--v-col-media`.
+ *
+ * **The test is still not the reason to refuse a per-kind ramp; the meaning of
+ * the colour is.** What the closed gap changes is only that reaching for one is
+ * now loud instead of silent.
+ *
+ * ── 2026-09-20: SECTIONS, which is a different question ──────────────────────
+ *
+ * The operator asked for the running order to be colour coded "section by
+ * section". That is not the refusal above wearing a new coat: a section is a
+ * POSITION in the plan, not a kind of content and not a state, so a band on it
+ * claims nothing about what a cue is or what a screen is doing. It is answered
+ * with the two free hues this paragraph names — see `sectionBands` below for the
+ * system, what happens when a plan has more sections than hues, and why colour is
+ * never the only signal there.
  */
 export const TAXONOMY_INK = 'var(--v-faint)';
 
@@ -309,6 +329,93 @@ export function sectionsOf(items) {
     else sec.timed = false;
   }
   return out;
+}
+
+/**
+ * SECTION BANDING — the running order, coloured section by section.
+ *
+ * ── WHAT THE COLOURS MEAN, AND WHAT THEY DELIBERATELY DO NOT ────────────────
+ *
+ * There are TWO, they alternate, and that is the whole system:
+ *
+ *   section 1 · magenta   `--v-sec-a`   (hue 314°)
+ *   section 2 · lime      `--v-sec-b`   (hue  81°)
+ *   section 3 · magenta … and so on, repeating every two.
+ *
+ * A band says ONE thing: **this is a different section from the one above it.**
+ * It is not a kind of content, not a state, not urgency, not whether a cue is
+ * timed. Nothing in this running order changes colour because of what happens to
+ * it — the colours a running service needs are spoken for, and a build surface
+ * borrowing one is the defect the top of this file refuses twice.
+ *
+ * ── WHY TWO, AND WHAT HAPPENS AT SECTION SEVEN ──────────────────────────────
+ *
+ * Two is not a first instalment. The law has taken orange (ON AIR), red
+ * (destructive), sky (a guess), violet (rehearsal), steel (selection), green
+ * (healthy) and neutral grey (CUED); magenta near 310° and lime near 80° are
+ * what is left on the wheel, and the paragraph at the top of this file says so
+ * with the measurements. A third hue does not exist to be found.
+ *
+ * So the palette REPEATS. Section 7 wears magenta, exactly as sections 1, 3 and
+ * 5 do. That is a deliberate answer rather than a limit worked around: banding
+ * two colours down a list is how a reader sees where one group ends and the next
+ * begins, and it makes no claim that section 7 and section 1 are related. What
+ * makes a section ITSELF is its ordinal and its name, both of which are printed.
+ * Inventing a seventh hue would mean either a colour the law has spoken for, or
+ * a hue sitting 20° from one — a magenta that is nearly rose, a lime that is
+ * nearly amber — which is worse than repeating, because a near-miss reads AS the
+ * promise colour at a glance and under a projector's light.
+ *
+ * ── COLOUR IS NEVER THE ONLY SIGNAL ─────────────────────────────────────────
+ *
+ * Same reason a paraphrase shows no percentage (rule 18): a channel that can be
+ * absent may not be the only channel. `ordinal` is printed in the heading, the
+ * heading prints the section's name, and a cue row's left edge is a SHAPE whose
+ * presence — not its hue — says the row is inside a numbered section. Read in
+ * greyscale, or by an operator who cannot separate magenta from lime, the
+ * running order loses the banding and nothing else.
+ *
+ * ── AN UNTITLED GROUP IS NOT A SECTION ──────────────────────────────────────
+ *
+ * `sectionsOf` opens an untitled leading group for the cues before the first
+ * heading, so that they are not dropped on the floor. Those get `null` here: no
+ * number, no ink, no edge. Numbering a group the operator never named would be
+ * inventing a section and then colouring the invention, which is a claim from an
+ * absence — the same mistake as an empty `built_shape` being called stale.
+ *
+ * Returns an array PARALLEL to `sections`: `null`, or
+ * `{ ordinal, ink, soft, line }`. Parallel rather than folded into `sectionsOf`
+ * because grouping is a fact about the plan and banding is a fact about how it
+ * is drawn, and the Planner is not the only surface that groups a plan.
+ */
+export const SECTION_BANDS = [
+  { ink: 'var(--v-sec-a)', soft: 'var(--v-sec-a-soft)', line: 'var(--v-sec-a-line)' },
+  { ink: 'var(--v-sec-b)', soft: 'var(--v-sec-b-soft)', line: 'var(--v-sec-b-line)' },
+];
+
+export function sectionBands(sections) {
+  let ordinal = 0;
+  return (sections ?? []).map((sec) => {
+    if (!sec || !String(sec.title || '').trim()) return null;
+    ordinal += 1;
+    return bandForOrdinal(ordinal);
+  });
+}
+
+/**
+ * The band a single section wears, by its ordinal among the TITLED sections.
+ *
+ * The one door onto the cycle (`SECTION_BANDS`), so a caller cannot index the
+ * array itself and get the modulo wrong at the wrap. A non-positive or
+ * unreadable ordinal is not a section and answers `null` rather than silently
+ * taking the first colour — an off-by-one that painted every section magenta
+ * would look exactly like a working feature.
+ */
+export function bandForOrdinal(ordinal) {
+  const n = Number(ordinal);
+  if (!Number.isFinite(n) || n < 1) return null;
+  const i = (Math.trunc(n) - 1) % SECTION_BANDS.length;
+  return { ordinal: Math.trunc(n), ...SECTION_BANDS[i] };
 }
 
 /**

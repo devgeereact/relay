@@ -45,6 +45,7 @@
     dropIndex,
     reorderTo,
     planChannelsOf,
+    sectionBands,
   } from '../plan.js';
   // THE SHARED URL BUILDER, and it has to be shared. `main.rs::media_url` builds
   // this for every output screen and `bundledbackgrounds.js` mirrors that rule for
@@ -499,6 +500,12 @@
   // Both derived from the ordered cue list, never stored beside it, so a section
   // can never claim cues the transport does not actually walk.
   $: sections = sectionsOf(items);
+  // THE BANDS, parallel to `sections` and derived from the same list. Grouping is
+  // a fact about the plan; banding is a fact about how it is drawn, which is why
+  // the two are separate functions — see `plan.js::sectionBands` for what the two
+  // colours mean, what happens at section seven, and why colour is never the only
+  // signal here.
+  $: bands = sectionBands(sections);
   $: runtime = planRuntime(items);
   $: railPlans = planQ.trim()
     ? plans.filter((p) => p.title.toLowerCase().includes(planQ.trim().toLowerCase()))
@@ -859,13 +866,26 @@
       {#if leftMode === 'cues'}
         <div class="rw-panebody sp-tablewrap">
           {#if items.length}
-            {#each sections as sec (sec.items[0].id)}
+            {#each sections as sec, si (sec.items[0].id)}
               <!-- A section heading is a CAPTION and a hairline to the right edge,
                    not a container: `sectionsOf` derives the grouping from the same
                    ordered list the transport walks, so a heading can never claim a
-                   cue the plan does not have in it. -->
+                   cue the plan does not have in it.
+                   THE BAND (`plan.js::sectionBands`). Two hues, alternating, and
+                   they say one thing: this is a different section from the one
+                   above. Never a kind, never a state — the colours a running
+                   service needs are all spoken for. The ORDINAL beside the name is
+                   what survives greyscale, so the running order loses the banding
+                   and nothing else when the colour is gone. An untitled leading
+                   group gets `null`: no number, no ink, because numbering a group
+                   the operator never named invents a section. -->
+              {@const band = bands[si]}
               {#if sec.title}
-                <div class="sp-sec">
+                <div class="sp-sec" style={band ? `--sec-ink:${band.ink};--sec-line:${band.line}` : ''}>
+                  {#if band}
+                    <span class="sp-secn r-mono"
+                      ><span class="sr-only">Section&nbsp;</span>{band.ordinal}</span>
+                  {/if}
                   <span class="sp-seccap">{sec.title}</span>
                   <span class="sp-secln"></span>
                 </div>
@@ -874,6 +894,8 @@
               {#each sec.items as c (c.id)}
                 {@const n = items.findIndex((i) => i.id === c.id)}
                 <div class="sp-row" class:sel={c.id === selId} class:dragging={dragId === c.id}
+                  class:inband={Boolean(band)}
+                  style={band ? `--sec-ink:${band.ink}` : ''}
                   on:click={() => (selId = c.id)} role="button" tabindex="0"
                   aria-pressed={c.id === selId}
                   on:keydown={(e) => {
@@ -1404,7 +1426,20 @@
     border:1px solid transparent; border-radius:var(--v-r-sm);
     margin:0 6px 2px; width:calc(100% - 12px);
     transition:background var(--v-dur) var(--v-ease), border-color var(--v-dur) var(--v-ease); }
+  /* A ROW INSIDE A NUMBERED SECTION carries a left edge in that section's ink.
+     It is an EDGE — a shape that is present or absent — before it is a hue: a row
+     in a section looks different from a row outside one with every colour
+     stripped out, which is what keeps the band from being the only signal. The
+     heading above it has scrolled away on a long plan and this has not, so it is
+     also the answer to "which section am I looking at?" halfway down.
+
+     `border-left-color` rather than a pseudo-element, so it rides the row's own
+     transform during a drag and cannot be left behind by one. */
+  .sp-row.inband{ border-left-width:2px; border-left-color:var(--sec-ink); padding-left:9px; }
   .sp-row:hover:not(.sel){ background:var(--v-surf2); border-color:var(--v-line); }
+  /* Hover and selection paint the other three edges; the band keeps its own, or a
+     row would lose which section it is in at the moment it is pointed at. */
+  .sp-row.inband:hover, .sp-row.inband.sel, .sp-row.inband.dragging{ border-left-color:var(--sec-ink); }
   /* Selection is steel blue — the thing you are working on (docs/REBRAND.md §1).
      It is NOT amber: amber means a cue is live on the wall, and a cue merely
      being edited on a Tuesday is not. */
@@ -1449,14 +1484,39 @@
     font-variant-numeric:tabular-nums; }
   .sp-drop{ padding:22px; text-align:center; font-size:var(--v-fs-b2); color:var(--v-faint); }
 
-  /* A section heading: a caption and a hairline that runs to the right edge. It
-     was a sticky bar with an amber rule down its left side — amber, on a build
-     surface, for a heading. The line is the furniture; the word is the heading. */
+  /* A section heading: a NUMBER, a caption and a hairline that runs to the right
+     edge. It was a sticky bar with an amber rule down its left side — amber, on a
+     build surface, for a heading. The line is the furniture; the word is the
+     heading; and the number is what the colour cannot say on its own.
+
+     THE BAND. `--sec-ink` and `--sec-line` are set on this element by the view
+     from `plan.js::sectionBands` — two hues, alternating by the section's
+     position, repeating from section three. They are the only two the colour law
+     leaves free, and they carry NO promise: the band says "a different section
+     from the one above" and nothing about what any cue is or what any screen is
+     doing. See the doc comment on `sectionBands` for why there are two and what
+     happens at section seven.
+
+     A heading with no band (the untitled leading group) sets neither variable and
+     falls back to the hairline it always had — `--sec-line` is unset there, so
+     `var(--sec-line, var(--v-line))` is the furniture again and the group is
+     plainly not a numbered section. */
   .sp-sec{ display:flex; align-items:center; gap:8px; padding:10px 12px 4px; }
+  /* The ordinal. Tabular digits in the section's own ink, over its own soft fill,
+     with a real border so the badge is a SHAPE before it is a colour: in
+     greyscale it is still a boxed number beside a heading. `sr-only` makes the
+     accessible name "Section 3" rather than the digit alone, which a screen
+     reader would announce with no idea what it counts. */
+  .sp-secn{ flex:0 0 auto; display:inline-grid; place-items:center;
+    min-width:17px; height:15px; padding:0 4px; border-radius:var(--v-r-sm);
+    font-size:var(--v-fs-cap); line-height:1; font-weight:700;
+    font-variant-numeric:tabular-nums;
+    color:var(--sec-ink, var(--v-faint));
+    border:1px solid var(--sec-line, var(--v-line2)); }
   .sp-seccap{ flex:0 0 auto; font-family:var(--f-mono); font-size:var(--v-fs-cap);
     line-height:var(--v-lh-cap); font-weight:600; letter-spacing:var(--v-tr-caps);
     text-transform:uppercase; color:var(--v-faint); }
-  .sp-secln{ flex:1; height:1px; background:var(--v-line); }
+  .sp-secln{ flex:1; height:1px; background:var(--sec-line, var(--v-line)); }
 
   /* THE CAVEAT — a pane footer, never a media query. See the markup. */
   .sp-caveat{ padding:8px 12px; }

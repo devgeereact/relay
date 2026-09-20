@@ -196,6 +196,31 @@
   --v-col-notice:var(--v-red);
   --v-col-media:var(--v-amethyst);
 
+  /* ── SECTION BANDING (the Planner's running order) ────────────────────────
+     THE TWO HUES THE COLOUR LAW LEAVES FREE, and they are the whole free set.
+
+     `plan.js` records the arithmetic twice and refuses a per-KIND ramp twice on
+     the strength of it: amber is ON AIR (36°), rose destructive (356°), cyan a
+     guess (194°), amethyst rehearsal (267°), steel selection (215°), emerald
+     healthy (138°), grey CUED. What is left on the wheel is magenta around 310°
+     and lime around 80°, and nothing else — which is why this pair is the
+     palette rather than the first two entries of one.
+
+     They colour a SECTION, never a kind and never a state. A section is a
+     position in the running order: the colour says "a different section from the
+     one above", and a plan with seven sections repeats these two three times on
+     purpose. What tells one section from another is its NUMBER and its NAME,
+     both printed; the ink is banding, so the running order still reads correctly
+     with no colour at all.
+
+     Measured against the surfaces they sit on (`legibility.js::contrastRatio`):
+     magenta 6.20 on --v-bg, 5.67 on --v-surf, 5.03 on --v-surf2; lime 10.30 /
+     9.41 / 8.35. Both clear AA body (4.5:1) on every surface the Planner puts
+     them on. Neither is placed on --v-surf3, the surface --v-faint is already
+     kept off. */
+  --v-sec-a:#ef6ad0; --v-sec-a-soft:rgba(239,106,208,.14); --v-sec-a-line:rgba(239,106,208,.45);
+  --v-sec-b:#a8d94b; --v-sec-b-soft:rgba(168,217,75,.14); --v-sec-b-line:rgba(168,217,75,.45);
+
   /* ── Radius. 3px, and 5px for the things that hold other things ───────────
      No pills on buttons, tabs or cards: a pill in a control room reads as a toy.
      --v-r-round survives for the two shapes that are genuinely round — a slider

@@ -31,16 +31,65 @@ const PROMISE = {
   '--v-red': 'destructive',
 };
 
+// ── THE INDIRECTION THIS SCANNER USED TO MISS ───────────────────────────────
+//
+// `plan.js` records the gap in the paragraph that refuses a per-kind ramp for the
+// second time: "Its sweep over every `TYPE` entry is a SUBSTRING match on the
+// token text, so `var(--v-col-scripture)` sails through it — the indirection is
+// invisible to the scanner even though it resolves to amber."
+//
+// That was exact, and it was the dangerous kind of gap: `--v-col-scripture` IS
+// `var(--v-amber)` and `--v-col-media` IS `var(--v-amethyst)` (tokens.css), so a
+// taxonomy built out of the `--v-col-*` family would have painted ON AIR on the
+// one cue kind the AI may fire by itself, and every grep for `--v-amber` would
+// have come back clean. The wave-4 proposal asked for exactly that.
+//
+// So the matcher now RESOLVES. It reads both halves of the stylesheet, follows a
+// `var()` chain to its literal, and reports the whole path — `--v-col-scripture
+// → --v-amber (ON AIR)` — because a reader who is told only "amber" will look for
+// an amber that is not in the file. A cycle terminates rather than recursing; a
+// token that is not defined resolves to nothing and is not a false positive.
+const STYLESHEET = ['../tokens.css', '../app.css']
+  .map((f) => readFileSync(resolve(__dirname, f), 'utf8'))
+  .join('\n');
+
+/** The declared value of `--token`, or null. First definition wins, as CSS does not. */
+function declarationOf(token) {
+  const m = STYLESHEET.match(new RegExp(`${token.replace(/[-]/g, '\\-')}\\s*:\\s*([^;}]+)[;}]`));
+  return m ? m[1].trim() : null;
+}
+
+/** Every `--token` a value names directly. */
+function tokensIn(value) {
+  return [...String(value || '').matchAll(/var\(\s*(--[\w-]+)/g)].map((m) => m[1]);
+}
+
 /**
- * Names a promise token, INCLUDING its variants — `--v-amber-soft`, `--v-amber2`,
- * `--v-cyan-line`. A plain substring match is what is wanted: a variant of a
- * promise colour is still that promise, and no non-promise token in `app.css`
- * begins with one of these names.
+ * Names a promise token, following `var()` indirection to any depth.
+ *
+ * The substring half is unchanged and still wanted: a VARIANT of a promise colour
+ * is still that promise (`--v-amber-soft`, `--v-amber2`, `--v-cyan-line`), and no
+ * non-promise token in the stylesheet begins with one of these names.
+ *
+ * The resolving half is the addition. It walks each named token's declaration,
+ * and each token THAT names, until it reaches a literal or runs out — so an alias
+ * of an alias of amber is still amber.
  */
-function promiseIn(value) {
+function promiseIn(value, seen = new Set(), path = []) {
   const v = String(value || '');
   for (const [token, means] of Object.entries(PROMISE)) {
-    if (v.includes(token)) return `${token} (${means})`;
+    if (v.includes(token)) {
+      const via = [...path, token].join(' → ');
+      return `${via} (${means})`;
+    }
+  }
+  for (const token of tokensIn(v)) {
+    if (seen.has(token)) continue; // a cycle is not a promise
+    seen.add(token);
+    const decl = declarationOf(token);
+    if (!decl) continue; // undefined token — nothing to follow, not a hit
+    const hit = promiseIn(decl, seen, [...path, token]);
+    if (hit) return hit;
   }
   return null;
 }
@@ -56,6 +105,42 @@ describe('the colour law — a taxonomy may not paint a promise', () => {
     expect(promiseIn('var(--v-rose)')).toContain('destructive');
     expect(promiseIn('var(--v-faint)')).toBeNull();
     expect(promiseIn('var(--v-sel)')).toBeNull();
+  });
+
+  it('…and it now FOLLOWS an alias, which is the gap plan.js recorded', () => {
+    // THE HOLE THIS CLOSES, named. `plan.js` says of the pre-2026-09-20 version of
+    // this file: "`var(--v-col-scripture)` sails through it — the indirection is
+    // invisible to the scanner even though it resolves to amber". A taxonomy built
+    // out of that family would have painted ON AIR on the one cue kind the AI may
+    // fire by itself, with every grep for `--v-amber` coming back clean.
+    //
+    // Watched to fail against the substring-only matcher: all four of these
+    // returned null, which is how the whole `--v-col-*` proposal would have passed.
+    expect(promiseIn('var(--v-col-scripture)')).toContain('ON AIR');
+    expect(promiseIn('var(--v-col-media)')).toContain('rehearsal');
+    expect(promiseIn('var(--v-col-notice)')).toContain('destructive');
+    // The PATH is reported, not just the verdict: a reader told only "amber" goes
+    // looking for an amber that is not written anywhere in the file.
+    expect(promiseIn('var(--v-col-scripture)')).toContain('--v-col-scripture → --v-amber');
+  });
+
+  it('…without inventing a promise where there is none', () => {
+    // The opposite mistake. A resolver that flagged everything would be as useless
+    // as one that flagged nothing, and the cheapest way to go green on a false
+    // positive is to weaken the scanner.
+    expect(promiseIn('var(--v-col-song)'), '--v-col-song is steel, i.e. selection').toBeNull();
+    expect(promiseIn('var(--v-accent)'), '--v-accent is an alias of --v-sel').toBeNull();
+    expect(promiseIn('var(--v-accent-soft)')).toBeNull();
+    // The section bands, which is what this strengthening was written alongside.
+    // They resolve to hexes of their own — the point of the exercise.
+    expect(promiseIn('var(--v-sec-a)')).toBeNull();
+    expect(promiseIn('var(--v-sec-b)')).toBeNull();
+    expect(promiseIn('var(--v-sec-a-soft)')).toBeNull();
+    // A token nothing defines is not a hit — it is a typo, and a different test's
+    // problem. Claiming it is amber would be a verdict from an absence.
+    expect(promiseIn('var(--v-not-a-real-token)')).toBeNull();
+    // And a cycle terminates rather than recursing for ever.
+    expect(promiseIn('var(--v-faint)', new Set(['--v-faint']))).toBeNull();
   });
 
   it('no cue type paints a promise colour', () => {
@@ -103,11 +188,40 @@ describe('the colour law — a taxonomy may not paint a promise', () => {
   it('slideAccent does not mention a promise colour in its own source', () => {
     // The value test above can only see the tags it thought to try. This sees the
     // function: a new branch returning amber for some tag nobody listed fails here.
+    //
+    // IT USED TO NAME THE SIX TOKENS AND STOP THERE, which is the same substring
+    // gap in a second place — a branch returning `var(--v-col-scripture)` passed
+    // it. It now resolves every token the body names, through `promiseIn`.
     const src = readFileSync(resolve(__dirname, './plan.js'), 'utf8');
     const body = src.slice(src.indexOf('export function slideAccent'));
     const fn = body.slice(0, body.indexOf('\n}') + 2);
-    const offenders = Object.keys(PROMISE).filter((t) => fn.includes(`var(${t}`));
+    const offenders = tokensIn(fn)
+      .map((t) => [t, promiseIn(`var(${t})`)])
+      .filter(([, hit]) => hit)
+      .map(([t, hit]) => `slideAccent returns ${t} → ${hit}`);
     expect(offenders).toEqual([]);
+  });
+
+  it('every colour plan.js hands out at all resolves clear of a promise', () => {
+    // The widest form of the sweep, and the one that does not depend on somebody
+    // remembering to add a new table to this file. `plan.js` is the module whose
+    // two taxonomy tables broke the law; this reads EVERY `var(--…)` in it and
+    // resolves each one, so a third table — or a fourth — is covered on arrival.
+    //
+    // `SECTION_BANDS` is what made this worth writing: it is a third table in this
+    // file, added the same day, and neither of the two existing sweeps would have
+    // looked at it.
+    const src = readFileSync(resolve(__dirname, './plan.js'), 'utf8');
+    // Code only — the file's doc comments QUOTE the promise tokens at length in
+    // order to explain what must not be done with them, and flagging that would
+    // make deleting the explanation the cheapest way to go green.
+    const offenders = tokensIn(codeOnly(src))
+      .map((t) => [t, promiseIn(`var(${t})`)])
+      .filter(([, hit]) => hit)
+      .map(([, hit]) => `plan.js hands out ${hit}`);
+    expect(offenders).toEqual([]);
+    // Guards the guard: the scan must actually be seeing the tokens in the file.
+    expect(tokensIn(codeOnly(src)).length).toBeGreaterThan(3);
   });
 
   it('Live still reserves amber for ON AIR, and a preview is steel — never amber', () => {
