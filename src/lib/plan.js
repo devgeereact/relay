@@ -166,8 +166,20 @@ export function slidesOf(item) {
       ];
     case 'announce':
       return [{ tag: 'NOTE', label: item.label, text: p.body || p.text || '' }];
+    // A media slide has no words and never will — but it does have an ASSET, and
+    // dropping the id here is what left every surface downstream with nothing but
+    // a filename to show. `media_id`/`media_kind` ride along so a caller can look
+    // the row up; `text` stays empty because there is still nothing to typeset.
     case 'media':
-      return [{ tag: 'BG', label: item.label, text: '' }];
+      return [
+        {
+          tag: 'BG',
+          label: item.label,
+          text: '',
+          media_id: p.media_id ?? null,
+          media_kind: p.kind || 'image',
+        },
+      ];
     case 'countdown': {
       const m = Number(p.minutes) || 5;
       return [{ tag: '⏱', label: p.label || item.label, text: `${m}:00` }];
@@ -443,15 +455,45 @@ export function fmtDuration(seconds, long = false) {
  * KEYED template visible (see `.sp-preview`) — it is a statement about a rendered
  * slide, so a cue with no slide to render gets words instead of an empty plate.
  *
+ * A MEDIA CUE IS A FIFTH SITUATION, and it is why `media` was added rather than
+ * an `{#if}` in the view. "The slide is the picture" was true and useless: the
+ * picture can be SHOWN, because `TemplateRender` already paints `media_url` +
+ * `media_kind`, and nothing upstream ever handed it either field for a plan cue.
+ * Once the caller looks the asset up, two answers are possible and they are not
+ * the same news — the row is there and the thumbnail IS the preview, or the row
+ * has been deleted out from under a cue that still points at it, which is the
+ * third situation above wearing a different coat. Naming the file is the whole
+ * value of the second: "a picture is missing" tells an operator nothing they can
+ * act on, and the cue's own label is often just `Background`.
+ *
+ * `media` is what the caller found: `{ found, filename }`, or nothing at all when
+ * no lookup was made. Absent, the four verdicts above are exactly as they were —
+ * the argument is additive on purpose, because this function's existing answers
+ * are themselves pinned.
+ *
+ * `plate` is whether the chequered ground is drawn. The chequer exists to make a
+ * KEYED template visible (see `.sp-preview`) — it is a statement about a rendered
+ * slide, so a cue with no slide to render gets words instead of an empty plate.
+ *
  * Pure, and here rather than in the component, because this is a rule about what
  * may be claimed and rules of that shape in this file are the ones that get tested.
  */
-export function previewState(item, hasText) {
+export function previewState(item, hasText, media) {
   if (!item) return { state: 'none', plate: false, message: '' };
   if (hasText) return { state: 'render', plate: true, message: '' };
   const known = TYPE[item.cue_type];
   if (item.cue_type === 'media') {
-    return { state: 'self', plate: false, message: 'The slide is the picture — media plays full-frame.' };
+    // Nothing was looked up — the caller cannot say, so neither may this.
+    if (!media) {
+      return { state: 'self', plate: false, message: 'The slide is the picture — media plays full-frame.' };
+    }
+    if (media.found) return { state: 'render', plate: true, message: '' };
+    const named = media.filename ? `“${media.filename}”` : 'the file it was built from';
+    return {
+      state: 'empty',
+      plate: false,
+      message: `This media cue points at ${named}, which is no longer in the media library, so firing it would put nothing on the screen.`,
+    };
   }
   if (item.cue_type === 'countdown') {
     return { state: 'self', plate: false, message: 'The clock is drawn when this cue fires, so there is nothing to show yet.' };

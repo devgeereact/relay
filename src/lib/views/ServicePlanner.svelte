@@ -46,9 +46,17 @@
     reorderTo,
     planChannelsOf,
   } from '../plan.js';
+  // THE SHARED URL BUILDER, and it has to be shared. `main.rs::media_url` builds
+  // this for every output screen and `bundledbackgrounds.js` mirrors that rule for
+  // the surfaces that show the file itself — the Library's media pane, and now
+  // this inspector. A picture Relay SHIPS has no file under `/media/<id>` at all
+  // (DECISIONS §90), so a hand-rolled copy here would render every seeded
+  // background as a broken-image box in a preview that claims to be the wall.
+  import { mediaUrl } from '../bundledbackgrounds.js';
   import {
     capture,
     templates,
+    localIp,
     listPlans,
     createPlan,
     deletePlan,
@@ -124,6 +132,12 @@
   let addSongs = [];
   let addMedia = [];
   let allMedia = []; // full media library, filtered locally by the query
+  // The host the preview's thumbnails are served from — the app's HTTP server on
+  // 8032, never the Vite port, which does not exist in a packaged build. Same
+  // default and same fallback as the Library's media pane: `localhost` works on
+  // this machine, and the LAN address is fetched so the URL shown here is the one
+  // an output screen would use.
+  let mediaHost = 'localhost';
   let addAnnounce = [];
   let allAnnounce = []; // full announcement list, filtered locally
   let addSearching = false;
@@ -229,6 +243,10 @@
     inspTab = 'general';
     msg = '';
     allMedia = await listMedia().catch(() => []);
+    // A failed lookup leaves `localhost`, which is correct on this machine — the
+    // preview is never worth failing a plan over.
+    const ip = await localIp().catch(() => null);
+    if (ip) mediaHost = ip;
     allAnnounce = await listAnnouncements().catch(() => []);
     await loadItems();
     if (items.length) selId = items[0].id;
@@ -631,6 +649,28 @@
   // The inspector preview goes through TemplateRender — the ONE renderer used by
   // the fullscreen output and the Templates editor — so what the operator sees
   // here is what the wall will show, by construction rather than by resemblance.
+  // THE MEDIA CUE'S ASSET, resolved out of the library already in hand.
+  //
+  // A media cue's whole content is a picture, and this inspector used to answer
+  // "what does this put on the wall?" with its filename. `TemplateRender` could
+  // paint it all along — it branches on `content.media_kind` and reads
+  // `content.media_url` — so the only thing missing was the lookup and the two
+  // fields. `allMedia` is already loaded for the Add-cue search, so this costs
+  // no extra call.
+  //
+  // `found` is a real three-way answer, not a truthiness test: a cue with no
+  // `media_id` at all (an older or hand-edited payload) is not the same as one
+  // pointing at a row that has been DELETED, and only the second is a defect
+  // worth naming a file over. `plan.js::previewState` turns this into the
+  // sentence, because the verdict lives there with the other four.
+  $: selMedia = (() => {
+    if (selCue?.cue_type !== 'media') return null;
+    const p = payloadOf(selCue);
+    if (p.media_id == null) return null;
+    const row = allMedia.find((m) => m.id === p.media_id) || null;
+    return { found: Boolean(row), filename: p.filename || selCue.label, row, kind: p.kind || 'image' };
+  })();
+
   $: previewContent = !selCue
     ? null
     : selCue.cue_type === 'scripture'
@@ -639,14 +679,27 @@
           text: payloadOf(selCue).text || '',
           translation: payloadOf(selCue).translation || '',
         }
-      : { reference: selCue.label, text: selSlides[0]?.text || '', translation: '' };
+      : selMedia?.found
+        ? {
+            reference: selCue.label,
+            text: '',
+            translation: '',
+            // The two fields `TemplateRender` actually reads. Built by the shared
+            // builder so this preview and the wall cannot disagree about where a
+            // file lives.
+            media_url: mediaUrl(mediaHost, selMedia.row),
+            media_kind: selMedia.kind === 'video' ? 'video' : 'image',
+          }
+        : { reference: selCue.label, text: selSlides[0]?.text || '', translation: '' };
 
   // What the preview may honestly claim. `plan.js` owns the verdict so the four
   // situations it separates are testable without a component (CLAUDE.md rule 35):
   // a media or countdown cue draws its own content at fire time; a scripture, song
   // or notice cue with nothing to typeset is a cue that would put NOTHING in front
   // of a congregation, which is different news and must not read the same.
-  $: pv = previewState(selCue, Boolean(previewContent?.text));
+  // A media cue has no TEXT and never will, so `hasText` can never speak for it —
+  // which is why the resolved asset is passed alongside rather than folded in.
+  $: pv = previewState(selCue, Boolean(previewContent?.text), selMedia);
 </script>
 
 <!-- Escape closes the arrangement picker, from anywhere — bound at the window rather
