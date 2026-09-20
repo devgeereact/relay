@@ -216,6 +216,13 @@
    * against.
    */
   let mediaReport = null;
+  /**
+   * WHAT THE OPERATOR HAS ASKED THE CLIP TO DO — `{ paused, loop, replayEpoch }`.
+   *
+   * `null` until somebody asks for something, which is the default a clip is fired
+   * with: playing, not looping.
+   */
+  let mediaTransport = null;
   const noteMedia = (m) => {
     mediaReport = m;
   };
@@ -229,6 +236,16 @@
    * happens here rather than being waited for.
    */
   $: if (!shownContent?.media_url) mediaReport = null;
+  /**
+   * A TRANSPORT BELONGS TO THE CLIP IT WAS PRESSED FOR.
+   *
+   * The hub empties its retained copy on any content frame, and this is the same
+   * decision on this side. Without it a screen would carry a Pause across a fire
+   * and the next video would arrive already held, with nothing in the product to
+   * say why — and a reconnect would not correct it, because there would be no
+   * retained frame left to send.
+   */
+  $: if (!shownContent?.media_url) mediaTransport = null;
   // ── THE STAGE TIMERS ────────────────────────────────────────────────────────
   //
   // `r6-contracts.test.js` recorded `timer: false` for this page, with a reason
@@ -843,6 +860,20 @@
       // WHAT EVERY SCREEN IS FOR. Sent on every hello and whenever it changes, so
       // this page can answer the only question it asks of it: am I the stage?
       applyRoles(m.roles);
+    } else if (m.kind === 'media_transport') {
+      // WHAT THE CLIP IS DOING. Applied to the element by `TemplateRender`, never
+      // by re-mounting it — re-mounting to pause would restart the clip from zero,
+      // which is the opposite of what Pause means.
+      //
+      // Not role-gated, unlike the stage frames: this changes what a screen is
+      // ALREADY showing rather than putting something new in front of somebody, so
+      // there is nothing here a congregation screen should be spared. A screen with
+      // no clip up has no video to apply it to and ignores it by construction.
+      mediaTransport = {
+        paused: !!m.paused,
+        loop: !!m.loop,
+        replayEpoch: Number.isFinite(m.replay_epoch) ? m.replay_epoch : null,
+      };
     } else if (m.kind === 'stage_alert') {
       // ONLY A STAGE. No role is not a stage — a lobby TV and a streaming feed
       // both arrive here with no role at all, and a filter whose default is yes
@@ -1094,6 +1125,7 @@
   stageMessage={shownStageMessage}
   programme={shownProgramme}
   onMedia={noteMedia}
+  {mediaTransport}
   transitionOverride={appliedTransition} />
 <!-- BLACKOUT NEVER BLACKS OUT A LOWER THIRD. On a keyed channel "black" would
      paint an opaque rectangle over the live camera — the opposite of what the

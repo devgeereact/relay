@@ -149,6 +149,7 @@ fn main() {
         .manage(Detecting(AtomicBool::new(true)))
         .manage(channels::Rehearsal::default())
         .manage(channels::CountdownWarnDefault::default())
+        .manage(channels::MediaTransport::default())
         .manage(channels::WallState::default())
         .manage(channels::LiveContent::default())
         .manage(timers::TimerRegistry::default())
@@ -229,6 +230,7 @@ fn main() {
             let kiosk_last_t = kiosk.last_timers_handle();
             let kiosk_last_bg = kiosk.last_background_handle();
             let kiosk_last_stage_media = kiosk.last_stage_media_handle();
+            let kiosk_last_transport = kiosk.last_media_transport_handle();
             let kiosk_down = kiosk.screens_down_handle();
             let kiosk_looks = kiosk.look_ids_handle();
             // The configured default, warmed before any client can connect — a
@@ -402,6 +404,7 @@ fn main() {
                 kiosk_last_t,
                 kiosk_last_bg,
                 kiosk_last_stage_media,
+                kiosk_last_transport,
                 kiosk_down,
                 kiosk_looks,
                 app.state::<channels::OutputHealth>().inner().clone(),
@@ -521,6 +524,7 @@ fn main() {
             fire_media,
             show_background,
             send_stage_media,
+            set_media_transport,
             get_content_templates,
             set_content_template,
             get_setting,
@@ -789,6 +793,19 @@ fn broadcast_with_clock<R: tauri::Runtime>(
     handle: &tauri::AppHandle<R>,
     mut content: channels::OutputContent,
 ) -> error::Result<()> {
+    // A NEW THING ON THE SCREENS IS A CLIP AT ITS BEGINNING, PLAYING.
+    //
+    // The hub empties the retained transport frame on any content, clear or black
+    // (`media_transport_retention`); this is the same decision for the state the
+    // commands read back from, in the same place the content leaves by (rule 36).
+    // Without it the next video a church put up would arrive already held, because
+    // somebody paused a different one twenty minutes earlier, and nothing in the
+    // product would say why.
+    //
+    // The epoch is deliberately NOT wound back — it is a monotonic instruction
+    // counter, and a replay number a screen has already seen is a replay that does
+    // nothing.
+    handle.state::<channels::MediaTransport>().reset();
     if let Err(bad) = pipeline::preflight(&content) {
         // The screens are left exactly as they were. Doing nothing quietly is the
         // failure being fixed, so this is said in three places: stdout for a
@@ -4008,6 +4025,37 @@ fn publish_background<R: tauri::Runtime>(
 /// and a church that reopened Relay on Tuesday to a Sunday backdrop would have to
 /// find the control that took it off. The retained hub slot is what carries it
 /// across a screen reconnecting, which is the case that actually happens.
+/// HOLD THE CLIP, LOOP IT, OR START IT AGAIN.
+///
+/// Requirement 11's transport. Each argument is what `adjust_countdown` calls a
+/// re-aim: `None` means "leave that alone", so Pause cannot un-loop and Loop
+/// cannot un-pause. An operator presses one control at a time and the others must
+/// survive it.
+///
+/// `replay` is not a state, so it is not a boolean on the wire either — it bumps a
+/// counter. An operator pressing Replay twice on a clip already at its start would
+/// otherwise publish a frame identical to the retained one, and a screen that had
+/// acted on the first would do nothing. See `channels::media_transport_frame_json`.
+///
+/// **It says nothing about whether a screen obeyed**, and must not: the screens
+/// report where their clip actually is on the beat (`channels::MediaBeat`), and
+/// Live reads the transport's effect from THAT rather than from the fact that a
+/// command returned `Ok`. A control that reported its own instruction back as an
+/// outcome is rule 35 with extra steps.
+#[tauri::command]
+fn set_media_transport<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    transport: tauri::State<'_, channels::MediaTransport>,
+    paused: Option<bool>,
+    // `looping`, not `loop`: the wire says `loop` and Rust cannot.
+    looping: Option<bool>,
+    replay: Option<bool>,
+) -> error::Result<()> {
+    let (paused, looping, epoch) = transport.apply(paused, looping, replay.unwrap_or(false));
+    channels::media_transport(&app, paused, looping, epoch);
+    Ok(())
+}
+
 /// PUT SOMETHING ON THE PREACHER'S OWN SCREEN, or take it off (`None`).
 ///
 /// An announcement slide, or the preacher's own deck, on the stage display and

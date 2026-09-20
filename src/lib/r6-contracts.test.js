@@ -134,6 +134,12 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       //
       // The stage page owns it, and that page cannot be anything else.
       stage_media: false,
+      // WHAT THE CLIP IS DOING — handled, and by every screen rather than by a
+      // chosen one. It changes what is already showing rather than putting
+      // something new in front of anybody, so there is nothing here a congregation
+      // screen should be spared; a screen with no clip up has no video to apply it
+      // to and ignores it by construction.
+      media_transport: true,
       // WHAT EACH SCREEN IS FOR — the fact the filter above is taken on. Sent on
       // every hello and whenever the operator changes a role, so this page can
       // answer "am I the stage?" and stop being one the moment it is not.
@@ -239,6 +245,12 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       // without it (rule 43). Scripture is painted OVER it and does not remove
       // it, so the slide returns when the reading is cleared.
       stage_media: true,
+      // The preacher's page draws its own zones and mounts no `<video>` for a
+      // FIRED clip, so a transport has nothing to act on here. `false` records the
+      // refusal rather than leaving it to be rediscovered as an omission — and if
+      // the stage ever plays a clip of its own, this is the row that says the
+      // decision was taken.
+      media_transport: false,
       channel_template: false, // the stage page has one fixed look
       template: false,
       // Same reason as template/channel_template above: the stage page does not

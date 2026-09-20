@@ -1040,6 +1040,74 @@ impl CountdownWarnDefault {
     }
 }
 
+/// WHAT THE CLIP ON THE SCREENS HAS BEEN ASKED TO DO.
+///
+/// Held here rather than derived from the retained frame, for the reason
+/// `adjust_countdown` keeps its own state: the operator changes ONE of these at a
+/// time. Pause must not un-loop, and Loop must not un-pause. A caller says nothing
+/// about the fields it is not touching, which needs somewhere to read the others
+/// back from.
+///
+/// It is reset when a clip is fired, and by the panic controls, in the same place
+/// the retained frame is emptied — one door, so the state and the wire cannot come
+/// to different conclusions about whether the clip is held.
+#[derive(Default)]
+pub struct MediaTransport {
+    inner: Mutex<MediaTransportState>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct MediaTransportState {
+    paused: bool,
+    looping: bool,
+    /// Only ever goes up. See `media_transport_frame_json`: replay is an event,
+    /// and an event expressed as a boolean cannot be sent twice.
+    replay_epoch: u64,
+}
+
+impl MediaTransport {
+    /// Apply what the caller actually said, leave the rest, and hand back the whole
+    /// state to publish. `replay` bumps the counter.
+    pub fn apply(
+        &self,
+        paused: Option<bool>,
+        looping: Option<bool>,
+        replay: bool,
+    ) -> (bool, bool, u64) {
+        let mut g = match self.inner.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if let Some(p) = paused {
+            g.paused = p;
+        }
+        if let Some(l) = looping {
+            g.looping = l;
+        }
+        if replay {
+            g.replay_epoch = g.replay_epoch.saturating_add(1);
+            // STARTING IT AGAIN MEANS IT IS RUNNING. An operator who presses
+            // Replay on a held clip means "play it from the top", not "seek to the
+            // top and stay stopped" — and the second reading leaves a frozen first
+            // frame on a wall with the transport saying it was actioned.
+            g.paused = false;
+        }
+        (g.paused, g.looping, g.replay_epoch)
+    }
+
+    /// Back to a clip that has just been fired: playing, not looping. The epoch is
+    /// deliberately NOT reset — it is a monotonic instruction counter, and winding
+    /// it back would let a later replay publish a number a screen has already seen.
+    pub fn reset(&self) {
+        let mut g = match self.inner.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        g.paused = false;
+        g.looping = false;
+    }
+}
+
 /// The configured warning window, for a publisher that has an app handle. None
 /// when nothing is configured OR when the state is not managed (headless tests,
 /// early boot) — an absence, which the far side reads as "keep the shipped minute"
@@ -1299,6 +1367,52 @@ fn stage_media_retention(msg: &str) -> Option<Option<String>> {
         return None;
     }
     Some((!msg.contains(r#""media_url":null"#)).then(|| msg.to_string()))
+}
+
+/// WHAT THE OPERATOR HAS ASKED THE CLIP TO DO — held, looping, or started again.
+///
+/// **`replay_epoch` is a counter and not a flag**, and that is the whole of why
+/// this works. "Start it again" is not a state a screen can be in; it is an event,
+/// and an event expressed as a boolean cannot be sent twice. An operator pressing
+/// Replay a second time on a clip already at its start would publish a frame
+/// identical to the retained one, and a screen that had acted on the first would
+/// do nothing at all. A number that only goes up is an instruction every time.
+fn media_transport_frame_json(paused: bool, looping: bool, replay_epoch: u64) -> String {
+    serde_json::json!({
+        "kind": "media_transport",
+        "paused": paused,
+        "loop": looping,
+        "replay_epoch": replay_epoch,
+    })
+    .to_string()
+}
+
+/// Is this the frame that says what the clip on the screens is doing?
+///
+/// `contains`, not `starts_with`, for the reason recorded on `is_screen_frame`.
+fn is_media_transport_frame(msg: &str) -> bool {
+    msg.contains(r#""kind":"media_transport""#)
+}
+
+/// Leave the transport alone, take it away, or become it.
+///
+/// Three answers again, and a fourth trigger the other retained frames do not
+/// have: **a new CONTENT frame clears it**. A clip is started at its beginning and
+/// playing, always, so a transport retained across a fire would hand the next
+/// video a church put up already held, because somebody paused a different one
+/// twenty minutes earlier. Nothing in the product would say why.
+///
+/// `clear` and `black` empty it too, with everything else they take.
+fn media_transport_retention(msg: &str) -> Option<Option<String>> {
+    if is_screen_frame(msg) {
+        // Content, clear and black alike: the transport belongs to the clip that
+        // was showing, and all three of those replace it.
+        return Some(None);
+    }
+    if !is_media_transport_frame(msg) {
+        return None;
+    }
+    Some(Some(msg.to_string()))
 }
 
 /// The frame a hub sends when every screen is following the wall.
@@ -1760,6 +1874,25 @@ pub fn stage_media<R: tauri::Runtime>(app: &tauri::AppHandle<R>, media: Option<(
     publish_kiosk(app, json);
 }
 
+/// TELL THE SCREENS WHAT TO DO WITH THE CLIP THEY ARE ALREADY PLAYING.
+///
+/// Not rehearsal-gated, and deliberately rather than by omission. Every other
+/// publisher here PUTS something in front of somebody; this one changes what is
+/// already there. In a rehearsal nothing is on a real screen to change, so the
+/// frame reaches nobody — and gating it would only mean an operator rehearsing the
+/// transport found the buttons dead with nothing to say why.
+pub fn media_transport<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    paused: bool,
+    looping: bool,
+    replay_epoch: u64,
+) {
+    publish_kiosk(
+        app,
+        media_transport_frame_json(paused, looping, replay_epoch),
+    );
+}
+
 /// THE WIRE FORM OF THE PROGRAMME TIMERS — the whole stage-visible set, every time.
 ///
 /// **A set, not a delta.** A tablet that missed one frame would otherwise be wrong
@@ -2175,6 +2308,12 @@ pub struct KioskHub {
     /// frame nor a timer, so retaining it in `last_screen` would replace the verse
     /// and hand the next screen to join a picture over a blank wall.
     last_stage_media: Arc<Mutex<Option<String>>>,
+    /// WHAT THE CLIP ON THE SCREENS IS DOING — held, looping, and which replay.
+    ///
+    /// Its own slot, and the only one a CONTENT frame reaches into: a clip is
+    /// always started at its beginning and playing, so a transport that outlived
+    /// the clip it belonged to would hand the next video to a church already held.
+    last_media_transport: Arc<Mutex<Option<String>>>,
     /// THE SCREENS THE OPERATOR HAS TAKEN OUT OF THE WALL — `{"4":"clear"}`.
     ///
     /// ITS OWN SLOT, NOT `last_screen`, and this is the fifth time that sentence
@@ -2233,6 +2372,7 @@ impl Default for KioskHub {
             last_timers: Arc::new(Mutex::new(None)),
             last_background: Arc::new(Mutex::new(None)),
             last_stage_media: Arc::new(Mutex::new(None)),
+            last_media_transport: Arc::new(Mutex::new(None)),
             // THE EMPTY FRAME, not an empty map. This slot holds a frame ready to
             // send, so seeding it with `{}` would put a bare object on the wire on
             // every hello before anything was ever taken down — a message with no
@@ -2352,6 +2492,15 @@ impl KioskHub {
                 *last = next;
             }
         }
+        // A SIXTH SLOT, and the only one a CONTENT frame empties. Every other
+        // retention here is cleared by a panic control alone; this one goes with
+        // the next thing fired as well, because the transport belongs to the clip
+        // rather than to the service.
+        if let Some(next) = media_transport_retention(&msg) {
+            if let Ok(mut last) = self.last_media_transport.lock() {
+                *last = next;
+            }
+        }
         // A FOURTH SLOT, and the same disjointness argument. A `screen_state` frame
         // is neither a screen frame nor a timer — it says which screens the
         // operator has taken OUT of the wall, which is a fact about screens rather
@@ -2377,6 +2526,10 @@ impl KioskHub {
         self.last_timers.clone()
     }
     /// Shared handle to the retained background, for the WS task's hello.
+    pub fn last_media_transport_handle(&self) -> Arc<Mutex<Option<String>>> {
+        self.last_media_transport.clone()
+    }
+
     pub fn last_stage_media_handle(&self) -> Arc<Mutex<Option<String>>> {
         self.last_stage_media.clone()
     }
@@ -2846,6 +2999,7 @@ pub async fn run_kiosk_server(
     last_timers: Arc<Mutex<Option<String>>>,
     last_background: Arc<Mutex<Option<String>>>,
     last_stage_media: Arc<Mutex<Option<String>>>,
+    last_media_transport: Arc<Mutex<Option<String>>>,
     screens_down: Arc<Mutex<String>>,
     look_ids: Arc<Mutex<Vec<i64>>>,
     health: OutputHealth,
@@ -2891,6 +3045,7 @@ pub async fn run_kiosk_server(
         let last_timers = last_timers.clone();
         let last_background = last_background.clone();
         let last_stage_media = last_stage_media.clone();
+        let last_media_transport = last_media_transport.clone();
         let screens_down = screens_down.clone();
         let look_ids = look_ids.clone();
         let health = health.clone();
@@ -3355,6 +3510,23 @@ pub async fn run_kiosk_server(
                                     let stage_media_frame =
                                         last_stage_media.lock().ok().and_then(|m| m.clone());
                                     if let Some(frame) = stage_media_frame {
+                                        let _ = write
+                                            .send(tokio_tungstenite::tungstenite::Message::Text(frame))
+                                            .await;
+                                    }
+                                    // AND WHAT THE CLIP IS DOING, if one is held or
+                                    // looping. A screen that rejoined mid-service
+                                    // would otherwise start the clip playing while
+                                    // every other screen sat held — and the operator
+                                    // who pressed Pause would be watching one screen
+                                    // disobey with nothing to say why.
+                                    //
+                                    // Emptied by the next fire as well as by a panic
+                                    // control, so this can only ever describe the
+                                    // clip that is actually up.
+                                    let transport_frame =
+                                        last_media_transport.lock().ok().and_then(|t| t.clone());
+                                    if let Some(frame) = transport_frame {
                                         let _ = write
                                             .send(tokio_tungstenite::tungstenite::Message::Text(frame))
                                             .await;
@@ -4768,6 +4940,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -4838,6 +5011,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -4931,6 +5105,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -4991,6 +5166,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -5080,6 +5256,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -5184,6 +5361,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -5274,6 +5452,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -5442,6 +5621,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -5556,6 +5736,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -5823,6 +6004,10 @@ mod tests {
         // join a picture over a blank wall. Scripture overrides it on the DEVICE,
         // which is a rule about painting and not about retention.
         ("stage_media", false),
+        // What the clip is DOING. Not a screen frame: it has its own slot, and
+        // retaining it here would replace the verse with a pause instruction and
+        // hand the next screen to join a blank wall.
+        ("media_transport", false),
         ("template", false),
         // Configuration, not content. It is retained — in its OWN slot, and
         // replayed on hello from there — because a screen that joins late must not
@@ -6037,6 +6222,14 @@ mod tests {
             true,
             "a word to the preacher is for a person, and a rehearsal has no person \
              waiting for it",
+        ),
+        (
+            "media_transport",
+            false,
+            "it changes what is ALREADY on a screen rather than putting something \
+             there, so in a rehearsal it reaches nobody by construction — and \
+             gating it would only mean an operator rehearsing the transport found \
+             the buttons dead with nothing to say why",
         ),
         (
             "stage_media",
@@ -6460,6 +6653,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -6533,6 +6727,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -7072,6 +7267,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -7141,6 +7337,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -7216,6 +7413,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -7409,6 +7607,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -7484,6 +7683,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -7556,6 +7756,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -7670,6 +7871,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -7787,6 +7989,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -7857,6 +8060,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -7938,6 +8142,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -8005,6 +8210,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -8271,6 +8477,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -8335,6 +8542,7 @@ mod tests {
             hub.last_timers_handle(),
             hub.last_background_handle(),
             hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             health.clone(),

@@ -2594,6 +2594,47 @@ return guardedRead('listOutputChannels', async (call) => {
 export const stageAlert = writable(null);
 
 /**
+ * WHAT THE OPERATOR HAS ASKED THE CLIP TO DO — `{ paused, loop }`.
+ *
+ * A mirror of what Relay SENT, and nothing more. **It is not evidence that a
+ * screen obeyed**: the screens report where their clip actually is on the beat,
+ * and `describeMediaClock` reads the effect from that. A control that reported its
+ * own instruction back as an outcome is rule 35 with extra steps, which is exactly
+ * what this store would become if a readout were derived from it.
+ */
+export const mediaTransport = writable({ paused: false, loop: false });
+
+/**
+ * Hold the clip, loop it, or start it again.
+ *
+ * Each field is a re-aim in `adjust_countdown`'s sense: omit one and it is left
+ * alone, so Pause cannot un-loop and Loop cannot un-pause. An operator presses one
+ * control at a time and the others have to survive it.
+ *
+ * `replay` is an event rather than a state and the engine carries it as a counter,
+ * so pressing it twice on a clip already at its start is two instructions rather
+ * than one frame sent twice.
+ *
+ * GROUP 1 (throws). The congregation can see the difference: a Pause that failed
+ * silently leaves a clip running under an operator who believes they stopped it,
+ * and the next cue goes out over the top of it.
+ */
+export async function setMediaTransport({ paused, loop, replay } = {}) {
+  const call = await invoke();
+  await call('set_media_transport', {
+    paused: paused ?? null,
+    // `looping` across the bridge: the wire says `loop` and Rust cannot.
+    looping: loop ?? null,
+    replay: replay ?? null,
+  });
+  // After, never before, and only what was actually asked for.
+  mediaTransport.update((t) => ({
+    paused: replay ? false : (paused ?? t.paused),
+    loop: loop ?? t.loop,
+  }));
+}
+
+/**
  * WHAT THE PREACHER'S OWN SCREEN IS HOLDING — the media id, or `null`.
  *
  * A mirror of what Relay SENT, written only after the call resolves, and claiming

@@ -121,3 +121,61 @@ describe('a screen reports its clip on the beat it already sends', () => {
     });
   });
 });
+
+// ── THE TRANSPORT: HOLD IT, LOOP IT, START IT AGAIN ─────────────────────────
+//
+// Requirement 11's controls. Each field is a re-aim in `adjust_countdown`'s sense:
+// omit one and it is left alone, because an operator presses one control at a time
+// and the others have to survive it. Pause must not un-loop.
+//
+// Replay is an EVENT and not a state, which is why the engine carries it as a
+// counter rather than a boolean. Pressing it twice on a clip already at its start
+// must be two instructions, not one frame sent twice — and a boolean cannot
+// express that.
+describe('the transport asks for one thing and leaves the rest', () => {
+  const load = async () => {
+    vi.resetModules();
+    const invoke = vi.fn().mockResolvedValue(null);
+    vi.doMock('@tauri-apps/api/core', () => ({ invoke: (...a) => invoke(...a) }));
+    const cap = await import('./stores/capture.js');
+    const { get } = await import('svelte/store');
+    return { invoke, cap, get };
+  };
+
+  it('says null for what it was not asked about', async () => {
+    const { invoke, cap } = await load();
+    await cap.setMediaTransport({ paused: true });
+    expect(invoke).toHaveBeenCalledWith('set_media_transport', {
+      paused: true,
+      looping: null,
+      replay: null,
+    });
+  });
+
+  it('pausing does not un-loop, which is the whole point of the nulls', async () => {
+    const { cap, get } = await load();
+    await cap.setMediaTransport({ loop: true });
+    await cap.setMediaTransport({ paused: true });
+    expect(get(cap.mediaTransport)).toEqual({ paused: true, loop: true });
+  });
+
+  it('a replay means the clip is running, not seeked and stopped', async () => {
+    // An operator pressing Replay on a held clip means "play it from the top". The
+    // other reading leaves a frozen first frame on a wall with the control saying
+    // it was actioned.
+    const { cap, get } = await load();
+    await cap.setMediaTransport({ paused: true });
+    await cap.setMediaTransport({ replay: true });
+    expect(get(cap.mediaTransport).paused).toBe(false);
+  });
+
+  it('does not claim a transport that failed to send', async () => {
+    vi.resetModules();
+    const invoke = vi.fn().mockRejectedValue(new Error('no'));
+    vi.doMock('@tauri-apps/api/core', () => ({ invoke: (...a) => invoke(...a) }));
+    const cap = await import('./stores/capture.js');
+    const { get } = await import('svelte/store');
+    await expect(cap.setMediaTransport({ paused: true })).rejects.toThrow();
+    expect(get(cap.mediaTransport).paused, 'a failed Pause still said held').toBe(false);
+  });
+});

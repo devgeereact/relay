@@ -370,6 +370,18 @@
    * is the whole design.
    */
   export let onMedia = null;
+  /**
+   * WHAT THE OPERATOR HAS ASKED THE CLIP TO DO.
+   *
+   * `{ paused, loop, replayEpoch }`, or `null` for the default a clip is fired
+   * with: playing, not looping.
+   *
+   * **Applied to the element, never by re-mounting it.** `{#key slideKey}` rebuilds
+   * the video whenever the content changes, and rebuilding it to pause it would
+   * restart the clip from zero — the opposite of what Pause means. So these are
+   * read in a reactive block that touches the existing element and nothing else.
+   */
+  export let mediaTransport = null;
 
   function fitOne(box, container) {
     const verse = box.querySelector('.verse');
@@ -1087,6 +1099,45 @@
    * silently missing from two thirds of the templates in the product — the twin
    * -door failure this repository has recorded four times.
    */
+  /**
+   * THE REPLAY THIS ELEMENT HAS ALREADY ACTED ON.
+   *
+   * Replay is an event, not a state, and the wire carries it as a counter for that
+   * reason. This remembers the last number acted on so a re-render, a re-connect,
+   * or a retained frame replayed on hello cannot start the clip again — a screen
+   * that rejoined mid-clip would otherwise jump to the beginning because the frame
+   * it was handed still names a replay from ten minutes ago.
+   */
+  let actedReplay = null;
+  // THE BACKDROP IS NOT THE CLIP, and its `loop` is deliberately left alone above.
+  // A standing background is room furniture that plays behind whatever is fired
+  // over it; the transport belongs to the video the operator put up, and a Pause
+  // that stopped the church's backdrop would be a control reaching past what it
+  // says it does.
+  $: if (videoEl && mediaTransport) {
+    const want = !!mediaTransport.paused;
+    // `loop` is a property, not a class: set it on the element rather than through
+    // markup, which would need the `{#key}` this block exists to avoid.
+    videoEl.loop = !!mediaTransport.loop;
+    const epoch = mediaTransport.replayEpoch ?? null;
+    if (epoch != null && epoch !== actedReplay) {
+      actedReplay = epoch;
+      try {
+        videoEl.currentTime = 0;
+      } catch {
+        /* a video with no metadata yet cannot be seeked; the next frame will. */
+      }
+    }
+    // Ask, then report. `play()` returns a promise that a browser may reject —
+    // autoplay policy, or a source that is not ready — and a rejection swallowed
+    // here would leave the operator's own control claiming an outcome it did not
+    // get. The BEAT is what says whether the clip is actually moving, and it reads
+    // the element rather than this intent.
+    if (want && !videoEl.paused) videoEl.pause();
+    else if (!want && videoEl.paused) void videoEl.play().catch(() => {});
+    reportMedia();
+  }
+
   const reportMedia = () => {
     if (!onMedia) return;
     const el = videoEl;
@@ -2020,7 +2071,7 @@
             <div class="lmediabox" style="{boxStyle(L)} border-radius:{L.radius || 0}cqw; opacity:{L.opacity == null ? 1 : L.opacity};">
               {#if content.media_kind === 'video'}
                 <!-- svelte-ignore a11y-media-has-caption -->
-                <video class="lmediafill" src={content.media_url} style="object-fit:{L.fit === 'contain' ? 'contain' : 'cover'};" bind:this={videoEl} autoplay loop muted={!audio} playsinline on:loadedmetadata={() => { routeAudio(); reportMedia(); }} on:timeupdate={reportMedia} on:pause={reportMedia} on:play={reportMedia} on:ended={reportMedia}></video>
+                <video class="lmediafill" src={content.media_url} style="object-fit:{L.fit === 'contain' ? 'contain' : 'cover'};" bind:this={videoEl} autoplay loop={mediaTransport ? !!mediaTransport.loop : true} muted={!audio} playsinline on:loadedmetadata={() => { routeAudio(); reportMedia(); }} on:timeupdate={reportMedia} on:pause={reportMedia} on:play={reportMedia} on:ended={reportMedia}></video>
               {:else}
                 <img class="lmediafill" src={content.media_url} style="object-fit:{L.fit === 'contain' ? 'contain' : 'cover'};" alt="" />
               {/if}
@@ -2117,7 +2168,7 @@
            layer to the template to position it instead. -->
       {#if content.media_kind === 'video'}
         <!-- svelte-ignore a11y-media-has-caption -->
-        <video class="media" src={content.media_url} bind:this={videoEl} autoplay loop muted={!audio} playsinline on:loadedmetadata={() => { routeAudio(); reportMedia(); }} on:timeupdate={reportMedia} on:pause={reportMedia} on:play={reportMedia} on:ended={reportMedia}></video>
+        <video class="media" src={content.media_url} bind:this={videoEl} autoplay loop={mediaTransport ? !!mediaTransport.loop : true} muted={!audio} playsinline on:loadedmetadata={() => { routeAudio(); reportMedia(); }} on:timeupdate={reportMedia} on:pause={reportMedia} on:play={reportMedia} on:ended={reportMedia}></video>
       {:else}
         <img class="media" src={content.media_url} alt="" />
       {/if}
@@ -2168,7 +2219,7 @@
          sensible behaviour and keeps old templates working. -->
     {#if content.media_kind === 'video'}
       <!-- svelte-ignore a11y-media-has-caption -->
-      <video class="media" src={content.media_url} bind:this={videoEl} autoplay loop muted={!audio} playsinline on:loadedmetadata={() => { routeAudio(); reportMedia(); }} on:timeupdate={reportMedia} on:pause={reportMedia} on:play={reportMedia} on:ended={reportMedia}></video>
+      <video class="media" src={content.media_url} bind:this={videoEl} autoplay loop={mediaTransport ? !!mediaTransport.loop : true} muted={!audio} playsinline on:loadedmetadata={() => { routeAudio(); reportMedia(); }} on:timeupdate={reportMedia} on:pause={reportMedia} on:play={reportMedia} on:ended={reportMedia}></video>
     {:else}
       <img class="media" src={content.media_url} alt="" />
     {/if}

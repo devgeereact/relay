@@ -94,6 +94,11 @@ pub(crate) fn bare_app() -> tauri::App<tauri::test::MockRuntime> {
         // as the two above and the same shape of failure: a fresh install manages
         // it, so a fixture without it is an app in a state no church could be in,
         // and `clear_screen` would refuse on a machine where it must work.
+        // WHAT THE CLIP ON THE SCREENS IS DOING. A fresh install has no clip and
+        // no transport, and a fixture missing this is not a fresh install — it is
+        // an app in a state no church could be in, where the one content door
+        // panics instead of firing.
+        .manage(channels::MediaTransport::default())
         .manage(channels::ScreensDown::default())
         .manage(servicelock::ServiceLock::default())
         .manage(Semantic(SemanticIndex::build(&corpus)))

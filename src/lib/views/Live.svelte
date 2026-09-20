@@ -135,6 +135,7 @@
   import IconButton from '../ui/IconButton.svelte';
   import { describeScreen } from '../outputHealth.js';
   import { describeMediaClock } from '../mediaclock.js';
+  import { mediaTransport, setMediaTransport } from '../stores/capture.js';
   import { programmeScreen, describeStageReach, describeCountdownReach } from '../channelroles.js';
   import TemplateRender from '../TemplateRender.svelte';
   import {
@@ -390,6 +391,27 @@
   // verse answers a question nobody asked, and it would be the last thing the
   // previous clip said rather than a fact about now.
   $: mediaLive = !!$live?.media_url && !$screenBlack;
+  let clipErr = '';
+  /**
+   * One door for all three transport controls.
+   *
+   * GROUP 1 throws, so the failure is caught HERE and shown rather than swallowed:
+   * a Pause that failed silently leaves a clip running under an operator who
+   * believes they stopped it, and the next cue goes out over the top of it.
+   *
+   * The button state is never set from this. The buttons read `$mediaTransport`,
+   * which the store writes only after the call resolves, and the REMAINING TIME
+   * reads the screens' own beat — so what the operator sees is what happened
+   * rather than what was asked for.
+   */
+  async function clip(change) {
+    clipErr = '';
+    try {
+      await setMediaTransport(change);
+    } catch (e) {
+      clipErr = humanError(e);
+    }
+  }
 
   $: outs = channels.map((c) => ({
     c,
@@ -2568,9 +2590,37 @@
            that no screen is answering goes and looks at one. -->
       {#if mediaLive}
         <div class="mon-clip" class:unknown={!mediaClock.known} aria-live="polite">
+          <!-- THE TRANSPORT. No amber on any of it: amber is ON AIR and these are
+               instructions about a clip, not a claim that a congregation is
+               looking at one.
+
+               `Replay` is not disabled while held, deliberately — starting a clip
+               again is exactly what an operator reaches for when it is stopped in
+               the wrong place, and the engine treats replay as "play it from the
+               top" rather than "seek and stay stopped". -->
+          <button
+            class="r-btn sm ghost"
+            on:click={() => clip({ paused: !$mediaTransport.paused })}
+            aria-pressed={$mediaTransport.paused}
+            title={$mediaTransport.paused ? 'Let the clip run' : 'Hold the clip where it is'}
+            >{$mediaTransport.paused ? 'Play' : 'Pause'}</button>
+          <button class="r-btn sm ghost" on:click={() => clip({ replay: true })} title="Start the clip again from the beginning">Replay</button>
+          <button
+            class="r-btn sm ghost"
+            class:on={$mediaTransport.loop}
+            on:click={() => clip({ loop: !$mediaTransport.loop })}
+            aria-pressed={$mediaTransport.loop}
+            title={$mediaTransport.loop ? 'Stop repeating at the end' : 'Repeat the clip when it ends'}
+            >Loop</button>
           <span class="r-mono">{mediaClock.text}</span>
           {#if mediaClock.known && mediaClock.from}
             <span class="mon-clipfrom">from {mediaClock.from}</span>
+          {/if}
+          {#if clipErr}
+            <!-- Humanised, and shown rather than swallowed: a transport control
+                 that failed quietly is a control reporting a success it did not
+                 achieve (rule 15's lesson, one surface over). -->
+            <span class="mon-cliperr" role="alert">{clipErr}</span>
           {/if}
           {#if mediaClock.disagree}
             <!-- A REAL GAP BETWEEN TWO SCREENS IS NOT DRIFT. Separate players are
@@ -3834,6 +3884,10 @@
   /* Rose, which already means a fault on this surface. Not amber: amber is ON AIR
      and a screen falling behind is not a claim about what a congregation sees. */
   .mon-clipwarn{color:var(--v-red); font-size:var(--v-fs-b3)}
+  .mon-cliperr{color:var(--v-red); font-size:var(--v-fs-b3)}
+  /* Steel, which already means "this is the state you chose" on this surface. Not
+     amber, which is ON AIR and belongs to the tag above the pane. */
+  .mon-clip .r-btn.on{color:var(--v-sel); border-color:var(--v-sel-line)}
   .mon-name{min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
     font-size:var(--v-fs-cap); letter-spacing:.09em; text-transform:uppercase;
     color:var(--v-faint)}
