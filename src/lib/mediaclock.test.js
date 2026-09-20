@@ -6,7 +6,7 @@
 // operator times the next cue against, which is why `describeMediaClock` takes
 // channel rows and nothing else — it has no way to ask the console's own video.
 import { describe, it, expect } from 'vitest';
-import { describeMediaClock, DRIFT_TOLERANCE_MS } from './mediaclock.js';
+import { describeMediaClock, DRIFT_TOLERANCE_MS, mediaIdFromUrl } from './mediaclock.js';
 
 const row = (over = {}) => ({
   id: 1,
@@ -148,5 +148,52 @@ describe('the run surface asks the screens', () => {
     // claim and is the only thing entitled to.
     const block = LIVE.slice(LIVE.indexOf('.mon-clip{'), LIVE.indexOf('.mon-name{'));
     expect(block).not.toMatch(/--v-amber|--v-amethyst|--v-cyan/);
+  });
+});
+
+describe('reading the media id back out of a URL the engine built', () => {
+  it('finds the id in an imported asset URL', () => {
+    expect(mediaIdFromUrl('http://192.168.1.144:8032/media/7')).toBe(7);
+    expect(mediaIdFromUrl('http://10.0.0.2:8032/media/812?x=1')).toBe(812);
+  });
+
+  it('answers null for a picture Relay SHIPS, which has no row', () => {
+    // DECISIONS §90: a bundled asset has no file under `/media/<id>` at all, so
+    // there is no id to read and guessing one would address somebody else's row.
+    expect(mediaIdFromUrl('http://192.168.1.144:8032/bundled/dark-wood.jpg')).toBeNull();
+  });
+
+  it('answers null rather than guessing on anything else', () => {
+    expect(mediaIdFromUrl(null)).toBeNull();
+    expect(mediaIdFromUrl('')).toBeNull();
+    expect(mediaIdFromUrl('http://x/media/abc')).toBeNull();
+    expect(mediaIdFromUrl('http://x/media/0')).toBeNull();
+  });
+});
+
+describe('the run surface can put the clip on the preacher screen too', () => {
+  const LIVE_SRC = readFileSync(resolve(__dirname, 'views/Live.svelte'), 'utf8');
+
+  it('sends the id it read back, and takes it off by sending null', () => {
+    // `sendStageMedia(null)` is the take-down, the same one door for both
+    // directions the engine uses. A separate "clear" call would be a second door
+    // onto one piece of state.
+    const fn = LIVE_SRC.slice(LIVE_SRC.indexOf('async function toStage'));
+    expect(fn.slice(0, 400)).toMatch(/sendStageMedia\(onStage \? null : liveMediaId\)/);
+  });
+
+  it('refuses a picture Relay ships rather than guessing an id', () => {
+    // DECISIONS §90: a bundled asset has no row under `/media/<id>`, so there is
+    // nothing to address. The control says so in its title instead of looking
+    // pressable and doing nothing.
+    expect(LIVE_SRC).toMatch(/disabled=\{liveMediaId == null\}/);
+    expect(LIVE_SRC).toMatch(/A picture Relay ships cannot be sent on its own/);
+  });
+
+  it('shows the failure rather than swallowing it', () => {
+    // A control that reported a success it did not achieve is the failure
+    // `panic.test.js` exists for one surface up.
+    const fn = LIVE_SRC.slice(LIVE_SRC.indexOf('async function toStage'));
+    expect(fn.slice(0, 400)).toMatch(/clipErr = humanError\(e\)/);
   });
 });

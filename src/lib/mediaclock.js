@@ -109,3 +109,25 @@ export function describeMediaClock(rows) {
     disagree: clips.length > 1 && spread > DRIFT_TOLERANCE_MS,
   };
 }
+
+/**
+ * THE MEDIA ID INSIDE A URL THE ENGINE BUILT, or `null`.
+ *
+ * `main.rs::media_url` builds `http://<ip>:8032/media/<id>` for an imported asset
+ * and something else entirely for one Relay SHIPS (DECISIONS §90) — a bundled
+ * picture has no row under `/media/<id>` at all. So this reads the id back where
+ * there is one and answers `null` where there is not, rather than guessing.
+ *
+ * It exists because a control that acts on the clip currently up needs the id, and
+ * the id is not on the content frame: the frame carries the URL, because that is
+ * what a screen needs. Reading it back here is the smaller of two evils — the
+ * other being a second field on every content frame that only one button reads.
+ *
+ * `null` disables the control with a reason rather than sending a guess.
+ */
+export function mediaIdFromUrl(url) {
+  const m = /\/media\/(\d+)(?:[/?#]|$)/.exec(String(url ?? ''));
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isSafeInteger(n) && n > 0 ? n : null;
+}

@@ -134,8 +134,8 @@
   import { whyDisabled, ENGINE_OFF, BUSY } from '../ui/whydisabled.js';
   import IconButton from '../ui/IconButton.svelte';
   import { describeScreen } from '../outputHealth.js';
-  import { describeMediaClock } from '../mediaclock.js';
-  import { mediaTransport, setMediaTransport } from '../stores/capture.js';
+  import { describeMediaClock, mediaIdFromUrl } from '../mediaclock.js';
+  import { mediaTransport, setMediaTransport, sendStageMedia, stageMedia } from '../stores/capture.js';
   import { programmeScreen, describeStageReach, describeCountdownReach } from '../channelroles.js';
   import TemplateRender from '../TemplateRender.svelte';
   import {
@@ -392,6 +392,27 @@
   // previous clip said rather than a fact about now.
   $: mediaLive = !!$live?.media_url && !$screenBlack;
   let clipErr = '';
+  /**
+   * THE CLIP ON THE WALL, AS AN ID — or `null` for one Relay ships.
+   *
+   * Requirement 10's Live half. The Library is where an operator picks a slide for
+   * the preacher deliberately; this is the other case they asked for: the thing
+   * already on the wall, put on the preacher's screen too, without leaving the run
+   * surface mid-service.
+   *
+   * A bundled picture has no row under `/media/<id>` (DECISIONS §90), so there is
+   * no id to send and the control says so instead of guessing at one.
+   */
+  $: liveMediaId = mediaIdFromUrl($live?.media_url);
+  $: onStage = $stageMedia != null && $stageMedia === liveMediaId;
+  async function toStage() {
+    clipErr = '';
+    try {
+      await sendStageMedia(onStage ? null : liveMediaId);
+    } catch (e) {
+      clipErr = humanError(e);
+    }
+  }
   /**
    * One door for all three transport controls.
    *
@@ -2605,6 +2626,24 @@
             title={$mediaTransport.paused ? 'Let the clip run' : 'Hold the clip where it is'}
             >{$mediaTransport.paused ? 'Play' : 'Pause'}</button>
           <button class="r-btn sm ghost" on:click={() => clip({ replay: true })} title="Start the clip again from the beginning">Replay</button>
+          <!-- AND ONTO THE PREACHER'S SCREEN TOO. Requirement 10, from the surface
+               an operator is already driving. Scripture overrides it there, so this
+               is additive rather than a second wall.
+
+               Disabled for a picture Relay ships, with the reason in the title
+               rather than a control that looks pressable and does nothing. -->
+          <button
+            class="r-btn sm ghost"
+            class:on={onStage}
+            disabled={liveMediaId == null}
+            aria-pressed={onStage}
+            on:click={toStage}
+            title={liveMediaId == null
+              ? 'A picture Relay ships cannot be sent on its own'
+              : onStage
+                ? "Take it off the preacher's screen"
+                : "Put this on the preacher's screen as well"}
+            >{onStage ? 'On stage' : 'To stage'}</button>
           <button
             class="r-btn sm ghost"
             class:on={$mediaTransport.loop}
