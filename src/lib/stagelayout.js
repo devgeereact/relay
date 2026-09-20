@@ -14,6 +14,16 @@
 /** Every zone a stage screen can show, in the order the panel lists them. */
 export const STAGE_ZONES = [
   { key: 'reading', label: 'Reading' },
+  // SOMETHING THE OPERATOR PUT THERE FOR THIS PERSON — an announcement to read
+  // out, or the preacher's own deck. It shares the reading's area and LOSES it:
+  // scripture overrides the slide, and the slide comes back when the reading is
+  // cleared rather than having to be pushed again.
+  //
+  // A layout saved before this key existed has no opinion about it, and an absent
+  // key reads as OFF rather than as the default's ON. That is the conservative
+  // direction: a screen the operator configured last month does not start
+  // carrying something new without being asked.
+  { key: 'media', label: 'Slide' },
   { key: 'next', label: 'Next' },
   { key: 'note', label: 'Stage Note' },
   { key: 'countdown', label: 'Screen Countdown' },

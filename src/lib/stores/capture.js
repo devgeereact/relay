@@ -2594,6 +2594,38 @@ return guardedRead('listOutputChannels', async (call) => {
 export const stageAlert = writable(null);
 
 /**
+ * WHAT THE PREACHER'S OWN SCREEN IS HOLDING — the media id, or `null`.
+ *
+ * A mirror of what Relay SENT, written only after the call resolves, and claiming
+ * nothing more than that. The hub records nothing about who connected
+ * (DECISIONS §35), so this can never be a claim that a screen is painting it.
+ */
+export const stageMedia = writable(null);
+
+/**
+ * Put a slide on the preacher's screen, or take it off (`null`).
+ *
+ * An announcement to read out, or the preacher's own deck. **Not a background**:
+ * `showBackground` puts the church's picture behind the words on every screen,
+ * and this puts one person's reference material on one screen.
+ *
+ * Scripture overrides it on the device and does not remove it, so the slide comes
+ * back when the reading is cleared rather than needing a second push.
+ *
+ * GROUP 1 (throws). Same reasoning as `sendStageAlert` beside it: the operator is
+ * putting something in front of a person and is looking at the result, and a
+ * swallowed failure leaves them believing the preacher can see something they
+ * cannot.
+ */
+export async function sendStageMedia(id) {
+  const call = await invoke();
+  await call('send_stage_media', { id: id ?? null });
+  // After, never before: a failed send must not leave a control claiming a slide
+  // is on the stage screen.
+  stageMedia.set(id ?? null);
+}
+
+/**
  * The Stage Message — one line, the whole stage monitor, and no other
  * screen (docs/REBRAND.md §5). Empty or whitespace clears it.
  *

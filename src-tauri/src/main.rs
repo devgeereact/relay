@@ -228,6 +228,7 @@ fn main() {
             let kiosk_last_x = kiosk.last_transition_handle();
             let kiosk_last_t = kiosk.last_timers_handle();
             let kiosk_last_bg = kiosk.last_background_handle();
+            let kiosk_last_stage_media = kiosk.last_stage_media_handle();
             let kiosk_down = kiosk.screens_down_handle();
             let kiosk_looks = kiosk.look_ids_handle();
             // The configured default, warmed before any client can connect — a
@@ -400,6 +401,7 @@ fn main() {
                 kiosk_last_x,
                 kiosk_last_t,
                 kiosk_last_bg,
+                kiosk_last_stage_media,
                 kiosk_down,
                 kiosk_looks,
                 app.state::<channels::OutputHealth>().inner().clone(),
@@ -518,6 +520,7 @@ fn main() {
             fire_content,
             fire_media,
             show_background,
+            send_stage_media,
             get_content_templates,
             set_content_template,
             get_setting,
@@ -4005,6 +4008,63 @@ fn publish_background<R: tauri::Runtime>(
 /// and a church that reopened Relay on Tuesday to a Sunday backdrop would have to
 /// find the control that took it off. The retained hub slot is what carries it
 /// across a screen reconnecting, which is the case that actually happens.
+/// PUT SOMETHING ON THE PREACHER'S OWN SCREEN, or take it off (`None`).
+///
+/// An announcement slide, or the preacher's own deck, on the stage display and
+/// nowhere else. **Not a background**: `show_background` puts the church's
+/// picture behind the words on every screen, and this puts one person's
+/// reference material on one screen.
+///
+/// **Scripture overrides it, and that rule lives on the device.** The stage page
+/// paints a reading over the media while it has one and paints the media again
+/// when the reading is cleared. It is deliberately NOT taken down when a verse
+/// arrives: an operator who had to push the slide again after every reading would
+/// not call that "overrides", and it is not what was asked for.
+///
+/// Documents are refused here for the same reason `fire_media` refuses them —
+/// nothing in the product renders a PDF to a screen, so a cue built from one
+/// would look fine in the Library and die on a Sunday.
+#[tauri::command]
+fn send_stage_media<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    db: tauri::State<'_, Db>,
+    id: Option<i64>,
+) -> error::Result<()> {
+    let Some(id) = id else {
+        // TAKE IT DOWN. No lookup, no database — the way off a screen may never
+        // depend on a row still being there. The same rule as `show_background`.
+        channels::stage_media(&app, None);
+        return Ok(());
+    };
+    let (kind, path) = {
+        let conn = db.0.lock()?;
+        conn.query_row(
+            "SELECT kind, path FROM media_assets WHERE id = ?1",
+            [id],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+        )
+        .map_err(|_| "media not found".to_string())?
+    };
+    let media_kind = match kind.as_str() {
+        "image" => "image",
+        "video" => "video",
+        _ => {
+            return Err(error::Error::refused(
+                "documents can't be put on the stage screen yet",
+            ))
+        }
+    };
+    let ip = local_ip().unwrap_or_else(|| "127.0.0.1".to_string());
+    // The one URL builder, for the reason its own doc comment records: a picture
+    // Relay ships has no file under `/media/<id>`, so a second rule here would
+    // hand the stage screen a URL that 404s.
+    channels::stage_media(
+        &app,
+        Some((media_url(&ip, id, &path), media_kind.to_string())),
+    );
+    Ok(())
+}
+
 #[tauri::command]
 fn show_background<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,

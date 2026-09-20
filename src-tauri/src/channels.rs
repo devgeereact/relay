@@ -1160,6 +1160,53 @@ fn background_retention(msg: &str) -> Option<Option<String>> {
     Some((!msg.contains(r#""media_url":null"#)).then(|| msg.to_string()))
 }
 
+/// SOMETHING FOR THE PREACHER TO LOOK AT, ON THE STAGE SCREEN ONLY.
+///
+/// An announcement slide, or the preacher's own deck, put where only they can see
+/// it. `media_url: null` takes it down, the same shape `background` uses and for
+/// the same reason: one door for up and down means the two cannot disagree about
+/// which is in force.
+///
+/// **It is not a congregation background and must never be confused with one.**
+/// `background` is the church's picture behind the words on every screen; this is
+/// one person's reference material on one screen, and the only reason it is
+/// retained at all is that a stage tablet reconnecting mid-sermon would otherwise
+/// come back blank (rule 43).
+fn stage_media_frame_json(url: Option<&str>, kind: Option<&str>) -> String {
+    serde_json::json!({ "kind": "stage_media", "media_url": url, "media_kind": kind }).to_string()
+}
+
+/// Is this the frame that decides what MEDIA a stage screen is holding?
+///
+/// `contains`, not `starts_with`, for the reason recorded on `is_screen_frame`:
+/// `serde_json` orders map keys alphabetically, so a prefix check here would break
+/// the moment a field sorting before `kind` is added.
+fn is_stage_media_frame(msg: &str) -> bool {
+    msg.contains(r#""kind":"stage_media""#)
+}
+
+/// Leave the stage media alone, take it down, or become it.
+///
+/// The same three answers as `background_retention`, and the take-down arm is here
+/// for the same reason: `clear` and `black` are published through the one door, so
+/// a panic control takes the preacher's slide with the wall by construction rather
+/// than by a second message somebody has to remember to send.
+///
+/// **A READING DOES NOT APPEAR HERE, and that is the precedence rule.** Scripture
+/// overrides stage media on the screen; it does not destroy it. The device paints
+/// the reading over the media while it has one and paints the media again when the
+/// reading is cleared. Taking the media down when a verse arrived would make the
+/// operator push it again after every reading, which is not what "overrides" means.
+fn stage_media_retention(msg: &str) -> Option<Option<String>> {
+    if is_wipe_frame(msg) {
+        return Some(None);
+    }
+    if !is_stage_media_frame(msg) {
+        return None;
+    }
+    Some((!msg.contains(r#""media_url":null"#)).then(|| msg.to_string()))
+}
+
 /// The frame a hub sends when every screen is following the wall.
 pub(crate) const SCREENS_ALL_UP: &str = r#"{"kind":"screen_state","screens":{}}"#;
 
@@ -1602,6 +1649,23 @@ pub fn stage_alert<R: tauri::Runtime>(app: &tauri::AppHandle<R>, text: Option<St
     publish_kiosk(app, json);
 }
 
+/// PUT SOMETHING ON THE PREACHER'S SCREEN, or take it off (`None`).
+///
+/// Suppressed in a rehearsal like every other publisher here: a rehearsal reaches
+/// no screen, and a slide appearing on a platform during one is the exact defect
+/// `stage_next` shipped with.
+pub fn stage_media<R: tauri::Runtime>(app: &tauri::AppHandle<R>, media: Option<(String, String)>) {
+    if rehearsing(app) {
+        println!("rehearsal: stage_media SUPPRESSED — nothing left the machine");
+        return;
+    }
+    let json = match &media {
+        Some((url, kind)) => stage_media_frame_json(Some(url), Some(kind)),
+        None => stage_media_frame_json(None, None),
+    };
+    publish_kiosk(app, json);
+}
+
 /// THE WIRE FORM OF THE PROGRAMME TIMERS — the whole stage-visible set, every time.
 ///
 /// **A set, not a delta.** A tablet that missed one frame would otherwise be wrong
@@ -2011,6 +2075,12 @@ pub struct KioskHub {
     /// all (the gate is at `set_background`), so there is nothing of a rehearsal
     /// to replay here either.
     last_background: Arc<Mutex<Option<String>>>,
+    /// WHAT THE PREACHER'S OWN SCREEN IS HOLDING — see `stage_media_retention`.
+    ///
+    /// Its own slot for the same reason as the background's: it is neither a screen
+    /// frame nor a timer, so retaining it in `last_screen` would replace the verse
+    /// and hand the next screen to join a picture over a blank wall.
+    last_stage_media: Arc<Mutex<Option<String>>>,
     /// THE SCREENS THE OPERATOR HAS TAKEN OUT OF THE WALL — `{"4":"clear"}`.
     ///
     /// ITS OWN SLOT, NOT `last_screen`, and this is the fifth time that sentence
@@ -2068,6 +2138,7 @@ impl Default for KioskHub {
             channel_shows: Arc::new(Mutex::new("{}".to_string())),
             last_timers: Arc::new(Mutex::new(None)),
             last_background: Arc::new(Mutex::new(None)),
+            last_stage_media: Arc::new(Mutex::new(None)),
             // THE EMPTY FRAME, not an empty map. This slot holds a frame ready to
             // send, so seeding it with `{}` would put a bare object on the wire on
             // every hello before anything was ever taken down — a message with no
@@ -2179,6 +2250,14 @@ impl KioskHub {
                 *last = next;
             }
         }
+        // A FIFTH SLOT, on the background's argument exactly: its own slot because
+        // it is neither a screen frame nor a timer, and reached by the panic
+        // controls because `clear` and `black` come through this door too.
+        if let Some(next) = stage_media_retention(&msg) {
+            if let Ok(mut last) = self.last_stage_media.lock() {
+                *last = next;
+            }
+        }
         // A FOURTH SLOT, and the same disjointness argument. A `screen_state` frame
         // is neither a screen frame nor a timer — it says which screens the
         // operator has taken OUT of the wall, which is a fact about screens rather
@@ -2204,6 +2283,10 @@ impl KioskHub {
         self.last_timers.clone()
     }
     /// Shared handle to the retained background, for the WS task's hello.
+    pub fn last_stage_media_handle(&self) -> Arc<Mutex<Option<String>>> {
+        self.last_stage_media.clone()
+    }
+
     pub fn last_background_handle(&self) -> Arc<Mutex<Option<String>>> {
         self.last_background.clone()
     }
@@ -2668,6 +2751,7 @@ pub async fn run_kiosk_server(
     last_transition: TransitionSlot,
     last_timers: Arc<Mutex<Option<String>>>,
     last_background: Arc<Mutex<Option<String>>>,
+    last_stage_media: Arc<Mutex<Option<String>>>,
     screens_down: Arc<Mutex<String>>,
     look_ids: Arc<Mutex<Vec<i64>>>,
     health: OutputHealth,
@@ -2712,6 +2796,7 @@ pub async fn run_kiosk_server(
         let last_transition = last_transition.clone();
         let last_timers = last_timers.clone();
         let last_background = last_background.clone();
+        let last_stage_media = last_stage_media.clone();
         let screens_down = screens_down.clone();
         let look_ids = look_ids.clone();
         let health = health.clone();
@@ -3146,6 +3231,30 @@ pub async fn run_kiosk_server(
                                     let backdrop =
                                         last_background.lock().ok().and_then(|b| b.clone());
                                     if let Some(frame) = backdrop {
+                                        let _ = write
+                                            .send(tokio_tungstenite::tungstenite::Message::Text(frame))
+                                            .await;
+                                    }
+                                    // AND THE PREACHER'S OWN SLIDE, if one is up.
+                                    //
+                                    // Rule 43, for the one screen in the building
+                                    // that is not a congregation screen: a stage
+                                    // tablet whose wifi dropped mid-sermon came back
+                                    // with the reading and no slide, and stayed that
+                                    // way until the operator happened to push it
+                                    // again. Sent BEFORE the content below, on the
+                                    // same ordering rule as the backdrop: the device
+                                    // paints a reading over the media, so the media
+                                    // has to be there first for the reading to be
+                                    // over anything.
+                                    //
+                                    // It can never undo a panic control, because
+                                    // `clear` and `black` empty this slot at the
+                                    // retention door rather than being filtered out
+                                    // here.
+                                    let stage_media_frame =
+                                        last_stage_media.lock().ok().and_then(|m| m.clone());
+                                    if let Some(frame) = stage_media_frame {
                                         let _ = write
                                             .send(tokio_tungstenite::tungstenite::Message::Text(frame))
                                             .await;
@@ -4558,6 +4667,7 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -4627,6 +4737,7 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -4719,6 +4830,7 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -4778,6 +4890,7 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -4866,6 +4979,7 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -4969,6 +5083,7 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -5058,6 +5173,7 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -5225,6 +5341,7 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -5338,6 +5455,7 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -5535,6 +5653,11 @@ mod tests {
         ("black", true),
         ("stage_next", false),
         ("stage_alert", false),
+        // The preacher's own slide. Not a screen frame: it has its own slot, so
+        // retaining it here would replace the verse and hand the next screen to
+        // join a picture over a blank wall. Scripture overrides it on the DEVICE,
+        // which is a rule about painting and not about retention.
+        ("stage_media", false),
         ("template", false),
         // Configuration, not content. It is retained — in its OWN slot, and
         // replayed on hello from there — because a screen that joins late must not
@@ -5749,6 +5872,12 @@ mod tests {
             true,
             "a word to the preacher is for a person, and a rehearsal has no person \
              waiting for it",
+        ),
+        (
+            "stage_media",
+            true,
+            "the preacher's own slide is for a person on a platform, and a slide \
+             appearing there during a rehearsal is `stage_next`'s defect again",
         ),
         (
             "publish_timers",
@@ -6165,6 +6294,7 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -6237,6 +6367,7 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -6775,6 +6906,7 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -6843,6 +6975,7 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -6917,6 +7050,7 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -7109,6 +7243,7 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -7183,6 +7318,7 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -7254,6 +7390,7 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -7367,6 +7504,7 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -7483,6 +7621,7 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -7552,6 +7691,7 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -7632,6 +7772,7 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -7698,6 +7839,7 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -7963,6 +8105,7 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -8026,6 +8169,7 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             health.clone(),

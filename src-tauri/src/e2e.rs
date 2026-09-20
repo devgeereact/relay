@@ -4080,6 +4080,148 @@ fn r0_a_panic_control_takes_the_background_off_every_screen() {
     }
 }
 
+/// THE PREACHER'S OWN SLIDE REACHES THE STAGE AND SURVIVES A RECONNECT.
+///
+/// Requirement 10. An announcement the preacher has to read out, or their own
+/// deck, on the stage screen and nowhere else.
+///
+/// Rule 43 is the half worth asserting: a stage tablet whose wifi drops mid-sermon
+/// comes back and is sent what is on its screen, which now includes this. Before
+/// the retention slot existed it came back with the reading and no slide and
+/// stayed that way until the operator happened to push it again.
+#[test]
+fn the_preachers_slide_is_replayed_to_a_screen_that_joins_after_it() {
+    let app = app();
+    let h = app.handle().clone();
+    let mut kiosk = qa::Kiosk::attach(&h);
+    let pic = seed_picture(&h);
+
+    send_stage_media(h.clone(), h.state::<Db>(), Some(pic)).expect("put the slide up");
+    settle();
+    let frame = kiosk.next().expect("the slide reached no screen at all");
+    assert!(
+        frame.contains(r#""kind":"stage_media""#),
+        "the slide did not leave the machine: {frame}"
+    );
+
+    // AND THE SCREEN THAT JOINS A MOMENT LATER IS TOLD.
+    let retained = h
+        .state::<channels::KioskHub>()
+        .last_stage_media_handle()
+        .lock()
+        .ok()
+        .and_then(|m| m.clone());
+    assert!(
+        retained.is_some_and(|f| f.contains(r#""kind":"stage_media""#)),
+        "a stage screen joining mid-sermon would come back with no slide"
+    );
+}
+
+/// A PANIC CONTROL TAKES THE PREACHER'S SLIDE TOO.
+///
+/// `Clear screens` means everything. The slide goes through the same retention
+/// door as the backdrop, so `clear` and `black` empty it by construction rather
+/// than by a second message somebody has to remember to send.
+#[test]
+fn a_panic_control_takes_the_preachers_slide_off_the_stage() {
+    for (name, wipe) in [("clear_screens", 0), ("blackout", 1)] {
+        let app = app();
+        let h = app.handle().clone();
+        let _kiosk = qa::Kiosk::attach(&h);
+        let pic = seed_picture(&h);
+
+        send_stage_media(h.clone(), h.state::<Db>(), Some(pic)).expect("slide up");
+        settle();
+        assert!(
+            retained_stage_media(&h).is_some(),
+            "{name}: nothing to take down — the test would pass for the wrong reason"
+        );
+
+        if wipe == 0 {
+            clear_screens(h.clone()).expect("clear");
+        } else {
+            blackout(h.clone()).expect("blackout");
+        }
+        settle();
+        assert!(
+            retained_stage_media(&h).is_none(),
+            "{name} left the preacher's slide on the stage screen"
+        );
+    }
+}
+
+/// NOTHING OF A STAGE SLIDE REACHES A SCREEN DURING A REHEARSAL.
+///
+/// The same guarantee as `stage_next` and `stage_alert`, and asserted on the hub
+/// rather than through `Wall`, because this publisher emits no Tauri event at all
+/// — watching the wall would have watched nothing and passed.
+#[test]
+fn nothing_of_the_preachers_slide_reaches_a_screen_during_a_rehearsal() {
+    let app = app();
+    let h = app.handle().clone();
+    let _kiosk = qa::Kiosk::attach(&h);
+    let pic = seed_picture(&h);
+
+    // THE LIVE CASE FIRST, so this cannot pass by the publisher being broken.
+    send_stage_media(h.clone(), h.state::<Db>(), Some(pic)).expect("slide up");
+    settle();
+    assert!(
+        retained_stage_media(&h).is_some(),
+        "the live case never worked"
+    );
+
+    set_rehearsal(
+        h.clone(),
+        h.state::<Session>(),
+        h.state::<channels::Rehearsal>(),
+        true,
+    )
+    .expect("enter rehearsal");
+    // ONE OPERATION, IN ONE DIRECTION, and that is the whole design of this
+    // assertion. My first version took the slide down and then put it back up
+    // inside the rehearsal, and asserted the slot was still full — which is true
+    // whether or not the gate exists, because the second call refills what the
+    // first emptied. It passed with the rehearsal gate deleted, which makes it a
+    // theory nobody tested (rule 40's own lesson, in a new file).
+    //
+    // A take-down alone cannot be undone by anything later in the test, so the
+    // slot staying full is only possible if the publisher genuinely refused.
+    send_stage_media(h.clone(), h.state::<Db>(), None).expect("ask for it to come down");
+    settle();
+    assert!(
+        retained_stage_media(&h).is_some(),
+        "a rehearsal reached the stage: the take-down left the machine and emptied the slot"
+    );
+}
+
+/// A DOCUMENT IS REFUSED AT THE DOOR, NOT ON A SUNDAY.
+///
+/// Nothing in the product renders a PDF to a screen, so a slide built from one
+/// would look correct in the Library and do nothing when it was reached.
+#[test]
+fn a_document_cannot_be_put_on_the_stage_screen() {
+    let app = app();
+    let h = app.handle().clone();
+    let doc = {
+        let db = h.state::<Db>();
+        let conn = db.0.lock().expect("db");
+        db::insert_media(&conn, "document", "notices.pdf", "2026-09-20").expect("seed a document")
+    };
+    assert!(
+        send_stage_media(h.clone(), h.state::<Db>(), Some(doc)).is_err(),
+        "a PDF was accepted onto the stage screen"
+    );
+}
+
+/// The slide the hub would replay to a stage screen that joined just now.
+fn retained_stage_media(h: &tauri::AppHandle<tauri::test::MockRuntime>) -> Option<String> {
+    h.state::<channels::KioskHub>()
+        .last_stage_media_handle()
+        .lock()
+        .ok()
+        .and_then(|m| m.clone())
+}
+
 /// NOTHING OF A BACKGROUND REACHES A LAN SCREEN DURING A REHEARSAL.
 ///
 /// `set_background` publishes to the hub and emits a Tauri event, so `Wall` would

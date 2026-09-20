@@ -121,6 +121,19 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       // rest, by driving the real page and asserting on what it PAINTS — which is
       // the claim, and is a thing a source scan cannot reach.
       stage_alert: true,
+      // THE PREACHER'S OWN SLIDE — `false`, and refused by having no branch at
+      // all rather than by a gate that could be got past.
+      //
+      // The programme rail is handled here because a stage-role screen can be
+      // served by `output.html` and needs its clocks (DECISIONS §104). A slide is
+      // different in kind: it is an announcement the preacher is reading from, or
+      // their own deck, and it is FULL-FRAME. A rail is bookkeeping in a strip at
+      // the foot; a slide would replace the whole picture, so a role map arriving
+      // a frame late would not mean a small mistake, it would mean one person's
+      // material across a congregation's wall.
+      //
+      // The stage page owns it, and that page cannot be anything else.
+      stage_media: false,
       // WHAT EACH SCREEN IS FOR — the fact the filter above is taken on. Sent on
       // every hello and whenever the operator changes a role, so this page can
       // answer "am I the stage?" and stop being one the moment it is not.
@@ -220,6 +233,12 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       black: true, // WAS false, and that was the finding — see the note above
       stage_next: true,
       stage_alert: true, // the whole point of the message
+      // THE SLIDE. Retained by the hub and replayed on hello, unlike the alert,
+      // because it is a state of the screen rather than an instruction for a
+      // moment — a tablet whose wifi dropped mid-sermon must not come back
+      // without it (rule 43). Scripture is painted OVER it and does not remove
+      // it, so the slide returns when the reading is cleared.
+      stage_media: true,
       channel_template: false, // the stage page has one fixed look
       template: false,
       // Same reason as template/channel_template above: the stage page does not

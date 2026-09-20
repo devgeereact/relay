@@ -53,6 +53,13 @@
   let note = ''; // the live cue's Stage Note, for this monitor only
   // The Stage Message. Takes the whole screen until the operator clears it.
   let alert = '';
+  // SOMETHING FOR THIS PERSON TO LOOK AT — `{ url, kind }`, or `null`.
+  //
+  // An announcement slide or the preacher's own deck, put on this screen by the
+  // operator. Unlike the alert, it IS retained by the hub and replayed on hello,
+  // because it is a state of the screen rather than an instruction for a moment:
+  // a tablet whose wifi dropped mid-sermon must not come back without it.
+  let stageMedia = null;
   // WHAT EVERY SCREEN IS FOR, as the backend publishes it: `{"2":"stage"}`. Sent
   // on every hello and again whenever it changes, so `{}` is an answer rather
   // than a silence — it is how this page learns it is NOT a stage.
@@ -871,6 +878,11 @@
       // figure nobody chose for it.
       cdWarnMs = null;
       next = null;
+      // AND SO DOES THE SLIDE. `Clear screens` means everything, and a picture
+      // the operator has just taken off every other screen has no business
+      // surviving here. The hub empties its retained slot at the same door, so a
+      // screen that reconnects after a panic control is not sent it back.
+      stageMedia = null;
       // A STAGE MESSAGE COMES DOWN WITH THE SCREENS — DECISIONS §91.
       //
       // This line is the answer to a question that used to be left unasked. The
@@ -929,6 +941,16 @@
       // and a panic control takes it down with everything else it says (§91).
       if (!acceptsStageMessage(myRole)) return;
       alert = (m.text || '').trim();
+    } else if (m.kind === 'stage_media') {
+      // ONLY A STAGE, on exactly `stage_alert`'s argument one branch up: the hub
+      // publishes to every client because it cannot address one (DECISIONS §35),
+      // so the refusal belongs at the receiver, and a page that does not know
+      // which screen it is must not be handed the preacher's own material.
+      //
+      // `media_url: null` takes it down, which is the one door for both
+      // directions and the same shape `background` uses.
+      if (!acceptsStageMessage(myRole)) return;
+      stageMedia = m.media_url ? { url: m.media_url, kind: m.media_kind || 'image' } : null;
     } else if (m.kind === 'stage_zones') {
       // A LIVE CHANGE. The initial read is over HTTP on connect (see
       // `loadStageZones`) because this page is the only consumer of this map
@@ -1303,6 +1325,24 @@
       {#if shown && content}
         {#if content.reference}<div class="ref">{content.reference}{content.translation ? ' · ' + content.translation : ''}</div>{/if}
         {#if content.text}<div class="verse" style="--vn:{verseChars}; --vcpl:{verseCpl}">{#if content.reference}“{content.text}”{:else}{content.text}{/if}</div>{/if}
+      {:else if zones.media && stageMedia}
+        <!-- THE SLIDE, AND ONLY WHILE NOTHING IS BEING READ.
+             This is the precedence rule requirement 10 asks for, and it lives
+             here rather than in the engine: scripture OVERRIDES the slide, it
+             does not destroy it. The branch above wins whenever there is a
+             reading, and the moment the reading is cleared this one paints again
+             with no second push from the operator. Taking the slide down when a
+             verse arrived would have meant pushing it again after every reading,
+             which is not what "overrides" means.
+
+             A panic control is the one thing that does remove it, in `apply` and
+             at the hub's retention door, so `Clear screens` really does mean
+             everything. -->
+        {#if stageMedia.kind === 'video'}
+          <video class="slide" src={stageMedia.url} autoplay loop muted playsinline></video>
+        {:else}
+          <img class="slide" src={stageMedia.url} alt="" />
+        {/if}
       {:else}
         <div class="idle">— standby —</div>
       {/if}
@@ -1935,6 +1975,18 @@
   /* The DEFAULT resting state of the preacher's phone — the thing on screen before
      anything is fired, and therefore the text most likely to be looked at. It was
      2.25:1: the worst contrast in the product, in its least forgiving location. */
+  /* THE SLIDE FILLS THE READING'S AREA AND KEEPS ITS SHAPE.
+     `contain`, never `cover`: an announcement slide cropped to fill is an
+     announcement with its edges cut off, and the one person reading it cannot
+     tell that anything is missing. The reading area is already the region that
+     takes what is left, so this needs no size of its own. */
+  .slide {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    object-position: center;
+  }
   .idle { font-family: var(--f-mono); color: var(--v-faint); letter-spacing: .1em;
     /* The scale step is the FLOOR on a phone, not the size on a platform monitor —
        a stage screen resting at "— standby —" in 14px type reads as a screen that
