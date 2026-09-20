@@ -568,6 +568,46 @@ export function formatCountdown(ms, mode = 'auto') {
   return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`;
 }
 
+/**
+ * THE FORMATTED FIGURE, CUT INTO THE GROUPS A PERSON READS IT IN.
+ *
+ * A SPLITTER of `formatCountdown`'s answer, not a second formatter. It never
+ * looks at a duration, never pads and never decides a shape — hand it whatever
+ * `formatCountdown` produced and it hands back the same characters, grouped.
+ * `parts.map(p => p.t).join('')` is the input, exactly, which is what keeps
+ * `.countdown`'s `textContent` equal to the figure the transport reads back.
+ *
+ * It exists for two things the renderer cannot do to a single text node:
+ *
+ *   · THE SEPARATOR. A colon at 110-192px carries the visual mass of a pair of
+ *     digit stems and sits dead in the middle of the figure. Making it its own
+ *     element is what lets the stylesheet set it back, so the minutes and the
+ *     seconds read as two groups rather than one block. It is a separator and
+ *     not information — the figure reads the same without it — so reducing its
+ *     prominence costs nothing a congregation needs.
+ *   · THE KEY. `k` carries the group's own value, so in a keyed `{#each}` a group
+ *     whose digits changed is a NEW element and one whose digits did not is the
+ *     SAME element. That is the whole mechanism behind a per-second settle: a
+ *     fresh element restarts a CSS animation with no JS timing loop, and — this
+ *     is the load-bearing half — without a `{#key}` anywhere near the element the
+ *     fitter has imperatively sized (rule 37, rule 42, RG-139).
+ *
+ * @param {string} text what `formatCountdown` returned
+ * @returns {{t: string, sep: boolean, k: string}[]}
+ */
+export function countdownParts(text) {
+  const s = String(text ?? '');
+  if (!s) return [];
+  const out = [];
+  // The index is part of the key because `1:04:09`'s two separators are the same
+  // character and a keyed each needs them told apart.
+  s.split(/(:)/).forEach((piece, i) => {
+    if (piece === '') return;
+    out.push({ t: piece, sep: piece === ':', k: `${i} ${piece}` });
+  });
+  return out;
+}
+
 /** How long is left is a countdown's business; WHEN TO WORRY is this.
  *  The SHIPPED figure — what a church that has never opened Settings gets. */
 export const COUNTDOWN_WARN_MS = 60_000;

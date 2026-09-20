@@ -455,7 +455,23 @@ describe('S1 · the readability panel folds, and its one visible line is a real 
     host.querySelector('.te-legtoggle').click();
     await settle();
     expect(host.querySelector('.te-legtoggle').getAttribute('aria-expanded')).toBe('true');
-    expect([...host.querySelectorAll('.te-legrow')].length).toBe(3);
+    // FOUR ROWS, and the fourth is deliberate rather than a leak. The subject of
+    // this test is the FOLD — that opening the disclosure gives back everything
+    // the panel used to render unconditionally — and a bare count could not say
+    // which rows those were. So the rows are named: the three this test was
+    // written for, plus the countdown row added with requirement 12
+    // (`legibility.js::checkCountdownWarn`), which appears because this fixture
+    // declares no `layout.shows` and `templateShows` reads an absent list as
+    // "shows everything" — the same reader `TemplateRender` uses to decide
+    // whether the digits reach the screen at all. A template that lists its kinds
+    // and omits `countdown` gets three rows, which `countdowntype.test.js` holds
+    // across the whole shelf.
+    expect([...host.querySelectorAll('.te-legrow b')].map((b) => b.textContent)).toEqual([
+      'Verse',
+      'Reference',
+      'From the back',
+      'Countdown, last minute',
+    ]);
     expect(host.querySelector('#te-scr')).toBeTruthy();
     expect(host.querySelector('#te-back')).toBeTruthy();
     expect(host.textContent).toMatch(/Neither has been checked against a projector/i);

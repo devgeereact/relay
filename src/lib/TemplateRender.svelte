@@ -65,7 +65,7 @@
   // template scales identically whether the container is a full screen or a
   // small preview box.
   import { afterUpdate, onMount, onDestroy } from 'svelte';
-  import { isLayered, isKeyedTemplate, boundValue, templateShows, formatElapsed, formatRemaining, formatCountdown, countdownWarning, topLevelLayers, drawBoxes } from './layers.js';
+  import { isLayered, isKeyedTemplate, boundValue, templateShows, formatElapsed, formatRemaining, formatCountdown, countdownParts, countdownWarning, topLevelLayers, drawBoxes } from './layers.js';
   // ONE timer, ONE formatter (docs/REBRAND.md §7). `layers.js` owns the formatter;
   // `countdown.js` owns the arithmetic in front of it — including the one exception,
   // a countdown that is being HELD.
@@ -1915,10 +1915,17 @@
                `white-space: nowrap` for the ticking digits, and what
                `.countdown.warn` needs below to paint the last-minute red pulse.
                None of that is restated inline. -->
+          <!-- THE DIGITS ARE GROUPED, AND THE MARKUP IS ONE LINE ON PURPOSE.
+               `countdownParts` splits the figure so the separator can be set back
+               and each group can settle on its own (see `layers.js`). Svelte
+               keeps the whitespace between sibling elements, so a newline in
+               here would land INSIDE `.countdown` and survive the `.trim()` the
+               transport's own test does on `textContent` — a control broken by a
+               styling change. Hence one line, and a test that reads the text
+               back. -->
           <div class="lfit countdown" data-base={verseSize * 2} data-fit="shrink" class:warn={countdownWarn}
-            style="font-size:{verseSize * 2}cqw; margin-top:{refGap}cqw; color:{countdownWarn ? CD_WARN : verseColor}; text-align:center; text-shadow:{verseShadowCss};">
-            {countdownDone ? (content.countdown_done || '0:00') : countdownText}
-          </div>
+            style="font-size:{verseSize * 2}cqw; margin-top:{refGap}cqw; color:{countdownWarn ? CD_WARN : verseColor}; text-align:center; text-shadow:{verseShadowCss};"
+          >{#if countdownDone}{content.countdown_done || '0:00'}{:else}{#each countdownParts(countdownText) as p (p.k)}<span class:cd-sep={p.sep} class:cd-num={!p.sep}>{p.t}</span>{/each}{/if}</div>
         </div>
       </div>
     {/if}
@@ -1982,9 +1989,10 @@
               {#if content.reference && !countdownDone}
                 <div class="reference" style="font-size:{refSize}cqw; {refStyle}">{content.reference}</div>
               {/if}
-              <div class="verse countdown" class:warn={countdownWarn} style="font-size:{verseSize * 2}cqw; color:{countdownWarn ? CD_WARN : verseColor}; text-align:{verseAlign}; text-shadow:{verseShadowCss};">
-                {countdownDone ? (content.countdown_done || '0:00') : countdownText}
-              </div>
+              <!-- Grouped digits + a separable separator, one line of markup, for
+                   the reasons written at the default-overlay branch above. -->
+              <div class="verse countdown" class:warn={countdownWarn} style="font-size:{verseSize * 2}cqw; color:{countdownWarn ? CD_WARN : verseColor}; text-align:{verseAlign}; text-shadow:{verseShadowCss};"
+              >{#if countdownDone}{content.countdown_done || '0:00'}{:else}{#each countdownParts(countdownText) as p (p.k)}<span class:cd-sep={p.sep} class:cd-num={!p.sep}>{p.t}</span>{/each}{/if}</div>
             {:else if refFirst}
               {#if show('reference') && content.reference}
                 <div class="reference" style="font-size:{refSize}cqw; {refStyle}">{content.reference}</div>
@@ -2263,10 +2271,57 @@
     font-variant-numeric: tabular-nums;
     font-weight: 700;
     line-height: 1.05;
-    letter-spacing: 0.01em;
+    /* NO TRACKING ON A TABULAR FIGURE, and the zero is stated rather than left
+       out so the reasoning has somewhere to live. This was 0.01em, a prose-scale
+       value, on text that is never prose: `tabular-nums` already gives every
+       figure the same advance, sized to the widest digit, so tracking on top of
+       it is spacing applied twice. It also costs CENTRING — CSS adds the track
+       after the LAST glyph as well, so a centred figure sits half a track left
+       of centre, which at 192px on an otherwise empty screen is a visible
+       offset. And on a `nowrap` line that is fitted in BOTH dimensions, every
+       pixel of width is paid back by the fitter as a smaller figure. */
+    letter-spacing: 0;
     /* The digits are one unbreakable line; keep them on one line so the fitter
        scales them down instead of letting them wrap mid-number. */
     white-space: nowrap;
+  }
+  /* THE SEPARATOR IS SET BACK, THE DIGITS ARE NOT.
+     At 110-192px a colon is two solid dots carrying the mass of a pair of digit
+     stems, parked in the middle of the figure; at full weight it reads as a
+     third glyph and the four digits read as one block. Setting it back groups
+     the figure into minutes and seconds, which is the reading somebody makes at
+     a glance from the back of a room. It is safe to reduce in a way a digit
+     never would be: the separator carries no information — `4 59` reads as
+     4:59 — so the contrast that matters is untouched. */
+  .countdown .cd-sep {
+    opacity: 0.7;
+    font-weight: 600;
+  }
+  /* A CHANGED GROUP SETTLES RATHER THAN SNAPPING.
+     The keyed `{#each}` in the markup rebuilds only the group whose digits moved
+     (`layers.js::countdownParts`), and a fresh element restarts this animation —
+     no JS timing loop, and no `{#key}` around the element the fitter has sized.
+
+     OPACITY ONLY, and that is the guarantee rather than a preference. Rule 37 and
+     RG-141 both rest on `fitOne` stopping on `scrollHeight`/`scrollWidth`, and a
+     TRANSFORM on a descendant contributes to a parent's scrollable overflow — so
+     even a purely decorative scale could push a fitted countdown into another
+     shrink round, four times a second, on the page that is on the wall. Opacity
+     cannot move a box, cannot change a measured dimension, and is composited off
+     the main thread. The fit gating (`fitSig`'s `countdownTo ? 1 : 0`) is
+     untouched: this animates an element the fitter never measures. */
+  @media (prefers-reduced-motion: no-preference) {
+    .countdown .cd-num {
+      animation: cdsettle 200ms ease-out;
+    }
+  }
+  @keyframes cdsettle {
+    from {
+      opacity: 0.3;
+    }
+    to {
+      opacity: 1;
+    }
   }
   .reference {
     font-weight: 600;

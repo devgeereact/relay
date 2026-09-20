@@ -1384,7 +1384,14 @@
         {/if}
         {#if legible && legOpen}
           <ul class="te-leg">
-            {#each [['Verse', legible.verse], ['Reference', legible.reference], ['From the back', legible.distance]] as [label, c] (label)}
+            <!-- The countdown row is ABSENT on a look that cannot show one —
+                 `review` answers null rather than a fourth `unknown`, because a
+                 row that is always there is a row nobody reads. What it adds is
+                 the one colour the other three could never see: the last-minute
+                 red is hard-coded in the renderer, not declared by the template,
+                 so nothing here was checking the most time-critical thing Relay
+                 puts on a wall. -->
+            {#each [['Verse', legible.verse], ['Reference', legible.reference], ['From the back', legible.distance], ...(legible.countdownWarn ? [['Countdown, last minute', legible.countdownWarn]] : [])] as [label, c] (label)}
               <li class="te-legrow" class:bad={c.state === 'low' || c.state === 'small'} class:unknown={c.state === 'unknown'}>
                 <b>{label}</b>
                 <span>{c.note}</span>
