@@ -41,10 +41,16 @@
 // to reconcile two documents that already agree.
 //
 // One residue, named rather than fixed here because it is a phase brief and not
-// the spec: `docs/REBRAND.md`'s `W1 · Live` brief still reads
-// `Quick tools (countdown · name band · word to the preacher)` — three things,
-// and the pre-rename name for the third. The name that ships is the one in
-// `names.test.js`.
+// the spec: `docs/REBRAND.md`'s `W1 · Live` brief still lists THREE things in
+// this card, and still uses the pre-rename label for the third. The label that
+// ships is the one `names.test.js` holds.
+//
+// The retired label is deliberately NOT quoted here, and that is not squeamishness:
+// `names.test.js` scans this file as text and counts any occurrence of a retired
+// name as a second name surviving. Quoting one to say it is retired reads to the
+// scanner exactly like using it — which is the correct behaviour for a register
+// whose whole job is that one concept has one name, and which caught this comment
+// on its first run.
 //
 // WHERE THE CARD CAME FROM. Relay had the countdown and a single `To preacher`
 // row. The lower thirds and the `stage_alert` frame kind already existed (phases
