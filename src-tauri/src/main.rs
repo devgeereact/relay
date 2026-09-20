@@ -23,6 +23,7 @@ mod eval;
 mod latency;
 mod models;
 mod pipeline;
+mod prodiscover;
 mod proimport;
 /// The shared QA harness: a first-launch fixture plus the two doors (Tauri events
 /// and the kiosk hub) a guarantee has to be checked on. Test-only. See `qa.rs`.
@@ -525,6 +526,7 @@ fn main() {
             show_background,
             send_stage_media,
             set_media_transport,
+            find_propresenter,
             get_content_templates,
             set_content_template,
             get_setting,
@@ -4025,6 +4027,38 @@ fn publish_background<R: tauri::Runtime>(
 /// and a church that reopened Relay on Tuesday to a Sunday backdrop would have to
 /// find the control that took it off. The retained hub slot is what carries it
 /// across a screen reconnecting, which is the case that actually happens.
+/// IS THERE A PROPRESENTER LIBRARY ON THIS COMPUTER ALREADY?
+///
+/// Requirement 14: *"allow the app to be able to find any propresenter files
+/// automatically on the computer if its ever available"*.
+///
+/// **It finds and counts. It imports nothing**, opens no song, and changes nothing
+/// on disk. The operator is offered what was found and decides; `Import folder`
+/// is what actually reads it.
+///
+/// `home_dir()` rather than `$HOME`, for rule 9's reason one directory up: a
+/// hand-rolled `$HOME` is why packaged Windows once ran with speech recognition
+/// silently dead. Windows has no `HOME`.
+///
+/// **On macOS this is rule 17 ground.** `~/Documents` is TCC-gated, and a build
+/// without `NSDocumentsFolderUsageDescription` does not get a polite refusal — the
+/// directory reads as empty, which is indistinguishable from a church that has no
+/// library. `scan_root` treats an unreadable directory as zero and says nothing
+/// was found rather than claiming there is nothing there, and the string is in
+/// `Info.plist`. Neither is visible in `tauri dev`; `scripts/sign-local.sh` is how
+/// it gets checked without a certificate.
+#[tauri::command]
+fn find_propresenter<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> error::Result<Vec<prodiscover::FoundLibrary>> {
+    use tauri::Manager;
+    let home = app
+        .path()
+        .home_dir()
+        .map_err(|_| "this computer has no home directory Relay can read".to_string())?;
+    Ok(prodiscover::find(&home))
+}
+
 /// HOLD THE CLIP, LOOP IT, OR START IT AGAIN.
 ///
 /// Requirement 11's transport. Each argument is what `adjust_countdown` calls a

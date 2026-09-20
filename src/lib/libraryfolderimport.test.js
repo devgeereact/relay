@@ -165,3 +165,73 @@ describe('what a real ProPresenter folder brings with it', () => {
     expect(reads.some((n) => n.startsWith('SONG-')), 'no song was read at all').toBe(true);
   });
 });
+
+// ── FINDING IT, RATHER THAN MAKING THEM FIND IT ─────────────────────────────
+//
+// Requirement 14: "allow the app to be able to find any propresenter files
+// automatically on the computer if its ever available".
+//
+// A church's library is 726 files in a folder whose path the volunteer running
+// Relay has very likely never seen. `Import folder` is only useful to somebody who
+// already knows where it is; this is the answer for everybody else.
+//
+// **It finds and counts; it imports nothing.** The webview cannot open a path, so
+// the operator still picks the folder — what this removes is having to know which
+// one. That limitation is named on the surface rather than worked around.
+describe('finding a library that is already on the computer', () => {
+  itMounted('offers a scan without making the operator know where to look', () => {
+    const b = [...host.querySelectorAll('button')].find((x) =>
+      x.textContent.includes('Find ProPresenter'),
+    );
+    expect(b, 'no way to look for a library').toBeTruthy();
+  });
+
+  itMounted('reports what it found, with the path and the count', async () => {
+    invoke.mockImplementation(async (cmd) => {
+      if (cmd === 'find_propresenter') {
+        return [{ path: '/Users/x/Documents/ProPresenter', songs: 726, truncated: false }];
+      }
+      return [];
+    });
+    const b = [...host.querySelectorAll('button')].find((x) =>
+      x.textContent.includes('Find ProPresenter'),
+    );
+    b.click();
+    await settle();
+    await settle();
+    expect(text()).toContain('/Users/x/Documents/ProPresenter');
+    expect(text()).toContain('726 songs');
+    // And it points at the door that can actually read it, because this one cannot.
+    expect(text()).toContain('Import folder');
+  });
+
+  itMounted('says "at least" when the walk stopped at its bound', async () => {
+    // A count that stopped early and does not say so is a wrong count — and this is
+    // the number an operator checks the import against afterwards.
+    invoke.mockImplementation(async (cmd) =>
+      cmd === 'find_propresenter'
+        ? [{ path: '/x', songs: 50_000, truncated: true }]
+        : [],
+    );
+    [...host.querySelectorAll('button')]
+      .find((x) => x.textContent.includes('Find ProPresenter'))
+      .click();
+    await settle();
+    await settle();
+    expect(text()).toContain('at least 50000 songs');
+  });
+
+  itMounted('a scan that finds nothing says what to try instead', async () => {
+    // A failed scan and an empty result are the same answer here, deliberately:
+    // this surface cannot tell them apart and must not pretend to. What it can do
+    // is say what to do next.
+    invoke.mockImplementation(async () => []);
+    [...host.querySelectorAll('button')]
+      .find((x) => x.textContent.includes('Find ProPresenter'))
+      .click();
+    await settle();
+    await settle();
+    expect(text()).toMatch(/No ProPresenter library in the usual places/);
+    expect(text()).toContain('Import folder');
+  });
+});

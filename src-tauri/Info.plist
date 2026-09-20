@@ -20,6 +20,22 @@
 -->
 <plist version="1.0">
 <dict>
+	<!--
+	  NSDocumentsFolderUsageDescription is the same trap as the microphone one, one
+	  folder along, and it fails more quietly. macOS gates ~/Documents behind TCC,
+	  and a hardened-runtime build without this string does not get a refusal it can
+	  report — the directory simply reads as EMPTY. So "find my ProPresenter
+	  library" would answer "nothing here" on a machine with 726 songs in it, and
+	  nothing in any log would say why.
+
+	  Invisible under `tauri dev`, like §17's. `scripts/sign-local.sh` reproduces it
+	  without a certificate.
+
+	  Written for the volunteer who sees it, and it says what Relay wants and what
+	  it does with it: it reads song files to import them, and it reads nothing else.
+	-->
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>Relay looks in your Documents folder for a ProPresenter library so it can offer to import your songs. It only reads song files, and only when you ask it to.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Relay listens to the service so it can find the scripture being preached and put it on your screens. The audio is transcribed on this computer and is never sent anywhere.</string>
 </dict>

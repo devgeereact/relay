@@ -39,6 +39,7 @@
   import ImportReview from './library/ImportReview.svelte';
   import BulkImport from './library/BulkImport.svelte';
   import { BULK_THRESHOLD, describeRun } from '../bulkimport.js';
+  import { findProPresenter } from '../stores/capture.js';
   import Collections from './library/Collections.svelte';
   import { COLLECTIONS, collectionOf } from './library/collections.js';
   import {
@@ -288,6 +289,22 @@
   let reload = 0; // bump to remount the active pane after an import
   let fileInput;
   let folderInput;
+  /**
+   * WHAT A SCAN FOUND, or `null` before anybody has asked.
+   *
+   * `[]` after a scan means nothing was found, which is a different thing from
+   * `null` and reads differently on the surface: one is "we looked", the other is
+   * "nobody has looked yet".
+   */
+  let foundLibraries = null;
+  let scanning = false;
+  async function findLibraries() {
+    scanning = true;
+    importMsg = '';
+    errMsg = '';
+    foundLibraries = await findProPresenter();
+    scanning = false;
+  }
   let importing = false;
   let importMsg = '';
   let showNew = false;
@@ -749,6 +766,21 @@
     </div>
 
     <div class="lib-topactions">
+      <!-- FIND IT, DON'T MAKE THEM. A church's library is 726 files in a folder
+           whose path the volunteer running Relay has very likely never seen, and
+           `Import folder` is only useful to somebody who already knows where it
+           is. This is the answer for everybody else.
+
+           It finds and counts; it imports nothing. The webview cannot open a path,
+           so the operator still picks the folder — what this removes is having to
+           know which one. -->
+      <button
+        class="r-btn ghost sm"
+        on:click={findLibraries}
+        disabled={!$capture.available || importing || scanning}
+        title="Look in the usual places for a ProPresenter library">
+        {scanning ? 'Looking…' : 'Find ProPresenter'}
+      </button>
       <button class="r-btn ghost sm" on:click={() => fileInput.click()} disabled={!$capture.available || importing}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M8 11l4 4 4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
         {importing ? 'Importing…' : 'Import'}
@@ -802,6 +834,35 @@
         {/if}
       </div>
       <input type="file" multiple accept={ACCEPT} bind:this={fileInput} on:change={onFiles} style="display:none" />
+      {#if foundLibraries}
+        <div class="lib-found" role="status">
+          {#if foundLibraries.length}
+            <p class="lib-foundhead">
+              Found {foundLibraries.length === 1 ? 'a ProPresenter library' : `${foundLibraries.length} ProPresenter libraries`}.
+              Open <b>Import folder</b> and choose the one you want.
+            </p>
+            <ul>
+              {#each foundLibraries as f (f.path)}
+                <li>
+                  <code>{f.path}</code>
+                  <!-- "at least", when the walk stopped at its bound. A count that
+                       stopped early and does not say so is a wrong count, and this
+                       one is the number an operator checks the import against. -->
+                  <span class="lib-foundn">{f.truncated ? 'at least ' : ''}{f.songs} song{f.songs === 1 ? '' : 's'}</span>
+                </li>
+              {/each}
+            </ul>
+          {:else}
+            <!-- A scan that failed and a scan that found nothing are the same
+                 answer here, deliberately: this surface cannot tell them apart and
+                 must not pretend to. What it CAN do is say what to try next. -->
+            <p class="lib-foundhead">
+              No ProPresenter library in the usual places. If yours lives somewhere
+              else, use <b>Import folder</b> and point at it.
+            </p>
+          {/if}
+        </div>
+      {/if}
       <!-- NO `accept` ON THE DIRECTORY INPUT, deliberately. A directory pick
            chooses a folder, not files, so an accept list filters nothing and only
            risks a browser greying out the folder itself. `onFiles` does the

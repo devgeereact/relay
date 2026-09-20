@@ -2594,6 +2594,28 @@ return guardedRead('listOutputChannels', async (call) => {
 export const stageAlert = writable(null);
 
 /**
+ * Is there a ProPresenter library on this computer already?
+ *
+ * Returns `[{ path, songs, truncated }]`, best first, and an empty list when there
+ * is nothing to offer. **It finds and counts; it imports nothing.**
+ *
+ * GROUP 2 (swallows). A scan that failed is not worth interrupting anybody for —
+ * the operator can still import a folder by hand, which is the path this only
+ * shortens. An empty list and a failed scan are deliberately the same answer to
+ * the caller, and the surface says "nothing found" for both, because it cannot
+ * tell them apart and should not pretend to.
+ */
+export async function findProPresenter() {
+  try {
+    const call = await invoke();
+    const found = await call('find_propresenter');
+    return Array.isArray(found) ? found : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
  * WHAT THE OPERATOR HAS ASKED THE CLIP TO DO — `{ paused, loop }`.
  *
  * A mirror of what Relay SENT, and nothing more. **It is not evidence that a
