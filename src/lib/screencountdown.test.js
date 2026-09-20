@@ -34,6 +34,11 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { tick } from 'svelte';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+// THE ONE COMMENT STRIPPER. Not a regex of this file's own — `codeonly.js` exists
+// because four of them is how a scanner goes blind, and it names the two ways a
+// hand-rolled one fails. This file wrote one anyway for half an hour and it was
+// the wrong shape; the shared one is the whole reason it does not have to be.
+import { codeOnly } from './codeonly.js';
 
 const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a) => invoke(...a) }));
@@ -46,17 +51,6 @@ const Live = (await import('./views/Live.svelte')).default;
 
 const DOCK_SRC = readFileSync(resolve(process.cwd(), 'src/lib/Dock.svelte'), 'utf8');
 const LIVE_SRC = readFileSync(resolve(process.cwd(), 'src/lib/views/Live.svelte'), 'utf8');
-
-/**
- * Source with its commentary removed.
- *
- * Every file this repository has that scans source carries one of these, and for
- * the same reason: a comment that mentions a call is not the call. This file's
- * own Planner assertion passed over a deleted `setPlanChannels` before it had
- * one, because the paragraph explaining the write names the function.
- */
-const codeOnly = (text) =>
-  text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
 
 /** A template that shows everything — nothing is filtered out of its reach. */
 const PLAIN = {
