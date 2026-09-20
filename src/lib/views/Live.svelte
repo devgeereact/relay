@@ -134,6 +134,7 @@
   import { whyDisabled, ENGINE_OFF, BUSY } from '../ui/whydisabled.js';
   import IconButton from '../ui/IconButton.svelte';
   import { describeScreen } from '../outputHealth.js';
+  import { describeMediaClock } from '../mediaclock.js';
   import { programmeScreen, describeStageReach, describeCountdownReach } from '../channelroles.js';
   import TemplateRender from '../TemplateRender.svelte';
   import {
@@ -371,6 +372,25 @@
   // this expression on purpose — a helper that closed over the health map would not be
   // tracked by Svelte's reactivity and the pane would freeze on its first reading,
   // which is the same class of bug as the badge it replaces.
+  // HOW LONG IS LEFT OF THE CLIP, from the screens rather than from this pane.
+  //
+  // The programme monitor below renders through the same component as the wall, so
+  // it holds its own `<video>` of the same file. Timing the clip off THAT one would
+  // keep counting while the wall was frozen, which is rule 35 on the one readout
+  // an operator times the next cue against. `describeMediaClock` is given the
+  // screens' own reports and has no way to ask this pane's player.
+  //
+  // Named inputs, not a helper closing over the map, for the reason the block
+  // below already records: a closure is not tracked by Svelte's reactivity and the
+  // readout would freeze on its first reading.
+  $: mediaClock = describeMediaClock(
+    channels.map((c) => ({ ...($channelHealth[c.id] ?? {}), id: c.id, name: c.name })),
+  );
+  // Only while a clip is what is on the screens. A remaining-time readout beside a
+  // verse answers a question nobody asked, and it would be the last thing the
+  // previous clip said rather than a fact about now.
+  $: mediaLive = !!$live?.media_url && !$screenBlack;
+
   $: outs = channels.map((c) => ({
     c,
     // THE RAW ROW RIDES ALONG, and it is not a second authority. `describeScreen`
@@ -2533,6 +2553,34 @@
           </span>
         {/if}
       </header>
+      <!-- HOW LONG IS LEFT, AND WHICH SCREEN SAID SO.
+           Requirement 11: "the countdown for the media so as to help know when
+           media is almost done or time remaining for preparation of the next
+           plan".
+
+           NOT amber. Amber means ON AIR and this is a fact about a clip, not a
+           claim that a congregation is looking at one — the tag above already
+           makes that claim and is the only thing entitled to.
+
+           It says `No screen is reporting a clip` in words rather than a dash or
+           a zero, and that sentence is the useful half: a dash reads as "this clip
+           has no clock", a zero reads as "it has finished", and an operator told
+           that no screen is answering goes and looks at one. -->
+      {#if mediaLive}
+        <div class="mon-clip" class:unknown={!mediaClock.known} aria-live="polite">
+          <span class="r-mono">{mediaClock.text}</span>
+          {#if mediaClock.known && mediaClock.from}
+            <span class="mon-clipfrom">from {mediaClock.from}</span>
+          {/if}
+          {#if mediaClock.disagree}
+            <!-- A REAL GAP BETWEEN TWO SCREENS IS NOT DRIFT. Separate players are
+                 never in lockstep, but a large spread is one screen stalled or
+                 buffering, and that is exactly what an operator needs before they
+                 cue something over it. -->
+            <span class="mon-clipwarn">screens disagree</span>
+          {/if}
+        </div>
+      {/if}
       <div class="screen">
         {#if $live && progTpl}
           <!-- THE STANDING BACKGROUND RIDES WITH THE CONTENT, because the wall
@@ -3779,6 +3827,13 @@
   /* HARD RIGHT, MONO, UPPERCASE. The reference is the one figure on this head an
      operator reads from across a booth, and in the body face it sat at a
      different weight and rhythm from everything beside it. */
+  .mon-clip{display:flex; align-items:baseline; gap:8px; padding:4px 10px;
+    font-size:var(--v-fs-b2); color:var(--v-txt); border-bottom:1px solid var(--v-line)}
+  .mon-clip.unknown{color:var(--v-dim)}
+  .mon-clipfrom{color:var(--v-faint); font-size:var(--v-fs-b3)}
+  /* Rose, which already means a fault on this surface. Not amber: amber is ON AIR
+     and a screen falling behind is not a claim about what a congregation sees. */
+  .mon-clipwarn{color:var(--v-red); font-size:var(--v-fs-b3)}
   .mon-name{min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
     font-size:var(--v-fs-cap); letter-spacing:.09em; text-transform:uppercase;
     color:var(--v-faint)}
