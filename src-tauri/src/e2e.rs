@@ -3389,6 +3389,7 @@ fn r136_a_recovery_in_the_record_always_has_a_loss_to_recover_from() {
         channels::PaintState::Content,
         "kiosk",
         channels::BeatGap::default(),
+        None,
     );
     record_output_edges(&h, &health, &list, &[], true);
 

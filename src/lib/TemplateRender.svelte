@@ -356,6 +356,20 @@
   const MIN_LEGIBLE_SCALE = 0.45;
   /** Called with `{ scale, legible }` when a fit has been forced below the floor. */
   export let onFit = null;
+  /**
+   * WHERE THE CLIP IS, reported by the element that is actually playing it.
+   *
+   * Called with `{ pos_ms, dur_ms, paused }` while a video is on this screen, and
+   * with `null` the moment one is not. `null` matters as much as the numbers: a
+   * last-known position left behind after the clip came off would have the console
+   * counting down a clip nobody is watching.
+   *
+   * The consumer is the beat (`outputHealth.js`), so the figure an operator reads
+   * comes from the screen that is painting rather than from the console's own
+   * preview of the same file. See `channels::MediaBeat` for why that distinction
+   * is the whole design.
+   */
+  export let onMedia = null;
 
   function fitOne(box, container) {
     const verse = box.querySelector('.verse');
@@ -1065,6 +1079,28 @@
   // Layer mode, full-frame media and the legacy band are mutually exclusive
   // branches, so at most one <video> is ever mounted — one binding covers all.
   let videoEl;
+  /**
+   * ONE REPORTER FOR ALL THREE `<video>` BRANCHES.
+   *
+   * Layer, legacy band and legacy region each mount their own element and each
+   * binds the same `videoEl`, so the handlers go on all three or the report is
+   * silently missing from two thirds of the templates in the product — the twin
+   * -door failure this repository has recorded four times.
+   */
+  const reportMedia = () => {
+    if (!onMedia) return;
+    const el = videoEl;
+    const dur = el ? el.duration * 1000 : NaN;
+    if (!el || !Number.isFinite(dur) || dur <= 0) {
+      onMedia(null);
+      return;
+    }
+    onMedia({
+      pos_ms: Math.max(0, Math.round(el.currentTime * 1000)),
+      dur_ms: Math.round(dur),
+      paused: !!el.paused,
+    });
+  };
   let sink = getAudioOutput();
   let unsubSink;
   onMount(() => {
@@ -1984,7 +2020,7 @@
             <div class="lmediabox" style="{boxStyle(L)} border-radius:{L.radius || 0}cqw; opacity:{L.opacity == null ? 1 : L.opacity};">
               {#if content.media_kind === 'video'}
                 <!-- svelte-ignore a11y-media-has-caption -->
-                <video class="lmediafill" src={content.media_url} style="object-fit:{L.fit === 'contain' ? 'contain' : 'cover'};" bind:this={videoEl} autoplay loop muted={!audio} playsinline on:loadedmetadata={routeAudio}></video>
+                <video class="lmediafill" src={content.media_url} style="object-fit:{L.fit === 'contain' ? 'contain' : 'cover'};" bind:this={videoEl} autoplay loop muted={!audio} playsinline on:loadedmetadata={() => { routeAudio(); reportMedia(); }} on:timeupdate={reportMedia} on:pause={reportMedia} on:play={reportMedia} on:ended={reportMedia}></video>
               {:else}
                 <img class="lmediafill" src={content.media_url} style="object-fit:{L.fit === 'contain' ? 'contain' : 'cover'};" alt="" />
               {/if}
@@ -2081,7 +2117,7 @@
            layer to the template to position it instead. -->
       {#if content.media_kind === 'video'}
         <!-- svelte-ignore a11y-media-has-caption -->
-        <video class="media" src={content.media_url} bind:this={videoEl} autoplay loop muted={!audio} playsinline on:loadedmetadata={routeAudio}></video>
+        <video class="media" src={content.media_url} bind:this={videoEl} autoplay loop muted={!audio} playsinline on:loadedmetadata={() => { routeAudio(); reportMedia(); }} on:timeupdate={reportMedia} on:pause={reportMedia} on:play={reportMedia} on:ended={reportMedia}></video>
       {:else}
         <img class="media" src={content.media_url} alt="" />
       {/if}
@@ -2132,7 +2168,7 @@
          sensible behaviour and keeps old templates working. -->
     {#if content.media_kind === 'video'}
       <!-- svelte-ignore a11y-media-has-caption -->
-      <video class="media" src={content.media_url} bind:this={videoEl} autoplay loop muted={!audio} playsinline on:loadedmetadata={routeAudio}></video>
+      <video class="media" src={content.media_url} bind:this={videoEl} autoplay loop muted={!audio} playsinline on:loadedmetadata={() => { routeAudio(); reportMedia(); }} on:timeupdate={reportMedia} on:pause={reportMedia} on:play={reportMedia} on:ended={reportMedia}></video>
     {:else}
       <img class="media" src={content.media_url} alt="" />
     {/if}

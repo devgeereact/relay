@@ -276,8 +276,25 @@ describe('startBeat', () => {
     stop();
     // The first beat of a page's life has no previous tick, so it says nothing
     // about a gap rather than claiming a zero one (RG-119).
+    //
+    // The three media fields are NAMED here rather than the equality being
+    // loosened, for the reason `timerwords.test.js` gives about its own payload:
+    // this test's claim is that the page invents nothing, and `null` is what "this
+    // screen is not playing a clip" looks like. Letting an unexamined field
+    // through would retire the claim to save the test.
     expect(sent).toEqual([
-      ['output_beat', { channelId: 3, state: 'content', sinceMs: null, hiddenMs: null }],
+      [
+        'output_beat',
+        {
+          channelId: 3,
+          state: 'content',
+          sinceMs: null,
+          hiddenMs: null,
+          mediaPosMs: null,
+          mediaDurMs: null,
+          mediaPaused: null,
+        },
+      ],
     ]);
   });
 

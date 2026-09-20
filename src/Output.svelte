@@ -206,6 +206,29 @@
   // and a lobby TV would be which layers that TV's template happens to have.
   let roles = {};
   let stageMessage = '';
+  /**
+   * WHERE THIS SCREEN'S CLIP IS — `{ pos_ms, dur_ms, paused }`, or `null`.
+   *
+   * Written by `TemplateRender` from the element that is actually playing, and
+   * read once per beat. It is deliberately NOT derived from the content frame: the
+   * frame says which clip was sent, and this says where that clip has got to on
+   * this screen, which is the only one of the two an operator can time a cue
+   * against.
+   */
+  let mediaReport = null;
+  const noteMedia = (m) => {
+    mediaReport = m;
+  };
+  /**
+   * A CLIP THAT HAS COME OFF REPORTS NOTHING, AND THAT NEEDS SAYING OUT LOUD.
+   *
+   * When the content changes from a clip to a verse the `<video>` is destroyed, and
+   * a destroyed element fires no event — so the last position it reported would sit
+   * here for the rest of the service and the console would count down a clip nobody
+   * is watching. The frame that replaced it is the thing that knows, so the clearing
+   * happens here rather than being waited for.
+   */
+  $: if (!shownContent?.media_url) mediaReport = null;
   // ── THE STAGE TIMERS ────────────────────────────────────────────────────────
   //
   // `r6-contracts.test.js` recorded `timer: false` for this page, with a reason
@@ -1048,6 +1071,9 @@
       // an alarm about a screen doing exactly what it was told (rule 35).
       getState: () => paintState({ black: shownBlack, visible: !!shownContent, content }),
       getWs: () => ws,
+      // WHERE THIS SCREEN'S CLIP IS. Read once per beat rather than per frame, and
+      // `null` whenever there is no clip — see `noteMedia`.
+      getMedia: () => mediaReport,
     });
   });
   onDestroy(() => {
@@ -1067,6 +1093,7 @@
   audio={isDesktop}
   stageMessage={shownStageMessage}
   programme={shownProgramme}
+  onMedia={noteMedia}
   transitionOverride={appliedTransition} />
 <!-- BLACKOUT NEVER BLACKS OUT A LOWER THIRD. On a keyed channel "black" would
      paint an opaque rectangle over the live camera — the opposite of what the

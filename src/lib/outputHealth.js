@@ -90,7 +90,24 @@ export function paintState({ black, visible, content }) {
  * `getWs` is likewise a getter: a kiosk socket is replaced on every reconnect, and
  * a captured reference would keep beating down a dead one.
  */
-export function startBeat({ channelId, getState, getWs = () => null, invoke = null }) {
+export function startBeat({
+  channelId,
+  getState,
+  getWs = () => null,
+  invoke = null,
+  // WHERE THIS SCREEN'S CLIP IS, or `null` when it is not playing one.
+  //
+  // It rides the beat rather than a channel of its own, because the beat is
+  // already the one thing a screen says about itself and it already carries the
+  // answer to "are you still painting". A clip's position is worth nothing
+  // without that: a position from a screen that stopped answering a minute ago is
+  // a countdown an operator would time the next cue against.
+  //
+  // The console must never compute this from its own preview. Its programme pane
+  // renders through the same component, so it holds a second player of the same
+  // file that buffers differently and carries on if the wall's copy stalls.
+  getMedia = () => null,
+}) {
   // Channel 0 is a raw template preview with no channel behind it — there is no
   // screen for an operator to worry about, so there is nothing to report.
   if (!Number.isFinite(channelId) || channelId <= 0) return () => {};
@@ -142,29 +159,55 @@ export function startBeat({ channelId, getState, getWs = () => null, invoke = nu
     return out;
   };
 
-  const sendOverSocket = (ws, state, g) => {
+  /**
+   * The clip fields for the wire, or nothing at all.
+   *
+   * A report with no duration is dropped whole rather than sent with a zero: zero
+   * is not a clip that takes no time, it is a player that has not loaded one yet,
+   * and "0:00 left" over a clip that has barely started is worse than saying
+   * nothing. The engine drops it again on arrival for the same reason; this is the
+   * near half of one rule, not a second one.
+   */
+  const mediaFields = (m) => {
+    const dur = Number(m?.dur_ms);
+    const pos = Number(m?.pos_ms);
+    if (!Number.isFinite(dur) || dur <= 0 || !Number.isFinite(pos) || pos < 0) return null;
+    return {
+      media_pos_ms: Math.round(Math.min(pos, dur)),
+      media_dur_ms: Math.round(dur),
+      media_paused: !!m.paused,
+    };
+  };
+
+  const sendOverSocket = (ws, state, g, m) => {
     // OPEN only (readyState 1). A queued send on a reconnecting socket arrives
     // seconds later and would report a screen as healthy at a moment it demonstrably
     // was not — the beat would paper over the very gap it exists to expose.
     if (!ws || ws.readyState !== 1) return false;
     try {
-      ws.send(JSON.stringify({ kind: 'beat', channel: channelId, state, ...g }));
+      ws.send(JSON.stringify({ kind: 'beat', channel: channelId, state, ...g, ...(mediaFields(m) ?? {}) }));
       return true;
     } catch {
       return false;
     }
   };
 
-  const sendOverBridge = async (state, g) => {
+  const sendOverBridge = async (state, g, m) => {
     try {
       const inv = invoke ?? (await import('@tauri-apps/api/core')).invoke;
       // camelCase across the bridge, snake_case on the wire: Tauri maps the
       // argument names and the WebSocket protocol does not.
+      const mf = mediaFields(m);
       await inv('output_beat', {
         channelId,
         state,
         sinceMs: g.since_ms ?? null,
         hiddenMs: g.hidden_ms ?? null,
+        // camelCase across the bridge, snake_case on the wire — the same mapping
+        // the two lines above already make.
+        mediaPosMs: mf?.media_pos_ms ?? null,
+        mediaDurMs: mf?.media_dur_ms ?? null,
+        mediaPaused: mf?.media_paused ?? null,
       });
     } catch {
       /* no backend, or the command is gone. Stay silent and go stale. */
@@ -189,10 +232,19 @@ export function startBeat({ channelId, getState, getWs = () => null, invoke = nu
       ws = null;
     }
     const g = gap();
-    if (sendOverSocket(ws, state, g)) return;
+    // Read once per beat, not per frame. `timeupdate` fires several times a second
+    // and none of those are worth a message; the beat's own interval is the rate
+    // an operator can read anyway.
+    let m = null;
+    try {
+      m = getMedia();
+    } catch {
+      m = null;
+    }
+    if (sendOverSocket(ws, state, g, m)) return;
     // A kiosk page has no bridge, so this is a no-op there and the beat correctly
     // goes stale while its socket is down.
-    void sendOverBridge(state, g);
+    void sendOverBridge(state, g, m);
   };
 
   // Report at once, so a screen that has just opened is not shown as silent for

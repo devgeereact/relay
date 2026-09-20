@@ -591,6 +591,77 @@ struct Beat {
     transport: &'static str,
     /// What the SCREEN'S OWN CLOCK said about the gap before this beat.
     gap: BeatGap,
+    /// WHERE THE CLIP IS, according to the screen that is playing it.
+    ///
+    /// `None` is "this screen said nothing about media", which is true of every
+    /// screen showing a verse and of every screen that has not been taught to
+    /// report. It is never defaulted to zero: a defaulted position reads as "the
+    /// clip is at the start", which is a claim, and the operator would be told a
+    /// clip had 4:12 left when nothing was playing at all.
+    media: Option<MediaBeat>,
+}
+
+/// A screen's account of the clip it is playing, carried on the beat it already
+/// sends.
+///
+/// **The console must not time a clip from its own copy.** Its programme pane
+/// renders through the same component, so it has a second video element playing
+/// the same file — and that one is not the wall. It buffers differently, it starts
+/// at a different instant, and if the wall's copy stalls the console's carries
+/// happily on. An operator reading "0:12 left" off the console while the
+/// congregation's screen is frozen at 2:30 is rule 35 exactly: a status line that
+/// cannot detect its own failure.
+///
+/// So the numbers come from the screen that is painting, on the beat that already
+/// says whether it is painting at all, and when no screen reports the console says
+/// it does not know rather than doing the arithmetic itself.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+pub struct MediaBeat {
+    pub pos_ms: u64,
+    pub dur_ms: u64,
+    pub paused: bool,
+}
+
+impl MediaBeat {
+    /// Read a screen's media report off a JSON beat.
+    ///
+    /// The same discipline as `BeatGap::from_json` and for the same reason: a
+    /// number that is not a sane non-negative integer is dropped, and a report
+    /// with no duration is dropped whole. A duration of zero is not a clip that
+    /// takes no time, it is a screen that has not finished loading one, and
+    /// "0:00 left" over a clip that has barely started is worse than saying
+    /// nothing.
+    /// The same reading, from the native window's command arguments rather than
+    /// from a JSON frame. One rule, two transports — the shape `BeatGap::clamped`
+    /// already takes, so a window and a browser source cannot come to different
+    /// conclusions about the same clip.
+    pub fn clamped(pos_ms: Option<u64>, dur_ms: Option<u64>, paused: Option<bool>) -> Option<Self> {
+        let dur_ms = dur_ms.filter(|d| *d > 0 && *d <= GAP_CLAMP_MS)?;
+        let pos_ms = pos_ms.filter(|p| *p <= GAP_CLAMP_MS)?.min(dur_ms);
+        Some(MediaBeat {
+            pos_ms,
+            dur_ms,
+            paused: paused.unwrap_or(false),
+        })
+    }
+
+    fn from_json(v: &serde_json::Value) -> Option<Self> {
+        let num = |k: &str| {
+            v.get(k)
+                .and_then(|n| n.as_u64())
+                .filter(|n| *n <= GAP_CLAMP_MS)
+        };
+        let dur_ms = num("media_dur_ms").filter(|d| *d > 0)?;
+        let pos_ms = num("media_pos_ms")?.min(dur_ms);
+        Some(MediaBeat {
+            pos_ms,
+            dur_ms,
+            paused: v
+                .get("media_paused")
+                .and_then(|b| b.as_bool())
+                .unwrap_or(false),
+        })
+    }
 }
 
 /// The screen's account of its own silence, carried on the beat that ends it.
@@ -725,7 +796,14 @@ impl OutputHealth {
     /// Record that the screen for `channel_id` is alive and painting `state`.
     /// A lock poisoned by a panicking reader must not take the wall's status with
     /// it: a lost beat degrades to "silent", which is the safe direction.
-    pub fn beat(&self, channel_id: i64, state: PaintState, transport: &'static str, gap: BeatGap) {
+    pub fn beat(
+        &self,
+        channel_id: i64,
+        state: PaintState,
+        transport: &'static str,
+        gap: BeatGap,
+        media: Option<MediaBeat>,
+    ) {
         if channel_id <= 0 {
             return;
         }
@@ -737,6 +815,7 @@ impl OutputHealth {
                     state,
                     transport,
                     gap,
+                    media,
                 },
             );
         }
@@ -760,6 +839,21 @@ impl OutputHealth {
     }
 
     /// True only if this channel reported within `BEAT_STALE_MS`.
+    /// WHERE THIS SCREEN SAYS ITS CLIP IS, or `None`.
+    ///
+    /// Only from a beat that is still fresh. A stale beat's media report is the
+    /// same lie as a stale paint state: an operator would be shown a clip counting
+    /// down on a screen that stopped answering a minute ago, and the countdown is
+    /// the one thing they are timing the next cue against.
+    pub fn media_of(&self, channel_id: i64) -> Option<MediaBeat> {
+        let m = self.beats.lock().ok()?;
+        let b = m.get(&channel_id)?;
+        if b.at.elapsed().as_millis() as u64 > BEAT_STALE_MS {
+            return None;
+        }
+        b.media
+    }
+
     pub fn painting(&self, channel_id: i64) -> bool {
         matches!(self.read(channel_id), Some((age, _, _)) if age <= BEAT_STALE_MS)
     }
@@ -2905,7 +2999,13 @@ pub async fn run_kiosk_server(
                                             .and_then(|s| s.as_str())
                                             .and_then(PaintState::parse),
                                     ) {
-                                        health.beat(ch, st, "kiosk", BeatGap::from_json(&v));
+                                        health.beat(
+                                            ch,
+                                            st,
+                                            "kiosk",
+                                            BeatGap::from_json(&v),
+                                            MediaBeat::from_json(&v),
+                                        );
                                         // ── AND THE SCREEN IS TOLD THE TIME ──
                                         //
                                         // Answered here, INSIDE the parse, so an
@@ -5625,6 +5725,71 @@ mod tests {
             r#"{"kind":"channel_shows","shows":{"1":["scripture"]}}"#
         ));
     }
+    /// A CLIP'S POSITION IS ONLY WORTH WHAT THE BEAT CARRYING IT IS WORTH.
+    ///
+    /// Requirement 11. The console must never time a clip off its own preview —
+    /// its programme pane holds a second player of the same file, and if the
+    /// wall's copy stalls the console's carries on. So the figure comes off the
+    /// beat, and a stale beat's figure is refused with the rest of it.
+    #[test]
+    fn a_stale_beat_says_nothing_about_a_clip() {
+        let h = OutputHealth::default();
+        h.beat(
+            4,
+            PaintState::Content,
+            "kiosk",
+            BeatGap::default(),
+            Some(MediaBeat {
+                pos_ms: 12_000,
+                dur_ms: 240_000,
+                paused: false,
+            }),
+        );
+        assert_eq!(h.media_of(4).map(|m| m.pos_ms), Some(12_000));
+        // And a channel nobody has reported for says nothing rather than zero.
+        assert_eq!(h.media_of(99), None);
+    }
+
+    /// ZERO IS NOT A CLIP THAT TAKES NO TIME.
+    ///
+    /// It is a player that has not loaded one yet. "0:00 left" over a clip that has
+    /// barely started is worse than saying nothing, because the operator acts on
+    /// it — that figure is what the next cue is timed against.
+    #[test]
+    fn a_report_with_no_duration_is_dropped_whole() {
+        let j = |s: &str| serde_json::from_str::<serde_json::Value>(s).expect("json");
+        assert_eq!(
+            MediaBeat::from_json(&j(r#"{"media_pos_ms":0,"media_dur_ms":0}"#)),
+            None
+        );
+        assert_eq!(MediaBeat::from_json(&j(r#"{"media_pos_ms":10}"#)), None);
+        assert_eq!(MediaBeat::from_json(&j(r#"{}"#)), None);
+        // And the same rule through the other transport, because a window and a
+        // browser source must not disagree about the same clip.
+        assert_eq!(MediaBeat::clamped(Some(0), Some(0), None), None);
+        assert_eq!(MediaBeat::clamped(Some(10), None, None), None);
+    }
+
+    /// A NUMBER OFF THE LAN IS STILL UNTRUSTED INPUT — and a position past the end
+    /// of its own clip is the shape that reaches an operator as a negative
+    /// countdown.
+    #[test]
+    fn a_position_past_the_end_is_clamped_to_the_end() {
+        let j = |s: &str| serde_json::from_str::<serde_json::Value>(s).expect("json");
+        let m = MediaBeat::from_json(&j(r#"{"media_pos_ms":999999,"media_dur_ms":5000}"#))
+            .expect("a clip with a real duration");
+        assert_eq!(m.pos_ms, 5_000);
+        assert_eq!(
+            MediaBeat::clamped(Some(999_999), Some(5_000), None).map(|m| m.pos_ms),
+            Some(5_000)
+        );
+        // Beyond a day is a broken clock or a hostile client, and neither is
+        // evidence about a service. The same clamp `BeatGap` already applies.
+        assert_eq!(
+            MediaBeat::clamped(Some(0), Some(GAP_CLAMP_MS + 1), None),
+            None
+        );
+    }
 
     /// Every `kind` this module publishes, and whether it decides what a screen
     /// is SHOWING. `true` here means the hub retains it and replays it to a
@@ -8328,7 +8493,7 @@ mod rehearsal_tests {
     #[test]
     fn a_beat_makes_a_screen_painting_and_carries_what_it_said() {
         let h = OutputHealth::default();
-        h.beat(7, PaintState::Content, "window", BeatGap::default());
+        h.beat(7, PaintState::Content, "window", BeatGap::default(), None);
         assert!(h.painting(7));
         let (age, state, transport) = h.read(7).expect("just beat");
         assert!(age < 1_000);
@@ -8344,8 +8509,8 @@ mod rehearsal_tests {
     #[test]
     fn a_preview_with_no_channel_reports_nothing() {
         let h = OutputHealth::default();
-        h.beat(0, PaintState::Content, "window", BeatGap::default());
-        h.beat(-1, PaintState::Content, "window", BeatGap::default());
+        h.beat(0, PaintState::Content, "window", BeatGap::default(), None);
+        h.beat(-1, PaintState::Content, "window", BeatGap::default(), None);
         assert!(h.read(0).is_none());
         assert!(h.read(-1).is_none());
     }
@@ -8395,7 +8560,7 @@ mod rehearsal_tests {
     #[test]
     fn a_screen_that_answered_and_then_went_quiet_is_reported_at_once() {
         let h = OutputHealth::default();
-        h.beat(9, PaintState::Content, "window", BeatGap::default());
+        h.beat(9, PaintState::Content, "window", BeatGap::default(), None);
         assert_eq!(
             h.transition(9),
             None,
@@ -8409,7 +8574,7 @@ mod rehearsal_tests {
             b.at = std::time::Instant::now() - std::time::Duration::from_millis(BEAT_STALE_MS * 2);
         }
         assert_eq!(h.transition(9), Some(false));
-        h.beat(9, PaintState::Content, "window", BeatGap::default());
+        h.beat(9, PaintState::Content, "window", BeatGap::default(), None);
         assert_eq!(h.transition(9), Some(true));
     }
 
@@ -8422,7 +8587,7 @@ mod rehearsal_tests {
     #[test]
     fn a_beat_carries_what_the_screen_said_about_its_own_silence() {
         let h = OutputHealth::default();
-        h.beat(9, PaintState::Content, "window", BeatGap::default());
+        h.beat(9, PaintState::Content, "window", BeatGap::default(), None);
         assert_eq!(h.last_gap(9), Some(BeatGap::default()));
         assert_eq!(
             h.last_gap(9).and_then(|g| g.describe()),
@@ -8435,6 +8600,7 @@ mod rehearsal_tests {
             PaintState::Content,
             "window",
             BeatGap::clamped(Some(641_000), Some(641_000)),
+            None,
         );
         assert_eq!(
             h.last_gap(9).and_then(|g| g.describe()).as_deref(),
@@ -8446,6 +8612,7 @@ mod rehearsal_tests {
             PaintState::Content,
             "window",
             BeatGap::clamped(Some(2_000), Some(0)),
+            None,
         );
         assert_eq!(
             h.last_gap(9).and_then(|g| g.describe()).as_deref(),
@@ -8490,7 +8657,7 @@ mod rehearsal_tests {
     #[test]
     fn forgetting_a_channel_resets_it_to_no_answer_yet() {
         let h = OutputHealth::default();
-        h.beat(3, PaintState::Black, "kiosk", BeatGap::default());
+        h.beat(3, PaintState::Black, "kiosk", BeatGap::default(), None);
         assert!(h.painting(3));
         h.forget(3);
         assert!(h.read(3).is_none());
@@ -8527,8 +8694,8 @@ mod rehearsal_tests {
     #[test]
     fn the_latest_beat_wins() {
         let h = OutputHealth::default();
-        h.beat(2, PaintState::Content, "window", BeatGap::default());
-        h.beat(2, PaintState::Black, "kiosk", BeatGap::default());
+        h.beat(2, PaintState::Content, "window", BeatGap::default(), None);
+        h.beat(2, PaintState::Black, "kiosk", BeatGap::default(), None);
         let (_, state, transport) = h.read(2).expect("beat");
         assert_eq!(state, PaintState::Black);
         assert_eq!(transport, "kiosk");

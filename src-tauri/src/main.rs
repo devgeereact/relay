@@ -6916,6 +6916,15 @@ struct ChannelLiveness {
     /// False for a target Relay cannot drive at all (NDI is parked), so the UI can
     /// say "unavailable" rather than "offline" — a different claim.
     supported: bool,
+    /// WHERE THIS SCREEN SAYS ITS CLIP IS — `None` when it said nothing.
+    ///
+    /// The console must never time a clip off its own preview: its programme pane
+    /// renders through the same component, so it has a second player of the same
+    /// file that buffers differently and carries on happily if the wall's copy
+    /// stalls. An operator reading "0:12 left" while the congregation's screen is
+    /// frozen at 2:30 is rule 35 exactly. So the figure comes from the screen that
+    /// is painting, and `None` means the operator is told nobody said.
+    media: Option<channels::MediaBeat>,
     /// The screen answered for itself within `channels::BEAT_STALE_MS`.
     ///
     /// This is the only field here that can tell a working screen from a frozen
@@ -7162,6 +7171,7 @@ fn channel_status(
                         }
                     },
                     supported: true,
+                    media: health.media_of(c.id),
                     painting,
                     last_beat_ms: age,
                     paint_state: state,
@@ -7209,6 +7219,7 @@ fn channel_status(
                         }
                     },
                     supported: true,
+                    media: health.media_of(c.id),
                     painting,
                     last_beat_ms: age,
                     paint_state: state,
@@ -7223,6 +7234,8 @@ fn channel_status(
                 clients: 0,
                 detail: "NDI output is not available in this build".into(),
                 supported: false,
+                // A target Relay cannot drive reports nothing about a clip either.
+                media: None,
                 painting: false,
                 last_beat_ms: None,
                 paint_state: None,
@@ -7235,6 +7248,8 @@ fn channel_status(
                 clients: 0,
                 detail: format!("Unknown render target '{other}'"),
                 supported: false,
+                // A target Relay cannot drive reports nothing about a clip either.
+                media: None,
                 painting: false,
                 last_beat_ms: None,
                 paint_state: None,
@@ -7255,6 +7270,16 @@ fn channel_status(
 /// and a print here would bury every other line in stdout (rule 4's lesson, one
 /// layer up). Unlike `greet`, whose entire value is that it appears exactly once,
 /// this one's value is that it never appears at all.
+// EIGHT FLAT ARGUMENTS, AND FLAT ON PURPOSE.
+//
+// The WebSocket beat carries `media_pos_ms`, `media_dur_ms` and `media_paused` as
+// three fields on one object, because that is what a JSON frame is. Bundling them
+// into a struct here would make the native window's beat a different shape from
+// the browser source's for no gain, and the whole point of `MediaBeat::clamped`
+// beside `MediaBeat::from_json` is that one rule reads both transports. A window
+// and a browser source must not be able to reach different conclusions about the
+// same clip.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 fn output_beat(
     health: tauri::State<'_, channels::OutputHealth>,
@@ -7265,6 +7290,12 @@ fn output_beat(
     // absent is the honest reading of that. See `channels::BeatGap` and RG-119.
     since_ms: Option<u64>,
     hidden_ms: Option<u64>,
+    // WHERE THE CLIP IS, if this screen is playing one. Absent for every screen
+    // showing a verse, and absent is the honest reading — see `channels::MediaBeat`
+    // for why the console must never time a clip off its own preview instead.
+    media_pos_ms: Option<u64>,
+    media_dur_ms: Option<u64>,
+    media_paused: Option<bool>,
 ) -> error::Result<()> {
     // An unparseable state is dropped, not defaulted. Defaulting would let a
     // malformed beat keep a dead screen looking alive, which is the exact failure
@@ -7275,6 +7306,7 @@ fn output_beat(
             st,
             "window",
             channels::BeatGap::clamped(since_ms, hidden_ms),
+            channels::MediaBeat::clamped(media_pos_ms, media_dur_ms, media_paused),
         );
     }
     Ok(())
