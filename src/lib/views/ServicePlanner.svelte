@@ -80,6 +80,16 @@
     countdownCuePayload,
   } from '../planneradd.js';
   import { dragFrame } from '../plannerdrag.js';
+  // Dropping a file straight onto the running order. The triage, the gap the
+  // operator is shown, and the order it produces — see the module for why a
+  // document is refused at the drop rather than at the fire.
+  import {
+    triageDrop,
+    refusalMessage,
+    dropGapAt,
+    orderWithDropAt,
+    droppedMessage,
+  } from '../plannerdrop.js';
   import {
     capture,
     templates,
@@ -105,6 +115,12 @@
     getSong,
     listArrangements,
     listMedia,
+    // The import path that already exists, reached from a drop instead of from a
+    // file dialog. `fileToBase64` is the choke point that holds MAX_IMPORT_BYTES
+    // (CLAUDE.md rule 36's shape), so a dropped file gets the same refusal a
+    // chosen one does, with no second guard written here.
+    importMedia,
+    fileToBase64,
     listAnnouncements,
     loadTemplates,
     readErrors,
@@ -499,6 +515,112 @@
     // down rather than waiting to be confirmed by a press meant for something else.
     if (cueDelArm !== null) disarmCueDelete();
   }
+  // ── DROP A FILE STRAIGHT ONTO THE RUNNING ORDER (Requirement 13) ──────────
+  //
+  // There was no file drop anywhere in `src/`. Putting a picture in a plan meant
+  // Library → Import → file dialog → the media review sheet → back here → Add cue
+  // → search the filename → click. This is the same import path (`fileToBase64` →
+  // `importMedia`) reached from a drag instead, with no new Rust and no new Tauri
+  // capability.
+  //
+  // IT CANNOT COLLIDE WITH THE REORDER, which was deliberately migrated OFF
+  // HTML5 drag onto pointer events. A file dragged from the operating system
+  // fires `dragenter`/`dragover`/`drop` and never `pointerdown`, so the two never
+  // see each other's events — and `dropAt` is held at null while a row is in hand
+  // anyway, because an insertion marker and a half-finished reorder on screen at
+  // once is two answers to "where will this land".
+  //
+  // `dragover` MUST `preventDefault()` or the webview navigates to the file and
+  // the console is simply gone, mid-build, with no way back but a relaunch.
+  let dropAt = null; // the gap index the marker is drawn at, or null when not over
+  let dropBusy = false;
+  let dropDepth = 0; // enter/leave nest: a child element's `dragleave` is not a leave
+
+  /** Does this drag carry FILES? A row being dragged inside the app does not. */
+  function dragHasFiles(e) {
+    const t = e?.dataTransfer;
+    if (!t) return false;
+    if (t.types && typeof t.types.includes === 'function') return t.types.includes('Files');
+    return Boolean(t.files?.length);
+  }
+
+  function onFileOver(e) {
+    if (!openPlan || drag || !dragHasFiles(e)) return;
+    // Without this the browser opens the file and the console is gone.
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    const rows = [...(e.currentTarget?.querySelectorAll?.('.sp-row') ?? [])].map((r) =>
+      r.getBoundingClientRect(),
+    );
+    dropAt = dropGapAt(rows, e.clientY);
+  }
+  function onFileEnter(e) {
+    if (!openPlan || drag || !dragHasFiles(e)) return;
+    dropDepth += 1;
+  }
+  function onFileLeave() {
+    dropDepth = Math.max(0, dropDepth - 1);
+    if (!dropDepth) dropAt = null;
+  }
+
+  /**
+   * The drop itself.
+   *
+   * Refusals are reported and the rest still land — a mixed drop is not
+   * all-or-nothing, because refusing the batch over one PDF makes an operator
+   * drag the pictures again. The size refusal is NOT re-implemented here:
+   * `fileToBase64` throws it before it allocates anything, and `humanError`
+   * prints that shape verbatim.
+   *
+   * Every file is imported, then every cue is added, and THEN one `reorder_plan`
+   * puts them where the marker was. The marker's gap is an index into the order
+   * as it was BEFORE the adds, which is the list the operator was looking at.
+   */
+  async function onFileDrop(e) {
+    if (!openPlan || drag || !dragHasFiles(e)) return;
+    e.preventDefault();
+    const at = dropAt;
+    dropDepth = 0;
+    dropAt = null;
+    const { accept, refused } = triageDrop(e.dataTransfer?.files);
+    if (!accept.length) {
+      err = refusalMessage(refused) || 'Nothing in that drop could become a cue.';
+      return;
+    }
+    const before = items.map((i) => i.id);
+    dropBusy = true;
+    await act(async () => {
+      try {
+        const newIds = [];
+        for (const { file, kind } of accept) {
+          // `import_media` answers the whole `media_assets` row, so the library
+          // the inspector's preview looks the asset up in is kept in step here
+          // rather than by a second `list_media` round trip.
+          const asset = await importMedia(kind, file.name, await fileToBase64(file));
+          if (asset) allMedia = [...allMedia, asset];
+          const built = mediaCuePayload(asset ?? { id: null, kind, filename: file.name });
+          const id = await addPlanItem(openPlan.id, built.cue_type, built.label, built.payload);
+          if (id != null) newIds.push(id);
+        }
+        await loadItems();
+        const order = orderWithDropAt(items.map((i) => i.id), newIds, at ?? before.length);
+        if (order.length && order.join() !== items.map((i) => i.id).join()) {
+          await reorderPlan(openPlan.id, order);
+          await loadItems();
+        }
+        if (newIds.length) selId = newIds[0];
+        await refresh();
+        msg = droppedMessage(newIds.length);
+        // A refusal alongside a success is still news. `err` is the rose slot and
+        // outranks `msg` in the head, which is the right way round: the operator
+        // can see the cues that landed, and cannot see the file that did not.
+        if (refused.length) err = refusalMessage(refused);
+      } finally {
+        dropBusy = false;
+      }
+    });
+  }
+
   /** Put the selection down without touching the plan. */
   function clearPicked() {
     picked = [];
@@ -1011,7 +1133,23 @@
       </div>
     {:else}
       {#if leftMode === 'cues'}
-        <div class="rw-panebody sp-tablewrap">
+        <!-- THE DROP ZONE is the whole running order, including the empty-plan
+             placeholder inside it, so a picture can be dropped onto a plan that
+             has nothing in it yet. The handlers ignore anything that is not a
+             FILE drag and anything arriving while a row is in hand, so the
+             pointer-based reorder underneath is untouched.
+             `role="presentation"` and the a11y-ignore: this is not a control and
+             does not claim to be one. Everything it does is reachable without a
+             mouse through ＋ Add cue → the media search, which is the path it is
+             a shortcut for — a drop cannot be a keyboard's only route to
+             anything. -->
+        <!-- svelte-ignore a11y-no-static-element-interactions -->
+        <div class="rw-panebody sp-tablewrap" class:dropping={dropAt !== null}
+          role="presentation"
+          on:dragenter={onFileEnter}
+          on:dragover={onFileOver}
+          on:dragleave={onFileLeave}
+          on:drop={onFileDrop}>
           {#if items.length}
             {#each sections as sec, si (sec.items[0].id)}
               <!-- A section heading is a CAPTION and a hairline to the right edge,
@@ -1040,6 +1178,15 @@
 
               {#each sec.items as c (c.id)}
                 {@const n = items.findIndex((i) => i.id === c.id)}
+                <!-- WHERE THE DROPPED FILE WILL LAND, shown before the mouse is
+                     released. The gap is `plannerdrop.dropGapAt`, the same number
+                     the insertion afterwards uses, so the marker cannot promise a
+                     position the reorder does not deliver. It carries WORDS as
+                     well as a line: a 2px rule is not a signal on its own, and
+                     this one appears over a list the operator is mid-drag on. -->
+                {#if dropAt === n}
+                  <div class="sp-mark"><span class="sp-markw r-mono">Drop here</span></div>
+                {/if}
                 <div class="sp-row" class:sel={c.id === selId} class:dragging={dragId === c.id}
                   class:inband={Boolean(band)} class:picked={picked.includes(c.id)}
                   style={band ? `--sec-ink:${band.ink}` : ''}
@@ -1118,13 +1265,31 @@
                 </div>
               {/each}
             {/each}
+            <!-- The last gap: below every row. Outside the section loop, so it
+                 belongs to the plan rather than to whichever section happens to
+                 be last. -->
+            {#if dropAt === items.length}
+              <div class="sp-mark"><span class="sp-markw r-mono">Drop here</span></div>
+            {/if}
           {:else if $readErrors.planItems}
             <!-- RG-95, last two surfaces. `planItems` swallowed to `[]`, so a read
                  that failed said "Empty plan" about a plan the operator spent an
                  evening building. -->
             <ErrorState error={$readErrors.planItems} onRetry={loadItems} />
           {:else}
-            <div class="sp-drop r-mono">Empty plan — use ＋ Add cue.</div>
+            <!-- An EMPTY plan is a drop target too, and it says so — a placeholder
+                 that only ever names one way in would have an operator hunting for
+                 a file dialog with the file already under their hand. -->
+            <div class="sp-drop r-mono" class:over={dropAt !== null}>
+              {#if dropAt !== null}
+                Drop to add it as the first cue.
+              {:else}
+                Empty plan — use ＋ Add cue, or drop a picture or a video here.
+              {/if}
+            </div>
+          {/if}
+          {#if dropBusy}
+            <div class="sp-drophint r-mono" role="status">Importing the dropped file…</div>
           {/if}
         </div>
       {:else}
@@ -1264,7 +1429,8 @@
     <div class="rw-panefoot sp-caveat">
       <p>
         {#if leftMode === 'cues'}Drag <b>⠿</b> to reorder. Shift-click for a run, ⌘/Ctrl-click to
-          pick several. {/if}Build only — nothing here reaches an output. Run it in <b>Live</b>.
+          pick several. Drop a picture or a video anywhere on the list to add it there.
+          {/if}Build only — nothing here reaches an output. Run it in <b>Live</b>.
       </p>
     </div>
   </section>
@@ -1702,7 +1868,28 @@
   .sp-cuenote svg{ flex:0 0 auto; }
   .sp-dur{ flex:0 0 auto; font-family:var(--f-mono); font-size:var(--v-fs-cap); color:var(--v-faint);
     font-variant-numeric:tabular-nums; }
-  .sp-drop{ padding:22px; text-align:center; font-size:var(--v-fs-b2); color:var(--v-faint); }
+  .sp-drop{ padding:22px; text-align:center; font-size:var(--v-fs-b2); color:var(--v-faint);
+    border:1px dashed transparent; border-radius:var(--v-r-lg); margin:6px;
+    transition:border-color var(--v-dur) var(--v-ease), color var(--v-dur) var(--v-ease); }
+  .sp-drop.over{ border-color:var(--v-sel-line); color:var(--v-txt); background:var(--v-sel-soft); }
+
+  /* ── A FILE OVER THE RUNNING ORDER ─────────────────────────────────────────
+     STEEL, not a new colour and not a promise one: a drop target is the thing you
+     are working on, which is exactly what `--v-sel` means here and on every other
+     desk (docs/REBRAND.md §1). It is emphatically not amber — a file being
+     dragged over a build surface has nothing to do with a congregation.
+
+     The marker carries WORDS. A 2px rule appearing under a moving cursor is not a
+     signal on its own, and this is the whole of the promise the drop makes about
+     where the cue will land. */
+  .sp-tablewrap.dropping{ box-shadow:inset 0 0 0 1px var(--v-sel-line); }
+  .sp-mark{ position:relative; display:flex; align-items:center; gap:8px;
+    height:2px; margin:2px 8px; background:var(--v-sel); border-radius:1px; }
+  .sp-markw{ position:absolute; left:0; top:-8px; padding:1px 5px;
+    font-size:var(--v-fs-cap); line-height:1.2; font-weight:600; letter-spacing:.04em;
+    color:var(--v-sel-ink); background:var(--v-sel-fill); border-radius:var(--v-r-sm);
+    white-space:nowrap; }
+  .sp-drophint{ padding:8px 12px; font-size:var(--v-fs-cap); color:var(--v-dim); }
 
   /* THE ROW'S DELETE. Always present, never hidden behind a hover: "do not hide
      destructive deletion behind ambiguity" cuts both ways, and a control that
