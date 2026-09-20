@@ -39,7 +39,8 @@
   import ImportReview from './library/ImportReview.svelte';
   import BulkImport from './library/BulkImport.svelte';
   import { BULK_THRESHOLD, describeRun } from '../bulkimport.js';
-  import { findProPresenter } from '../stores/capture.js';
+  import { findProPresenter, saveAnnouncement } from '../stores/capture.js';
+  import { sourceFolder, shelfFor, foldersIn } from '../importroute.js';
   import Collections from './library/Collections.svelte';
   import { COLLECTIONS, collectionOf } from './library/collections.js';
   import {
@@ -417,6 +418,7 @@
     // webview before anything is decided — four simultaneous copies each, per the
     // note on `fileToBase64`. Sorting is free; reading is not.
     const lyric = []; // → the pre-save review, or the bulk runner
+    const notices = []; // out of an ANNOUNCEMENT folder → the announcements shelf
     const media = []; // pictures, video, documents → the look below
     // WHAT A FOLDER BRINGS WITH IT, and why a hand-picked set never needed this.
     //
@@ -447,7 +449,12 @@
             ? 'document'
             : null;
       if (PRO.includes(ext) || TXT.includes(ext)) {
-        lyric.push(file);
+        // WHICH SHELF, from the folder it came out of. A hand-picked file carries
+        // no relative path and lands on the songs shelf exactly as before — this
+        // only reads a grouping a FOLDER pick already supplies, and never guesses
+        // one from a file name.
+        if (shelfFor(sourceFolder(file)) === 'announcement') notices.push(file);
+        else lyric.push(file);
       } else if (kind) {
         media.push({
           file,
@@ -467,7 +474,45 @@
         importMsg = `Skipped .${ext} (unsupported)`;
       }
     }
-    if (junk && !lyric.length && !media.length) {
+    // WHAT CAME FROM WHERE. Counted by the folder's own name, because that is the
+    // church's word: an operator recognises `HMYN`, and does not recognise "18
+    // items were classified as songs". Empty for a hand-picked set, which has no
+    // grouping to report.
+    const folders = foldersIn(files);
+    if (folders.length > 1) {
+      importMsg = folders.map((f) => `${f.folder} ${f.count}`).join(' · ');
+    }
+
+    // THE ANNOUNCEMENT SHELF, and it is a short list on purpose.
+    //
+    // The real library has about four of these against seven hundred songs, so a
+    // sequential save is the right shape — the bulk runner exists for the case
+    // where reading everything up front is the problem, and four files are not
+    // that case. A failure on one is collected and the rest carry on, because
+    // aborting a 726-file import over one announcement would be the worse answer.
+    if (notices.length) {
+      let saved = 0;
+      const failed = [];
+      for (const file of notices) {
+        try {
+          const parsed = await parseImport(file.name, await fileToBase64(file));
+          for (const song of parsed) {
+            const body = (song.sections ?? [])
+              .map((sec) => sec.lyrics ?? '')
+              .filter(Boolean)
+              .join('\n\n');
+            await saveAnnouncement(null, song.title, body);
+            saved += 1;
+          }
+        } catch {
+          failed.push(file.name);
+        }
+      }
+      const tail = failed.length ? ` · ${failed.length} could not be read` : '';
+      importMsg = `${saved} announcement${saved === 1 ? '' : 's'} imported${tail}`;
+    }
+
+    if (junk && !lyric.length && !media.length && !notices.length) {
       importMsg = `Nothing importable in that folder — ${junk} file${junk === 1 ? '' : 's'} skipped`;
     }
 

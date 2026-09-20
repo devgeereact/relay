@@ -235,3 +235,85 @@ describe('finding a library that is already on the computer', () => {
     expect(text()).toContain('Import folder');
   });
 });
+
+// ── A LIBRARY'S OWN SHELVES SURVIVE THE IMPORT ──────────────────────────────
+//
+// A ProPresenter library is folders, and the grouping is the church's own. The
+// real export: SONGS ~721, SCRIPTURES ~49, HMYN ~18, SPOKEN WORDS ~11,
+// ANNOUNCEMENT ~4. Calling all 800 of them songs throws that away and makes the
+// operator put it back one item at a time.
+describe('a folder import keeps the shelf a file came off', () => {
+  itMounted('an ANNOUNCEMENT folder lands on the announcements shelf', async () => {
+    const saved = [];
+    invoke.mockImplementation(async (cmd, args) => {
+      if (cmd === 'parse_import') {
+        return [{ title: 'Countdown', sections: [{ tag: '1', label: 'Slide 1', lyrics: 'Ten minutes' }] }];
+      }
+      if (cmd === 'save_announcement') {
+        saved.push(args);
+        return 1;
+      }
+      return [];
+    });
+    const f = pickedFile('Countdown.pro');
+    f.webkitRelativePath = 'rrr/ANNOUNCEMENT/Countdown.pro';
+    await chooseVia('input[webkitdirectory]', [f]);
+    await settle();
+    await settle();
+    expect(saved.length, 'the announcement went to the songs shelf').toBe(1);
+    expect(saved[0].title).toBe('Countdown');
+    expect(saved[0].body).toContain('Ten minutes');
+  });
+
+  itMounted('a SONGS folder is untouched by any of it', async () => {
+    const saved = [];
+    invoke.mockImplementation(async (cmd, args) => {
+      if (cmd === 'save_announcement') {
+        saved.push(args);
+        return 1;
+      }
+      if (cmd === 'parse_import') return [{ title: 'x', sections: [] }];
+      return [];
+    });
+    const f = pickedFile('30 Billion.pro');
+    f.webkitRelativePath = 'rrr/SONGS/30 Billion.pro';
+    await chooseVia('input[webkitdirectory]', [f]);
+    await settle();
+    expect(saved, 'a song was filed as an announcement').toEqual([]);
+  });
+
+  itMounted('a HAND-PICKED file is a song exactly as it always was', async () => {
+    // No relative path means no grouping, and guessing one from a file name would
+    // file things on a shelf nobody chose. This is the regression guard on every
+    // import that existed before folders did.
+    const saved = [];
+    invoke.mockImplementation(async (cmd, args) => {
+      if (cmd === 'save_announcement') {
+        saved.push(args);
+        return 1;
+      }
+      if (cmd === 'parse_import') return [{ title: 'x', sections: [] }];
+      return [];
+    });
+    await chooseVia('input[type="file"]:not([webkitdirectory])', [pickedFile('ANNOUNCEMENT.pro')]);
+    await settle();
+    expect(saved).toEqual([]);
+  });
+
+  itMounted('and the report names the folders in the church’s own words', async () => {
+    invoke.mockImplementation(async (cmd) => (cmd === 'parse_import' ? [] : []));
+    const mk = (path) => {
+      const f = pickedFile(path.split('/').pop());
+      f.webkitRelativePath = path;
+      return f;
+    };
+    await chooseVia('input[webkitdirectory]', [
+      mk('L/SONGS/a.pro'),
+      mk('L/SONGS/b.pro'),
+      mk('L/HMYN/c.pro'),
+    ]);
+    await settle();
+    expect(text()).toContain('SONGS 2');
+    expect(text()).toContain('HMYN 1');
+  });
+});
