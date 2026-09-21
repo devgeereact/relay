@@ -6289,3 +6289,57 @@ removed. `stagemessagenative.test.js` drives the page half through the real comp
 stage window paints it, a native main screen does not, a blank takes it down, and both doors ask
 the one predicate.
 
+## 115. The Screen Countdown leaves Live a second time, and the transport is deleted rather than left uncalled (2026-09-21)
+
+**On the operator's instruction: "remove the Screen Countdown from the live workspace completely."**
+
+### The history, because it has now gone both ways twice
+
+On the morning of 2026-09-20 the band moved from Quick tools to Live. That evening the operator
+asked for it to go, and it went. On 2026-09-21 the Phase 1 audit read the note it left back as
+its F13 row — a countdown already in front of a room could not be held, reset, nudged or put
+back from anywhere — and the operator asked for it back (§109). Later that day the operator
+asked for it removed completely. **This is that decision, and it reverses §109.**
+
+### What goes
+
+The band and its whole transport: the figure fields, the clock-time target, the format, the six
+controls, the screen picker, the reach line and the way back (RG-152). With it, the eleven
+`r7_*` end-to-end tests that drove it, the two blocks in `countdownwiring.test.js` that drove
+its wrappers, and the CSS — an unused selector is a surface somebody rebuilds half of by
+accident.
+
+**And the two commands it was the only caller of: `adjust_countdown` and `show_timer`, deleted
+outright.** This is the half the first removal got wrong. F13 found them *imported into Live and
+called nowhere*, which is precisely the state this repository has deleted ten other commands for:
+every registered command is invokable from the webview, so one nothing calls is attack surface
+nobody is watching. Their wrappers go too (`adjustCountdown`, `pauseCountdown`, `showTimer`), as
+do the two pure readers only the transport used (`countdownRemaining`, `countdownHeld`) and the
+helper in `main.rs` that only they called (it was `newest_congregation_timer`, and naming it
+as a citation here would be a citation to nothing). `servicelock::PROTECTED`'s
+never-block list loses both names, and the test that asserts every name there is a REGISTERED
+command is what caught it.
+
+### What stays, and this is the part that matters to a room
+
+**A church can still run a countdown.** The Planner builds one as a cue aimed at named screens
+and Live fires it like every other cue: `start_countdown` keeps that caller and all of its tests.
+`countdown.js` is untouched, so `TemplateRender`, `Stage.svelte` and `timers.js` render a
+countdown exactly as before, held or running. `startCountdown`'s refusal guard kept its reading
+by inlining it.
+
+### What it costs, recorded rather than argued away
+
+**A countdown already in front of a congregation cannot be held, re-aimed, nudged or put back.
+The only thing that takes one off a wall is Clear screens or Blackout.** That was true between
+2026-09-20 and 2026-09-21 as well, and it is what F13 filed. It is written here, in
+`screencountdown.test.js` and at the top of the e2e block the eleven tests vacated, so the next
+reader meets the cost where they meet the absence.
+
+**Why a reversal is recorded at all.** Because §109 recorded the last one, and a silent removal
+would leave the next reader with three facts and no order to put them in.
+
+**Pinned by** `screencountdown.test.js`, which asserts the band's absence, that no transport
+state is left behind, that nothing is styled that is not drawn, that both commands are gone from
+the bridge — and, as its own guard, that `start_countdown` is NOT.
+

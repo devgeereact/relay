@@ -1610,88 +1610,20 @@ return sequence.map((i) => sections[i]).filter(Boolean);
  *  future). Derived from the mirrored output content, so it clears the moment
  *  the screen is cleared or any other content goes live. */
 export function countdownRunning() {
-return countdownRemaining() !== null;
+// INLINE SINCE 2026-09-21. This read `countdownRemaining()`, a reader the Screen
+// Countdown's transport shared with it; the transport went with the band
+// (DECISIONS §115) and took the reader with it, and this guard is the only thing
+// that still needed the answer. `countdownRemainingMs` distinguishes "finished"
+// (0) from "there is no countdown" (null) because a renderer shows a done message
+// for one and nothing for the other. This question does not care: a countdown
+// that has run out is not one `start_countdown` must refuse to replace.
+const left = countdownRemainingMs(get(live));
+return left != null && left > 0;
 }
 
-/** Is the countdown on the wall being HELD? Through the one reader, so the
- *  transport, the wall and the stage page cannot disagree about it. */
-export function countdownHeld() {
-return countdownIsPaused(get(live));
-}
 
-/** How long the countdown ON THE WALL has left, in ms — or null when there is no
- *  countdown on the wall. The transport reads THIS, never its own clock: one
- *  timer, so the figure in the dock and the figure on the screen cannot drift
- *  (docs/REBRAND.md §7). */
-export function countdownRemaining(atMs = Date.now()) {
-const left = countdownRemainingMs(get(live), atMs);
-// `countdownRemainingMs` distinguishes "finished" (0) from "there is no countdown"
-// (null) because a renderer has to show a done message for one and nothing for the
-// other. The TRANSPORT does not: a countdown that has run out is not something ±1
-// can re-aim, so both are null here.
-return left != null && left > 0 ? left : null;
-}
 
-/**
- * RE-AIM THE RUNNING COUNTDOWN — Reset and ±1 on the transport.
- *
- * Separate from `startCountdown` on purpose. That one REFUSES while a countdown
- * is running, which is right for "Start" (a second countdown over the first is
- * always a mistake) and wrong for every transport press, all of which are about
- * the countdown that is already there. One broadcast per press; the outputs go
- * on ticking locally, so this adds no per-second traffic.
- *
- * THROWS (contract group 1) — it changes what a congregation is looking at.
- *
- * **The carry-over now happens in the engine, not here** (`main::adjust_countdown`).
- * This used to rebuild the whole fire out of `$live` — the label, the done message
- * and the template read back off the event and handed to `start_countdown` again —
- * and it worked exactly as long as every caller remembered every field. A held
- * countdown added one more to forget, and forgetting THAT one restarts a paused
- * timer in front of a congregation from a press of `+1`. The engine keeps the
- * countdown and this asks it to change one thing about it; the guarantees that used
- * to be pinned here (the label does not change, and an UNPINNED template is never
- * re-pinned — DECISIONS §29) are pinned in `e2e.rs` instead, where they now hold for
- * every caller rather than for this one.
- */
-export async function adjustCountdown(ms, keepPlan = true) {
-const remainingMs = Math.round(Number(ms));
-if (!Number.isFinite(remainingMs) || remainingMs <= 0) {
-  throw new Error('A countdown needs a length greater than zero.');
-}
-const call = await invoke();
-await call('adjust_countdown', { remainingMs, paused: null });
-// `keepPlan` DEFAULTS TRUE here, and it is the only wrapper in this file that
-// does. Every other take replaces what is on the wall, so the plan cue that was
-// amber is no longer what anyone is looking at. This one changes a NUMBER on
-// content that is already up: if a plan's countdown cue is on air, it is still on
-// air afterwards, and clearing `onAir` would grey out the correct cue and send
-// the next `→` back to cue 1. A countdown started from the dock already left the
-// plan when it started, so there is nothing left to clear either way.
-if (!keepPlan) leavePlan();
-}
 
-/**
- * HOLD OR RELEASE THE COUNTDOWN ON THE SCREENS — the half of §7's transport that
- * did not exist until the engine had a field for it.
- *
- * Every other press on that row re-aims an absolute instant, which is something
- * `countdown_to` can already say. "Stopped" is not an instant, so it is said by
- * `countdown_paused_ms` instead, and it is said by the engine: a held countdown must
- * stay held through a `+1`, through a screen reconnecting mid-service, and through
- * anything else that re-broadcasts it.
- *
- * THROWS (contract group 1) — it changes what a congregation is looking at. It
- * cannot start a countdown: with nothing counting the engine refuses, in words.
- *
- * `keepPlan` defaults true for the same reason `adjustCountdown`'s does — holding a
- * plan's countdown cue leaves that cue exactly as on-air as it was.
- */
-export async function pauseCountdown(paused, keepPlan = true) {
-const call = await invoke();
-await call('adjust_countdown', { remainingMs: null, paused: !!paused });
-if (!keepPlan) leavePlan();
-}
 
 /** Start a pre-service countdown on every output. Outputs tick MM:SS locally
  *  from the broadcast target; `label` shows above, `doneMsg` replaces it at 0.
@@ -1725,8 +1657,10 @@ keepPlan = false,
 warnMs = null,
 untilMs = null,
 // WHICH SCREENS (RG-161). `null` is every screen. The engine stamps it onto the
-// TIMER rather than onto this one broadcast, because `adjust_countdown` and
-// `show_timer` put the same countdown out again later — see `Timer::channels`.
+// TIMER rather than onto this one broadcast — see `Timer::channels`. It did that
+// because `adjust_countdown` and `show_timer` put the same countdown out again
+// later; both were deleted on 2026-09-21 (DECISIONS §115) and the stamp stays,
+// because the timer is still where a countdown's identity lives.
 channels = null,
 ) {
 if (countdownRunning()) {
@@ -1918,23 +1852,6 @@ const call = await invoke();
 return call('list_timers');
 }
 
-/**
- * PUT A CONGREGATION TIMER BACK IN FRONT OF PEOPLE — the explicit way back.
- *
- * A timer outlives the content that replaced it now, so after a reading there is
- * something to return to. This is how an operator returns to it, on purpose. It
- * carries whatever the timer says NOW, so what goes back up is the figure in the
- * list rather than the length it started as. A `'stage'` timer is refused by the
- * engine, in words: it has no congregation wire form.
- *
- * THROWS (contract group 1) — it is one of two doors onto a congregation wall, so
- * a failure nobody is told about is an operator believing in a countdown that is
- * not there.
- */
-export async function showTimer(timerId, templateId = null) {
-const call = await invoke();
-await call('show_timer', { timerId, templateId });
-}
 
 /** Fire arbitrary content to the screens. `kind` ('song'|'announce') selects the
  *  content-type default template (per-content-type templates). `stageNote` is an

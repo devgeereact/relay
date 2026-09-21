@@ -547,7 +547,6 @@ fn main() {
             save_song,
             delete_song,
             start_countdown,
-            adjust_countdown,
             start_timer,
             adjust_timer,
             reset_timer,
@@ -557,7 +556,6 @@ fn main() {
             delete_stage_layout,
             stop_timer,
             list_timers,
-            show_timer,
             list_arrangements,
             save_arrangement,
             delete_arrangement,
@@ -3382,92 +3380,6 @@ fn start_countdown<R: tauri::Runtime>(
     Ok(())
 }
 
-/// RE-AIM OR HOLD THE COUNTDOWN THAT IS ALREADY ON THE SCREENS — Reset, ±1, Pause,
-/// Resume. It can never create one.
-///
-/// `remaining_ms` is how long should be left; `paused` whether it should be held.
-/// `None` for either means "leave that alone", so `+1` moves the time without
-/// touching the hold, and Pause holds it without moving the time.
-///
-/// ## Why this exists rather than a second call to `start_countdown`
-///
-/// The console used to assemble a re-aim out of its mirror of the live content —
-/// label, done message and template read back off the event and handed to
-/// `start_countdown` again. It worked, and it only worked while every caller
-/// remembered every field. `countdown_paused_ms` is one more thing to forget, and
-/// forgetting THAT one restarts a held timer in front of a congregation: the operator
-/// presses `+1` on a paused countdown and it starts running. So the engine keeps the
-/// countdown (`timers::TimerRegistry`) and this changes one thing about it.
-///
-/// ## Two things it must not do
-///
-/// **It must not put content on a wall by itself.** With no countdown in front of the
-/// operator it refuses, in words, rather than starting one: Start is the control that
-/// puts a countdown in front of people and there must be exactly one of those.
-///
-/// **It must not re-skin the screens.** The content is carried over verbatim, which
-/// includes `template_pinned` — a countdown fired from the dock resolves through the
-/// content LOOK, which defers to each screen's own template (DECISIONS §29). Rebuilding
-/// the fire and handing the resolved id back as a cue template would take that
-/// deference away, and a press of `+1` would silently re-skin every screen in the
-/// building.
-#[tauri::command]
-fn adjust_countdown<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-    remaining_ms: Option<i64>,
-    paused: Option<bool>,
-) -> error::Result<()> {
-    let Some(timer) = newest_congregation_timer(&app) else {
-        // Still exactly the sentence an operator reads, and it is still true in the
-        // only case that can now produce it: there is no congregation timer at all.
-        // A cleared or blacked wall stops one, so the transport still cannot bring
-        // back what a panic control took.
-        return Err(error::Error::refused("Nothing is counting down."));
-    };
-    let now_ms = cd_now_ms();
-    let adjusted = app
-        .state::<timers::TimerRegistry>()
-        .adjust(timer.id, remaining_ms, paused, now_ms)
-        // `newest_congregation_timer` is the only source of `timer` here, so the
-        // scope is `Both` by construction rather than by a lookup that can be wrong.
-        .map_err(|e| timer_refusal(e, timers::Scope::Both))?;
-
-    // A RE-AIM MAY NOT TAKE A CONGREGATION SCREEN BACK FROM A SERMON.
-    //
-    // Before the registry, this could not arise: the countdown WAS the live content,
-    // so it was always what the screens were showing or it did not exist. Now it can
-    // outlive a verse, and a `+1` that repainted itself over the reading would be the
-    // same class of failure this command's own doc comment forbids for templates —
-    // a transport press with a consequence nobody asked it for.
-    //
-    // So the registry changes and nothing is published. The way back onto a wall is
-    // `show_timer`, one action that says what it does. "What is on the screens right
-    // now" is read from the one slot that already answers it (`channels::LiveContent`)
-    // rather than guessed at a second time.
-    let Some(mut content) = channels::live_content(&app).filter(is_countdown_content) else {
-        return Ok(());
-    };
-    let shown = timers::project_both(&adjusted);
-    // `countdown_to` stays set even while held: it is where the countdown would land
-    // if it were resumed now, and it is what keeps the content reading as a countdown
-    // to `preflight`, to the retained screen frame and to the slide key.
-    content.countdown_to = Some(shown.countdown_to);
-    content.countdown_paused_ms = shown.countdown_paused_ms;
-    // `countdown_from` is NOT re-stamped. It is the instant the countdown was first
-    // aimed from, so the warning span stays the countdown's own length rather than
-    // shrinking to whatever is left each time somebody presses a button.
-    //
-    // Everything else — the label, the done message and above all the template
-    // triple — is carried over VERBATIM, which is what keeps a press of `+1` from
-    // silently re-skinning every screen in the building (DECISIONS §29).
-    //
-    // `trace_id` is cleared: an operator's press has no decode pass behind it, and
-    // inventing one would put a human action into the AI's latency percentile.
-    content.trace_id = None;
-    broadcast_with_clock(&app, content)?;
-    Ok(())
-}
-
 /// Epoch milliseconds. The clock every timer command reads, so they cannot disagree
 /// about "now" within one press.
 /// BRING THE SAVED CLOCKS BACK INTO THE REGISTRY, at launch — and tell the stage,
@@ -3525,18 +3437,6 @@ fn is_countdown_content(c: &channels::OutputContent) -> bool {
     c.countdown_to.is_some()
         || c.countdown_paused_ms.is_some()
         || c.kind.as_deref() == Some("countdown")
-}
-
-/// The congregation timer the transport is about: the newest `Both` timer, or None.
-///
-/// Newest rather than oldest because `start_countdown` takes the previous one, so
-/// there is at most one — and if a later track ever allows two, the one an operator
-/// just started is the one the transport means.
-fn newest_congregation_timer<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
-) -> Option<timers::Timer> {
-    app.try_state::<timers::TimerRegistry>()
-        .and_then(|reg| reg.snapshot_scope(timers::Scope::Both).pop())
 }
 
 /// A registry refusal in words an operator can act on. Both are `Refused`, not
@@ -3922,60 +3822,6 @@ fn list_timers<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> error::Result<Vec
             timer,
         })
         .collect())
-}
-
-/// PUT A CONGREGATION TIMER BACK IN FRONT OF PEOPLE — **the explicit way back.**
-///
-/// A timer now outlives the content that replaced it, so after a reading there is
-/// something to return to. Returning to it is this, an action an operator takes on
-/// purpose; it is never a side effect of `+1`, because a transport press that
-/// repainted a countdown over a sermon would be a control doing something other
-/// than what it says.
-///
-/// It carries whatever the timer says NOW — the adjusted figure, and the hold if it
-/// is held — so what goes back up is what the operator has been looking at in the
-/// list, not the five minutes it started as.
-///
-/// A `Stage`-scoped timer is refused, in words: it has no congregation wire form,
-/// and projecting one into the four `countdown_*` fields would put the preacher's
-/// private clock on the wall.
-// GENERIC OVER THE RUNTIME (rule 24) — it puts content on a wall, so it is fire-path
-// code and `e2e.rs` has to be able to drive it.
-#[tauri::command]
-fn show_timer<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-    db: tauri::State<'_, Db>,
-    timer_id: i64,
-    template_id: Option<i64>,
-) -> error::Result<()> {
-    // Cloned out of the registry, with the lock released, before anything is
-    // broadcast (rule 2).
-    let timer = app
-        .state::<timers::TimerRegistry>()
-        .get(timer_id)
-        .ok_or_else(|| error::Error::not_found("That timer is not running."))?;
-    if timer.scope != timers::Scope::Both {
-        return Err(error::Error::refused(
-            "That timer is for the stage monitor, so it cannot be put on the screens.",
-        ));
-    }
-    let (tid, tjson, tpinned) = {
-        let conn = db.0.lock()?;
-        cue_or_content_tpl(&conn, template_id, "countdown")
-    };
-    broadcast_with_clock(&app, countdown_content(&timer, tid, tjson, tpinned))?;
-    // ── SITE 11 OF THE CONTENT-KIND SWEEP. NOTHING CHANGED, AND WHY ───────────
-    //
-    // `cues.type` is free-form TEXT with no CHECK (docs/data/schema.sql), so a new
-    // value would need no migration — and none is written. Putting a timer back is
-    // recorded as `"countdown"`, the same value `start_countdown` writes, because
-    // it is the same thing appearing on the same screens; a service history that
-    // called the two different things would be making a distinction a reader of the
-    // history cannot act on. Nothing writes a sixth `plan_items.cue_type` either,
-    // so the enumerating comment at `schema.sql`'s `cue_type` column is still
-    // accurate and is deliberately left alone.
-    persist_cue(&app, "countdown", None);
-    Ok(())
 }
 
 /// Build the wire form of a `Both` timer. **The one place a timer becomes content**,

@@ -187,7 +187,9 @@ describe('is a countdown what is on the screens', () => {
   it('a countdown that has RUN OUT is still what is on the screens', () => {
     const finished = { kind: 'countdown', countdown_to: Date.now() - 60_000 };
     cap.live.set(finished);
-    expect(cap.countdownRemaining()).toBe(null); // the transport's reading
+    // `cap.countdownRemaining()` was asserted beside this until 2026-09-21: the
+    // transport that read it is gone with the band (DECISIONS §115), and the
+    // engine-side question below is the one that was always the claim.
     expect(isCountdownContent(finished)).toBe(true); // the engine's
   });
 });

@@ -386,7 +386,7 @@ export function isCountdownContent(content) {
  * that should not have been offered.
  *
  * THE NEWEST `Both` TIMER, because that is what the engine means by "the
- * congregation countdown" (`main::newest_congregation_timer`). `list_timers` hands
+ * congregation countdown" (`main::newest_congregation_timer, deleted 2026-09-21 with the transport that was its only caller (DECISIONS §115)`). `list_timers` hands
  * them back oldest first. There is at most one — `start_countdown` stops the one
  * before it — and agreeing with the engine costs one line either way.
  *

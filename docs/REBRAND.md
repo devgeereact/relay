@@ -90,15 +90,15 @@ dock row beneath (Live audio · Live transcript · **Quick tools** · Controls),
   column is what an operator is actually looking at), and that argument is about how the blocks
   in this card relate to each other, never about how many of them there are. Two are one instrument
   on exactly the same terms.
-- **The countdown left this card on 2026-09-20, on the operator's instruction**, and the reason is
-  not a design one: the other two change something on every workspace, and the countdown only ever
-  changed a congregation screen, which is a thing an operator is on Live to do. It is now the
-  **Screen Countdown** band on Live's run surface, under the Stage Timer, with its whole transport.
-  **The price is real and is recorded rather than argued away**: the dock renders on every workspace
-  and Live does not, so an operator changing a template in Templates can no longer re-aim a
-  countdown without coming back to Live. That was the 2026-09-17 reasoning for putting it here, and
-  it is kept at `views/Live.svelte` above `cdPress`, where somebody weighing it again will be
-  standing. `quicktools.test.js` asserts the two, `screencountdown.test.js` asserts the arrival.
+- **The countdown left this card on 2026-09-20 and is no longer anywhere in the shell.** It moved
+  to a band on Live that morning, was removed that evening, was restored on 2026-09-21 (DECISIONS
+  §109) and was **removed completely later the same day on the operator's instruction** (§115).
+  Both commands its transport used were deleted with it rather than left registered and uncalled.
+  **What a church still has** is the Planner's countdown cue, aimed at named screens and fired
+  from the plan like any other. **What it costs** is recorded rather than argued away: a countdown
+  already in front of a congregation cannot be held, re-aimed, nudged or put back, and only a
+  panic control takes it off a wall. `quicktools.test.js` asserts the two blocks this card keeps;
+  `screencountdown.test.js` asserts the band's absence and that `start_countdown` survives.
 - **Names.** The third block shipped as the **Stage Message**; this section called it *word to the
   preacher* and the name that ships is the one `names.test.js` enforces.
 - **Single click sends to Program, double click previews.** A 190 ms timer on the single press so a

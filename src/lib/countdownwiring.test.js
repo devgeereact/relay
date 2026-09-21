@@ -71,97 +71,19 @@ beforeEach(() => {
   cap.live.set(null);
 });
 
-describe('re-aiming a running countdown changes the number and nothing else', () => {
-  const adjust = () => invoke.mock.calls.find((c) => c[0] === 'adjust_countdown')?.[1];
-
-  // THE CONSOLE NO LONGER REBUILDS THE FIRE, AND THAT IS THE POINT.
-  //
-  // It used to: the label, the done message and the template were read back off
-  // `$live` and handed to `start_countdown` again, and the three tests that used to
-  // sit here pinned each of those hand-offs. That worked exactly as long as every
-  // caller remembered every field — and `countdown_paused_ms` is one more to forget,
-  // with the worst possible failure: a `+1` on a held countdown silently restarts it
-  // in front of a congregation.
-  //
-  // So the carry-over moved into the engine (`main::adjust_countdown`), where it
-  // holds for every caller rather than for this one, and the guarantees moved with
-  // it — `e2e::r7_*` pins the label, the done message, the unpinned template
-  // (DECISIONS §29) and the hold. What is left to check HERE is that the console
-  // really does ask for one change rather than re-describing the countdown.
-  it('asks the engine to change the time, and describes nothing else about the countdown', async () => {
-    cap.live.set({
-      reference: 'Doors open in',
-      countdown_to: Date.now() + 300_000,
-      countdown_done: 'Please come in',
-      template_id: 7,
-      template_pinned: false,
-    });
-    await cap.adjustCountdown(4 * 60_000);
-    expect(invoke.mock.calls.map((c) => c[0])).toEqual(['adjust_countdown']);
-    expect(adjust()).toEqual({ remainingMs: 4 * 60_000, paused: null });
-    // Not one word about the label, the done message or the template: a re-aim that
-    // restates them is a re-aim that can get one of them wrong.
-    expect(Object.keys(adjust()).sort()).toEqual(['paused', 'remainingMs']);
-  });
-
-  it('refuses a target of zero rather than letting the backend substitute five minutes', async () => {
-    await expect(cap.adjustCountdown(0)).rejects.toBeTruthy();
-    expect(invoke).not.toHaveBeenCalled();
-  });
-});
-
-// ── PAUSE ───────────────────────────────────────────────────────────────────
+// ── THE TRANSPORT'S OWN TESTS WENT WITH THE TRANSPORT (2026-09-21) ─────────
 //
-// §7 asks for Start/Pause · Reset · ±1 · Clear, and Pause was the one of the five
-// that was never built. Every other press re-aims an absolute instant, which is
-// something `countdown_to` can already say; "stopped" is not an instant, so it took
-// a field the engine owns. These are the console's half of it.
-describe('holding the countdown', () => {
-  const adjust = () => invoke.mock.calls.find((c) => c[0] === 'adjust_countdown')?.[1];
-
-  it('asks for the hold and nothing else — a pause must not move the number', async () => {
-    cap.live.set({ reference: 'Service begins in', countdown_to: Date.now() + 300_000 });
-    await cap.pauseCountdown(true);
-    expect(adjust()).toEqual({ remainingMs: null, paused: true });
-    invoke.mockClear();
-    await cap.pauseCountdown(false);
-    expect(adjust()).toEqual({ remainingMs: null, paused: false });
-  });
-
-  // The transport reads how long is left through the ONE reader, so a held
-  // countdown reads as on the wall — not as "nothing is counting down", which would
-  // re-enable Start and let a second countdown be laid over the first.
-  it('a HELD countdown is still on the wall as far as the transport is concerned', () => {
-    cap.live.set({
-      reference: 'Service begins in',
-      // Deliberately an instant in the PAST: a countdown held for longer than it had
-      // left is the ordinary case (hold at 4:00, the preacher talks for ten minutes).
-      // Read as an instant it is finished; read correctly it is still showing 4:00.
-      countdown_to: Date.now() - 60_000,
-      countdown_paused_ms: 4 * 60_000,
-    });
-    expect(cap.countdownRunning()).toBe(true);
-    expect(cap.countdownRemaining()).toBe(4 * 60_000);
-    expect(cap.countdownHeld()).toBe(true);
-  });
-
-  it('and the transport refuses to start a second one over it', async () => {
-    const { countdownCan, countdownPress } = await import('./countdown.js');
-    expect(countdownCan('start', 5 * 60_000, 4 * 60_000, true)).toBe(false);
-    expect(countdownPress('start', 5 * 60_000, 4 * 60_000, true).refused).toMatch(/already running/);
-    // …while ±1 still re-aims it, WITHOUT releasing the hold.
-    const plus = countdownPress('plus', 5 * 60_000, 4 * 60_000, true);
-    expect(plus.broadcastMs).toBe(5 * 60_000);
-    expect(plus.pause).toBe(null);
-  });
-});
-
-// ── THE WALL ITSELF ─────────────────────────────────────────────────────────
+// Two blocks stood here: re-aiming a running countdown, and holding it. They drove
+// `adjustCountdown` and `pauseCountdown`, which were deleted with the Screen
+// Countdown's band when the operator asked for it off Live for the second time
+// (DECISIONS §115). A test for a wrapper that does not exist is not a weaker test,
+// it is a test of nothing.
 //
-// Everything above is a decision about a number. This is the number on the screen
-// the congregation is looking at, through the ONE renderer, with the clock moved by
-// hand — because a held countdown that holds in the console and ticks on the wall is
-// worse than no Pause at all.
+// WHAT IS LEFT BELOW IS THE HALF THAT STILL HAS A SUBJECT: what a HELD countdown
+// looks like on a screen. The engine can still produce one — a plan cue's
+// countdown carries `countdown_paused_ms` like any other — and `TemplateRender`
+// still has to paint it without ticking. Nothing about the renderer changed.
+
 describe('a held countdown holds on the wall', () => {
   let host;
   let app;

@@ -216,16 +216,21 @@ mod tests {
         "fire_media",
         "show_background",
         "start_countdown",
-        "adjust_countdown",
+        // `adjust_countdown` and `show_timer` were here until 2026-09-21 and are
+        // gone from the product (DECISIONS §115): the Screen Countdown left Live for
+        // the second time and they lost their only caller. This test is what said
+        // so — it asserts that every name here is a REGISTERED command, so a
+        // guarantee about something that no longer exists fails rather than reading
+        // as cover.
+        //
         // A timer control is a live control: it changes a number a congregation or a
-        // preacher is looking at, and `show_timer` puts one on a wall. The lock may
-        // never reach any of them — an operator mid-service who cannot stop a clock
-        // that is counting down to the wrong thing has no way out of it.
+        // preacher is looking at. The lock may never reach any of them — an operator
+        // mid-service who cannot stop a clock that is counting down to the wrong
+        // thing has no way out of it.
         "start_timer",
         "adjust_timer",
         "stop_timer",
         "list_timers",
-        "show_timer",
         "set_detection_enabled",
         "set_sensitivity",
         "open_channel_output",

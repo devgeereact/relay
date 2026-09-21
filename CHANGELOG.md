@@ -10,6 +10,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+### The Screen Countdown is no longer on the Live workspace
+
+Removed on request. A countdown is still built and fired from the **Planner**, as a cue aimed at the screens you choose. What is gone is the band on Live and its transport, so a countdown already in front of the room can no longer be held, re-aimed, nudged or put back — **Clear screens** and **Blackout** are what take one off a wall now. (DECISIONS §115)
+
 ### Relay's own tests stopped going blind in the same way twice
 
 Internal only, nothing an operator sees. Twenty-six of Relay's static checks each stripped code comments with their own hand-written pattern, and that pattern had already blanked seven thousand characters of the preacher's stage page — so the checks read that page with its labels missing and reported it clean. They all use one stripper now, and a new check refuses a hand-written one. (RG-169)

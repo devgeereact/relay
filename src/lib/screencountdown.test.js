@@ -165,32 +165,71 @@ afterEach(() => {
  */
 const LIVE_CODE = codeOnly(LIVE_SRC);
 
-describe('the run surface carries the Screen Countdown, under the Stage Timer', () => {
-  // 2026-09-21: the operator asked for the band back (it was removed on
-  // 2026-09-20, a day after it moved here from Quick tools). A countdown in front
-  // of a room needs a hand on it: hold, a minute either way, an appointment, and
-  // the way back after a verse replaced it. DECISIONS §109.
-  it('names it and draws its transport', () => {
-    expect(LIVE_CODE).toContain('Screen Countdown');
-    expect(LIVE_CODE).toContain('sc-band');
-    expect(LIVE_CODE).toContain('cdtrans');
-    expect(LIVE_CODE).toContain('Put back on screens');
-  });
-
-  it('carries the transport state behind the controls', () => {
-    for (const live of ['cdPress(', 'function cdRun', 'cdUntilBad', 'cdChosen', 'cdReach']) {
-      expect(LIVE_CODE, `Live is missing ${live}`).toContain(live);
+describe('the run surface carries NO Screen Countdown — the second removal', () => {
+  // THE HISTORY, BECAUSE IT HAS NOW GONE BOTH WAYS TWICE AND A READER NEEDS THE
+  // ORDER. It moved from Quick tools to a band on Live on the morning of
+  // 2026-09-20; the operator asked that evening for it to go and it went; the
+  // 2026-09-21 audit read the note it left back as F13 and the operator asked for
+  // it back (DECISIONS §109); and on 2026-09-21 the operator asked for it removed
+  // COMPLETELY. DECISIONS §115 is that decision and records what it costs.
+  //
+  // THE COST, stated here rather than only in the decision, because this is the
+  // file somebody reads when they wonder where it went: a countdown already in
+  // front of a room can no longer be held, re-aimed, nudged or put back. The only
+  // thing that takes it off a wall is a panic control. That was true between
+  // 2026-09-20 and 2026-09-21 as well, and it is what F13 filed.
+  //
+  // WHAT A CHURCH CAN STILL DO: build a countdown as a Planner cue aimed at named
+  // screens, and fire it from the plan (the block further down asserts that path
+  // still works). `start_countdown` is untouched and still has that one caller.
+  it('names no Screen Countdown and draws no transport', () => {
+    for (const gone of ['Screen Countdown', 'sc-band', 'cdtrans', 'Put back on screens']) {
+      expect(LIVE_CODE, `Live still renders ${gone}`).not.toContain(gone);
     }
   });
 
-  it('styles the band', () => {
+  it('and keeps none of the transport state behind the removed band', () => {
+    // The same rule this file already holds against the dock, one surface along:
+    // a block deleted from the markup while its reactive half stays behind is a
+    // tick and two reads running for nothing, and the next reader finds a
+    // `cdPress('start')` with no button and puts the band back.
+    for (const ghost of ['cdPress(', 'function cdRun', 'cdUntilBad', 'cdChosen', 'cdReach', 'cdBack']) {
+      expect(LIVE_CODE, `Live still holds ${ghost}`).not.toContain(ghost);
+    }
+  });
+
+  it('and styles nothing it no longer draws', () => {
+    // An unused selector is a surface somebody rebuilds half of by accident.
     for (const sel of ['.sc-band{', '.cdfields{', '.cdstatev{', '.sc-ch{', '@keyframes cdwarn']) {
-      expect(LIVE_CODE, `Live does not style ${sel}`).toContain(sel);
+      expect(LIVE_CODE, `Live still styles ${sel}`).not.toContain(sel);
     }
   });
 
-  it('sits under the Stage Timer band, never above it', () => {
-    expect(LIVE_SRC.indexOf('class="sc-band"')).toBeGreaterThan(LIVE_SRC.indexOf('class="pt-band"'));
+  it('and the two commands it was the only caller of are gone from the bridge', () => {
+    // NOT LEFT BEHIND, which is the half the FIRST removal got wrong: F13 found
+    // `adjustCountdown` and `showTimer` imported into Live and called nowhere.
+    // Every registered command is invokable from the webview, so one nothing
+    // calls is attack surface nobody is watching (CLAUDE.md, and the precedent of
+    // the ten deleted before these two).
+    const CAPTURE = readFileSync(resolve(process.cwd(), 'src/lib/stores/capture.js'), 'utf8');
+    for (const gone of ['adjustCountdown', 'showTimer']) {
+      expect(codeOnly(CAPTURE), `the wrapper ${gone} is still here`).not.toContain(
+        `export async function ${gone}`,
+      );
+      expect(LIVE_CODE, `Live still imports ${gone}`).not.toContain(gone);
+    }
+    const MAIN = readFileSync(resolve(process.cwd(), 'src-tauri/src/main.rs'), 'utf8');
+    expect(MAIN, 'adjust_countdown is still registered').not.toMatch(/fn adjust_countdown\b/);
+    expect(MAIN, 'show_timer is still registered').not.toMatch(/fn show_timer\b/);
+  });
+
+  it('…and `start_countdown` is NOT, because the plan cue still fires it', () => {
+    // The guard on the four above. A removal that took the whole feature out
+    // would satisfy every one of them and would be a different decision from the
+    // one the operator made.
+    expect(LIVE_CODE, 'the plan cue lost its countdown').toContain('startCountdown(');
+    const MAIN = readFileSync(resolve(process.cwd(), 'src-tauri/src/main.rs'), 'utf8');
+    expect(MAIN).toMatch(/fn start_countdown\b/);
   });
 });
 

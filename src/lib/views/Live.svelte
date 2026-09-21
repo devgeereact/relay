@@ -143,7 +143,6 @@
     resolveOutputTemplate,
     isKeyedTemplate,
     formatCountdown,
-    countdownWarning,
   } from '../layers.js';
   import ModelSetup from '../ModelSetup.svelte';
   import { registerContext } from '../shortcuts.js';
@@ -192,17 +191,13 @@
     listOutputChannels,
     channelHealth,
     channelWaiting,
+    // THE ONE CALLER LEFT (2026-09-21, DECISIONS §115). The Screen Countdown's
+    // band is gone from this surface; what remains is the PLAN CUE, which fires a
+    // countdown like every other cue. The rest of the transport went with the
+    // band — `adjustCountdown` and `showTimer` were deleted outright rather than
+    // left imported and uncalled, which is the state F13 filed after the first
+    // removal and the one this file must not return to.
     startCountdown,
-    // THE REST OF THE SCREEN COUNTDOWN'S TRANSPORT (2026-09-20). `adjustCountdown`
-    // re-aims the countdown already on the wall, which `startCountdown` refuses
-    // to do; `pauseCountdown` holds and releases it; the two readers answer what
-    // the WALL says rather than what this view remembers. `showTimer` is the way
-    // back onto a congregation screen.
-    adjustCountdown,
-    pauseCountdown,
-    countdownRemaining,
-    countdownHeld,
-    showTimer,
     setLiveTransition,
     startCapture,
     stopCapture,
@@ -237,19 +232,11 @@
   // here, pure and tested, and this view performs them. A second copy of any of
   // this is how the dock and the wall came to disagree about the same number
   // once already (docs/REBRAND.md §7).
-  import {
-    atClockTime,
-    countdownSet,
-    countdownFormat,
-    countdownPress,
-    countdownCan,
-    countdownTotalMs,
-    msFromFields,
-    fieldsFromMs,
-    wayBack,
-    aimedScreens,
-    toggleScreen,
-  } from '../countdown.js';
+  // ONE THING, AND IT IS NOT THE COUNTDOWN'S. `atClockTime` turns "10:30" into an
+  // instant where local time is actually known, and the STAGE TIMER uses it for an
+  // appointment (§102). The ten other helpers this view imported were the Screen
+  // Countdown band's and went with it on 2026-09-21 (§115).
+  import { atClockTime } from '../countdown.js';
 
   // ── the plan being RUN (not edited) ──────────────────────────────────────
   let plans = [];
@@ -638,15 +625,15 @@
   let ptBusy = false;
   let ptNow = Date.now();
 
-  // ONE READ, TWO PROJECTIONS (2026-09-20). The registry holds both scopes and
-  // `list_timers` hands back all of them, so the Screen Countdown band above
-  // takes its congregation rows off this same call rather than polling the same
-  // command a second time on the same surface. `stageTimers` is the Stage band's
-  // filter; `wayBack` is the countdown band's, and it wants the unfiltered list.
-  // It used to feed the Screen Countdown band the unfiltered list as well. That
-  // band has gone, and its two variables went with it — `cdTimers` and
-  // `cdTimersErr` were still being ASSIGNED here after the block that declared
-  // them was deleted, which is a `ReferenceError` on the one path that reports a
+  // ONE READ, ONE PROJECTION (2026-09-21). The registry holds both scopes and
+  // `list_timers` hands back all of them; `stageTimers` is the Stage band's
+  // filter and this surface now wants nothing else from the call.
+  //
+  // It fed the Screen Countdown band the unfiltered list as well until §115 took
+  // that band off this surface for the second time. Its two variables went with
+  // it, and the FIRST removal is why that sentence is here: `cdTimers` and
+  // `cdTimersErr` were still being ASSIGNED after the block that declared them
+  // was deleted, which is a `ReferenceError` on the one path that reports a
   // failed read, so the Stage band said nothing at all instead of saying why.
   async function loadProgrammeTimers() {
     try {
@@ -830,256 +817,8 @@
   // THE SCREEN COUNTDOWN IS BACK ON THIS SURFACE (operator instruction, 2026-09-21)
   // ══════════════════════════════════════════════════════════════════════════
   //
-  // It arrived here on the morning of 2026-09-20, out of Quick tools, left the
-  // console that evening on an instruction, and was asked for again on
-  // 2026-09-21 after the Phase 1 audit found that a countdown already on a wall
-  // could not be held, reset, nudged or put back from anywhere (RG-206,
-  // DECISIONS §109). Restored from `41d3057~1` unchanged: the band, its six
-  // transport controls, the screen picker, the reach line and the way back.
-  // A Planner countdown cue still exists and still fires through this view.
-
-  // ══════════════════════════════════════════════════════════════════════════
   //
-  // It was the first block of Quick tools until 2026-09-20, when the operator
-  // asked for it out: *"Remove SCREEN COUNTDOWN from Quick Tools in the Live
-  // workspace. The countdown that goes to the live screen must remain available,
-  // but only where it is actually needed: the pre-service countdown for the
-  // service going online."*
   //
-  // ── WHY IT LANDED HERE AND WHAT THAT COSTS ────────────────────────────────
-  //
-  // The dock is in the SHELL and renders on every workspace; this view does not.
-  // That was the whole of the 2026-09-17 argument for putting `Put back on
-  // screens` inside the dock's countdown block, and the argument has not become
-  // wrong — it has been outranked. An operator changing a template in Templates
-  // can no longer re-aim a countdown without coming back to Live, and that is a
-  // real loss, recorded rather than papered over. What buys it: this control
-  // reaches a congregation screen, which is a Live action, and it now sits
-  // beside the Stage Timer band, where an operator's hands already are.
-  //
-  // ── AND WHAT DID NOT CHANGE ───────────────────────────────────────────────
-  //
-  // `countdown.js` is still the ONE decision layer. `countdownPress` decides,
-  // this half performs, and nothing here re-derives a refusal or a figure. The
-  // set duration and the format are still module-scope stores for exactly the
-  // reason they were: this view is `{#if …}` in the workspace router, so changing
-  // workspace destroys it, and a component `let` would drop what the operator
-  // typed at the one moment they are least able to notice.
-  $: cdFields = fieldsFromMs($countdownSet);
-  // `ptNow` is the band below's half-second tick and this figure rides on it:
-  // two clocks in two bands about the same "now" is a second subtraction, which
-  // is the defect `countdown.js` records as fixed once already.
-  $: cdRunning = $live?.countdown_to ? countdownRemaining(ptNow) : null;
-  // HELD, read from the content on the wall rather than from a flag this band
-  // keeps. A transport that remembered its own hold would go on saying "Resume"
-  // over a countdown some other surface released — rule 35.
-  $: cdPaused = !!$live && countdownHeld();
-  $: cdLive = cdRunning != null;
-  // ONE FORMATTER, ASKED A QUESTION (docs/REBRAND.md §7). `$countdownFormat` is
-  // the third argument `formatCountdown` has always taken; nothing here
-  // re-derives hours, minutes or seconds.
-  $: cdText = formatCountdown(cdLive ? cdRunning : $countdownSet, $countdownFormat);
-  $: cdSetLabel = formatCountdown($countdownSet, $countdownFormat);
-  // THE TOTAL IS THE CONTENT'S, NOT THE TOOL'S, and the threshold is the
-  // countdown's own — the ranking is `countdownWarning`'s, stated once there.
-  // Both read off `$live` so the figure here and the figure on the wall turn red
-  // together. RED, never amber: amber means ON AIR (rule 18).
-  $: cdTotal = countdownTotalMs($live) ?? $countdownSet;
-  $: cdWarn = cdLive && countdownWarning(cdRunning, cdTotal, $live?.countdown_warn_ms);
-
-  /** Type into hh : mm : ss. Only ever changes the tool, never a screen. */
-  function setCdField(which, value) {
-    const f = { ...cdFields, [which]: value };
-    countdownSet.set(msFromFields(f.h, f.m, f.s));
-  }
-
-  // ── A LENGTH OR AN APPOINTMENT (DECISIONS §102) ───────────────────────────
-  //
-  // Empty means the hh:mm:ss fields beside it. A time here wins, and a time that
-  // has already gone is kept rather than rolled to tomorrow: the wall reads
-  // `+5:00` over and the mistake is visible, where 23:55:00 would hide it.
-  let cdUntil = '';
-  $: cdUntilAt = cdUntil.trim() ? atClockTime(cdUntil) : null;
-  $: cdUntilBad = cdUntil.trim().length > 0 && cdUntilAt === null;
-
-  // ── WHICH SCREENS IT IS AIMED AT ──────────────────────────────────────────
-  //
-  // The church this was asked for runs `ONLINE SCREEN`, `STAGE SCREEN` and
-  // `ONLINE + STAGE SCREEN`, and the countdown they mean is the pre-service one
-  // on the stream. Relay cannot work out which screen that is:
-  // `output_channels.role` holds `main` and `stage` and nothing else, and picking
-  // the screen whose NAME contains "online" is exactly the heuristic
-  // `channelroles.js` exists to have removed. So the band asks, and assumes
-  // nothing on the operator's behalf.
-  //
-  // `null` is every screen and is NOT a list naming every screen —
-  // `Timer::channels` draws that distinction and `aimedScreens` is the one place
-  // this side spells it. It resets to `null` when the view is rebuilt,
-  // deliberately: "which screens" is a decision about the countdown being started
-  // now, and a remembered aim that outlived the service it was chosen for would
-  // narrow next Sunday's countdown with nothing on screen saying so.
-  //
-  // IT READS `channels`, WHICH THIS VIEW READS ONCE AT MOUNT and does not poll.
-  // The dock's copy of this panel DID poll, every two seconds, and the reason was
-  // specific to the dock: it renders on every workspace, including Templates and
-  // Outputs, which are exactly where an operator changes a screen — so a value
-  // read once would be stale in the one place they had just made it wrong. That
-  // reason does not survive the move. Reaching Outputs from here means leaving
-  // this view, which destroys it, and coming back rebuilds it and re-reads. The
-  // Stage Timer band below has relied on the same single read since it was
-  // written; a second poll here would be a second answer to the same question.
-  /** @type {number[]|null} */
-  let cdChosen = null;
-  $: cdAimed = aimedScreens(cdChosen, channels);
-  /** The operator ticked every screen off. A real answer, and Start refuses it. */
-  $: cdAimNone = Array.isArray(cdChosen) && cdChosen.length === 0;
-
-  // ── WHERE IT WOULD ACTUALLY GO (RG-167, aimed) ────────────────────────────
-  //
-  // `describeCountdownReach` is the shared rule and it is asked about `cdAimed`,
-  // not about every screen in the building. A line that went on saying "Goes to
-  // all 3 screens" over a countdown aimed at one of them is rule 35 on the one
-  // line that answers "where would this go" — and it would be MOST wrong in the
-  // case this band was moved here to serve.
-  //
-  // The empty aim gets its own sentence rather than being handed to the rule:
-  // `describeCountdownReach([])` answers *"No screens are set up"*, which is a
-  // different fact from *"you have not chosen one"*, and one reassuring sentence
-  // over two situations is the whole of rule 35.
-  $: cdFallbackTpl = $templates.find((t) => t.id === $defaultTemplateId) ?? null;
-  $: cdReach = cdAimNone
-    ? { kind: 'none', text: 'No screen chosen — nothing would show it' }
-    : describeCountdownReach(
-        cdAimed,
-        (c) =>
-          resolveOutputTemplate(
-            $templates.find((t) => t.id === c?.template_id) ?? null,
-            null,
-            false,
-            cdFallbackTpl,
-          ),
-        {
-          read: channelsRead,
-          error: $readErrors.listOutputChannels
-            ? humanError($readErrors.listOutputChannels)
-            : '',
-        },
-      );
-
-  /** Tick or untick one screen. The rule is `countdown.js`'s, shared with the Planner. */
-  function toggleCdScreen(id) {
-    cdChosen = toggleScreen(cdChosen, id, channels);
-  }
-
-  /**
-   * ONE PRESS OF THE TRANSPORT. The decision is `countdownPress` — pure, tested —
-   * and this half only performs it. `broadcastMs === null` means "touch no
-   * screen", which is what Clear and an off-air ±1 both are.
-   *
-   * DIGITS ALONE, AND NO WORDS AT ALL. The words beside a clock are payload
-   * (`content.reference`) and there is no field for them here; supplying a guess
-   * on the operator's behalf is a control deciding something nobody was asked. A
-   * cue that wants words says so in the Planner and fires them through this view.
-   *
-   * AN APPOINTMENT ONLY APPLIES TO STARTING ONE, and so does the aim. `±1` and
-   * Reset are about the countdown already up: re-aiming those at a clock time —
-   * or at a different set of screens — would silently change what a congregation
-   * is watching under an operator who pressed a minute button. The engine stamps
-   * the screens onto the TIMER at Start for the same reason, so a Pause cannot
-   * widen them.
-   */
-  function cdPress(action) {
-    const r = countdownPress(action, $countdownSet, cdRunning, cdPaused);
-    countdownSet.set(r.setMs);
-    if (r.refused) {
-      cdErr = r.refused;
-      return;
-    }
-    if (r.pause !== null) {
-      cdRun(() => pauseCountdown(r.pause));
-      return;
-    }
-    if (r.broadcastMs == null) {
-      cdErr = '';
-      return;
-    }
-    if (action === 'start' && cdAimNone) {
-      // The button is disabled for this, and the refusal is here as well because
-      // a guarantee kept on one door is this repository's most-repeated bug.
-      cdErr = 'Choose at least one screen — a countdown aimed at nothing is not a countdown.';
-      return;
-    }
-    const at = action === 'start' && cdUntil.trim() ? atClockTime(cdUntil) : null;
-    cdRun(() =>
-      action === 'start'
-        ? startCountdown(r.broadcastMs / 60_000, '', '', null, false, null, at, cdChosen)
-        : adjustCountdown(r.broadcastMs),
-    );
-  }
-
-  // ── THE WAY BACK ONTO A CONGREGATION SCREEN (RG-152) ──────────────────────
-  //
-  // A timer outlives the content that replaced it, so after a reading there is
-  // something to go back to and nothing is showing it. Two facts and no third:
-  // the REGISTRY says a congregation timer exists, and `$live` says what the
-  // screens are showing — read through `isCountdownContent` inside `wayBack`,
-  // the same three-armed question `main::adjust_countdown` asks, and NOT through
-  // `cdRunning`, which calls a countdown that has run out null. A countdown at
-  // 0:00 is still on the wall, and offering to put that one "back" is the drift
-  // this note exists to prevent.
-  //
-  // THREE THINGS IT CAN SAY, and silence is only one of them. A read that FAILED
-  // is not an empty registry: `listTimers` throws for exactly that reason, and a
-  // band that fell silent on a failure would say the same thing over a quiet
-  // Sunday and over a broken bridge.
-  /** `null` = never read. `[]` = read, and there are none. The two differ. */
-  // Both are written by `loadProgrammeTimers` — one read, two projections; see
-  // the note on that function for why there is not a second poll here.
-  let cdTimers = null;
-  let cdTimersErr = '';
-  let cdErr = '';
-  let cdBusy = false;
-  $: cdBack = wayBack(cdTimers, $live);
-  // Through the one projection and the one reader (`timers.js` → `countdown.js`),
-  // ticked by the same `ptNow` as the figure above it, so the two numbers in this
-  // band cannot disagree about "now".
-  $: cdBackLeft = cdBack.timer ? timerRemainingMs(cdBack.timer, ptNow) : null;
-  $: cdBackText = formatCountdown(cdBackLeft, $countdownFormat);
-
-  /**
-   * Perform one countdown action and report its own failure.
-   *
-   * It claims nothing on success. What says a countdown reached a screen is
-   * `$live` changing, which is the screens answering rather than this band
-   * asserting — the same discipline `Dock.svelte::run` keeps, and the reason
-   * none of these controls turns anything amber.
-   */
-  async function cdRun(fn) {
-    cdBusy = true;
-    cdErr = '';
-    try {
-      await fn();
-      if (!dead) await loadProgrammeTimers();
-    } catch (e) {
-      if (!dead) cdErr = humanError(e);
-    }
-    if (!dead) cdBusy = false;
-  }
-
-  /**
-   * Put the congregation timer back in front of people.
-   *
-   * It carries nothing of its own: `show_timer` sends whatever the timer says NOW,
-   * so what goes up is the figure in the line beside this button. It cannot create
-   * a timer — Start is the one control that puts a countdown in front of people for
-   * the first time — and it is offered only for a `Both` timer, which is the scope
-   * `show_timer` accepts.
-   */
-  function cdPutBack() {
-    const t = cdBack.timer;
-    if (!t) return;
-    cdRun(() => showTimer(t.id));
-  }
 
 
   // HAS THIS VIEW ALREADY GONE AWAY? `onMount` is async and Svelte does not wait
@@ -2900,185 +2639,6 @@
     {/if}
   </div>
 
-  <!-- ══════ THE CLOCK A CONGREGATION WATCHES ═══════════════════════════════
-       The Screen Countdown, moved out of Quick tools on the operator's
-       instruction of 2026-09-20. See the block comment above `cdPress` for why
-       it landed here and what that costs.
-
-       A BAND OF ITS OWN, UNDER THE STAGE TIMER. Two clocks, two audiences: the
-       one above reaches a preacher's monitor and nothing else, and this one
-       reaches a congregation. They are deliberately not merged — a press meant
-       for the preacher's clock that reached a wall is the one mistake on this
-       part of the surface that cannot be taken back quietly.
-
-       WHY IT IS SECOND RATHER THAN FIRST. Both bands carry a control reading
-       `Reset`, and the Stage Timer's is inside the chip of the timer it resets,
-       where the name beside it says which one. Putting this band first put a
-       bare `Reset` above that chip, so the first `Reset` on the surface was the
-       one that re-aims a congregation countdown and the labelled one was below
-       it. The band that names its own target reads first.
-
-       IT WRAPS RATHER THAN SCROLLING, `flex: 0 0 auto`, like the band above. The
-       slide grid keeps `flex: 1 1 0` and takes everything left. Nothing here is
-       in the Controls card, which is `overflow:hidden` and never scrolls because
-       `Clear screens` lives in it (rule 15) — that card is in the SHELL and this
-       change gives it more room rather than less. -->
-  <div class="sc-band">
-    <span class="pt-lbl">Screen Countdown</span>
-    <!-- hh : mm : ss. THREE named controls, not one minutes box: a pre-service
-         countdown and a 90-minute service are both timers. -->
-    <span class="cdfields">
-      <input class="r-input cdf" type="number" min="0" max="12" value={cdFields.h}
-        on:input={(e) => setCdField('h', e.target.value)} aria-label="Countdown hours" />
-      <i class="cdsep">:</i>
-      <input class="r-input cdf" type="number" min="0" max="59" value={cdFields.m}
-        on:input={(e) => setCdField('m', e.target.value)} aria-label="Countdown minutes" />
-      <i class="cdsep">:</i>
-      <input class="r-input cdf" type="number" min="0" max="59" value={cdFields.s}
-        on:input={(e) => setCdField('s', e.target.value)} aria-label="Countdown seconds" />
-    </span>
-    <!-- OR A TIME OF DAY (DECISIONS §102). "The service starts at 10:30" is the
-         commonest countdown a church shows. Empty means the fields beside it, and
-         it governs START only — re-aiming a running countdown at a clock time
-         would change what the wall counts to under an operator who pressed a
-         minute button. -->
-    <span class="pt-unit">or at</span>
-    <input
-      class="r-input pt-at"
-      class:bad={cdUntilBad}
-      type="text"
-      bind:value={cdUntil}
-      placeholder="10:30"
-      inputmode="numeric"
-      autocomplete="off"
-      aria-label="Countdown clock time"
-      aria-invalid={cdUntilBad}
-      title="A time of day to count down to, like 10:30. Leave it empty to use the length beside it." />
-    <!-- THE TITLE SAYS WHAT IT GOVERNS. A wall's countdown is rendered from
-         `OutputContent`, which carries no format field, so a control implying it
-         reached the screens would claim a reach it has not got (rule 35). -->
-    <select
-      class="r-select cdfmt"
-      bind:value={$countdownFormat}
-      aria-label="Countdown format"
-      title="How this readout reads. The screens read the countdown through their own template.">
-      <option value="auto">auto</option>
-      <option value="ms">m:ss</option>
-      <option value="hms">h:mm:ss</option>
-    </select>
-    <!-- THE FIGURE AND THE WORD THAT SAYS WHICH FIGURE IT IS. It is showing one
-         of TWO facts — what the screens are counting, or what Start would put up —
-         and a big number with no label is the half of a status line that lies.
-         THREE states, not two: a held countdown IS on the screens, it is simply
-         not moving. -->
-    <span class="cdfig">
-      <span
-        class="tfig r-mono"
-        class:live={cdLive}
-        class:warn={cdWarn}
-        role="status"
-        aria-live="off"
-        title={cdLive
-          ? 'What the screens are counting, right now.'
-          : 'What Start would put on the screens. Nothing is counting.'}>{cdText}</span>
-      <span class="cdstatev" class:live={cdLive} class:held={cdPaused}
-        >{!cdLive ? 'not counting' : cdPaused ? 'on the screens · held' : 'on the screens'}</span>
-    </span>
-    {#if cdLive}<span class="cdset r-mono">· {cdSetLabel} loaded</span>{/if}
-    <!-- Clear is NOT Clear screens. It returns this tool to its default length and
-         touches nothing a congregation can see; the red control in the dock is the
-         one that blanks a wall. -->
-    <span class="cdtrans" role="group" aria-label="Countdown transport">
-      <button class="r-btn sm ghost" on:click={() => cdPress('start')}
-        disabled={cdBusy || !$capture.available || cdUntilBad || cdAimNone
-          || !countdownCan('start', $countdownSet, cdRunning, cdPaused)}>Start</button>
-      <!-- PAUSE AND RESUME ARE TWO ACTIONS, NOT A TOGGLE. Which one is offered is
-           read from the CONTENT on the wall, so a press can never do the opposite
-           of what its label says. Nothing here is amber: holding a countdown does
-           not change what is on air, it changes whether it is moving. -->
-      {#if cdPaused}
-        <button class="r-btn sm ghost" on:click={() => cdPress('resume')}
-          title="Let the countdown on the screens carry on from where it was held"
-          disabled={cdBusy || !$capture.available
-            || !countdownCan('resume', $countdownSet, cdRunning, cdPaused)}>Resume</button>
-      {:else}
-        <button class="r-btn sm ghost" on:click={() => cdPress('pause')}
-          title="Hold the countdown on the screens at exactly what it says"
-          disabled={cdBusy || !$capture.available
-            || !countdownCan('pause', $countdownSet, cdRunning, cdPaused)}>Pause</button>
-      {/if}
-      <button class="r-btn sm ghost" on:click={() => cdPress('reset')}
-        disabled={cdBusy || !$capture.available
-          || !countdownCan('reset', $countdownSet, cdRunning, cdPaused)}>Reset</button>
-      <button class="r-btn sm ghost" on:click={() => cdPress('minus')} aria-label="One minute less"
-        disabled={cdBusy || !$capture.available
-          || !countdownCan('minus', $countdownSet, cdRunning, cdPaused)}>−1</button>
-      <button class="r-btn sm ghost" on:click={() => cdPress('plus')} aria-label="One minute more"
-        disabled={cdBusy || !$capture.available
-          || !countdownCan('plus', $countdownSet, cdRunning, cdPaused)}>+1</button>
-      <button class="r-btn sm ghost" on:click={() => cdPress('clear')}
-        title="Reset this tool to five minutes. It does not clear the screens.">Clear</button>
-    </span>
-    <!-- ── WHICH SCREENS (the operator's instruction, 2026-09-20) ───────────
-         "Only where it is actually needed: the pre-service countdown for the
-         service going online." Relay cannot know which screen the stream is —
-         there is no such role, and matching a NAME is the heuristic
-         `channelroles.js` was written to remove — so this asks, once, in one
-         press per screen. Every screen is the default and is shown as a real
-         choice rather than as nothing ticked. -->
-    {#if channels.length}
-      <span class="sc-screens" role="group" aria-label="Countdown screens">
-        {#each channels as c (c.id)}
-          <button
-            class="r-btn ghost sm sc-ch"
-            class:on={(cdChosen ?? channels.map((x) => x.id)).includes(c.id)}
-            aria-pressed={(cdChosen ?? channels.map((x) => x.id)).includes(c.id)}
-            title="Whether this countdown goes to {c.name}. A screen it does not name keeps what it is showing."
-            on:click={() => toggleCdScreen(c.id)}>{c.name}</button>
-        {/each}
-      </span>
-    {/if}
-    <!-- ── WHERE IT WOULD GO (RG-167) ──────────────────────────────────────
-         Asked about the screens it is AIMED at, not about every screen there is.
-         `on the screens` was true of the store and, on two kinds of screen, false
-         of the room: one whose `shows` allow-list omits the kind drops the fire in
-         silence, and a KEYED one refuses the clock rather than painting it over a
-         live camera (RG-166). It asks no screen anything — both exclusions are
-         properties of the template each screen resolves — which is why it can
-         stand here before a countdown has ever been fired.
-
-         NO LAW COLOUR. `.warn` is dim: a church whose screens all hide the kind
-         has made a choice and nothing has failed. -->
-    <span class="cdreach" class:warn={cdReach.kind === 'none' || cdReach.kind === 'unknown'}
-      >{cdReach.text}</span>
-    <span class="pt-spring"></span>
-    <!-- A control's own failure, in words, beside the control. It claims nothing
-         on success: what says a countdown reached a screen is `$live` changing. -->
-    {#if cdErr}<span class="pt-err" role="alert">{cdErr}</span>{/if}
-    <!-- ── THE WAY BACK (RG-152) ───────────────────────────────────────────
-         Only when there IS a congregation timer and it is not what the screens
-         are showing. NO COLOUR: amber is ON AIR, cyan is a guess, amethyst is
-         rehearsal, and a timer that exists and is off the screens is none of the
-         three. A dim line and a ghost button is what "there is something here you
-         may want" looks like when it is not claiming anything. -->
-    {#if cdBack.state === 'offered'}
-      <span class="cdback">
-        <span class="cdbackline"
-          ><span class="r-mono cdbackfig">{cdBackText}</span> · counting, off the screens</span>
-        <button
-          class="r-btn sm ghost"
-          on:click={cdPutBack}
-          title="Put this countdown back on the screens. It goes up carrying what it says now, not the length it started as."
-          disabled={cdBusy || !$capture.available}>Put back on screens</button>
-      </span>
-    {/if}
-    <!-- A FAILED READ IS NOT AN EMPTY REGISTRY (rule 35). Silence would say the
-         same thing over a quiet Sunday and over a broken bridge, on the one
-         control that puts a countdown back in front of a congregation. -->
-    {#if cdTimersErr}
-      <span class="pt-err">Cannot tell whether a countdown is waiting — {cdTimersErr}</span>
-    {/if}
-  </div>
 
 
   <!-- ══════ THE SLIDE GRID — full width, directly under the monitors ══════
@@ -4213,100 +3773,6 @@
     color:var(--v-faint)}
   .det-meta.on{color:var(--v-emerald)}
 
-  /* ── THE SCREEN COUNTDOWN BAND (operator instruction, 2026-09-20) ───────
-     THE SAME BAND SHAPE AS THE STAGE TIMER ABOVE, on purpose: one row, `flex:0 0
-     auto`, wrapping rather than scrolling, so the slide grid keeps `flex:1 1 0`
-     and this costs it one row of height. Two clocks that look like two kinds of
-     instrument is what the dock's Quick tools had to be fixed for once already
-     (`quicktools.test.js`, L3).
-
-     IT IS NOT `.pt-band`. Sharing the class would be tidier and would break the
-     one thing the two bands must not share: `programmetimer.test.js` and
-     `stagetimerreach.test.js` both read `host.querySelector('.pt-band')` to ask
-     what the STAGE band says, and four of their assertions are that it never uses
-     the words `on stage`, `on air`, `on the screens` or `live`. This band says
-     `on the screens` because it is true here. A shared class would have made
-     every one of those scans read the wrong band — and they would have gone on
-     passing, which is the failure mode this repository records against scanners
-     twice over.
-
-     NO LAW COLOUR ANYWHERE IN IT. Amber is ON AIR, cyan a guess, amethyst
-     rehearsal. The figure turns RED in the last minute because red means act now;
-     everything else is the caption ink. */
-  .sc-band{flex:0 0 auto; display:flex; align-items:center; flex-wrap:wrap;
-    gap:var(--v-sp-xs); min-width:0}
-  /* hh : mm : ss. Mono figures so a changing number never reflows the row beside
-     it (docs/REBRAND.md §1). */
-  .cdfields{display:flex; align-items:center; gap:2px; flex:0 0 auto; min-width:0}
-  .cdf{width:40px; flex:0 0 auto; text-align:center;
-    font-family:var(--f-mono); font-variant-numeric:tabular-nums;
-    /* The spinner arrows steal a third of the field and are unusable in a dark
-       booth; ±1 is the control that adjusts this. */
-    -moz-appearance:textfield; appearance:textfield}
-  .cdf::-webkit-outer-spin-button,
-  .cdf::-webkit-inner-spin-button{-webkit-appearance:none; margin:0}
-  .cdsep{flex:0 0 auto; font-style:normal; color:var(--v-faint)}
-  .cdfmt{flex:0 0 auto; width:auto; min-width:0; padding:0 20px 0 6px;
-    font-size:var(--v-fs-lbl); background-position:calc(100% - 7px) center}
-  /* The figure and the word under it, as one thing. `min-width:0` so a long state
-     word ellipses rather than wrapping the row and changing the band's height. */
-  .cdfig{display:flex; flex-direction:column; align-items:flex-start; gap:1px;
-    flex:0 1 auto; min-width:0}
-  /* THE FIGURE. Dim until it is genuinely on a wall: off air this IS the set
-     duration, and a setting rendered as brightly as a live figure is the same
-     number telling two different stories. */
-  .tfig{flex:0 0 auto; min-width:0; font-variant-numeric:tabular-nums;
-    font-size:var(--v-fs-h2); line-height:1; font-weight:600; letter-spacing:.01em;
-    color:var(--v-faint)}
-  .tfig.live{color:var(--v-txt)}
-  /* Red = act now. NEVER amber: amber means ON AIR and nothing else (rule 18). */
-  .tfig.warn{color:var(--v-red)}
-  /* The blink itself is in this file's ONE `no-preference` block, further down
-     beside the press feedback, rather than in a second block of its own. That is
-     not tidiness: `livedesk.test.js` reads from the first `no-preference` query
-     to the `reduce` one and asserts that nothing in between animates a box, and
-     a second query opened above it silently widens that slice over half the
-     stylesheet — a scanner reporting on six hundred lines while its comment says
-     six. The keyframes live here, next to the rule they are for. */
-  @keyframes cdwarn{50%{opacity:.38}}
-  .cdstatev{max-width:100%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
-    font-family:var(--f-mono); font-size:var(--v-fs-cap);
-    letter-spacing:var(--v-tr-caps); text-transform:uppercase; color:var(--v-faint)}
-  .cdstatev.live{color:var(--v-dim)}
-  /* Held is a real third state and reads as one. Cyan is a GUESS and amber is ON
-     AIR, so neither is available; the body ink is the one that means "the
-     operator did this deliberately". */
-  .cdstatev.held{color:var(--v-txt)}
-  .cdset{flex:0 0 auto; font-size:var(--v-fs-cap); color:var(--v-faint)}
-  /* Six buttons in a row that wraps with the band, not a grid: this band has the
-     whole width of the run surface rather than the ~323px the dock's card had,
-     which is the arithmetic that forced three-and-three there. */
-  .cdtrans{display:flex; align-items:center; gap:var(--v-sp-xs); flex:0 0 auto;
-    flex-wrap:wrap}
-  /* WHICH SCREENS. `.on` is the ticked state and it is the ordinary selected
-     ghost, not a law colour — choosing a screen is not a claim that anything is
-     on it. */
-  .sc-screens{display:flex; align-items:center; gap:var(--v-sp-xs); flex:0 1 auto;
-    min-width:0; flex-wrap:wrap}
-  .sc-ch{flex:0 1 auto; min-width:0; max-width:180px; overflow:hidden;
-    text-overflow:ellipsis; white-space:nowrap}
-  /* The SAME ticked state the Planner's screen buttons wear (`.sp-ch.on`), so a
-     screen chosen on a Tuesday and a screen chosen on a Sunday look like the same
-     answer to the same question. `--v-sel` is the selection ink and is not one of
-     the four law colours. */
-  .sc-ch.on{background:var(--v-sel); color:var(--v-txt)}
-  /* WHERE IT WOULD GO (RG-167). It shrinks and ellipsises rather than pushing the
-     transport off the row. `.warn` is DIM, never red: a church whose screens all
-     hide the kind has made a choice and nothing has failed. */
-  .cdreach{flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis;
-    white-space:nowrap; font-size:var(--v-fs-cap); color:var(--v-faint)}
-  .cdreach.warn{color:var(--v-dim)}
-  .cdback{display:flex; align-items:center; gap:var(--v-sp-xs); flex:0 0 auto; min-width:0}
-  .cdbackline{font-size:var(--v-fs-cap); color:var(--v-faint); min-width:0;
-    overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
-  /* The figure, in the same mono as the one above it. Not `.tfig`: this one is
-     not on a screen, and that figure means "what the screens are counting". */
-  .cdbackfig{color:var(--v-dim); font-variant-numeric:tabular-nums}
 
   /* ── A CLAIM CARD ─────────────────────────────────────────────────────────
      One card per claim, in a column, because a decode window can name several
