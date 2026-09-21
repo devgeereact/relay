@@ -61,6 +61,26 @@
   // shortenings of one path is how they come to disagree.
   $: readyModel = modelLabel($capture.stt?.model);
   $: readyLanguage = $capture.stt?.language ?? null;
+  // WHICH BIBLE THE WALL READS FROM (RG-50, 2026-09-21). On 2026-09-20 the
+  // preacher named the NKJV; Relay carried the KJV alone and said nothing
+  // (RG-135). Now that two are bundled and one is chosen in Settings →
+  // Scripture, the pre-service screen says which, beside the model and the
+  // language. `null` is "the list could not be read" and is printed as that,
+  // never as a blank that reads like a Bible with no name.
+  let readyBible = undefined;
+  async function loadBible() {
+    try {
+      const [list, active] = await Promise.all([listTranslations(), getActiveTranslation()]);
+      if (!Array.isArray(list) || !list.length) {
+        readyBible = null;
+        return;
+      }
+      const t = list.find((x) => x.id === active) ?? list[0];
+      readyBible = `${t.abbreviation} · ${t.name}`;
+    } catch {
+      readyBible = null;
+    }
+  }
 
   import {
     capture,
@@ -76,6 +96,8 @@
     setRehearsal,
     serviceLock,
     readErrors,
+    listTranslations,
+    getActiveTranslation,
   } from '../stores/capture.js';
   import * as walk from '../pathcheck.js';
   import Loading from '../ui/Loading.svelte';
@@ -235,6 +257,7 @@
   }
 
   onMount(async () => {
+    loadBible();
     // Deliberately not awaited together with the checks: the lists are cheap and
     // should paint immediately, while the probes land one at a time.
     loadServices();
@@ -339,6 +362,10 @@
                  profile carries no language, and automatic election is what
                  RG-116 measured the cost of. -->
             <span class="d-setv r-mono">{readyLanguage ?? 'auto-detect'}</span>
+          </span>
+          <span class="d-set">
+            <span class="d-setk">Bible</span>
+            <span class="d-setv r-mono">{readyBible === undefined ? '…' : readyBible ?? 'could not be read — see Settings → Scripture'}</span>
           </span>
         </p>
       {/if}

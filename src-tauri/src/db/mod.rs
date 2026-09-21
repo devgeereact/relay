@@ -214,7 +214,11 @@ fn ensure_corpus_repair(conn: &Connection) -> rusqlite::Result<()> {
     // An install that has not imported a Bible at all is not a broken corpus —
     // it is a database `baseline_forward_fill` or `seed` will fill. Repairing
     // here would be a 31,102-row import on a machine that asked for none.
-    let have: i64 = conn.query_row("SELECT COUNT(*) FROM verses", [], |r| r.get(0))?;
+    // THE KJV ALONE (RG-50): a second bundled translation shares the table.
+    let Some(kjv) = verses::kjv_id(conn)? else {
+        return Ok(());
+    };
+    let have: i64 = verses::verse_count_for(conn, kjv)?;
     if have == 0 {
         return Ok(());
     }
@@ -223,8 +227,8 @@ fn ensure_corpus_repair(conn: &Connection) -> rusqlite::Result<()> {
         .query_row(
             "SELECT COUNT(*) FROM verses
               WHERE book = 'Genesis' AND chapter = 30 AND verse = 27
-                AND text NOT LIKE '%tarry%'",
-            [],
+                AND text NOT LIKE '%tarry%' AND translation_id = ?1",
+            [kjv],
             |r| r.get::<_, i64>(0),
         )
         .unwrap_or(0)
@@ -300,8 +304,10 @@ fn baseline_forward_fill(conn: &Connection) -> rusqlite::Result<()> {
         // church that installed Relay last month has "Matthew 22:37" pointing at
         // the words of 22:38 until this rung runs. It re-imports once, then the
         // count matches and it never runs again.
-        if verse_count(conn)? != 31_102 {
-            reimport_full_kjv(conn)?;
+        if let Some(kjv) = verses::kjv_id(conn)? {
+            if verses::verse_count_for(conn, kjv)? != 31_102 {
+                reimport_full_kjv(conn)?;
+            }
         }
         // One-time re-clean: DBs imported before the gloss stripper baked the KJV
         // marginal notes ("... Heb. ...") into the verse text. Re-import to strip.
@@ -418,6 +424,7 @@ fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
     ensure_service_plans(conn)?; // Planner
     ensure_songs(conn)?; // Lyrics
     ensure_saved_scripture(conn)?; // Library
+    ensure_bsb_translation(conn)?; // the second bundled Bible (RG-50, DECISIONS §110)
     ensure_media(conn)?;
     ensure_announcements(conn)?;
     ensure_service_events(conn)?; // the service timeline + latency snapshots
@@ -3018,7 +3025,7 @@ mod tests {
 
         let text: String = conn
             .query_row(
-                "SELECT text FROM verses WHERE book = 'Genesis' AND chapter = 30 AND verse = 27",
+                "SELECT text FROM verses WHERE book = 'Genesis' AND chapter = 30 AND verse = 27 AND translation_id = (SELECT id FROM translations WHERE abbreviation = 'KJV')",
                 [],
                 |r| r.get(0),
             )
@@ -3046,7 +3053,7 @@ mod tests {
         let broken = "In that day also he shall come even to thee from Assyria. \
                       {and from the fortified cities: or, even to the fortified cities}";
         conn.execute(
-            "UPDATE verses SET text = ?1 WHERE book = 'Micah' AND chapter = 7 AND verse = 12",
+            "UPDATE verses SET text = ?1 WHERE book = 'Micah' AND chapter = 7 AND verse = 12 AND translation_id = (SELECT id FROM translations WHERE abbreviation = 'KJV')",
             [broken],
         )
         .unwrap();
@@ -3058,7 +3065,7 @@ mod tests {
 
         let text: String = conn
             .query_row(
-                "SELECT text FROM verses WHERE book = 'Micah' AND chapter = 7 AND verse = 12",
+                "SELECT text FROM verses WHERE book = 'Micah' AND chapter = 7 AND verse = 12 AND translation_id = (SELECT id FROM translations WHERE abbreviation = 'KJV')",
                 [],
                 |r| r.get(0),
             )
@@ -3080,7 +3087,7 @@ mod tests {
         init_fresh(&conn).unwrap();
 
         conn.execute(
-            "UPDATE verses SET text = ?1 WHERE book = 'Hebrews' AND chapter = 13 AND verse = 25",
+            "UPDATE verses SET text = ?1 WHERE book = 'Hebrews' AND chapter = 13 AND verse = 25 AND translation_id = (SELECT id FROM translations WHERE abbreviation = 'KJV')",
             ["Grace be with you all. Amen. «Written to the Hebrews from Italy, by Timothy.»"],
         )
         .unwrap();
@@ -3091,7 +3098,7 @@ mod tests {
 
         let text: String = conn
             .query_row(
-                "SELECT text FROM verses WHERE book = 'Hebrews' AND chapter = 13 AND verse = 25",
+                "SELECT text FROM verses WHERE book = 'Hebrews' AND chapter = 13 AND verse = 25 AND translation_id = (SELECT id FROM translations WHERE abbreviation = 'KJV')",
                 [],
                 |r| r.get(0),
             )
@@ -3118,7 +3125,7 @@ mod tests {
         init_fresh(&conn).unwrap();
 
         conn.execute(
-            "UPDATE verses SET text = ?1 WHERE book = 'Hebrews' AND chapter = 13 AND verse = 25",
+            "UPDATE verses SET text = ?1 WHERE book = 'Hebrews' AND chapter = 13 AND verse = 25 AND translation_id = (SELECT id FROM translations WHERE abbreviation = 'KJV')",
             ["Grace be with you all. Amen. «Written to the Hebrews from Italy, by Timothy.»"],
         )
         .unwrap();
@@ -3128,7 +3135,7 @@ mod tests {
 
         let text: String = conn
             .query_row(
-                "SELECT text FROM verses WHERE book = 'Hebrews' AND chapter = 13 AND verse = 25",
+                "SELECT text FROM verses WHERE book = 'Hebrews' AND chapter = 13 AND verse = 25 AND translation_id = (SELECT id FROM translations WHERE abbreviation = 'KJV')",
                 [],
                 |r| r.get(0),
             )

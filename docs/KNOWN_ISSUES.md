@@ -49,6 +49,13 @@ code that would consume each already exists.
 
 ---
 
+### Bible versions, as of 2026-09-21
+
+Two ship bundled: the KJV and the Berean Standard Bible, both public domain (RG-50, DECISIONS
+§110). A licensed version (NKJV, NIV, ESV) cannot be bundled and there is no import path for one
+yet; that is the half of RG-50 still owed. The World English Bible and the ASV are addable the
+same way the BSB was, by a data file in the KJV's shape, if a church asks.
+
 ## 2. Parked, honestly (built seam, not built feature)
 
 These have a deliberate seam in the code and an honest "not built" signal — they are *paused*,

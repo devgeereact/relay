@@ -722,7 +722,7 @@ mod cold_start {
     ///
     /// When the translation half fails, an importer shipped: move the matrix row.
     #[test]
-    fn a_fresh_install_still_cannot_be_given_a_second_translation() {
+    fn a_fresh_install_ships_two_translations_and_reads_from_one() {
         let app = bare_app();
         let h = app.handle().clone();
         let db = h.state::<Db>();
@@ -733,10 +733,18 @@ mod cold_start {
             0,
             "a fresh install seeds no arrangements"
         );
+        // KJV and BSB since 2026-09-21 (RG-50, DECISIONS §110). This test used to
+        // say "still cannot be given a second translation"; the operator asked for
+        // one and a public-domain one was bundled. The wall reads from ONE.
         assert_eq!(
             count(&conn, "translations"),
-            1,
-            "a fresh install ships exactly one translation (KJV)"
+            2,
+            "a fresh install ships the KJV and the BSB"
+        );
+        assert_eq!(
+            db::verse_count(&conn).unwrap(),
+            31_102,
+            "one Bible's count, the active one"
         );
 
         // The TABLE was never the problem, for either of them. For arrangements the
@@ -1038,8 +1046,8 @@ mod cold_start {
             assert!(db::verse_count(&conn).unwrap() > 31_000);
             assert_eq!(
                 count(&conn, "translations"),
-                1,
-                "the reopen re-seeded translations — a duplicate KJV"
+                2,
+                "the reopen re-seeded translations — a duplicate KJV or BSB"
             );
             assert!(!db::list_templates(&conn).unwrap().is_empty());
             assert_eq!(count(&conn, "output_channels"), 4);
@@ -1055,7 +1063,7 @@ mod cold_start {
             conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
             db::migrate(&conn, false).expect("third launch");
             assert_eq!(count(&conn, "output_channels"), 4);
-            assert_eq!(count(&conn, "translations"), 1);
+            assert_eq!(count(&conn, "translations"), 2);
             assert_eq!(db::list_plans(&conn).unwrap().len(), starter_plans + 1);
         }
 
@@ -1705,8 +1713,8 @@ mod cold_start {
         );
         assert_eq!(
             count(&conn, "translations"),
-            1,
-            "a duplicate KJV translation"
+            2,
+            "a duplicate translation: KJV and BSB ship, and a second boot adds neither"
         );
     }
 
@@ -1816,12 +1824,18 @@ mod cold_start {
         let db = h.state::<Db>();
         let conn = db.0.lock().unwrap();
 
-        assert_eq!(db::verse_count(&conn).unwrap(), 31_102, "the bundled KJV");
-        assert_eq!(count(&conn, "translations"), 1);
+        assert_eq!(
+            db::verse_count(&conn).unwrap(),
+            31_102,
+            "the bundled KJV, active"
+        );
+        // KJV and BSB, since 2026-09-21 (RG-50). The FTS mirror covers both and
+        // every search is scoped to the active one.
+        assert_eq!(count(&conn, "translations"), 2);
         assert_eq!(
             count(&conn, "verses_fts"),
-            31_102,
-            "the FTS mirror is built"
+            2 * 31_102,
+            "the FTS mirror is built over both bundled translations"
         );
         // THE SHELF. The exact total is asserted in
         // `db::mod::seeds_the_builtin_templates` against the code's own count; here

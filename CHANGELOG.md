@@ -128,6 +128,14 @@ A network screen that could not keep up with Relay used to miss updates in
 silence, including a clear. It is now handed what is on the screens again, and
 Outputs counts how often that happened.
 
+### A second Bible: the Berean Standard Bible
+
+Relay now carries two Bibles: the King James Version and the Berean Standard
+Bible, a modern public-domain text. Choose which the screens read from in
+Settings → Scripture; the readiness screen says which one is chosen. Searches,
+suggestions and readings all come from the chosen one. The NKJV, which was
+asked for, is a copyrighted text and cannot be included.
+
 ### The Screen Countdown's controls are back on Live
 
 A countdown already on the screens can again be held, given a minute either

@@ -173,6 +173,11 @@ Live software fails live. These are the things that actually happen.
 | **`→` says it did nothing** | End of the passage, or nothing is on screen yet. Relay says which. | Fire a verse first, or step back. |
 | **Relay crashed mid-service** | The console crashed. **The output screens are separate — the congregation still sees the verse.** | Press **Recover console**. It puts you back where you were. (**Dismiss and keep working** leaves the console as it is.) |
 
+**Which Bible.** Relay carries the King James Version and the Berean Standard Bible (a modern
+public-domain text). Pick one in **Settings → Scripture** before the service; the readiness
+screen names the one in use. If the preacher reads from a version Relay does not have, the
+words on the wall will differ from the words being read, and the suggestion card says so.
+
 **A screen says "Not painting the picture".** The picture or clip you fired did not load on that
 screen: the file has gone, that screen cannot reach the address, or the clip is in a format that
 screen cannot play (an iPhone clip is usually HEVC, which OBS and Windows may not decode). The

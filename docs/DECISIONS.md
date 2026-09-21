@@ -6106,3 +6106,31 @@ day; it is true again.
 **Pinned by** `screencountdown.test.js`, which now asserts the band's presence and its place
 under the Stage Timer.
 
+## 110. A second Bible ships bundled, and the NKJV does not (2026-09-21)
+
+**The ask.** *"If you can get a different bible version like NKJV, get it and add it."* The New
+King James Version is Thomas Nelson's, under copyright, and cannot be obtained or bundled without
+a licence; the same is true of the NIV and the ESV (RELAY_GAP §19b). What can be had today, with
+no licence and no internet on a Sunday, is a public-domain text.
+
+**The decision.** The **Berean Standard Bible** (BSB, public domain since 2023, modern English,
+the nearest register to the NKJV among free texts) ships bundled beside the KJV at
+`src-tauri/data/bsb.json`, in the KJV file's shape and, checked at conversion, the KJV's exact
+66-book, 31,102-verse layout with zero chapter-length mismatches, so every anchor,
+`chapter_last_verse` and the semantic index's shape hold. `ensure_bsb_translation` adds it once
+to an install that has the KJV alone. The operator chooses in Settings → Scripture, as before,
+and the readiness screen names the choice beside the model and the language (RG-50's graceful
+minimum).
+
+**What "one Bible at a time" now means in code.** Two translations share the `verses` table.
+Everything that reads verses reads **one**: `verse_count` and `all_verses` are the active
+translation's, the LIKE and FTS searches are scoped to it, and the corpus repair reads and
+rewrites the **KJV alone** by its own id. Before this, `all_verses` would have built the phrase
+and semantic indexes over both texts and offered every quotation twice.
+
+**What this does not do.** It does not add an operator import path for a licensed corpus; that
+is RG-50's option two and still needs its own design. It does not translate the book-name
+aliases (`LANGUAGES.md`), which are about what the preacher *says*, not what the wall reads.
+
+**Pinned by** `db::verses::second_translation::*` and `readiness.test.js` *RG-50*.
+

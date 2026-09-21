@@ -84,8 +84,64 @@ pub fn chapter_last_verse(
 }
 
 /// Total verses currently seeded — a cheap health check for the data layer.
+/// Verses in the ACTIVE translation — one Bible's count, which is what the
+/// readiness screen, the seed audit and every "31,102" in this repository mean.
+/// With two bundled translations the table holds twice that, and a total would
+/// read as a corpus twice too big (RG-50).
 pub fn verse_count(conn: &Connection) -> rusqlite::Result<i64> {
-    conn.query_row("SELECT COUNT(*) FROM verses", [], |r| r.get(0))
+    let tid = crate::db::active_translation_id(conn)?;
+    verse_count_for(conn, tid)
+}
+
+pub fn verse_count_for(conn: &Connection, translation_id: i64) -> rusqlite::Result<i64> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM verses WHERE translation_id = ?1",
+        [translation_id],
+        |r| r.get(0),
+    )
+}
+
+/// The KJV's own row id; `None` on a database with no KJV at all.
+pub fn kjv_id(conn: &Connection) -> rusqlite::Result<Option<i64>> {
+    conn.query_row(
+        "SELECT id FROM translations WHERE abbreviation = 'KJV'",
+        [],
+        |r| r.get::<_, i64>(0),
+    )
+    .optional()
+}
+
+/// THE SECOND BUNDLED TRANSLATION (RG-50, DECISIONS §110). Idempotent on every
+/// open: an install that has the KJV alone gains the BSB once; an install whose
+/// BSB is short is repaired the way the KJV is. Rule 25: retryable, one
+/// transaction, rebuilt FTS.
+pub fn ensure_bsb_translation(conn: &Connection) -> rusqlite::Result<()> {
+    let tid = match conn
+        .query_row(
+            "SELECT id FROM translations WHERE abbreviation = 'BSB'",
+            [],
+            |r| r.get::<_, i64>(0),
+        )
+        .optional()?
+    {
+        Some(id) => id,
+        None => {
+            conn.execute(
+                "INSERT INTO translations (name, abbreviation, language, license_type)
+                 VALUES (?1, ?2, ?3, ?4)",
+                ("Berean Standard Bible", "BSB", "en", "public domain"),
+            )?;
+            conn.last_insert_rowid()
+        }
+    };
+    if verse_count_for(conn, tid)? == 31_102 {
+        return Ok(());
+    }
+    let tx = conn.unchecked_transaction()?;
+    tx.execute("DELETE FROM verses WHERE translation_id = ?1", [tid])?;
+    insert_corpus(&tx, tid, BSB_JSON)?;
+    tx.commit()?;
+    Ok(())
 }
 
 /// Full-text (LIKE) scripture search — the fallback when a query isn't a
@@ -102,9 +158,10 @@ pub fn search_verses_text(
         "SELECT v.id, v.book, v.chapter, v.verse, v.text, t.abbreviation
            FROM verses v JOIN translations t ON t.id = v.translation_id
           WHERE v.text LIKE ?1
-          ORDER BY (CAST(t.id AS TEXT) =
-                     COALESCE((SELECT value FROM app_settings WHERE key = 'active_translation'), '')) DESC,
-                   v.id
+            AND v.translation_id = COALESCE(
+                  (SELECT CAST(value AS INTEGER) FROM app_settings WHERE key = 'active_translation'),
+                  (SELECT MIN(id) FROM translations))
+          ORDER BY v.id
           LIMIT ?2",
     )?;
     let rows = stmt.query_map((pat, limit), row_to_verse)?;
@@ -113,12 +170,21 @@ pub fn search_verses_text(
 
 /// Every verse, for building the semantic index (Phase 9).
 pub fn all_verses(conn: &Connection) -> rusqlite::Result<Vec<VerseRow>> {
+    let tid = crate::db::active_translation_id(conn)?;
+    all_verses_for(conn, tid)
+}
+
+/// One translation's verses, in canonical order: the corpus the phrase and
+/// semantic indexes are built from. Two translations in one index would offer
+/// every paraphrase twice and every quotation as two candidates (RG-50).
+pub fn all_verses_for(conn: &Connection, translation_id: i64) -> rusqlite::Result<Vec<VerseRow>> {
     let mut stmt = conn.prepare(
         "SELECT v.id, v.book, v.chapter, v.verse, v.text, t.abbreviation
            FROM verses v JOIN translations t ON t.id = v.translation_id
+          WHERE v.translation_id = ?1
           ORDER BY v.id",
     )?;
-    let rows = stmt.query_map([], row_to_verse)?;
+    let rows = stmt.query_map([translation_id], row_to_verse)?;
     rows.collect()
 }
 
@@ -142,6 +208,10 @@ fn row_to_verse(r: &rusqlite::Row) -> rusqlite::Result<VerseRow> {
 /// `{ "chapters": [[verse, …], …] }`. Book names come from CANONICAL_BOOKS by
 /// index, so a stored verse and a detected reference always agree on spelling.
 const KJV_JSON: &str = include_str!("../../data/kjv.json");
+/// The Berean Standard Bible, public domain since 2023, in the same shape and the
+/// same 66-book, 31,102-verse layout as the KJV file (checked at conversion:
+/// zero chapter-length mismatches). RG-50, DECISIONS §110.
+const BSB_JSON: &str = include_str!("../../data/bsb.json");
 
 #[derive(serde::Deserialize)]
 struct KjvBook {
@@ -204,7 +274,12 @@ fn import_full_kjv(conn: &Connection, translation_id: i64) -> rusqlite::Result<u
 /// seed, `reimport_full_kjv` for a repair that must also take the old rows out
 /// atomically. A half-imported Bible is not a state a church may boot into.
 fn insert_full_kjv(tx: &Connection, translation_id: i64) -> rusqlite::Result<usize> {
-    let raw = KJV_JSON.trim_start_matches('\u{feff}'); // strip UTF-8 BOM
+    insert_corpus(tx, translation_id, KJV_JSON)
+}
+
+/// Insert one bundled corpus (the KJV file's shape) under one translation id.
+fn insert_corpus(tx: &Connection, translation_id: i64, json: &str) -> rusqlite::Result<usize> {
+    let raw = json.trim_start_matches('\u{feff}'); // strip UTF-8 BOM
     let books: Vec<KjvBook> = serde_json::from_str(raw)
         .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
 
@@ -411,9 +486,10 @@ fn fts_match(conn: &Connection, match_q: &str, limit: i64) -> rusqlite::Result<V
            JOIN verses v ON v.id = verses_fts.rowid
            JOIN translations t ON t.id = v.translation_id
           WHERE verses_fts MATCH ?1
-          ORDER BY (CAST(t.id AS TEXT) =
-                     COALESCE((SELECT value FROM app_settings WHERE key = 'active_translation'), '')) DESC,
-                   bm25(verses_fts)
+            AND v.translation_id = COALESCE(
+                  (SELECT CAST(value AS INTEGER) FROM app_settings WHERE key = 'active_translation'),
+                  (SELECT MIN(id) FROM translations))
+          ORDER BY bm25(verses_fts)
           LIMIT ?2",
     )?;
     let rows = match stmt.query_map((match_q, limit), row_to_verse) {
@@ -738,14 +814,21 @@ pub(super) fn reimport_full_kjv(conn: &Connection) -> rusqlite::Result<()> {
     let links: Vec<(i64, String, i64, i64)> = {
         let mut q = tx.prepare(
             "SELECT d.id, v.book, v.chapter, v.verse
-               FROM detections d JOIN verses v ON v.id = d.verse_id",
+               FROM detections d JOIN verses v ON v.id = d.verse_id
+               JOIN translations t ON t.id = v.translation_id
+              WHERE t.abbreviation = 'KJV'",
         )?;
         let rows = q.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
         rows.collect::<rusqlite::Result<Vec<_>>>()?
     };
-    tx.execute("UPDATE detections SET verse_id = NULL", [])?;
-    tx.execute("DELETE FROM verses", [])?;
     let tid = kjv_translation_id(&tx)?;
+    // THE KJV'S ROWS ONLY (RG-50). A second bundled translation lives in the
+    // same table, and repairing one Bible must not erase the other.
+    tx.execute(
+        "UPDATE detections SET verse_id = NULL WHERE verse_id IN (SELECT id FROM verses WHERE translation_id = ?1)",
+        [tid],
+    )?;
+    tx.execute("DELETE FROM verses WHERE translation_id = ?1", [tid])?;
     insert_full_kjv(&tx, tid)?;
     {
         let mut put = tx.prepare(
@@ -1488,5 +1571,95 @@ mod corpus_tests {
             }
         }
         assert!(bad.is_empty(), "not the verse:\n{}", bad.join("\n"));
+    }
+}
+
+/// 2026-09-21 · RG-50, option one. The operator asked for a second version
+/// ("NKJV if you can get it"). The NKJV is Thomas Nelson's and cannot be
+/// obtained without a licence; the Berean Standard Bible is public domain since
+/// 2023, modern English, and carries the KJV's exact 66-book, 31,102-verse
+/// layout, so every anchor, every `chapter_last_verse` and the semantic index's
+/// shape stay valid. It ships bundled, like the KJV, because a church with no
+/// internet must still have it. Everything that reads verses reads ONE
+/// translation, the active one; the corpus repair reads the KJV alone.
+#[cfg(test)]
+mod second_translation {
+    use super::*;
+
+    fn corpus_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate(&conn, true).unwrap();
+        conn
+    }
+
+    #[test]
+    fn a_fresh_install_carries_the_kjv_and_the_bsb_and_the_kjv_is_still_31102() {
+        let conn = corpus_db();
+        let ts = list_translations(&conn).unwrap();
+        assert_eq!(
+            ts.iter()
+                .map(|t| t.abbreviation.as_str())
+                .collect::<Vec<_>>(),
+            vec!["KJV", "BSB"]
+        );
+        assert_eq!(verse_count_for(&conn, ts[0].id).unwrap(), 31_102, "the KJV");
+        assert_eq!(verse_count_for(&conn, ts[1].id).unwrap(), 31_102, "the BSB");
+        // The active translation is the KJV until somebody chooses; the count the
+        // readiness screen shows is ONE Bible's, not the sum.
+        assert_eq!(verse_count(&conn).unwrap(), 31_102);
+    }
+
+    #[test]
+    fn an_install_that_has_the_kjv_alone_gains_the_bsb_on_boot_once() {
+        let conn = corpus_db();
+        conn.execute_batch("DELETE FROM verses WHERE translation_id = (SELECT id FROM translations WHERE abbreviation='BSB'); DELETE FROM translations WHERE abbreviation='BSB';").unwrap();
+        assert_eq!(list_translations(&conn).unwrap().len(), 1);
+        ensure_bsb_translation(&conn).unwrap();
+        ensure_bsb_translation(&conn).unwrap();
+        let ts = list_translations(&conn).unwrap();
+        assert_eq!(ts.len(), 2, "twice is once");
+        assert_eq!(verse_count_for(&conn, ts[1].id).unwrap(), 31_102);
+    }
+
+    #[test]
+    fn the_corpus_the_indexes_read_is_one_translation() {
+        let conn = corpus_db();
+        let tid = crate::db::active_translation_id(&conn).unwrap();
+        assert_eq!(all_verses_for(&conn, tid).unwrap().len(), 31_102);
+    }
+
+    #[test]
+    fn search_answers_from_one_translation_only() {
+        let conn = corpus_db();
+        for rows in [
+            search_verses_text(&conn, "shepherd", 50).unwrap(),
+            search_verses_fts(&conn, "shepherd", 50).unwrap(),
+        ] {
+            assert!(!rows.is_empty());
+            let abbrs: std::collections::HashSet<_> =
+                rows.iter().map(|r| r.translation.clone()).collect();
+            assert_eq!(abbrs.len(), 1, "a search mixed translations: {abbrs:?}");
+        }
+    }
+
+    #[test]
+    fn choosing_the_bsb_changes_the_words_on_the_wall() {
+        let conn = corpus_db();
+        let bsb = list_translations(&conn)
+            .unwrap()
+            .into_iter()
+            .find(|t| t.abbreviation == "BSB")
+            .unwrap();
+        crate::db::set_setting(&conn, "active_translation", &bsb.id.to_string()).unwrap();
+        let v = lookup_verse(&conn, "John", 3, 16).unwrap().unwrap();
+        assert_eq!(v.translation, "BSB");
+        assert!(
+            v.text
+                .starts_with("For God so loved the world that He gave His one and only Son"),
+            "{}",
+            v.text
+        );
+        assert_eq!(verse_count(&conn).unwrap(), 31_102);
+        assert_eq!(all_verses_for(&conn, bsb.id).unwrap()[0].translation, "BSB");
     }
 }

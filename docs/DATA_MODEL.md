@@ -65,6 +65,11 @@ The Bible translation a verse belongs to. Bundled corpus today is **KJV only** (
 `id, name, abbreviation, language` (ISO code), `license_type`. There is deliberately no import
 path for a second translation — which is also why there is no licensing exposure.
 
+Two rows on every install since 2026-09-21: **KJV** and **BSB** (Berean Standard Bible,
+public domain), both 31,102 verses in the same layout (DECISIONS §110). Every read is scoped to
+the active translation (`app_settings.active_translation`, default the lowest id); the corpus
+repair reads and rewrites the KJV by its own id.
+
 ### Verse — `db/verses.rs` `VerseRow`
 A single verse: `translation_id, book` (canonical name), `chapter, verse, text`, and
 `embedding BLOB`. **The `embedding` column exists and has never been written to** — it is the

@@ -81,7 +81,7 @@ cargo test eval::tests::print_scorecard -- --nocapture         # detection score
 - **`tauri dev` does NOT exercise the CSP.** In dev, Tauri loads the Vite `devUrl`; `app.security.csp` only applies to bundled assets. **Any CSP change must be verified with `npm run tauri build`** against the packaged binary.
 - **This machine cannot screenshot the app.** Verify via `cargo test`, `vite build`, backend stdout, and the **boot heartbeat**: `App.svelte` calls `greet` on mount, `main.rs` prints `console: webview up (operator)`. No line = blank/broken console. **Exactly one line per launch** — the count is the signal, so `greet` has exactly ONE caller and anything else asking "is the bridge up?" calls `ping`, which is silent. Pinned by `ipc.test.js`; see §26.
 - **STT models** live in app-data (`db::app_data_dir()/models`), gitignored. Downloaded in-app (`models.rs`), or resolved via `RELAY_MODEL_PATH` → repo `models/`.
-- **Full KJV** is bundled at `src-tauri/data/kjv.json` (`include_str!`, committed — required to build).
+- **Full KJV** is bundled at `src-tauri/data/kjv.json` and the **Berean Standard Bible** at `src-tauri/data/bsb.json` (both `include_str!`, committed — required to build; DECISIONS §110, RG-50). Every verse read is scoped to `app_settings.active_translation`; the corpus repair reads the KJV alone.
 - **SQLite** dev DB: `~/Library/Application Support/com.relay.app/relay.db`.
 
 ### Debugging audio / STT without a human at the mic

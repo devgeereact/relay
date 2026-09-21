@@ -164,3 +164,31 @@ describe('RG-190 · and a healthy machine still reads ready, so the two tests ab
     expect(text(el)).not.toMatch(/not working/);
   });
 });
+
+// 2026-09-21 · RG-50. The preacher named a translation Relay did not carry and
+// Relay said nothing (RG-135). The pre-service screen now says which Bible the
+// wall will read from, beside the model and the language, so the operator knows
+// before the room fills up.
+describe('RG-50 · the readiness screen names the Bible the wall reads from', () => {
+  it('names the active translation', async () => {
+    invoke.mockImplementation(async (cmd) => {
+      if (cmd === 'list_translations') return [{ id: 1, name: 'King James Version', abbreviation: 'KJV', language: 'en' }, { id: 2, name: 'Berean Standard Bible', abbreviation: 'BSB', language: 'en' }];
+      if (cmd === 'get_active_translation') return 2;
+      return null;
+    });
+    const el = await mountDashboard({ model: '/m/ggml-large-v3-turbo.bin', language: 'en' });
+    for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
+    expect(text(el)).toMatch(/Bible/);
+    expect(text(el)).toMatch(/BSB/);
+  });
+  it('says so plainly when the list could not be read', async () => {
+    invoke.mockImplementation(async (cmd) => {
+      if (cmd === 'list_translations') throw new Error('no');
+      return null;
+    });
+    const el = await mountDashboard({ model: '/m/ggml-base.bin', language: null });
+    for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
+    expect(text(el)).toMatch(/Bible/);
+    expect(text(el)).toMatch(/not read|unknown|no answer/i);
+  });
+});

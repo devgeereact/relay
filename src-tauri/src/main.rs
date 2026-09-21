@@ -210,6 +210,8 @@ fn main() {
             let corpus: Vec<(VerseRef, String)> = {
                 let db = app.state::<Db>();
                 let conn = db.0.lock().expect("db lock");
+                // ONE TRANSLATION (RG-50): the active one. Two in the index would
+                // offer every quotation twice.
                 db::all_verses(&conn)
                     .unwrap_or_default()
                     .into_iter()
