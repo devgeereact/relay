@@ -121,9 +121,10 @@ because the operator concludes the app is broken.
 
 ---
 
-## 5. Outputs shows what each screen is actually showing
+## 5. Outputs shows what each screen is actually showing — **DONE, RG-211**
 
-Feed each card the live content for that channel instead of the stand-in, keeping the stand-in
+`describeScreen` now returns `shows` beside `kind`/`label`/`note`, so the frame and
+the badge come from one verdict rather than two derivations. Feed each card the live content for that channel instead of the stand-in, keeping the stand-in
 **only** for a screen with nothing on it (an empty card would otherwise read as a fault). A card
 for a screen that is NOT RESPONDING must show its last known frame and say that it is stale —
 showing current content under a dead badge is the rule 35 failure in a new place.

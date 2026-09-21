@@ -682,3 +682,87 @@ describe('a screen whose media failed to load', () => {
     expect(describeScreen(row({ media_error: null }), ON_AIR).kind).toBe('onair');
   });
 });
+
+// ── WHAT A CARD MAY PAINT — the same verdict, one field further (RG-211) ─────
+//
+// The Outputs workspace renders every screen through the wall's own renderer,
+// and fed every card the SAME content: the live programme when a service was
+// running, a stand-in verse when one was not. So a screen that had stopped
+// answering painted the verse that fired thirty seconds after it died, under a
+// badge reading **Not responding** — current content beneath a dead badge,
+// which is rule 35 in a new place. A blacked-out screen did the same.
+//
+// The decision is not a second rule beside `describeScreen`; it is the same
+// verdict saying one more thing, because two rules is how the badge and the
+// picture come to disagree.
+describe('shows — what the card under this badge may paint', () => {
+  const kinds = (st, wall = ON_AIR, waited = 0) => describeScreen(st, wall, waited).shows;
+
+  it('a screen that is painting content shows the content', () => {
+    expect(kinds(row())).toBe('content');
+  });
+
+  it('a screen that has stopped answering shows its LAST frame, not the current one', () => {
+    // The whole finding. `stale` is the instruction to the card: paint what this
+    // screen was last known to be showing and say that it is old.
+    expect(kinds(row({ painting: false, last_beat_ms: 30000 }))).toBe('stale');
+    expect(kinds(row({ painting: false, last_beat_ms: null }), ON_AIR, BEAT_GRACE_MS + 1)).toBe(
+      'stale',
+    );
+  });
+
+  it('a screen the operator took down paints nothing, whatever is on the programme', () => {
+    expect(kinds(row({ down: 'clear' }))).toBe('blank');
+    expect(kinds(row({ down: 'black', paint_state: 'black' }))).toBe('blank');
+  });
+
+  it('a blackout and a cleared wall paint nothing', () => {
+    expect(kinds(row({ paint_state: 'black' }), { rehearsing: false, live: true, black: true })).toBe(
+      'blank',
+    );
+    expect(kinds(row({ paint_state: 'clear' }), { rehearsing: false, live: false, black: false })).toBe(
+      'blank',
+    );
+  });
+
+  it('a rehearsal paints nothing, because nothing of a rehearsal reaches a screen', () => {
+    expect(kinds(row(), { rehearsing: true, live: true, black: false })).toBe('blank');
+  });
+
+  it('when the two claims disagree, the SCREEN’S word decides what the card paints', () => {
+    // The badge already says the screen disagrees. The picture must follow the
+    // screen rather than Relay's belief, or the card argues with its own badge.
+    expect(kinds(row({ paint_state: 'clear' }))).toBe('blank');
+    expect(kinds(row({ paint_state: null }))).toBe('unknown');
+  });
+
+  it('a screen that has said nothing yet paints nothing and does not pretend', () => {
+    expect(kinds(row({ painting: false, last_beat_ms: null }), ON_AIR, 1000)).toBe('unknown');
+    expect(kinds(row({ online: false }))).toBe('blank');
+    expect(kinds(row({ supported: false }))).toBe('blank');
+  });
+
+  it('a picture that failed still shows the slide — the badge carries the failure', () => {
+    // `media_error` means the page IS painting and one element inside it is not.
+    // Blanking the card would hide the rest of the slide, which is the part that
+    // tells the operator which cue is up.
+    expect(kinds(row({ media_error: 'picture not loading · /media/3' }))).toBe('content');
+  });
+
+  it('every verdict says what may be painted — a card can never be left guessing', () => {
+    const all = [
+      [row(), ON_AIR, 0],
+      [row({ painting: false, last_beat_ms: 30000 }), ON_AIR, 0],
+      [row({ painting: false, last_beat_ms: null }), ON_AIR, 1000],
+      [row({ online: false }), ON_AIR, 0],
+      [row({ supported: false }), ON_AIR, 0],
+      [row({ down: 'clear' }), ON_AIR, 0],
+      [row({ media_error: 'x' }), ON_AIR, 0],
+      [row({ paint_state: 'clear' }), ON_AIR, 0],
+      [row(), { rehearsing: true, live: true, black: false }, 0],
+      [row({ paint_state: 'black' }), { rehearsing: false, live: true, black: true }, 0],
+    ];
+    for (const [st, wall, waited] of all)
+      expect(['content', 'blank', 'stale', 'unknown']).toContain(describeScreen(st, wall, waited).shows);
+  });
+});

@@ -992,6 +992,20 @@
   // together the moment a verse fires. Idle: the stand-in, so a template is still
   // legible on a Tuesday.
   $: cardContent = $live ? $liveContent : PREVIEW;
+
+  // ── THE LAST FRAME EACH SCREEN WAS KNOWN TO BE SHOWING (RG-211) ────────────
+  //
+  // A plain `Map`, deliberately NOT a store and NOT a `$:` value. It is written
+  // from inside the `cards` computation below, and a reactive container written
+  // where it is read is a loop. Nothing renders from it directly either: the
+  // frame a card paints is chosen once, in that same computation, so there is one
+  // place to read and one place to reason about.
+  //
+  // It only ever holds a frame a screen ITSELF said it was painting — see
+  // `shows === 'content'` below — which is what makes it honest to keep showing
+  // when that screen stops answering. A map filled from Relay's belief would
+  // retain frames the screen never received, which is the bug in slower motion.
+  const lastFrames = new Map();
   $: cards = shown.map((c) => {
     const st = status[c.id] ?? null;
     const own = c.template_id == null ? null : ($templates.find((t) => t.id === c.template_id) ?? null);
@@ -1010,11 +1024,42 @@
       ) || DEFAULT_TEMPLATE;
     const i = parseInt(c.display_target ?? '', 10);
     const mon = Number.isFinite(i) ? (monitors.find((m) => m.index === i) ?? null) : null;
+    // ── WHAT THIS CARD MAY PAINT, from the SAME verdict as its badge ─────────
+    //
+    // Every card used to be handed `cardContent` — the programme — whatever its
+    // screen was doing. So a screen that had dropped off the network painted the
+    // verse that fired after it died, in full, under a badge reading **Not
+    // responding**, and a screen the operator had taken down painted the
+    // programme it had been taken out of. The picture is the half of this
+    // surface an operator actually looks at, so the card was telling them the
+    // opposite of its own label (rule 35, RG-211).
+    //
+    // `shows` comes from `describeScreen`, beside the word — one rule, one
+    // place, so the two cannot drift apart.
+    const shows = verdicts[c.id]?.shows ?? 'unknown';
+    if ($live && shows === 'content' && cardContent) lastFrames.set(c.id, cardContent);
+    // WITH NOTHING ON THE PROGRAMME every card shows the stand-in, and that is
+    // not the same decision as `blank`. On a Tuesday there is no content to be
+    // wrong about, and a grid of empty boxes answers none of the questions this
+    // tab is opened to ask about the LOOKS.
+    const frame = !$live
+      ? cardContent
+      : shows === 'content'
+        ? cardContent
+        : shows === 'stale'
+          ? (lastFrames.get(c.id) ?? null)
+          : null;
     return {
       c,
       st,
       tpl,
       mon,
+      frame,
+      // A frame is stale when it is the last thing this screen was KNOWN to be
+      // showing and the programme has since moved on. It is said in words on the
+      // card, because a picture that is merely old looks exactly like a picture
+      // that is current.
+      stale: !!($live && shows === 'stale' && frame),
       // THE SAME RULE LIVE USES, with the same four inputs (rule 35), and now the
       // same OBJECT the inspector and the rail read — see `verdicts`. The cards
       // used to derive their word from `FAULT_WORD[screenFault(st)]`, which knows
@@ -1365,7 +1410,20 @@
                   {#if k.plate}
                     <CameraPlate />
                   {/if}
-                  <TemplateRender template={k.tpl} content={cardContent} />
+                  <!-- THE CARD PAINTS ITS OWN SCREEN, not the programme (RG-211).
+                       `k.frame` is null for a screen that is showing nothing — a
+                       blackout, a screen taken down, one that has said it is
+                       clear — and an empty frame is the honest picture of that.
+                       A screen that has stopped answering keeps the last frame it
+                       was known to have and SAYS the frame is old, because a
+                       picture that is merely old looks exactly like a current
+                       one. -->
+                  {#if k.frame}
+                    <TemplateRender template={k.tpl} content={k.frame} />
+                  {/if}
+                  {#if k.stale}
+                    <span class="ch-stale r-mono">Last seen</span>
+                  {/if}
                 </div>
 
                 <div class="ch-cardtop">
@@ -2488,6 +2546,17 @@
      lays itself out against the page. */
   .ch-frame{ position:relative; aspect-ratio:16/9; min-width:0; overflow:hidden;
     border:1px solid var(--v-line2); border-radius:var(--v-r-sm); background:var(--v-void); }
+  /* A FRAME THAT IS OLD SAYS SO IN WORDS (RG-211). Ochre, because this is a
+     caution and nothing else in the palette may be spent on one (rule 18,
+     DECISIONS §111): it is not amber, which means the screen is on air, and it
+     is not rose, because nothing has failed here that the badge has not already
+     named. It sits over the picture rather than beside it, so it cannot be read
+     as belonging to the card below. */
+  .ch-stale{ position:absolute; left:6px; top:6px; z-index:2;
+    padding:2px 6px; border-radius:var(--v-r-sm);
+    font-size:var(--v-fs-lbl); line-height:var(--v-lh-lbl); letter-spacing:.04em;
+    color:var(--v-caution); background:color-mix(in srgb, var(--v-void) 78%, transparent);
+    border:1px solid color-mix(in srgb, var(--v-caution) 45%, transparent); }
   /* `.ch-plate` / `.ch-platelbl` moved into `ui/CameraPlate.svelte` with the
      markup they styled — a rule left behind here would be a rule nobody renders,
      and this file has already been caught by a `class:` directive naming a class

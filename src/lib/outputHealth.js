@@ -320,7 +320,7 @@ export function screenFault(st) {
 /**
  * What to say about one screen.
  *
- * Returns `{ kind, label, note }`. `kind` chooses the colour, and it obeys the
+ * Returns `{ kind, label, note, shows }`. `kind` chooses the colour, and it obeys the
  * colour law (DECISIONS §22): **amber is spent only on a screen that is both
  * genuinely on air and answering.** A screen that is not answering can never be
  * amber, and neither can one that IS answering and says it is showing nothing —
@@ -332,22 +332,45 @@ export function screenFault(st) {
  * either claim is compared, because the two disagree on purpose there and the
  * disagreement is not news.
  *
+ * `shows` is the same verdict saying one thing more: what a surface that PAINTS
+ * this screen — the Outputs workspace's cards — is allowed to put in the frame.
+ * It is part of this function rather than a second rule beside it, because a
+ * badge and a picture derived separately are how a card comes to argue with its
+ * own label (RG-211). Four answers, and every branch gives one:
+ *
+ * - `content` — paint what Relay is sending. The screen has said it is painting
+ *               content, so the card and the screen agree.
+ * - `blank`   — paint nothing. The screen is down, taken down, blacked out, in a
+ *               rehearsal nothing reaches, or has itself said it is clear.
+ * - `stale`   — paint the last frame this screen was KNOWN to be showing, and
+ *               say that it is old. Painting the current programme under a **Not
+ *               responding** badge is the rule 35 failure in a new place: the
+ *               verse on that card is one the screen never received.
+ * - `unknown` — paint nothing and claim nothing. Nobody has heard from it yet.
+ *
  * @param st       the channel's `ChannelLiveness` row, or null before the first poll
  * @param wall     `{ rehearsing, live, black }` — what Relay believes it is sending
  * @param waitedMs how long this screen has been attached without answering
  */
 export function describeScreen(st, wall, waitedMs = 0) {
   const fault = screenFault(st);
-  if (fault === 'unknown') return { kind: 'unknown', label: 'Checking…', note: '' };
+  if (fault === 'unknown')
+    return { kind: 'unknown', label: 'Checking…', note: '', shows: 'unknown' };
   if (fault === 'unsupported')
-    return { kind: 'idle', label: 'Unavailable', note: st.detail ?? '' };
-  if (fault === 'offline') return { kind: 'idle', label: 'No window', note: st.detail ?? '' };
+    return { kind: 'idle', label: 'Unavailable', note: st.detail ?? '', shows: 'blank' };
+  if (fault === 'offline')
+    return { kind: 'idle', label: 'No window', note: st.detail ?? '', shows: 'blank' };
 
   if (fault !== 'ok') {
     // Never answered AND still inside the grace window: say so plainly rather
     // than accusing a screen that is still starting up.
     if (fault === 'never' && waitedMs < BEAT_GRACE_MS)
-      return { kind: 'idle', label: 'Waiting…', note: 'the screen has not reported yet' };
+      return {
+        kind: 'idle',
+        label: 'Waiting…',
+        note: 'the screen has not reported yet',
+        shows: 'unknown',
+      };
     return {
       kind: 'down',
       label: 'Not responding',
@@ -355,6 +378,7 @@ export function describeScreen(st, wall, waitedMs = 0) {
         fault === 'never'
           ? 'this screen has never reported painting'
           : `last answered ${Math.round(st.last_beat_ms / 1000)}s ago`,
+      shows: 'stale',
     };
   }
 
@@ -398,7 +422,8 @@ export function describeScreen(st, wall, waitedMs = 0) {
   // and a fixture must not be able to earn amber that a screen would not.
   const says = PAINT_STATES.includes(st.paint_state) ? st.paint_state : null;
   const seen = says ? `screen: ${says}` : '';
-  if (wall?.rehearsing) return { kind: 'rehearsal', label: 'Rehearsal', note: seen };
+  if (wall?.rehearsing)
+    return { kind: 'rehearsal', label: 'Rehearsal', note: seen, shows: 'blank' };
 
   // ── THE OPERATOR TOOK THIS SCREEN OUT OF THE WALL ──────────────────────────
   //
@@ -425,6 +450,7 @@ export function describeScreen(st, wall, waitedMs = 0) {
       kind: 'ready',
       label: st.down === 'black' ? 'Taken down · black' : 'Taken down',
       note: seen ? `you took this screen down · ${seen}` : 'you took this screen down',
+      shows: 'blank',
     };
   }
 
@@ -434,7 +460,12 @@ export function describeScreen(st, wall, waitedMs = 0) {
   // inside it is blank. Ranked with `down`, because a congregation looking at a
   // blank frame under an amber badge is the failure rule 35 exists to stop.
   if (typeof st.media_error === 'string' && st.media_error.trim()) {
-    return { kind: 'down', label: 'Not painting the picture', note: st.media_error.trim() };
+    return {
+      kind: 'down',
+      label: 'Not painting the picture',
+      note: st.media_error.trim(),
+      shows: 'content',
+    };
   }
 
   const sending = wall?.live && !wall?.black ? 'content' : wall?.black ? 'black' : 'clear';
@@ -451,10 +482,17 @@ export function describeScreen(st, wall, waitedMs = 0) {
         says === null
           ? 'the screen has not said what it is showing'
           : `${RELAY_CLAIM[sending]} · the screen says ${says}`,
+      shows: says === null ? 'unknown' : says === 'content' ? 'content' : 'blank',
     };
   }
-  if (sending === 'content') return { kind: 'onair', label: 'On Air', note: seen };
-  return { kind: 'ready', label: sending === 'black' ? 'Blackout' : 'Ready', note: seen };
+  if (sending === 'content')
+    return { kind: 'onair', label: 'On Air', note: seen, shows: 'content' };
+  return {
+    kind: 'ready',
+    label: sending === 'black' ? 'Blackout' : 'Ready',
+    note: seen,
+    shows: 'blank',
+  };
 }
 
 /** Relay's half of the note, in words — one per thing Relay can be sending. */
