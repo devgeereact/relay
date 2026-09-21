@@ -54,10 +54,7 @@ These do not move without a human explicitly reopening them. Full reasoning in
 
 **The directory says which is which.** `docs/` is the specification. `docs/qa/` is how Relay is
 checked and what checking found. `docs/qa/audits/` is frozen evidence — dated, and never edited
-after the fact. **`docs/superpowers/` is the wave work: `specs/` the design a wave was built to
-and `plans/` the work orders it was built from.** It is neither specification nor evidence — it
-is what was intended at the time, which is why a ruling that lives only there has not been made
-yet and belongs in `DECISIONS.md` (§92, §93, §94 and §95 all landed on 2026-09-17, and three of the four had to be renumbered: four branches wrote a §92 at the same insertion point on the same day). `CHANGELOG.md` stays at the
+after the fact. **`docs/superpowers/plans/` holds the ONE live plan** (`2026-09-19-stage-timers-mobile.md`, with its own inline status); **`docs/archive/` holds every wave design and work order whose work has landed**, each headed with where its rulings and findings now live. Neither is specification nor evidence — a ruling that lives only in a design has not been made yet and belongs in `DECISIONS.md` (§92, §93, §94 and §95 all landed on 2026-09-17, and three of the four had to be renumbered: four branches wrote a §92 at the same insertion point on the same day). `CHANGELOG.md` stays at the
 repository root, where the convention and GitHub both expect it.
 
 **Two rows below sit under the `docs/qa/` heading and are not in `docs/qa/`** — `REBRAND.md` and
@@ -175,8 +172,9 @@ drive the running app over `:8032`). The cheap half runs on every edit:
 
 Three documents, at three altitudes, and they are meant to disagree on scope rather than on fact:
 
-- **[RELAY_V1_AUDIT.md](RELAY_V1_AUDIT.md)** — the V1 production audit, last run 2026-09-03. It
-  owns the **decision**, the **three scorecards**, the **fix process** (ten defects, each with
+- **[qa/RELAY_GAP.md](qa/RELAY_GAP.md) §24 owns the release decision**; nothing else restates it
+  (this page, `README.md` and `CLAUDE.md` all did, and the copies disagreed). **[RELAY_V1_AUDIT.md](RELAY_V1_AUDIT.md)** is the V1 production audit that took it, last run 2026-09-03. It
+  owns the **three scorecards**, the **fix process** (ten defects, each with
   the test that would fail if it came back), and the disposition of every phase of both briefs —
   a 42-phase PWA brief and a live-service brief numbered §00–§105. Where a phase could not be reached
   from this machine it says **UNVERIFIED** and names the instrument that would answer it; where
@@ -186,7 +184,7 @@ Three documents, at three altitudes, and they are meant to disagree on scope rat
   whether Relay ships a second Bible translation, an import path for one, or neither.
 - **[qa/audits/](qa/audits/)** — dated machine audits, **each frozen**. They never rewrite their
   own findings; closures go in the fix log at the top, because an audit that edits its own
-  history stops being evidence. **Eleven of them** (`ls qa/audits | wc -l`); this sentence said
+  history stops being evidence. **Twelve of them** (`ls qa/audits | wc -l`); this sentence said
   *Five* and then listed six, which is the shortest possible demonstration of why a count does
   not belong in prose beside the list it counts. The ones a reader reaches for:
   [QA-2026-08-14.md](qa/audits/QA-2026-08-14.md) (six-agent full scope; §16 is the human test

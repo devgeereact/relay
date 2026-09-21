@@ -1,3 +1,5 @@
+> **Archived 2026-09-21.** Historical. The consolidation it describes merged to `main` as PR #87 on 2026-09-17; the measured baselines it carries are in `docs/qa/QA_HARNESS.md` Part 0 (the 2026-09-17 block). It never had a status section; this line is it. Nothing here is edited except the paths of citations into other archived files, retargeted so every citation still resolves; the rulings and findings it led to live where the line above says.
+
 # Consolidation — three roots, one branch, and the defects the waves left behind
 
 **Date** 2026-09-17 · **Branch** `feat/consolidation` · **Target** `main`, one PR
@@ -153,7 +155,7 @@ wave-3-versus-wave-4 in origin and that step 1 does not change them.
 Two files sit outside the conflict set and git will pick one silently. Both must be
 checked by hand:
 
-- `docs/superpowers/specs/2026-09-15-timers-templates-stage-design.md` — the 73-line
+- `docs/archive/2026-09-15-timers-templates-stage-design.md` — the 73-line
   §4.2 correction exists **only** on wave 4. **Take wave 4's copy.** Its own plan names
   the failure mode: *"Leaving that sentence in a spec with no correction beside it is
   how the next wave under-scopes it again."*

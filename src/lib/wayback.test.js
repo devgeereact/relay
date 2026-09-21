@@ -7,7 +7,7 @@
 // exactly the distinction CLAUDE.md draws and RG-21 was filed on: **the test is
 // whether a RENDERED control can get there, not whether a wrapper exists.**
 //
-// The operator's decision (2026-09-17, `docs/superpowers/plans/2026-09-16-wave3-
+// The operator's decision (2026-09-17, `docs/archive/2026-09-16-wave3-
 // timers.md`) puts that control in the dock's Countdown block rather than in Live's
 // programme band, because the dock is on every workspace and the band is on one.
 //

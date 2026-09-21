@@ -1,3 +1,5 @@
+> **Archived 2026-09-21.** Historical work order. Wave 4 landed 2026-09-17 and was audited in `docs/qa/audits/2026-09-17-WAVE4-STAGE-PLANNER.md`; findings RG-161 to RG-165. Its 41 checkboxes were never ticked; the audit is the record. Task 8 ("wave 4 does NOT build screen targeting") was superseded when RG-161 shipped. Nothing here is edited except the paths of citations into other archived files, retargeted so every citation still resolves; the rulings and findings it led to live where the line above says.
+
 # Wave 4 — Stage and Planner Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. This repository has never checked a box in a landed plan — completion is evidenced by commits and green suites, not by the boxes.
@@ -8,7 +10,7 @@
 
 **Tech Stack:** Rust (Tauri v2, `rusqlite`), Svelte 4 + Vite, vitest + jsdom, `cargo test`, Chrome via the browser driver named in Track D.
 
-**Spec:** `docs/superpowers/specs/2026-09-15-timers-templates-stage-design.md` §4 (lines 726–801).
+**Spec:** `docs/archive/2026-09-15-timers-templates-stage-design.md` §4 (lines 726–801).
 
 **Depends on:** Waves 0, 1 and 2, plus wave 3 tracks A, B and D, all verified present in this tree on 2026-09-16 — `src-tauri/src/timers.rs` (the registry, 11 unit tests), `channels.rs:1212` `timer_frame_json`, `channels.rs:1424` the timer frame's own retained slot, and the countdown warning threshold as a setting.
 
@@ -202,7 +204,7 @@ Today a programme row renders a label and digits and nothing else. `warn_ms` is 
 **Why this exists:** The spec says "add it, defaulting to all" about a facility that has no wire, no receiver filter and no per-channel retention. Leaving that sentence in a spec with no correction beside it is how the next wave under-scopes it again.
 
 **Files:**
-- Modify: `docs/superpowers/specs/2026-09-15-timers-templates-stage-design.md` — a correction beside §4.2's paragraph, stating what it costs
+- Modify: `docs/archive/2026-09-15-timers-templates-stage-design.md` — a correction beside §4.2's paragraph, stating what it costs
 - Modify: `docs/qa/RELAY_GAP.md` — file it at the next free id
 
 - [ ] **Step 1: State the four pieces** it actually needs, each with the citation that proves it is missing: a channel set on the content (`channels.rs` `OutputContent`), a routed publish at the choke point (`channels.rs:1089-1090`), a receiver-side filter (`src/Output.svelte:293`, which today never compares its own channel — the precedent that it can is `channel://retemplate`, filtered at `:330`), and per-channel retention so a screen that joins mid-service is shown what is on **its** screen (rule 43, `channels.rs:1424`).

@@ -1,3 +1,5 @@
+> **Archived 2026-09-21.** Historical. Built the same day: `docs/DECISIONS.md` §97 and §98, register rows RG-171 to RG-174 (closed 2026-09-18). Its status line ("specified, not built") and its claim that per-cue targeting "stays closed" are both false now (RG-161, RG-177 closed). Nothing here is edited except the paths of citations into other archived files, retargeted so every citation still resolves; the rulings and findings it led to live where the line above says.
+
 # Channel looks — a per-screen, per-kind template
 
 **Date** 2026-09-18 · **Status** specified, not built · **Prerequisite** landed

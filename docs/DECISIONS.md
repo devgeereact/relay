@@ -4768,7 +4768,7 @@ fails the two clock cases, which is the opposite mistake a reader could make fro
 ## 92. The preacher's programme rail counts up past zero, and prose never enters a slot sized for digits (2026-09-17)
 
 **This decision existed only in a commit message and in
-`docs/superpowers/specs/2026-09-17-consolidation-design.md` §2 for the first day of its life**,
+`docs/archive/2026-09-17-consolidation-design.md` §2 for the first day of its life**,
 which is the state CLAUDE.md's *"if the decision isn't there, it hasn't been made"* exists to
 stop. It is written down here because two waves built opposite behaviour into the same
 reactive block, three pairs of assertions in `src/lib/timers.test.js` could not both pass, and

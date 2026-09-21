@@ -222,3 +222,18 @@ Initial code repair: `channelroles.js::stageRemoteUrl`, `Channels.svelte::showSt
 Rollback for the first repair: revert its local source/test changes together; no data migration is involved. For subsequent schema work, take and test a local database backup before a packaged upgrade, and document whether an older binary can read it. Keep each PR independently reviewable.
 
 Next implementation slice: complete phase 1's address refresh and stage-channel selection, then reproduce the user's actual scan/connect failure on the installed app before treating the connection issue as closed.
+
+## Open questions inherited from the 2026-09-19 design
+
+Carried here on 2026-09-21 when `specs/2026-09-19-stage-planner-media-propresenter-design.md` was archived (its sub-projects shipped on 2026-09-20; see RG-161 to RG-177, DECISIONS §104, §105). These are the things it said it would not decide, and nothing has decided them since:
+
+- How a countdown is started when there is no plan (3a).
+- Which of the three numbering changes the operator meant (5a).
+- Whether media transport ships without a reverse channel. The recommendation is
+  that it does not, and that is a recommendation rather than a decision.
+- Anything covered by [`../plans/2026-09-19-stage-timers-mobile.md`](../plans/2026-09-19-stage-timers-mobile.md),
+  whose phases 1, 2, 4, 5 and 6 remain open. Phase 6 in particular is a written
+  rehearsal script that has never been run, and no claim here about a physical
+  stage TV, a phone or a projector can be made until it is.
+
+Also still open from that design: 4e click semantics (contradicted by DECISIONS §81 on the run surface, so it needs a ruling rather than a build), 5c playlists into plans, 5e media import (BLOCKED on the church's media folder), and the elapsed timer.

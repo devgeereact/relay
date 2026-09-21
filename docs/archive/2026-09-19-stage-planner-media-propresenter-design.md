@@ -1,3 +1,5 @@
+> **Archived 2026-09-21.** Historical. Eleven of its thirteen items shipped on 2026-09-20 (RG-161 to RG-177, DECISIONS §104, §105); its open questions now live at the tail of `docs/superpowers/plans/2026-09-19-stage-timers-mobile.md`. Its "Verification status" block describes the evening it was written and is false about the code as it stands. Nothing here is edited except the paths of citations into other archived files, retargeted so every citation still resolves; the rulings and findings it led to live where the line above says.
+
 # Stage reach, Planner craft, media transport and ProPresenter
 
 Date: 2026-09-19. Status when written: design, approved in outline, no code written.
@@ -15,7 +17,7 @@ Date: 2026-09-19. Status when written: design, approved in outline, no code writ
 The operator chose "spec everything first, build nothing yet" on the evening before a
 service test.
 
-Companion document: [`../plans/2026-09-19-stage-timers-mobile.md`](../plans/2026-09-19-stage-timers-mobile.md).
+Companion document: [`../superpowers/plans/2026-09-19-stage-timers-mobile.md`](../superpowers/plans/2026-09-19-stage-timers-mobile.md).
 That plan owns the connection journey, timer state and saved stage layouts, and
 several of its phases are already delivered. **This document does not restate it.**
 Where the two meet, this one says which phase it depends on and stops.
@@ -665,7 +667,7 @@ parallel with each other. SP4's 4f should become its own plan.
 - Which of the three numbering changes the operator meant (5a).
 - Whether media transport ships without a reverse channel. The recommendation is
   that it does not, and that is a recommendation rather than a decision.
-- Anything covered by [`../plans/2026-09-19-stage-timers-mobile.md`](../plans/2026-09-19-stage-timers-mobile.md),
+- Anything covered by [`../superpowers/plans/2026-09-19-stage-timers-mobile.md`](../superpowers/plans/2026-09-19-stage-timers-mobile.md),
   whose phases 1, 2, 4, 5 and 6 remain open. Phase 6 in particular is a written
   rehearsal script that has never been run, and no claim here about a physical
   stage TV, a phone or a projector can be made until it is.

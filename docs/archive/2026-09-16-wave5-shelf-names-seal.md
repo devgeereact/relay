@@ -1,10 +1,12 @@
+> **Archived 2026-09-21.** Historical work order. Wave 5 landed 2026-09-16 and was audited in `docs/qa/audits/DESIGN-2026-09-16-WAVE5.md`; findings RG-156 to RG-160. Nothing here is edited except the paths of citations into other archived files, retargeted so every citation still resolves; the rulings and findings it led to live where the line above says.
+
 # Wave 5 — the shelf, the names and the seal: implementation plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: use `superpowers:subagent-driven-development` or `superpowers:executing-plans` to work this plan task by task. Steps use checkbox (`- [ ]`) syntax for tracking. This repository has never checked a box in a landed plan — completion is evidenced by commits and green suites, not by boxes.
 
 **Goal:** answer the four questions the design opens with. What a church finds on the shelf becomes forty layer-model templates with a stable identity the legacy conversion cannot destroy; one concept carries one name everywhere; the operator console's own skin stops at the glass; and four controls that lie about what they do stop lying.
 
-**Spec:** `docs/superpowers/specs/2026-09-16-shelf-names-and-seal-design.md`, approved by the operator on 2026-09-16 before any code was written.
+**Spec:** `docs/archive/2026-09-16-shelf-names-and-seal-design.md`, approved by the operator on 2026-09-16 before any code was written.
 
 **Architecture:** seven code tracks and one browser-driven verification pass. Each lands as its own branch merged into `feat/wave5-impl`, which branches from `feat/wave5-shelf-names-seal` (waves 0, 1 and 2 plus the wave 5 design doc). Wave 3 is in flight on `feat/wave3-timers` in other worktrees and **is not touched by this wave**: wave 3 branches from the same base, keeps `countdown_*` as the wire form, and every template this wave seeds survives it unchanged.
 

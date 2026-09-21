@@ -1,3 +1,5 @@
+> **Archived 2026-09-21.** Historical. The design waves 0 to 4 were built to; the work landed by 2026-09-17. Rulings are in `docs/DECISIONS.md` §71 to §95; findings are in `docs/qa/RELAY_GAP.md` RG-139 to RG-165. Its own status line ("approved, not yet implemented") describes the day it was written. Nothing here is edited except the paths of citations into other archived files, retargeted so every citation still resolves; the rulings and findings it led to live where the line above says.
+
 # Design — timers, templates, stage, settings, routing
 
 **Date:** 2026-09-15

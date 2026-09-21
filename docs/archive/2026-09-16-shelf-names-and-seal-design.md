@@ -1,7 +1,9 @@
+> **Archived 2026-09-21.** Historical. Wave 5 (shelf, names, seal) landed on 2026-09-16 and was audited in `docs/qa/audits/DESIGN-2026-09-16-WAVE5.md`; rulings are in `docs/DECISIONS.md` §87 to §90; the name register is `src/lib/names.test.js`. Its statement that waves 3 and 4 had not landed was true that day and is not now. Nothing here is edited except the paths of citations into other archived files, retargeted so every citation still resolves; the rulings and findings it led to live where the line above says.
+
 # Design — the shelf, the names and the seal (Wave 5)
 
 **Status:** approved by the operator on 2026-09-16, before any code was written.
-**Predecessor:** `docs/superpowers/specs/2026-09-15-timers-templates-stage-design.md`,
+**Predecessor:** `docs/archive/2026-09-15-timers-templates-stage-design.md`,
 whose waves 0, 1 and 2 have landed and whose waves 3 (Timers) and 4 (Stage and
 Planner) have not.
 

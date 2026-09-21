@@ -1,3 +1,5 @@
+> **Archived 2026-09-21.** Historical work order. Wave 3 landed 2026-09-16 and was audited in `docs/qa/audits/DESIGN-2026-09-16-WAVE3.md`; findings RG-146 to RG-155; rulings DECISIONS §91 to §93. Its 63 checkboxes were never ticked; the audit is the record. Nothing here is edited except the paths of citations into other archived files, retargeted so every citation still resolves; the rulings and findings it led to live where the line above says.
+
 # Wave 3 — Timers Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. This repository has never checked a box in a landed plan — completion is evidenced by commits and green suites, not by the boxes.
@@ -8,7 +10,7 @@
 
 **Tech Stack:** Rust (Tauri v2, `rusqlite`), Svelte 4 + Vite, vitest + jsdom, `cargo test`, Chrome via the browser audit harness.
 
-**Spec:** `docs/superpowers/specs/2026-09-15-timers-templates-stage-design.md` §3 (lines 533–726).
+**Spec:** `docs/archive/2026-09-15-timers-templates-stage-design.md` §3 (lines 533–726).
 
 **Depends on:** Waves 0, 1 and 2, all verified landed in this tree on 2026-09-16 (`REHEARSAL_VERDICTS` at `channels.rs:3504`; `fire_media` generic at `main.rs:2979`; the dead `push_announcement` gone from both enumerations).
 

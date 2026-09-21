@@ -1,3 +1,5 @@
+> **Archived 2026-09-21.** Historical work order. Wave 2 landed 2026-09-16 and was audited in `docs/qa/audits/DESIGN-2026-09-16-WAVE2.md`; see `docs/REBRAND.md` §Status and DECISIONS §87, §88. Nothing here is edited except the paths of citations into other archived files, retargeted so every citation still resolves; the rulings and findings it led to live where the line above says.
+
 # Wave 2 — Templates ⊕ Themes Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
@@ -8,7 +10,7 @@
 
 **Tech Stack:** Rust (Tauri v2, `rusqlite`), Svelte 4 + Vite, vitest + jsdom, `cargo test`, Chrome via the browser audit harness.
 
-**Spec:** `docs/superpowers/specs/2026-09-15-timers-templates-stage-design.md` (Wave 2)
+**Spec:** `docs/archive/2026-09-15-timers-templates-stage-design.md` (Wave 2)
 
 **Depends on:** Waves 0 and 1 complete and green.
 
