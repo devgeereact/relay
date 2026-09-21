@@ -1572,6 +1572,13 @@
           <div class="sp-noslide" class:warn={pv.state === 'empty' || pv.state === 'unknown'}>
             <p class="sp-noslidemsg">{pv.message}</p>
           </div>
+        {/if}
+        {#if pv.warning}
+          <!-- THE CODEC WARNING (F5). Shown beside a cue that renders fine HERE and
+               may paint nothing on a browser screen; `previewState` decides. -->
+          <div class="sp-noslide warn" role="status">
+            <p class="sp-noslidemsg">{pv.warning}</p>
+          </div>
           <p class="sp-fhelp">Nothing here is on air.</p>
         {/if}
 

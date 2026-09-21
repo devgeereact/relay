@@ -6026,3 +6026,35 @@ that morning scored 0.88 against correct fires at 0.55, which is rule 10's whole
 
 **Pinned by** `detection::field_2026_09_20::*`, `e2e::a_verse_answered_from_memory_is_offered_never_fired`
 (watched to reproduce the wall with the old label) and `detect.test.js`.
+
+## 107. A fired clip does not loop until somebody asks, and a screen says when its picture did not load (2026-09-21)
+
+**Two defaults, one rule: the wall does what the controls say it does.**
+
+**Loop.** `TemplateRender.svelte` played a fired clip with `loop` on unless a transport frame
+said otherwise; the engine's clean state, the console's store and `Output.svelte`'s own comment
+said *"playing, not looping"*. Three authorities, two answers, and the operator saw the third:
+a Loop button reading off over a wall that looped, and a Pause that un-looped a worship
+background because it sent `looping: null` and the engine's `false` took over (RG-183). The
+default is now **off** everywhere. Off rather than on because the transport exists: an operator
+who wants a background to repeat presses Loop and can see that it is on; a clip that loops
+without being asked is a wall doing something no control claims. The cost is real and accepted:
+a background clip fired from the plan plays once and holds its last frame until Loop is pressed,
+and the Library tile says so where the clip is chosen.
+
+**A picture that did not load.** No media element reported failure, so a 404, an undecodable
+codec and a CSP refusal were one event, nothing, under an amber badge (RG-182). The renderer now
+reports through one callback, the page carries the failure on the beat it already sends, and
+the desk ranks such a screen with `down` and names the URL. It is reported, never enforced:
+Relay keeps sending, because the projector's own window may be painting the same picture fine
+while an OBS source cannot decode it. The one thing this must never do is turn a failed picture
+into a refused fire; that would be the validator refusing content on behalf of a screen, which
+DECISIONS §42 forbids.
+
+**Codec.** Relay does not transcode (KNOWN_ISSUES §2). It probes the container at import
+(`mediaprobe`), keeps the answer in `media_assets.codec`, and warns on the tile and the cue.
+`NULL` means *not probed*, never *fine*.
+
+**Pinned by** `mediadefault.test.js`, `mediaerror.test.js`, `outputhealth.test.js`,
+`channels::tests` and `mediaprobe::tests`.
+

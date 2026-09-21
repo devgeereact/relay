@@ -237,7 +237,8 @@ CREATE TABLE media_assets (
     kind       TEXT NOT NULL,
     filename   TEXT NOT NULL,
     path       TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL DEFAULT ''
+    created_at TEXT NOT NULL DEFAULT '',
+    codec      TEXT                       -- 'hevc' | 'h264' | 'vp9' | 'av1' | NULL = not probed / unknown (F5, 2026-09-21)
 );
 
 -- ===== Live session data (db/services.rs) =====

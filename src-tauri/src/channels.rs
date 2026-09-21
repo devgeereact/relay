@@ -664,6 +664,19 @@ impl MediaBeat {
     }
 }
 
+/// A screen's account of a picture or clip that did not load, off a JSON beat.
+/// Bounded, because a page on the LAN must not be able to push a novel into the
+/// desk's status row; absent when the beat says nothing, which is the honest
+/// reading of a screen whose media loaded (or that shows none).
+pub fn media_error_from_json(v: &serde_json::Value) -> Option<String> {
+    const MAX: usize = 300;
+    let s = v.get("media_error")?.as_str()?.trim();
+    if s.is_empty() {
+        return None;
+    }
+    Some(s.chars().take(MAX).collect())
+}
+
 /// The screen's account of its own silence, carried on the beat that ends it.
 ///
 /// **This exists to answer RG-119, and it is the only thing that can.** A service
@@ -776,6 +789,12 @@ impl BeatGap {
 #[derive(Clone, Default)]
 pub struct OutputHealth {
     beats: Arc<Mutex<HashMap<i64, Beat>>>,
+    /// WHAT A SCREEN SAID ABOUT A PICTURE OR CLIP IT COULD NOT LOAD (2026-09-21,
+    /// O-4 / M-3). A 404, a codec the webview cannot decode and a CSP refusal
+    /// were one observable event — nothing — while the beat still said `content`
+    /// and the desk printed On Air in amber over a blank frame. The page now says
+    /// so on the beat it already sends, and a beat that says nothing clears it.
+    media_errors: Arc<Mutex<HashMap<i64, String>>>,
     /// What was last REPORTED about each channel, so an edge can be detected and
     /// written to the service timeline exactly once.
     ///
@@ -845,6 +864,33 @@ impl OutputHealth {
     /// same lie as a stale paint state: an operator would be shown a clip counting
     /// down on a screen that stopped answering a minute ago, and the countdown is
     /// the one thing they are timing the next cue against.
+    /// Record, or clear, the media failure a screen reported on its latest beat.
+    pub fn note_media_error(&self, channel_id: i64, error: Option<String>) {
+        if channel_id <= 0 {
+            return;
+        }
+        if let Ok(mut m) = self.media_errors.lock() {
+            match error {
+                Some(e) => {
+                    m.insert(channel_id, e);
+                }
+                None => {
+                    m.remove(&channel_id);
+                }
+            }
+        }
+    }
+
+    /// The media failure a still-answering screen last reported, if any. A stale
+    /// screen's report is dropped with the rest of its beat: "not responding" is
+    /// the truer thing to say about it.
+    pub fn media_error_of(&self, channel_id: i64) -> Option<String> {
+        if !self.painting(channel_id) {
+            return None;
+        }
+        self.media_errors.lock().ok()?.get(&channel_id).cloned()
+    }
+
     pub fn media_of(&self, channel_id: i64) -> Option<MediaBeat> {
         let m = self.beats.lock().ok()?;
         let b = m.get(&channel_id)?;
@@ -3161,6 +3207,7 @@ pub async fn run_kiosk_server(
                                             BeatGap::from_json(&v),
                                             MediaBeat::from_json(&v),
                                         );
+                                        health.note_media_error(ch, media_error_from_json(&v));
                                         // ── AND THE SCREEN IS TOLD THE TIME ──
                                         //
                                         // Answered here, INSIDE the parse, so an
@@ -7663,6 +7710,82 @@ mod tests {
     /// must also draw no reply — otherwise an unparseable beat would be
     /// distinguishable from a parseable one by whether an answer came back,
     /// which is a probe this read-only server does not owe anybody.
+    /// 2026-09-21 · RG-182, through the real hub: a beat naming a picture the
+    /// screen could not load reaches `OutputHealth`, and the next clean beat
+    /// clears it. The pure reader is tested above; this is the wiring.
+    #[tokio::test]
+    async fn a_beat_naming_a_media_failure_reaches_the_desk_through_the_real_hub() {
+        use futures_util::{SinkExt, StreamExt};
+        let port = free_port();
+        let hub = KioskHub::default();
+        let health = OutputHealth::default();
+        tokio::spawn(run_kiosk_server(
+            log_only(),
+            hub.sender(),
+            hub.templates_handle(),
+            hub.clients_handle(),
+            hub.default_template_handle(),
+            hub.channel_roles_handle(),
+            hub.channel_looks_handle(),
+            hub.channel_templates_handle(),
+            hub.channel_shows_handle(),
+            hub.last_screen_handle(),
+            hub.last_screen_by_channel_handle(),
+            hub.last_transition_handle(),
+            hub.last_timers_handle(),
+            hub.last_background_handle(),
+            hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
+            hub.screens_down_handle(),
+            hub.look_ids_handle(),
+            health.clone(),
+            port,
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
+            .await
+            .expect("connect");
+        let (mut write, mut read) = ws.split();
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"kind":"beat","channel":2,"state":"content","media_error":"image not loading · http://10.0.0.5:8032/media/3"}"#
+                    .to_string(),
+            ))
+            .await
+            .expect("send beat");
+        // Wait for the ack: that is the hub saying it has read the beat.
+        let mut acked = false;
+        for _ in 0..HELLO_FRAMES {
+            let Ok(Some(Ok(msg))) =
+                tokio::time::timeout(std::time::Duration::from_secs(2), read.next()).await
+            else {
+                break;
+            };
+            if msg
+                .into_text()
+                .unwrap_or_default()
+                .contains(r#""kind":"beat_ack""#)
+            {
+                acked = true;
+                break;
+            }
+        }
+        assert!(acked, "the beat was never acknowledged");
+        assert_eq!(
+            health.media_error_of(2).as_deref(),
+            Some("image not loading · http://10.0.0.5:8032/media/3"),
+            "the desk never learned what the screen said about its picture"
+        );
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"kind":"beat","channel":2,"state":"content"}"#.to_string(),
+            ))
+            .await
+            .expect("send clean beat");
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        assert_eq!(health.media_error_of(2), None, "a clean beat must clear it");
+    }
+
     #[tokio::test]
     async fn a_beat_that_does_not_parse_is_not_answered() {
         let port = free_port();
@@ -8714,6 +8837,47 @@ mod rehearsal_tests {
     /// `output.html` defaults `?channel=` to 0 when it is opened as a raw preview.
     /// Recording a beat for it would invent a screen nobody configured, and it
     /// would then appear in a status view as an output going silent.
+    /// 2026-09-21 · O-4 / M-3. A screen whose picture did not load must not read
+    /// On Air. The page says so on the beat; the desk must be able to read it back,
+    /// and a later beat that says nothing must clear it (the failure healed, or a
+    /// new clip replaced it).
+    #[test]
+    fn a_beat_carries_a_media_failure_and_a_clean_beat_clears_it() {
+        let h = OutputHealth::default();
+        h.beat(7, PaintState::Content, "window", BeatGap::default(), None);
+        h.note_media_error(7, Some("video not loading · http://x:8032/media/1".into()));
+        assert_eq!(
+            h.media_error_of(7).as_deref(),
+            Some("video not loading · http://x:8032/media/1")
+        );
+        h.beat(7, PaintState::Content, "window", BeatGap::default(), None);
+        h.note_media_error(7, None);
+        assert_eq!(h.media_error_of(7), None);
+    }
+
+    /// …and the kiosk door reads the same field off the JSON frame.
+    #[test]
+    fn a_kiosk_beat_names_its_media_failure() {
+        let v: serde_json::Value = serde_json::from_str(
+            r#"{"kind":"beat","channel":3,"state":"content","media_error":"image not loading · http://x:8032/media/3"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            media_error_from_json(&v).as_deref(),
+            Some("image not loading · http://x:8032/media/3")
+        );
+        let clean: serde_json::Value =
+            serde_json::from_str(r#"{"kind":"beat","channel":3,"state":"content"}"#).unwrap();
+        assert_eq!(media_error_from_json(&clean), None);
+        // Bounded: a page cannot push a novel through the desk's status row.
+        let long = format!(
+            r#"{{"kind":"beat","channel":3,"state":"content","media_error":"{}"}}"#,
+            "x".repeat(5000)
+        );
+        let long: serde_json::Value = serde_json::from_str(&long).unwrap();
+        assert!(media_error_from_json(&long).unwrap().len() <= 300);
+    }
+
     #[test]
     fn a_preview_with_no_channel_reports_nothing() {
         let h = OutputHealth::default();

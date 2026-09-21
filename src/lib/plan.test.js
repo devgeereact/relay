@@ -517,3 +517,20 @@ describe('planChannelsOf', () => {
     expect(planChannelsOf('[1,"two",null,3]')).toEqual([1, 3]);
   });
 });
+
+// 2026-09-21 · F5. The library's one clip is HEVC. It decodes in the projector's
+// own window and may be black in an OBS browser source or on Windows, and
+// nothing said so. The probe at import records the codec; the Planner's preview
+// verdict carries the warning so it is read where the cue is built.
+describe('a cue whose clip is a codec other screens may not play', () => {
+  it('still renders, and says so', () => {
+    const v = previewState({ cue_type: 'media' }, false, { found: true, filename: 'IMG_3427.mov', codec: 'hevc' });
+    expect(v.state).toBe('render');
+    expect(v.warning).toMatch(/HEVC/);
+    expect(v.warning).toMatch(/OBS|Windows/);
+  });
+  it('says nothing for a codec every screen plays', () => {
+    const v = previewState({ cue_type: 'media' }, false, { found: true, filename: 'a.mp4', codec: 'h264' });
+    expect(v.warning ?? '').toBe('');
+  });
+});

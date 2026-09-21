@@ -107,6 +107,10 @@ export function startBeat({
   // renders through the same component, so it holds a second player of the same
   // file that buffers differently and carries on if the wall's copy stalls.
   getMedia = () => null,
+  // WHAT THIS SCREEN COULD NOT LOAD, as a short sentence, or `null` (O-4). Sent
+  // only when set, so an absent field means "nothing failed" and clears the
+  // desk's last report — which is the honest reading of a beat that says nothing.
+  getMediaError = () => null,
 }) {
   // Channel 0 is a raw template preview with no channel behind it — there is no
   // screen for an operator to worry about, so there is nothing to report.
@@ -168,6 +172,15 @@ export function startBeat({
    * nothing. The engine drops it again on arrival for the same reason; this is the
    * near half of one rule, not a second one.
    */
+  const mediaErrorField = () => {
+    let e = null;
+    try {
+      e = getMediaError();
+    } catch {
+      e = null;
+    }
+    return typeof e === 'string' && e.trim() ? { media_error: e.trim().slice(0, 300) } : {};
+  };
   const mediaFields = (m) => {
     const dur = Number(m?.dur_ms);
     const pos = Number(m?.pos_ms);
@@ -185,7 +198,7 @@ export function startBeat({
     // was not — the beat would paper over the very gap it exists to expose.
     if (!ws || ws.readyState !== 1) return false;
     try {
-      ws.send(JSON.stringify({ kind: 'beat', channel: channelId, state, ...g, ...(mediaFields(m) ?? {}) }));
+      ws.send(JSON.stringify({ kind: 'beat', channel: channelId, state, ...g, ...(mediaFields(m) ?? {}), ...mediaErrorField() }));
       return true;
     } catch {
       return false;
@@ -208,6 +221,8 @@ export function startBeat({
         mediaPosMs: mf?.media_pos_ms ?? null,
         mediaDurMs: mf?.media_dur_ms ?? null,
         mediaPaused: mf?.media_paused ?? null,
+        // A PICTURE OR CLIP THIS SCREEN COULD NOT LOAD, or null (O-4).
+        mediaError: mediaErrorField().media_error ?? null,
       });
     } catch {
       /* no backend, or the command is gone. Stay silent and go stale. */
@@ -414,6 +429,14 @@ export function describeScreen(st, wall, waitedMs = 0) {
   }
 
   // What Relay believes it is sending this screen, in the screen's own vocabulary.
+  // A SCREEN THAT SAYS ITS PICTURE DID NOT LOAD IS NOT ON AIR (O-4, 2026-09-21).
+  // Its DOM has a slide, so `paint_state` honestly reads `content`; the picture
+  // inside it is blank. Ranked with `down`, because a congregation looking at a
+  // blank frame under an amber badge is the failure rule 35 exists to stop.
+  if (typeof st.media_error === 'string' && st.media_error.trim()) {
+    return { kind: 'down', label: 'Not painting the picture', note: st.media_error.trim() };
+  }
+
   const sending = wall?.live && !wall?.black ? 'content' : wall?.black ? 'black' : 'clear';
   // `clear` and `black` both mean "nothing of ours is on that screen", which is
   // the claim a Blackout or a Ready badge makes. Only `content` vs not-content is

@@ -594,7 +594,17 @@ export function previewState(item, hasText, media) {
     if (!media) {
       return { state: 'self', plate: false, message: 'The slide is the picture — media plays full-frame.' };
     }
-    if (media.found) return { state: 'render', plate: true, message: '' };
+    if (media.found) {
+      // THE CODEC WARNING (F5, 2026-09-21). The projector's own window decodes an
+      // iPhone's HEVC; an OBS browser source or a Windows screen may paint
+      // nothing, and until the beat carried a media failure nothing said so. The
+      // cue still renders here — the warning is read where the cue is built.
+      const warning =
+        media.codec === 'hevc'
+          ? `“${media.filename ?? 'this clip'}” is HEVC (H.265). It plays in Relay's own output window and on a Mac; an OBS browser source or a Windows screen may show nothing. Convert it to H.264 to be safe.`
+          : '';
+      return { state: 'render', plate: true, message: '', warning };
+    }
     const named = media.filename ? `“${media.filename}”` : 'the file it was built from';
     return {
       state: 'empty',

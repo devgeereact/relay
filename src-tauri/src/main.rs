@@ -21,6 +21,7 @@ mod error;
 #[cfg(test)]
 mod eval;
 mod latency;
+mod mediaprobe;
 mod models;
 mod pipeline;
 mod prodiscover;
@@ -2979,11 +2980,21 @@ fn import_media(
 ) -> error::Result<db::MediaAsset> {
     lock.guard("import_media")?;
     let bytes = decode_import(&filename, &data)?;
+    // WHAT CODEC A CLIP CARRIES, while the bytes are already here (F5, 2026-09-21).
+    // An iPhone `.mov` is HEVC, which the projector's own window decodes and an
+    // OBS browser source or a Windows screen may not. Relay does not transcode;
+    // it records the answer so the Library tile and the Planner's preview can
+    // warn where the clip is chosen and where the cue is built.
+    let codec = if kind == "video" {
+        mediaprobe::codec_hint(&bytes).map(str::to_string)
+    } else {
+        None
+    };
     let dir = db::media_dir();
     std::fs::create_dir_all(&dir)?;
 
     let conn = db.0.lock()?;
-    let id = db::insert_media(&conn, &kind, &filename, &date)?;
+    let id = db::insert_media(&conn, &kind, &filename, &date, codec.as_deref())?;
     let path_str = write_media_file(&conn, &dir, id, &filename, &bytes)?;
     db::set_media_path(&conn, id, &path_str)?;
     Ok(db::MediaAsset {
@@ -2992,6 +3003,7 @@ fn import_media(
         filename,
         path: path_str,
         created_at: date,
+        codec,
     })
 }
 
@@ -7112,6 +7124,10 @@ struct ChannelLiveness {
     /// frozen at 2:30 is rule 35 exactly. So the figure comes from the screen that
     /// is painting, and `None` means the operator is told nobody said.
     media: Option<channels::MediaBeat>,
+    /// A picture or clip this screen said it could not load (O-4). `None` is the
+    /// ordinary case. Read by `describeScreen`, which will not call a screen On Air
+    /// over a frame it has said is blank.
+    media_error: Option<String>,
     /// The screen answered for itself within `channels::BEAT_STALE_MS`.
     ///
     /// This is the only field here that can tell a working screen from a frozen
@@ -7359,6 +7375,7 @@ fn channel_status(
                     },
                     supported: true,
                     media: health.media_of(c.id),
+                    media_error: health.media_error_of(c.id),
                     painting,
                     last_beat_ms: age,
                     paint_state: state,
@@ -7407,6 +7424,7 @@ fn channel_status(
                     },
                     supported: true,
                     media: health.media_of(c.id),
+                    media_error: health.media_error_of(c.id),
                     painting,
                     last_beat_ms: age,
                     paint_state: state,
@@ -7423,6 +7441,7 @@ fn channel_status(
                 supported: false,
                 // A target Relay cannot drive reports nothing about a clip either.
                 media: None,
+                media_error: None,
                 painting: false,
                 last_beat_ms: None,
                 paint_state: None,
@@ -7437,6 +7456,7 @@ fn channel_status(
                 supported: false,
                 // A target Relay cannot drive reports nothing about a clip either.
                 media: None,
+                media_error: None,
                 painting: false,
                 last_beat_ms: None,
                 paint_state: None,
@@ -7483,6 +7503,9 @@ fn output_beat(
     media_pos_ms: Option<u64>,
     media_dur_ms: Option<u64>,
     media_paused: Option<bool>,
+    // A PICTURE OR CLIP THIS SCREEN COULD NOT LOAD, in the page's words (O-4).
+    // Absent is "nothing failed", and it clears the last report.
+    media_error: Option<String>,
 ) -> error::Result<()> {
     // An unparseable state is dropped, not defaulted. Defaulting would let a
     // malformed beat keep a dead screen looking alive, which is the exact failure
@@ -7494,6 +7517,12 @@ fn output_beat(
             "window",
             channels::BeatGap::clamped(since_ms, hidden_ms),
             channels::MediaBeat::clamped(media_pos_ms, media_dur_ms, media_paused),
+        );
+        health.note_media_error(
+            channel_id,
+            media_error
+                .map(|e| e.trim().chars().take(300).collect::<String>())
+                .filter(|e| !e.is_empty()),
         );
     }
     Ok(())
@@ -8862,7 +8891,7 @@ mod import_guard_tests {
         let conn = rusqlite::Connection::open_in_memory().expect("db");
         conn.execute_batch(include_str!("../../docs/data/schema.sql"))
             .expect("schema");
-        let id = db::insert_media(&conn, "video", "loop.mp4", "2026-09-02").expect("insert");
+        let id = db::insert_media(&conn, "video", "loop.mp4", "2026-09-02", None).expect("insert");
         assert_eq!(
             db::list_media(&conn).expect("list").len(),
             1,
@@ -8887,7 +8916,7 @@ mod import_guard_tests {
         let conn = rusqlite::Connection::open_in_memory().expect("db");
         conn.execute_batch(include_str!("../../docs/data/schema.sql"))
             .expect("schema");
-        let id = db::insert_media(&conn, "image", "a b/c.png", "2026-09-02").expect("insert");
+        let id = db::insert_media(&conn, "image", "a b/c.png", "2026-09-02", None).expect("insert");
         let dir = std::env::temp_dir().join("relay-import-guard-test");
         std::fs::create_dir_all(&dir).expect("tmp dir");
         let path = write_media_file(&conn, &dir, id, "a b/c.png", b"hello").expect("write");

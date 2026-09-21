@@ -217,6 +217,15 @@
    */
   let mediaReport = null;
   /**
+   * THE PICTURE OR CLIP THIS SCREEN COULD NOT LOAD, in words, or `null` (O-4).
+   * Rides the beat so the desk stops calling this screen On Air over a blank
+   * frame. The renderer reports; this only carries.
+   */
+  let mediaError = null;
+  const noteMediaError = (e) => {
+    mediaError = e ? `${e.kind} not loading · ${e.url}` : null;
+  };
+  /**
    * WHAT THE OPERATOR HAS ASKED THE CLIP TO DO — `{ paused, loop, replayEpoch }`.
    *
    * `null` until somebody asks for something, which is the default a clip is fired
@@ -1105,6 +1114,8 @@
       // WHERE THIS SCREEN'S CLIP IS. Read once per beat rather than per frame, and
       // `null` whenever there is no clip — see `noteMedia`.
       getMedia: () => mediaReport,
+      // WHAT THIS SCREEN COULD NOT LOAD, or nothing. See `noteMediaError`.
+      getMediaError: () => mediaError,
     });
   });
   onDestroy(() => {
@@ -1125,6 +1136,7 @@
   stageMessage={shownStageMessage}
   programme={shownProgramme}
   onMedia={noteMedia}
+  onMediaError={noteMediaError}
   {mediaTransport}
   transitionOverride={appliedTransition} />
 <!-- BLACKOUT NEVER BLACKS OUT A LOWER THIRD. On a keyed channel "black" would

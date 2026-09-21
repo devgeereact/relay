@@ -1466,7 +1466,7 @@ mod cold_start {
             // (DECISIONS §90); this test is about the one it imports.
             let shipped = count(&conn, "media_assets");
             (
-                db::insert_media(&conn, "image", "backdrop.png", "2026-08-16").unwrap(),
+                db::insert_media(&conn, "image", "backdrop.png", "2026-08-16", None).unwrap(),
                 shipped,
             )
         };
@@ -1543,7 +1543,7 @@ mod cold_start {
         // Counted against the pictures a fresh install already ships
         // (DECISIONS §90); what this test is about is the one row it adds.
         let shipped = db::list_media(&conn).unwrap().len();
-        let id = db::insert_media(&conn, "image", "backdrop.png", "2026-08-16").unwrap();
+        let id = db::insert_media(&conn, "image", "backdrop.png", "2026-08-16", None).unwrap();
         assert_eq!(db::list_media(&conn).unwrap().len(), shipped + 1);
 
         // The write fails the way a full disk fails. The row must not survive it.

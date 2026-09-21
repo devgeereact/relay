@@ -143,6 +143,14 @@ into the right (possibly repeated) slots. "Standard" is implicit and never persi
   `/media/<id>` with digit-prefix-id path-traversal defence (DECISIONS, LAN-bind decision).
 
 ---
+- **MediaAsset** (`media_assets`, `db/library.rs`) — a **pointer**, not a blob: `kind` (`image` |
+  `video` | `document`, decided from the extension in the webview), `filename`, `path` (a file at
+  `<app-data>/media/{id}_{name}`, or `bundled:…` for a picture Relay ships), `created_at`, and
+  since 2026-09-21 **`codec`** — the codec family the container named at import (`hevc` |
+  `h264` | `vp9` | `av1`), `NULL` for a picture, a document, a clip imported before the probe, or
+  a container that named nothing. `NULL` means *not probed*, never *fine* (`mediaprobe.rs`,
+  RG-184). Deleting an asset deletes every `media` plan cue that named it.
+
 
 ## 5. Live service
 

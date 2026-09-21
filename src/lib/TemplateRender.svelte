@@ -382,6 +382,30 @@
    * read in a reactive block that touches the existing element and nothing else.
    */
   export let mediaTransport = null;
+  /**
+   * A PICTURE OR CLIP THAT DID NOT LOAD, or `null` once one has (2026-09-21, O-4).
+   *
+   * Six media elements and not one `on:error`: a 404, a codec the webview cannot
+   * decode and a CSP refusal were the same observable event — nothing — while the
+   * beat still said `content` and the desk printed On Air in amber over a blank
+   * frame. Every fired-media element now reports through this one callback, and
+   * reports the failure healed on `load`/`loadeddata`, so the page can carry it on
+   * the beat and the desk can stop calling the screen On Air.
+   */
+  export let onMediaError = null;
+  let mediaFailedUrl = null;
+  const mediaFailed = (kind, url) => {
+    mediaFailedUrl = url;
+    onMediaError?.({ kind, url });
+  };
+  const mediaLoaded = () => {
+    if (mediaFailedUrl === null) return;
+    mediaFailedUrl = null;
+    onMediaError?.(null);
+  };
+  // A new clip or picture is a new question; the last one's failure must not
+  // stand for it. Fires on the URL, so a re-render of the same content is silent.
+  $: if (content?.media_url !== mediaFailedUrl && mediaFailedUrl !== null) mediaLoaded();
 
   function fitOne(box, container) {
     const verse = box.querySelector('.verse');
@@ -2071,9 +2095,9 @@
             <div class="lmediabox" style="{boxStyle(L)} border-radius:{L.radius || 0}cqw; opacity:{L.opacity == null ? 1 : L.opacity};">
               {#if content.media_kind === 'video'}
                 <!-- svelte-ignore a11y-media-has-caption -->
-                <video class="lmediafill" src={content.media_url} style="object-fit:{L.fit === 'contain' ? 'contain' : 'cover'};" bind:this={videoEl} autoplay loop={mediaTransport ? !!mediaTransport.loop : true} muted={!audio} playsinline on:loadedmetadata={() => { routeAudio(); reportMedia(); }} on:timeupdate={reportMedia} on:pause={reportMedia} on:play={reportMedia} on:ended={reportMedia}></video>
+                <video class="lmediafill" src={content.media_url} style="object-fit:{L.fit === 'contain' ? 'contain' : 'cover'};" bind:this={videoEl} on:error={() => mediaFailed('video', content.media_url)} on:loadeddata={mediaLoaded} autoplay loop={!!mediaTransport?.loop} muted={!audio} playsinline on:loadedmetadata={() => { routeAudio(); reportMedia(); }} on:timeupdate={reportMedia} on:pause={reportMedia} on:play={reportMedia} on:ended={reportMedia}></video>
               {:else}
-                <img class="lmediafill" src={content.media_url} style="object-fit:{L.fit === 'contain' ? 'contain' : 'cover'};" alt="" />
+                <img class="lmediafill" src={content.media_url} style="object-fit:{L.fit === 'contain' ? 'contain' : 'cover'};" alt="" on:error={() => mediaFailed('image', content.media_url)} on:load={mediaLoaded} />
               {/if}
             </div>
           {/if}
@@ -2168,9 +2192,9 @@
            layer to the template to position it instead. -->
       {#if content.media_kind === 'video'}
         <!-- svelte-ignore a11y-media-has-caption -->
-        <video class="media" src={content.media_url} bind:this={videoEl} autoplay loop={mediaTransport ? !!mediaTransport.loop : true} muted={!audio} playsinline on:loadedmetadata={() => { routeAudio(); reportMedia(); }} on:timeupdate={reportMedia} on:pause={reportMedia} on:play={reportMedia} on:ended={reportMedia}></video>
+        <video class="media" src={content.media_url} bind:this={videoEl} on:error={() => mediaFailed('video', content.media_url)} on:loadeddata={mediaLoaded} autoplay loop={!!mediaTransport?.loop} muted={!audio} playsinline on:loadedmetadata={() => { routeAudio(); reportMedia(); }} on:timeupdate={reportMedia} on:pause={reportMedia} on:play={reportMedia} on:ended={reportMedia}></video>
       {:else}
-        <img class="media" src={content.media_url} alt="" />
+        <img class="media" src={content.media_url} alt="" on:error={() => mediaFailed('image', content.media_url)} on:load={mediaLoaded} />
       {/if}
     {/if}
     {#if showDefaultCountdown}
@@ -2219,9 +2243,9 @@
          sensible behaviour and keeps old templates working. -->
     {#if content.media_kind === 'video'}
       <!-- svelte-ignore a11y-media-has-caption -->
-      <video class="media" src={content.media_url} bind:this={videoEl} autoplay loop={mediaTransport ? !!mediaTransport.loop : true} muted={!audio} playsinline on:loadedmetadata={() => { routeAudio(); reportMedia(); }} on:timeupdate={reportMedia} on:pause={reportMedia} on:play={reportMedia} on:ended={reportMedia}></video>
+      <video class="media" src={content.media_url} bind:this={videoEl} on:error={() => mediaFailed('video', content.media_url)} on:loadeddata={mediaLoaded} autoplay loop={!!mediaTransport?.loop} muted={!audio} playsinline on:loadedmetadata={() => { routeAudio(); reportMedia(); }} on:timeupdate={reportMedia} on:pause={reportMedia} on:play={reportMedia} on:ended={reportMedia}></video>
     {:else}
-      <img class="media" src={content.media_url} alt="" />
+      <img class="media" src={content.media_url} alt="" on:error={() => mediaFailed('image', content.media_url)} on:load={mediaLoaded} />
     {/if}
   {:else}
   <!-- Background is its OWN layer so its opacity can be dimmed (for readability

@@ -3921,7 +3921,7 @@ fn r0_a_picture_reaches_the_wall_and_disarms_the_passage() {
     let media_id = {
         let db = h.state::<Db>();
         let conn = db.0.lock().expect("db");
-        db::insert_media(&conn, "image", "slide.png", "2026-09-15").expect("seed a media row")
+        db::insert_media(&conn, "image", "slide.png", "2026-09-15", None).expect("seed a media row")
     };
 
     fire_media(h.clone(), h.state::<Db>(), media_id, None, None).expect("fire the picture");
@@ -3960,7 +3960,7 @@ fn r0_a_picture_reaches_the_wall_and_disarms_the_passage() {
 fn seed_picture(h: &tauri::AppHandle<tauri::test::MockRuntime>) -> i64 {
     let db = h.state::<Db>();
     let conn = db.0.lock().expect("db");
-    db::insert_media(&conn, "image", "sanctuary.jpg", "2026-09-17").expect("seed a picture")
+    db::insert_media(&conn, "image", "sanctuary.jpg", "2026-09-17", None).expect("seed a picture")
 }
 
 /// The picture the hub would replay to a screen that joined just now.
@@ -4206,7 +4206,8 @@ fn a_document_cannot_be_put_on_the_stage_screen() {
     let doc = {
         let db = h.state::<Db>();
         let conn = db.0.lock().expect("db");
-        db::insert_media(&conn, "document", "notices.pdf", "2026-09-20").expect("seed a document")
+        db::insert_media(&conn, "document", "notices.pdf", "2026-09-20", None)
+            .expect("seed a document")
     };
     assert!(
         send_stage_media(h.clone(), h.state::<Db>(), Some(doc)).is_err(),
@@ -4289,7 +4290,7 @@ fn a_document_can_never_become_a_background() {
     let doc = {
         let db = h.state::<Db>();
         let conn = db.0.lock().expect("db");
-        db::insert_media(&conn, "document", "notices.pdf", "2026-09-17").expect("seed")
+        db::insert_media(&conn, "document", "notices.pdf", "2026-09-17", None).expect("seed")
     };
 
     assert!(

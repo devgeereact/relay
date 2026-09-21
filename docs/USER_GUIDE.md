@@ -168,6 +168,12 @@ Live software fails live. These are the things that actually happen.
 | **`→` says it did nothing** | End of the passage, or nothing is on screen yet. Relay says which. | Fire a verse first, or step back. |
 | **Relay crashed mid-service** | The console crashed. **The output screens are separate — the congregation still sees the verse.** | Press **Recover console**. It puts you back where you were. (**Dismiss and keep working** leaves the console as it is.) |
 
+**A screen says "Not painting the picture".** The picture or clip you fired did not load on that
+screen: the file has gone, that screen cannot reach the address, or the clip is in a format that
+screen cannot play (an iPhone clip is usually HEVC, which OBS and Windows may not decode). The
+other screens may be fine. Fire the next thing, or convert the clip to H.264 before the service.
+Relay keeps sending; it never refuses a fire on a screen's behalf.
+
 ### The panic keys
 
 **`Esc` clears everything. `B` blacks everything out. They work on every tab, always** — even if the screen you are on has broken.

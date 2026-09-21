@@ -80,6 +80,12 @@ not missing. Do not fake them; do not delete the seam.
   refuses at any score and any dial. Deleting that flag is the whole of the remaining work, and
   it is a signature rather than a commit. Yorùbá is the largest addressable church market in the
   tier-1 list.
+- **Transcoding.** Relay probes a clip's codec at import (`mediaprobe`, 2026-09-21) and warns
+  where the clip is chosen and where the cue is built, because an iPhone's HEVC plays in Relay's
+  own output window and may paint nothing in an OBS browser source or on Windows. It does **not**
+  transcode: that needs ffmpeg or a platform encoder in the bundle, a job queue, and a second
+  copy of every clip on disk. Parked, honestly; the warning is the seam. A screen that cannot
+  decode the clip now says so on its beat (RG-182) rather than standing blank under an amber badge.
 - **`related_scripture`** — built, registered, and now *surfaced* in the Intelligence Feed
   (previously zero callers). Keep it earning its place or delete it; dead built code rots.
 

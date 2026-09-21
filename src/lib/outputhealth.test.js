@@ -293,6 +293,8 @@ describe('startBeat', () => {
           mediaPosMs: null,
           mediaDurMs: null,
           mediaPaused: null,
+          // …and the media failure it did not have (O-4): named, for the same reason.
+          mediaError: null,
         },
       ],
     ]);
@@ -637,5 +639,49 @@ describe('a screen that stops answering is named, not numbered', () => {
     const decl = line.slice(0, line.indexOf(';'));
     expect(decl).toMatch(/st\.name/);
     expect(decl).not.toMatch(/=>\s*st\.id\b/);
+  });
+});
+
+// 2026-09-21 · O-4 / M-3. A screen whose picture did not load must not be called
+// On Air. The page says so on the beat it already sends; the desk reads it.
+describe('a screen whose media failed to load', () => {
+  it('carries the failure on the beat, both doors', async () => {
+    vi.useFakeTimers();
+    const frames = [];
+    const ws = { readyState: 1, send: (f) => frames.push(JSON.parse(f)) };
+    const sent = [];
+    // The kiosk door: a socket takes the beat.
+    const stop = startBeat({
+      channelId: 6,
+      getState: () => 'content',
+      getWs: () => ws,
+      getMediaError: () => 'picture not loading · http://10.0.0.5:8032/media/3',
+    });
+    stop();
+    expect(frames[0].media_error).toBe('picture not loading · http://10.0.0.5:8032/media/3');
+    // The native door: no socket, so the bridge takes it.
+    const stop2 = startBeat({
+      channelId: 6,
+      getState: () => 'content',
+      invoke: async (cmd, args) => sent.push([cmd, args]),
+      getMediaError: () => 'picture not loading · http://10.0.0.5:8032/media/3',
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    stop2();
+    vi.useRealTimers();
+    expect(sent[0][1].mediaError).toBe('picture not loading · http://10.0.0.5:8032/media/3');
+  });
+
+  it('is not On Air on the desk, and the note names the failure', () => {
+    const st = row({ media_error: 'picture not loading · http://10.0.0.5:8032/media/3' });
+    const d = describeScreen(st, ON_AIR);
+    expect(d.kind).toBe('down');
+    expect(d.label).toBe('Not painting the picture');
+    expect(d.note).toContain('media/3');
+  });
+
+  it('and a screen with no failure is still On Air', () => {
+    expect(describeScreen(row({ media_error: null }), ON_AIR).kind).toBe('onair');
   });
 });

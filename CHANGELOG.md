@@ -32,6 +32,28 @@ keys no longer act on the console underneath it. Pressing A with the panel open
 used to accept the first suggestion in the list, whichever one you were reading.
 B still blacks out the screens from anywhere.
 
+### A screen says when its picture did not load
+
+A screen whose picture or clip failed to load, because the file is missing, the
+address is wrong for that screen, or the clip is in a format that screen cannot
+play, now says so. Outputs shows the screen as "Not painting the picture" with
+the address, Live names the screen under the programme pane, and the screen is
+no longer called On Air while it is blank.
+
+### Clips play once until you press Loop
+
+A fired clip no longer repeats by itself. It plays once and holds its last
+frame; press Loop to make it repeat, and the Loop button now shows what the
+screens are doing. Pausing a looping clip no longer switches the loop off.
+
+### Relay warns about clips other screens may not play
+
+When you import a video, Relay checks what format it is in. An iPhone clip is
+usually HEVC (H.265), which plays in Relay's own output window and on a Mac but
+may show nothing in an OBS browser source or on a Windows screen. The Library
+tile and the Planner's cue preview now say so. Relay does not convert the file;
+convert it to H.264 before Sunday if it has to reach one of those screens.
+
 ### Connecting the preacher's phone
 
 When Relay cannot find a local network address, Sharing now explains the problem

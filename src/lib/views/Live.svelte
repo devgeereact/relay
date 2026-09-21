@@ -3126,6 +3126,14 @@
     </div>
   {/if}
   {#if fitWarning}<div class="out-warn" role="status"><b>Small on the wall.</b> {fitWarning}</div>{/if}
+  <!-- A SCREEN THAT SAYS ITS PICTURE DID NOT LOAD (O-4, 2026-09-21). The beat
+       carries it, `describeScreen` refuses to call the screen On Air, and this
+       line names the screen and the URL so the operator can tell a wrong address
+       from a dead codec from a missing file. Reported, never enforced: Relay is
+       still sending, and the other screens may be painting it fine. -->
+  {#each outs.filter((o) => typeof o.st?.media_error === 'string' && o.st.media_error) as o (o.c.id)}
+    <div class="out-warn" role="status"><b>{o.c.name} is not painting the picture.</b> {o.st.media_error}</div>
+  {/each}
   <!-- Announced once, on the transition, through the same polite region the AI's
        suggestions use. A live region that repeats is one an operator learns to
        tune out. -->

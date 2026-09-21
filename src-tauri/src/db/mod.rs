@@ -3377,7 +3377,7 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         init_fresh(&conn).unwrap();
         let plan = create_plan(&conn, "Sunday", "2026-07-12").unwrap();
-        let m = insert_media(&conn, "image", "slide.png", "2026-07-12").unwrap();
+        let m = insert_media(&conn, "image", "slide.png", "2026-07-12", None).unwrap();
         add_plan_item(
             &conn,
             plan,
