@@ -30,6 +30,7 @@ import {
   isOverride,
   liveTransition,
 } from './transitions.js';
+import { codeOnly } from './codeonly.js';
 
 const src = resolve(__dirname, '..');
 const OUTPUT = readFileSync(resolve(src, 'Output.svelte'), 'utf8');
@@ -196,7 +197,7 @@ describe('L4 · the picker is in the take rack, and the take is never below it',
     // and the paragraph three lines above this one contains the call verbatim —
     // so commenting the real call out left the assertion passing over a shell
     // that no longer read the override at all. Only the code is the claim.
-    const code = APP.replace(/\/\/.*$/gm, '').replace(/<!--[\s\S]*?-->/g, '');
+    const code = codeOnly(APP);
     expect(code).toMatch(/loadLiveTransition\(\)/);
   });
 

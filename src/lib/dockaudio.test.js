@@ -29,6 +29,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { tick } from 'svelte';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { codeOnly } from './codeonly.js';
 
 const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a) => invoke(...a) }));
@@ -356,7 +357,7 @@ describe('the microphone is chosen and opened from the card that shows its level
     // written beside it, and a scanner that reads the prose about a rule
     // instead of the rule is a scanner that passes everything — `ipc.test.js`
     // has been wrong that way twice.
-    const markup = src.replace(/<!--[\s\S]*?-->/g, '');
+    const markup = codeOnly(src);
     const row = markup.slice(markup.indexOf('<span class="dcap">Mic</span>'), markup.indexOf('<span class="dcap">Sens</span>'));
     expect(row).not.toMatch(/amber/);
     // And on the rendered control, which is what an operator actually sees.
@@ -439,7 +440,7 @@ describe('C2 · the audio card wears icon toggles, with the switch semantics int
     // Rule 18, on the row the switch used to be on. Comments stripped: the
     // reason this is not amber is written beside it, and a scanner that reads
     // the prose instead of the rule passes everything.
-    const markup = src.replace(/<!--[\s\S]*?-->/g, '');
+    const markup = codeOnly(src);
     const rows = markup.slice(markup.indexOf('<div class="audrow">'), markup.indexOf('</div>\n    </div>'));
     expect(rows).not.toMatch(/amber/);
     const style = src.slice(src.indexOf('<style>')).replace(/\/\*[\s\S]*?\*\//g, '');
@@ -660,9 +661,7 @@ describe('a segment is drawn in runs of one colour', () => {
 // only moment more of them can be seen.
 describe('the transcript card paints a window, and the window grows', () => {
   const DOCK = readFileSync(resolve(process.cwd(), 'src/lib/Dock.svelte'), 'utf8');
-  const CODE = DOCK.replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^[ \t]*\/\/.*$/gm, '');
+  const CODE = codeOnly(DOCK);
 
   it('renders the NEWEST lines, never the oldest', () => {
     // A window taken off the front would show the start of the service for ever

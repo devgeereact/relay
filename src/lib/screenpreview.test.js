@@ -15,15 +15,12 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { resolveOutputTemplate } from './layers.js';
 import { DEFAULT_TEMPLATE } from './templates.js';
+import { codeOnly } from './codeonly.js';
 
 const read = (p) => readFileSync(path.resolve(__dirname, '..', p), 'utf8');
 /** The same file with its prose removed. A comment that NAMES the defect is not the
  *  defect, and a scanner that cannot tell the two apart reports the fix as the bug. */
-const code = (src) =>
-  src
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^\s*\/\/.*$/gm, '');
+const code = (src) => codeOnly(src);
 
 // A content look: a full-screen, opaque scripture template.
 const LOOK = {

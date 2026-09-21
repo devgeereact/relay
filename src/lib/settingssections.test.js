@@ -29,6 +29,7 @@ import path from 'node:path';
 // this suite on Node 20, 22 and 24 precisely because runtime differences have
 // bitten here before.
 import { CONTENT_KINDS } from './layers.js';
+import { codeOnly } from './codeonly.js';
 
 const ROOT = path.resolve(__dirname, '../..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
@@ -45,11 +46,7 @@ const STYLE = SRC.slice(SRC.indexOf('<style>'));
 // sentences reports the removed control as still present, which is a false
 // finding about a fix, and the fix is to scan what renders rather than to stop
 // writing the explanation down.
-const strip = (s) =>
-  s
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^\s*\/\/.*$/gm, '');
+const strip = (s) => codeOnly(s);
 const CODE = strip(SRC);
 const MARKUP_ONLY = strip(MARKUP);
 /** The `<script>` block with its commentary removed — see the note above. */
@@ -1047,7 +1044,16 @@ describe('a Settings control says which of its outcomes happened', () => {
     // The declaration is not a write; every assignment after it must be one.
     const writes = SCRIPT_ONLY.match(/(?<!let )savedDsn\s*=/g) ?? [];
     expect(writes.length, 'savedDsn is written in more than one place').toBe(1);
-    expect(SCRIPT_ONLY).toMatch(/function acceptCrash\(landed\)[\s\S]{0,160}savedDsn = landed/);
+    // 400, not 160, and the number moved with the stripper rather than with the
+    // code (RG-169). `codeOnly` BLANKS a comment instead of deleting it, so every
+    // offset and line number in the result still matches the real file — which is
+    // the whole reason it exists, and which means a bounded window now has to span
+    // the comment's footprint as well as its absence. The three-line guard comment
+    // inside `acceptCrash` is 266 characters of that footprint. Measured, not
+    // guessed: widen this when the function grows, and do not widen it to make a
+    // failure go away, because the bound is what stops this matching a
+    // `savedDsn = landed` somewhere else entirely.
+    expect(SCRIPT_ONLY).toMatch(/function acceptCrash\(landed\)[\s\S]{0,400}savedDsn = landed/);
   });
 });
 

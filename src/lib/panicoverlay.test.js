@@ -42,6 +42,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, join } from 'node:path';
+import { codeOnly } from './codeonly.js';
 
 const SRC = resolve(process.cwd(), 'src');
 
@@ -62,10 +63,7 @@ const rel = (p) => p.slice(resolve(process.cwd()).length + 1);
 
 /** Strip comments — a claim in prose is not a handler, which is the bug itself. */
 function code(text) {
-  return text
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^\s*\/\/.*$/gm, '');
+  return codeOnly(text);
 }
 
 /**

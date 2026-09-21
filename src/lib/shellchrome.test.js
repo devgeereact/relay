@@ -19,6 +19,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { codeOnly } from './codeonly.js';
 
 const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a) => invoke(...a) }));
@@ -39,9 +40,7 @@ const DOCK = read('src/lib/Dock.svelte');
  * explaining WHY something was removed names the thing it removed, which is
  * every honest comment about a deletion. Only the code is the claim.
  */
-const CODE = APP.replace(/<!--[\s\S]*?-->/g, '')
-  .replace(/\/\*[\s\S]*?\*\//g, '')
-  .replace(/^\s*\/\/.*$/gm, '');
+const CODE = codeOnly(APP);
 
 // ── §2 · SIX WORKSPACES, IN THE PROTOTYPE'S ORDER ───────────────────────────
 //

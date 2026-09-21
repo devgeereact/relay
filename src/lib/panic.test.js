@@ -19,6 +19,7 @@ import { get } from 'svelte/store';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { installShortcuts } from './shortcuts.js';
+import { codeOnly } from './codeonly.js';
 
 const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a) => invoke(...a) }));
@@ -158,7 +159,7 @@ describe('removing Emergency Stop left both of its paths standing', () => {
   // therefore names it; a `not.toContain` over the prose would fail on an honest
   // note about a deletion. Only the code is the claim — the same lesson
   // `transitionoverride.test.js` records from the other direction.
-  const code = app.replace(/<!--[\s\S]*?-->/g, '').replace(/^\s*\/\/.*$/gm, '');
+  const code = codeOnly(app);
 
   it('the chrome carries no panic control any more', () => {
     const chrome = code.slice(code.indexOf('<header class="topbar-v">'), code.indexOf('</header>'));

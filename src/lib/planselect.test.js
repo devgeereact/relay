@@ -59,6 +59,7 @@ import {
   orderWithDuplicateInPlace,
 } from './planselect.js';
 import { sectionsOf } from './plan.js';
+import { codeOnly } from './codeonly.js';
 
 const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a) => invoke(...a) }));
@@ -274,9 +275,7 @@ describe('rule 41 on the Planner', () => {
     // webview, so a two-step delete guarded by one deletes NOTHING and reports
     // success. `hardrules.test.js` sweeps the tree; this is here because this
     // change is the reason the temptation exists on this file.
-    const code = PLANNER.replace(/<!--[\s\S]*?-->/g, '')
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/^\s*\/\/.*$/gm, '');
+    const code = codeOnly(PLANNER);
     for (const fn of ['confirm', 'alert', 'prompt']) {
       expect(new RegExp(`(^|[^.\\w])${fn}\\s*\\(`).test(code), `native ${fn}() in the Planner`).toBe(false);
     }

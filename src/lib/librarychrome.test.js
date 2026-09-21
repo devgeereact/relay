@@ -20,6 +20,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { tick } from 'svelte';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { codeOnly } from './codeonly.js';
 
 const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a) => invoke(...a) }));
@@ -30,11 +31,7 @@ const BIBLE = 'src/lib/views/library/Browse.svelte';
 
 /** Markup only: this repository's files explain their own rules in prose, and a
     grep a comment can trip is a grep that will trip on the next one. */
-const markup = (p) =>
-  read(p)
-    .replace(/<!--[\s\S]*?-->/g, ' ')
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/(^|\s)\/\/[^\n]*/g, ' ');
+const markup = (p) => codeOnly(read(p));
 
 function mount(Component, props = {}) {
   const host = document.createElement('div');

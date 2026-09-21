@@ -22,6 +22,7 @@ import {
   staleNote,
   planChannelsOf,
 } from './plan.js';
+import { codeOnly } from './codeonly.js';
 
 const song = (id, ...labels) => ({
   id,
@@ -185,10 +186,7 @@ describe('typeOf — the one door onto TYPE', () => {
           // Strip comments: three files DESCRIBE this defect in prose, and a
           // scanner that greps a comment is how one entitlement test passed on
           // a broken file.
-          const code = src
-            .replace(/<!--[\s\S]*?-->/g, '')
-            .replace(/\/\*[\s\S]*?\*\//g, '')
-            .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+          const code = codeOnly(src);
           if (/(\|\||\?\?)\s*TYPE\.scripture\b/.test(code)) hits.push(p.slice(root.length + 1));
         }
       }

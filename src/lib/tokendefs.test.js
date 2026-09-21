@@ -27,6 +27,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, join, extname } from 'node:path';
+import { codeOnly } from './codeonly.js';
 
 const SRC = resolve(__dirname, '..');
 // THE STYLESHEET IS TWO FILES. `src/app.css` is the console's, and it starts by
@@ -59,7 +60,7 @@ function walk(dir, out = []) {
  * the `;` and the next name. Without this the definition scanner saw 0 of 99,
  * and the whole file reported every token in the palette as missing.
  */
-const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/<!--[\s\S]*?-->/g, ' ');
+const strip = (s) => codeOnly(s);
 
 const FILES = walk(SRC);
 

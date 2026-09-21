@@ -10,6 +10,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+### Relay's own tests stopped going blind in the same way twice
+
+Internal only, nothing an operator sees. Twenty-six of Relay's static checks each stripped code comments with their own hand-written pattern, and that pattern had already blanked seven thousand characters of the preacher's stage page — so the checks read that page with its labels missing and reported it clean. They all use one stripper now, and a new check refuses a hand-written one. (RG-169)
+
 ### A word to the preacher reaches a stage screen on HDMI
 
 If your stage screen is a **network screen**, a Stage Message always reached it. If it is a **native output window** — a confidence monitor plugged in by HDMI — it never did, and Relay told you the message had been sent. It reaches both now. Nothing changed about which screens may show one: a screen still has to be given the stage role, and the congregation screens still refuse it. (RG-156, DECISIONS §114)

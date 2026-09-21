@@ -21,6 +21,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { SHORTCUTS } from './shortcuts.js';
 import { degradations } from './degraded.js';
+import { codeOnly } from './codeonly.js';
 
 const read = (f) => readFileSync(resolve(process.cwd(), f), 'utf8');
 const help = read('src/lib/views/Help.svelte');
@@ -28,7 +29,7 @@ const settings = read('src/lib/views/Settings.svelte');
 const dock = read('src/lib/Dock.svelte');
 
 /** Prose only — the markup an operator reads, comments stripped. */
-const prose = (s) => s.replace(/<!--[\s\S]*?-->/g, '').replace(/^\s*\/\/.*$/gm, '');
+const prose = (s) => codeOnly(s);
 
 /**
  * THE DOCUMENTS ARE INSTRUCTIONS TOO.

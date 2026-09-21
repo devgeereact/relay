@@ -27,6 +27,7 @@ import {
   screenSwitch,
   screenReporting,
 } from './outputHealth.js';
+import { codeOnly } from './codeonly.js';
 
 const ROOT = path.resolve(__dirname, '../..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
@@ -503,11 +504,7 @@ describe('screenReporting — the heartbeat claim, and the two it must not colla
  * "ipc.test.js was wrong twice" failure in miniature: it looks exhaustive while
  * checking nothing. Precedent and prior art: `screenpreview.test.js`.
  */
-const code = (src) =>
-  src
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^\s*\/\/.*$/gm, '');
+const code = (src) => codeOnly(src);
 
 describe('both surfaces read the same fact', () => {
   it('Live and Outputs decide from the backend`s `painting`, not from global state', () => {

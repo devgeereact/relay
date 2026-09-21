@@ -19,6 +19,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { tick } from 'svelte';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { codeOnly } from './codeonly.js';
 
 const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a) => invoke(...a) }));
@@ -268,7 +269,7 @@ describe('rule 44 — this panel takes nothing from the operator', () => {
     // A twenty-minute import may not be a twenty-minute window with no Escape and
     // no `Clear screens`. The panel is an ordinary region in the workspace.
     const src = readFileSync(join(process.cwd(), 'src/lib/views/library/BulkImport.svelte'), 'utf8');
-    const code = src.replace(/<!--[\s\S]*?-->/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+    const code = codeOnly(src);
     for (const role of ['dialog', 'alertdialog', 'menu', 'listbox']) {
       expect(code, `a ${role} would take Escape and the panic button`).not.toContain(
         `role="${role}"`,

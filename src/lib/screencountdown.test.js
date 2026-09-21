@@ -163,9 +163,7 @@ afterEach(() => {
  * this the tests would fail on their own explanation, which would teach the next
  * person to delete the explanation rather than to keep the guarantee.
  */
-const LIVE_CODE = LIVE_SRC.replace(/<!--[\s\S]*?-->/g, '')
-  .replace(/\/\*[\s\S]*?\*\//g, '')
-  .replace(/^[ \t]*\/\/.*$/gm, '');
+const LIVE_CODE = codeOnly(LIVE_SRC);
 
 describe('the run surface carries the Screen Countdown, under the Stage Timer', () => {
   // 2026-09-21: the operator asked for the band back (it was removed on

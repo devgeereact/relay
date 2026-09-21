@@ -7,6 +7,7 @@
 // `Live.svelte` that could only be reached by mounting the whole run surface.
 import { describe, it, expect } from 'vitest';
 import { transportMode, verseIsOnAir, fallsThroughToPlan, SCRIPTURE } from './transportmode.js';
+import { codeOnly } from './codeonly.js';
 
 const verse = { kind: SCRIPTURE, reference: 'John 3:16' };
 const song = { kind: 'song' };
@@ -119,10 +120,7 @@ describe('the run surface uses this module and holds no second copy', () => {
     const { readFileSync } = await import('node:fs');
     const { resolve } = await import('node:path');
     const src = readFileSync(resolve(process.cwd(), 'src/lib/views/Live.svelte'), 'utf8');
-    const code = src
-      .replace(/<!--[\s\S]*?-->/g, '')
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/^[ \t]*\/\/.*$/gm, '');
+    const code = codeOnly(src);
     expect(code).toContain("from '../transportmode.js'");
     // Two surfaces answering "which mode is the transport in" is how they come
     // to disagree — the same argument `outputHealth.js` and `countdown.js` are

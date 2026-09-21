@@ -12,6 +12,7 @@ import { describe, it, expect } from 'vitest';
 import { heard, methodKey, methodBadgeKey, methodNoteKey, showsConfidence, inLibrary, evidenceIsASpan, orderClaims } from './detect.js';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { codeOnly } from './codeonly.js';
 
 const direct = { method: 'direct', confidence: 0.92 };
 const semantic = { method: 'semantic', confidence: 0.61 };
@@ -153,10 +154,7 @@ describe('a claim card says which KIND of claim it is', () => {
   // Comments stripped for the `not.toMatch` below. The fix's own comment QUOTES the
   // defect it replaced, and an assertion over the prose would fail on an honest
   // note about a deletion — the lesson `panic.test.js` records in the same words.
-  const live = liveRaw
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^\s*\/\/.*$/gm, '');
+  const live = codeOnly(liveRaw);
 
   it('every method gets its own chip', () => {
     const seen = new Set(
@@ -189,11 +187,7 @@ describe('a claim card says which KIND of claim it is', () => {
       const src = readFileSync(resolve(process.cwd(), file), 'utf8');
       const m = src.match(/import \{([^}]+)\} from ['"][^'"]*detect\.js['"]/);
       if (!m) continue;
-      const body = src
-        .replace(/<!--[\s\S]*?-->/g, '')
-        .replace(/\/\*[\s\S]*?\*\//g, '')
-        .replace(/^\s*\/\/.*$/gm, '')
-        .replace(m[0], '');
+      const body = codeOnly(src).replace(m[0], '');
       for (const name of m[1].split(',').map((x) => x.trim()).filter(Boolean)) {
         expect(
           new RegExp(`\\b${name}\\b`).test(body),

@@ -27,7 +27,7 @@ beside it in this session; the 2026-09-17 block that follows is kept as history.
 | Count | Value | Command |
 |---|---|---|
 | Rust tests | **1019 passed / 0 failed / 17 ignored** | `cd src-tauri && cargo test` |
-| Frontend tests | **3439 passed, 231 files** | `npx vitest run` |
+| Frontend tests | **3447 passed, 232 files** | `npx vitest run` |
 | `e2e.rs` tests | **104 passed / 1 ignored** (the ignored one is `stt::e2e_latency`, matched by substring) | `cd src-tauri && cargo test e2e` |
 | Registered commands | **164** | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
 | qa-inventory | 164/164 addressed, 0 handlerless, 0 unnamed, 1 intentional orphan (`__r6probe.svelte`) | `node scripts/qa-inventory.mjs` |

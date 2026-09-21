@@ -19,6 +19,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { tick } from 'svelte';
 import * as svelteRuntime from 'svelte';
+import { codeOnly } from './codeonly.js';
 
 const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a) => invoke(...a) }));
@@ -568,11 +569,7 @@ describe('a song joins a service through the plan', () => {
   // "add all" must not read as though it has one — and a scanner that cannot
   // tell a control from a sentence about a control will be weakened until it
   // cannot tell anything.
-  const read = (p) =>
-    readFileSync(new URL(p, import.meta.url), 'utf8')
-      .replace(/<!--[\s\S]*?-->/g, ' ')
-      .replace(/\/\*[\s\S]*?\*\//g, ' ')
-      .replace(/(^|\s)\/\/[^\n]*/g, ' ');
+  const read = (p) => codeOnly(readFileSync(new URL(p, import.meta.url), 'utf8'));
   const LIBRARY = [
     './views/Library.svelte',
     './views/library/LyricsPane.svelte',

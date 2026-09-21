@@ -21,6 +21,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { installShortcuts, registerContext, SHORTCUTS } from './shortcuts.js';
+import { codeOnly } from './codeonly.js';
 
 const read = (f) => readFileSync(resolve(process.cwd(), f), 'utf8');
 const APP = read('src/App.svelte');
@@ -275,8 +276,7 @@ describe('C2 · the mic-quality and language banners are gone from the run surfa
   // still names `langWarning` in the note recording why it went, and a scanner
   // that read the whole file would report the defect present and the defect
   // fixed at once (the reason `workspacegrammar.test.js` strips prose too).
-  const MARKUP = LIVE.slice(LIVE.lastIndexOf('</script>'), LIVE.lastIndexOf('<style>'))
-    .replace(/<!--[\s\S]*?-->/g, '');
+  const MARKUP = codeOnly(LIVE.slice(LIVE.lastIndexOf('</script>'), LIVE.lastIndexOf('<style>')));
 
   it('neither banner is rendered, and neither string table is left behind', () => {
     expect(MARKUP, 'the banner element is still rendered').not.toMatch(/sttwarn/);

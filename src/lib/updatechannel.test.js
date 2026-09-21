@@ -23,6 +23,7 @@
 // one screen where somebody goes to look.
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { get } from 'svelte/store';
+import { codeOnly } from './codeonly.js';
 
 const check = vi.fn();
 let importFails = false;
@@ -197,9 +198,7 @@ describe('every surface that talks about the update channel goes through one des
     // must never come back is the phrase rendered straight into a template, where
     // nothing has asked the channel anything.
     const markupOf = (src) =>
-      src
-        .replace(/<script[\s\S]*?<\/script>/g, '')
-        .replace(/<!--[\s\S]*?-->/g, '');
+      codeOnly(src.replace(/<script[\s\S]*?<\/script>/g, ''));
 
     const offenders = files.filter((f) => /latest version/i.test(markupOf(readFileSync(f, 'utf8'))));
     expect(offenders).toEqual([]);
