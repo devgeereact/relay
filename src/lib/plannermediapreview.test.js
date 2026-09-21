@@ -303,3 +303,77 @@ describe('the Planner uses the shared URL builder', () => {
     expect(view).not.toMatch(/:8032\/media\//);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 4 · THE ROWS, WHICH ARE WHAT AN OPERATOR ACTUALLY SCANS (RG-215)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The operator's words: *"Media items should have a Preview for easy
+// recognisation of what kind of items they are, both in planner and in their
+// workspace"*. The INSPECTOR has painted the picture since the fix this file was
+// written for, and the Library's media pane paints one per card. What was left
+// is the two lists a Tuesday is actually spent in: the running order, where a
+// media cue was a coloured dot and a filename, and the Add-cue results, where
+// picking the right background meant recognising `IMG_20240714_113255.jpg`.
+//
+// One row shows the picture and the whole plan becomes readable at a glance,
+// which is the difference between a list of files and a running order.
+describe('a media cue is recognisable in the lists, not only in the inspector', () => {
+  const openPlan = async () => {
+    const ServicePlanner = (await import('./views/ServicePlanner.svelte')).default;
+    app = new ServicePlanner({ target: host });
+    await until(() => host.querySelector('.sp-railcard'), 'the plan rail');
+    host.querySelector('.sp-railcard').click();
+    await until(() => host.querySelector('.sp-row'), 'the running order');
+  };
+
+  itMounted('the running order shows the picture on the row', async () => {
+    await openPlan();
+    const thumb = host.querySelector('.sp-row .sp-thumb img');
+    expect(thumb, 'the row is still a dot and a filename').toBeTruthy();
+    // The SHARED builder, so the row and the wall cannot disagree about where a
+    // file lives — `bundled:` included.
+    expect(thumb.getAttribute('src')).toBe('http://192.168.1.50:8032/media/7');
+  });
+
+  itMounted('a video cue shows its first frame, not a picture that cannot load', async () => {
+    cues = [mediaCue({ media_id: CLIP.id, kind: CLIP.kind, filename: CLIP.filename }, { label: CLIP.filename })];
+    await openPlan();
+    const v = host.querySelector('.sp-row .sp-thumb video');
+    expect(v, 'a video was rendered as an <img>').toBeTruthy();
+    expect(v.getAttribute('preload')).toBe('metadata');
+  });
+
+  itMounted('a cue whose asset has been deleted shows no broken picture', async () => {
+    // The same three-way answer `selMedia` already makes: no id, a deleted row
+    // and a resolved one are different, and only the middle one would paint a
+    // broken image if the row guessed a URL from the id it was given.
+    library = [CLIP, SEEDED];
+    await openPlan();
+    expect(host.querySelector('.sp-row .sp-thumb img'), 'a URL was guessed for a deleted asset').toBeNull();
+    expect(host.querySelector('.sp-row').textContent).toContain('sunrise.jpg');
+  });
+
+  itMounted('and a cue that is not media gets no thumbnail at all', async () => {
+    cues = [
+      {
+        ...mediaCue({}),
+        cue_type: 'scripture',
+        label: 'John 3:16',
+        payload_json: JSON.stringify({ reference: 'John 3:16', text: 'For God so loved' }),
+      },
+    ];
+    await openPlan();
+    expect(host.querySelector('.sp-row .sp-thumb')).toBeNull();
+  });
+
+  itMounted('the Add-cue list shows each picture beside its name', async () => {
+    await openPlan();
+    const add = [...host.querySelectorAll('button')].find((b) => b.textContent.includes('Add cue'));
+    add.click();
+    await until(() => host.querySelector('.sp-result'), 'the add results');
+    const shots = [...host.querySelectorAll('.sp-result .sp-thumb')];
+    expect(shots.length, 'picking a background still means reading filenames').toBeGreaterThan(0);
+    expect(host.querySelector('.sp-result .sp-thumb img, .sp-result .sp-thumb video')).toBeTruthy();
+  });
+});

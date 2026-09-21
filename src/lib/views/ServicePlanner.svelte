@@ -70,6 +70,7 @@
   // (DECISIONS §90), so a hand-rolled copy here would render every seeded
   // background as a broken-image box in a preview that claims to be the wall.
   import { mediaUrl } from '../bundledbackgrounds.js';
+  import MediaThumb from '../ui/MediaThumb.svelte';
   // THE TWO BLOCKS THAT CAME OUT OF THIS FILE. The add panel's local filter and
   // its four payload builders, and the pointer drag's paint arithmetic. Both were
   // already self-contained and both were untestable where they were: a payload
@@ -999,6 +1000,27 @@
     return { found: Boolean(row), filename: p.filename || selCue.label, row, kind: p.kind || 'image' };
   })();
 
+  // ── THE PICTURE ON THE ROW (RG-215) ───────────────────────────────────────
+  //
+  // The same three-way answer `selMedia` makes for the inspector, for any cue in
+  // the running order: no `media_id` at all, a row that has been DELETED, and a
+  // resolved one are different things, and only the third has a URL. Guessing
+  // one from the id would paint a broken picture for the second, which is a
+  // worse answer than no picture — a thumbnail is a claim that this is what the
+  // cue puts on a screen.
+  //
+  // `allMedia` is already loaded for the Add-cue search, so no row costs a call.
+  const cueThumb = (c, rows, host) => {
+    if (c?.cue_type !== 'media') return null;
+    const p = payloadOf(c);
+    if (p.media_id == null) return null;
+    const row = rows.find((m) => m.id === p.media_id);
+    // A document has no frame to paint, and `fire_media` refuses to put one on a
+    // screen in any case.
+    if (!row || row.kind === 'document') return null;
+    return { url: mediaUrl(host, row), kind: p.kind === 'video' ? 'video' : 'image' };
+  };
+
   $: previewContent = !selCue
     ? null
     : selCue.cue_type === 'scripture'
@@ -1282,6 +1304,14 @@
                        (`TAXONOMY_INK`, CLAUDE.md rule 18), so the WORD is the
                        taxonomy and `chipOf` never truncates it. -->
                   <span class="sp-ck r-mono">{chipOf(c.cue_type)}</span>
+                  <!-- WHAT THIS CUE PUTS ON A SCREEN, for the one cue type whose
+                       whole content is a picture. `null` for every other kind and
+                       for an asset that is no longer there, so the row never
+                       paints a claim it cannot keep. -->
+                  {#if cueThumb(c, allMedia, mediaHost)}
+                    {@const th = cueThumb(c, allMedia, mediaHost)}
+                    <span class="sp-thumb"><MediaThumb url={th.url} kind={th.kind} size={30} /></span>
+                  {/if}
                   <!-- One line unless the cue actually has something extra to say.
                        A subtitle under every row doubled the row height and
                        squeezed the cue name — the one thing an operator scans for. -->
@@ -1436,6 +1466,12 @@
               {#each addMedia as m (m.id)}
                 <button class="sp-result r-focus" on:click={() => addMediaCue(m)}>
                   <span class="sp-dot" style="background:{TYPE.media.color};"></span>
+                  <!-- The same rule as the running order, one size up: this is
+                       where a background is CHOSEN, and choosing one by filename
+                       is how the wrong picture gets into a plan. -->
+                  {#if m.kind !== 'document'}
+                    <span class="sp-thumb"><MediaThumb url={mediaUrl(mediaHost, m)} kind={m.kind === 'video' ? 'video' : 'image'} size={34} /></span>
+                  {/if}
                   <span class="sp-resbody"><span class="sp-resref">{m.filename}</span><span class="sp-restext r-mono">{m.kind}</span></span>
                   <span class="sp-plus">＋</span>
                 </button>
@@ -2108,6 +2144,10 @@
      heading above each group names the kind, and a dot that borrowed a colour
      would be the taxonomy painting a promise again. */
   .sp-dot{ width:6px; height:6px; border-radius:2px; flex:0 0 auto; }
+  /* The thumbnail is a wrapper the list owns, not a class inside the component:
+     the component answers "what does this file look like" and the list answers
+     "where does it sit in a row". */
+  .sp-thumb{ flex:0 0 auto; display:block; }
 
   .sp-results{ display:flex; flex-direction:column; }
   /* A SEARCH RESULT ROW, not a button. Two lines — a reference and the opening

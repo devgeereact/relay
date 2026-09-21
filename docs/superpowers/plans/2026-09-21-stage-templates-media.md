@@ -138,8 +138,9 @@ showing current content under a dead badge is the rule 35 failure in a new place
 - **7 · The default template applies everywhere.** Audit `resolveOutputTemplate` per kind; scripture
   and song lyrics follow the main output template on Live, preview and output; media, announcements
   and Planner cues keep their own; media needs no template at all.
-- **8 · Media previews** in the Planner and the Library, so a cue is recognisable without reading
-  a filename. A still frame for video, the image itself for a picture.
+- **8 · Media previews — DONE, RG-215.** The Library's media pane and the Planner's cue inspector
+  already painted the file; the running order and the Add-cue results did not, and those are the
+  two lists a plan is built in. `ui/MediaThumb.svelte` is now the one rule for both.
 - **9 · Duplicate song slides.** Only the slide at the arrangement POSITION that was fired may read
   LIVE. The current behaviour marks every slide with the same words, which is why the screenshot
   shows two. This is a correctness bug on the surface an operator steps through.
