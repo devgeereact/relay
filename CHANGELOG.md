@@ -10,6 +10,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+### Warnings have their own colour, and it is not the on-air one
+
+A screen you had taken down, a stage role nobody had set and a template whose font did not load were all shown in **amber**, the colour that means a congregation is looking at something. Five other warnings borrowed the rehearsal purple. Every warning that is not a failure now wears one ochre caution colour that promises nothing about your screens, and the `SLIDE` badge on the transport is steel rather than amber, so it no longer glows over a clear wall. Amber still means on air and only that. (RG-207, DECISIONS §111)
+
 ### A verse Relay assumed is now offered, not fired
 
 When the preacher says "verse one" and Relay has to guess the book from the

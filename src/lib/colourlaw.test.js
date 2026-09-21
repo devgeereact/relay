@@ -340,24 +340,14 @@ describe('the colour law — amethyst promises that nothing here reaches a congr
       ['src/lib/Splash.svelte', 'the launch sequence'],
       ['src/lib/ui/BrandMark.svelte', 'the launch sequence lockup'],
       ['src/lib/boot/UpdateAvailable.svelte', 'the launch sequence'],
-      // ── THE CAUTION GAP, §93's open question ────────────────────────────────
-      // These three are NOT inside the promise. They are amethyst because this
-      // palette publishes no caution ink and every other colour is already a
-      // promise, and each records that argument independently at its own call
-      // site. They are listed so that paying the gap off is visible and adding to
-      // it is not silent. `.b-check.warn` in `src/app.css` is the fourth.
-      ['src/lib/views/Settings.svelte', 'CAUTION GAP — .s-netwarn, §93'],
-      ['src/lib/views/Help.svelte', 'CAUTION GAP — the callout, §93'],
-      ['src/lib/views/library/LyricsPane.svelte', 'CAUTION GAP — .ly-warn, §93'],
-      // The fifth, and the ONE that arrived by a promise colour being given back
-      // rather than by a new caution being invented. `.ms-caution` (the model that
-      // will fall behind a live sermon on a machine with no acceleration) and
-      // `.ms-locked` (the service lock) were and are cautions; the first was
-      // painted `--v-amber`, which means ON AIR and only that, on a panel that is
-      // never on air. Moving it into the gap is the gap being COUNTED correctly,
-      // which is the opposite of it growing quietly — and it is what the law says
-      // to do when a caution is the honest reading.
-      ['src/lib/ModelSetup.svelte', 'CAUTION GAP — .ms-caution and .ms-locked, §93'],
+      // ── THE CAUTION GAP, §93's open question — PAID on 2026-09-21 ──────────
+      // Five entries used to sit here (Settings' .s-netwarn, Help's callout,
+      // LyricsPane's .ly-warn, ModelSetup's .ms-caution and .ms-locked, and
+      // app.css's .b-check.warn), each amethyst because this palette published
+      // no caution ink. It does now: `--v-caution` (DECISIONS §111, RG-207), and
+      // the caution sweep at the bottom of this file enumerates every surface
+      // that wears it. Nothing in this map is a caution any more, and a caution
+      // arriving here again is the drift the gap was named to make visible.
     ]);
     // WHAT THIS DOES NOT SEE, said so it is not read as more. It matches
     // `var(--v-amethyst…)`, so a component that wears the shared `.r-badge
@@ -378,25 +368,20 @@ describe('the colour law — amethyst promises that nothing here reaches a congr
     expect(stale, 'these no longer paint amethyst — take them out of the list').toEqual([]);
   });
 
-  it('and the cautions are still exactly five — the gap does not grow quietly', () => {
-    // The count is the assertion. `.b-check.warn` in `src/app.css` is one of them
-    // and lives in the stylesheet rather than in a component, so it is named here
-    // rather than in the map above.
-    //
-    // IT WAS FOUR AND IT IS FIVE, and the direction matters. `ModelSetup.svelte`
-    // did not acquire a caution — it always had one, painted in the colour
-    // reserved for ON AIR. Paying an amber violation into the amethyst gap makes
-    // the gap one entry larger and the LAW one violation smaller, which is the
-    // trade §93 describes. A sixth arriving because somebody wanted a warning
-    // colour is the thing this count is watching for.
-    const cautions = [
+  it('and no caution wears amethyst any more — the gap is paid, not grown', () => {
+    // This test used to count the cautions borrowing amethyst: four, then five
+    // when ModelSetup's amber violation was paid into the gap. On 2026-09-21 the
+    // gap was closed the other way — a caution ink exists (§111) — so the count
+    // is zero and the assertion is that it STAYS zero. The five former borrowers
+    // are named so that one of them drifting back is legible as itself.
+    const formerly = [
       'src/lib/views/Settings.svelte',
       'src/lib/views/Help.svelte',
       'src/lib/views/library/LyricsPane.svelte',
       'src/lib/ModelSetup.svelte',
     ];
-    for (const f of cautions) expect(paintsAmethyst(f), `${f}`).toBe(true);
-    expect(read('src/app.css')).toMatch(/\.b-check\.warn \.ico\{ color:var\(--v-amethyst2\); \}/);
+    for (const f of formerly) expect(paintsAmethyst(f), `${f} borrows amethyst for a caution again`).toBe(false);
+    expect(read('src/app.css')).toMatch(/\.b-check\.warn \.ico\{ color:var\(--v-caution2\); \}/);
     // And app.css no longer claims what it cannot support. The sentence that used
     // to sit above the four control buttons said "the rehearsal colour, and
     // nothing else uses it", in a file spending amethyst fourteen other ways.
@@ -522,11 +507,12 @@ describe('the colour law — amber means ON AIR, and every use is named', () => 
       ['src/App.svelte', 'the shell lamp and the on-air stopwatch'],
       ['src/lib/views/library/LiveOutputRail.svelte', 'Go live — the button that puts it there'],
       ['src/lib/views/library/VerseDeck.svelte', 'the On Air badge and its tally'],
-      ['src/lib/views/Channels.svelte', 'a screen that is painting right now'],
       // THE PREACHER'S OWN PAGE — the stage alert, which is on air to one person.
       ['src/Stage.svelte', 'the stage alert and the countdown warning on a live monitor'],
-      // TEMPLATE DATA, not chrome: a swatch showing a colour the operator chose.
-      ['src/lib/views/templates/TemplateEditor.svelte', 'a template author picking a colour'],
+      // Channels and TemplateEditor were listed here until 2026-09-21, and both
+      // entries were amnesties: the only amber either painted was a CAUTION (a
+      // screen taken down, a stage role unset, a font that did not load). They
+      // wear `--v-caution` now and the sweep at the bottom of this file holds them.
       // A LYRIC THAT IS UP. Same promise, said on the pane that put it there.
       ['src/lib/views/library/LyricsPane.svelte', 'the section currently on the screens'],
     ]);
@@ -578,5 +564,83 @@ describe('the claim card does not wear the tally light, and the three methods lo
   it('book-uncertain has its own mark', () => {
     expect(live).toMatch(/\.clm\.ub\{[^}]*dashed/);
     expect(live).toMatch(/class:ub=\{d\.method === 'uncertain_book'\}/);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// CAUTION — THE GAP §93 NAMED, PAID (RG-207, DECISIONS §111, 2026-09-21).
+//
+// For four months this palette published no caution ink, so every warning that
+// was not a failure borrowed a promise colour and argued for it at the call site:
+// five surfaces borrowed amethyst ("nothing here reaches a congregation", which
+// is true of a settings page and says nothing about the warning) and three more
+// borrowed amber, the tally light, on a screen an operator had taken DOWN, on a
+// stage screen with no role, and on a template whose font did not load. A
+// volunteer reading amber on the Outputs tab was being told a screen was on air
+// by the box that said it was not.
+//
+// `--v-caution` is a desaturated warm ochre: warm enough to read as a warning,
+// far enough from `#ffa31a` that the two never sit side by side as the same
+// colour. It carries NO promise about a screen — that is the whole point of it.
+describe('the colour law — caution has its own ink, and it is neither promise', () => {
+  const ROOT = resolve(__dirname, '../..');
+  const read = (f) => readFileSync(resolve(ROOT, f), 'utf8');
+  const code = (f) => codeOnly(read(f));
+  /** The CSS block of one selector, comments blanked, or '' if it is gone. */
+  const rule = (f, sel) => {
+    const src = code(f);
+    const esc = sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const m = src.match(new RegExp(`${esc}\\s*\\{([^}]*)\\}`));
+    return m ? m[1] : '';
+  };
+
+  it('the token exists, and it is not amber and not amethyst', () => {
+    const t = read('src/tokens.css');
+    const hex = (name) => (t.match(new RegExp(`${name}:(#[0-9a-f]{6})`, 'i')) || [])[1];
+    expect(hex('--v-caution'), '--v-caution is not defined in tokens.css').toBeTruthy();
+    expect(hex('--v-caution')).not.toBe(hex('--v-amber'));
+    expect(hex('--v-caution')).not.toBe(hex('--v-amethyst'));
+    for (const v of ['--v-caution-soft', '--v-caution-line', '--v-caution2']) {
+      expect(t, `${v} is missing — a component would hand-write an rgba()`).toContain(`${v}:`);
+    }
+  });
+
+  // EVERY CAUTION, ENUMERATED WITH WHAT IT WARNS ABOUT. The eight surfaces the
+  // 2026-09-21 audit and §93 between them named. Each must paint the caution ink
+  // and neither promise colour.
+  const CAUTIONS = [
+    ['src/app.css', '.b-check.warn .ico', 'a boot probe that answered with a warning'],
+    ['src/app.css', '.b-check.warn .note', 'the same probe, its note'],
+    ['src/lib/views/Settings.svelte', '.s-netwarn', 'a service is being recorded / not while the mic is live'],
+    ['src/lib/views/Help.svelte', '.callout', "the help page's callout"],
+    ['src/lib/views/library/LyricsPane.svelte', '.ly-warn', 'the arrangement needs checking'],
+    ['src/lib/ModelSetup.svelte', '.ms-caution', 'a model that will fall behind a live sermon'],
+    ['src/lib/ModelSetup.svelte', '.ms-locked', 'the service lock is holding this back'],
+    ['src/lib/views/Channels.svelte', '.ch-downnow', 'a screen the operator took down'],
+    ['src/lib/views/Channels.svelte', '.ch-stage-warn', 'no screen has the stage role'],
+    ['src/lib/views/templates/TemplateEditor.svelte', '.te-fwarn', "a template's font did not load"],
+  ];
+
+  it.each(CAUTIONS)('%s %s — %s — wears the caution ink and no promise colour', (f, sel) => {
+    const r = rule(f, sel);
+    expect(r, `${sel} is gone from ${f}`).not.toBe('');
+    expect(r, `${sel} does not paint --v-caution`).toMatch(/var\(--v-caution/);
+    expect(r, `${sel} still paints the tally light`).not.toMatch(/var\(--v-amber/);
+    expect(r, `${sel} still paints the rehearsal colour`).not.toMatch(/var\(--v-amethyst/);
+  });
+
+  it('the SLIDE badge on the transport is steel, not the tally light — the wall may be clear', () => {
+    // U15 / RG-207: `.rack-mode.slide` was amber "because the plan rail is amber",
+    // on a caption that is painted whenever a plan is loaded, including over a
+    // wall that says CLEAR. A mode badge is the thing you are working on.
+    const r = rule('src/lib/views/Live.svelte', '.rack-mode.slide');
+    expect(r).not.toBe('');
+    expect(r).not.toMatch(/var\(--v-amber/);
+    expect(r).toMatch(/var\(--v-sel\)/);
+  });
+
+  it('the scanner sees a rule when there is one, and an empty string when there is not', () => {
+    expect(rule('src/app.css', '.b-check.fail .ico')).toMatch(/--v-red/);
+    expect(rule('src/app.css', '.no-such-rule-anywhere')).toBe('');
   });
 });

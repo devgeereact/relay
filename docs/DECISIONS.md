@@ -4878,6 +4878,8 @@ can date.
 
 ## 93. Amethyst promises "nothing here reaches a congregation", and the caution gap is named rather than closed (2026-09-17)
 
+> **The caution gap this section leaves open was paid on 2026-09-21 by §111**: a caution ink exists, and the five surfaces enumerated below wear it. The reading of amethyst here is unchanged.
+
 **A human may overrule this. It restates a law rather than moving one, and it deliberately leaves
 one question open instead of answering it with a colour nobody argued for.**
 
@@ -5503,7 +5505,7 @@ negative would never reach that branch.
 
 **The mark is the sign and the word, and in no law colour.** `+12:40 over`. Amber is ON AIR,
 cyan is a guess, amethyst is rehearsal, red is a failure — and a sermon running long is none
-of the four (DECISIONS §93 records that this product publishes no caution ink, and the band
+of the four (DECISIONS §93 recorded that this product published no caution ink, §111 added one, and the band
 already forbids the other three by test). The rail is red because on the preacher's own page
 red is his own bookkeeping; on a console red means something has broken. The over-running
 figure is set in the body ink at weight 600 rather than the dim one, because it is the single
@@ -6133,4 +6135,48 @@ is RG-50's option two and still needs its own design. It does not translate the 
 aliases (`LANGUAGES.md`), which are about what the preacher *says*, not what the wall reads.
 
 **Pinned by** `db::verses::second_translation::*` and `readiness.test.js` *RG-50*.
+
+## 111. Caution has its own ink, and the gap §93 named is paid rather than reargued (2026-09-21)
+
+**On the operator's approval of the Phase 2 list (F27), after the Phase 1 audit found amber spent on caution in four workspaces.**
+
+§93 read every amethyst surface and settled all but one question: caution. Its ruling was
+that this palette published no caution ink, that every other colour was already a promise,
+and that the surfaces borrowing amethyst for a warning should be *enumerated* rather than
+recoloured, so that paying the gap off would be visible and growing it would not be silent.
+`colourlaw.test.js` held that list at five.
+
+The 2026-09-21 audit found the other half of the same gap. Three surfaces had borrowed
+**amber** for a caution: the Outputs card for a screen the operator took **down**
+(`.ch-downnow`), the line saying no screen has the stage role (`.ch-stage-warn`), and the
+template editor's *font did not load* strip (`.te-fwarn`). Amber is the tally light. On the
+box that says a screen is **not** on air, it is the one colour that may never sit, and a
+volunteer reading it was being told two opposite things by one card. The `SLIDE` badge on
+Live's transport was amber for a third reason, "the plan rail is amber", on a caption painted
+whenever a plan is loaded, including over a wall that read CLEAR (U15).
+
+### The decision
+
+- **`--v-caution`** (`#c9a24a`, with `--v-caution2`, `-soft`, `-line`, `-ink`) joins
+  `src/tokens.css`. A desaturated warm ochre: warm enough to read as a warning, far enough
+  from `#ffa31a` that the two never read as one colour under a projector glow. **It carries
+  no promise about a screen.** That is its whole definition, and the reason it could not be
+  any of the existing five.
+- **Every caution wears it and nothing else does.** The five former amethyst borrowers
+  (`.b-check.warn`, `.s-netwarn`, Help's callout, `.ly-warn`, `.ms-caution`/`.ms-locked`)
+  and the three amber ones move together. The amethyst allow-list in `colourlaw.test.js`
+  shrinks by four entries and the amber one by two, and both lists may still only shrink.
+- **The `SLIDE` badge is steel.** A mode badge is the thing you are working on (§1's
+  definition of `--v-sel`), and it says nothing about what a congregation sees.
+- **What did not move:** amber, amethyst, cyan and grey mean exactly what §1 says. A
+  *failure* is still rose/red, not caution. A sermon running long on the stage page is still
+  in no law colour (§99): the over-run mark is the preacher's own bookkeeping, not a caution
+  to him.
+
+### What holds it
+
+`colourlaw.test.js` gained a caution sweep that names every caution surface with what it
+warns about, and asserts each paints `--v-caution` and neither promise colour; the token
+test asserts the hex differs from amber and amethyst. `settingssections.test.js` was
+retargeted from *"is amethyst"* to *"is the caution ink and not amber"*. RG-207.
 

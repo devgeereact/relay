@@ -528,10 +528,10 @@ input[type=color]::-moz-color-swatch{ border:0; border-radius:2px; }
    the same fact said where the word "rehearsal" does not fit, and a boot ladder
    and a rehearsal badge can never be on screen together because `.b-shell`
    renders instead of `App.svelte`.
-   What is deliberately NOT settled is CAUTION. Four surfaces spend amethyst on a
-   warning because this palette publishes no caution ink and every other colour is
-   already a promise. That gap is filed, not improvised. `colourlaw.test.js`
-   enumerates all of it.
+   CAUTION was the one question §93 left open, and §111 paid it on 2026-09-21:
+   `--v-caution` is the ink for a warning that is not a failure, it promises
+   nothing about a screen, and `colourlaw.test.js` enumerates every surface
+   that wears it. Nothing borrows amethyst or amber for a warning any more.
 
    A panic control is never placed behind a validator and never scrolled out of
    reach (CLAUDE.md rule 36, DECISIONS section 20), so these are sized to stay
@@ -896,14 +896,14 @@ input[type="checkbox"]{ accent-color:var(--v-accent); }
   /* A long humanised error must not turn one row into five lines. */
   display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
 .b-check.ok .ico{ color:var(--v-emerald); }
-/* AMETHYST, NOT CYAN. Cyan is a mode colour and means exactly one thing in this
-   app — "the AI is guessing" (a paraphrase match). A boot warning is not a
-   detection claim, and borrowing the colour for generic emphasis is how a
-   semantic palette stops being semantic. Amber is out for the same reason (it
-   is the tally light). Amethyst is the launch sequence's own accent, and what it
-   means app-wide — "not reaching the screens" — is what these warnings say. */
-.b-check.warn .ico{ color:var(--v-amethyst2); }
-.b-check.warn .note{ color:var(--v-amethyst2); }
+/* THE CAUTION INK, NOT CYAN AND NOT AMETHYST. Cyan means "the AI is guessing";
+   amber is the tally light; and amethyst, which this rule wore until 2026-09-21,
+   promises "nothing here reaches a congregation" — true at boot and beside the
+   point, because a probe that answered with a warning is a caution, not a
+   mode. This palette had no caution ink then (DECISIONS §93); it has one now
+   (§111, RG-207), and every warning that is not a failure wears it. */
+.b-check.warn .ico{ color:var(--v-caution2); }
+.b-check.warn .note{ color:var(--v-caution2); }
 .b-check.fail .ico{ color:var(--v-red); }
 .b-check.fail .note{ color:var(--v-red); }
 .b-check.running .ico, .b-check.pending .ico{ color:var(--v-amethyst); }

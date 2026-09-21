@@ -482,11 +482,13 @@ describe('acceptance 2 · the update line still reports the CHANNEL', () => {
   });
 
   // The mirror of the assertion above: `.s-netbad` → rose is pinned, but
-  // nothing pinned `.s-netwarn` → amethyst, so recolouring it to amber (rule
+  // nothing pinned `.s-netwarn`'s colour, so recolouring it to amber (rule
   // 18's colour reserved for ON AIR, on a page that is never on air) would
-  // leave every other test green.
-  it('the caution class is amethyst, not the colour reserved for ON AIR', () => {
-    expect(STYLE).toMatch(/\.s-netwarn\{[^}]*--v-amethyst/);
+  // leave every other test green. It was amethyst until 2026-09-21, borrowed
+  // because the palette had no caution ink; it wears `--v-caution` now (§111).
+  it('the caution class is the caution ink, not the colour reserved for ON AIR', () => {
+    expect(STYLE).toMatch(/\.s-netwarn\{[^}]*--v-caution/);
+    expect(STYLE).not.toMatch(/\.s-netwarn\{[^}]*--v-amber/);
   });
 });
 
@@ -940,7 +942,7 @@ describe('a Settings control says which of its outcomes happened', () => {
     expect(
       MARKUP_ONLY,
       'An inline amber in Settings. Amber means ON AIR; use .s-netbad (rose, a ' +
-        'failure) or .s-netwarn (amethyst, a caution).',
+        'failure) or .s-netwarn (the caution ink).',
     ).not.toMatch(/--v-amber/);
   });
 

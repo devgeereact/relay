@@ -371,19 +371,18 @@
      past. But amber is not the alternative to red — it means ON AIR and only
      that, and this panel is never on air (DESIGN_SYSTEM §1, rule 18).
 
-     Amethyst, the same ink `.s-netwarn` and `.b-check.warn` already wear. It is
-     DECISIONS §93's open question rather than a promise being spent: this palette
-     publishes no caution colour, every other one is already a promise, and §93
-     enumerates the surfaces that answer that gap with amethyst so that paying it
-     off is visible. This one joins that list by being COUNTED there, which is the
-     opposite of the gap growing quietly — it was always a caution, and it was
+     The caution ink, the same one `.s-netwarn` and `.b-check.warn` wear. Until
+     2026-09-21 all three borrowed amethyst, because this palette published no
+     caution colour and DECISIONS §93 chose to enumerate the borrowers rather
+     than invent one; §111 paid that gap with `--v-caution`, which promises
+     nothing about a screen. This panel was always a caution, and it was
      wearing the one colour it was not allowed to wear. */
   .ms-caution {
     font-size:var(--v-fs-b1); line-height: 1.55; margin: 0 0 8px;
     padding: 7px 9px; border-radius: 7px;
-    background: var(--v-amethyst-soft);
-    border: 1px solid var(--v-amethyst-line);
-    color: var(--v-amethyst2);
+    background: var(--v-caution-soft);
+    border: 1px solid var(--v-caution-line);
+    color: var(--v-caution2);
   }
   /* The service lock, stated once at the top of the panel rather than only as a
      tooltip per card: a row of greyed buttons with the reason behind a hover is
@@ -392,7 +391,7 @@
      holding something back on purpose, and the operator can lift it. */
   .ms-locked {
     font-size: var(--v-fs-b1); line-height: 1.55; margin: 8px 0 0;
-    color: var(--v-amethyst2);
+    color: var(--v-caution2);
   }
   .ms-live {
     font-size: 10.5px; letter-spacing: 0.04em; text-transform: uppercase;

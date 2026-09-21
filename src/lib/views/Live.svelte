@@ -4047,10 +4047,11 @@
     text-transform:uppercase; color:var(--v-faint)}
   .rack-mode{display:block; margin-top:3px;
     font-size:var(--v-fs-cap); font-weight:700; letter-spacing:.1em; color:var(--v-cyan)}
-  /* Amber here is NOT "on air": it is the plan's own colour on the plan rail
-     beside it, and SLIDE mode means the arrows walk the plan. It sits on a
-     caption, not on a claim about a screen. */
-  .rack-mode.slide{color:var(--v-amber)}
+  /* STEEL, not amber (RG-207, 2026-09-21). This badge read amber "because it is
+     the plan's own colour", on a caption painted whenever a plan is loaded —
+     including over a wall that says CLEAR. A mode badge is the thing you are
+     working on, and that is what steel is for. */
+  .rack-mode.slide{color:var(--v-sel)}
 
   /* ── THE TRANSITION BAND (L4 · docs/REBRAND.md §8 · DECISIONS §84) ────────
      These rules came out of `app.css`'s X1 block when the control left the

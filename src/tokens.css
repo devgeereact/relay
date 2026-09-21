@@ -148,6 +148,14 @@
      means one thing again. */
   --v-amethyst:#a96bf5; --v-amethyst2:#c49bfa; --v-amethyst-mute:#4a4658;
   --v-amethyst-soft:rgba(169,107,245,.16); --v-amethyst-line:rgba(169,107,245,.45);
+  /* CAUTION — a warning that is not a failure, and carries NO promise about a
+     screen. Added 2026-09-21 (DECISIONS §111, RG-207): for four months this
+     palette published no caution ink, so every warning borrowed amber or
+     amethyst and argued for it at the call site. A desaturated warm ochre,
+     deliberately far from amber's #ffa31a so the two never read as one colour
+     under a projector glow. */
+  --v-caution:#c9a24a; --v-caution2:#dcbd75; --v-caution-ink:#1f1806;
+  --v-caution-soft:rgba(201,162,74,.14); --v-caution-line:rgba(201,162,74,.42);
   /* CUED — where the transport resumes, and NOT on screen. */
   --v-grey:#8a929e; --v-grey-soft:rgba(138,146,158,.16);
 

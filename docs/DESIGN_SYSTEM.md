@@ -60,6 +60,7 @@ operator during a live service is the same class of failure as a control that li
 | 🔵 **Cyan** `#4cc9f0` | `--v-cyan` | **A guess.** A paraphrase / semantic match. Never a heard reference. |
 | ⚫ **Grey** `#8a929e` | `--v-grey` | **CUED** — this is where `→` resumes, and it is **not** on screen. |
 | 🔷 **Steel** `#5b9cf8` | `--v-sel` | **The thing you are working on.** Selection, focus, tabs, keys. Carries no promise about a screen. |
+| 🟡 **Caution** `#c9a24a` | `--v-caution` | **A warning that is not a failure**, and carries **no promise about a screen**: a screen taken down, a role unset, a font that did not load, a service lock holding something back. Never for emphasis (that is steel) and never for a failure (that is rose). DECISIONS §111. |
 
 The four promises are unchanged. The rebrand retuned their hexes and gave
 interactive chrome a colour of its own; it did not move a meaning.
@@ -76,10 +77,10 @@ The rules that follow from that:
   amethyst on fourteen other surfaces. DECISIONS §93 settles it by reading those fourteen: safe
   mode ("outputs disabled") and the launch sequence (no console, no output window, nothing on any
   wall) are the same fact said where "rehearsal" does not fit, and a boot ladder and a rehearsal
-  badge can never be on screen together. **What is deliberately NOT settled is caution.** Four
-  surfaces spend amethyst on a warning because this palette publishes no caution ink and every
-  other colour is already a promise. That gap is filed, not improvised; `colourlaw.test.js`
-  enumerates all of it and a human may overrule the ruling.
+  badge can never be on screen together. **Caution was the one question §93 left open**, and
+  it was paid on 2026-09-21 (DECISIONS §111): the palette now publishes `--v-caution`, the five
+  surfaces that borrowed amethyst for a warning and the three that borrowed amber wear it, and
+  `colourlaw.test.js` enumerates every caution surface with what it warns about.
 - **A claim card is steel, not amber, until the wall says otherwise** (RG-192, 2026-09-21). A heard suggestion wore the tally light while the Program pane read CLEAR; a heard claim is *the thing you are working on* and gets `--v-sel` on its rule, its chip and its confidence bar. `uncertain_book` gets a dashed rule so it never reads as a paraphrase.
 - **A paraphrase is cyan and shows no percentage at all.** A TF-IDF cosine is not a probability,
   and a number that lies is worse than no number (DECISIONS §21). It is never amethyst, because

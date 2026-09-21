@@ -2305,7 +2305,7 @@
      here: the alignment, because a quiet button centres its label by default
      and this one begins under the select's left edge. */
   .te-minilink{ justify-content:flex-start; padding-left:0; align-self:flex-start; }
-  .te-fwarn{ margin:0; padding:8px 10px; border:1px solid var(--v-amber-soft); border-radius:var(--v-r-sm); background:var(--v-amber-soft); color:var(--v-amber2); font-size:var(--v-fs-cap); line-height:1.45; }
+  .te-fwarn{ margin:0; padding:8px 10px; border:1px solid var(--v-caution-line); border-radius:var(--v-r-sm); background:var(--v-caution-soft); color:var(--v-caution2); font-size:var(--v-fs-cap); line-height:1.45; }
   .te-stepper{ display:flex; align-items:center; }
   .te-num{ height:32px; padding:0 8px; border-radius:var(--v-r-md); background:var(--v-bg); border:1px solid var(--v-line2); color:var(--v-txt); font-size:var(--v-fs-b2); outline:none; width:100%; box-sizing:border-box; }
   .te-num:focus{ border-color:var(--v-accent-line); }

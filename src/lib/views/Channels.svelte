@@ -2534,22 +2534,25 @@
   .ch-stage-sub{ margin:0 0 10px; font-size:var(--v-fs-b2); line-height:1.45; }
   .ch-stage-actions{ display:flex; gap:6px; flex-wrap:wrap; }
   .ch-downrow{ display:flex; gap:6px; flex-wrap:wrap; margin-bottom:6px; }
-  /* A SCREEN THE OPERATOR TOOK DOWN. Amber, not rose: nothing has failed and
-     nothing needs repairing — this is a decision somebody made, and rose here
-     would send a volunteer hunting for a broken projector. Same reading as the
-     badge `describeScreen` gives it. */
+  /* A SCREEN THE OPERATOR TOOK DOWN. The caution ink, not rose: nothing has
+     failed and nothing needs repairing — this is a decision somebody made, and
+     rose here would send a volunteer hunting for a broken projector. Same
+     reading as the badge `describeScreen` gives it. It was AMBER until
+     2026-09-21 (RG-207): the tally light, on the box saying a screen is NOT on
+     air, which is the one place that colour may never sit. */
   .ch-downnow{
     margin:0 0 8px; padding:8px 10px; border-radius:var(--r-sm, 6px);
-    background:var(--v-amber-soft); border:1px solid var(--v-amber-line);
-    color:var(--v-amber); font-size:var(--v-fs-b2); line-height:1.45;
+    background:var(--v-caution-soft); border:1px solid var(--v-caution-line);
+    color:var(--v-caution2); font-size:var(--v-fs-b2); line-height:1.45;
   }
-  /* NO STAGE SCREEN. Amber, not red: nothing has failed, a screen simply has no
-     role — a configuration answer, and red would send an operator looking for a
-     fault. Same reading as the line `stage.html` shows at the other end. */
+  /* NO STAGE SCREEN. The caution ink, not red: nothing has failed, a screen
+     simply has no role — a configuration answer, and red would send an operator
+     looking for a fault. Same reading as the line `stage.html` shows at the
+     other end. Never amber: a stage screen with no role is not on air. */
   .ch-stage-warn{
     margin:0; padding:10px 12px; border-radius:var(--r-sm, 6px);
-    background:var(--v-amber-soft); border:1px solid var(--v-amber-line);
-    color:var(--v-amber); font-size:var(--v-fs-b2); line-height:1.45;
+    background:var(--v-caution-soft); border:1px solid var(--v-caution-line);
+    color:var(--v-caution2); font-size:var(--v-fs-b2); line-height:1.45;
   }
   /* ── the preacher's screen ──
      NO LAW COLOUR ANYWHERE IN THIS BLOCK, and that is the point rather than an

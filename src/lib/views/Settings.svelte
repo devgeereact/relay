@@ -2624,7 +2624,7 @@
      matching `.b-check.warn` in the boot ladder; never amber, which means ON AIR
      and nothing else. */
   .s-netbad{ color:var(--v-rose); }
-  .s-netwarn{ color:var(--v-amethyst2); }
+  .s-netwarn{ color:var(--v-caution2); }
   /* An error the operator must read now, rather than a footnote. */
   .s-alert{ margin-top:10px; font-size:var(--v-fs-cap); line-height:var(--v-lh-cap); color:var(--v-red); }
 
