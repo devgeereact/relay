@@ -54,6 +54,8 @@
   let note = ''; // the live cue's Stage Note, for this monitor only
   // The Stage Message. Takes the whole screen until the operator clears it.
   let alert = '';
+  /** Note or alarm (DECISIONS §116). False is the safe default. */
+  let alertUrgent = false;
   // SOMETHING FOR THIS PERSON TO LOOK AT — `{ url, kind }`, or `null`.
   //
   // An announcement slide or the preacher's own deck, put on this screen by the
@@ -942,6 +944,7 @@
       // and a panic control takes it down with everything else it says (§91).
       if (!acceptsStageMessage(myRole)) return;
       alert = (m.text || '').trim();
+      alertUrgent = !!m.urgent;
     } else if (m.kind === 'stage_media') {
       // ONLY A STAGE, on exactly `stage_alert`'s argument one branch up: the hub
       // publishes to every client because it cannot address one (DECISIONS §35),
@@ -1301,11 +1304,22 @@
     </p>
   {/if}
 
-  {#if alert && !down}
-    <!-- THE WHOLE SCREEN. A preacher reads this from a platform, mid-sentence,
-         without looking for it. Outside the zone layout on purpose: an
-         instruction that a switched-off zone could hide is not an instruction. -->
+  {#if alert && !down && alertUrgent}
+    <!-- THE WHOLE SCREEN, AND ONLY WHEN IT WAS ASKED FOR (DECISIONS §116). A
+         preacher reads this from a platform, mid-sentence, without looking for
+         it. Outside the zone layout on purpose: an instruction that a
+         switched-off zone could hide is not an instruction.
+
+         It used to render for ANY message, so "wrap up in five" took the whole
+         screen exactly as an emergency would, and an alarm spent on ordinary
+         business stops being an alarm. -->
     <div class="alert {alertSize}" role="status" aria-live="assertive">{alert}</div>
+  {/if}
+  {#if alert && !down && !alertUrgent}
+    <!-- A QUIET WORD. Along the foot, over nothing, never flashing. This page
+         draws its own zones rather than a template, so there is no
+         `stage_message` layer to defer to and the strip is the placement. -->
+    <div class="quietmsg" role="status" aria-live="polite">{alert}</div>
   {/if}
 
   <!-- ══ ZONES ══ NOTHING MAY LEAVE THE SCREEN (docs/REBRAND.md §5).
@@ -2013,6 +2027,31 @@
   /* The Stage Note — confidence-monitor only, never on the main output. */
   /* The Stage Message — docs/REBRAND.md §5. The pulse is the point: a
      platform is a bright place and a flat red panel reads as part of the set. */
+  /* THE QUIET STRIP (DECISIONS §116). Not an alarm and not nothing: it sits at
+     the foot, inside the safe area, and takes no more room than it needs. No
+     animation — the alarm is the other thing, and two things that move are two
+     alarms. */
+  .quietmsg {
+    position: fixed;
+    left: env(safe-area-inset-left);
+    right: env(safe-area-inset-right);
+    bottom: calc(env(safe-area-inset-bottom) + 2vh);
+    z-index: 40;
+    margin: 0 3vw;
+    padding: 1.1vh 2.4vw;
+    border-radius: var(--s-r-md);
+    background: rgba(0, 0, 0, .62);
+    border: 1px solid var(--s-edge);
+    color: #fff;
+    font-family: var(--f-body);
+    font-size: clamp(14px, 3.4vw, 30px);
+    line-height: var(--s-lh-prose);
+    text-align: center;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
   .alert {
     /* FIXED, and above everything. This is read by somebody mid-sentence in front
        of a congregation; it does not share the screen with a clock. */

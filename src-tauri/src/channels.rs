@@ -1950,12 +1950,24 @@ pub fn stage_next<R: tauri::Runtime>(
 ///
 /// Suppressed in a rehearsal, like every other publisher here — see `stage_next`
 /// for what that cost the one time it was missed.
-pub fn stage_alert<R: tauri::Runtime>(app: &tauri::AppHandle<R>, text: Option<String>) {
+pub fn stage_alert<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    text: Option<String>,
+    urgent: bool,
+) {
     if rehearsing(app) {
         println!("rehearsal: stage_alert SUPPRESSED — nothing left the machine");
         return;
     }
-    let json = serde_json::json!({ "kind": "stage_alert", "text": &text }).to_string();
+    // ── QUIET OR URGENT, AND THE DIFFERENCE IS THE WHOLE POINT ───────────────
+    //
+    // There was one rendering: a full-bleed flashing red panel. So "wrap up in
+    // five" arrived as the same emergency as "stop, there is a medical
+    // incident", and an alarm spent on ordinary business stops being an alarm.
+    // `urgent` is false for a note, which lands as fixed text where the
+    // template puts it, and true for the panel (DECISIONS §116).
+    let json =
+        serde_json::json!({ "kind": "stage_alert", "text": &text, "urgent": urgent }).to_string();
     publish_kiosk(app, json);
     // ── THE SECOND DOOR, AND WHY IT IS NOT A WIDENING (RG-156) ───────────────
     //
@@ -1979,7 +1991,10 @@ pub fn stage_alert<R: tauri::Runtime>(app: &tauri::AppHandle<R>, text: Option<St
     // and nothing else, `OutputContent` has no stage-message field, and
     // `e2e::r5_a_word_to_the_preacher_reaches_no_congregation_channel` asserts
     // both of those about both doors.
-    let _ = app.emit("output://stage_alert", serde_json::json!({ "text": text }));
+    let _ = app.emit(
+        "output://stage_alert",
+        serde_json::json!({ "text": text, "urgent": urgent }),
+    );
 }
 
 /// PUT SOMETHING ON THE PREACHER'S SCREEN, or take it off (`None`).

@@ -10,6 +10,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+### A word to the preacher no longer sounds like an emergency
+
+Every Stage Message took the preacher's whole screen with a flashing red panel — so *"wrap up in five"* looked exactly like *"stop, there is a medical incident"*. Quick tools now has two buttons for the same words. **Send to stage** puts them up as an ordinary note, where your stage template places them, without flashing or covering the reading. **Alert** is the flashing full-screen panel, for something that must stop the service. If your stage template has no place for a message, a note appears as a small strip along the foot rather than vanishing. (DECISIONS §116)
+
 ### The Stage Timer's Size control now does something
 
 Setting **Size** on the Stage Timers layer in the template editor changed nothing: it was the one layer in Relay whose figures were sized entirely by the box they sat in. The number you type is now the size you get, and the box is only a limit — a clock still shrinks if it genuinely will not fit, so a long time like `1:30:13` can never be cut short into a shorter time that looks correct.

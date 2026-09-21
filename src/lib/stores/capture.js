@@ -2705,9 +2705,9 @@ export async function sendStageMedia(id) {
  * at the result; a failure that is swallowed leaves them believing the preacher
  * has been told something they have not.
  */
-export async function sendStageAlert(text) {
+export async function sendStageAlert(text, urgent = false) {
 const call = await invoke();
-await call('send_stage_alert', { text: text ?? null });
+await call('send_stage_alert', { text: text ?? null, urgent: !!urgent });
 // After, never before: a failed send must not leave the dock saying a word is on
 // the preacher's monitor.
 stageAlert.set(text?.trim() ? text.trim() : null);

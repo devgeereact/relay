@@ -111,6 +111,15 @@
    */
   export let stageMessage = '';
   /**
+   * IS THIS A NOTE OR AN ALARM (operator, 2026-09-21; DECISIONS §116).
+   *
+   * There was one rendering — the full-bleed flashing panel — so every word sent
+   * to a preacher arrived as an emergency. `false` is the safe default for the
+   * same reason it is on the command: a caller that did not ask for an alarm must
+   * not get one.
+   */
+  export let stageUrgent = false;
+  /**
    * THE STAGE TIMERS — supplied by the page, never by the content, exactly like
    * `stageMessage` above and for the same reason.
    *
@@ -1561,6 +1570,20 @@
   // surfaces that can hand one over already trim - this is the renderer refusing
   // to paint a full-bleed red panel over a string nobody typed.
   $: stageAlert = (stageMessage || '').trim();
+  /**
+   * DOES THIS TEMPLATE DECLARE ANYWHERE FOR A QUIET WORD TO GO?
+   *
+   * Found by reading the operator's own template rather than by reasoning:
+   * `Stage · Reading` has Background, Reading, Reference, Clock and Elapsed, and
+   * no `stage_message` layer. A quiet send that painted only into that layer
+   * would be swallowed on the one screen this was asked for — the silence RG-156
+   * was about, arriving by a different door. So the strip below renders exactly
+   * when there is nowhere declared, and a template that DOES declare a place
+   * keeps its designer's placement.
+   */
+  $: hasMessageLayer = stackLayers.some(
+    ({ L }) => L?.bind === 'stage_message' && L?.visible !== false,
+  );
   $: progSet = Array.isArray(programme) ? programme : [];
   $: progNow = now || (typeof Date !== 'undefined' ? Date.now() : 0);
   $: progRows = programmeRows(progSet, progNow);
@@ -2392,7 +2415,7 @@
        Message over a cleared screen is still a Stage Message. It comes down when
        the page stops handing one over, which `Output.svelte` does on a role
        change and on both panic controls (DECISIONS §91). -->
-  {#if stageAlert}
+  {#if stageAlert && stageUrgent}
     <div class="lalert {alertStep(stageAlert)}" role="status" aria-live="assertive">
       <!-- SHOWN ONLY UNDER REDUCED MOTION (see the stylesheet). With the pulse
            running, the panel identifies itself by behaving like nothing else on a
@@ -2402,9 +2425,42 @@
       <span class="lalert-txt">{stageAlert}</span>
     </div>
   {/if}
+
+  <!-- == A QUIET WORD WITH NOWHERE DECLARED TO GO ==
+       Not an alarm and not nothing. A template that declares a `stage_message`
+       layer paints the words where its designer put them; one that does not gets
+       this strip, because a send that reports success and shows nothing is the
+       failure RG-156 filed. It does not flash, does not fill the screen and does
+       not cover the reading — that is the whole distinction the operator asked
+       for (DECISIONS §116). -->
+  {#if stageAlert && !stageUrgent && !hasMessageLayer}
+    <div class="lmsg" role="status" aria-live="polite">{stageAlert}</div>
+  {/if}
 </div>
 
 <style>
+  /* THE QUIET STRIP. Along the foot, inside the safe area, at a size that reads
+     from a platform without taking the screen. No animation: an alarm is the
+     other control, and two things that both move are two alarms. */
+  .lmsg {
+    position: absolute;
+    left: 4cqw;
+    right: 4cqw;
+    bottom: 3cqh;
+    z-index: 3;
+    padding: 0.8cqh 1.2cqw;
+    border-radius: 0.6cqw;
+    background: rgba(0, 0, 0, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    color: #fff;
+    font-size: 3.2cqw;
+    line-height: 1.25;
+    text-align: center;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
   .stage {
     position: absolute;
     inset: 0;

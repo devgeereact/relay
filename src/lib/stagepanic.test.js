@@ -20,6 +20,12 @@
 // console correctly reported the control had succeeded.
 //
 //   npx vitest run src/lib/stagepanic.test.js
+// NOTE (2026-09-21, DECISIONS §116): a Stage Message is now a NOTE by default and
+// an ALARM only when the operator asks. Every frame below carries `urgent: true`
+// because these tests are about the alarm — the full-bleed panel, its sizing and
+// what a panic control does to it. The quiet path has its own tests in
+// `stagemessagenative.test.js`.
+
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { tick } from 'svelte';
 
@@ -99,7 +105,7 @@ const VERSE = {
   service_started_at: Date.now() - 60_000,
 };
 
-const ALERT = { kind: 'stage_alert', text: 'Wrap up — 5 minutes' };
+const ALERT = { kind: 'stage_alert', text: 'Wrap up — 5 minutes', urgent: true };
 
 /** Every panic control, by the name the hub publishes it under. */
 const PANIC = ['clear', 'black'];
@@ -169,7 +175,7 @@ describe('DECISIONS §91 · a Stage Message comes down with the screens', () => 
     await send(VERSE);
     await send(ALERT);
     await send({ kind: 'clear' });
-    await send({ kind: 'stage_alert', text: 'Two minutes' });
+    await send({ kind: 'stage_alert', text: 'Two minutes', urgent: true });
 
     expect(container.querySelector('.alert')?.textContent).toContain('Two minutes');
   });

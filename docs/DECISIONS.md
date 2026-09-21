@@ -6343,3 +6343,53 @@ would leave the next reader with three facts and no order to put them in.
 state is left behind, that nothing is styled that is not drawn, that both commands are gone from
 the bridge — and, as its own guard, that `start_countdown` is NOT.
 
+## 116. A word to the preacher is a note by default and an alarm only when asked (2026-09-21)
+
+**On the operator's instruction:** *"when a message is written in the stage message section in the
+live workspace, it should show on the stage display fixed text only; if the operator sends to
+stage or alert then it fills the screen with flashing warning red."*
+
+### The defect
+
+There was **one** rendering. Anything typed and sent became a full-bleed flashing red panel
+covering the whole stage screen. So *"wrap up in five"* arrived as the same event as *"stop,
+there is a medical incident"*, and there was no way at all to put a quiet word in front of a
+preacher.
+
+**An alarm spent on ordinary business stops being an alarm.** That is the whole cost: the control
+still works, and the person it is aimed at has learned it does not mean anything.
+
+### The decision
+
+Two verbs over one field, and the words are identical — what differs is whether the preacher is
+interrupted.
+
+- **Send to stage** — a note. It paints into the template's `stage_message` layer, where the
+  designer put it. It does not flash and does not cover the reading.
+- **Alert** — the panel, unchanged: full-bleed, flashing, above everything, for the thing that
+  must stop the service. Rose on the control that sends it, never amber (rule 18).
+
+`urgent` defaults to **false** at every door — the command, the frame, the event, the renderer
+prop and the wrapper. The safe default of a two-state control is the state that interrupts
+nobody, and a caller that did not ask for an alarm must never get one.
+
+### The fallback, which is the part that needed care
+
+It was found by reading the operator's own template rather than by reasoning. **`Stage · Reading`
+declares Background, Reading, Reference, Clock and Elapsed — and no `stage_message` layer.** A
+note that painted only into that layer would have been swallowed on the exact screen this was
+asked for: a send reporting success and showing nothing, which is the silence RG-156 filed
+arriving through a different door.
+
+So a note with nowhere declared to go gets a **modest fixed strip** along the foot — over
+nothing, never flashing, two lines at most. A template that DOES declare a place keeps its
+designer's placement. The preacher's phone draws its own zones rather than a template, so the
+strip is its placement in every case.
+
+### What holds it
+
+`stagemessagenative.test.js` — urgency is the renderer's own fact, the panel is gated on it, the
+strip renders exactly when there is nowhere declared, the strip does not animate, and both of the
+page's doors carry urgency. `stagezones`, `stagepanic` and `stagealerttemplate` now send
+`urgent: true`, because what they test is the alarm; each says so at the top of the file.
+

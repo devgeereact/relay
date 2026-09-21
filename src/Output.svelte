@@ -207,6 +207,8 @@
   // and a lobby TV would be which layers that TV's template happens to have.
   let roles = {};
   let stageMessage = '';
+  /** Note or alarm (DECISIONS §116). False is the safe default on every door. */
+  let stageUrgent = false;
   /**
    * WHERE THIS SCREEN'S CLIP IS — `{ pos_ms, dur_ms, paused }`, or `null`.
    *
@@ -945,6 +947,7 @@
       // hub does not retain it (rule 43, FRAME_VERDICTS).
       if (!acceptsStageMessage(myRole)) return;
       stageMessage = (m.text || '').trim();
+      stageUrgent = !!m.urgent;
     } else if (m.kind === 'channel_template') {
       // This screen's assigned template was changed. Filter by our channel (the
       // hub broadcasts to all; each client applies only its own) — live, no re-copy.
@@ -1138,6 +1141,7 @@
         await listen('output://stage_alert', (e) => {
           if (!acceptsStageMessage(myRole)) return;
           stageMessage = (e.payload?.text || '').trim();
+          stageUrgent = !!e.payload?.urgent;
         }),
       );
       // BOTH DOORS, for the seventh time in this file, and here the cost of one
@@ -1220,6 +1224,7 @@
   backdrop={shownBackdrop}
   audio={isDesktop}
   stageMessage={shownStageMessage}
+  {stageUrgent}
   programme={shownProgramme}
   onMedia={noteMedia}
   onMediaError={noteMediaError}

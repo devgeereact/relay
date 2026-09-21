@@ -8146,6 +8146,7 @@ fn set_default_template<R: tauri::Runtime>(
 fn send_stage_alert<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     text: Option<String>,
+    urgent: Option<bool>,
 ) -> error::Result<()> {
     const MAX: usize = 140;
     let line = text.unwrap_or_default();
@@ -8155,7 +8156,11 @@ fn send_stage_alert<R: tauri::Runtime>(
     } else {
         Some(line.chars().take(MAX).collect::<String>())
     };
-    channels::stage_alert(&app, msg);
+    // TWO VERBS, ONE FIELD (operator, 2026-09-21; DECISIONS §116). `urgent`
+    // absent is the quiet send, because a caller that does not ask for an alarm
+    // must not get one — the safe default of a two-state control is the state
+    // that interrupts nobody.
+    channels::stage_alert(&app, msg, urgent.unwrap_or(false));
     Ok(())
 }
 

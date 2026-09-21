@@ -758,10 +758,15 @@
   };
 
   let stageMsg = '';
-  const toPreacher = () => run(async () => {
+  // TWO VERBS, ONE FIELD (operator, 2026-09-21; DECISIONS §116). The words are
+  // the same; what differs is whether the preacher's screen is interrupted. A
+  // note lands as fixed text where the template puts it; an alert takes the
+  // screen and flashes. One control for each, because a modifier on a single
+  // button is a thing an operator gets wrong in front of a congregation.
+  const toPreacher = (urgent = false) => run(async () => {
     const line = stageMsg.trim();
     if (!line) return;
-    await sendStageAlert(line);
+    await sendStageAlert(line, urgent);
   });
   const clearPreacher = () => run(async () => {
     await sendStageAlert(null);
@@ -1087,13 +1092,19 @@
           bind:value={stageMsg}
           placeholder="Wrap up · Five minutes left · Stand by"
           aria-label="Stage Message — stage monitor only"
-          on:keydown={(e) => e.key === 'Enter' && toPreacher()} />
+          on:keydown={(e) => e.key === 'Enter' && toPreacher(false)} />
         <!-- `primary`, not `pri`. `pri` is not a class this stylesheet defines,
              so the one button in Quick tools that is meant to read as the
              primary action had been rendering as a plain `.r-btn` — invisible,
              because a plain button is a perfectly ordinary thing to look at. -->
         <div class="qbtns">
-          <button class="r-btn sm primary" on:click={toPreacher} disabled={busy || !stageMsg.trim()}>Send to stage</button>
+          <button class="r-btn sm primary" on:click={() => toPreacher(false)} disabled={busy || !stageMsg.trim()}
+            title="Put these words on the preacher's screen as an ordinary note. It does not flash and does not cover the reading.">Send to stage</button>
+          <!-- THE ALARM, AND IT SAYS SO. Rose, because this is the one control
+               here that interrupts a person mid-sentence — and never amber, which
+               means a congregation is looking at something (rule 18). -->
+          <button class="r-btn sm danger" on:click={() => toPreacher(true)} disabled={busy || !stageMsg.trim()}
+            title="Take the whole stage screen with a flashing red alert. For something that must stop the service.">Alert</button>
           <button class="r-btn sm ghost" on:click={clearPreacher} disabled={busy || !$stageAlert}>Take down</button>
         </div>
       </div>

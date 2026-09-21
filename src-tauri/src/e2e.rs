@@ -2697,7 +2697,7 @@ fn r5_a_word_to_the_preacher_reaches_the_stage_and_not_a_rehearsal() {
     let mut kiosk = qa::Kiosk::attach(&h);
 
     // Assert arrival FIRST, so this cannot pass by the publish path being broken.
-    super::send_stage_alert(h.clone(), Some("  Wrap up — 5 minutes  ".into())).expect("send");
+    super::send_stage_alert(h.clone(), Some("  Wrap up — 5 minutes  ".into()), None).expect("send");
     settle();
     let sent = kiosk
         .next()
@@ -2712,7 +2712,7 @@ fn r5_a_word_to_the_preacher_reaches_the_stage_and_not_a_rehearsal() {
     );
 
     // Blank clears rather than painting a red screen with nothing on it.
-    super::send_stage_alert(h.clone(), Some("   ".into())).expect("clear");
+    super::send_stage_alert(h.clone(), Some("   ".into()), None).expect("clear");
     settle();
     let cleared = kiosk.next().expect("clearing is also a message");
     assert!(
@@ -2728,7 +2728,7 @@ fn r5_a_word_to_the_preacher_reaches_the_stage_and_not_a_rehearsal() {
     )
     .expect("enter rehearsal");
 
-    super::send_stage_alert(h.clone(), Some("Rehearsing".into())).expect("send in rehearsal");
+    super::send_stage_alert(h.clone(), Some("Rehearsing".into()), None).expect("send in rehearsal");
     settle();
     assert!(
         kiosk.silent(),
@@ -2808,7 +2808,7 @@ fn r5_a_word_to_the_preacher_reaches_no_congregation_channel() {
     assert_eq!(before, 1, "the fixture's own fire did not reach the wall");
     while kiosk.next().is_some() {} // drain the fire's own frames
 
-    super::send_stage_alert(h.clone(), Some("Wrap up — 5 minutes".into())).expect("send");
+    super::send_stage_alert(h.clone(), Some("Wrap up — 5 minutes".into()), None).expect("send");
     settle();
 
     let frame = kiosk
@@ -2963,7 +2963,7 @@ fn r5_a_word_to_the_preacher_reaches_no_screen_that_is_not_a_stage() {
 
     // …AND PUBLISHING AN ALERT CHANGES NONE OF IT. Nothing about sending a word to
     // the preacher may promote a screen into being one.
-    super::send_stage_alert(h.clone(), Some("Wrap up — 5 minutes".into())).expect("send");
+    super::send_stage_alert(h.clone(), Some("Wrap up — 5 minutes".into()), None).expect("send");
     settle();
     let frame = kiosk.next().expect("the alert is published");
     assert!(frame.contains(r#""kind":"stage_alert""#), "{frame}");

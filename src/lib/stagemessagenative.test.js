@@ -171,3 +171,61 @@ describe('a native stage window is reached by a Stage Message — RG-156', () =>
     ).toBe(4);
   });
 });
+
+// ── TWO VERBS, ONE FIELD (operator, 2026-09-21; DECISIONS §116) ────────────
+//
+// "When a message is written in the stage message section it should show on the
+// stage display fixed text only; if the operator sends to stage or alert then it
+// fills the screen with a flashing warning red line."
+//
+// There was ONE rendering: the full-bleed flashing panel. So "wrap up in five"
+// arrived as the same emergency as "stop, there is a medical incident", and an
+// alarm spent on ordinary business stops being an alarm. Nothing in the product
+// could put a quiet word on a preacher's screen.
+//
+// THE FALLBACK IS THE PART THAT NEEDED CARE, and it was found by reading the
+// operator's own template rather than by reasoning. `Stage · Reading` has five
+// layers — Background, Reading, Reference, Clock, Elapsed — and NO
+// `stage_message` layer. A quiet send that only ever painted into that layer
+// would have been swallowed on the one screen this was asked for, which is the
+// silence RG-156 was about, arriving by a different door. So a quiet message
+// with nowhere declared to go gets a modest fixed strip instead of nothing.
+describe('a quiet word and an alarm are different things — DECISIONS §116', () => {
+  const RENDER = readFileSync(resolve(process.cwd(), 'src/lib/TemplateRender.svelte'), 'utf8');
+
+  it('the renderer takes urgency as its own fact, not as the presence of words', () => {
+    expect(RENDER, 'the renderer cannot tell a note from an alarm').toMatch(
+      /export let stageUrgent/,
+    );
+  });
+
+  it('the flashing panel is gated on urgency', () => {
+    // It was `{#if stageAlert}` — any words at all. The panel is the thing that
+    // must be rare, so it is the thing that must be asked for.
+    expect(RENDER).toMatch(/\{#if stageAlert && stageUrgent\}/);
+  });
+
+  it('a quiet message with no layer to land in still lands, modestly', () => {
+    // NEVER SWALLOWED. The operator's own stage template declares no
+    // `stage_message` layer, so "renders into the layer, and otherwise nowhere"
+    // would be a send that reports success and shows nothing.
+    expect(RENDER, 'no quiet strip at all').toMatch(/class="lmsg"/);
+    expect(RENDER, 'the strip is not conditional on the template lacking a place').toMatch(
+      /\{#if stageAlert && !stageUrgent && !hasMessageLayer\}/,
+    );
+  });
+
+  it('…and it does not flash, which is the whole distinction', () => {
+    const strip = /\.lmsg\s*\{[\s\S]*?\}/.exec(RENDER);
+    expect(strip, 'the strip has no styling').toBeTruthy();
+    expect(strip[0], 'the quiet strip animates — then it is a second alarm').not.toMatch(
+      /animation:/,
+    );
+  });
+
+  it('the page carries urgency from both doors', () => {
+    expect(PAGE, 'the socket door drops urgency').toMatch(/m\.urgent/);
+    expect(PAGE, 'the Tauri door drops urgency').toMatch(/payload\?\.urgent/);
+  });
+});
+

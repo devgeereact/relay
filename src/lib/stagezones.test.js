@@ -14,6 +14,12 @@
 // say — is asserted against the mounted component.
 //
 //   npx vitest run src/lib/stagezones.test.js
+// NOTE (2026-09-21, DECISIONS §116): a Stage Message is now a NOTE by default and
+// an ALARM only when the operator asks. Every frame below carries `urgent: true`
+// because these tests are about the alarm — the full-bleed panel, its sizing and
+// what a panic control does to it. The quiet path has its own tests in
+// `stagemessagenative.test.js`.
+
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -508,7 +514,7 @@ describe('the Stage Message', () => {
   for (const [text, step] of longer) {
     it(`a ${text.length}-character message is sized "${step}", not clipped`, async () => {
       const { container } = await mount(verse);
-      socket.onmessage({ data: JSON.stringify({ kind: 'stage_alert', text }) });
+      socket.onmessage({ data: JSON.stringify({ kind: 'stage_alert', text, urgent: true }) });
       await tick();
       const el = container.querySelector('.alert');
       expect(el, 'the message did not render at all').toBeTruthy();
@@ -566,7 +572,9 @@ describe('the Stage Message', () => {
     await tick();
     expect(container.querySelector('.reading')).toBeNull();
 
-    socket.onmessage({ data: JSON.stringify({ kind: 'stage_alert', text: 'Wrap up — 5 minutes' }) });
+    socket.onmessage({
+      data: JSON.stringify({ kind: 'stage_alert', text: 'Wrap up — 5 minutes', urgent: true }),
+    });
     await tick();
     const alert = container.querySelector('.alert');
     expect(alert, 'an instruction a switched-off zone could hide is not an instruction').toBeTruthy();

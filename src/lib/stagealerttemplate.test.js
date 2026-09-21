@@ -32,6 +32,12 @@
 // screen by a human.
 //
 //   npx vitest run src/lib/stagealerttemplate.test.js
+// NOTE (2026-09-21, DECISIONS §116): a Stage Message is now a NOTE by default and
+// an ALARM only when the operator asks. Every frame below carries `urgent: true`
+// because these tests are about the alarm — the full-bleed panel, its sizing and
+// what a panic control does to it. The quiet path has its own tests in
+// `stagemessagenative.test.js`.
+
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { tick } from 'svelte';
 import { readFileSync } from 'node:fs';
@@ -170,7 +176,7 @@ describe('every stage template gets the alert, not only the ones that asked for 
     // A template designed before Stage Messages existed is exactly the screen
     // this has to reach, so the panel cannot be a layer the designer opts into.
     await outputPage(2, { 1: 'main', 2: 'stage' });
-    send({ kind: 'stage_alert', text: MESSAGE });
+    send({ kind: 'stage_alert', text: MESSAGE, urgent: true });
     await settle();
     expect(panel(), 'a stage TV got the alert as ordinary text, or as nothing').toBeTruthy();
     expect(panel().textContent).toContain(MESSAGE);
@@ -179,7 +185,7 @@ describe('every stage template gets the alert, not only the ones that asked for 
 
   it('over a blank screen, because an alert is not a decoration on a slide', async () => {
     await outputPage(2, { 1: 'main', 2: 'stage' });
-    send({ kind: 'stage_alert', text: MESSAGE });
+    send({ kind: 'stage_alert', text: MESSAGE, urgent: true });
     await settle();
     expect(host.textContent).not.toContain('For God so loved');
     expect(panel()).toBeTruthy();
@@ -187,14 +193,14 @@ describe('every stage template gets the alert, not only the ones that asked for 
 
   it('it is announced assertively, for the one reader who may not be looking', async () => {
     await outputPage(2, { 1: 'main', 2: 'stage' });
-    send({ kind: 'stage_alert', text: MESSAGE });
+    send({ kind: 'stage_alert', text: MESSAGE, urgent: true });
     await settle();
     expect(panel().getAttribute('aria-live')).toBe('assertive');
   });
 
   it('and an empty message takes it away again', async () => {
     await outputPage(2, { 1: 'main', 2: 'stage' });
-    send({ kind: 'stage_alert', text: MESSAGE });
+    send({ kind: 'stage_alert', text: MESSAGE, urgent: true });
     await settle();
     expect(panel()).toBeTruthy();
     send({ kind: 'stage_alert', text: null });
@@ -210,7 +216,7 @@ describe('CONSTRAINT 1 · it never reaches a congregation screen', () => {
   ]) {
     it(`no panel on ${what}`, async () => {
       await outputPage(channel, { 1: 'main', 2: 'stage' });
-      send({ kind: 'stage_alert', text: MESSAGE });
+      send({ kind: 'stage_alert', text: MESSAGE, urgent: true });
       await settle();
       expect(panel()).toBeNull();
       expect(host.textContent).not.toContain(MESSAGE);
@@ -219,7 +225,7 @@ describe('CONSTRAINT 1 · it never reaches a congregation screen', () => {
 
   it('and a screen that stops being the stage loses it mid-service', async () => {
     await outputPage(2, { 1: 'main', 2: 'stage' });
-    send({ kind: 'stage_alert', text: MESSAGE });
+    send({ kind: 'stage_alert', text: MESSAGE, urgent: true });
     await settle();
     expect(panel()).toBeTruthy();
     send({ kind: 'channel_roles', roles: { 1: 'main', 2: 'main' } });
@@ -236,7 +242,7 @@ describe('CONSTRAINT 2 · a panic control takes it down (DECISIONS §91)', () =>
       // is what makes the two stage surfaces agree — `Stage.svelte` clears its own
       // `alert` on exactly these two kinds.
       await outputPage(2, { 1: 'main', 2: 'stage' });
-      send({ kind: 'stage_alert', text: MESSAGE });
+      send({ kind: 'stage_alert', text: MESSAGE, urgent: true });
       await settle();
       expect(panel()).toBeTruthy();
       send({ kind });
@@ -250,7 +256,7 @@ describe('CONSTRAINT 2 · a panic control takes it down (DECISIONS §91)', () =>
     // same line: this page used to HIDE the message with the layer stack and never
     // reset it, so the next fire painted a private word nobody had re-sent.
     await outputPage(2, { 1: 'main', 2: 'stage' });
-    send({ kind: 'stage_alert', text: MESSAGE });
+    send({ kind: 'stage_alert', text: MESSAGE, urgent: true });
     await settle();
     send({ kind: 'clear' });
     await settle();
@@ -264,12 +270,12 @@ describe('CONSTRAINT 2 · a panic control takes it down (DECISIONS §91)', () =>
 
   it('and the operator can say it again in one action afterwards', async () => {
     await outputPage(2, { 1: 'main', 2: 'stage' });
-    send({ kind: 'stage_alert', text: MESSAGE });
+    send({ kind: 'stage_alert', text: MESSAGE, urgent: true });
     await settle();
     send({ kind: 'black' });
     await settle();
     expect(panel()).toBeNull();
-    send({ kind: 'stage_alert', text: MESSAGE });
+    send({ kind: 'stage_alert', text: MESSAGE, urgent: true });
     await settle();
     expect(panel()).toBeTruthy();
   });
