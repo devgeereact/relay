@@ -16,10 +16,11 @@ ordered batches, each verified by running, each with its documents updated in th
 - Batch 5: RG-193 output page staleness; RG-194 wall countdown on the host clock; RG-195 lagging client re-synced and counted. Done.
 - Batch 6: RG-196 to RG-205, the audit's tier two; FIELD-2026-09-20 audit; document refresh and consolidation Done.
 - Batch 7 (on the operator's "go ahead", 2026-09-21): RG-206 countdown transport restored (§109); RG-50 a second Bible, the BSB (§110); RG-207 the caution ink (§111); the V1 audit and launch checklist folded into RELAY_GAP §24/§27 and QA_HARNESS Parts 5/6 and archived. Done.
+- Batch 8 ("go ahead with what's remaining", 2026-09-21): RG-208 timers persist and a relaunch brings them back (§112); RG-209 every build carries a marker and every service records it (S13); RG-50 option two, a licensed Bible imported from a file and deleted in two presses (§113). Done.
 
 ## Outside scope
 
-- Transcoding; an import path for a licensed Bible (RG-50 option two).
+- Transcoding (parked, needs a decoder Relay does not ship); the phone rehearsal (phase 6, needs a device); the elapsed timer (deferred with a reason, plan phase 3).
 - Cloud features, new authentication, NDI or native SDI; transcoding.
 - Remote synchronisation, publishing, merging or deployment.
 - Claiming physical-phone or projector success from source or automated tests.
