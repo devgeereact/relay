@@ -6252,3 +6252,40 @@ A church that holds a licence and has the text as a file was still told, in effe
 refusals), the `servicelock` tests for the two new entries, and `settingssections.test.js`
 (the control, the two-press delete, the bundled two undeletable from the page).
 
+## 114. A Stage Message leaves by both doors, and the role gate is what keeps it off a wall (2026-09-21)
+
+**Closing the open half of RG-156, which had been filed since 2026-09-16 and re-read three times.**
+
+`channels::stage_alert` published to the kiosk hub and emitted nothing. A screen wired as a
+`network_client` — which the seeded **Stage display** is — received a Stage Message; a screen
+wired as a **native window** and given the `stage` role received nothing at all. The console
+reported the message sent either way.
+
+**The failure direction is silence, which is why nobody had met it.** It takes a church to put a
+confidence monitor on HDMI rather than on the network, and then nothing says a word: the operator
+believes the preacher has been told something the preacher was never told. That is rule 35 seen
+from the engine end rather than the badge end — the thing that cannot detect its own failure is
+the sender.
+
+### The decision
+
+- **`stage_alert` emits `output://stage_alert` as well as publishing to the hub**, carrying
+  `text` and nothing else (`null` takes the message down).
+- **The guarantee does not move, and it never rested on that door being shut.** Neither door can
+  address one screen: the hub records nothing about who connected (§35, not reversed) and a Tauri
+  emit is app-wide. Every congregation browser source has always been *sent* this frame and has
+  always refused it. What refuses it is `channelroles::acceptsStageMessage`, and `Output.svelte`
+  now asks it at both doors **from one function** — two expressions of one rule is the thing that
+  drifts, and a guarantee kept on one of two doors is this repository's most-repeated bug.
+- **Nothing a congregation renderer binds rides on it.** `OutputContent` has no stage-message
+  field and the event carries no `content_kind`, `reference`, `template_json` or `media_url`.
+
+### What holds it
+
+`e2e::r5_a_word_to_the_preacher_reaches_no_congregation_channel` used to assert *"the Tauri door
+stays shut"* by watching the Wall. It now **watches the door**: exactly one event, carrying the
+words, carrying no congregation field, with the wall undisturbed — watched to fail with the emit
+removed. `stagemessagenative.test.js` drives the page half through the real component: a native
+stage window paints it, a native main screen does not, a blank takes it down, and both doors ask
+the one predicate.
+

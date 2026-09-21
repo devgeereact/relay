@@ -140,6 +140,7 @@ const REGISTER = [
       'src/lib/channelroles.test.js',
       'src/lib/stagealertpanic.test.js',
       'src/lib/stagemessage.test.js',
+      'src/lib/stagemessagenative.test.js',
       'src/lib/views/Channels.svelte',
       // Wave 3 — the two files that hold what a PANIC CONTROL does to a Stage
       // Message (DECISIONS §91) and to the console's mirror of it. They were

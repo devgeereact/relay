@@ -1955,8 +1955,31 @@ pub fn stage_alert<R: tauri::Runtime>(app: &tauri::AppHandle<R>, text: Option<St
         println!("rehearsal: stage_alert SUPPRESSED — nothing left the machine");
         return;
     }
-    let json = serde_json::json!({ "kind": "stage_alert", "text": text }).to_string();
+    let json = serde_json::json!({ "kind": "stage_alert", "text": &text }).to_string();
     publish_kiosk(app, json);
+    // ── THE SECOND DOOR, AND WHY IT IS NOT A WIDENING (RG-156) ───────────────
+    //
+    // This published to the kiosk hub and nothing else, so a screen wired as a
+    // `native_window` and given the `stage` role received NOTHING. The seeded
+    // `Stage display` is a `network_client`, so it took a church configuring a
+    // confidence monitor on HDMI to meet it — and then the failure is silence:
+    // the console reports a Stage Message sent, and the preacher is never told
+    // something the operator believes they have been told. That is rule 35 from
+    // the engine end rather than the badge end.
+    //
+    // **The guarantee does not move.** It never rested on this door being shut —
+    // it rests on `channelroles::acceptsStageMessage`, which `Output.svelte` asks
+    // before painting, at the kiosk door and now at this one, from ONE function.
+    // It could not rest on the door: the hub cannot address a client either
+    // (DECISIONS §35), so every congregation browser source has always been sent
+    // this frame and has always refused it. A Tauri emit reaches every webview on
+    // exactly the same terms.
+    //
+    // Nothing a congregation renderer binds rides on it: the payload is the text
+    // and nothing else, `OutputContent` has no stage-message field, and
+    // `e2e::r5_a_word_to_the_preacher_reaches_no_congregation_channel` asserts
+    // both of those about both doors.
+    let _ = app.emit("output://stage_alert", serde_json::json!({ "text": text }));
 }
 
 /// PUT SOMETHING ON THE PREACHER'S SCREEN, or take it off (`None`).

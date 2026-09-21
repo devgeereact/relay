@@ -2755,22 +2755,42 @@ fn r5_a_word_to_the_preacher_reaches_the_stage_and_not_a_rehearsal() {
 ///   - it carries no field a congregation renderer binds — no `content_kind`, no
 ///     `reference`, no `template_json`. `Output.svelte` reads `text` only under
 ///     `kind === 'content'`, so a frame with no content kind cannot paint;
-///   - **the Tauri door stays shut**. A native output window is driven by
-///     `output://content` / `clear` / `black` and nothing else, so a projector on
-///     HDMI is unreachable from here by construction — and the Wall is what proves
-///     it, because the Wall is that door.
+///   - **the Tauri door carries the same thing and no more.** This point USED to
+///     read *"the Tauri door stays shut"*, and that was true and was the defect
+///     (RG-156): a screen wired as a native window and given the `stage` role heard
+///     nothing at all, while the console reported a Stage Message sent. The door is
+///     open since 2026-09-21 and `output://stage_alert` carries `text` and nothing
+///     else — no `content_kind`, no `reference`, no `template_json` — so what a
+///     congregation renderer binds is unchanged, which is what this asserts;
+///   - **and the wall is undisturbed either way.** `Wall` watches `output://content`,
+///     so a stage alert that ever became content would move the count, and a clear
+///     or a black provoked by one would show here too.
 ///
-/// The last point is the one a source scan can never make. An alert published to
-/// the hub is broadcast to every WebSocket client including `output.html`; what
-/// stops a congregation seeing it is that the frame is not a content frame and no
-/// congregation renderer has a branch for it. A future `emit` added here would pass
-/// `r6-contracts` untouched and fail this.
+/// The last two points are the ones a source scan can never make. An alert is
+/// broadcast to every WebSocket client including `output.html` AND emitted to every
+/// webview, and neither door can address one screen — the hub records nothing about
+/// who connected (DECISIONS §35) and a Tauri emit is app-wide. What stops a
+/// congregation seeing it is `channelroles::acceptsStageMessage`, asked on the page
+/// at both doors from one function, plus the fact asserted here: the payload holds
+/// nothing a congregation template binds. `stagemessagenative.test.js` drives the
+/// page half; this drives the engine half.
 #[test]
 fn r5_a_word_to_the_preacher_reaches_no_congregation_channel() {
     let app = app();
     let h = app.handle().clone();
     let wall = Wall::watch(&h);
     let mut kiosk = qa::Kiosk::attach(&h);
+    // The native door, which this test used to prove shut by watching the Wall.
+    let alerts: std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    {
+        let sink = alerts.clone();
+        h.listen("output://stage_alert", move |e| {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(e.payload()) {
+                sink.lock().unwrap().push(v);
+            }
+        });
+    }
 
     // A real verse first, so the test is run against a wall that HAS something on
     // it — the case where a leak would be indistinguishable from the verse.
@@ -2813,7 +2833,26 @@ fn r5_a_word_to_the_preacher_reaches_no_congregation_channel() {
         );
     }
 
-    // THE OTHER DOOR. A native output window hears Tauri events and nothing else.
+    // THE OTHER DOOR, WATCHED RATHER THAN ASSUMED SHUT (RG-156). It is open now,
+    // so "the Wall did not move" is no longer the whole claim about it: the event
+    // itself has to carry nothing a congregation renderer binds.
+    assert_eq!(
+        alerts.lock().unwrap().len(),
+        1,
+        "the native door got no alert, or got more than one"
+    );
+    let payload = alerts.lock().unwrap()[0].clone();
+    assert_eq!(
+        payload.get("text").and_then(|v| v.as_str()),
+        Some("Wrap up — 5 minutes"),
+        "the native door did not carry the words: {payload}"
+    );
+    for field in ["content_kind", "reference", "template_json", "media_url"] {
+        assert!(
+            payload.get(field).is_none(),
+            "the alert event carries `{field}`, which is congregation content: {payload}"
+        );
+    }
     assert_eq!(
         wall.count(),
         before,

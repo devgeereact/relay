@@ -1122,6 +1122,24 @@
           applyRoles(e.payload?.roles);
         }),
       );
+      // BOTH DOORS, and this one was MISSING (RG-156). `channels::stage_alert`
+      // published to the kiosk hub and emitted nothing, so a screen wired as a
+      // native window and given the `stage` role heard no Stage Message at all —
+      // while the console reported one sent. The failure direction is silence,
+      // which is why nobody had met it: it takes a church to put a confidence
+      // monitor on HDMI rather than on the network, and then nothing says a word.
+      //
+      // THE SAME PREDICATE, not a second one. `acceptsStageMessage` is asked here
+      // exactly as it is asked in the socket branch above, because the two doors
+      // are answering one question and a second expression of it is the thing that
+      // drifts. No role is not a stage: a lobby TV and a streaming feed arrive
+      // with no role at all, and a filter whose default is yes is not a filter.
+      unlisten.push(
+        await listen('output://stage_alert', (e) => {
+          if (!acceptsStageMessage(myRole)) return;
+          stageMessage = (e.payload?.text || '').trim();
+        }),
+      );
       // BOTH DOORS, for the seventh time in this file, and here the cost of one
       // door is two screens in one room wearing different templates for the same
       // verse. An operator who changes a look mid-service must see it move on the

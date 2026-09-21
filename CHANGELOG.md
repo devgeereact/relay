@@ -10,6 +10,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+### A word to the preacher reaches a stage screen on HDMI
+
+If your stage screen is a **network screen**, a Stage Message always reached it. If it is a **native output window** — a confidence monitor plugged in by HDMI — it never did, and Relay told you the message had been sent. It reaches both now. Nothing changed about which screens may show one: a screen still has to be given the stage role, and the congregation screens still refuse it. (RG-156, DECISIONS §114)
+
 ### A switch that is greyed out now says why
 
 **Send crash reports** — the one control that decides whether anything leaves your computer — sat greyed out and explained nothing when Relay's engine was not answering. Every greyed-out *button* in Settings has explained itself since 2026-09-18; the switches could not, because there was no shared switch for them to go through. There is one now, and all three switches in Settings use it. The reason reaches both a mouse and a screen reader. (RG-168)
