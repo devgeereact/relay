@@ -108,7 +108,7 @@ rendered output at all.
 
 ---
 
-## 4. WYSIWYG: an audit, not a feature
+## 4. WYSIWYG: an audit, not a feature — **RUN, RG-218: clean**
 
 The architecture is already right — one renderer for the editor preview and the wall. What is
 wrong is per-binding: a layer whose declared properties the renderer overrides. Item 2 is one
