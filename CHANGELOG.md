@@ -10,6 +10,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+### The Stage Timer's Size control now does something
+
+Setting **Size** on the Stage Timers layer in the template editor changed nothing: it was the one layer in Relay whose figures were sized entirely by the box they sat in. The number you type is now the size you get, and the box is only a limit — a clock still shrinks if it genuinely will not fit, so a long time like `1:30:13` can never be cut short into a shorter time that looks correct.
+
 ### A sermon clock that has run over now flashes
 
 The preacher's Stage Timer went red when the time ran out and did nothing else. It now **flashes** the moment the time is up and for every second after it, on both the stage monitor and the preacher's phone. The steady red still marks the warning window you set — a clock that flashes for the whole of a five-minute warning is one people stop seeing. If you have asked your device for reduced motion, it glows instead of flashing rather than giving you nothing.

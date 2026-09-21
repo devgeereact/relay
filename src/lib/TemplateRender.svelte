@@ -77,6 +77,7 @@
   // `stagealert.js` is the one table that says how big a Stage Message is.
   import {
     programmeRows,
+    railSize,
     programmeCh,
     programmeCapacity,
     programmeCells,
@@ -2346,7 +2347,7 @@
         <div
           class="lprog"
           bind:this={progEls[i]}
-          style="{boxStyle(L)} --tmrs:{cells.length}; --tch:{progCh}; {railRoomVars(progH[i], progHeadH[i])} color:{L.color || '#fff'}; font-family:{fontFamOf(L.font)}; opacity:{L.opacity == null ? 1 : L.opacity};"
+          style="{boxStyle(L)} --tmrs:{cells.length}; --tch:{progCh}; --lp-sz:{railSize(L)}; {railRoomVars(progH[i], progHeadH[i])} color:{L.color || '#fff'}; font-family:{fontFamOf(L.font)}; opacity:{L.opacity == null ? 1 : L.opacity};"
           aria-label="Programme">
           {#each cells as t, j (j)}
             {#if t.more}
@@ -2529,7 +2530,22 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: min(clamp(12px, calc(92cqw / var(--tmrs) / var(--tch, 6) / 0.62), 64px), var(--lp-room, calc(var(--lp-h, 100px) * 0.62)));
+    /* WHAT THE DESIGNER ASKED FOR, CAPPED BY WHAT FITS (operator, 2026-09-21).
+       `--lp-sz` is `L.size` converted into this container by `timers.js::railSize`
+       — the Size field in the editor, which reached this layer and nothing else
+       in the product until now.
+
+       It is a `min()`, so the two caps that were the whole value before are still
+       caps: the per-column budget (`--tch`, which is what stops `1:30:13` being
+       sliced into a shorter time that still reads as valid — RG-147) and the
+       rail's own height. A figure may SHRINK to fit its box; it may not grow past
+       what was asked for. The 12px floor stays: below it nothing is readable from
+       a platform anyway, and a figure that small is a box that is too small. */
+    font-size: min(
+      calc(var(--lp-sz, 2.2) * 1cqw),
+      clamp(12px, calc(92cqw / var(--tmrs) / var(--tch, 6) / 0.62), 64px),
+      var(--lp-room, calc(var(--lp-h, 100px) * 0.62))
+    );
   }
   /* THE ONE PROSE CELL ON THIS RAIL, and it is the rail talking about itself.
      Digits sized for `MM:SS` would set `+3 more` at the size of a clock and clip

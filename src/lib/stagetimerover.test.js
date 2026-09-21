@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { tick } from 'svelte';
-import { timerRemainingMs, programmeRows } from './timers.js';
+import { timerRemainingMs, programmeRows, railSize } from './timers.js';
 import { countdownRemainingMs } from './countdown.js';
 import { formatCountdown } from './layers.js';
 import { readFileSync } from 'node:fs';
@@ -398,6 +398,61 @@ describe('both stage surfaces flash at the same moment, and it is the same momen
     expect(PHONE).toMatch(/\.tmr\.warn\s+\.tval\s*\{[^}]*color:/);
     const RENDER = readFileSync(resolve(process.cwd(), 'src/lib/TemplateRender.svelte'), 'utf8');
     expect(RENDER).toMatch(/\.lp-cell\.warn\s+\.lp-val\s*\{[^}]*color:/);
+  });
+});
+
+// ── AND THE SIZE CONTROL REACHES IT (operator, 2026-09-21) ─────────────────
+//
+// "The stage timer is not responding to text edit or sizing as I want it bigger."
+//
+// It was not. Every other text layer in this product is sized by `L.size` in
+// `cqw` and fitted by `fitLayers`. The programme rail was the ONE layer whose
+// figure size came entirely from its container — `92cqw / --tmrs / --tch / 0.62`
+// — so the Size field the editor draws for it moved nothing at all. A control
+// wired to nothing is worse than an absent one: the operator drags it, sees no
+// change, and concludes the application is broken rather than that one property
+// was never connected.
+//
+// THE UNIT CONVERSION IS THE WHOLE TRICK, and it is why this could not be a
+// one-line change. `L.size` is a share of the SLIDE's width, because that is what
+// `cqw` means for every other layer. But `.lprog` declares `container-type:
+// inline-size`, so a `cqw` written inside it is a share of the RAIL. A rail 40%
+// of the screen wide would have rendered `6cqw` at 2.4% of the screen — smaller
+// than before, on the control that was asked to make it bigger. So the ratio is
+// computed where both numbers are known and handed over as a plain number.
+describe('the Size control reaches the programme rail', () => {
+  const RENDER = readFileSync(resolve(process.cwd(), 'src/lib/TemplateRender.svelte'), 'utf8');
+
+  it('the rail is handed its layer’s declared size, converted into its own container', () => {
+    expect(RENDER, 'the rail never receives the layer size').toMatch(/--lp-sz:/);
+    // Converted, not passed through: the multiplier is `size * 100 / w`.
+    expect(RENDER, 'the size is handed over in the wrong container’s units').toMatch(
+      /--lp-sz:\$\{[^}]*railSize\(L\)[^}]*\}|railSize\(L\)/,
+    );
+  });
+
+  it('and the declared size is what it asks for, with the container as the CAP', () => {
+    // A figure may SHRINK to fit its box — RG-147's sliced `1:30:13` is a lie a
+    // preacher cannot detect, so the caps stay — but it may never grow past what
+    // the designer asked for, which is what "bigger" has to mean.
+    const rule = /\.lp-val\s*\{[\s\S]*?font-size:([^;]*);/.exec(RENDER);
+    expect(rule, 'the figure lost its font-size').toBeTruthy();
+    expect(rule[1], 'the declared size is not in the calculation').toMatch(/--lp-sz/);
+    expect(rule[1], 'the container caps were dropped — a long clock can be sliced again').toMatch(
+      /--tch|--lp-room/,
+    );
+    expect(rule[1], 'it is not a min(), so the declared size can overflow the box').toContain('min(');
+  });
+
+  it('railSize converts a share of the SCREEN into a share of the RAIL', () => {
+    // The arithmetic, asserted rather than trusted: a 6cqw figure in a rail that
+    // is half the screen wide is 12cqw of that rail.
+    expect(railSize({ size: 6, w: 50 })).toBeCloseTo(12, 5);
+    expect(railSize({ size: 6, w: 100 })).toBeCloseTo(6, 5);
+    // A missing or nonsense width must not divide by zero and blank the rail.
+    expect(Number.isFinite(railSize({ size: 6, w: 0 }))).toBe(true);
+    expect(Number.isFinite(railSize({ size: 6 }))).toBe(true);
+    expect(Number.isFinite(railSize({}))).toBe(true);
   });
 });
 

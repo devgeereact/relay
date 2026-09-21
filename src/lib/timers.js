@@ -138,6 +138,32 @@ export function timerRemainingMs(t, nowMs, { past = false } = {}) {
  * @param {Array} timers rows as the `timer` hub frame carries them
  * @param {number} nowMs
  */
+/**
+ * THE DECLARED FIGURE SIZE, CONVERTED INTO THE RAIL'S OWN CONTAINER.
+ *
+ * `L.size` is a share of the SLIDE's width, because that is what `cqw` means for
+ * every other text layer in the product. `.lprog` declares
+ * `container-type: inline-size`, so a `cqw` written inside it is a share of the
+ * RAIL. Those are different numbers whenever the rail is not full width, and the
+ * difference runs the wrong way: a rail 40% of the screen wide would render
+ * `6cqw` at 2.4% of the screen — SMALLER, on the control an operator reached for
+ * to make it bigger.
+ *
+ * rail width = w% of screen, so 1cqw(rail) = w/100 cqw(screen), so a figure of
+ * `size` screen-units is `size * 100 / w` rail-units.
+ *
+ * A missing, zero or nonsense width falls back to full width rather than
+ * dividing by zero: the wrong size is a bad look, and `NaN` is a blank rail on a
+ * preacher's monitor.
+ */
+export function railSize(layer) {
+  const size = Number(layer?.size);
+  const w = Number(layer?.w);
+  const base = Number.isFinite(size) && size > 0 ? size : 2.2;
+  const width = Number.isFinite(w) && w > 0 ? w : 100;
+  return (base * 100) / width;
+}
+
 export function programmeRows(timers, nowMs) {
   const list = Array.isArray(timers) ? timers : [];
   return list
