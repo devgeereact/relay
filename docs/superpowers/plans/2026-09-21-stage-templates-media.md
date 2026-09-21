@@ -1,6 +1,9 @@
 # Stage, templates, outputs and media — the operator's brief of 2026-09-21
 
-**Status: plan. Nothing here is built yet.** Written from the operator's brief and from reading
+**Status: BUILT, 2026-09-21. Eleven of twelve items complete; see each section for its RG row.**
+The one thing outstanding is the rest of item 10 — scrub and volume, which are absent on every
+surface and are recorded as absent rather than claimed. What follows is the plan as written,
+annotated with what each item became. Written from the operator's brief and from reading
 the code, not from assumption — every claim below says whether it was VERIFIED in the tree or is
 still UNCHECKED, because three of the last five things filed as broken turned out to be already
 fixed and one turned out to be a different defect from the one reported.
