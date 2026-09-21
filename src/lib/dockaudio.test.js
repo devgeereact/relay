@@ -436,6 +436,61 @@ describe('C2 · the audio card wears icon toggles, with the switch semantics int
     }
   });
 
+  // ── THE TWO TOGGLES LINE UP (operator, 2026-09-21) ───────────────────────
+  //
+  // They did not. Each `.audrow` was its own flex container, and the SENS row
+  // carries one cell the MIC row does not: `.sensv`, the figure `50`. With a 7px
+  // gap that is 25px of content sitting between the slider and the switch, so the
+  // ARMED toggle sat 25px to the right of the LISTEN toggle — two instances of one
+  // instrument, on two lines of one card, not in one column.
+  //
+  // Two flex rows cannot be made to agree by arithmetic: any fix that reserves
+  // 25px somewhere is a number that has to be re-derived the moment the figure
+  // reaches three digits or the gap changes. A grid is the thing that makes a
+  // column a column, so the rows share ONE, and the picker spans the cell the
+  // figure occupies rather than a placeholder being invented for it.
+  //
+  // WHAT THIS FILE CANNOT SEE, said so it is not read as more: jsdom lays nothing
+  // out, so nothing here measures a pixel. What it can hold is the STRUCTURE that
+  // makes alignment a property of the layout rather than a coincidence — one grid,
+  // both rows in it, and a named column for the switch.
+  describe('the two icon toggles are in one column, not two rows that nearly agree', () => {
+    const style = () => codeOnly(src.slice(src.indexOf('<style>')));
+    const rule = (sel) => {
+      const at = style().indexOf(`\n  ${sel} {`);
+      return at === -1 ? '' : style().slice(at, style().indexOf('}', at));
+    };
+
+    it('the rows sit in ONE grid, so there is one switch column rather than two', () => {
+      const markup = codeOnly(src);
+      // A single container holding both rows. Two sibling grids would size their
+      // own columns independently and land in the same place only by luck.
+      const wrap = markup.indexOf('<div class="audgrid">');
+      expect(wrap, 'the two audio rows are not in a shared grid').toBeGreaterThan(-1);
+      const rows = markup.slice(wrap, markup.indexOf('</div>', markup.lastIndexOf('class="dcap detl"')));
+      expect((rows.match(/<div class="audrow">/g) ?? []).length, 'both rows must be inside it').toBe(2);
+      expect(rule('.audgrid'), 'the wrapper is not a grid').toMatch(/display:\s*grid/);
+    });
+
+    it('and the rows are transparent to it, so their cells are the grid’s cells', () => {
+      // `display: contents` is what lets a row keep its name in the markup while
+      // its children become the grid's own items. Without it the grid has two
+      // items — the rows — and the columns inside them are independent again,
+      // which is the defect wearing a wrapper.
+      expect(rule('.audrow'), 'a row is still its own flex container').toMatch(/display:\s*contents/);
+      expect(rule('.audrow'), 'a row still lays its own children out').not.toMatch(/display:\s*flex/);
+    });
+
+    it('the mic picker spans the figure’s column, so no empty cell is invented for it', () => {
+      // The MIC row has four cells and the SENS row five. The honest way to make
+      // four occupy five columns is to let the flexible one span, not to add a
+      // spacer element that exists only to be empty.
+      expect(rule('.micpick'), 'the picker does not span the value column').toMatch(
+        /grid-column:\s*2\s*\/\s*span\s*2/,
+      );
+    });
+  });
+
   it('and spends no amber on either of them', () => {
     // Rule 18, on the row the switch used to be on. Comments stripped: the
     // reason this is not amber is written beside it, and a scanner that reads

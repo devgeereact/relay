@@ -841,6 +841,19 @@
            The device is fixed for the life of a capture, because that is what
            `start_capture` takes — so the picker is disabled while listening
            rather than silently doing nothing. -->
+      <!-- ONE GRID FOR BOTH ROWS (operator, 2026-09-21). They were two flex rows,
+           and the SENS row carries one cell the MIC row does not — `.sensv`, the
+           figure `50` — so with a 7px gap the ARMED toggle sat 25px right of the
+           LISTEN toggle. Two instances of one instrument, on two lines of one
+           card, not in one column.
+
+           A grid is what makes a column a column. The rows keep their names and
+           become `display: contents`, so their children are the grid's own items
+           and the switch lands in one column by construction rather than by two
+           rows happening to add up the same. Nothing was measured or reserved:
+           an arithmetic fix would need re-deriving the moment the figure reaches
+           three digits. -->
+      <div class="audgrid">
       <div class="audrow">
         <span class="dcap">Mic</span>
         <select
@@ -954,6 +967,7 @@
           </svg>
         </button>
         <span class="dcap detl">{$detectionOn ? 'armed' : 'off'}</span>
+      </div>
       </div>
     </div>
   </div>
@@ -1288,14 +1302,41 @@
     position: absolute; left: 8px; top: 5px; font-size: var(--v-fs-kind);
     letter-spacing: .09em; color: var(--v-faint); pointer-events: none;
   }
-  .audrow { display: flex; align-items: center; gap: 7px; flex: 0 0 auto; }
-  .audrow :global(input[type='range']) { flex: 1 1 auto; min-width: 0; }
+  /* FIVE COLUMNS, AND THE SWITCH IS THE FOURTH.
+     caption · the flexible control · the figure · the toggle · the word.
+     `minmax(0, 1fr)` rather than `1fr` so a long device name truncates inside
+     the column instead of widening it — the same reason `.micpick` carries
+     `min-width: 0` below. */
+  .audgrid {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+    align-items: center;
+    gap: 7px;
+    flex: 0 0 auto;
+  }
+  /* The rows keep their NAME — the markup still reads as two rows and
+     `dockaudio.test.js` still slices them by it — and give up laying their own
+     children out. Without this the grid has two items (the rows) and the columns
+     inside each are independent again, which is the misalignment wearing a
+     wrapper. */
+  .audrow { display: contents; }
+  /* EXPLICIT, not left to `justify-self: stretch`. A grid item with `width: auto`
+     does stretch, but a form control's intrinsic width has been the exception in
+     more than one engine, and this row is the one where a slider that sized
+     itself to ~170px instead of the column would move the toggle beside it —
+     which is the whole defect this grid exists to end. Nothing in jsdom can see
+     that, so it is stated rather than assumed. */
+  .audgrid :global(input[type='range']) { width: 100%; min-width: 0; }
   /* The device names a church actually has are long ("MacBook Pro Microphone",
      "Scarlett 2i2 USB"). It takes the row's spare width and truncates rather than
      pushing the switch off the card's edge. Width only — the height is the
      shared control's, which is the whole point of the four-row column here:
      select · slider · switch all land on one line. */
-  .micpick { flex: 1 1 auto; min-width: 0; }
+  /* FOUR CELLS IN A FIVE-COLUMN ROW. The MIC row has no figure, so the picker
+     spans the flexible column AND the figure's — which is the honest way to make
+     four occupy five. The alternative is an empty span that exists only to be
+     empty, and a spacer is furniture the next person has to work out. */
+  .micpick { grid-column: 2 / span 2; width: 100%; min-width: 0; }
   /* ── THE ICON TOGGLE (C2, operator instruction 2026-09-14) ────────────────
      "I will prefer to have an icon toggle button rather than having this big
      switch on the audio section." The 38x21 pill is a good instrument in a
@@ -1337,8 +1378,13 @@
     flex: 0 0 auto; font-family: var(--f-mono); font-size: var(--v-fs-cap);
     letter-spacing: var(--v-tr-caps); text-transform: uppercase; color: var(--v-faint);
   }
-  .dcap.detl { min-width: 34px; }
-  .sensv { flex: 0 0 auto; min-width: 18px; text-align: right; font-size: var(--v-fs-cap); color: var(--v-dim); }
+  /* The grid sizes this column to the widest word in it (`LISTEN`), so both
+     captions already start on one edge and the hand-set width that used to do
+     that job would now only push the column wider than its content. */
+  .dcap.detl { text-align: left; }
+  /* Column three. `min-width` keeps a single digit from collapsing the column and
+     moving the toggle beside it; the column grows on its own for three. */
+  .sensv { min-width: 18px; text-align: right; font-size: var(--v-fs-cap); color: var(--v-dim); }
   .db { flex: 0 0 auto; font-size: var(--v-fs-cap); color: var(--v-dim); }
   .vad {
     flex: 0 0 auto;
