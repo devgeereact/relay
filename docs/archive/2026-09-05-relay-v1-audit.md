@@ -1,3 +1,5 @@
+> **Archived 2026-09-21.** Historical, frozen at its 2026-09-05 revision. The decision and its reasoning live in `docs/qa/RELAY_GAP.md` §24, the launch conditions beside them, the scorecards and the brief disposition in `docs/qa/QA_HARNESS.md` Parts 5 and 6, and the launch checklist in `RELAY_GAP.md` §27. Nothing here is edited except the paths of citations, retargeted so every link still resolves. Blocker 5 (the updater) closed on 2026-09-05 as the text says; blocker 1 recurred on 2026-09-06 and 2026-09-20 (RG-115, RG-178, RG-179).
+
 # Relay — V1 Production Audit
 
 **2026-09-03, revised 2026-09-05 · branch `audit/v1-production-sweep` · version `0.1.0-4`.**
@@ -19,9 +21,9 @@ names the instrument that would answer it. Nothing is scored around.
 
 > **This document owns exactly three things**: the production decision (§1), the scorecards
 > (§15), and the disposition of every phase of both briefs (§17). Everything else it cites.
-> [qa/RELAY_GAP.md](qa/RELAY_GAP.md) remains the `RG-` register and is where findings are filed;
-> [qa/QA_HARNESS.md](qa/QA_HARNESS.md) §0 remains the register of counts;
-> [qa/audits/](qa/audits/) remains the frozen evidence. A second copy of any of those is how
+> [qa/RELAY_GAP.md](../qa/RELAY_GAP.md) remains the `RG-` register and is where findings are filed;
+> [qa/QA_HARNESS.md](../qa/QA_HARNESS.md) §0 remains the register of counts;
+> [qa/audits/](../qa/audits/) remains the frozen evidence. A second copy of any of those is how
 > four documents came to disagree.
 
 ---
@@ -59,7 +61,7 @@ decision), [§6](#6-the-fix-process-start-to-finish) (what was actually changed)
 > 01–42 appears exactly once, that §17.2's ranges cover the Relay brief's sections 00–105 with no
 > gap and no overlap, that each scorecard's rows add up to the total printed beside it, that every
 > fix in §6 says what it changed and how it was proved, and that the counts quoted here match
-> [qa/QA_HARNESS.md](qa/QA_HARNESS.md) §0 rather than restating them. **Two of the three scorecard
+> [qa/QA_HARNESS.md](../qa/QA_HARNESS.md) §0 rather than restating them. **Two of the three scorecard
 > totals were wrong in the first draft** — which is why the test exists rather than a promise to
 > be careful.
 
@@ -132,7 +134,7 @@ states.
 its own: seven agents rebuilt six workspaces and the shell against the settled prototype, and every
 count in this section moved because of it. These are the assembled tree's, measured after the last
 merge — **not one of the seven agents' own suite totals survived it** — and they are what
-[`qa/QA_HARNESS.md`](qa/QA_HARNESS.md) §0 now carries. **The verdict does not move, and nothing
+[`qa/QA_HARNESS.md`](../qa/QA_HARNESS.md) §0 now carries. **The verdict does not move, and nothing
 here is evidence about a service**: the wave changed what an operator sees and touches, not what
 the router may do, and it measured no word error rate in any language.
 
@@ -165,7 +167,7 @@ they affect rather than here.
 **What did not run, and why.** There is no church, no projector, no congregation, no second
 operator, and no code-signing certificate on this machine. There is no recording of a real
 sermon — so **word error rate remains unmeasured in every language**, which is the sentence
-[LANGUAGES.md](LANGUAGES.md) has carried since the beginning and this audit does not soften it.
+[LANGUAGES.md](../LANGUAGES.md) has carried since the beginning and this audit does not soften it.
 Windows was not built or run: CI covers it, this machine cannot.
 
 **One thing about method that mattered more than any single finding.** The pass before this one
@@ -183,7 +185,7 @@ a guard that fails when the scanner itself stops seeing anything.
 
 > ## NOT READY for general release · READY WITH CONDITIONS for a supervised pilot
 
-Unchanged in verdict from [qa/RELAY_GAP.md](qa/RELAY_GAP.md) §24 (2026-08-31), re-verified on
+Unchanged in verdict from [qa/RELAY_GAP.md](../qa/RELAY_GAP.md) §24 (2026-08-31), re-verified on
 2026-09-03, and **re-verified again on 2026-09-05 after a pass that closed twenty register rows
 and found two P0s.** The verdict did not move, and the reason it did not is the whole argument
 of this document: **everything closed since was closed by reading and by tests, and the five
@@ -246,7 +248,7 @@ old dead address — but the next one can, and that is the last time that senten
 that release would carry are unsigned on both platforms.**
 
 **And the one this pass removed from the informal list**: a church now has a way to **erase a
-recorded sermon** from inside Relay. Until 2026-09-03, [PRIVACY.md](PRIVACY.md)'s only answer to
+recorded sermon** from inside Relay. Until 2026-09-03, [PRIVACY.md](../PRIVACY.md)'s only answer to
 *"remove that"* was *delete the folder* — every service ever recorded, or none. Relay's most
 sensitive holding is verbatim text of what a preacher said to a congregation, every document
 here promises it never leaves the device, and none of them could say how to get rid of it.
@@ -474,7 +476,7 @@ shape of the original defect in its doc comment.
 
 **Problem.** `transcripts.text` is verbatim, near-real-time text of what a preacher said to a
 congregation, and `detections.heard_text` is the exact sentence behind every verse that reached
-a wall. [PRIVACY.md](PRIVACY.md)'s only answer to *"remove that"* was **delete the folder** —
+a wall. [PRIVACY.md](../PRIVACY.md)'s only answer to *"remove that"* was **delete the folder** —
 quit Relay, find `~/Library/Application Support/com.relay.app`, and destroy every service ever
 recorded, or keep all of them.
 
@@ -866,7 +868,7 @@ physical screen. Those need a certificate, a second machine, and a projector.
 ## 9. Security audit
 
 **PASS, within a threat model that is written down and deliberately narrow.**
-[SECURITY.md](SECURITY.md) carries T1–T10, and two of its rows are honest absences rather than
+[SECURITY.md](../SECURITY.md) carries T1–T10, and two of its rows are honest absences rather than
 mitigations.
 
 | | Finding |
@@ -939,8 +941,8 @@ that stopped answering, sheds counted and shown.
 
 ## 12. Performance and long-service behaviour
 
-Quoted from [qa/audits/PERF-2026-08-24.md](qa/audits/PERF-2026-08-24.md) and
-[PERF-MODELS-2026-08-30.md](qa/audits/PERF-MODELS-2026-08-30.md); **not re-measured this
+Quoted from [qa/audits/PERF-2026-08-24.md](../qa/audits/PERF-2026-08-24.md) and
+[PERF-MODELS-2026-08-30.md](../qa/audits/PERF-MODELS-2026-08-30.md); **not re-measured this
 session**, and nothing this pass changed touches the decode path.
 
 | Target | Measured | Verdict |
@@ -1096,7 +1098,7 @@ Stated plainly, because a risk that is not named is a risk that is being hidden.
    published through the promote workflow, and **no update has ever been watched installing** —
    nobody has taken a machine on an older version and watched Relay fetch, verify and apply one.
    The builds already in the world carry the old dead address and can never be reached at all. That is the row in
-   [qa/LAUNCH_CHECKLIST.md](qa/LAUNCH_CHECKLIST.md) §5 that still reads ⬜, and it needs two
+   [the launch checklist](2026-09-15-launch-checklist.md) §5 that still reads ⬜, and it needs two
    versions and a laptop, not a commit.
 6. **Windows.** Not built or run in this session. CI covers compile, format, lint and tests;
    nothing here covers behaviour.
@@ -1275,7 +1277,7 @@ Relay and a church is evidence, a certificate and a published release — not co
 > ### NOT READY FOR PRODUCTION (general release)
 > ### READY WITH CONDITIONS (supervised pilot — two churches, named operators, every service watched by somebody who can take the wall back by hand)
 
-The conditions are [qa/RELAY_GAP.md](qa/RELAY_GAP.md) §24's five, unchanged, plus the two this
+The conditions are [qa/RELAY_GAP.md](../qa/RELAY_GAP.md) §24's five, unchanged, plus the two this
 audit added on 2026-09-03 and two more on 2026-09-05:
 
 6. **Watch one update install, once, before handing a build to a church.** Blocker 5 is closed —

@@ -27,7 +27,7 @@ beside it in this session; the 2026-09-17 block that follows is kept as history.
 | Count | Value | Command |
 |---|---|---|
 | Rust tests | **1005 passed / 0 failed / 17 ignored** | `cd src-tauri && cargo test` |
-| Frontend tests | **3427 passed, 230 files** | `npx vitest run` |
+| Frontend tests | **3426 passed, 230 files** | `npx vitest run` |
 | `e2e.rs` tests | **104 passed / 1 ignored** (the ignored one is `stt::e2e_latency`, matched by substring) | `cd src-tauri && cargo test e2e` |
 | Registered commands | **164** | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
 | qa-inventory | 164/164 addressed, 0 handlerless, 0 unnamed, 1 intentional orphan (`__r6probe.svelte`) | `node scripts/qa-inventory.mjs` |
@@ -111,7 +111,7 @@ do: a section headed *the register of counts* whose current entry has none sends
 back to the stale block underneath it.
 
 **The orphan is unchanged and deliberate.** `src/lib/__r6probe.svelte` is the test probe
-`docs/RELAY_V1_AUDIT.md` already names, excluded by name from `r6-contracts.test.js`'s own walk.
+the V1 audit (`docs/archive/2026-09-05-relay-v1-audit.md`) already names, excluded by name from `r6-contracts.test.js`'s own walk.
 
 **Read the qa-inventory line sceptically, as the wave 3 block below already says.** It reports
 every command addressed because it traces to a WRAPPER, which is the weaker of the two tests;
@@ -267,7 +267,7 @@ register exists for. None of the three was a broken behaviour and all three were
 each.
 
 qa-inventory's one orphan component, `src/lib/__r6probe.svelte`, is the pre-existing, deliberate
-test probe `docs/RELAY_V1_AUDIT.md` already names — unchanged by either wave.
+test probe the V1 audit (`docs/archive/2026-09-05-relay-v1-audit.md`) already names — unchanged by either wave.
 
 Neither suite failed. The counts above are what each runner's own summary line reported.
 
@@ -318,7 +318,7 @@ count that disagrees with its own tree is precisely what this section exists to 
 correction is worthless if the next reader cannot see which figure moved.
 
 qa-inventory's one orphan component, `src/lib/__r6probe.svelte`, is the pre-existing,
-deliberate test probe `docs/RELAY_V1_AUDIT.md` already names — unchanged by this wave, and
+deliberate test probe the V1 audit (`docs/archive/2026-09-05-relay-v1-audit.md`) already names — unchanged by this wave, and
 already excluded by name from `r6-contracts.test.js`'s own walk of `src/`.
 
 Neither suite failed. The counts above are what each runner's own summary line reported.
@@ -387,7 +387,7 @@ new ones (`defaulttemplate.test.js`, `fitcoverage.test.js`, `showsregister.test.
 added. That pair is what the replaced block recorded as **-1**; it had only seen one of the two
 tracks, which is the same reason every other figure in it was short. `e2e.rs` and qa-inventory's handlerless/unnamed counts are unchanged.
 qa-inventory's one orphan component, `src/lib/__r6probe.svelte`, is the pre-existing, deliberate
-test probe `docs/RELAY_V1_AUDIT.md` already names — not something this wave introduced, and
+test probe the V1 audit (`docs/archive/2026-09-05-relay-v1-audit.md`) already names — not something this wave introduced, and
 already excluded by name from `r6-contracts.test.js`'s own walk of `src/`.
 
 Neither suite failed on either tree. Every count above is what that runner's own summary line
@@ -1223,3 +1223,178 @@ an assertion whose expected-value list was never checked by a human is a test th
 whatever happened to be true the day it was generated.
 
 Then the agents, for the things a test cannot enumerate in advance.
+
+---
+
+
+> **Brought here from the V1 production audit on 2026-09-21** (`docs/archive/2026-09-05-relay-v1-audit.md` §15, scored 2026-09-03 and re-scored 2026-09-05). **These figures are frozen at that date and are not re-scored by a commit**: every row that could move is capped by a room, a purchase or a publishing action, which is the audit's own argument. The sums are held by `v1audit.test.js`, which reads this file. The `§N` citations inside the rows refer to the archived audit's own sections.
+
+# Part 5 · The scorecards
+
+Three, because the briefs ask for three and because a single average hides exactly the thing
+that matters.
+
+### 15.1 PWA master audit — 84/100
+
+Scored on the brief's own ten axes. **Where a phase is structurally N/A for a desktop
+application, the axis is scored on the equivalent Relay actually has**, and the row says which.
+
+| Axis | Score | Why |
+|---|---|---|
+| Functionality | **9**/10 | Every rendered control reaches a real command; 0 dead controls; the fire path is covered end to end. −1 for the import path that could kill the process until this pass |
+| Security | **9**/10 | ▲ +1, 2026-09-05. RG-85 and RG-97 are closed, and three more with them: the kiosk hub refuses a page Relay did not serve (RG-108), an imported SVG is no longer an active document (RG-107), and `cargo audit` — which had never been run — reports **0 vulnerabilities** with both audits now in CI. −1 for the unauthenticated control plane, which is a recorded decision and still an exposure, and because an `Origin` is a claim a browser makes honestly and other software can forge |
+| PWA | **6**/10 | Scored as *distribution and installability*: a signed installer, an updater, an offline bundle on a USB stick. −4 because the updater endpoint 404s and neither platform is code-signed |
+| Offline | **10**/10 | Not approximated — it is the resting state. Nothing on the live path touches a network |
+| Performance | **8**/10 | 139 ms median first partial, 0 dropped partials, bounded memory. −2 because mic→screen p95 has never been measured in a room |
+| Accessibility | **9**/10 | ▲ +1, 2026-09-05. Six *"it is on the screens"* lines were silent to a screen reader and are now announced; five controls rendered `[object Object]`; a failed save was shown in success green with no role. −1, and it does not move until somebody does it: **no screen-reader run and no keyboard-only pass by a person** |
+| Responsiveness | **8**/10 | Scored as *output scaling*: `cqw` templates render identically at any output size, with a measured fit floor. Console breakpoints are N/A |
+| SEO | **N/A** | There is no public surface, no crawler, and nothing indexable. Scored out of the total rather than as a zero — see the note below |
+| UX | **9**/10 | ▲ +1, 2026-09-05. RG-95 is closed across eleven surfaces: a list that failed to load no longer tells an operator to redo work they have already done. −1 because nobody but the author has operated any of it |
+| Reliability | **8**/10 | Service lock, heartbeats, pre-air validation, crash recovery that refuses to restore on-air-ness. −2 because one wrong verse reached a real congregation and one service is one sample |
+
+**76 of a possible 90 → 84/100 normalised.** SEO is excluded from the denominator rather than
+scored 0/10: a private local application has no indexable surface, and awarding it zero would
+report a failure where there is no requirement. That is stated rather than buried.
+
+### 15.2 Relay production score — 81/100
+
+| Area | Score | Note |
+|---|---|---|
+| Audio | **8**/10 | Levels learned not assumed; device fallback; debug recorder. −2: queues were unbounded until this pass, and a real room is still the only proof |
+| Transcription | **6**/10 | Works, locally, offline, in four languages. **WER unmeasured in all of them** |
+| Transcription latency | **9**/10 | Measured properly, on one clock, at the speed of speech |
+| Offline operation | **10**/10 | |
+| Synchronisation | **N/A → 10** | There is no second writer. Scored full because the *absence* is correct, not because it was built |
+| Scripture detection | **9**/10 | 100 % recall, 0 wrong verses on 74 labelled cases, through the real router |
+| Scripture validation | **8**/10 | Only `Direct` may auto-fire, enforced before thresholds. −2 for RG-32: a context-resolved bare verse still carries a `Direct` label it did not earn |
+| Presentation routing | **9**/10 | One choke point, one validator, one renderer |
+| OBS | **8**/10 | Channel-keyed URL, live template swap, transparent output for keying |
+| ATEM | **5**/10 | Probed and reported, never driven. Bridging hardware is the recorded strategy |
+| ProPresenter | **6**/10 | Import works. There is no live interop and none is claimed |
+| Recovery | **9**/10 | Position restored, on-air-ness deliberately not |
+| Live-service UX | **9**/10 | ▲ +1 — see the UX row in 15.1 |
+| PWA / distribution | **6**/10 | The 404 endpoint and the absent certificates |
+| Performance | **8**/10 | |
+| Accessibility | **9**/10 | ▲ +1 — see 15.1 |
+| Security | **9**/10 | ▲ +1 — see 15.1 |
+| Data integrity | **8**/10 | ▼ **−1, and it is the only score that went DOWN.** The previous 9 was awarded without knowing that the corpus repair it was scoring **had never run on any path**: it was placed on the `user_version == 0` branch that no shipped install is on, and on that branch it opened a transaction inside one and errored out of `migrate` altogether (RG-102, RG-103). Both are fixed, with tests that drive the real `migrate` on a v2 database and assert the DATA rather than the schema — but a 9 for a repair nobody had run was a number about a hope. Seven smaller findings are filed and deliberately unfixed (RG-113), including no `busy_timeout` on a file two Relay windows can open |
+| Observability | **9**/10 | Two new instruments; the report names what it cannot see |
+| Long-service stability | **6**/10 | 49.5 minutes of real evidence. Two hours is untested |
+
+**Total: 161/200 → 81/100.**
+
+### 15.3 Live-service reliability — 63/80
+
+The score the brief insists must not be hidden by strong scores in cosmetic areas.
+
+> **Not one row moved on 2026-09-05, and that is the finding.** Two P0s were closed that day,
+> five surfaces stopped lying about failed reads, the kiosk hub stopped handing the preacher's
+> monitor to the wifi and the dependency tree went to zero vulnerabilities — and **none of it is
+> field evidence.** This scorecard only moves for a room: a measured word error rate, a second
+> service, an operator who did not write Relay, a projector, two hours. Every one of the eight
+> rows below is capped by something that costs a Sunday morning rather than a commit, which is
+> exactly why the brief asks for it separately.
+
+| | Score |
+|---|---|
+| Audio reliability | **8**/10 |
+| Transcription reliability | **6**/10 — WER unmeasured |
+| Scripture reliability | **8**/10 — one wrong verse in one real service |
+| Presentation reliability | **9**/10 |
+| Integration reliability | **6**/10 — OBS/kiosk real, ATEM and ProPresenter not driven |
+| Offline reliability | **10**/10 |
+| Recovery reliability | **9**/10 |
+| Session reliability | **7**/10 — Service Lock, timeline and replay all exist; nobody but the author has run one |
+
+**LIVE-SERVICE RELIABILITY: 63/80.**
+
+
+---
+
+
+> **Brought here from the V1 production audit on 2026-09-21** (`docs/archive/2026-09-05-relay-v1-audit.md` §17). Frozen at 2026-09-05: it dispositions the two briefs as they stood then, and the `§N`, `F-NN` and blocker numbers inside the rows are the archived audit's. `v1audit.test.js` holds the arithmetic — every PWA phase 01 to 42 once, every Relay section 00 to 105 once with no gap and no overlap.
+
+# Part 6 · Brief disposition — every phase, both briefs
+
+### 17.1 The PWA master audit, phases 01–42
+
+| Phase | Disposition |
+|---|---|
+| 01 Project discovery | **DONE** — §3. Framework, runtime, build, data, integrations, environment all mapped |
+| 02 Route & page audit | **DONE as surfaces** — §4. There is no router, no URL and no deep link; the equivalents are eight tabs and three served pages, each with its auth, offline and error posture recorded |
+| 03 Functional QA | **DONE** — 952 frontend and 644 Rust tests, 38 of them driving the real fire path against a real database. Duplicate submission is guarded by busy flags on every async control; destructive actions are two-step |
+| 04 PWA installability | **N/A — there is no manifest and there should not be one.** Relay installs as a signed `.dmg`/`.msi`. Scored as distribution in §15.1 |
+| 05 Service worker audit | **N/A — there is no service worker.** Nothing intercepts fetches; the LAN server serves from an embedded bundle with `Cache-Control: no-cache` |
+| 06 Offline-first audit | **DONE** — §11. Offline is the resting state, not a fallback |
+| 07 Offline data & sync | **N/A by design** — there is no second writer anywhere in the system. Building a queue and a conflict resolver would add failure modes to a system that has none |
+| 08 App update strategy | **PARTIAL — blocker #5.** The strategy is right (never during a service, operator-confirmed, data snapshot before install, a way back) and the endpoint is dead |
+| 09 Responsive design | **N/A for the console** (a desktop window, 960×640 minimum) / **DONE for outputs** (`cqw`, identical at any size, with a measured fit floor) |
+| 10 Touch & mobile UX | **PARTIAL** — the stage page is the phone surface and is built for it; the console is not and is not claimed to be |
+| 11 Accessibility | **DONE** — §13 |
+| 12 Authentication | **N/A — there are no accounts.** One operator, one machine, no session to expire |
+| 13 Authorisation | **N/A — there are no roles.** No horizontal or vertical escalation is possible where there is one privilege level. The LAN control plane's openness is a recorded decision, audited in §9 |
+| 14 Database & data integrity | **DONE, two defects found and fixed** — §10, F-02, F-10 |
+| 15 Security | **DONE** — §9 |
+| 16 API security & reliability | **DONE** — the seven `/api/*` routes, method-gated, CORS-gated, timeout-bounded, verified in production (§8). Rate limiting absent: RG-97 |
+| 17 Performance | **DONE from prior measurement** — §12 |
+| 18 Network resilience | **DONE** — §11. Nothing on the live path waits on a network, so there is no infinite spinner to have |
+| 19 Forms | **DONE** — the forms are Settings, Planner, Templates and the importers; validation is server-side in the sense that matters (the Rust command validates, not the webview), and F-01 added the missing one |
+| 20 Error handling | **DONE, one defect fixed** — one humaniser, typed errors across the bridge, and F-08 closed the last Loading/Empty/Error conflation on a screen that mattered. RG-95 records the rest |
+| 21 Notifications | **N/A** — no push, no permission request, no subscription. In-app status only, which is correct for a live tool |
+| 22 SEO | **N/A** — no public surface |
+| 23 PWA/SEO separation | **N/A** — the whole application is private by construction |
+| 24 Accessibility + PWA | **DONE** — §13; the install experience is an installer, the offline state is the normal state |
+| 25 File uploads | **DONE, defect found and fixed** — F-01/F-02. Type is checked by extension against the importer's list and the MIME table is pinned to it; size is now capped; there is no upload *server*, so malware scanning and signed URLs are N/A |
+| 26 E-mail & external services | **N/A** — Relay integrates with no external service on the live path |
+| 27 Analytics & monitoring | **DONE** — §14. Opt-in, off by default, scrubbed |
+| 28 Privacy | **DONE, a gap found and closed** — §14, F-03. Deletion existed only as "delete the folder" |
+| 29 UI consistency | **DONE** — one design system, one renderer, one error humaniser, one colour semantics rule |
+| 30 Content audit | **DONE** — no lorem ipsum, no fake testimonials, no fabricated statistics, no dummy contact details. **Zero `TODO` and zero `FIXME` in `src/` or `src-tauri/src/`** — deferred work lives in `KNOWN_ISSUES.md` and the `RG-` register, where it has an owner, rather than in a marker nobody greps. British English in operator-facing text, checked against the usual tells (*behavior*, *optimize*, *canceled*, *catalog*) in `locales/en.json` and the Svelte tree: no hits |
+| 31 Navigation | **DONE** — eight tabs, no dead links; the Markdown links in the documentation are now checked by a test (RG-87) |
+| 32 UX friction | **DONE** — the Live/Planner merge exists precisely because an operator running a plan on a separate tab could not see the AI's suggestions |
+| 33 Data-loss prevention | **DONE** — crash recovery, plan drafts in the database rather than in memory, snapshot before update, and the debug recorder's *press Stop, never force-quit* warning is in `CLAUDE.md` and the user guide |
+| 34 Destructive actions | **DONE** — every `delete_*` is two-step, service-locked, and consequence-labelled. F-03 added the newest one under the same rules |
+| 35 Build & deployment | **DONE, and further than the previous pass** — §8. Dev build, production build, bundle, ad-hoc hardened signing, launch, and a probe of the running binary |
+| 36 Production configuration | **DONE** — there is no production environment to misconfigure. The one runtime configuration that matters is the updater endpoint, and it is wrong (blocker #5) |
+| 37 Regression test | **DONE** — §7 |
+| 38 Code quality | **DONE** — 0 clippy warnings at `-D warnings`, 0 dead commands, 0 dead controls, 1 deliberate test-only orphan component. One dead accessor introduced by this pass was removed rather than left |
+| 39 Priority system | **APPLIED** — §6 is ordered P1 first |
+| 40 Do not overengineer | **APPLIED** — one dev-only dependency feature was added (`tokio/test-util`, so a five-second timeout can be tested without a five-second test). No new runtime dependency. Three proposed sweeps were **declined** and recorded rather than performed |
+| 41 Final production score | **DONE** — §15, three scorecards, and the sums are checked by `v1audit.test.js` because the first draft got two of them wrong |
+| 42 Final report | **DONE** — this document |
+
+### 17.2 The Relay live-service audit, sections 00–105
+
+Grouped, because a hundred rows of "EXISTS" is not a report. **Every section from §00 to §105 is
+accounted for by exactly one row, with no gap and no overlap** — which is a claim about
+arithmetic, so `v1audit.test.js` checks it rather than asking you to.
+
+| Sections | Disposition |
+|---|---|
+| **00–05** Command, principle, discovery, routes, roles, auth | **DONE.** §2, §3, §4. Roles and auth are N/A with the reason recorded, not skipped |
+| **06–07** Session model, state integrity | **EXISTS.** A service is a row with a real lifecycle, a Service Lock, a timeline and a replay — not an `isLive` boolean. Multi-client state agreement is N/A: there is one client |
+| **08–09** Audio input, device recovery | **EXISTS, and improved.** Device fallback when the preferred config will not open, `audio://error` for everything else, levels learned never assumed. F-06 closed the memory risk. **Device hot-swap mid-service is UNVERIFIED** — it needs a hand on a cable |
+| **10–14** Transcription: accuracy, latency, state model, continuity, offline | **PARTIAL, and it is the moat.** Latency is measured properly and is good (§12). PARTIAL/FINAL exist end to end and render differently. **Accuracy has never been measured in any language.** Offline transcription is real and complete |
+| **15–19** Network state, offline architecture, queue, sync, idempotency | **N/A by design**, §11/§17.1-07. The one idempotency question that *does* arise — a double-press on a fire — is answered by the router's per-reference debounce and by the transport's mode awareness |
+| **20–24** Scripture detection, parsing, confidence, database, routing | **EXISTS, strongest area.** Recognition, interpretation, validation and routing are four separate stages with a gate between the last two. 100 % recall and 0 wrong verses on the labelled gate. RG-32 is the one honest hole: a context-resolved bare verse wears a `Direct` label it did not earn |
+| **25–29** Presentation output, command state, OBS, ATEM, ProPresenter | **PARTIAL and honest about it.** OBS and kiosk are real and heartbeat-verified. ATEM and ProPresenter are **not driven** — bridging hardware is the recorded strategy (SDI is a permanent non-goal), and `open_ndi_output` returns a clear error rather than pretending |
+| **30–34** Health centre, dashboard, operator control, manual override, automation safety | **EXISTS.** **23** launch probes on a four-level severity ladder, a one-sentence readiness verdict, manual fire always present, detection disarmable, safe mode. Automation cannot act above `Suggest` unless Relay *heard* the reference |
+| **35–37** Transcript editing, session history, audit log | **EXISTS / N/A.** There is no transcript editing and none is proposed — editing a record of what was said is a different product. History and the event timeline are real and survive a quit |
+| **38–40** Database integrity, concurrency, data loss | **DONE, two defects fixed** — §10 |
+| **41–44** Manifest, service worker, cache strategy, update safety | **N/A / N/A / N/A / PARTIAL** — §17.1-04/05/08 |
+| **45–48** Sleep-resume, network failure, recovery engine, recovery confirmation | **EXISTS for the states that can occur.** Wake-lock while a screen or a mic is live; the degraded-state line in the shell; recovery restores position and refuses to restore on-air-ness. **Sleep/resume mid-service is UNVERIFIED** |
+| **49–51** Error handling, notifications, alerts | **DONE, one defect fixed** (F-08). No sound alerts, deliberately: an alarm during a sermon is a worse outcome than the fault it announces |
+| **52–53** Mobile, responsive live interface | **PARTIAL.** The stage page is the mobile surface and works. The console is desktop-only and is not claimed otherwise |
+| **54–57** Accessibility, performance, long service, large transcript | **DONE / DONE / PARTIAL / DONE.** The transcript UI is bounded by construction, so there is no virtualisation problem. 49.5 minutes is the longest real run |
+| **58–64** Security, multi-tenant, credentials, rate limiting, media, API, webhooks | **DONE** — §9. Multi-tenancy and webhooks are N/A; rate limiting is RG-97 |
+| **65–67** Observability, health checks, logging | **EXISTS, two instruments added** — §14 |
+| **68–72** Privacy, retention, backup, destructive actions, search | **DONE, a real gap closed** (F-03). Backup is the update snapshot plus Export; a church-wide backup strategy is the church's, and Relay says where the folder is |
+| **73–75** Settings, configuration validation, pre-service check | **EXISTS.** The path check — say one verse and watch six stages — is the strongest thing in this group |
+| **76–78** Live mode, emergency mode, presentation safety | **EXISTS.** The console *is* live mode; manual operation always remains possible; the panic controls do not pass through the validator, because a validator that could refuse a blackout is a blackout that can fail |
+| **79–81** False-positive dataset, transcription dataset, integration matrix | **PARTIAL.** The false-positive dataset exists and is a CI gate (74 cases, four languages). **The transcription dataset does not exist** — that is the WER hole. The integration matrix exists for OBS/kiosk and is marked BLOCKED for ATEM/ProPresenter rather than passed |
+| **82** Twelve critical journeys | **10 of 12 covered by tests.** Journeys 7–8 (network failure and recovery) are structurally trivial here — nothing on the live path uses a network. Journeys 11–12 (device restart, multi-hour run) are **UNVERIFIED** |
+| **83–86** P0/P1/P2/P3 blocker lists | **APPLIED** — §1 and §6 |
+| **87–99** Regression, production build, console, storage, memory, CPU, installation, deep links, back/forward, crash recovery, security regression, performance regression | **DONE where reachable.** §7 and §8 cover regression, the production build and a clean console on a packaged launch. **Browser storage was audited and is small and deliberate**: `localStorage` holds one key (`relay.session.v1`) carrying the active tab, the open plan, the cue and slide position and the first-run flag — **ids and positions only, content-free by design**, so a reload mid-service does not drop the operator back on the Console tab with no idea where they were; plus the crash breadcrumb that reads the same key, the boot flags, and the operator's audio-output choice (which lives there because the fullscreen output window shares an origin with the console and that is how the choice reaches it). No `sessionStorage`, no IndexedDB, no cookies, no cache storage. Transcript and verse text are never in any of it — they stay in SQLite, per the local-first rule. Deep links and back/forward are N/A. **CPU/battery/thermal over hours is UNVERIFIED** |
+| **100–102** The three scores and the final report | **§15 and this document** |
+| **103–105** The release gate, the golden test, the engineering rule | **The golden test has been run once, in a real service, and it is `FIELD-2026-08-30.md`.** Relay knew what was happening, the operator knew, the operator could continue, and one wrong verse still reached a congregation. That is the whole basis of the supervised-pilot decision |
+

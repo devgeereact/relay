@@ -120,6 +120,11 @@ describe('RG-67 · every cross-reference resolves', () => {
     ['docs/audits/', 'docs/qa/audits/'],
     ['docs/RELAY_GAP.md', 'docs/qa/RELAY_GAP.md'],
     ['docs/PRODUCT_AUDIT.md', 'docs/qa/audits/PRODUCT-2026-07-13.md'],
+    // 2026-09-21: the V1 audit and the launch checklist were folded into
+    // RELAY_GAP §24/§27 and QA_HARNESS Parts 5/6 and archived. Four frozen
+    // audits cite them where they used to be.
+    ['docs/RELAY_V1_AUDIT.md', 'docs/archive/2026-09-05-relay-v1-audit.md'],
+    ['docs/qa/LAUNCH_CHECKLIST.md', 'docs/archive/2026-09-15-launch-checklist.md'],
   ]);
 
   /** The path a moved citation now names, or `null` if it did not move. */
@@ -233,6 +238,14 @@ describe('RG-67 · every cross-reference resolves', () => {
         if (!pathPart) continue;
         const cited = decodeURIComponent(pathPart);
         if (existsSync(resolve(root, dir, cited))) continue;
+        // A frozen audit whose links were retargeted when IT moved, and which now
+        // cite a file that moved AFTER that: resolved from where the audit is,
+        // then redirected. The same map, honoured for frozen files only.
+        if (frozen) {
+          const fromHere = join(dir, cited).replace(/\\/g, '/');
+          const moved = redirect(fromHere);
+          if (moved && existsSync(resolve(root, moved))) continue;
+        }
         if (oldDir) {
           const asWritten = join(oldDir, cited).replace(/\\/g, '/');
           const moved = redirect(asWritten) ?? asWritten;
@@ -307,7 +320,7 @@ describe('RG-67 · every cross-reference resolves', () => {
     // regex ever eats more than it should, the link count collapses and the check
     // above passes over nothing — the same narrowing failure the scanner guards
     // in `hardrules.test.js` and `ipc.test.js`.
-    const audit = FILES.find(([f]) => f.endsWith('RELAY_V1_AUDIT.md'));
+    const audit = FILES.find(([f]) => f.endsWith('2026-09-05-relay-v1-audit.md'));
     expect(audit, 'the audit is no longer being read').toBeTruthy();
     expect(prose(audit[1]).length).toBeGreaterThan(audit[1].length * 0.5);
   });

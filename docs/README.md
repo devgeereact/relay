@@ -57,9 +57,10 @@ checked and what checking found. `docs/qa/audits/` is frozen evidence — dated,
 after the fact. **`docs/superpowers/plans/` holds the ONE live plan** (`2026-09-19-stage-timers-mobile.md`, with its own inline status); **`docs/archive/` holds every wave design and work order whose work has landed**, each headed with where its rulings and findings now live. Neither is specification nor evidence — a ruling that lives only in a design has not been made yet and belongs in `DECISIONS.md` (§92, §93, §94 and §95 all landed on 2026-09-17, and three of the four had to be renumbered: four branches wrote a §92 at the same insertion point on the same day). `CHANGELOG.md` stays at the
 repository root, where the convention and GitHub both expect it.
 
-**Two rows below sit under the `docs/qa/` heading and are not in `docs/qa/`** — `REBRAND.md` and
-`RELAY_V1_AUDIT.md` are top-level. The links are right; the filing is not, and the paragraph
-above says the directory is the classifier.
+**One row below sits under the `docs/qa/` heading and is not in `docs/qa/`** — `REBRAND.md` is
+top-level. The link is right; the filing is not, and the paragraph above says the directory is the
+classifier. (`RELAY_V1_AUDIT.md` was the other until 2026-09-21; it and `LAUNCH_CHECKLIST.md` are
+folded into `RELAY_GAP.md` and `QA_HARNESS.md` and archived.)
 
 | Volume | Owns the question | Document(s) | Status |
 |---|---|---|---|
@@ -85,11 +86,10 @@ above says the directory is the classifier.
 
 | Document | Owns |
 |---|---|
-| [qa/QA_HARNESS.md](qa/QA_HARNESS.md) | The QA apparatus, and **§0 is the register of counts for the whole repository** — every row beside the command that produces it |
-| [qa/RELAY_GAP.md](qa/RELAY_GAP.md) | The `RG-` gap register. Meant to be updated, unlike the audits |
-| [qa/LAUNCH_CHECKLIST.md](qa/LAUNCH_CHECKLIST.md) | One release gate list. Every box names its command or says it has never been checked |
+| [qa/QA_HARNESS.md](qa/QA_HARNESS.md) | The QA apparatus, **§0 the register of counts for the whole repository** — every row beside the command that produces it — and Parts 5 and 6 the three scorecards and the brief disposition, frozen at 2026-09-05 |
+| [qa/RELAY_GAP.md](qa/RELAY_GAP.md) | The `RG-` gap register (§23), the release decision and its reasoning (§24), and the one launch gate list (§27). Meant to be updated, unlike the audits |
 | [REBRAND.md](REBRAND.md) | The active build specification for Relay Studio — the brand, the workspace grammar, the template engine, and the twelve phases with their status. `AGENTS.md` step 2 sends readers here to find it |
-| [RELAY_V1_AUDIT.md](RELAY_V1_AUDIT.md) | The V1 production audit: the decision, three scorecards, the fix process, and every phase of both briefs dispositioned |
+| [archive/](archive/) | Finished wave designs, and the two retired audit documents: the V1 production audit (`2026-09-05-relay-v1-audit.md`) and the launch checklist (`2026-09-15-launch-checklist.md`), folded into the register and the harness on 2026-09-21 |
 | [qa/audits/](qa/audits/) | **Frozen.** **Twelve** dated audits (`ls qa/audits | wc -l`): four field services, two performance runs, one six-agent QA sweep, **four browser-driven passes** (waves 2, 3 and 5 on 2026-09-16, wave 4 on 2026-09-17) and the retired product audit. Closures go in a fix log at the top, never into the findings |
 
 **On ADRs:** [DECISIONS.md](DECISIONS.md) *is* the architecture-decision record — a single
@@ -172,59 +172,32 @@ drive the running app over `:8032`). The cheap half runs on every edit:
 
 Three documents, at three altitudes, and they are meant to disagree on scope rather than on fact:
 
-- **[qa/RELAY_GAP.md](qa/RELAY_GAP.md) §24 owns the release decision**; nothing else restates it
-  (this page, `README.md` and `CLAUDE.md` all did, and the copies disagreed). **[RELAY_V1_AUDIT.md](RELAY_V1_AUDIT.md)** is the V1 production audit that took it, last run 2026-09-03. It
-  owns the **three scorecards**, the **fix process** (ten defects, each with
-  the test that would fail if it came back), and the disposition of every phase of both briefs —
-  a 42-phase PWA brief and a live-service brief numbered §00–§105. Where a phase could not be reached
-  from this machine it says **UNVERIFIED** and names the instrument that would answer it; where
-  a phase assumes a kind of program Relay is not, it says **N/A** and says why.
-- **[qa/RELAY_GAP.md](qa/RELAY_GAP.md)** — the `RG-` register, and unlike the audits it is meant
-  to be updated. §19b holds the decisions the report needs and cannot make; one is open —
-  whether Relay ships a second Bible translation, an import path for one, or neither.
-- **[qa/audits/](qa/audits/)** — dated machine audits, **each frozen**. They never rewrite their
-  own findings; closures go in the fix log at the top, because an audit that edits its own
-  history stops being evidence. **Twelve of them** (`ls qa/audits | wc -l`); this sentence said
-  *Five* and then listed six, which is the shortest possible demonstration of why a count does
-  not belong in prose beside the list it counts. The ones a reader reaches for:
-  [QA-2026-08-14.md](qa/audits/QA-2026-08-14.md) (six-agent full scope; §16 is the human test
-  script), [PERF-2026-08-24.md](qa/audits/PERF-2026-08-24.md) (real-time latency, and §6 is what
-  its numbers do **not** establish),
-  **[FIELD-2026-08-30.md](qa/audits/FIELD-2026-08-30.md)** — *the first real service*: 49.5
-  minutes on a packaged build, no drift, five of six auto-fires correct, **one wrong verse on a
-  real wall** — **[FIELD-2026-09-06.md](qa/audits/FIELD-2026-09-06.md)** — *two services, two
-  models, four wrong verses*: the day the model choice turned out to be an accuracy decision
-  (**3 of 3 on `turbo`, 5 of 9 on `ggml-base`**), and the day the sensitivity dial was shown by
-  measurement not to be the lever — [PERF-MODELS-2026-08-30.md](qa/audits/PERF-MODELS-2026-08-30.md), what each
-  speech model costs in transcript updates per second, and
-  **[FIELD-2026-09-13.md](qa/audits/FIELD-2026-09-13.md)** — *the first service with no wrong
-  verse*: eight of eight over 110.5 minutes, on `ggml-large-v3-turbo` pinned by hand before the
-  microphone was opened, which is one sample and does not close RG-116 —
-  [PRODUCT-2026-07-13.md](qa/audits/PRODUCT-2026-07-13.md), the product audit retired into
-  evidence on 2026-09-02 with a header recording where each of its parts went, and the **four
-  browser-driven passes** — [DESIGN-2026-09-16-WAVE2](qa/audits/DESIGN-2026-09-16-WAVE2.md),
-  [WAVE3](qa/audits/DESIGN-2026-09-16-WAVE3.md), [WAVE5](qa/audits/DESIGN-2026-09-16-WAVE5.md)
-  and [2026-09-17-WAVE4-STAGE-PLANNER](qa/audits/2026-09-17-WAVE4-STAGE-PLANNER.md) — which are
+- **[qa/RELAY_GAP.md](qa/RELAY_GAP.md) §24 owns the release decision and its reasoning**; nothing else restates it
+  (this page, `README.md` and `CLAUDE.md` all did, and the copies disagreed). The V1 production audit that
+  took it (2026-09-03, revised 2026-09-05) is archived at [archive/2026-09-05-relay-v1-audit.md](archive/2026-09-05-relay-v1-audit.md);
+  its **three scorecards** and the disposition of every phase of both briefs — a 42-phase PWA brief
+  and a live-service brief numbered §00–§105 — are [qa/QA_HARNESS.md](qa/QA_HARNESS.md) Parts 5 and 6,
+  frozen at that date. Where a phase could not be reached from this machine it says **UNVERIFIED**
+  and names the instrument that would answer it.
+- **[qa/audits/](qa/audits/)** — frozen evidence. Four of the twelve are
   the audits done by DRIVING the app rather than reading it, and are therefore the only ones
   that have ever caught a congregation-facing rendering fault. **Read each one's header note
   before trusting an id in it**: the wave 4 and wave 5 passes were renumbered differently
   (`qa/RELAY_GAP.md` §23a), and one rewrote its body while the other did not.
-- **[qa/LAUNCH_CHECKLIST.md](qa/LAUNCH_CHECKLIST.md)** — the gate list. Every box names the
+- **[qa/RELAY_GAP.md](qa/RELAY_GAP.md) §27** — the gate list. Every box names the
   command that ticks it or says it has never been checked.
 
-**Relay has never shipped. As of 2026-09-05: NOT READY for general release · READY WITH
-CONDITIONS for a supervised pilot** — two churches, named operators, every service watched by
-somebody who can take the wall back by hand. The register's size is a number with one home:
+**Relay has never shipped. NOT READY for general release · READY WITH CONDITIONS for a
+supervised pilot** — two churches, named operators, every service watched by somebody who can take
+the wall back by hand. The register's size is a number with one home:
 [qa/RELAY_GAP.md](qa/RELAY_GAP.md), where `relaygap.test.js` asserts it against the table. This
-sentence used to carry its own copy, and the copy was stale by fourteen entries. **Five things
-block a general release, and by the count in [RELAY_V1_AUDIT.md](RELAY_V1_AUDIT.md) §1 none of
-the five is closed by a commit alone — two are not commits at all** (a certificate is a
-purchase, a published release is an action):** a wrong verse
-reached a real congregation on 2026-08-30; word error rate has never been measured in any
-language; neither platform has a code-signing certificate (RG-73); nobody but the author has
-ever run a service; and **the auto-updater points at a URL that returns 404** (RG-83, found
-2026-09-02, still true on 2026-09-05). The conditions are [qa/RELAY_GAP.md](qa/RELAY_GAP.md) §24 and the reasoning is
-[RELAY_V1_AUDIT.md](RELAY_V1_AUDIT.md) §1.
+sentence used to carry its own copy, and the copy was stale by fourteen entries. **Four things
+block a general release, and none is closed by a commit alone — two are not commits at all** (a
+certificate is a purchase, an operator is a person): a wrong verse has reached a real congregation
+(2026-08-30, 2026-09-06 and twice on 2026-09-20, each root-caused); word error rate has never been
+measured in any language; neither platform has a code-signing certificate (RG-73); and nobody but
+the author has ever run a service. The fifth, the auto-updater's dead endpoint, closed on 2026-09-05
+(RG-83, RG-114). The conditions and the reasoning are both [qa/RELAY_GAP.md](qa/RELAY_GAP.md) §24.
 
 The packaged build **has** been reached by an instrument — one live sermon
 ([FIELD-2026-08-30.md](qa/audits/FIELD-2026-08-30.md)). Pixels out, hardware, and a second

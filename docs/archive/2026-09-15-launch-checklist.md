@@ -1,7 +1,9 @@
+> **Archived 2026-09-21.** Historical, last run 2026-09-15. The one gate list now lives in `docs/qa/RELAY_GAP.md` §27, beside the decision it supports (§24). Nothing here is edited except citation paths.
+
 # Relay — Launch Checklist
 
 **One gate list.** There used to be two — the retired product audit's §16 and
-[RELAY_GAP.md](RELAY_GAP.md) §25 — and they disagreed. This is the only one.
+[RELAY_GAP.md](../qa/RELAY_GAP.md) §25 — and they disagreed. This is the only one.
 
 **Every box either names the command that ticks it, or says plainly that it has never been
 checked.** A ticked box with no instrument behind it is how this repository shipped a readiness
@@ -11,7 +13,7 @@ checklist claiming a macOS signing certificate that has never existed. Do not ti
 `⬜` **never checked** · `❌` checked and failing.
 
 Last run: **2026-09-15**, against `0.2.0-3` on `rebrand/wave3`. Findings live in
-[RELAY_GAP.md](RELAY_GAP.md) §23; the reasoning is [RELAY_V1_AUDIT.md](../RELAY_V1_AUDIT.md).
+[RELAY_GAP.md](../qa/RELAY_GAP.md) §23; the reasoning is [the V1 audit](2026-09-05-relay-v1-audit.md).
 
 ---
 
@@ -19,7 +21,7 @@ Last run: **2026-09-15**, against `0.2.0-3` on `rebrand/wave3`. Findings live in
 
 | | Gate | How |
 |---|---|---|
-| ✅ | Frontend suite passes | `npx vitest run` — the counts live in [QA_HARNESS.md](QA_HARNESS.md) §0, which is the register; this row is about the gate, not the number |
+| ✅ | Frontend suite passes | `npx vitest run` — the counts live in [QA_HARNESS.md](../qa/QA_HARNESS.md) §0, which is the register; this row is about the gate, not the number |
 | ✅ | Rust suite passes | `cd src-tauri && cargo test` — same: §0 owns the count. This row said *942 / 70* and *644* for three days after both moved |
 | ✅ | Formatting | `cargo fmt --all -- --check` |
 | ✅ | Lints, warnings denied | `cargo clippy --all-targets -- -D warnings` — **this failed on 2026-09-02 and was fixed (RG-82). Run it; do not assume it** |
@@ -112,5 +114,5 @@ Last run: **2026-09-15**, against `0.2.0-3` on `rebrand/wave3`. Findings live in
 
 **NOT READY for general release · READY WITH CONDITIONS for a supervised pilot.**
 Five things block a general release and **two of them are not commits** — a certificate is a
-purchase and a published release is an action. [RELAY_GAP.md](RELAY_GAP.md) §24 owns the
-conditions; [RELAY_V1_AUDIT.md](../RELAY_V1_AUDIT.md) §1 owns the reasoning.
+purchase and a published release is an action. [RELAY_GAP.md](../qa/RELAY_GAP.md) §24 owns the
+conditions; [the V1 audit](2026-09-05-relay-v1-audit.md) §1 owns the reasoning.

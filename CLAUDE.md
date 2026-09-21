@@ -8,7 +8,7 @@ Read this before touching code. It reflects real decisions made in real sessions
 
 Relay is AI-assisted live presentation software for churches. It listens to a live sermon, detects scripture references (direct quotes and paraphrases), and routes the right content to multiple independently-styled output screens in real time. It is built to interoperate with OBS, ATEM and ProPresenter rather than replace them: OBS, vMix and kiosk screens over the local network, a projector or a switcher over HDMI. **NDI is parked and no ATEM accepts NDI in any case**, so HDMI, plus a converter on the SDI-only rack-mount ATEMs, is the whole switcher path (`docs/OUTPUT_ROUTING.md` §2).
 
-Full context: `docs/SPEC.md` (canonical spec), `docs/DECISIONS.md` (why, not just what), `docs/RELAY_V1_AUDIT.md` (current health, the scorecards and the blocker list), `docs/qa/RELAY_GAP.md` (what a product-expansion brief asked for vs what actually exists, with the gap register and the two reversal proposals).
+Full context: `docs/SPEC.md` (canonical spec), `docs/DECISIONS.md` (why, not just what), `docs/qa/RELAY_GAP.md` §24 (the release decision, its reasoning and the blocker list; §27 the launch gate list), `docs/qa/QA_HARNESS.md` Parts 5 and 6 (the scorecards and the brief disposition, frozen at 2026-09-05), `docs/qa/RELAY_GAP.md` (what a product-expansion brief asked for vs what actually exists, with the gap register and the two reversal proposals).
 
 ## Non-negotiable constraints
 
@@ -102,9 +102,10 @@ Every audio bug so far was invisible in the code and reproducible only with a sp
 │          DESIGN_SYSTEM · LANGUAGES · AI_DISCLOSURE · SECURITY · PRIVACY
 │          USER_GUIDE · RELEASING · CONTRIBUTING · CODE_OF_CONDUCT · PROMPT
 │          KNOWN_ISSUES — what is deferred, parked or owed, and on whose authority
-│          RELAY_V1_AUDIT — the production audit, the scorecard, the release decision
-│   docs/qa/  HOW IT IS CHECKED. QA_HARNESS · RELAY_GAP (the RG register) ·
-│          LAUNCH_CHECKLIST
+│   docs/archive/ — finished designs and the two retired audit documents (the V1
+│          audit and the launch checklist, folded into RELAY_GAP and QA_HARNESS on 2026-09-21)
+│   docs/qa/  HOW IT IS CHECKED. QA_HARNESS (counts · scorecards · brief disposition) ·
+│          RELAY_GAP (the RG register · the release decision · the launch checklist)
 │          qa/audits/ — FROZEN evidence; closures go in a fix log, never in the
 │             findings. TWELVE dated audits, one of them a retired product audit
 │             and FOUR of them browser-driven passes — waves 2, 3 and 5 on
@@ -199,7 +200,7 @@ Every audio bug so far was invisible in the code and reproducible only with a sp
 
 **2026-09-10, a rendered design/UI/UX pass — the first audit done by DRIVING the app rather than reading it, and it found two things every existing instrument was blind to** (RG-128 … RG-134). The console was rendered in a browser against a mock Tauri bridge and the output/stage pages against the real backend, because this machine cannot screenshot the Tauri window. **The first verse put on a freshly-opened output page was painted with its top and bottom lines cut through the middle** (rule 42), and **a screen that reconnected mid-service came back blank and stayed blank until the next fire** (rule 43). Both are congregation-facing, both were reproduced against the running backend, and neither is visible to `qa-inventory` — which reported 0 handlerless buttons and 0 unnamed controls throughout, and was right both times. Also closed: seven Settings controls that saved a preference nothing read, one of them promising a confirmation step before going live that has never existed (DECISIONS §69); the RG-92 update sentence still hard-coded on the Settings overview; and a run surface that rendered a failing screen's name seven pixels wide. **What this pass does NOT change: the release decision, the model question, or word error rate.**
 
-**`docs/RELAY_V1_AUDIT.md` owns the decision, the scorecards and the brief disposition; it is the current blocker list** (one blocker removed and one added since 2026-08-31 — the verdict did not move). `docs/qa/RELAY_GAP.md` remains the `RG-` register where findings are filed, `docs/qa/QA_HARNESS.md` §0 the register of counts, `docs/qa/audits/` the frozen evidence. **Do not restate any of the four in a fifth place** — that is how they came to disagree.
+**`docs/qa/RELAY_GAP.md` §24 owns the decision, its reasoning and the blocker list, and §27 the launch gate list; `docs/qa/QA_HARNESS.md` Parts 5 and 6 hold the scorecards and the brief disposition, frozen at 2026-09-05.** the V1 audit and the launch checklist held those until 2026-09-21 and are in `docs/archive/` (`2026-09-05-relay-v1-audit.md`, `2026-09-15-launch-checklist.md`); the fold was made because a checklist in its own file contradicted itself on the updater for a fortnight. `docs/qa/RELAY_GAP.md` §23 remains the `RG-` register where findings are filed, `QA_HARNESS.md` §0 the register of counts, `docs/qa/audits/` the frozen evidence. **Do not restate any of these in another place** — that is how they came to disagree.
 
 Full pipeline works end to end: **listen → transcribe (local whisper) → detect (direct + semantic + context) → gate (router) → render on independently-templated outputs (native window + kiosk/OBS over WebSocket)**, fully offline.
 
