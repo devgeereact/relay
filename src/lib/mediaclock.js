@@ -48,6 +48,19 @@ import { formatCountdown } from './layers.js';
  */
 export const DRIFT_TOLERANCE_MS = 4000;
 
+/**
+ * When a clip becomes something the preacher has to act on.
+ *
+ * Thirty seconds, which is the smallest useful amount of time to change what you
+ * are about to do: stand up, find the place, look at the operator. A warning
+ * that arrives at five seconds is an announcement that the clip has ended.
+ *
+ * It is a named decision rather than a number inside a component because two
+ * surfaces already show this figure, and a threshold typed twice is a threshold
+ * that will one day differ between the stage and the desk.
+ */
+export const CLIP_WARN_MS = 30_000;
+
 /** One screen's contribution, or `null` when it has nothing to contribute. */
 function clipOf(row) {
   if (!row || row.painting !== true) return null;
@@ -130,4 +143,38 @@ export function mediaIdFromUrl(url) {
   if (!m) return null;
   const n = Number(m[1]);
   return Number.isSafeInteger(n) && n > 0 ? n : null;
+}
+
+/**
+ * HOW LONG IS LEFT OF THE CLIP IN FRONT OF THE PREACHER, in milliseconds.
+ *
+ * The stage half of requirement 11, and a DIFFERENT question from the one
+ * `describeMediaClock` answers. That one is the operator's: it asks the
+ * congregation screens, on their beat, because the console's own player is not
+ * the thing anybody is watching. The stage page has no channel health — it is a
+ * client like every other screen — and the clip it is timing is the one playing
+ * in front of the person who needs the answer. So the source is the player, and
+ * the two rules stay apart: collapsing them would leave one of the two surfaces
+ * quoting a number that is not about the picture it is showing.
+ *
+ * **What this deliberately does NOT claim.** It is this screen's copy of the
+ * file, not the congregation's. Two players of the same clip started at
+ * separate instants drift by a second or so, which is `DRIFT_TOLERANCE_MS`'s
+ * whole subject, and nothing here corrects for it. For the question being asked
+ * — *is the picture I am standing in front of about to end* — this screen's own
+ * copy is the honest source, and it is the only one this page can reach.
+ *
+ * `null` for every state a player can be in before it knows: no element, no
+ * metadata, a zero duration, a live stream with no end. **Never a zero**, which
+ * would read as "it has finished" about a clip that has not started.
+ *
+ * @param el a media element, or anything carrying `duration` and `currentTime`
+ */
+export function clipRemainingMs(el) {
+  if (!el) return null;
+  const duration = Number(el.duration);
+  const at = Number(el.currentTime);
+  if (!Number.isFinite(duration) || duration <= 0) return null;
+  if (!Number.isFinite(at)) return null;
+  return Math.max(0, Math.round((duration - at) * 1000));
 }

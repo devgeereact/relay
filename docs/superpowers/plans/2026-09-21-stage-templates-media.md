@@ -145,9 +145,10 @@ showing current content under a dead badge is the rule 35 failure in a new place
   shows two. This is a correctness bug on the surface an operator steps through.
 - **10 · Media controls everywhere**, not only when a stage screen is attached, with the full set:
   play/pause, replay, loop, scrub, and volume if there is audio.
-- **11 · Media on the stage screen.** The timer gets its own backing so it stays readable over
-  video, and a **media countdown** appears beside it so the preacher can see how long is left —
-  the thing that tells them to get ready.
+- **11 · Media on the stage screen — DONE, RG-212 and RG-213.** The rail earns a plate while a
+  picture is behind it and loses it when the picture goes; the stage rail carries a `Clip` figure
+  read off the page's own player, which is the copy the preacher is looking at. It times THIS
+  screen, not the congregation's — the drift is item 12 and is not corrected here.
 
 ## 12. "All media in sync" — needs a decision before it is built
 

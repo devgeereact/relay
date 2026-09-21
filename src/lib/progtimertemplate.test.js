@@ -340,3 +340,62 @@ describe('the overflow rule comes with it — and it measures the BOX', () => {
     expect(codeOnly(src)).not.toMatch(/innerWidth/);
   });
 });
+
+// ── A CLOCK OVER A PICTURE HAS TO BE READABLE ON THE PICTURE (RG-212) ────────
+//
+// The operator's words: *"when Media is on stage screen can the timer
+// automatically have its own background that will make it visible to the
+// viewers"*. A programme rail is white digits with no backing of its own,
+// which is exactly right over a template's own dark background and unreadable
+// the moment a clip is painting behind it — and a clip's brightness changes
+// frame by frame, so this is not a template a designer can pre-solve.
+//
+// AUTOMATICALLY is the load-bearing word. The backing appears while a picture
+// is behind the rail and goes away when it stops, because a permanent plate
+// would be a box sitting over every template that has no picture.
+describe('the programme rail earns a backing while a picture is behind it', () => {
+  it('has none over a template with no picture', async () => {
+    await outputPage(2, { 1: 'main', 2: 'stage' });
+    send(timerFrame([wire({ countdown_to: Date.now() + 240_000 })]));
+    await settle();
+    expect(rail().className, 'a plate over a template that needs none').not.toMatch(/overmedia/);
+  });
+
+  it('gains one the moment a clip is fired, and loses it when the clip goes', async () => {
+    await outputPage(2, { 1: 'main', 2: 'stage' });
+    send(timerFrame([wire({ countdown_to: Date.now() + 240_000 })]));
+    send({
+      kind: 'content',
+      content_kind: 'media',
+      media_url: 'http://10.0.0.5:8032/media/4',
+      media_kind: 'video',
+    });
+    await settle();
+    expect(rail(), 'the rail went with the clip').toBeTruthy();
+    expect(rail().className, 'white digits on an unknown picture').toMatch(/overmedia/);
+
+    send({ kind: 'clear' });
+    await settle();
+    expect(rail().className, 'the plate outlived the picture').not.toMatch(/overmedia/);
+  });
+
+  it('a still picture counts too — a bright slide hides a clock as well as a clip does', async () => {
+    await outputPage(2, { 1: 'main', 2: 'stage' });
+    send(timerFrame([wire({ countdown_to: Date.now() + 240_000 })]));
+    send({
+      kind: 'content',
+      content_kind: 'media',
+      media_url: 'http://10.0.0.5:8032/media/9',
+      media_kind: 'image',
+    });
+    await settle();
+    expect(rail().className).toMatch(/overmedia/);
+  });
+
+  it('and the plate is a real rule in the stylesheet, not a class nothing paints', async () => {
+    // This file has been caught by a `class:` directive naming a class no
+    // stylesheet defines, which is a test asserting a spelling.
+    const src = readFileSync(resolve(__dirname, './TemplateRender.svelte'), 'utf8');
+    expect(codeOnly(src)).toMatch(/\.lprog\.overmedia\s*\{/);
+  });
+});

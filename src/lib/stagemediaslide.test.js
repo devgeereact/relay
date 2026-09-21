@@ -213,3 +213,57 @@ describe('the wrapper that puts it there', () => {
     expect(get(cap.stageMedia), 'a failed send still claimed the slide was up').toBeNull();
   });
 });
+
+// ── HOW LONG IS LEFT OF IT (RG-213) ─────────────────────────────────────────
+//
+// The operator's words: *"on the side can you have the media countdown so the
+// stage screen tells the preacher when the media is almost done and they can be
+// well prepared for next action"*.
+//
+// The figure comes from the clip playing on THIS page, which is the one the
+// preacher is standing in front of, and `clipRemainingMs` carries the reasoning
+// for why that is the honest source here and the beat is the honest source on
+// the operator's desk.
+describe('the clip on the stage says how long is left of it', () => {
+  /** Give the mounted `<video>` the metadata a real one gets on load. */
+  const playing = async (duration, currentTime) => {
+    const v = host.querySelector('video.slide');
+    Object.defineProperty(v, 'duration', { value: duration, configurable: true });
+    Object.defineProperty(v, 'currentTime', { value: currentTime, configurable: true, writable: true });
+    v.dispatchEvent(new Event('timeupdate'));
+    await tick();
+    await tick();
+    return v;
+  };
+  const railText = () => host.querySelector('.figrow, .rail')?.textContent ?? '';
+
+  it('counts down beside the reading, labelled, once the player knows the length', async () => {
+    await open(2);
+    await send(ROLES);
+    await send({ ...SLIDE, media_kind: 'video' });
+    // BEFORE the player knows anything, there is no figure — an absence, not a
+    // zero. A zero on a stage monitor reads as "it has finished".
+    expect(railText(), 'a clip clock appeared before the clip had a length').not.toMatch(/Clip/i);
+
+    await playing(125, 5);
+    expect(railText(), 'the preacher was told nothing about the clip').toMatch(/Clip/i);
+    expect(railText()).toContain('2:00');
+  });
+
+  it('goes away with the clip, so the last clip cannot stand as a fact about now', async () => {
+    await open(2);
+    await send(ROLES);
+    await send({ ...SLIDE, media_kind: 'video' });
+    await playing(125, 5);
+    expect(railText()).toMatch(/Clip/i);
+    await send({ kind: 'stage_media', media_url: null, media_kind: null });
+    expect(railText(), 'a figure about a clip that is no longer on the screen').not.toMatch(/Clip/i);
+  });
+
+  it('a still picture gets no countdown, because it does not end', async () => {
+    await open(2);
+    await send(ROLES);
+    await send(SLIDE);
+    expect(railText()).not.toMatch(/Clip/i);
+  });
+});

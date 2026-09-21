@@ -7,6 +7,7 @@
   } from './lib/layers.js';
   import { countdownRemainingMs, countdownIsPaused, countdownTotalMs } from './lib/countdown.js';
   import { sameHostMediaUrl } from './lib/outputurl.js';
+  import { clipRemainingMs, CLIP_WARN_MS } from './lib/mediaclock.js';
   // Mobile stage-display remote — the preacher opens this on a phone/iPad (via
   // QR or the LAN URL) to see the live verse + reference in real time. No Tauri
   // runtime: it connects to the kiosk WebSocket hub (:8031) for content, exactly
@@ -631,7 +632,26 @@
   // verse. So the rail's stacked pairs — the thing §5 actually asks for — could
   // not be reached from any state Relay can be in. A zone nothing can render is a
   // zone nobody is looking at.
+  // ── HOW LONG IS LEFT OF THE CLIP IN FRONT OF THE PREACHER (RG-213) ─────────
+  //
+  // Read off THIS page's own player, on its own `timeupdate`, because this page
+  // has no channel health to ask and the clip it would be asking about is the
+  // one already painting in front of the person who needs the answer.
+  // `clipRemainingMs` carries the reasoning and the limit.
+  //
+  // `null` until the player knows, and `null` again the moment the slide goes —
+  // a figure about a clip that is no longer on the screen is the same lie as a
+  // countdown that keeps running after the cue it belonged to.
+  let clipEl = null;
+  let clipLeft = null;
+  const readClip = () => (clipLeft = clipRemainingMs(clipEl));
+  $: if (!stageMedia || stageMedia.kind !== 'video') {
+    clipEl = null;
+    clipLeft = null;
+  }
+  $: clipWarn = clipLeft != null && clipLeft <= CLIP_WARN_MS;
   $: figureList = [
+    ...(clipLeft != null ? ['clip'] : []),
     ...(zones.countdown && cdRemain != null ? ['countdown'] : []),
     ...(zones.clock ? ['clock'] : []),
     ...(zones.elapsed && elapsedText ? ['elapsed'] : []),
@@ -658,18 +678,37 @@
   // The pairs are labelled from the END, so a formatter that ever returned MM:SS
   // rather than H:MM:SS still labels the minutes as minutes.
   const PAIR_KEYS = ['Hrs', 'Min', 'Sec'];
-  $: railList = figureList.flatMap((f) => {
-    if (f === 'countdown') {
-      return cdFinished
-        ? [{ k: 'Countdown', v: cdDone || '0:00', done: true }]
-        : cdPairs.map((p, i) => ({
-            k: PAIR_KEYS[PAIR_KEYS.length - cdPairs.length + i] ?? '',
-            v: p,
-            warn: cdWarn,
-          }));
-    }
-    if (f === 'clock') return [{ k: 'Time', v: clock }];
-    return [{ k: 'Elapsed', v: elapsedText }];
+  // ── ONE LIST, THREE READERS ────────────────────────────────────────────────
+  //
+  // The rail, the row across the bottom and the character count that sizes them
+  // each carried their OWN ladder over the figure kinds — three copies of
+  // "countdown means this, clock means that". They were already inconsistent
+  // when the clip figure was added: the rail labelled it and the row fell
+  // through to `Elapsed` and painted an empty value under the wrong word, on the
+  // preacher's screen. That is the twin-door shape this repository keeps
+  // finding, in three doors rather than two.
+  //
+  // So every figure says its own label and value once, here. The rail still
+  // expands a running countdown into its stacked pairs — that is a LAYOUT
+  // difference and the reason `railList` survives — but it takes every other
+  // figure from this list rather than re-deciding it.
+  $: figCells = figureList.map((f) =>
+    f === 'clip'
+      ? { k: 'Clip', v: formatCountdown(clipLeft), warn: clipWarn }
+      : f === 'countdown'
+        ? { k: 'Countdown', v: cdFinished ? cdDone || '0:00' : cdText, warn: cdWarn, done: cdFinished }
+        : f === 'clock'
+          ? { k: 'Time', v: clock }
+          : { k: 'Elapsed', v: elapsedText },
+  );
+  $: railList = figureList.flatMap((f, i) => {
+    if (f === 'countdown' && !cdFinished)
+      return cdPairs.map((p, j) => ({
+        k: PAIR_KEYS[PAIR_KEYS.length - cdPairs.length + j] ?? '',
+        v: p,
+        warn: cdWarn,
+      }));
+    return [figCells[i]];
   });
   // How many ROWS the beside-rail holds: a running countdown is three of them, a
   // finished one is a single line of words. It is the list's own length now, so a
@@ -711,9 +750,7 @@
   // difference reads as emphasis rather than as raggedness, and §5 asks for the
   // countdown's pairs to FILL the rail — which sizing them for an eight-character
   // clock two rows down would quietly undo.
-  $: figCh = figureList
-    .map((f) => (f === 'countdown' ? (cdFinished ? cdDone || '0:00' : cdText) : f === 'clock' ? clock : elapsedText))
-    .reduce((n, v) => Math.max(n, v.length || 5), 5);
+  $: figCh = figCells.reduce((n, c) => Math.max(n, (c.v || '').length || 5), 5);
 
   // HOW MANY CHARACTERS THE READING HAS, handed to the stylesheet so the verse can
   // be sized to the room instead of to a fixed ceiling. docs/REBRAND.md §3.4 —
@@ -1354,7 +1391,14 @@
              at the hub's retention door, so `Clear screens` really does mean
              everything. -->
         {#if stageMedia.kind === 'video'}
-          <video class="slide" src={stageMedia.url} autoplay loop muted playsinline></video>
+          <!-- The clip, and the only place on this page that knows how long is
+               left of it. Every event a player can change its mind on, because a
+               figure that updates on `timeupdate` alone freezes where a clip was
+               paused rather than where it is. -->
+          <video class="slide" src={stageMedia.url} bind:this={clipEl}
+            on:loadedmetadata={readClip} on:timeupdate={readClip} on:play={readClip}
+            on:pause={readClip} on:seeked={readClip} on:ended={readClip}
+            autoplay loop muted playsinline></video>
         {:else}
           <img class="slide" src={stageMedia.url} alt="" />
         {/if}
@@ -1385,11 +1429,10 @@
     <!-- ACROSS THE BOTTOM. Also its own container, for the same reason. -->
     <div class="figrow" class:tall={figuresTakeTheRoom} class:only={!zones.reading}
       style="--figs:{figureList.length}; --ch:{figCh}" aria-label="Figures">
-      {#each figureList as f (f)}
-        {@const v = f === 'countdown' ? (cdFinished ? cdDone || '0:00' : cdText) : f === 'clock' ? clock : elapsedText}
-        <div class="fig" class:warn={f === 'countdown' && cdWarn}>
-          <span class="figk">{f === 'countdown' ? 'Countdown' : f === 'clock' ? 'Time' : 'Elapsed'}</span>
-          <span class="figv">{v}</span>
+      {#each figCells as c (c.k)}
+        <div class="fig" class:warn={c.warn} class:done={c.done}>
+          <span class="figk">{c.k}</span>
+          <span class="figv">{c.v}</span>
         </div>
       {/each}
     </div>

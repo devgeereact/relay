@@ -200,6 +200,20 @@
   // reads is the defect the 2026-09-10 pass closed seven Settings controls of.
   $: hasBackdropLayer = layered && layers.some((L) => L.type === 'backdrop' && L.visible !== false);
   $: backdropUp = !!backdrop?.media_url && hasBackdropLayer;
+  // ── IS THERE A PICTURE BEHIND THE CLOCK RIGHT NOW? (RG-212) ────────────────
+  //
+  // The programme rail is digits with no backing, which is right over a
+  // template's own background and unreadable over a clip — and a clip's
+  // brightness changes frame by frame, so no designer can pre-solve it in the
+  // template. The rail earns a plate while a picture is painting and loses it
+  // when the picture goes; a permanent one would be a box sitting over every
+  // template that never shows a picture at all.
+  //
+  // Both kinds count. A fired clip or slide (`content.media_url`, gated on
+  // `allowMedia` because a screen told not to show fired media has no picture on
+  // it) and the standing backdrop, which is behind everything for the whole
+  // service and is the likelier of the two to be bright.
+  $: pictureBehind = (!!content?.media_url && allowMedia) || backdropUp;
   // DELIBERATELY NOT GATED ON `allowMedia`. That answers "does this SCREEN show
   // fired media" — a lower third keeping a camera clean while a picture fills the
   // main wall — and a backdrop is not fired media. Having the layer at all is the
@@ -2369,6 +2383,7 @@
         {@const cells = programmeCells(progRows, programmeCapacity(progW[i]))}
         <div
           class="lprog"
+          class:overmedia={pictureBehind}
           bind:this={progEls[i]}
           style="{boxStyle(L)} --tmrs:{cells.length}; --tch:{progCh}; --lp-sz:{railSize(L)}; {railRoomVars(progH[i], progHeadH[i])} color:{L.color || '#fff'}; font-family:{fontFamOf(L.font)}; opacity:{L.opacity == null ? 1 : L.opacity};"
           aria-label="Programme">
@@ -2514,6 +2529,20 @@
     align-items: stretch;
     overflow: hidden;
     z-index: 3;
+  }
+  /* THE PLATE THE RAIL EARNS OVER A PICTURE (RG-212).
+     A wash and a blur rather than a solid block: the clip is the thing the
+     congregation is watching, and a rail that punches an opaque bar through it
+     is a worse answer than a clock nobody can read. `backdrop-filter` is a
+     progressive enhancement - where it is not supported the wash alone still
+     lifts the digits off the picture, which is why the colour carries most of
+     the contrast rather than the blur.
+     NO COLOUR CHANGE: the digits keep the template's own ink, and a warning or
+     an over-run keeps its own (rule 18). This adds a surface, never a meaning. */
+  .lprog.overmedia {
+    background: color-mix(in srgb, #000 62%, transparent);
+    backdrop-filter: blur(6px);
+    border-radius: 0.8cqw;
   }
   /* `min-width: 0` on the item, or a long label refuses to shrink and pushes the
      last timer off the end of a screen nobody is standing next to. */

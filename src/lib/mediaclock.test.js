@@ -6,7 +6,12 @@
 // operator times the next cue against, which is why `describeMediaClock` takes
 // channel rows and nothing else — it has no way to ask the console's own video.
 import { describe, it, expect } from 'vitest';
-import { describeMediaClock, DRIFT_TOLERANCE_MS, mediaIdFromUrl } from './mediaclock.js';
+import {
+  describeMediaClock,
+  DRIFT_TOLERANCE_MS,
+  mediaIdFromUrl,
+  clipRemainingMs,
+} from './mediaclock.js';
 
 const row = (over = {}) => ({
   id: 1,
@@ -195,5 +200,56 @@ describe('the run surface can put the clip on the preacher screen too', () => {
     // `panic.test.js` exists for one surface up.
     const fn = LIVE_SRC.slice(LIVE_SRC.indexOf('async function toStage'));
     expect(fn.slice(0, 400)).toMatch(/clipErr = humanError\(e\)/);
+  });
+});
+
+// ── THE PREACHER'S HALF OF THE SAME QUESTION (RG-213) ────────────────────────
+//
+// The operator's words: *"on the side can you have the media countdown so the
+// stage screen tells the preacher when the media is almost done and they can be
+// well prepared for next action"*.
+//
+// `describeMediaClock` above answers this for the OPERATOR, from what the
+// congregation screens report on their beat. The stage page cannot ask that
+// question: it has no channel health, it is a client like any other. What it
+// does have is the clip itself, playing in front of the preacher — so the rule
+// is about a player rather than about a set of screens, and it is a separate
+// function for exactly that reason. Collapsing them would mean one of the two
+// surfaces reading a number that is not about the picture it is showing.
+describe('clipRemainingMs — the clock on the preacher’s own copy', () => {
+  it('is what is left of the clip, in milliseconds', () => {
+    expect(clipRemainingMs({ duration: 90, currentTime: 30 })).toBe(60_000);
+  });
+
+  it('is null when the player cannot yet say — never a zero', () => {
+    // A zero reads as "it has finished", which is the one thing it must not say
+    // about a clip that has not started. Every shape a video element takes
+    // before `loadedmetadata` is an absence.
+    expect(clipRemainingMs(null)).toBeNull();
+    expect(clipRemainingMs({})).toBeNull();
+    expect(clipRemainingMs({ duration: NaN, currentTime: 0 })).toBeNull();
+    expect(clipRemainingMs({ duration: 0, currentTime: 0 })).toBeNull();
+    // A live stream has no end, so there is nothing to count down to.
+    expect(clipRemainingMs({ duration: Infinity, currentTime: 12 })).toBeNull();
+  });
+
+  it('never goes below zero, and a finished clip says zero rather than nothing', () => {
+    expect(clipRemainingMs({ duration: 10, currentTime: 10 })).toBe(0);
+    expect(clipRemainingMs({ duration: 10, currentTime: 11.4 })).toBe(0);
+  });
+
+  it('a looping clip still counts to the end of THIS pass', () => {
+    // It is the right answer for the question being asked: the preacher wants to
+    // know when the picture in front of them comes round again, and a loop that
+    // reported `null` would leave the one figure they are watching blank.
+    expect(clipRemainingMs({ duration: 20, currentTime: 5, loop: true })).toBe(15_000);
+  });
+
+  it('a held clip reports the time left where it stopped, not a falling figure', () => {
+    // Nothing here reads the clock, so a paused player simply keeps reporting the
+    // same number. Asserted because it is a promise the stage rail relies on.
+    const held = { duration: 60, currentTime: 12, paused: true };
+    expect(clipRemainingMs(held)).toBe(48_000);
+    expect(clipRemainingMs(held)).toBe(48_000);
   });
 });
