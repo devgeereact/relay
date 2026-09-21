@@ -1167,7 +1167,8 @@
    * that rejoined mid-clip would otherwise jump to the beginning because the frame
    * it was handed still names a replay from ten minutes ago.
    */
-  let actedReplay = null;
+  /** The replay and scrub epochs this element has already acted on (RG-221). */
+  let actedTransport = null;
   // THE BACKDROP IS NOT THE CLIP, and its `loop` is deliberately left alone above.
   // A standing background is room furniture that plays behind whatever is fired
   // over it; the transport belongs to the video the operator put up, and a Pause
@@ -1178,7 +1179,7 @@
   // what Pause means. The reporting stays here, because the BEAT is what says
   // whether the clip is actually moving and only this page sends one.
   $: if (videoEl && mediaTransport) {
-    actedReplay = applyMediaTransport(videoEl, mediaTransport, actedReplay);
+    actedTransport = applyMediaTransport(videoEl, mediaTransport, actedTransport);
     reportMedia();
   }
 

@@ -4123,9 +4123,17 @@ fn set_media_transport<R: tauri::Runtime>(
     // `looping`, not `loop`: the wire says `loop` and Rust cannot.
     looping: Option<bool>,
     replay: Option<bool>,
+    // WHERE THE HANDLE WAS DROPPED, in milliseconds (RG-221). `None` leaves the
+    // clip where it is; `Some` is an instruction and bumps its own counter, so a
+    // screen joining later cannot be dragged back by a retained frame.
+    seek_ms: Option<i64>,
+    // The room's level, 0.0-1.0. `None` leaves it alone — a Pause that also
+    // reset the sound to full is the shape of every "one control moved another"
+    // bug this transport exists to avoid.
+    volume: Option<f64>,
 ) -> error::Result<()> {
-    let (paused, looping, epoch) = transport.apply(paused, looping, replay.unwrap_or(false));
-    channels::media_transport(&app, paused, looping, epoch);
+    let frame = transport.apply(paused, looping, replay.unwrap_or(false), seek_ms, volume);
+    channels::media_transport(&app, frame);
     Ok(())
 }
 

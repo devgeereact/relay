@@ -73,6 +73,11 @@ function clipOf(row) {
     name: row.name || `Screen ${row.id}`,
     remaining: Math.max(0, Math.round(dur - Math.min(pos, dur))),
     paused: !!m.paused,
+    // The two a SCRUB needs (RG-221). Carried on the same clip as everything
+    // else here so the bar and the readout cannot end up describing two
+    // different screens.
+    duration: Math.round(dur),
+    position: Math.max(0, Math.round(Math.min(pos, dur))),
   };
 }
 
@@ -95,6 +100,10 @@ export function describeMediaClock(rows) {
       // and goes and looks at it.
       text: 'No screen is reporting a clip',
       remainingMs: null,
+      // ABSENT, NEVER ZERO. A zero-length scrub bar looks usable and can move
+      // nothing, which is the defect DECISIONS §69 closed seven controls of.
+      durationMs: null,
+      positionMs: null,
       paused: false,
       from: null,
       screens: 0,
@@ -116,6 +125,8 @@ export function describeMediaClock(rows) {
       ? `${formatCountdown(soonest.remaining)} left · held`
       : `${formatCountdown(soonest.remaining)} left`,
     remainingMs: soonest.remaining,
+    durationMs: soonest.duration,
+    positionMs: soonest.position,
     paused,
     from: soonest.name,
     screens: clips.length,

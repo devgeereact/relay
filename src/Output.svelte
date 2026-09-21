@@ -938,7 +938,19 @@
         paused: !!m.paused,
         loop: !!m.loop,
         replayEpoch: Number.isFinite(m.replay_epoch) ? m.replay_epoch : null,
+        // The scrub and the room's level (RG-221). Counted apart from the replay,
+        // for the reason `mediatransport.js` records: one epoch for both would
+        // swallow a scrub made immediately after a replay.
+        seekEpoch: Number.isFinite(m.seek_epoch) ? m.seek_epoch : null,
+        seekMs: Number.isFinite(m.seek_ms) ? m.seek_ms : null,
+        volume: Number.isFinite(m.volume) ? m.volume : null,
       };
+      // AND A SCRUB MOVES THE SYNC BASELINE WITH IT (RG-220). Without this the
+      // corrector pulls the clip back to where the clock says it should be
+      // within two seconds, so the operator's own drag visibly undoes itself.
+      if (Number.isFinite(m.started_at) && content?.media_url) {
+        content = { ...content, media_started_at: m.started_at };
+      }
     } else if (m.kind === 'stage_alert') {
       // ONLY A STAGE. No role is not a stage — a lobby TV and a streaming feed
       // both arrive here with no role at all, and a filter whose default is yes

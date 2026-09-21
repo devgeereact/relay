@@ -2491,6 +2491,53 @@
             <span class="mon-clipwarn">screens disagree</span>
           {/if}
         </div>
+        <!-- ── THE REST OF THE TRANSPORT (RG-221) ──────────────────────────────
+             Play, Pause, Replay and Loop are not the whole of a transport, and
+             the operator said so: a church could not start a clip thirty seconds
+             in, could not go back to a line the preacher wanted again, and could
+             not turn a clip down under a spoken introduction.
+
+             ON ITS OWN ROW, because the row above is the one an operator hits
+             under pressure and a scrub handle is the last thing that should move
+             the Pause button sideways.
+
+             `on:change`, never `on:input`: dragging a handle fires input on every
+             pixel, and each one is a frame to every screen in the building. The
+             change event is the drop. -->
+        {#if mediaClock.known && mediaClock.durationMs}
+          <div class="mon-clip2">
+            <input
+              class="r-range mon-scrub"
+              type="range"
+              min="0"
+              max={mediaClock.durationMs}
+              step="250"
+              value={mediaClock.positionMs ?? 0}
+              aria-label="Scrub the clip"
+              title="Drag to move the clip. Every screen follows."
+              on:change={(e) => clip({ seekMs: Number(e.target.value) })}
+            />
+            <!-- NOT `aria-label="Volume"` alone: this is the clip's level on the
+                 screens, not the operator's own monitoring, and the two are
+                 different things an operator could otherwise confuse under
+                 pressure. -->
+            <span class="mon-vol">
+              <span class="r-lbl">Level</span>
+              <input
+                class="r-range"
+                type="range"
+                min="0"
+                max="1"
+                step="0.05"
+                value={$mediaTransport.volume ?? 1}
+                aria-label="Clip volume on the screens"
+                title="How loud the clip is on the output screens"
+                on:change={(e) => clip({ volume: Number(e.target.value) })}
+              />
+              <span class="r-mono mon-volnum">{Math.round(($mediaTransport.volume ?? 1) * 100)}%</span>
+            </span>
+          </div>
+        {/if}
       {/if}
       <div class="screen">
         {#if $live && progTpl}
@@ -3502,6 +3549,14 @@
   .mon-clipfrom{color:var(--v-faint); font-size:var(--v-fs-b3)}
   /* Rose, which already means a fault on this surface. Not amber: amber is ON AIR
      and a screen falling behind is not a claim about what a congregation sees. */
+  /* The second transport row. Its own line, so a scrub handle can never move the
+     Pause button sideways under an operator's hand. */
+  .mon-clip2{ display:flex; align-items:center; gap:10px; padding:2px 0 4px; }
+  .mon-scrub{ flex:1 1 auto; min-width:0; }
+  .mon-vol{ flex:0 0 auto; display:flex; align-items:center; gap:6px; }
+  .mon-vol .r-range{ width:78px; }
+  .mon-volnum{ min-width:34px; text-align:right; color:var(--v-dim);
+    font-size:var(--v-fs-lbl); font-variant-numeric:tabular-nums; }
   .mon-clipwarn{color:var(--v-red); font-size:var(--v-fs-b3)}
   .mon-cliperr{color:var(--v-red); font-size:var(--v-fs-b3)}
   /* Steel, which already means "this is the state you chose" on this surface. Not

@@ -145,10 +145,16 @@ describe('the transport asks for one thing and leaves the rest', () => {
   it('says null for what it was not asked about', async () => {
     const { invoke, cap } = await load();
     await cap.setMediaTransport({ paused: true });
+    // Two more nulls since RG-221 added the scrub and the level, and they are
+    // the same claim: a Pause says nothing about where the clip is or how loud
+    // it is, and a wrapper that sent a figure for either would move a control
+    // the operator did not touch.
     expect(invoke).toHaveBeenCalledWith('set_media_transport', {
       paused: true,
       looping: null,
       replay: null,
+      seekMs: null,
+      volume: null,
     });
   });
 
@@ -156,7 +162,9 @@ describe('the transport asks for one thing and leaves the rest', () => {
     const { cap, get } = await load();
     await cap.setMediaTransport({ loop: true });
     await cap.setMediaTransport({ paused: true });
-    expect(get(cap.mediaTransport)).toEqual({ paused: true, loop: true });
+    // The level rides in the store too, and survives both — it is a fact about
+    // the room rather than about this clip (RG-221).
+    expect(get(cap.mediaTransport)).toEqual({ paused: true, loop: true, volume: 1 });
   });
 
   it('a replay means the clip is running, not seeked and stopped', async () => {

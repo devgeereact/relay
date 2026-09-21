@@ -682,7 +682,7 @@
   // `applyMediaTransport` is the same rule `TemplateRender` uses, in one place
   // rather than typed twice.
   let xport = null;
-  let actedReplay = null;
+  let actedTransport = null;
   // A TRANSPORT BELONGS TO THE CLIP IT WAS PRESSED FOR, and "the clip" means
   // THIS clip and not "a clip". Keyed on the url rather than on there being one:
   // the hub drops its retained transport on a content frame, and nothing drops
@@ -696,12 +696,12 @@
     clipUrl = clipNow;
     clipStart = stageMedia?.startedAt ?? null;
     xport = null;
-    actedReplay = null;
+    actedTransport = null;
     clipLeft = null;
     if (!clipNow) clipEl = null;
   }
   $: if (clipEl && xport) {
-    actedReplay = applyMediaTransport(clipEl, xport, actedReplay);
+    actedTransport = applyMediaTransport(clipEl, xport, actedTransport);
     readClip();
   }
   $: clipWarn = clipLeft != null && clipLeft <= CLIP_WARN_MS;
@@ -1046,7 +1046,13 @@
         paused: !!m.paused,
         loop: !!m.loop,
         replayEpoch: Number.isFinite(m.replay_epoch) ? m.replay_epoch : null,
+        seekEpoch: Number.isFinite(m.seek_epoch) ? m.seek_epoch : null,
+        seekMs: Number.isFinite(m.seek_ms) ? m.seek_ms : null,
+        volume: Number.isFinite(m.volume) ? m.volume : null,
       };
+      // The scrub's new baseline, so the corrector does not undo the drag
+      // (RG-220) and the countdown beside it stays about the right moment.
+      if (Number.isFinite(m.started_at) && clipStart != null) clipStart = m.started_at;
     } else if (m.kind === 'stage_media') {
       // ONLY A STAGE, on exactly `stage_alert`'s argument one branch up: the hub
       // publishes to every client because it cannot address one (DECISIONS §35),

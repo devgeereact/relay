@@ -2633,7 +2633,7 @@ export async function findProPresenter() {
  * own instruction back as an outcome is rule 35 with extra steps, which is exactly
  * what this store would become if a readout were derived from it.
  */
-export const mediaTransport = writable({ paused: false, loop: false });
+export const mediaTransport = writable({ paused: false, loop: false, volume: 1 });
 
 /**
  * Hold the clip, loop it, or start it again.
@@ -2650,18 +2650,27 @@ export const mediaTransport = writable({ paused: false, loop: false });
  * silently leaves a clip running under an operator who believes they stopped it,
  * and the next cue goes out over the top of it.
  */
-export async function setMediaTransport({ paused, loop, replay } = {}) {
+export async function setMediaTransport({ paused, loop, replay, seekMs, volume } = {}) {
   const call = await invoke();
   await call('set_media_transport', {
     paused: paused ?? null,
     // `looping` across the bridge: the wire says `loop` and Rust cannot.
     looping: loop ?? null,
     replay: replay ?? null,
+    // A SCRUB IS AN EVENT (RG-221), the same shape as `replay` and counted apart
+    // from it. `null` means "leave the clip where it is", which is every press
+    // of every other control on the row.
+    seekMs: seekMs ?? null,
+    volume: volume ?? null,
   });
   // After, never before, and only what was actually asked for.
   mediaTransport.update((t) => ({
     paused: replay ? false : (paused ?? t.paused),
     loop: loop ?? t.loop,
+    // The room's level, and it survives the next fire — unlike `paused` and
+    // `loop`, which the engine resets on new content. An operator who turned a
+    // clip down for a quiet room did not mean "for this clip only".
+    volume: volume ?? t.volume ?? 1,
   }));
 }
 

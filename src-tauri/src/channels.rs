@@ -1177,13 +1177,56 @@ pub struct MediaTransport {
     inner: Mutex<MediaTransportState>,
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 struct MediaTransportState {
     paused: bool,
     looping: bool,
     /// Only ever goes up. See `media_transport_frame_json`: replay is an event,
     /// and an event expressed as a boolean cannot be sent twice.
     replay_epoch: u64,
+    /// The same shape as `replay_epoch`, and counted APART from it (RG-221). One
+    /// counter for both would swallow a scrub made immediately after a replay,
+    /// which is exactly the pair of presses an operator makes when a clip started
+    /// in the wrong place.
+    seek_epoch: u64,
+    /// Where the last scrub put it, in milliseconds.
+    seek_ms: i64,
+    /// THE ROOM'S LEVEL, 0.0–1.0, and deliberately NOT cleared by `reset`: an
+    /// operator who turned a clip down for a quiet room did not mean "for this
+    /// clip only", where `paused` and `looping` genuinely are per clip.
+    volume: f64,
+}
+
+impl Default for MediaTransportState {
+    /// Full volume, because a clip that arrives silent with nothing to say why is
+    /// the worse of the two defaults. `f64::default()` is 0.0, which is why this
+    /// is written out rather than derived.
+    fn default() -> Self {
+        Self {
+            paused: false,
+            looping: false,
+            replay_epoch: 0,
+            seek_epoch: 0,
+            seek_ms: 0,
+            volume: 1.0,
+        }
+    }
+}
+
+/// What every screen is told about the clip it is playing.
+#[derive(Clone, Copy)]
+pub struct TransportFrame {
+    pub paused: bool,
+    pub looping: bool,
+    pub replay_epoch: u64,
+    pub seek_epoch: u64,
+    pub seek_ms: i64,
+    pub volume: f64,
+    /// THE BASELINE A SCRUB IMPLIES (RG-220, RG-221), or `None` when this frame
+    /// carries no scrub. Without it the sync corrector would undo the operator's
+    /// own drag within two seconds: they move the handle, the picture jumps back,
+    /// and the app looks broken.
+    pub started_at: Option<i64>,
 }
 
 impl MediaTransport {
@@ -1194,7 +1237,9 @@ impl MediaTransport {
         paused: Option<bool>,
         looping: Option<bool>,
         replay: bool,
-    ) -> (bool, bool, u64) {
+        seek_ms: Option<i64>,
+        volume: Option<f64>,
+    ) -> TransportFrame {
         let mut g = match self.inner.lock() {
             Ok(g) => g,
             Err(poisoned) => poisoned.into_inner(),
@@ -1205,6 +1250,12 @@ impl MediaTransport {
         if let Some(l) = looping {
             g.looping = l;
         }
+        if let Some(v) = volume {
+            // Clamped here as well as at the receiver. A value outside 0–1 throws
+            // on a real media element, and a frame nobody can apply is worse than
+            // a level slightly off what was asked for.
+            g.volume = v.clamp(0.0, 1.0);
+        }
         if replay {
             g.replay_epoch = g.replay_epoch.saturating_add(1);
             // STARTING IT AGAIN MEANS IT IS RUNNING. An operator who presses
@@ -1213,7 +1264,25 @@ impl MediaTransport {
             // frame on a wall with the transport saying it was actioned.
             g.paused = false;
         }
-        (g.paused, g.looping, g.replay_epoch)
+        let mut started_at = None;
+        if let Some(at) = seek_ms {
+            g.seek_epoch = g.seek_epoch.saturating_add(1);
+            g.seek_ms = at.max(0);
+            // AND THE SYNC BASELINE MOVES WITH IT. RG-220 pulls every screen onto
+            // the instant Relay sent the clip; a scrub that did not restate that
+            // instant would be corrected away within the tolerance, so the
+            // operator's own drag would visibly undo itself.
+            started_at = Some(now_epoch_ms() - g.seek_ms);
+        }
+        TransportFrame {
+            paused: g.paused,
+            looping: g.looping,
+            replay_epoch: g.replay_epoch,
+            seek_epoch: g.seek_epoch,
+            seek_ms: g.seek_ms,
+            volume: g.volume,
+            started_at,
+        }
     }
 
     /// Back to a clip that has just been fired: playing, not looping. The epoch is
@@ -1226,6 +1295,8 @@ impl MediaTransport {
         };
         g.paused = false;
         g.looping = false;
+        // The VOLUME survives, and that is the one difference between the three.
+        // See the field's own note: the sound level is a fact about the room.
     }
 }
 
@@ -1526,12 +1597,22 @@ fn stage_media_retention(msg: &str) -> Option<Option<String>> {
 /// Replay a second time on a clip already at its start would publish a frame
 /// identical to the retained one, and a screen that had acted on the first would
 /// do nothing at all. A number that only goes up is an instruction every time.
-fn media_transport_frame_json(paused: bool, looping: bool, replay_epoch: u64) -> String {
+fn media_transport_frame_json(f: TransportFrame) -> String {
     serde_json::json!({
         "kind": "media_transport",
-        "paused": paused,
-        "loop": looping,
-        "replay_epoch": replay_epoch,
+        "paused": f.paused,
+        "loop": f.looping,
+        "replay_epoch": f.replay_epoch,
+        // A SCRUB IS AN EVENT, exactly as a replay is, and counted apart from it
+        // (RG-221). `seek_ms` is where the handle was dropped; a screen acts on
+        // an epoch it has not seen and ignores one it has, so a retained frame
+        // cannot drag a screen that joins an hour later back to the start.
+        "seek_epoch": f.seek_epoch,
+        "seek_ms": f.seek_ms,
+        // The room's level, 0.0–1.0.
+        "volume": f.volume,
+        // The baseline the scrub implies, when this frame carries one (RG-220).
+        "started_at": f.started_at,
     })
     .to_string()
 }
@@ -2068,16 +2149,8 @@ pub fn stage_media<R: tauri::Runtime>(app: &tauri::AppHandle<R>, media: Option<(
 /// already there. In a rehearsal nothing is on a real screen to change, so the
 /// frame reaches nobody — and gating it would only mean an operator rehearsing the
 /// transport found the buttons dead with nothing to say why.
-pub fn media_transport<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
-    paused: bool,
-    looping: bool,
-    replay_epoch: u64,
-) {
-    publish_kiosk(
-        app,
-        media_transport_frame_json(paused, looping, replay_epoch),
-    );
+pub fn media_transport<R: tauri::Runtime>(app: &tauri::AppHandle<R>, frame: TransportFrame) {
+    publish_kiosk(app, media_transport_frame_json(frame));
 }
 
 /// THE WIRE FORM OF THE PROGRAMME TIMERS — the whole stage-visible set, every time.

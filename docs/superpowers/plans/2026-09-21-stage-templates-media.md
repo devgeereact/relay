@@ -1,9 +1,7 @@
 # Stage, templates, outputs and media — the operator's brief of 2026-09-21
 
-**Status: BUILT, 2026-09-21. Eleven of twelve items complete; see each section for its RG row.**
-The one thing outstanding is the rest of item 10 — scrub and volume, which are absent on every
-surface and are recorded as absent rather than claimed. What follows is the plan as written,
-annotated with what each item became. Written from the operator's brief and from reading
+**Status: BUILT, 2026-09-21. All twelve items complete; see each section for its RG row.**
+What follows is the plan as written, annotated with what each item became. Written from the operator's brief and from reading
 the code, not from assumption — every claim below says whether it was VERIFIED in the tree or is
 still UNCHECKED, because three of the last five things filed as broken turned out to be already
 fixed and one turned out to be a different defect from the one reported.
@@ -152,8 +150,8 @@ showing current content under a dead badge is the rule 35 failure in a new place
   shows two. This is a correctness bug on the surface an operator steps through.
 - **10 · Media controls everywhere — PART DONE, RG-214.** The gap turned out to be the other way
   round: the transport reached every screen except the preacher's, which ignored the frame and
-  hard-coded `loop`. Both surfaces now share one rule. **Scrub and volume are still absent on
-  every surface** and are the rest of this item.
+  hard-coded `loop`. Both surfaces now share one rule. Scrub and volume followed as RG-221: an
+  event-counted scrub that restates the sync baseline, and a level that survives the next fire.
 - **11 · Media on the stage screen — DONE, RG-212 and RG-213.** The rail earns a plate while a
   picture is behind it and loses it when the picture goes; the stage rail carries a `Clip` figure
   read off the page's own player, which is the copy the preacher is looking at. It times THIS

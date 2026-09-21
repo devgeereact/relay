@@ -253,3 +253,70 @@ describe('clipRemainingMs — the clock on the preacher’s own copy', () => {
     expect(clipRemainingMs(held)).toBe(48_000);
   });
 });
+
+// ── AND WHERE THE CLIP IS, WHICH IS WHAT A SCRUB NEEDS (RG-221) ─────────────
+//
+// `remainingMs` answers "how long is left", which is the operator's question
+// during a service. A scrub asks two more: how long is the clip, and where is it
+// now. They come from the same beat, from the same screen — the one the rest of
+// this verdict is about — so they belong here rather than in a second reader
+// that could pick a different screen.
+describe('the clip’s length and position, for the control that moves it', () => {
+  const row = (over = {}) => ({
+    id: 1,
+    name: 'Main screen',
+    painting: true,
+    media: { dur_ms: 120_000, pos_ms: 30_000, paused: false },
+    ...over,
+  });
+
+  it('are the SAME screen the rest of the verdict is about', () => {
+    const d = describeMediaClock([
+      row({ id: 1, name: 'Main screen', media: { dur_ms: 120_000, pos_ms: 30_000 } }),
+      // Further through the clip, so it is the one with the least left and the
+      // one `from` already names.
+      row({ id: 2, name: 'Lobby', media: { dur_ms: 120_000, pos_ms: 100_000 } }),
+    ]);
+    expect(d.from).toBe('Lobby');
+    expect(d.durationMs).toBe(120_000);
+    expect(d.positionMs).toBe(100_000);
+  });
+
+  it('are absent, never zero, when no screen is reporting a clip', () => {
+    // A zero length would make a scrub bar that looks usable and cannot move
+    // anything, which is the defect DECISIONS §69 closed seven controls of.
+    const d = describeMediaClock([]);
+    expect(d.durationMs).toBeNull();
+    expect(d.positionMs).toBeNull();
+  });
+});
+
+// ── AND THE CONTROLS THAT MOVE IT ARE ON THE DESK (RG-221) ──────────────────
+//
+// The rule is held against numbers above and in `mediafull.test.js`; this holds
+// that Live actually offers the two controls, and the two judgements that make
+// them usable rather than merely present.
+describe('the rest of the transport is reachable from the run surface', () => {
+  it('offers a scrub and a level, both named for somebody who cannot see them', () => {
+    expect(LIVE, 'no scrub on the desk').toMatch(/aria-label="Scrub the clip"/);
+    // NOT "Volume": this is the clip's level on the SCREENS, not the operator's
+    // own monitoring, and an operator under pressure could confuse the two.
+    expect(LIVE).toMatch(/aria-label="Clip volume on the screens"/);
+  });
+
+  it('sends the scrub on the DROP, never on every pixel of the drag', () => {
+    // `on:input` fires per pixel and each one is a frame to every screen in the
+    // building — a drag across a two-minute clip would be hundreds of broadcasts
+    // and a wall that stutters while the handle moves.
+    const bar = LIVE.slice(LIVE.indexOf('aria-label="Scrub the clip"'));
+    const tag = bar.slice(0, bar.indexOf('/>'));
+    expect(tag, 'the scrub fires on every pixel of the drag').not.toMatch(/on:input/);
+    expect(tag).toMatch(/on:change=\{\(e\) => clip\(\{ seekMs:/);
+  });
+
+  it('and neither appears when no screen is reporting a clip', () => {
+    // A scrub bar over an unknown length looks usable and can move nothing,
+    // which is the defect DECISIONS §69 closed seven Settings controls of.
+    expect(LIVE).toMatch(/\{#if mediaClock\.known && mediaClock\.durationMs\}/);
+  });
+});
