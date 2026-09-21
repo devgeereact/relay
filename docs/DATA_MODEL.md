@@ -60,6 +60,9 @@ Relay may compare a signal to a stored level ([DECISIONS.md](DECISIONS.md) §19,
 ## 2. Reference data
 
 ### Translation — `db/verses.rs` `Translation`
+Two ship bundled (KJV, BSB; `BUNDLED_ABBREVIATIONS`), and an operator may import more from a
+JSON file in the KJV's shape (`import_translation`, replacing by abbreviation) or delete an
+imported one (`delete_translation`, never the bundled two or the active one). DECISIONS §113.
 The Bible translation a verse belongs to. Bundled corpus today is **KJV only** (66 books,
 31,102 verses, committed at `src-tauri/data/kjv.json`, glosses **and subscriptions** stripped at import — no cleaned verse carries `{`, `}`, `«` or `»`, swept over the whole corpus by `db::verses::corpus_tests`). Fields:
 `id, name, abbreviation, language` (ISO code), `license_type`. There is deliberately no import

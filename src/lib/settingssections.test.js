@@ -1238,5 +1238,23 @@ describe('the component kit, and what adopting it buys', () => {
     expect(MARKUP_ONLY).toMatch(/rw-nvk">Version<[\s\S]{0,400}\{buildMarker/);
     expect(SCRIPT).toMatch(/buildMarker\s*=\s*await\s+getBuildMarker\(\)/);
   });
+
+  // RG-50 OPTION TWO (2026-09-21): a licensed Bible cannot be bundled, so a church
+  // brings its own file. The control lives beside the translation list; the
+  // delete is two presses; the bundled two cannot be deleted from here at all.
+  it('Scripture offers a Bible import beside the translation list, and a two-press delete for an imported one', () => {
+    const tr = MARKUP_ONLY.slice(
+      MARKUP_ONLY.indexOf('<div class="rw-group">Bible translations</div>'),
+      MARKUP_ONLY.indexOf('<div class="rw-group">Language coverage</div>'),
+    );
+    expect(tr).toMatch(/type="file"[^>]*accept="\.json[^"]*"/);
+    expect(tr).toMatch(/Import a Bible/);
+    expect(tr, 'the delete must be armed first').toMatch(/trDeleteArmed === tr\.id/);
+    expect(tr, 'the bundled two are not deletable from here').toMatch(/!isBundled\(tr\)/);
+    expect(SCRIPT).toMatch(/await importTranslation\(/);
+    expect(SCRIPT).toMatch(/await deleteTranslation\(/);
+    // The footer no longer says "Only the KJV is bundled".
+    expect(tr).not.toMatch(/Only public-domain <b>KJV<\/b> is bundled/);
+  });
 });
 

@@ -138,6 +138,8 @@ pub const PROTECTED: &[(&str, &str)] = &[
     ("delete_announcement", "deleting an announcement"),
     ("delete_media", "deleting a media file"),
     ("delete_voice_profile", "deleting a voice profile"),
+    ("delete_translation", "deleting a Bible translation"),
+    ("import_translation", "importing a Bible translation"),
     ("delete_service", "erasing a recorded service"),
     // Removing the demo set deletes plans, songs, notices, saved verses and a
     // media file in one press — the most irreversible thing on this list per click,

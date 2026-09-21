@@ -10,6 +10,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+### Bring your own Bible
+
+If your church holds a licence for a version Relay does not ship, Settings → Scripture → **Import a Bible** takes it from a JSON file (66 books in order, chapters as lists of verses). Relay checks the whole file first and says exactly what is wrong if it refuses; importing over the same short code replaces it. Delete is two presses, and the bundled KJV and Berean Standard Bible cannot be deleted. Relay does not check the licence: that is yours. (RG-50, DECISIONS §113)
+
 ### Relay says which build it is
 
 Settings → This machine now shows the build beside the version, every service records the build that ran it, and the diagnostic file carries it. A version number is shared by every build of a branch, so after a service where something went wrong nobody could say exactly which code was running. Now the row says. (RG-209)

@@ -6130,8 +6130,8 @@ translation's, the LIKE and FTS searches are scoped to it, and the corpus repair
 rewrites the **KJV alone** by its own id. Before this, `all_verses` would have built the phrase
 and semantic indexes over both texts and offered every quotation twice.
 
-**What this does not do.** It does not add an operator import path for a licensed corpus; that
-is RG-50's option two and still needs its own design. It does not translate the book-name
+**What this does not do.** It did not add an operator import path for a licensed corpus; that
+is RG-50's option two, and §113 built it the same day. It does not translate the book-name
 aliases (`LANGUAGES.md`), which are about what the preacher *says*, not what the wall reads.
 
 **Pinned by** `db::verses::second_translation::*` and `readiness.test.js` *RG-50*.
@@ -6216,4 +6216,39 @@ restore_never_hands_out_a_restored_id_again}`, `db::timers::tests` (round trip, 
 unparseable row skipped, the restore filter), and
 `e2e::a_relaunch_brings_the_clocks_back_without_putting_one_on_a_wall`, watched to fail with
 the stage publish removed. RG-208.
+
+## 113. A church may import a Bible it holds a licence for, in the KJV file's shape (2026-09-21)
+
+**On the operator's "go ahead with what's remaining"; RG-50's option two, which §110 left as "still needs its own design".**
+
+The NKJV the preacher named on 2026-09-20 is under copyright and will never ship inside Relay.
+A church that holds a licence and has the text as a file was still told, in effect, to wait.
+
+### The decision
+
+- **`import_translation`** takes a JSON file in the shape the two bundled Bibles already use: a
+  list of the 66 books in canonical order, each `{ "chapters": [[verse, …], …] }`. Book names
+  come from `CANONICAL_BOOKS` by index, so a detected reference and a stored verse agree on
+  spelling by construction. **Verse layout is not required to match the KJV's** — a licensed text
+  may merge or split verses — but every book must be present and no verse may be empty, and the
+  refusal names the book, chapter and verse. Nothing is written until the whole file has passed.
+- **The abbreviation is the identity.** Importing over an abbreviation already imported REPLACES
+  it in one transaction, which is how a corrected file lands without a delete first. `KJV` and
+  `BSB` are refused: the corpus repair reads the KJV by its own id, and the bundled two are the
+  floor a church can always fall back to.
+- **`delete_translation`** refuses the bundled two and the active one (choose another first, so a
+  delete can never leave `active_translation` pointing at nothing), relinks any past detection
+  that pointed into the deleted text at the KJV's same reference, and rebuilds the FTS index.
+- **Both are held back during a service** (`servicelock::PROTECTED`): rebuilding the search
+  index under a running detector is not a Sunday job. The control is two presses for a delete
+  (rule 41) and lives in Settings → Scripture beside the list it changes.
+- **What Relay does not check is the licence.** It stores `license_type = 'licensed'` and the
+  name the operator typed; whether the church may display the text is the church's question,
+  and a dialogue box asking it would be theatre.
+
+### What holds it
+
+`db::verses::imported_translation::*` (import, replace, every refusal, delete's three
+refusals), the `servicelock` tests for the two new entries, and `settingssections.test.js`
+(the control, the two-press delete, the bundled two undeletable from the page).
 

@@ -67,7 +67,7 @@
     Math.round(
       (Object.keys(CATALOGUES[code] ?? {}).filter((k) => !k.startsWith('_')).length / TOTAL) * 100,
     );
-  import { capture, meter, initAudio, startCapture, stopCapture, setSensitivity, getSensitivity, setSttLanguage, setInputDevice, getBuildMarker, listTranslations, getActiveTranslation, setActiveTranslation, localIp, getCrashReporting, setCrashReporting, serviceTargetMinutes, loadServiceTarget, setServiceTarget, countdownWarnMs, loadCountdownWarnMs, setCountdownWarnMs, latencyReport, latencyReset, latencySetEnabled, serviceLock, loadServiceLock, setServiceLock, rooms, loadRooms, saveRoom, useRoom, deleteRoom,
+  import { capture, meter, initAudio, startCapture, stopCapture, setSensitivity, getSensitivity, setSttLanguage, setInputDevice, getBuildMarker, listTranslations, getActiveTranslation, setActiveTranslation, importTranslation, deleteTranslation, fileToBase64, localIp, getCrashReporting, setCrashReporting, serviceTargetMinutes, loadServiceTarget, setServiceTarget, countdownWarnMs, loadCountdownWarnMs, setCountdownWarnMs, latencyReport, latencyReset, latencySetEnabled, serviceLock, loadServiceLock, setServiceLock, rooms, loadRooms, saveRoom, useRoom, deleteRoom,
     listOutputChannels, setChannelDisplay, activeVoiceProfile, languageReport, exportDiagnostics, readErrors,
     demoStatus, loadDemoContent, removeDemoContent } from '../stores/capture.js';
   // `Loading` and `ErrorState` are no longer imported HERE and that is the point
@@ -1019,6 +1019,61 @@
     stopLatencyPoll();
   });
 
+  // ── IMPORT A BIBLE (RG-50 option two, DECISIONS §113) ────────────────────
+  // A licensed text cannot ship inside Relay, so a church brings its own file in
+  // the KJV's shape. The name and abbreviation are typed here, not guessed from
+  // the filename: what the list says is what the operator called it.
+  const BUNDLED = ['KJV', 'BSB'];
+  const isBundled = (tr) => BUNDLED.includes(tr.abbreviation);
+  let trFileInput;
+  let trName = '';
+  let trAbbr = '';
+  let trLang = 'en';
+  let trBusy = false;
+  let trMsg = '';
+  let trDeleteArmed = null;
+  async function onBibleFile(e) {
+    const file = e.target?.files?.[0];
+    if (trFileInput) trFileInput.value = '';
+    if (!file) return;
+    trMsg = '';
+    if (!trName.trim() || !trAbbr.trim()) {
+      trMsg = 'Type the translation\u2019s name and its short code first, then choose the file.';
+      return;
+    }
+    trBusy = true;
+    try {
+      const r = await importTranslation({
+        name: trName.trim(),
+        abbreviation: trAbbr.trim(),
+        language: trLang.trim() || 'en',
+        licenseType: 'licensed',
+        filename: file.name,
+        dataB64: await fileToBase64(file),
+      });
+      trMsg = r.replaced
+        ? `Replaced ${trAbbr.trim().toUpperCase()} with ${r.verses.toLocaleString()} verses.`
+        : `Imported ${trAbbr.trim().toUpperCase()}: ${r.verses.toLocaleString()} verses. Pick it above to read from it.`;
+      trName = ''; trAbbr = '';
+      await loadTranslations();
+    } catch (err) {
+      trMsg = humanError(err);
+    }
+    trBusy = false;
+  }
+  async function doDeleteTranslation(tr) {
+    if (trDeleteArmed !== tr.id) { trDeleteArmed = tr.id; return; }
+    trDeleteArmed = null;
+    trMsg = '';
+    try {
+      await deleteTranslation(tr.id);
+      trMsg = `Removed ${tr.abbreviation}.`;
+      await loadTranslations();
+    } catch (err) {
+      trMsg = humanError(err);
+    }
+  }
+
   async function pickTranslation(id) {
     const prev = activeTranslation;
     activeTranslation = id;
@@ -1708,11 +1763,45 @@
                 <span class="s-tr-name">{tr.name}</span>
                 {#if tr.id === activeTranslation}<span class="s-tr-active r-mono">active</span>{/if}
               </button>
+              {#if !isBundled(tr)}
+                <!-- TWO PRESSES, in-app (rule 41). The bundled two never show this:
+                     `db::delete_translation` refuses them too, but a control that
+                     cannot succeed is a dead button. -->
+                <div class="s-tr-tools">
+                  <Button variant={trDeleteArmed === tr.id ? 'danger' : 'ghost'} size="sm"
+                    on:click={() => doDeleteTranslation(tr)}
+                    disabled={$serviceLock.engaged || tr.id === activeTranslation}
+                    disabledReason={tr.id === activeTranslation ? 'Choose another translation first.' : whyDisabled([$serviceLock.engaged && SERVICE_LOCKED])}>
+                    {trDeleteArmed === tr.id ? `Delete ${tr.abbreviation}, really` : 'Delete'}
+                  </Button>
+                  {#if trDeleteArmed === tr.id}
+                    <Button variant="ghost" size="sm" on:click={() => (trDeleteArmed = null)}>Keep it</Button>
+                  {/if}
+                </div>
+              {/if}
             {/each}
           </ListState>
         </div>
         <div class="s-prose">
-          <p class="rw-foot">Only public-domain <b>KJV</b> is bundled. Additional versions need their verse data added to the corpus.</p>
+          <p class="rw-foot">The <b>KJV</b> and the <b>Berean Standard Bible</b> ship inside Relay, both public domain. A licensed version (NKJV, NIV, ESV) cannot be bundled; if your church holds a licence and has the text as a file, import it below.</p>
+        </div>
+        <!-- IMPORT A BIBLE (RG-50 option two). The file is JSON in the KJV's shape:
+             a list of 66 books, each { "chapters": [[verse, …], …] }, Genesis to
+             Revelation. Relay checks every book is present and no verse is empty
+             before a single row is written; the refusal says which. -->
+        <div class="rw-group">Import a Bible</div>
+        <div class="s-prose s-trimport">
+          <label class="rw-nv"><span class="rw-nvk">Name</span><input class="r-input" type="text" bind:value={trName} placeholder="New King James Version" disabled={trBusy} /></label>
+          <label class="rw-nv"><span class="rw-nvk">Short code</span><input class="r-input" type="text" bind:value={trAbbr} placeholder="NKJV" maxlength="12" disabled={trBusy} /></label>
+          <label class="rw-nv"><span class="rw-nvk">Language</span><input class="r-input" type="text" bind:value={trLang} placeholder="en" maxlength="8" disabled={trBusy} /></label>
+          <input type="file" accept=".json,application/json" bind:this={trFileInput} on:change={onBibleFile} style="display:none" />
+          <Button variant="ghost" size="sm" on:click={() => trFileInput?.click()}
+            disabled={trBusy || $serviceLock.engaged || !$capture.available}
+            disabledReason={whyDisabled([trBusy && BUSY, $serviceLock.engaged && SERVICE_LOCKED, !$capture.available && ENGINE_OFF])}>
+            {trBusy ? 'Importing…' : 'Import a Bible from a file…'}
+          </Button>
+          {#if trMsg}<p class="rw-foot" role="status">{trMsg}</p>{/if}
+          <p class="rw-foot">A JSON file: a list of the 66 books in order, each with <code>"chapters"</code> as a list of verse lists. Verse layout may differ from the KJV; every book must be present. Held back while a service is being recorded.</p>
         </div>
         <!-- LANGUAGE COVERAGE. It had its own rail entry once and now shares a
              section with the translation list, which is the other answer to "what
@@ -2707,6 +2796,8 @@
   .s-tr-dot{ width:13px; height:13px; border-radius:50%; flex:0 0 auto; border:2px solid var(--v-faint); }
   .s-tr-dot.on{ border-color:var(--v-accent); background:radial-gradient(circle,var(--v-accent) 40%,transparent 45%); }
   .s-tr-name{ color:var(--v-dim); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .s-tr-tools{ display:flex; gap:6px; padding:0 12px 8px; }
+  .s-trimport .rw-nv .r-input{ max-width:260px; }
   .s-tr-active{ font-family:var(--f-mono); font-size:var(--v-fs-cap); letter-spacing:.1em;
     text-transform:uppercase; color:var(--v-accent); }
 

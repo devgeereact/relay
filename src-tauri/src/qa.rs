@@ -749,9 +749,10 @@ mod cold_start {
 
         // The TABLE was never the problem, for either of them. For arrangements the
         // break used to be one level up — a wrapper no component imported — and
-        // that is closed. For translations the break is at the command layer: there
-        // is no `add_translation` at all, and behind it the verse corpus for a
-        // second version does not exist to import.
+        // that is closed. For translations the break WAS at the command layer:
+        // there was no importer at all, and behind it no second corpus. Both are
+        // closed (RG-50, DECISIONS §110 and §113), and the assertion below flipped
+        // with them: the importer must exist AND be reached from a rendered control.
         drop(conn);
         let conn = db.0.lock().unwrap();
         conn.execute_batch(
@@ -764,11 +765,18 @@ mod cold_start {
 
         let translation_commands = std::fs::read_to_string("src/main.rs").unwrap();
         assert!(
-            !translation_commands.contains("fn add_translation")
-                && !translation_commands.contains("fn import_translation"),
-            "a translation importer now exists — the Settings note 'Additional \
-             versions need their verse data added to the corpus' is no longer the \
-             end of the road, so update the matrix"
+            translation_commands.contains("fn import_translation"),
+            "the Bible importer is gone — RG-50 option two reopened"
+        );
+        let settings = std::fs::read_to_string("../src/lib/views/Settings.svelte").unwrap();
+        assert!(
+            settings.contains("importTranslation(") && settings.contains("Import a Bible"),
+            "the importer exists and no rendered control reaches it — the create-path \
+             gap `qa-inventory` polices, on the one table it used to name"
+        );
+        assert!(
+            !settings.contains("Additional versions need their verse data added to the corpus"),
+            "the Settings note still says the corpus is the end of the road"
         );
     }
 

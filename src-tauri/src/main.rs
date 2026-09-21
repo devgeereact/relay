@@ -675,6 +675,8 @@ fn main() {
             list_translations,
             get_active_translation,
             set_active_translation,
+            import_translation,
+            delete_translation,
             list_voice_profiles,
             active_voice_profile,
             create_voice_profile,
@@ -5656,6 +5658,46 @@ fn get_active_translation(db: tauri::State<'_, Db>) -> error::Result<Option<i64>
 
 /// Choose which translation to read from. Every verse lookup (detection, nav,
 /// manual, output) then prefers it, falling back to any that has the verse.
+/// IMPORT A BIBLE from a JSON file in the KJV's shape (RG-50 option two, DECISIONS
+/// §113). Held back during a service: a rebuild of the FTS index and a new
+/// translation row under a running detector is not a Sunday job.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)] // one command, one file, six things about it — a struct would only rename the eight
+fn import_translation(
+    db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+    name: String,
+    abbreviation: String,
+    language: String,
+    license_type: String,
+    filename: String,
+    data: String,
+) -> error::Result<db::ImportedTranslation> {
+    lock.guard("import_translation")?;
+    let bytes = decode_import(&filename, &data)?;
+    let json = String::from_utf8(bytes).map_err(|_| {
+        error::Error::refused(format!(
+            "{filename} is not a text file. Relay reads a Bible as UTF-8 JSON."
+        ))
+    })?;
+    let conn = db.0.lock()?;
+    db::import_translation(&conn, &name, &abbreviation, &language, &license_type, &json)
+        .map_err(error::Error::refused)
+}
+
+/// DELETE AN IMPORTED BIBLE. The two Relay ships and the active one are refused
+/// in `db::delete_translation`, with the reason.
+#[tauri::command]
+fn delete_translation(
+    db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+    id: i64,
+) -> error::Result<()> {
+    lock.guard("delete_translation")?;
+    let conn = db.0.lock()?;
+    db::delete_translation(&conn, id).map_err(error::Error::refused)
+}
+
 #[tauri::command]
 fn set_active_translation(
     db: tauri::State<'_, Db>,

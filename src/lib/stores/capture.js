@@ -2234,6 +2234,25 @@ return guardedRead('listMedia', async (call) => {
     return await call('list_media');
 }, []);
 }
+/** Import a Bible from a JSON file in the KJV's shape (RG-50 option two). Throws. */
+export async function importTranslation({ name, abbreviation, language, licenseType, filename, dataB64 }) {
+const call = await invoke();
+return await call('import_translation', {
+  name,
+  abbreviation,
+  language,
+  licenseType,
+  filename,
+  data: dataB64,
+});
+}
+
+/** Delete an imported Bible. Throws; the bundled two and the active one are refused. */
+export async function deleteTranslation(id) {
+const call = await invoke();
+return await call('delete_translation', { id });
+}
+
 export async function importMedia(kind, filename, dataB64) {
 const call = await invoke();
 return await call('import_media', {

@@ -177,6 +177,12 @@ Live software fails live. These are the things that actually happen.
 public-domain text). Pick one in **Settings → Scripture** before the service; the readiness
 screen names the one in use. If the preacher reads from a version Relay does not have, the
 words on the wall will differ from the words being read, and the suggestion card says so.
+If your church holds a licence for another version and has it as a file, **Settings → Scripture →
+Import a Bible** takes a JSON file in the same shape as the bundled two (66 books in order, each
+with its chapters as lists of verses); Relay checks every book is there and no verse is empty
+before it writes anything, and tells you exactly what is wrong if not. Delete takes two presses,
+and the two bundled Bibles and the one in use cannot be deleted. Neither is possible while a
+service is being recorded.
 
 **A screen says "Not painting the picture".** The picture or clip you fired did not load on that
 screen: the file has gone, that screen cannot reach the address, or the clip is in a format that
