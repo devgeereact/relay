@@ -128,6 +128,13 @@ A network screen that could not keep up with Relay used to miss updates in
 silence, including a clear. It is now handed what is on the screens again, and
 Outputs counts how often that happened.
 
+### The Screen Countdown's controls are back on Live
+
+A countdown already on the screens can again be held, given a minute either
+way, reset, re-aimed at a clock time and put back after a verse replaced it,
+from the band under the Stage Timer on Live. The band was removed the evening
+before; it is back on request.
+
 ### Ten smaller things, each a sentence
 
 - Help now says how to turn a screen on (Outputs → Screens → Turn on) and

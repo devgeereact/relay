@@ -6082,3 +6082,27 @@ a congregation (§18), so the check §26 wanted stays available exactly there.
 **Pinned by** `main::tests::a_manual_open_never_lands_on_the_operators_display` and
 `gallerycontrols.test.js`.
 
+## 109. The Screen Countdown's transport lives on Live, and the reversal is recorded rather than hidden (2026-09-21)
+
+**The history, in three days.** On the morning of 2026-09-20 the Screen Countdown left Quick
+tools for a band of its own on Live, under the Stage Timer (REBRAND §2). That evening the
+operator asked for it to go, and it went: the countdown became a Planner cue aimed at named
+screens, and Live kept a note where the band had been saying exactly what was lost. On
+2026-09-21 the Phase 1 audit read that note back to the operator as its F13 row: a countdown
+already in front of a room could not be held, reset, nudged or put back from anywhere, and the
+two commands that could do it were imported into Live and called nowhere. The operator asked for
+the band back.
+
+**The decision.** The band is restored unchanged from the commit before its removal
+(`41d3057~1`): the fields, the clock-time target, the format, the figure, the six transport
+controls, the screen picker, the reach line and the way back. Two clocks, two audiences, two
+bands, never merged (§99). The Planner cue stays; it fires through this view like every other cue.
+
+**Why record a reversal at all.** Because the removal was itself recorded, in a note that
+argued for what it cost, and a silent restoration would leave the next reader with two facts and
+no order to put them in. REBRAND §2 already described the band on Live and had been false for a
+day; it is true again.
+
+**Pinned by** `screencountdown.test.js`, which now asserts the band's presence and its place
+under the Stage Timer.
+

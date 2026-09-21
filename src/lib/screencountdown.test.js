@@ -167,27 +167,32 @@ const LIVE_CODE = LIVE_SRC.replace(/<!--[\s\S]*?-->/g, '')
   .replace(/\/\*[\s\S]*?\*\//g, '')
   .replace(/^[ \t]*\/\/.*$/gm, '');
 
-describe('the run surface no longer carries the Screen Countdown', () => {
-  it('names it nowhere and draws none of its controls', () => {
-    expect(LIVE_CODE).not.toContain('Screen Countdown');
-    expect(LIVE_CODE).not.toContain('sc-band');
-    expect(LIVE_CODE).not.toContain('cdtrans');
-    expect(LIVE_CODE).not.toContain('Put back on screens');
+describe('the run surface carries the Screen Countdown, under the Stage Timer', () => {
+  // 2026-09-21: the operator asked for the band back (it was removed on
+  // 2026-09-20, a day after it moved here from Quick tools). A countdown in front
+  // of a room needs a hand on it: hold, a minute either way, an appointment, and
+  // the way back after a verse replaced it. DECISIONS §109.
+  it('names it and draws its transport', () => {
+    expect(LIVE_CODE).toContain('Screen Countdown');
+    expect(LIVE_CODE).toContain('sc-band');
+    expect(LIVE_CODE).toContain('cdtrans');
+    expect(LIVE_CODE).toContain('Put back on screens');
   });
 
-  it('keeps no countdown transport state behind the missing controls', () => {
-    // A view that still computed `cdLive`, ticked a figure and held a busy flag
-    // for a band nobody renders is the shape of a surface half-rebuilt by
-    // accident. The script went with the markup.
-    for (const dead of ['cdPress(', 'function cdRun', 'cdUntilBad', 'cdChosen', 'cdReach']) {
-      expect(LIVE_CODE, `Live still carries ${dead}`).not.toContain(dead);
+  it('carries the transport state behind the controls', () => {
+    for (const live of ['cdPress(', 'function cdRun', 'cdUntilBad', 'cdChosen', 'cdReach']) {
+      expect(LIVE_CODE, `Live is missing ${live}`).toContain(live);
     }
   });
 
-  it('leaves no stylesheet for a band that is not there', () => {
+  it('styles the band', () => {
     for (const sel of ['.sc-band{', '.cdfields{', '.cdstatev{', '.sc-ch{', '@keyframes cdwarn']) {
-      expect(LIVE_CODE, `Live still styles ${sel}`).not.toContain(sel);
+      expect(LIVE_CODE, `Live does not style ${sel}`).toContain(sel);
     }
+  });
+
+  it('sits under the Stage Timer band, never above it', () => {
+    expect(LIVE_SRC.indexOf('class="sc-band"')).toBeGreaterThan(LIVE_SRC.indexOf('class="pt-band"'));
   });
 });
 
