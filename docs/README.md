@@ -199,9 +199,9 @@ the author has ever run a service. The fifth, the auto-updater's dead endpoint, 
 (RG-83, RG-114). The conditions and the reasoning are both [qa/RELAY_GAP.md](qa/RELAY_GAP.md) §24.
 
 The packaged build **has** been reached by an instrument — one live sermon
-([FIELD-2026-08-30.md](qa/audits/FIELD.md)). Pixels out, hardware, and a second
-operator still have not: [QA-2026-08-14.md](qa/audits/SUPERSEDED.md) §16 is the human test
-script and it has not been run.
+(the 2026-08-30 service, in [FIELD.md](qa/audits/FIELD.md)). Pixels out, hardware, and a
+second operator still have not: the 2026-08-14 QA sweep, in
+[SUPERSEDED.md](qa/audits/SUPERSEDED.md), §16 is the human test script and it has not been run.
 
 What remains open is captured, with reasoning, in [KNOWN_ISSUES.md](KNOWN_ISSUES.md) — and most
 of it is blocked on the world (a certificate, a native speaker, thirty minutes of a real sermon
