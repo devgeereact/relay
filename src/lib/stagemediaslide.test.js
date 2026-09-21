@@ -267,3 +267,84 @@ describe('the clip on the stage says how long is left of it', () => {
     expect(railText()).not.toMatch(/Clip/i);
   });
 });
+
+// ── THE CONTROLS REACH THE PREACHER'S SCREEN TOO (RG-214) ───────────────────
+//
+// The operator's words: *"Controls on the media shouldn't work just for only
+// stage so as to be consistent and it should have all required media
+// functionalities"*. The gap is the other way round from the way it reads, and
+// it is real either way: the hub sends `media_transport` to every client,
+// `output.html` applies it, and this page ignored the frame entirely. Its slide
+// was `<video autoplay loop muted>` with the loop hard-coded, so Pause, Play and
+// Loop moved every screen in the building except the one in front of the
+// preacher.
+//
+// It matters more than consistency. A clip held on the wall and running on the
+// stage puts the preacher's copy ahead of the congregation's for the rest of the
+// cue, and RG-213's countdown beside it is then timing a different moment from
+// the one everybody else is watching.
+describe('the clip on the stage obeys the same transport as every other screen', () => {
+  const clip = () => host.querySelector('video.slide');
+  const transport = (over = {}) => ({
+    kind: 'media_transport',
+    paused: false,
+    loop: false,
+    replay_epoch: 0,
+    ...over,
+  });
+
+  it('holds when the operator holds it, and runs again when they let it go', async () => {
+    await open(2);
+    await send(ROLES);
+    await send({ ...SLIDE, media_kind: 'video' });
+    // jsdom's `paused` is a getter that always answers true, and the rule asks
+    // the element before it acts — so a bare stub of `pause()` would never be
+    // reached and the test would assert nothing. The element is given a real
+    // one that the stubs move.
+    const v = clip();
+    let paused = false;
+    Object.defineProperty(v, 'paused', { get: () => paused, configurable: true });
+    v.pause = () => { paused = true; };
+    v.play = () => { paused = false; return Promise.resolve(); };
+
+    await send(transport({ paused: true }));
+    expect(paused, 'Pause moved every screen but the preacher’s').toBe(true);
+    await send(transport({ paused: false }));
+    expect(paused).toBe(false);
+  });
+
+  it('stops repeating when the operator turns the loop off', async () => {
+    // Hard-coded `loop` was the shape of this: the control existed on the desk,
+    // the frame arrived on this page, and the attribute could not be moved.
+    await open(2);
+    await send(ROLES);
+    await send({ ...SLIDE, media_kind: 'video' });
+    await send(transport({ loop: false }));
+    expect(clip().loop, 'the slide looped whatever the desk said').toBe(false);
+    await send(transport({ loop: true }));
+    expect(clip().loop).toBe(true);
+  });
+
+  it('a replay starts it again from the top', async () => {
+    await open(2);
+    await send(ROLES);
+    await send({ ...SLIDE, media_kind: 'video' });
+    const v = clip();
+    v.currentTime = 40;
+    v.play = () => Promise.resolve();
+    await send(transport({ replay_epoch: 1 }));
+    expect(v.currentTime, 'Replay left the preacher’s copy where it was').toBe(0);
+  });
+
+  it('and a transport belongs to the clip it was pressed for', async () => {
+    // The same decision `Output.svelte` records: a held clip must not hand its
+    // Pause to whatever is sent next, or the following slide arrives frozen with
+    // nothing in the product to say why.
+    await open(2);
+    await send(ROLES);
+    await send({ ...SLIDE, media_kind: 'video' });
+    await send(transport({ paused: true, loop: true }));
+    await send({ kind: 'stage_media', media_url: 'http://x/media/8', media_kind: 'video' });
+    expect(clip().loop, 'the next clip inherited the last one’s loop').toBe(false);
+  });
+});

@@ -248,12 +248,16 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       // without it (rule 43). Scripture is painted OVER it and does not remove
       // it, so the slide returns when the reading is cleared.
       stage_media: true,
-      // The preacher's page draws its own zones and mounts no `<video>` for a
-      // FIRED clip, so a transport has nothing to act on here. `false` records the
-      // refusal rather than leaving it to be rediscovered as an omission — and if
-      // the stage ever plays a clip of its own, this is the row that says the
-      // decision was taken.
-      media_transport: false,
+      // THE STAGE PLAYS A CLIP OF ITS OWN, which is the case the previous version
+      // of this row named in advance: it read `false` with the note *"if the stage
+      // ever plays a clip of its own, this is the row that says the decision was
+      // taken"*. `stage_media` puts a video on this page, so there IS an element
+      // to act on, and until RG-214 the frame arrived and was ignored — Pause,
+      // Play and Loop moved every screen in the building except the one in front
+      // of the preacher, and a clip held on the wall ran on here for the rest of
+      // the cue. Not role-gated, for the same reason as on `output.html`: it
+      // changes what a screen is already showing.
+      media_transport: true,
       channel_template: false, // the stage page has one fixed look
       template: false,
       // Same reason as template/channel_template above: the stage page does not

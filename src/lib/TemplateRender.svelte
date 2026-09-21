@@ -84,6 +84,7 @@
     programmeRoom,
   } from './timers.js';
   import { alertStep } from './stagealert.js';
+  import { applyMediaTransport } from './mediatransport.js';
 
   export let template = {};
   export let content = null; // { reference, text, translation }
@@ -1171,27 +1172,12 @@
   // over it; the transport belongs to the video the operator put up, and a Pause
   // that stopped the church's backdrop would be a control reaching past what it
   // says it does.
+  // Ask, then report. The asking is `applyMediaTransport`, which is shared with
+  // the preacher's own page — see RG-214, where the two surfaces disagreed about
+  // what Pause means. The reporting stays here, because the BEAT is what says
+  // whether the clip is actually moving and only this page sends one.
   $: if (videoEl && mediaTransport) {
-    const want = !!mediaTransport.paused;
-    // `loop` is a property, not a class: set it on the element rather than through
-    // markup, which would need the `{#key}` this block exists to avoid.
-    videoEl.loop = !!mediaTransport.loop;
-    const epoch = mediaTransport.replayEpoch ?? null;
-    if (epoch != null && epoch !== actedReplay) {
-      actedReplay = epoch;
-      try {
-        videoEl.currentTime = 0;
-      } catch {
-        /* a video with no metadata yet cannot be seeked; the next frame will. */
-      }
-    }
-    // Ask, then report. `play()` returns a promise that a browser may reject —
-    // autoplay policy, or a source that is not ready — and a rejection swallowed
-    // here would leave the operator's own control claiming an outcome it did not
-    // get. The BEAT is what says whether the clip is actually moving, and it reads
-    // the element rather than this intent.
-    if (want && !videoEl.paused) videoEl.pause();
-    else if (!want && videoEl.paused) void videoEl.play().catch(() => {});
+    actedReplay = applyMediaTransport(videoEl, mediaTransport, actedReplay);
     reportMedia();
   }
 

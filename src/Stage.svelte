@@ -8,6 +8,7 @@
   import { countdownRemainingMs, countdownIsPaused, countdownTotalMs } from './lib/countdown.js';
   import { sameHostMediaUrl } from './lib/outputurl.js';
   import { clipRemainingMs, CLIP_WARN_MS } from './lib/mediaclock.js';
+  import { applyMediaTransport } from './lib/mediatransport.js';
   // Mobile stage-display remote — the preacher opens this on a phone/iPad (via
   // QR or the LAN URL) to see the live verse + reference in real time. No Tauri
   // runtime: it connects to the kiosk WebSocket hub (:8031) for content, exactly
@@ -645,9 +646,35 @@
   let clipEl = null;
   let clipLeft = null;
   const readClip = () => (clipLeft = clipRemainingMs(clipEl));
-  $: if (!stageMedia || stageMedia.kind !== 'video') {
-    clipEl = null;
+  // ── AND IT DOES WHAT EVERY OTHER SCREEN IS DOING (RG-214) ──────────────────
+  //
+  // The hub sends `media_transport` to every client. This page ignored it and
+  // hard-coded `loop` on its own slide, so Pause, Play and Loop moved the whole
+  // building except the screen in front of the preacher — and a clip held on the
+  // wall ran on here for the rest of the cue, which puts the countdown beside it
+  // (RG-213) on a different moment from the one everybody else is watching.
+  //
+  // `applyMediaTransport` is the same rule `TemplateRender` uses, in one place
+  // rather than typed twice.
+  let xport = null;
+  let actedReplay = null;
+  // A TRANSPORT BELONGS TO THE CLIP IT WAS PRESSED FOR, and "the clip" means
+  // THIS clip and not "a clip". Keyed on the url rather than on there being one:
+  // the hub drops its retained transport on a content frame, and nothing drops
+  // it when one slide replaces another, so a held clip handed its Pause to the
+  // next one and the following slide arrived frozen with nothing to say why.
+  let clipUrl = null;
+  $: clipNow = stageMedia?.kind === 'video' ? stageMedia.url : null;
+  $: if (clipNow !== clipUrl) {
+    clipUrl = clipNow;
+    xport = null;
+    actedReplay = null;
     clipLeft = null;
+    if (!clipNow) clipEl = null;
+  }
+  $: if (clipEl && xport) {
+    actedReplay = applyMediaTransport(clipEl, xport, actedReplay);
+    readClip();
   }
   $: clipWarn = clipLeft != null && clipLeft <= CLIP_WARN_MS;
   $: figureList = [
@@ -982,6 +1009,16 @@
       if (!acceptsStageMessage(myRole)) return;
       alert = (m.text || '').trim();
       alertUrgent = !!m.urgent;
+    } else if (m.kind === 'media_transport') {
+      // NOT ROLE-GATED, for the reason `Output.svelte` records at the same
+      // branch: this changes what a screen is ALREADY showing rather than
+      // putting something new in front of anybody, and a page with no clip up
+      // has nothing to apply it to.
+      xport = {
+        paused: !!m.paused,
+        loop: !!m.loop,
+        replayEpoch: Number.isFinite(m.replay_epoch) ? m.replay_epoch : null,
+      };
     } else if (m.kind === 'stage_media') {
       // ONLY A STAGE, on exactly `stage_alert`'s argument one branch up: the hub
       // publishes to every client because it cannot address one (DECISIONS §35),
@@ -1395,10 +1432,16 @@
                left of it. Every event a player can change its mind on, because a
                figure that updates on `timeupdate` alone freezes where a clip was
                paused rather than where it is. -->
+          <!-- KEYED ON THE URL. A `<video>` reused for the next clip keeps the
+               properties the transport set on it — `loop`, and a position — so
+               the element is rebuilt rather than re-pointed. A new clip starts
+               from the top in any case, which is what a re-mount does. -->
+          {#key stageMedia.url}
           <video class="slide" src={stageMedia.url} bind:this={clipEl}
             on:loadedmetadata={readClip} on:timeupdate={readClip} on:play={readClip}
             on:pause={readClip} on:seeked={readClip} on:ended={readClip}
-            autoplay loop muted playsinline></video>
+            autoplay muted playsinline></video>
+          {/key}
         {:else}
           <img class="slide" src={stageMedia.url} alt="" />
         {/if}

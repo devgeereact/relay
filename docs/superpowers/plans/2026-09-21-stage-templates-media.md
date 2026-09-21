@@ -143,8 +143,10 @@ showing current content under a dead badge is the rule 35 failure in a new place
 - **9 · Duplicate song slides.** Only the slide at the arrangement POSITION that was fired may read
   LIVE. The current behaviour marks every slide with the same words, which is why the screenshot
   shows two. This is a correctness bug on the surface an operator steps through.
-- **10 · Media controls everywhere**, not only when a stage screen is attached, with the full set:
-  play/pause, replay, loop, scrub, and volume if there is audio.
+- **10 · Media controls everywhere — PART DONE, RG-214.** The gap turned out to be the other way
+  round: the transport reached every screen except the preacher's, which ignored the frame and
+  hard-coded `loop`. Both surfaces now share one rule. **Scrub and volume are still absent on
+  every surface** and are the rest of this item.
 - **11 · Media on the stage screen — DONE, RG-212 and RG-213.** The rail earns a plate while a
   picture is behind it and loses it when the picture goes; the stage rail carries a `Clip` figure
   read off the page's own player, which is the copy the preacher is looking at. It times THIS
