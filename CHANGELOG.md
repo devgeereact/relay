@@ -54,6 +54,39 @@ may show nothing in an OBS browser source or on a Windows screen. The Library
 tile and the Planner's cue preview now say so. Relay does not convert the file;
 convert it to H.264 before Sunday if it has to reach one of those screens.
 
+### Staging in the Library fires again
+
+Cueing a verse, a song or a notice from the Library's inspector, or queueing a
+selection, then firing it, threw an error asking you to remove it and add it
+again. Every door into Staging now tags what it queued, and the error no longer
+names "Up Next", a control that was retired.
+
+### The arrow key steps a song you staged
+
+A song staged from the Songs rail with no plan open now reads SLIDE, and the
+arrow keys step through its sections from the one last fired. It used to read
+VERSE and say "No passage on screen yet" over a wall showing the song.
+
+### OBS on this computer gets its pictures
+
+A browser screen loaded from "localhost" was refused Relay's own pictures and
+clips by its security policy, because the picture's address named the LAN
+address instead. The page now asks for pictures from the address it was loaded
+from. The projector window was never affected.
+
+### Turn on will not cover the console
+
+Turning on a screen with no display chosen used to open a fullscreen output over
+this console. With more than one display connected, Relay now asks you to choose
+one first; the option that used to read "Primary display" reads "Choose a
+display…".
+
+### Test on screens takes two presses
+
+In Templates, "Test on screens" now asks for a second press before putting
+sample scripture on the live screens, and is held back while a service is being
+recorded unless Rehearsal is on.
+
 ### Connecting the preacher's phone
 
 When Relay cannot find a local network address, Sharing now explains the problem

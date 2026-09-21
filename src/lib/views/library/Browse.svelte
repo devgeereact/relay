@@ -253,7 +253,7 @@
   function queueChecked() {
     const add = source
       .filter((v) => checked.has(refOf(v)) && !queue.some((q) => q.reference === refOf(v)))
-      .map((v) => ({ reference: refOf(v), text: v.text }));
+      .map((v) => ({ reference: refOf(v), text: v.text, kind: 'scripture' })); // tagged (RG-185)
     if (add.length) onQueueChange([...queue, ...add]);
     msg = `Queued ${add.length} verse${add.length === 1 ? '' : 's'}`;
     checked = new Set();

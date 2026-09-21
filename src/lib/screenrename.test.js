@@ -202,7 +202,10 @@ describe('a screen configured for a display that is not connected says so', () =
     // And the control case, which is what stops this passing by the label being
     // wrong in both directions: a screen that never named a display still reads
     // as the primary, because that is genuinely what it will open on.
-    expect(card('Spare').textContent).toContain('Primary display');
+    // Since RG-188 the empty option names the STATE, not a destination: with one
+    // monitor it reads "This display"; with two, "Choose a display…" (and Turn on
+    // is withheld until one is chosen). Either way it is not the missing-display line.
+    expect(card('Spare').textContent).toContain('This display');
     expect(card('Spare').textContent).not.toContain('not connected');
   });
 });

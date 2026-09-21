@@ -43,8 +43,10 @@ Three things follow from how this is built, and they are worth knowing:
   up you have to press **Open** yourself. On a one-monitor desk nothing auto-opens;
   plug the projector in and its screen restores itself.
 - **It will never cover your console.** Relay refuses to auto-open an output onto
-  the primary display. Covering the operator's own screen mid-service is worse
-  than showing nothing.
+  the primary display, and since 2026-09-21 the manual **Turn on** refuses too when
+  there is a second display and none is chosen (RG-188, DECISIONS §108): Outputs asks
+  you to choose one first. With only one display connected, Turn on does what it says.
+  Covering the operator's own screen mid-service is worse than showing nothing.
 - **The window backdrop is black, not white.** The page itself is transparent so
   a lower-third template keys out cleanly in OBS, but on a real projector a
   transparent page showed the webview's white background around the band. The

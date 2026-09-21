@@ -311,6 +311,8 @@
     screenBlack: $screenBlack,
     planOnAir,
     planLength: openPlan ? items.length : 0,
+    // A staged song deck (RG-186): the grid holds the song, so the key steps it.
+    deckLength: grid?.source === 'song' ? grid.cells.length : 0,
   });
 
   // Named so the plan picker's error state has something to retry with (RG-95).
@@ -1009,7 +1011,9 @@
   // error, no toast and no log. On the key they press more than any other, in the
   // middle of a sermon. It now always says what happened.
   async function step(dir) {
-    if (mode === 'slide') return stepLive(dir);
+    if (mode === 'slide') {
+      return grid?.source === 'song' && !(openPlan && planOnAir) ? stepDeck(dir) : stepLive(dir);
+    }
     let outcome;
     try {
       outcome = await navVerse(dir > 0 ? 'next' : 'back');
@@ -1024,6 +1028,18 @@
     if (notice) flash(notice);
   }
 
+  /** The song cell last put on the wall from a staged deck, or -1 (RG-186). */
+  let deckIdx = -1;
+  /** A STAGED DECK WITH NO PLAN ON AIR (RG-186). The grid is the song; walk its
+   *  cells the way the plan's are walked, from the cell last fired, never
+   *  wrapping. A keystroke is a person pressing something, so it may call
+   *  `fireCell` — the fourth caller `slidegridwiring.test.js` enumerates. */
+  async function stepDeck(dir) {
+    const cells = grid?.cells ?? [];
+    const next = deckIdx < 0 ? 0 : deckIdx + dir;
+    if (next < 0 || next >= cells.length) return; // ends are hard stops
+    return fireCell(cells[next]);
+  }
   async function stepLive(dir) {
     const to = stepFrom(items, liveCueId, liveSlide, dir);
     if (!to) return; // ends of the plan are hard stops — never wrap
@@ -1813,6 +1829,7 @@
       if (!cell.text.trim()) return;
       try {
         await fireContent(cell.label, cell.text, 'song');
+        deckIdx = cell.slideIdx ?? deckIdx; // where → resumes from (RG-186)
         flash(`${cell.label} is on the screens`);
       } catch (e) {
         flash(humanError(e));

@@ -42,8 +42,13 @@ describe('the grid is rendered, and its presses go through the arbiter', () => {
     // operator double-clicked, and `take()` taking the one-ahead cell the preview
     // pane is showing. Nothing else may call it — a fourth caller is the second
     // click path this test exists to prevent.
+    // …and, since 2026-09-21 (RG-186), a FOURTH: `→`/`←` stepping a song deck
+    // staged with no plan on air. A keystroke is a person pressing something,
+    // which is the test this list applies; it is named here so a fifth caller
+    // is still the second click path.
     const calls = [...src.matchAll(/fireCell\(/g)].length;
-    expect(calls).toBe(3);
+    expect(calls).toBe(4);
+    expect(src).toMatch(/return fireCell\(cells\[next\]\);/);
     expect(src).toMatch(/send: fireCell,/);
     expect(src).toMatch(/if \(gridPreview\) return fireCell\(gridPreview\);/);
     expect(src).toMatch(/if \(gridNextCell\) return fireCell\(gridNextCell\);/);

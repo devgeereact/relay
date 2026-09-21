@@ -320,6 +320,9 @@ const REGISTER = [
       'src/lib/views/library/LiveOutputRail.svelte',
       'src/lib/views/library/Inspector.svelte',
       'src/lib/libraryinspector.test.js',
+      // The refusal in `fireQueued` names the area it means (RG-185, 2026-09-21);
+      // it used to name "Up Next", which RG-158 retired.
+      'src/lib/views/Library.svelte',
     ],
     forbidden: ['Staging area', 'Stage queue', 'Shortlist'],
   },

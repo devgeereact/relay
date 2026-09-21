@@ -348,6 +348,13 @@
    * with no screens, and claiming "not connected" from an ambiguity would be the
    * same defect pointing the other way. Same judgement as `resolve_display`.
    */
+  /** A native screen with no display chosen while there is more than one to
+   *  choose from: a manual Turn on would land on this console (RG-188). */
+  const needsDisplay = (c) => {
+    if (!c || !isNative(c)) return false;
+    const i = parseInt(c.display_target ?? '', 10);
+    return !Number.isFinite(i) && monitors.length > 1;
+  };
   const missingDisplay = (c) => {
     if (!isNative(c) || !monitors.length) return null;
     const i = parseInt(c.display_target ?? '', 10);
@@ -1392,7 +1399,10 @@
                     <select class="r-select ch-cardpick" aria-label="Display for {k.c.name}"
                       value={k.c.display_target ?? ''} on:change={(e) => assignDisplay(k.c, e)}
                       disabled={!$capture.available}>
-                      <option value="">Primary display</option>
+                      <!-- NOT "Primary display" (RG-188): with nothing chosen a manual
+                           Turn on now refuses rather than opening over this console,
+                           and the option says what the state IS, not where it would go. -->
+                      <option value="">{monitors.length > 1 ? 'Choose a display…' : 'This display'}</option>
                       {#each monitors as m (m.index)}
                         <option value={String(m.index)}>{m.name} · {m.width}×{m.height}{m.primary ? ' (primary)' : ''}</option>
                       {/each}
@@ -2048,7 +2058,9 @@
               {#if selSwitch.action === 'off'}
                 <button class="r-btn ghost sm" on:click={() => closeNative(sel)}>Turn off</button>
               {:else if selSwitch.action === 'on'}
-                <button class="r-btn primary sm" on:click={() => openNative(sel)} disabled={!$capture.available}>Turn on</button>
+                <button class="r-btn primary sm" on:click={() => openNative(sel)}
+                  disabled={!$capture.available || needsDisplay(sel)}
+                  title={needsDisplay(sel) ? 'Choose a display for this screen first, or it would open over this console (RG-188).' : 'Open this screen'}>Turn on</button>
               {:else}
                 <span class="ch-fixed" title={selSwitch.why}>{selSwitch.label}</span>
               {/if}

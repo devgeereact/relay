@@ -194,7 +194,7 @@
       await fireContent(item.reference, item.text, item.kind);
     } else {
       throw new Error(
-        `This item was queued without a content kind, so Relay will not guess what it is. Remove it from Up Next and add it again.`,
+        `This item was queued without a content kind, so Relay will not guess what it is. Remove it from Staging and add it again.`,
       );
     }
   }

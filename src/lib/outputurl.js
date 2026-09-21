@@ -24,6 +24,24 @@ export const OUTPUT_PORT = 8032;
  * @param templateId  the screen's own template, or null/undefined when it follows
  * @param name        the screen's name, for the page title
  */
+/**
+ * Relay's own media URL, re-homed to the host THIS page was loaded from (RG-187).
+ *
+ * LAN pages are served under `media-src 'self'` while `media_url` is built from
+ * the machine's default-route address. An OBS source on this same laptop loads
+ * `http://localhost:8032/output.html` and is handed `http://192.168.1.42:8032/…`:
+ * a different origin, refused by the policy, a black picture and nothing in any
+ * log. Only Relay's own port is rewritten; a page with no host (the native
+ * window) and anything that is not `http://…:8032` is left exactly as it came.
+ */
+export function sameHostMediaUrl(url, pageHost) {
+  if (typeof url !== 'string' || !pageHost) return url;
+  const m = url.match(/^http:\/\/([^/:]+):8032(\/.*)?$/);
+  if (!m) return url;
+  if (m[1] === pageHost) return url;
+  return `http://${pageHost}:8032${m[2] ?? ''}`;
+}
+
 export function outputUrl(host, channel, templateId, name = '') {
   const base = `http://${host}:${OUTPUT_PORT}/output.html?channel=${channel}`;
   const tpl = templateId == null || templateId === '' ? '' : `&template_id=${templateId}`;

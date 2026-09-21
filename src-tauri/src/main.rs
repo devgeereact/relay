@@ -6979,12 +6979,8 @@ fn open_channel_output(
     // undecorated fullscreen output covers the console the operator is running
     // the service from, with nothing reported. `auto_open_outputs` has always
     // skipped that case; this is the manual path agreeing with it, out loud.
-    let monitor_index = match resolve_display(
-        channel.display_target.as_deref(),
-        &channels::list_monitors(&app),
-    ) {
-        DisplayChoice::On(idx) => Some(idx),
-        DisplayChoice::Anywhere => None,
+    let monitors = channels::list_monitors(&app);
+    let monitor_index = match resolve_display(channel.display_target.as_deref(), &monitors) {
         DisplayChoice::Missing(n) => {
             return Err(error::Error::refused(format!(
                 "{} is set to open on Display {n}, which is not connected. \
@@ -6992,6 +6988,13 @@ fn open_channel_output(
                 channel.name
             )))
         }
+        // NEVER OVER THE CONSOLE (RG-188). `Anywhere` used to fall through to the
+        // OS default — the primary display, the one the operator is running the
+        // service from — and a borderless fullscreen output covered the console
+        // with nothing reported. `auto_open_outputs` had always refused that;
+        // the manual path now agrees with it, in a sentence.
+        choice => manual_open_target(choice, &monitors)
+            .map_err(|why| error::Error::refused(format!("{}: {why}", channel.name)))?,
     };
     // Deterministic, so the window can be traced back to this channel — that is
     // what makes the channel's "online" light real. It also makes
@@ -7199,6 +7202,34 @@ enum DisplayChoice {
     /// The operator named a display (1-based, as a human reads it) and it is not
     /// connected. Refuse, and say which.
     Missing(usize),
+}
+
+/// Where a MANUAL "Turn on" may put a fullscreen output (RG-188). `Ok(Some(idx))`
+/// is a chosen, connected, non-primary display; `Ok(None)` is "wherever the OS
+/// puts it", allowed only when there is nowhere else to go; `Err` is a sentence
+/// for the operator. The primary monitor is the console, and covering it is the
+/// one thing a manual open must never do without being told which display.
+fn manual_open_target(
+    choice: DisplayChoice,
+    monitors: &[channels::MonitorInfo],
+) -> Result<Option<usize>, String> {
+    let primary = monitors.iter().find(|m| m.primary).map(|m| m.index);
+    match choice {
+        DisplayChoice::On(idx) if Some(idx) == primary && monitors.len() > 1 => Err(format!(
+            "Display {} is this console's own screen. Choose the projector's display \
+             for this screen in Outputs, or it would cover the console you are running \
+             the service from.",
+            idx + 1
+        )),
+        DisplayChoice::On(idx) => Ok(Some(idx)),
+        DisplayChoice::Anywhere if monitors.len() > 1 => Err(
+            "Choose a display for this screen in Outputs first. With none chosen it \
+             would open over this console."
+                .to_string(),
+        ),
+        DisplayChoice::Anywhere => Ok(None),
+        DisplayChoice::Missing(n) => Err(format!("Display {n} is not connected.")),
+    }
 }
 
 fn resolve_display(target: Option<&str>, monitors: &[channels::MonitorInfo]) -> DisplayChoice {
@@ -8756,7 +8787,7 @@ mod display_target_tests {
     //
     // These hold the decision, as a pure function, so the refusal can be tested
     // without a window server.
-    use super::{channels, resolve_display, DisplayChoice};
+    use super::{channels, manual_open_target, resolve_display, DisplayChoice};
 
     fn mon(index: usize, primary: bool) -> channels::MonitorInfo {
         channels::MonitorInfo {
@@ -8769,6 +8800,29 @@ mod display_target_tests {
             scale: 1.0,
             primary,
         }
+    }
+
+    /// 2026-09-21 · OU-1 (RG-188). The MANUAL open honoured `Anywhere`, so a screen
+    /// with no display chosen fullscreened onto the primary monitor — the console
+    /// the operator is running the service from — with nothing reported. The
+    /// automatic open had refused that case since the dock bug; the manual path
+    /// now agrees with it, out loud: no display chosen, or the chosen display is
+    /// the operator's, is a refusal with a sentence.
+    #[test]
+    fn a_manual_open_never_lands_on_the_operators_display() {
+        let two = [mon(0, true), mon(1, false)];
+        assert_eq!(manual_open_target(DisplayChoice::On(1), &two), Ok(Some(1)));
+        let err = manual_open_target(DisplayChoice::Anywhere, &two).unwrap_err();
+        assert!(err.contains("Choose a display"), "{err}");
+        let err = manual_open_target(DisplayChoice::On(0), &two).unwrap_err();
+        assert!(err.contains("console"), "{err}");
+        // Missing is still Missing's own sentence, decided by the caller.
+        // One monitor only: there is nowhere else to go, and covering the console
+        // is exactly what the operator asked for by pressing the button.
+        assert_eq!(
+            manual_open_target(DisplayChoice::Anywhere, &[mon(0, true)]),
+            Ok(None)
+        );
     }
 
     #[test]

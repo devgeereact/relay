@@ -6058,3 +6058,27 @@ DECISIONS §42 forbids.
 **Pinned by** `mediadefault.test.js`, `mediaerror.test.js`, `outputhealth.test.js`,
 `channels::tests` and `mediaprobe::tests`.
 
+## 108. Nothing opens over the console, and nothing reaches the wall from a browsing tab in one press (2026-09-21)
+
+**Turn on.** A native screen with no display chosen used to fullscreen wherever the OS put a new
+window, which is the primary display, which is the console. The automatic open at launch had
+refused that case since the dock bug; the manual button had not, and the option that stood in for
+"nothing chosen" was labelled *Primary display*, so the state read as a choice (RG-188). The rule:
+**a manual open never lands on the operator's display unless the operator's display is the only
+one there is.** `manual_open_target` refuses `Anywhere` and the primary monitor in a sentence when
+there is a second monitor to choose; with one monitor, pressing Turn on means what it says and the
+console is covered on purpose (`Esc` still clears, and the window is what the operator asked for).
+Outputs withholds the button until a display is chosen and labels the empty option *Choose a
+display…*.
+
+**Test on screens.** DECISIONS §26 let a template be checked on the real screens before a service.
+It was one unguarded click from a browsing workspace, and nothing asked whether a service was
+being recorded (RG-189). The rule: **no single press on a browsing surface reaches a congregation**
+(the same rule §81 keeps on Live's grid, the other way round). The control arms on the first press,
+names what the second will do, disarms itself after six seconds, and is withheld while a service is
+being recorded unless rehearsal is on. A rehearsal is the one state in which the fire cannot reach
+a congregation (§18), so the check §26 wanted stays available exactly there.
+
+**Pinned by** `main::tests::a_manual_open_never_lands_on_the_operators_display` and
+`gallerycontrols.test.js`.
+

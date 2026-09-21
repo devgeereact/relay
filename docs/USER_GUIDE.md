@@ -52,6 +52,11 @@ Relay treats every output as a *screen* — the main projector, a stage monitor,
 
 For a projector plugged into your laptop: pick the display, press **Open**. A fullscreen window appears on it.
 
+> **Turn on asks for a display first.** With more than one display connected, a screen with no
+> display chosen will not open, because the only place it could go is over this console. Pick
+> the projector in the screen's card, then press Turn on. With one display, Turn on opens on it.
+
+
 ### 4. Choose the microphone
 
 **Settings → This room.** Pick the input. **A bar should move when someone speaks.**
@@ -183,6 +188,10 @@ Relay keeps sending; it never refuses a fire on a screen's behalf.
 ---
 
 ## The other tabs
+
+**Templates → Test on screens takes two presses**, and is held back while a service is being
+recorded unless Rehearsal is on. The first press asks; the second puts John 3:16 on the live
+screens with that template. `Esc` clears it.
 
 You will not need these during a service.
 

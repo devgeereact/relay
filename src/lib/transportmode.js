@@ -58,9 +58,12 @@ export function verseIsOnAir(live, screenBlack, planOnAir) {
  * but because there is nothing else for the key to do and `nav` will say so in
  * words rather than the bar claiming a plan that is not loaded.
  */
-export function transportMode({ live, screenBlack, planOnAir, planLength }) {
+export function transportMode({ live, screenBlack, planOnAir, planLength, deckLength = 0 }) {
   if (verseIsOnAir(live, screenBlack, planOnAir)) return 'verse';
-  return planLength > 0 ? 'slide' : 'verse';
+  // A staged song deck takes the key exactly as a plan does (RG-186). With no
+  // plan open a deck read VERSE, and `→` said "No passage on screen yet" over a
+  // wall visibly showing a song.
+  return planLength > 0 || deckLength > 0 ? 'slide' : 'verse';
 }
 
 /**

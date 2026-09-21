@@ -6,6 +6,7 @@
     setCountdownWarnDefault,
   } from './lib/layers.js';
   import { countdownRemainingMs, countdownIsPaused, countdownTotalMs } from './lib/countdown.js';
+  import { sameHostMediaUrl } from './lib/outputurl.js';
   // Mobile stage-display remote — the preacher opens this on a phone/iPad (via
   // QR or the LAN URL) to see the live verse + reference in real time. No Tauri
   // runtime: it connects to the kiosk WebSocket hub (:8031) for content, exactly
@@ -950,7 +951,7 @@
       // `media_url: null` takes it down, which is the one door for both
       // directions and the same shape `background` uses.
       if (!acceptsStageMessage(myRole)) return;
-      stageMedia = m.media_url ? { url: m.media_url, kind: m.media_kind || 'image' } : null;
+      stageMedia = m.media_url ? { url: sameHostMediaUrl(m.media_url, location.hostname), kind: m.media_kind || 'image' } : null;
     } else if (m.kind === 'stage_zones') {
       // A LIVE CHANGE. The initial read is over HTTP on connect (see
       // `loadStageZones`) because this page is the only consumer of this map

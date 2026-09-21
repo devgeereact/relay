@@ -119,7 +119,16 @@
     }
     onQueueChange([
       ...queue,
-      { reference: item.reference, text: item.words, mediaId: item.mediaId ?? null },
+      // TAGGED (RG-185). `fireQueued` refuses an untagged row rather than guessing,
+      // and this door queued four kinds with no tag, so stage-then-fire from the
+      // Library threw for everything but a picture. The Inspector's own `kind`
+      // vocabulary says `notice`; the fire path's says `announce`.
+      {
+        reference: item.reference,
+        text: item.words,
+        mediaId: item.mediaId ?? null,
+        kind: item.kind === 'notice' ? 'announce' : item.kind,
+      },
     ]);
     msg = `${item.title} is cued — it is not on a screen`;
   }

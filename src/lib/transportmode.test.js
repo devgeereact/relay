@@ -157,3 +157,20 @@ describe('contentIsExpectedPlanFire', () => {
     expect(contentIsExpectedPlanFire({ reference: 'John 3:16' }, null)).toBe(false);
   });
 });
+
+// 2026-09-21 · Live D2 (RG-186). A song deck staged from the rail with no plan
+// open read VERSE, and `→` flashed "No passage on screen yet" over a wall
+// visibly showing a song. The bar must follow what the grid holds: a staged deck
+// is stepped by the key exactly as a plan is.
+describe('a staged song deck takes the key', () => {
+  it('reads SLIDE with a deck and no plan', () => {
+    expect(transportMode({ live: null, screenBlack: false, planOnAir: false, planLength: 0, deckLength: 4 })).toBe('slide');
+  });
+  it('a verse on air still wins over a deck', () => {
+    const live = { kind: SCRIPTURE, reference: 'John 3:16' };
+    expect(transportMode({ live, screenBlack: false, planOnAir: false, planLength: 0, deckLength: 4 })).toBe('verse');
+  });
+  it('nothing staged, no plan: VERSE, as before', () => {
+    expect(transportMode({ live: null, screenBlack: false, planOnAir: false, planLength: 0, deckLength: 0 })).toBe('verse');
+  });
+});
