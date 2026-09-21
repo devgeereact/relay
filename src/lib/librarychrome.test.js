@@ -67,12 +67,16 @@ describe('the shell carries ONE chrome row', () => {
 describe('every control the row carried still exists, on a surface that owns it', () => {
   const bible = markup(BIBLE);
 
-  it('chapter, Favourites and Sort are in the Bible pane head', () => {
-    for (const label of ['Chapter', 'Sort']) {
-      expect(bible, `${label} left the shell and did not arrive`).toMatch(
-        new RegExp(`aria-label="${label}"`),
-      );
-    }
+  it('Sort and Favourites are in the Bible pane head, and the chapter is in the rail', () => {
+    expect(bible, 'Sort left the shell and did not arrive').toMatch(/aria-label="Sort"/);
+    // THE CHAPTER MOVED AGAIN, ON PURPOSE (RG-216). It arrived here as a
+    // `<select>` of "Chapter 1 … Chapter 150" and is now Live's own grid,
+    // mounted under the open book in the rail — the same job in a shape that can
+    // do it, since finding 119 of 150 in a dropdown means reading every entry on
+    // the way. The select is DELETED rather than kept beside it, which is the
+    // argument that deleted the Book select from this same row.
+    expect(bible, 'two controls for one chapter').not.toMatch(/aria-label="Chapter"/);
+    expect(bible, 'the Library grew its own copy of the grid').toMatch(/<ChapterPicker/);
     expect(bible).toMatch(/aria-pressed=\{favouritesOnly\}/);
     // Icon-only, so it is named for anyone who cannot see the fill.
     expect(bible).toMatch(/aria-label="Favourites only"/);
@@ -95,7 +99,10 @@ describe('every control the row carried still exists, on a surface that owns it'
     const guard = head.indexOf('{#if checked.size}');
     const close = head.indexOf('{/if}', guard);
     const inside = head.slice(guard, close);
-    for (const label of ['Chapter', 'Sort']) {
+    // `Chapter` left this row entirely (RG-216) and the picker is in the rail,
+    // which is outside the head and therefore outside this guard by
+    // construction — so the navigation cannot be taken away by a selection.
+    for (const label of ['Sort']) {
       expect(inside, `${label} is hidden while verses are ticked`).not.toContain(
         `aria-label="${label}"`,
       );

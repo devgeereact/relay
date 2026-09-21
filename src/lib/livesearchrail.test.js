@@ -199,7 +199,7 @@ describe('the Live search rail', () => {
 
     host.querySelector('.lr-row').dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await tick();
-    host.querySelector('.lr-chip').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    host.querySelector('.cp-chip').dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await tick();
 
     expect(staged).toEqual([['Psalms', 1]]);
@@ -428,20 +428,23 @@ describe('the chapter picker', () => {
 
   const bookRow = (name) =>
     [...host.querySelectorAll('.lr-row')].find((r) => r.querySelector('.lr-n')?.textContent === name);
-  const chips = () => [...host.querySelectorAll('.lr-chip')];
+  const chips = () => [...host.querySelectorAll('.cp-chip')];
 
   it('lays the chapters on a FIXED GRID of equal cells, not a ragged wrap (source)', () => {
     // A SOURCE TEST, labelled as one: jsdom does no layout, so it cannot measure
     // two boxes and compare them. What it CAN hold is the pair of properties
     // that made them ragged — a wrap, and a chip sized by its own label — and it
     // was watched to fail with either of them restored.
-    const css = read('./LiveRail.svelte');
-    const block = css.slice(css.indexOf('.lr-chips {'), css.indexOf('.lr-chip {'));
+    // The grid moved into `ui/ChapterPicker.svelte` (RG-216) so the Library
+    // could mount the same picker rather than grow a copy. The rules did not
+    // move: every property below is the one that made these ragged.
+    const css = read('./ui/ChapterPicker.svelte');
+    const block = css.slice(css.indexOf('.cp-chips {'), css.indexOf('.cp-chip {'));
     expect(block).toContain('display: grid');
     expect(block).toContain('repeat(auto-fill, minmax(');
     expect(block).not.toContain('flex-wrap');
 
-    const chip = css.slice(css.indexOf('.lr-chip {'), css.indexOf('.lr-chip:hover'));
+    const chip = css.slice(css.indexOf('.cp-chip {'), css.indexOf('.cp-chip:hover'));
     // Every cell filled by its grid track — NOT `min-width`, which is what let
     // `50` draw a wider box than `1`.
     expect(chip).toContain('width: 100%');
@@ -456,7 +459,7 @@ describe('the chapter picker', () => {
     bookRow('Genesis').click();
     await tick();
 
-    const cap = host.querySelector('.lr-chapcap');
+    const cap = host.querySelector('.cp-cap');
     expect(cap).not.toBeNull();
     // Browsing opens a chapter in the grid. It is NOT the search half's
     // sentence, which is true of a hit and false of a chapter: §9 makes a single
@@ -515,8 +518,8 @@ describe('the chapter picker', () => {
   });
 
   it('the mark is the rail’s own action and never wears a colour that claims a screen', () => {
-    const css = read('./LiveRail.svelte');
-    const at = css.indexOf(".lr-chip[aria-current='true'] {");
+    const css = read('./ui/ChapterPicker.svelte');
+    const at = css.indexOf(".cp-chip[aria-current='true'] {");
     expect(at).toBeGreaterThan(-1);
     const rule = css.slice(at, css.indexOf('}', at));
     // Steel = the thing being worked on. Amber means ON AIR, amethyst means

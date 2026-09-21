@@ -85,6 +85,7 @@
   import EmptyState from './ui/EmptyState.svelte';
   import ErrorState from './ui/ErrorState.svelte';
   import Loading from './ui/Loading.svelte';
+  import ChapterPicker from './ui/ChapterPicker.svelte';
 
   /** Stage one chapter in the slide grid. Never fires. */
   export let onChapter = () => {};
@@ -275,10 +276,12 @@
    */
   function reveal() {
     bodyEl?.querySelector('.lr-row[aria-expanded="true"]')?.scrollIntoView?.({ block: 'nearest' });
-    bodyEl?.querySelector('.lr-chip[aria-current="true"]')?.scrollIntoView?.({ block: 'nearest' });
+    // `.cp-chip` — the picker's own class, since the grid moved into
+    // `ui/ChapterPicker.svelte` (RG-216). A selector left pointing at the old
+    // class would fail silently and the rail would simply stop scrolling to the
+    // chapter, which is the quietest kind of regression.
+    bodyEl?.querySelector('.cp-chip[aria-current="true"]')?.scrollIntoView?.({ block: 'nearest' });
   }
-
-  const chapterList = (n) => Array.from({ length: Math.max(0, n) }, (_, i) => i + 1);
 
   // Single press = the whole job; double press = stage the chapter and nothing
   // more. ONE arbiter, the grid's, so a double can never also fire — the
@@ -404,31 +407,22 @@
           <span class="lr-k r-mono">{b.chapters}</span>
         </button>
         {#if openBook === b.book}
-          <div class="lr-chapters">
-            <!-- WHAT A PRESS DOES, SAID WHERE THE PRESS HAPPENS. The search half
-                 above carries its own, different sentence, and the two are
-                 deliberately not the same: §9 makes a single press on a SEARCH
-                 HIT send the verse to the programme, while browsing only ever
-                 opens a chapter in the grid. One legend over both meanings is
-                 the sentence that reads the same whether or not a congregation
-                 is looking at something (rule 35). -->
-            <p class="lr-cap lr-chapcap">Opens in the grid · no screen changes</p>
-            <div class="lr-chips">
-              {#each chapterList(b.chapters) as c}
-                <button
-                  class="lr-chip"
-                  {disabled}
-                  aria-current={openedChapter?.book === b.book && openedChapter?.chapter === c
-                    ? 'true'
-                    : undefined}
-                  title={openedChapter?.book === b.book && openedChapter?.chapter === c
-                    ? `${b.book} ${c} — the chapter you opened from here`
-                    : `Open ${b.book} ${c} in the slide grid — nothing reaches a screen`}
-                  on:click={() => stage(b.book, c)}
-                  aria-label={`${b.book} chapter ${c}`}>{c}</button>
-              {/each}
-            </div>
-          </div>
+          <!-- THE SHARED PICKER (RG-216). The grid and every rule in it left this
+               file for `ui/ChapterPicker.svelte` so the Library could have the
+               same one rather than a copy that agrees today and drifts next year.
+               WHAT A PRESS DOES stays here, because it is different on the two
+               surfaces: the search half above sends a verse to the programme,
+               while browsing only ever opens a chapter in the grid, and one
+               legend over both meanings is the sentence that reads the same
+               whether or not a congregation is looking at something (rule 35). -->
+          <ChapterPicker
+            book={b.book}
+            count={b.chapters}
+            current={openedChapter?.book === b.book ? openedChapter.chapter : null}
+            {disabled}
+            caption="Opens in the grid · no screen changes"
+            openTitle={(bk, c) => `Open ${bk} ${c} in the slide grid — nothing reaches a screen`}
+            onPick={(c) => stage(b.book, c)} />
         {/if}
       {:else}
         {#if !booksLoaded}
@@ -562,53 +556,7 @@
     text-transform: uppercase; color: var(--v-dim);
   }
 
-  /* ── THE CHAPTER PICKER ────────────────────────────────────────────────────
-     A FIXED GRID, NOT A WRAP. These were a `flex-wrap` of chips sized by their
-     own labels — `min-width:22px` plus `padding:0 5px` — so a one-digit chapter
-     and a two-digit one drew different boxes, every row held a different count,
-     and no column lined up with the one above it. Reading 119 out of 150 meant
-     reading every chip on the way. `auto-fill` + `1fr` gives every cell the same
-     width at any rail width, so the rows line up and a chapter can be found by
-     counting columns.
-
-     A CHAPTER CHIP IS NOT A BUTTON-IN-A-ROW, which is why it is not `.r-btn`:
-     it is a fixed square cell in a numeric picker, sized by the grid rather than
-     by its label, and `.r-btn`'s 11px of side padding is the exact property that
-     made these ragged. It draws `.r-btn`'s rest and hover fills so it still
-     belongs to the same family. */
-  .lr-chapters { padding: 2px 8px 8px; }
-  .lr-chapcap { padding: 2px 0 4px; }
-  .lr-chips {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(26px, 1fr));
-    gap: 3px;
-    /* BOUNDED, so a long book does not bury the list it came from. Psalms has
-       150 chapters — 25 rows at this width — and inline in the rail's one
-       scroller that pushed the 47 books after it clean off the column. The
-       picker scrolls itself; the book list stays where the operator left it. */
-    max-height: 168px; overflow-y: auto;
-    scrollbar-width: thin; scrollbar-color: var(--v-surf3) transparent;
-  }
-  .lr-chips::-webkit-scrollbar { width: 6px; }
-  .lr-chips::-webkit-scrollbar-thumb { background: var(--v-surf3); border-radius: var(--v-r-round); }
-  .lr-chip {
-    display: grid; place-items: center;
-    width: 100%; height: 24px; padding: 0;
-    border-radius: var(--v-r-sm); cursor: pointer;
-    background: var(--v-surf2); border: 1px solid var(--v-500); color: var(--v-dim);
-    font-family: var(--f-mono); font-size: var(--v-fs-cap);
-    /* Tabular figures, or 1 and 11 sit at different optical centres inside cells
-       that are finally the same size. */
-    font-variant-numeric: tabular-nums;
-  }
-  .lr-chip:hover:not(:disabled) { background: var(--v-surf3); border-color: var(--v-sel-line); color: var(--v-txt); }
-  .lr-chip:disabled { opacity: .5; cursor: not-allowed; }
-  /* WHERE YOU WERE. Steel — the colour of the thing being worked on. NEVER
-     amber, which means ON AIR, and never cyan, which means the AI guessed: this
-     marks a chapter this rail opened into the grid, which is not a claim about
-     any screen. */
-  .lr-chip[aria-current='true'] {
-    background: var(--v-sel-soft); border-color: var(--v-sel-line);
-    color: var(--v-txt); font-weight: 600;
-  }
+  /* THE CHAPTER PICKER's grid, its chips and every rule behind them moved into
+     `ui/ChapterPicker.svelte` (RG-216), with the reasoning, so the Library could
+     mount the same picker instead of growing a copy of it. */
 </style>
