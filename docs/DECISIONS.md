@@ -6180,3 +6180,40 @@ warns about, and asserts each paints `--v-caution` and neither promise colour; t
 test asserts the hex differs from amber and amethyst. `settingssections.test.js` was
 retargeted from *"is amethyst"* to *"is the caution ink and not amber"*. RG-207.
 
+## 112. The clocks survive a relaunch, and a congregation countdown comes back to the desk rather than to the wall (2026-09-21)
+
+**On the operator's "go ahead with what's remaining"; F28 in the Phase 1 audit, the largest open item in the stage plan.**
+
+`timers::TimerRegistry` was a `Mutex<HashMap>` and nothing else. A relaunch mid-service — a
+crash, an update, a laptop closed and opened — lost every clock: the preacher's sermon timer,
+and a Screen Countdown a congregation was watching. Nothing said so; the tablet simply went
+blank and the wall kept the last frame the screens retained.
+
+### The decision
+
+- **Every mutation is written.** The registry gains a sink it calls after each change with
+  the WHOLE registry (`timers::Sink`), and `main.rs` installs one that writes the rows through
+  `db::save_timers` on a thread of its own, so the registry never holds the database lock. A
+  snapshot rather than a delta: a message lost on the way is repaired by the next. The
+  announcement sits on the mutators (rule 36), and `every_mutation_is_announced_to_the_sink_once`
+  enumerates them.
+- **`timers` is a table**, one row per timer, the `Timer` as JSON; `next_id` rides in
+  `app_settings` so an id is never handed out twice across a relaunch (a reused id is a `+1`
+  landing on the wrong clock). `db::restorable` drops a clock started in a rehearsal (rehearsal
+  itself does not survive a relaunch) and any clock older than six hours (last Sunday's).
+- **Restoring is not re-airing.** `restore_timers` puts the rows back and tells the stage
+  (`publish_timers`, which carries no content frame), and publishes NOTHING to a congregation
+  screen. A countdown that was on a wall comes back into the registry, where Live's Screen
+  Countdown band already offers a timer that is *counting, off the screens* with **Put back on
+  screens** (RG-152). That is the rule crash recovery keeps for a verse — position restored,
+  on-air-ness deliberately not (§27) — applied to a clock. The deadline model makes a restored
+  running timer correct after any gap: `target_ms` is an instant, not a count.
+
+### What holds it
+
+`timers::tests::{every_mutation_is_announced_to_the_sink_once, a_refused_adjust_announces_nothing,
+restore_never_hands_out_a_restored_id_again}`, `db::timers::tests` (round trip, replace,
+unparseable row skipped, the restore filter), and
+`e2e::a_relaunch_brings_the_clocks_back_without_putting_one_on_a_wall`, watched to fail with
+the stage publish removed. RG-208.
+

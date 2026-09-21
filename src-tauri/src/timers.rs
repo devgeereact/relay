@@ -251,15 +251,59 @@ struct Inner {
     timers: HashMap<TimerId, Timer>,
 }
 
+/// WHERE A CHANGE GOES ONCE IT HAS HAPPENED: the whole registry, after every
+/// mutation. `main.rs` installs one that writes the rows to the database
+/// (`db::save_timers`) on its own thread; tests install a counter. A snapshot
+/// rather than a delta, so a message lost on the way is repaired by the next.
+pub type Sink = Box<dyn Fn(TimerId, Vec<Timer>) + Send + Sync>;
+
 /// The timers, and the answers to questions about them.
 #[derive(Default)]
-pub struct TimerRegistry(Mutex<Inner>);
+pub struct TimerRegistry(Mutex<Inner>, Mutex<Option<Sink>>);
 
 impl TimerRegistry {
     /// The lock, with a poisoned one recovered rather than propagated — see the
     /// module doc. Not `unwrap()`: this runs during a live service.
     fn inner(&self) -> std::sync::MutexGuard<'_, Inner> {
         self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Install the sink every mutation reports to. Persistence was the one thing
+    /// this registry did not do (F28): a relaunch mid-service lost every clock,
+    /// including one a congregation was watching.
+    pub fn set_sink(&self, sink: Sink) {
+        *self.1.lock().unwrap_or_else(|e| e.into_inner()) = Some(sink);
+    }
+
+    /// TELL THE SINK, with no lock held. Called by every mutator after it has
+    /// released `inner` — the sink may take a database lock, and rule 2's shape
+    /// (a lock held across a call that wants another) is the same deadlock here
+    /// as it is across an emit. On the MUTATORS, not the call sites (rule 36):
+    /// `every_mutation_is_announced_to_the_sink_once` enumerates them.
+    fn announce(&self) {
+        let (next_id, timers) = {
+            let g = self.inner();
+            let mut all: Vec<Timer> = g.timers.values().cloned().collect();
+            all.sort_by_key(|t| t.id);
+            (g.next_id, all)
+        };
+        if let Some(sink) = self.1.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+            sink(next_id, timers);
+        }
+    }
+
+    /// PUT SAVED ROWS BACK, at launch, before anything is announced. `next_id`
+    /// resumes from the saved counter or from the highest restored id, whichever
+    /// is larger: an id handed out twice is a `+1` on the timer the operator can
+    /// see moving one they cannot. Restoring is not publishing — nothing here
+    /// reaches a screen (DECISIONS §112).
+    pub fn restore(&self, next_id: TimerId, timers: Vec<Timer>) {
+        let mut g = self.inner();
+        let top = timers.iter().map(|t| t.id).max().unwrap_or(0);
+        g.next_id = g.next_id.max(next_id).max(top);
+        for t in timers {
+            g.timers.insert(t.id, t);
+        }
     }
 
     /// Put a timer in the registry and hand back its identity. **The only creator.**
@@ -283,6 +327,8 @@ impl TimerRegistry {
                 ..timer
             },
         );
+        drop(g);
+        self.announce();
         id
     }
 
@@ -330,7 +376,10 @@ impl TimerRegistry {
         // trying to replace.
         let figure = t.target_ms - now_ms;
         t.paused_ms = t.paused_ms.map(|_| figure);
-        Ok(t.clone())
+        let out = t.clone();
+        drop(g);
+        self.announce();
+        Ok(out)
     }
 
     /// The timer with that id, cloned, or None.
@@ -340,7 +389,11 @@ impl TimerRegistry {
 
     /// Take one timer. True if there was one to take.
     pub fn stop(&self, id: TimerId) -> bool {
-        self.inner().timers.remove(&id).is_some()
+        let took = self.inner().timers.remove(&id).is_some();
+        if took {
+            self.announce();
+        }
+        took
     }
 
     /// Take every timer in one scope and no other, reporting how many. A panic
@@ -356,6 +409,10 @@ impl TimerRegistry {
             .collect();
         for id in &doomed {
             g.timers.remove(id);
+        }
+        drop(g);
+        if !doomed.is_empty() {
+            self.announce();
         }
         doomed.len()
     }
@@ -397,6 +454,10 @@ impl TimerRegistry {
             .collect();
         for id in &doomed {
             g.timers.remove(id);
+        }
+        drop(g);
+        if !doomed.is_empty() {
+            self.announce();
         }
         doomed.len()
     }
@@ -451,7 +512,10 @@ impl TimerRegistry {
         t.target_ms = now_ms + next;
         t.paused_ms = hold.then_some(next);
         // `from_ms` is NOT re-stamped — see `Timer`.
-        Ok(t.clone())
+        let out = t.clone();
+        drop(g);
+        self.announce();
+        Ok(out)
     }
 
     /// Every timer, oldest first. The order is by identity, which is the order they
@@ -1241,5 +1305,98 @@ mod tests {
             project_both(&five(now, Scope::Both)).countdown_warn_ms,
             None
         );
+    }
+
+    // ── PERSISTENCE: EVERY MUTATION IS ANNOUNCED, ONCE (F28, RG-208) ────────
+    //
+    // The registry was a `Mutex<HashMap>` and nothing else, so a relaunch mid-
+    // service lost every clock, including one a congregation was watching. The
+    // repair is a SINK the registry calls after every mutation, with the whole
+    // registry — a snapshot, not a delta, so a dropped message is repaired by the
+    // next one. The sink is on the MUTATORS (rule 36: the choke point, not the
+    // call sites), and this test enumerates them so a seventh mutator that
+    // forgets to announce fails here rather than on a Sunday.
+    type Seen = std::sync::Arc<std::sync::Mutex<Vec<(TimerId, usize)>>>;
+    fn counting_sink() -> (Seen, Sink) {
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let s = seen.clone();
+        let sink: Sink = Box::new(move |next_id, timers: Vec<Timer>| {
+            s.lock().unwrap().push((next_id, timers.len()));
+        });
+        (seen, sink)
+    }
+
+    #[test]
+    fn every_mutation_is_announced_to_the_sink_once() {
+        let now = 1_000_000;
+        let reg = TimerRegistry::default();
+        let (seen, sink) = counting_sink();
+        reg.set_sink(sink);
+        let count = || seen.lock().unwrap().len();
+
+        let a = reg.start(five(now, Scope::Both));
+        assert_eq!(count(), 1, "start announces");
+        reg.adjust(a, Some(120_000), None, now).unwrap();
+        assert_eq!(count(), 2, "adjust announces");
+        reg.reset(a, now).unwrap();
+        assert_eq!(count(), 3, "reset announces");
+        let b = reg.start(five(now, Scope::Stage));
+        assert_eq!(count(), 4);
+        assert!(reg.stop(b));
+        assert_eq!(count(), 5, "stop announces");
+        assert!(!reg.stop(b), "a second stop of the same id takes nothing");
+        assert_eq!(count(), 5, "…and announces nothing: nothing changed");
+        reg.stop_scope(Scope::Both);
+        assert_eq!(count(), 6, "stop_scope announces");
+        reg.stop_scope(Scope::Both);
+        assert_eq!(count(), 6, "an empty stop_scope announces nothing");
+        let mut r = five(now, Scope::Stage);
+        r.started_in_rehearsal = true;
+        reg.start(r);
+        reg.stop_started_in_rehearsal();
+        assert_eq!(count(), 8, "stop_started_in_rehearsal announces");
+
+        // The snapshot handed over is the WHOLE registry, and carries next_id.
+        let (next_id, len) = *seen.lock().unwrap().last().unwrap();
+        assert_eq!(len, 0);
+        assert_eq!(
+            next_id, 3,
+            "three ids were handed out and none may be reused"
+        );
+    }
+
+    #[test]
+    fn a_refused_adjust_announces_nothing() {
+        let now = 1_000_000;
+        let reg = TimerRegistry::default();
+        let (seen, sink) = counting_sink();
+        reg.set_sink(sink);
+        let a = reg.start(five(now, Scope::Both));
+        assert!(reg.adjust(a, Some(500), None, now).is_err());
+        assert!(reg.adjust(99, None, None, now).is_err());
+        assert_eq!(seen.lock().unwrap().len(), 1, "only the start was a change");
+    }
+
+    /// RESTORE KEEPS IDS MONOTONIC. A relaunch that restored timers 1 and 2 and
+    /// then handed out id 1 again would be the reused-id failure the registry
+    /// refuses to have: a `+1` on the timer the operator can see moving one they
+    /// cannot. `next_id` is restored with the rows, and never below the highest
+    /// id among them.
+    #[test]
+    fn restore_never_hands_out_a_restored_id_again() {
+        let now = 1_000_000;
+        let reg = TimerRegistry::default();
+        let mut a = five(now, Scope::Stage);
+        a.id = 4;
+        let mut b = five(now, Scope::Both);
+        b.id = 7;
+        reg.restore(2, vec![a, b]); // a stale next_id below the rows is corrected
+        assert_eq!(
+            reg.snapshot().iter().map(|t| t.id).collect::<Vec<_>>(),
+            vec![4, 7]
+        );
+        let c = reg.start(five(now, Scope::Stage));
+        assert_eq!(c, 8, "the next id is above every restored one");
+        assert_eq!(reg.get(4).map(|t| t.scope), Some(Scope::Stage));
     }
 }

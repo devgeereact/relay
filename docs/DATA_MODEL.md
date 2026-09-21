@@ -180,6 +180,16 @@ One row per run (`date, title`). Parent of the two live logs:
   `template_change`) — distinct from a `PlanItem` build-time cue. Same word, two lifecycles;
   the model keeps them apart.
 
+### Timer — `timers.rs` `Timer`, persisted by `db/timers.rs`
+A clock: `scope` (`Both` reaches every screen through the content frame; `Stage` reaches the
+preacher's tablet only), `target_ms`/`from_ms` (instants, so a running timer is correct after
+any gap), `paused_ms` (a held figure, signed), `warn_ms`, `configured_ms` (what Reset restores),
+`until_ms` (an appointment), `plan_item_id`, `started_in_rehearsal`, `channels`. Lives in
+`timers::TimerRegistry` and, since 2026-09-21, in the `timers` table: every mutation writes the
+whole registry (one row per timer, JSON body; `next_id` in `app_settings`), and a launch restores
+what `db::restorable` allows — nothing from a rehearsal, nothing older than six hours — into the
+registry and never onto a wall (DECISIONS §112).
+
 ### SessionState / Session — `main.rs` `SessionState`, `Session`
 The ephemeral "right now": which service is live, current passage, position. Held as
 `Session(Mutex<Option<SessionState>>)`. It is state, not a record — never persisted verbatim;

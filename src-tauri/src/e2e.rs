@@ -5903,3 +5903,83 @@ fn a_verse_answered_from_memory_is_offered_never_fired() {
     );
     assert_eq!(psalm["status"], "suggested");
 }
+
+/// A RELAUNCH BRINGS THE CLOCKS BACK, AND PUTS NONE OF THEM ON A WALL — F28, DECISIONS §112.
+///
+/// The registry was in memory and nothing else. Here a stage clock and a
+/// congregation countdown are saved the way the sink saves them, the process
+/// "relaunches" (a fresh `app()` over the same rows), and `restore_timers` runs
+/// as `setup` runs it. The stage tablet is told, because a programme clock reaches
+/// it without a content frame; the congregation screens receive NOTHING, because
+/// restoring is not re-airing — the countdown is in the registry for Put back.
+/// Watched to fail with `publish_timers` removed from `restore_timers` (the stage
+/// half) and with a `broadcast_content` added to it (the wall half).
+#[test]
+fn a_relaunch_brings_the_clocks_back_without_putting_one_on_a_wall() {
+    let app = app();
+    let h = app.handle().clone();
+    let now = 1_700_000_000_000;
+    let stage = timers::Timer {
+        id: 3,
+        label: "Sermon".into(),
+        done_msg: String::new(),
+        target_ms: now + 1_200_000,
+        from_ms: now - 600_000,
+        paused_ms: None,
+        warn_ms: Some(300_000),
+        scope: timers::Scope::Stage,
+        configured_ms: 1_800_000,
+        until_ms: None,
+        plan_item_id: None,
+        started_in_rehearsal: false,
+        channels: None,
+    };
+    let wall_clock = timers::Timer {
+        id: 5,
+        scope: timers::Scope::Both,
+        label: "Service starts in".into(),
+        ..stage.clone()
+    };
+    {
+        let db = h.state::<Db>();
+        let conn = db.0.lock().unwrap();
+        db::save_timers(&conn, 5, &[stage.clone(), wall_clock.clone()]).unwrap();
+    }
+    let wall = Wall::watch(&h);
+    let mut kiosk = qa::Kiosk::attach(&h);
+
+    let n = restore_timers(&h, now);
+    settle();
+
+    assert_eq!(n, 2);
+    let reg = h.state::<timers::TimerRegistry>();
+    assert_eq!(reg.get(3), Some(stage));
+    assert_eq!(reg.get(5), Some(wall_clock));
+    assert_eq!(
+        reg.start(timers::Timer {
+            id: 0,
+            ..reg.get(3).unwrap()
+        }),
+        6,
+        "ids resume above the restored ones"
+    );
+
+    // The stage was told, with the stage clock and only the stage clock.
+    let frames = kiosk.drain();
+    let timer_frames: Vec<&String> = frames.iter().filter(|f| f.contains("\"timers\"")).collect();
+    assert!(
+        !timer_frames.is_empty(),
+        "the stage tablet must learn its clock on relaunch: {frames:?}"
+    );
+    assert!(timer_frames[0].contains("\"Sermon\""));
+    assert!(
+        !timer_frames[0].contains("Service starts in"),
+        "a congregation countdown is not a stage frame"
+    );
+    // And no content frame left by either door.
+    assert!(
+        frames.iter().all(|f| !f.contains("content_kind")),
+        "restoring put content on the kiosk: {frames:?}"
+    );
+    assert_eq!(wall.count(), 0, "restoring put content on the wall");
+}

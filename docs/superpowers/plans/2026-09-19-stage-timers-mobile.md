@@ -195,6 +195,8 @@ what a useful report back looks like. It is NOT RUN.
 
 Acceptance: record visible results and failures. No general-release claim from this work alone; the repository's existing supervised-pilot decision remains in force.
 
+**Timer persistence — done 2026-09-21** (RG-208, DECISIONS §112). `TimerRegistry` writes every change to a `timers` table on its own thread and a relaunch restores the rows: the stage is told, a congregation countdown is offered on Live for Put back. This was the largest open item in this area.
+
 ## Decisions and compatibility
 
 The user's approval covers including signed overtime Pause/Resume and saved layouts. The following are the proposed concrete contracts, not silently enacted architecture changes:

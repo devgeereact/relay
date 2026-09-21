@@ -132,6 +132,21 @@ CREATE TABLE stage_layouts (
     seed_key   TEXT UNIQUE             -- NULL for a layout the operator made
 );
 
+-- ===== The clocks, so a relaunch keeps them (db/timers.rs) =====
+--
+-- `timers::TimerRegistry` was in memory and nothing else, so a relaunch
+-- mid-service lost every clock, including one a congregation was watching (F28,
+-- DECISIONS §112). One row per timer, the whole `timers::Timer` as JSON; the
+-- registry's `next_id` rides in app_settings under `timers.next_id`, because an
+-- id is never reused. Every save REPLACES the table with the registry's
+-- snapshot. At launch `db::restorable` drops a clock started in a rehearsal and
+-- any clock older than six hours; a congregation countdown comes back into the
+-- registry and NOT onto a wall, which is Live's Put back.
+CREATE TABLE timers (
+    id   INTEGER PRIMARY KEY,
+    body TEXT NOT NULL                 -- timers::Timer, serialised
+);
+
 -- ===== Service plans & the unified cue (db/plans.rs) =====
 
 CREATE TABLE service_plans (

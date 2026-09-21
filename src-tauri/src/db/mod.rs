@@ -24,6 +24,7 @@ mod songs;
 mod stage;
 mod starter;
 mod templates;
+mod timers;
 mod verses;
 
 pub use channels::*;
@@ -37,6 +38,7 @@ pub use songs::*;
 pub use stage::*;
 pub use starter::*;
 pub use templates::*;
+pub use timers::*;
 pub use verses::*;
 
 use rusqlite::{Connection, OptionalExtension};
@@ -390,14 +392,15 @@ fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
     // resolve. Both are retryable (rule 25) and neither leaves a scratch table.
     ensure_stage_layouts(conn)?;
     ensure_channel_stage_layout(conn)?;
-    // RETIRE BEFORE SEEDING, not after. The seed became five families this wave and
-    // the rows they replaced are removed from installs that already have them. But
-    // seeds insert BY NAME and only when absent, and one retired shelf row shares
-    // the name `Lower Third · Scripture` with a new family member. Seeding first
-    // would see that name present, skip the family member, and this would then
-    // delete the old row: a family one member short until the next boot. Their bytes
-    // differ, so a name-plus-bytes match tells them apart either way; this is about
-    // ordering, not about matching. See templates.rs for the three conditions.
+    ensure_timers(conn)?; // the registry's rows, so a relaunch keeps every clock (F28)
+                          // RETIRE BEFORE SEEDING, not after. The seed became five families this wave and
+                          // the rows they replaced are removed from installs that already have them. But
+                          // seeds insert BY NAME and only when absent, and one retired shelf row shares
+                          // the name `Lower Third · Scripture` with a new family member. Seeding first
+                          // would see that name present, skip the family member, and this would then
+                          // delete the old row: a family one member short until the next boot. Their bytes
+                          // differ, so a name-plus-bytes match tells them apart either way; this is about
+                          // ordering, not about matching. See templates.rs for the three conditions.
     ensure_retired_presets_are_gone(conn)?;
     ensure_preset_templates(conn)?; // ready-to-use preset designs (additive, by name)
                                     // …and correct the one seeded value that additive-by-name cannot reach: see
@@ -2211,6 +2214,7 @@ mod tests {
         "demo.rs",
         "starter.rs",
         "verses.rs",
+        "timers.rs",
     ];
 
     #[test]
@@ -2253,6 +2257,7 @@ mod tests {
             include_str!("demo.rs"),
             include_str!("starter.rs"),
             include_str!("verses.rs"),
+            include_str!("timers.rs"),
         ];
         assert_eq!(
             SOURCES.len(),
@@ -2417,6 +2422,7 @@ mod tests {
             include_str!("demo.rs"),
             include_str!("starter.rs"),
             include_str!("verses.rs"),
+            include_str!("timers.rs"),
         ];
         assert_eq!(
             SOURCES.len(),

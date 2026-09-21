@@ -10,6 +10,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+### Your clocks survive a restart
+
+If Relay quits mid-service — a crash, an update, a laptop closed — every timer used to vanish: the preacher's sermon clock and a countdown the room was watching. They now come back on relaunch. The stage screen gets its clock straight away. A countdown that was on the screens is not put back by itself; Live's Screen Countdown band shows it *counting, off the screens* with **Put back on screens**, so nothing reaches a congregation without a hand on it. Clocks from a rehearsal, or older than six hours, are not brought back. (RG-208, DECISIONS §112)
+
 ### Warnings have their own colour, and it is not the on-air one
 
 A screen you had taken down, a stage role nobody had set and a template whose font did not load were all shown in **amber**, the colour that means a congregation is looking at something. Five other warnings borrowed the rehearsal purple. Every warning that is not a failure now wears one ochre caution colour that promises nothing about your screens, and the `SLIDE` badge on the transport is steel rather than amber, so it no longer glows over a clear wall. Amber still means on air and only that. (RG-207, DECISIONS §111)

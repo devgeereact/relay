@@ -174,6 +174,39 @@ fn main() {
         .manage(Session::default())
         .manage(models::DownloadState::default())
         .setup(|app| {
+            // THE CLOCKS COME BACK BEFORE ANYTHING ELSE CAN TOUCH THEM (F28,
+            // DECISIONS §112). Restored, not re-aired: nothing here reaches a
+            // congregation screen. Then every later change is written on its own
+            // thread, so the registry never holds the database lock.
+            restore_timers(&app.handle().clone(), cd_now_ms());
+            {
+                let h = app.handle().clone();
+                let (tx, rx) = std::sync::mpsc::sync_channel::<(i64, Vec<timers::Timer>)>(64);
+                let spawned = std::thread::Builder::new()
+                    .name("relay-timers".into())
+                    .spawn(move || {
+                        for (next_id, set) in rx {
+                            let db = h.state::<Db>();
+                            let conn = match db.0.lock() {
+                                Ok(c) => c,
+                                Err(e) => e.into_inner(),
+                            };
+                            if let Err(e) = db::save_timers(&conn, next_id, &set) {
+                                eprintln!("timers: could not save ({e}) — a relaunch will not have this change");
+                            }
+                        }
+                    });
+                match spawned {
+                    Ok(_) => app.state::<timers::TimerRegistry>().set_sink(Box::new(
+                        move |next_id, set| {
+                            // A full queue drops THIS snapshot; the next change carries
+                            // the whole registry again, so nothing is lost for long.
+                            let _ = tx.try_send((next_id, set));
+                        },
+                    )),
+                    Err(e) => eprintln!("timers: no persistence thread ({e}) — clocks will not survive a relaunch"),
+                }
+            }
             // Crash reporting: OFF unless the operator previously opted in. This
             // runs before anything else can panic, but deliberately after the DB
             // is open, because the consent lives in the DB. No consent → no DSN,
@@ -3430,6 +3463,48 @@ fn adjust_countdown<R: tauri::Runtime>(
 
 /// Epoch milliseconds. The clock every timer command reads, so they cannot disagree
 /// about "now" within one press.
+/// BRING THE SAVED CLOCKS BACK INTO THE REGISTRY, at launch — and tell the stage,
+/// which is the one screen a timer reaches without a content frame.
+///
+/// Generic over the runtime (rule 24) so `e2e.rs` can drive it. It publishes NO
+/// content frame: a congregation countdown that was on a wall when Relay quit
+/// comes back into the registry, where Live's Screen Countdown band offers it
+/// (`cdBack`, "counting, off the screens") and **Put back** returns it to the
+/// screens — the same rule crash recovery keeps for a verse (position restored,
+/// on-air-ness deliberately not). What is brought back is `db::restorable`'s
+/// answer, and the number is printed so the boot log says what a relaunch did.
+fn restore_timers<R: tauri::Runtime>(app: &tauri::AppHandle<R>, now_ms: i64) -> usize {
+    let saved = {
+        let db = app.state::<Db>();
+        let conn = match db.0.lock() {
+            Ok(c) => c,
+            Err(e) => e.into_inner(),
+        };
+        db::load_timers(&conn)
+    };
+    let (next_id, rows) = match saved {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("timers: could not read the saved clocks ({e})");
+            return 0;
+        }
+    };
+    let keep = db::restorable(rows, now_ms);
+    let n = keep.len();
+    if n > 0 {
+        let wall = keep
+            .iter()
+            .filter(|t| t.scope == timers::Scope::Both)
+            .count();
+        println!(
+            "timers: restored {n} clock(s) from the last run ({wall} for the screens, held for Put back)"
+        );
+    }
+    app.state::<timers::TimerRegistry>().restore(next_id, keep);
+    channels::publish_timers(app);
+    n
+}
+
 fn cd_now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

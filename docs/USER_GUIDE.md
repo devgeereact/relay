@@ -323,6 +323,12 @@ key was "deliberately total, monitor timers included". It has not been true sinc
 clocks got a lifetime of their own, and `e2e::a_clear_takes_the_congregation_timer_and_leaves_the_programme_timer`
 is what holds it.)
 
+**Timers survive a restart.** If Relay quits during a service, the sermon clock is back on the
+stage screen the moment it relaunches, and a Screen Countdown that was on the wall waits on the
+Live desk as *counting, off the screens* until you press **Put back on screens**. Nothing goes
+back in front of a congregation on its own. Clocks from a rehearsal, or older than six hours,
+are not brought back.
+
 A Stage Message also comes down with a panic key, and does not come back when a screen
 reconnects.
 
