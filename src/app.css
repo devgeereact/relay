@@ -1,7 +1,12 @@
 /* Relay — THE OPERATOR CONSOLE'S STYLESHEET.
  *
- * Ported from the design references in `docs/design/` (the working HTML mock they
- * came from is not in this repository). The shared visual language: the token
+ * Ported from a set of rendered screen references that were DELETED on
+ * 2026-09-21, together with the working HTML mock they came from, because the
+ * product had long since moved past them: CLAUDE.md already said they were not a
+ * spec and that where a reference and this stylesheet disagreed, this stylesheet
+ * was what shipped. Nothing here changed with them, and every rule that a
+ * reference used to justify now carries its reasoning in place rather than a
+ * pointer to a picture. This file is the visual language: the token
  * sheet below, plus the reusable component classes. Per-screen markup lives in
  * src/lib/views/*.svelte; anything reused across screens lives here so Svelte's
  * per-component style scoping doesn't strip it.
@@ -587,8 +592,7 @@ input[type="checkbox"]{ accent-color:var(--v-accent); }
 .r-row .bar{ position:absolute; left:0; top:12px; bottom:12px; width:3px; border-radius:0 var(--v-r-sm) var(--v-r-sm) 0; }
 
 /* ── Pills, segments, chips ────────────────────────────────────────────────
-   The Library reference (docs/design/relay-main-library-screen.png) introduces
-   three small controls that are not one-offs: the content-type PILL row, the
+   The Library screen introduces three small controls that are not one-offs: the content-type PILL row, the
    view SEGMENT control, and the metadata CHIP. They live here so the Library,
    the Planner and anything after them cannot drift apart on radius or height. */
 .r-pill{ display:inline-flex; align-items:center; gap:7px; height:26px; padding:0 11px;

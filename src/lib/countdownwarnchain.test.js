@@ -1,7 +1,7 @@
 // RG-149 · THE WARNING THRESHOLD, ALL THE WAY TO THE TWO SCREENS A PERSON LOOKS AT.
 //
 // Track D landed the rule and left the chain broken in three places, measured in
-// `audits/DESIGN-2026-09-16-WAVE3.md` §5d:
+// `audits/DESIGN.md` §5d:
 //
 //   (a) `countdownWarning(remainingMs, totalMs, warnMs)` gained a third argument
 //       and all three readers called it with two, so a threshold chosen for one

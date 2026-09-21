@@ -5324,7 +5324,7 @@ mod r4_audit {
     // Six references, transcribed by `ggml-large-v3-turbo` from a live sermon and
     // taken VERBATIM from `detections.heard_text` — the column that exists because
     // a service once put wrong verses on a wall and the log could not say what it
-    // had heard. Full write-up: `docs/qa/audits/FIELD-2026-08-30.md`.
+    // had heard. Full write-up: `docs/qa/audits/FIELD.md`.
     //
     // These are not invented sentences. Every earlier case in this file was written
     // by someone imagining how a preacher talks; these are how one actually did,

@@ -130,8 +130,8 @@
 
   // ── THE SHORTCUT BOARD ────────────────────────────────────────────────────
   //
-  // Laid out to docs/design/relay-helpandshortcut-screen.png. The LAYOUT is
-  // the reference's. The KEYS are not, and must never be: every row below is
+  // The LAYOUT came from a rendered reference, deleted on 2026-09-21. The KEYS
+  // did not, and must never: every row below is
   // generated from `SHORTCUTS` in lib/shortcuts.js — the same table the keydown
   // handler reads — so this screen cannot drift from the real bindings.
   //
@@ -179,9 +179,10 @@
   $: other = SHORTCUTS.filter((s) => s.always && !s.keys.some((k) => PANIC_KEYS[k]));
 </script>
 
-<!-- HELP / SHORTCUTS — laid out to docs/design/relay-helpandshortcut-screen.png.
+<!-- HELP / SHORTCUTS.
      Board first (Panic · Transport · Other), then the troubleshooting topics, which
-     the reference does not show but which are this tab's other half. -->
+     the original rendered reference did not show but which are this tab's other
+     half. That reference is gone (deleted 2026-09-21); this order is the layout. -->
 <div class="help">
   <!-- BEFORE the shortcut board. Somebody who has never run a service does not yet
        know which of these keys matter; ten minutes of drills tells them, and the

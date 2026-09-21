@@ -3322,7 +3322,7 @@ fn r9_a_hit_is_still_a_verse_row_on_the_wire() {
 
 /// RG-136 — A RECOVERY IN THE SERVICE RECORD MUST HAVE A LOSS TO RECOVER FROM.
 ///
-/// Field service 2026-09-13 (`audits/FIELD-2026-09-13.md` §3) recorded three
+/// Field service 2026-09-13 (`audits/FIELD.md` §3) recorded three
 /// events for a 110.5 minute service: `service_started`, then `output_recovered`
 /// for the Streaming screen, then `output_lost`. **A screen came back from an
 /// outage the timeline never recorded**, so the report and the replay — which are
@@ -4611,7 +4611,7 @@ fn a_programme_timer_published_during_a_rehearsal_reaches_no_stage_tablet() {
 /// **The assertion surface is the claim**, for the same reason as the rehearsal
 /// test above: `publish_timers` emits no Tauri event, so `qa::Wall` cannot see
 /// this at all and a test written against it would pass over the defect. The
-/// measured defect (`audits/DESIGN-2026-09-16-WAVE3.md` §6) is two separate
+/// measured defect (`audits/DESIGN.md` §6) is two separate
 /// failures and both are asserted here — the registry kept `Rehearsal only`, and
 /// the exit published `clear` and `stage_next` and NO `timer` frame, so the
 /// tablet's set and the registry disagreed silently until something unrelated

@@ -671,7 +671,7 @@ fn worker<F>(
                 // this form. It used to name three millisecond figures and nothing
                 // else, so an operator who followed it landed on `ggml-base`, which is
                 // the configuration that produced four wrong verses in 85.5 minutes on
-                // 2026-09-06 (`docs/qa/audits/FIELD-2026-09-06.md` §3, RG-116). A
+                // 2026-09-06 (`docs/qa/audits/FIELD.md` §3, RG-116). A
                 // speed setting that is really an accuracy setting must say so at the
                 // point where it is offered. `small` is named because rule 32 makes it
                 // free: 153ms rounds to the same single 200ms chunker hop that base's

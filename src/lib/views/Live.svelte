@@ -1443,7 +1443,7 @@
         // for one and no control that writes one. Relay composing a sentence here
         // would be Relay's words presented as somebody's choice, and it would cost
         // something measured: a finished row's message renders at 30px against the
-        // digits' 64px (`docs/qa/audits/2026-09-17-WAVE4-STAGE-PLANNER.md` §1.3), so
+        // digits' 64px (`docs/qa/audits/DESIGN.md` §1.3), so
         // every bound cue on every install would end less legible than `0:00`, with
         // nobody having asked for it. That half of RG-162 is left open against the
         // timer surface that owns message text — wave 3 Track E.
@@ -2367,7 +2367,7 @@
 </script>
 
 
-<!-- LIVE — laid out to docs/design/relay-console-screen.png.
+<!-- LIVE. The layout came from a rendered console reference, deleted 2026-09-21.
      Row A: PREVIEW · take rack · PROGRAM · OUTPUT STATUS
      Row B: 1 Live Transcript · 2 AI Detection · 3 Service Plan · 4 Quick Controls
      Everything below is a re-dressing of the controls that were already here — no
@@ -3612,8 +3612,7 @@
 </div>
 
 <style>
-  /* LIVE — laid out to docs/design/relay-console-screen.png, styled entirely
-     from the --v-* design tokens in app.css. No raw hex, no arbitrary px: every
+  /* LIVE — styled entirely from the --v-* design tokens in app.css. No raw hex, no arbitrary px: every
      colour is a token and every gap comes off the 8pt scale. */
   .inspect-link{ align-self:flex-start; margin-top:9px; background:none; border:0; padding:0;
     font-family:var(--f-body); font-size:var(--v-fs-b1); color:var(--v-cyan); cursor:pointer;

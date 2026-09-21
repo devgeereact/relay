@@ -1042,7 +1042,7 @@ mod tests {
     ///
     /// RG-122. `audio: capture @ 48000 Hz · denoise on (RNNoise)` was the whole
     /// startup record, and both candidate inputs on 2026-09-06 ran at 48 kHz, so
-    /// `FIELD-2026-09-06.md` had to state its input on the operator's word alone.
+    /// `FIELD.md` (was `FIELD-2026-09-06.md`) had to state its input on the operator's word alone.
     /// The default-ness is the half RG-121 needs: a launch that silently fell back
     /// to the system default reads identically to one an operator set up, and only
     /// this phrase distinguishes them.

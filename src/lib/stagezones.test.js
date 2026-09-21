@@ -817,7 +817,7 @@ describe('S4 · the stage reads as one instrument', () => {
 // aloud — on a page that is `overflow: hidden` by design, so there was nothing to
 // scroll and nothing saying the verse was incomplete. With the Programme zone
 // switched off the same two panels left the verse whole
-// (`docs/qa/audits/2026-09-17-WAVE4-STAGE-PLANNER.md` §2.3).
+// (`docs/qa/audits/DESIGN.md` §2.3).
 //
 // jsdom has no layout engine, so the 38.9px is not reproducible here and this file
 // already records why (the split at the top). What IS reproducible is the cause:

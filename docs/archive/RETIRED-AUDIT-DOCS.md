@@ -1,3 +1,25 @@
+# Retired audit documents
+
+**Two documents, merged into this file on 2026-09-21** and otherwise untouched.
+
+Both were live documents until 2026-09-21, when what they owned was folded into the register and
+the harness so that the release decision, its reasoning and its gate list stopped living in three
+places that disagreed. The V1 production audit's decision reasoning is now `../qa/RELAY_GAP.md`
+§24, its launch checklist is §27, and its scorecards and brief disposition are
+`../qa/QA_HARNESS.md` Parts 5 and 6.
+
+They are **frozen at their own dates**. Nothing is edited except the paths of citations,
+retargeted so every citation still resolves.
+
+**What is in this file, in order:**
+
+- `2026-09-05-relay-v1-audit.md` — Relay — V1 Production Audit
+- `2026-09-15-launch-checklist.md` — Relay — Launch Checklist
+
+---
+
+<!-- ===== was docs/archive/RETIRED-AUDIT-DOCS.md, merged 2026-09-21, verbatim ===== -->
+
 > **Archived 2026-09-21.** Historical, frozen at its 2026-09-05 revision. The decision and its reasoning live in `docs/qa/RELAY_GAP.md` §24, the launch conditions beside them, the scorecards and the brief disposition in `docs/qa/QA_HARNESS.md` Parts 5 and 6, and the launch checklist in `RELAY_GAP.md` §27. Nothing here is edited except the paths of citations, retargeted so every link still resolves. Blocker 5 (the updater) closed on 2026-09-05 as the text says; blocker 1 recurred on 2026-09-06 and 2026-09-20 (RG-115, RG-178, RG-179).
 
 # Relay — V1 Production Audit
@@ -941,8 +963,8 @@ that stopped answering, sheds counted and shown.
 
 ## 12. Performance and long-service behaviour
 
-Quoted from [qa/audits/PERF-2026-08-24.md](../qa/audits/PERF-2026-08-24.md) and
-[PERF-MODELS-2026-08-30.md](../qa/audits/PERF-MODELS-2026-08-30.md); **not re-measured this
+Quoted from [qa/audits/PERF.md](../qa/audits/PERF.md) and
+[PERF-MODELS-2026-08-30.md](../qa/audits/PERF.md); **not re-measured this
 session**, and nothing this pass changed touches the decode path.
 
 | Target | Measured | Verdict |
@@ -959,7 +981,7 @@ session**, and nothing this pass changed touches the decode path.
 because there is no unbounded list. `perf_samples` snapshots percentiles once a minute rather
 than accumulating traces. **The two genuine unbounded-growth risks were the audio queues, and
 they are closed (F-06).** What remains unmeasured is a real multi-hour run on a church laptop:
-`docs/qa/audits/FIELD-2026-08-30.md` covers 49.5 minutes with no drift, and that is the longest
+`docs/qa/audits/FIELD.md` covers 49.5 minutes with no drift, and that is the longest
 evidence that exists.
 
 ---
@@ -1098,7 +1120,7 @@ Stated plainly, because a risk that is not named is a risk that is being hidden.
    published through the promote workflow, and **no update has ever been watched installing** —
    nobody has taken a machine on an older version and watched Relay fetch, verify and apply one.
    The builds already in the world carry the old dead address and can never be reached at all. That is the row in
-   [the launch checklist](2026-09-15-launch-checklist.md) §5 that still reads ⬜, and it needs two
+   [the launch checklist](RETIRED-AUDIT-DOCS.md) §5 that still reads ⬜, and it needs two
    versions and a laptop, not a commit.
 6. **Windows.** Not built or run in this session. CI covers compile, format, lint and tests;
    nothing here covers behaviour.
@@ -1228,7 +1250,7 @@ arithmetic, so `v1audit.test.js` checks it rather than asking you to.
 | **83–86** P0/P1/P2/P3 blocker lists | **APPLIED** — §1 and §6 |
 | **87–99** Regression, production build, console, storage, memory, CPU, installation, deep links, back/forward, crash recovery, security regression, performance regression | **DONE where reachable.** §7 and §8 cover regression, the production build and a clean console on a packaged launch. **Browser storage was audited and is small and deliberate**: `localStorage` holds one key (`relay.session.v1`) carrying the active tab, the open plan, the cue and slide position and the first-run flag — **ids and positions only, content-free by design**, so a reload mid-service does not drop the operator back on the Console tab with no idea where they were; plus the crash breadcrumb that reads the same key, the boot flags, and the operator's audio-output choice (which lives there because the fullscreen output window shares an origin with the console and that is how the choice reaches it). No `sessionStorage`, no IndexedDB, no cookies, no cache storage. Transcript and verse text are never in any of it — they stay in SQLite, per the local-first rule. Deep links and back/forward are N/A. **CPU/battery/thermal over hours is UNVERIFIED** |
 | **100–102** The three scores and the final report | **§15 and this document** |
-| **103–105** The release gate, the golden test, the engineering rule | **The golden test has been run once, in a real service, and it is `FIELD-2026-08-30.md`.** Relay knew what was happening, the operator knew, the operator could continue, and one wrong verse still reached a congregation. That is the whole basis of the supervised-pilot decision |
+| **103–105** The release gate, the golden test, the engineering rule | **The golden test has been run once, in a real service, and it is `FIELD.md` (was `FIELD-2026-08-30.md`).** Relay knew what was happening, the operator knew, the operator could continue, and one wrong verse still reached a congregation. That is the whole basis of the supervised-pilot decision |
 
 ---
 
@@ -1319,3 +1341,128 @@ What the audits have changed is what they can still change: every defect closed 
 has an instrument in the tree that fails if it comes back, and the four register rows still open
 are a second service, a native speaker, a correction kept on the record, and a release somebody
 has to publish. **None of the four is a commit.**
+
+---
+
+<!-- ===== was docs/archive/RETIRED-AUDIT-DOCS.md, merged 2026-09-21, verbatim ===== -->
+
+> **Archived 2026-09-21.** Historical, last run 2026-09-15. The one gate list now lives in `docs/qa/RELAY_GAP.md` §27, beside the decision it supports (§24). Nothing here is edited except citation paths.
+
+# Relay — Launch Checklist
+
+**One gate list.** There used to be two — the retired product audit's §16 and
+[RELAY_GAP.md](../qa/RELAY_GAP.md) §25 — and they disagreed. This is the only one.
+
+**Every box either names the command that ticks it, or says plainly that it has never been
+checked.** A ticked box with no instrument behind it is how this repository shipped a readiness
+checklist claiming a macOS signing certificate that has never existed. Do not tick from memory.
+
+`✅` verified by a command that was run · `⚠️` partially verified, with the limit stated ·
+`⬜` **never checked** · `❌` checked and failing.
+
+Last run: **2026-09-15**, against `0.2.0-3` on `rebrand/wave3`. Findings live in
+[RELAY_GAP.md](../qa/RELAY_GAP.md) §23; the reasoning is [the V1 audit](RETIRED-AUDIT-DOCS.md).
+
+---
+
+## 1. The build
+
+| | Gate | How |
+|---|---|---|
+| ✅ | Frontend suite passes | `npx vitest run` — the counts live in [QA_HARNESS.md](../qa/QA_HARNESS.md) §0, which is the register; this row is about the gate, not the number |
+| ✅ | Rust suite passes | `cd src-tauri && cargo test` — same: §0 owns the count. This row said *942 / 70* and *644* for three days after both moved |
+| ✅ | Formatting | `cargo fmt --all -- --check` |
+| ✅ | Lints, warnings denied | `cargo clippy --all-targets -- -D warnings` — **this failed on 2026-09-02 and was fixed (RG-82). Run it; do not assume it** |
+| ✅ | Frontend builds | `npm run build` |
+| ✅ | The three version files agree | `npm run version:check` |
+| ✅ | No dead commands, no orphan controls | `node scripts/qa-inventory.mjs` → 133/133, 1 intentional orphan |
+| ✅ | Every citation resolves | `npx vitest run src/lib/crossrefs.test.js` |
+| ✅ | The packaged binary builds and launches | `npm run tauri build` → `.app` + `.dmg`, 0 warnings; launched 2026-09-03 with an isolated `RELAY_DB_PATH` and printed **exactly one** boot heartbeat. **CI's macOS job is still compile-only and says so** — this box is ticked by a human running the command |
+| ✅ | The hardened runtime does not kill the microphone | `./scripts/sign-local.sh` → `flags=0x10002(adhoc,runtime)`, mic entitlement present, usage string present. **Rule 17's trap reproduced without a certificate** |
+| ✅ | The LAN surface behaves in production, not just in tests | `curl` against the running bundle, re-run 2026-09-05 on a build carrying the ranged-media change: `output.html` 200 + kiosk CSP + `nosniff`; `GET /api/black` → **405, `Allow: POST`, no CORS wildcard**; traversal → 404; `/media/<id>` 200 + `Accept-Ranges`, `Range: bytes=500-599` → **206 + `Content-Range: bytes 500-599/1024`, byte-exact**, and a range past the end → **416** |
+| ✅ | The update channel resolves | **Live.** `npm run updater:check` reports **2 update endpoints live**, serving `0.2.0-2`, seven platforms each (re-run 2026-09-15). This row read ⚠️ *"empty until the first publish"* for months after the publish actually happened, which is the register disagreeing with the tool that knows. The endpoint is one permanent address — `…/releases/download/updates/latest.json` — repointed by `update-channel-promote.yml` whenever a release is published (RG-83, RG-114). `npm run updater:check` reads 404 until that first publish, correctly. `npm run version:check` fails if an endpoint drifts back to `/latest/` **or** forward to a version tag, which is the shape that resolves without working |
+| ⬜ | A clean machine installs it | never done |
+
+## 2. The live path
+
+| | Gate | How |
+|---|---|---|
+| ✅ | Only `Direct` can auto-fire, enforced before thresholds | `router::decide`; `router::semantic_can_never_auto_fire` |
+| ✅ | A paraphrase cannot be promoted by any number | `router::corroboration_never_promotes_a_paraphrase` |
+| ✅ | One window may put at most one verse on a wall | `main::rank_for_wall` |
+| ✅ | Content leaves by one door, and the validator is on it | `channels::broadcast_content` has one caller |
+| ✅ | Rehearsal cannot reach a congregation screen — including the stage monitor | `nothing_reaches_the_stage_monitor_during_a_rehearsal` |
+| ✅ | Panic controls bypass the validator and can never report an unachieved success | `panic.test.js` |
+| ✅ | `Esc` inside a dialog does not clear the screens | `shortcuts.test.js` |
+| ✅ | Detection gate beats the SPEC target | `cargo test eval::tests::print_scorecard -- --nocapture` → 0.0% wrong-verse over 74 cases |
+| ✅ | No `unwrap`/`expect` on the live path | grep, test-boundary aware, across the seven service modules |
+| ⚠️ | The whole path, driven end to end | `cargo test e2e::` → 38 tests — real commands, real DB, **mock window** |
+| ⬜ | The whole path, on a projector, in a room | one service on 2026-08-30; no second |
+| ⬜ | **A database from a released build survives the corpus repair** | RG-102 … RG-105. `sqlite3 "$HOME/Library/Application Support/com.relay.app/relay.db" "PRAGMA user_version; SELECT COUNT(*) FROM verses;"` before an upgrade and after. Held by tests; never run on a machine that has recorded real services |
+
+## 3. Speech
+
+| | Gate | How |
+|---|---|---|
+| ✅ | Decode cost fits the cadence | `RELAY_BENCH_MODEL=… cargo test --release decode_cost -- --ignored` — base 56 ms, small 151 ms, turbo 594 ms at an 8 s window |
+| ✅ | The cadence floor is a whole number of chunker hops | `stt::adaptive_cadence` |
+| ✅ | A quiet preacher is still heard — levels are learned, never assumed | `cargo test audio::gate -- --ignored` |
+| ⬜ | **Word error rate, any language** | needs 30 minutes of sermon audio · `bench/README.md` |
+| ⬜ | First-partial and end-to-end p95 latency | `stt::realtime::live_transcript_latency`, same recording |
+| ⬜ | The book aliases are right | needs a native speaker · `docs/CONTRIBUTING.md` |
+
+## 4. Output and hardware
+
+| | Gate | How |
+|---|---|---|
+| ✅ | A screen that stops answering cannot read On Air | `outputhealth.test.js` |
+| ✅ | A template swap is live without re-copying a URL | channel-keyed output URLs, DECISIONS §29 |
+| ⬜ | A real projector | never |
+| ⬜ | A second monitor, OBS, a capture card | never |
+| ⬜ | Any microphone other than this laptop's | never |
+
+## 5. Release
+
+| | Gate | How |
+|---|---|---|
+| ✅ | The signing gate is per-platform and fails loud on a real tag | `release.yml` — two certificates, two verdicts |
+| ❌ | **A macOS code-signing certificate exists** | `gh secret list` → **zero of the six `APPLE_*`** |
+| ❌ | **A Windows code-signing certificate exists** | `gh secret list` → **zero of the eight `AZURE_*`/`WINDOWS_*`** |
+| ✅ | The updater manifest is signed | `TAURI_SIGNING_PRIVATE_KEY` is set |
+| ✅ | **The updater endpoint resolves** | **Live** — see §1's row of the same name, which this row contradicted for a fortnight (Phase 1 audit, 2026-09-21). `npm run updater:check` reports 2 update endpoints live. One gate, one answer |
+| ⬜ | An update has been watched installing, once | never |
+| ⬜ | The microphone survives the first correctly-signed macOS build | `npm run tauri build && ./scripts/sign-local.sh` — **free, and it reproduces rule 17's trap without a certificate. Run it before buying anything** |
+| ⬜ | The offline bundle onto a stick, carried to a machine with no internet | `node scripts/offline-bundle.mjs` |
+
+## 6. Security and privacy
+
+| | Gate | How |
+|---|---|---|
+| ✅ | No secrets in the tree | `git grep`; `.env` untracked, `.env.example` tracked |
+| ✅ | No production dependency advisories | `npm audit --omit=dev` → 0 |
+| ⚠️ | Dev-toolchain advisories | 10, all `vite`/`vitest`/`svelte-hmr`/`esbuild` — none shipped, and **the two reachable ones needed the dev server to be on the LAN**, which it no longer is by default (RG-98, DECISIONS §65: `RELAY_DEV_LAN=1` opts in) |
+| ✅ | Rust dependency advisories | `cargo audit` → **0 vulnerabilities** (RG-101). Run for the first time on 2026-09-04, when it found three; all three went by lockfile update, including the two 7.5-HIGH `quick-xml` ones this register had recorded as needing an upstream Tauri bump — `plist` 1.10.0 already depends on the fixed version. The 18 remaining rows are warnings: unmaintained GTK3 **Linux** bindings, which neither shipped platform builds. **A CI job now runs it on every push**, beside `npm audit --omit=dev` |
+| ✅ | Mutating LAN routes require POST and are denied CORS even on success | `main::remote_mutates` |
+| ⚠️ | The CSP | **Narrowed 2026-09-05 (RG-85)**: `img-src`/`media-src` are `http://*:8032` and `connect-src` is `ws://*:8031` — Relay's own ports, any host, because a LAN address cannot be named in a static policy. Held by `qa::kiosk_headers::the_console_policy_allows_relays_own_media_url_and_no_other_host`, and the packaged build boots and prints its one heartbeat. **Still ⚠️ because `tauri dev` does not exercise the CSP and nobody has watched a background video paint on a projector under it** |
+| ✅ | Only a page Relay served may join the kiosk feed | **RG-108, DECISIONS §64.** Probed against the packaged binary: `101` for no origin, `:8032` on two hosts, `:5032` and `tauri://localhost`; **`403`** for `evil.example.com`, `null`, a LAN host on `:3000` and an `https://` origin. `RELAY_KIOSK_ANY_ORIGIN=1` is the escape hatch and the refusal names it. **What no instrument here could check: the `Origin` a real OBS browser source sends** |
+| ✅ | Nothing a preacher said reaches the timeline | `timeline_tests`, and `timeline.test.js` from the other side |
+| ✅ | Crash reports drop free text wholesale rather than filtering it | `telemetry::scrub` |
+
+## 7. The people
+
+| | Gate | How |
+|---|---|---|
+| ⚠️ | A real service, start to finish | once, 2026-08-30, by the author |
+| ⬜ | **A service run by somebody who did not write it** | never — and this is the gate that decides general release |
+| ⬜ | A second and third service, watching for drift | never |
+
+---
+
+## The decision this checklist supports
+
+**NOT READY for general release · READY WITH CONDITIONS for a supervised pilot.**
+Five things block a general release and **two of them are not commits** — a certificate is a
+purchase and a published release is an action. [RELAY_GAP.md](../qa/RELAY_GAP.md) §24 owns the
+conditions; [the V1 audit](RETIRED-AUDIT-DOCS.md) §1 owns the reasoning.
+
+---

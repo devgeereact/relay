@@ -1,7 +1,7 @@
 // THE PROGRAMME ROW'S OWN GEOMETRY, ON THE PREACHER'S SCREEN.
 //
 // Three defects were measured in a real layout engine by the wave 3 browser pass
-// (`docs/qa/audits/DESIGN-2026-09-16-WAVE3.md` §8 and §9) and filed as RG-147 and
+// (`docs/qa/audits/DESIGN.md` §8 and §9) and filed as RG-147 and
 // RG-154. This file is what holds them shut afterwards.
 //
 // ── WHAT THIS FILE CAN AND CANNOT PROVE, PLAINLY ────────────────────────────────

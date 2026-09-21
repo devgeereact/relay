@@ -180,7 +180,7 @@ Acceptance: a cue may change the intended stage layout/timer without touching an
 
 ### Phase 6: packaged rehearsal and operator acceptance
 
-**The script exists: [`../../qa/STAGE_PHONE_REHEARSAL.md`](../../qa/STAGE_PHONE_REHEARSAL.md).**
+**The script exists: [`../../qa/QA_HARNESS.md` Part 7](../../qa/QA_HARNESS.md) (it was `docs/qa/STAGE_PHONE_REHEARSAL.md`, a path that no longer exists, until it was folded into the harness on 2026-09-21).**
 Twelve numbered sections, in dependency order, each saying what to expect and what to record
 when it does not happen. It opens with the build step because a binary predating
 `network_addresses` reproduces the very defect it is meant to test (S13), and it ends with

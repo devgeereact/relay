@@ -16,7 +16,7 @@ Built out into a lightweight presentation suite: a **Content Library** (saved sc
 3. `CLAUDE.md` — working conventions and non-negotiable constraints; read first if you're using an AI coding agent in this repo.
 4. `docs/PROMPT.md` — the build-phase reference (the module docs cite its phase numbers); the full brief now lives in `docs/SPEC.md`.
 5. `docs/SPEC.md` — canonical technical spec (original brief). `docs/DECISIONS.md` — every major decision, with reasoning.
-6. **[docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md)** — tokens, type, and the four colours that carry a promise (amber = on air, amethyst = rehearsal, cyan = a guess, grey = cued). Read before touching any UI. `docs/design/` holds the rendered screen references.
+6. **[docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md)** — tokens, type, and the four colours that carry a promise (amber = on air, amethyst = rehearsal, cyan = a guess, grey = cued). Read before touching any UI.
 
 ## Tech stack
 

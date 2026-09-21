@@ -1,6 +1,6 @@
 // THE AUDIT'S OWN ARITHMETIC, CHECKED BY SOMETHING THAT CANNOT TALK ITSELF ROUND.
 //
-// The V1 production audit (now `docs/archive/2026-09-05-relay-v1-audit.md`, with its scorecards in `docs/qa/QA_HARNESS.md` Parts 5 and 6) makes three claims about itself that a reader has to do
+// The V1 production audit (now `docs/archive/RETIRED-AUDIT-DOCS.md`, with its scorecards in `docs/qa/QA_HARNESS.md` Parts 5 and 6) makes three claims about itself that a reader has to do
 // sums to verify, and that nobody will:
 //
 //   1. every phase of the PWA brief (01–42) is dispositioned,
@@ -36,7 +36,7 @@ const root = resolve(__dirname, '../..');
 // RELAY_GAP.md §24, and the whole document is archived unedited. The arithmetic
 // this file checks did not move; only the file it reads.
 const DOC = readFileSync(resolve(root, 'docs/qa/QA_HARNESS.md'), 'utf8');
-const ARCHIVE = readFileSync(resolve(root, 'docs/archive/2026-09-05-relay-v1-audit.md'), 'utf8');
+const ARCHIVE = readFileSync(resolve(root, 'docs/archive/RETIRED-AUDIT-DOCS.md'), 'utf8');
 
 /** The text between two headings. */
 function section(from, to, doc = DOC) {
@@ -55,7 +55,8 @@ describe('the V1 audit is internally consistent', () => {
     expect(DOC).toContain('# Part 5 · The scorecards');
     expect(DOC).toContain('# Part 6 · Brief disposition');
     // And the archive is the audit, unedited but for its header and its links.
-    expect(ARCHIVE).toMatch(/^> \*\*Archived 2026-09-21\.\*\*/);
+    expect(ARCHIVE).toMatch(/^# Retired audit documents/);
+    expect(ARCHIVE).toContain('> **Archived 2026-09-21.**');
     expect(ARCHIVE).toContain('# Relay — V1 Production Audit');
     expect(ARCHIVE).toContain('## 6. The fix process');
   });

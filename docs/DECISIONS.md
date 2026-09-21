@@ -1663,7 +1663,7 @@ Everything above is a development machine, a release binary run from `cargo`, an
 text-to-speech audio in no room at all. Word error rate is still unmeasured in every
 language. Nobody has run a service. The `end_to_end_speech_to_scripture` and
 `audio_to_visible_transcript` spans need a webview and an output page and therefore a
-real app, and no number for them appears here. See `docs/qa/audits/PERF-2026-08-24.md`
+real app, and no number for them appears here. See `docs/qa/audits/PERF.md`
 for exactly what was and was not measured, and Stage F of the human test script for
 what has to happen in a room.
 
@@ -2441,7 +2441,7 @@ be seen as leftover at all.
 
 ### A bare verse belongs to the book this sentence names
 
-**Found in a live service, not in this repository** — `docs/qa/audits/FIELD-2026-08-30.md`.
+**Found in a live service, not in this repository** — `docs/qa/audits/FIELD.md`.
 
 The operator fired **Proverbs 3:6** by hand. Five minutes later the preacher said
 *"…what was going through in **Luke 10**. If you read from **verse 32**, 37."*
@@ -2493,7 +2493,7 @@ twice**.
 
 ## 57. The record and the instruments, corrected by a real service (2026-08-30)
 
-Three defects found by pointing `docs/qa/audits/FIELD-2026-08-30.md`'s own numbers at the
+Three defects found by pointing `docs/qa/audits/FIELD.md`'s own numbers at the
 code that produced them. None of them could have been found from source, and none of
 them is in the pipeline — **all three are in what Relay writes down about itself.**
 
@@ -3021,7 +3021,7 @@ ships had never been checked at all until 2026-09-04.
 
 ## 66. A chapter this window states is not one memory may answer for (2026-09-06)
 
-**Found in a live service, not in this repository** — `docs/qa/audits/FIELD-2026-09-06.md`,
+**Found in a live service, not in this repository** — `docs/qa/audits/FIELD.md`,
 finding F-8.
 
 §56 established the first half of this rule and the wording it turned on: *memory is what
@@ -4768,7 +4768,7 @@ fails the two clock cases, which is the opposite mistake a reader could make fro
 ## 92. The preacher's programme rail counts up past zero, and prose never enters a slot sized for digits (2026-09-17)
 
 **This decision existed only in a commit message and in
-`docs/archive/2026-09-17-consolidation-design.md` §2 for the first day of its life**,
+`docs/archive/WAVE-DESIGNS.md` §2 for the first day of its life**,
 which is the state CLAUDE.md's *"if the decision isn't there, it hasn't been made"* exists to
 stop. It is written down here because two waves built opposite behaviour into the same
 reactive block, three pairs of assertions in `src/lib/timers.test.js` could not both pass, and
@@ -5237,7 +5237,7 @@ would be inventing the worse of the two facts.
 are all untouched. This changes **who may set the gate and what they are told about it**,
 never where the gate sits. Rules 10, 28, 30 and 34 are not in the diff.
 
-It also does not make the gate a better gate. `docs/qa/audits/FIELD-2026-09-06.md` §2
+It also does not make the gate a better gate. `docs/qa/audits/FIELD.md` §2
 measured that the sensitivity dial is **not** the lever for a wrong verse — its most
 cautious setting still kept a wrong verse at 0.95 and discarded a correct one. Removing a
 second, contradictory way to set it is an honesty fix, not an accuracy one.

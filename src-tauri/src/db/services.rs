@@ -1314,7 +1314,7 @@ mod index_tests {
         );
     }
 
-    /// A SERVICE RECORDS THE BUILD THAT RAN IT (S13). `FIELD-2026-09-20.md` §0:
+    /// A SERVICE RECORDS THE BUILD THAT RAN IT (S13). `FIELD.md` (was `FIELD-2026-09-20.md`) §0:
     /// "Build under test: not recorded by Relay." Now it is, on the row, so an
     /// audit reading the database a day later can name the commit rather than
     /// infer it from a file's timestamp.

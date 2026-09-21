@@ -411,7 +411,7 @@ describe('the programme row warns, on the one rule', () => {
 //
 // The browser pass watched a 45-second `Offering` timer read `0:00` for the next
 // twelve minutes, and two of the six rows in the §8 screenshot were in that state
-// (`audits/DESIGN-2026-09-16-WAVE3.md` §11). A row that reads `0:00` cannot be told
+// (`audits/DESIGN.md` §11). A row that reads `0:00` cannot be told
 // from one that has just been started at zero, and neither of them answers the
 // question a stage monitor is actually asked.
 //

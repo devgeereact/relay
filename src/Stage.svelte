@@ -595,7 +595,7 @@
   // was cut off the bottom of the passage — on a page that is `overflow: hidden` by
   // design, so there was nothing to scroll and nothing saying the verse was
   // incomplete. With the Programme zone switched off the same two panels left the
-  // verse whole (RG-164, `docs/qa/audits/2026-09-17-WAVE4-STAGE-PLANNER.md` §2.3).
+  // verse whole (RG-164, `docs/qa/audits/DESIGN.md` §2.3).
   //
   // So the rail stands down while a panel is open. The order of precedence is the
   // only one that can be right here: the rail is bookkeeping and the verse is the

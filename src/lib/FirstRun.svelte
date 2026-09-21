@@ -8,11 +8,12 @@
   //
   // Everything else in the app is optional refinement. THIS is the path.
   //
-  // ── Shape: docs/design/relay-production-interface.png, panel 2 ─────────
+  // ── Shape ──────────────────────────────────────────────────────────────
   //
   // A vertical step rail on the left, one content pane on the right, Back and
-  // Continue at the bottom. The reference's rail is Welcome · Audio Input ·
-  // Model Download · Language · Finish.
+  // Continue at the bottom. The rail is Welcome · Audio Input · Model Download ·
+  // Language · Finish. (Drawn from a rendered reference that was deleted on
+  // 2026-09-21; the shape it gave is written out here instead of cited.)
   //
   // Two deliberate deviations from it. (They were logged in a working design log
   // that is not in this repository, so they are written out here instead — a

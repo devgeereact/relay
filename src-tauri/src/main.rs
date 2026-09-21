@@ -6053,7 +6053,7 @@ fn dismiss_detection<R: tauri::Runtime>(
 /// measured defect was precisely an exit that published `clear` and `stage_next`
 /// and no `timer` frame at all, leaving the tablet's set and the registry to
 /// disagree in silence until something unrelated republished
-/// (`audits/DESIGN-2026-09-16-WAVE3.md` §6).
+/// (`audits/DESIGN.md` §6).
 ///
 /// Called only with the rehearsal flag already flipped OFF, so the publish is a real
 /// one rather than a suppression.

@@ -91,6 +91,6 @@ Answer the live-production questions directly, in words a volunteer would use:
 - Can they override the AI?
 - Can the app recover from an interruption without putting something stale back on air?
 
-**Write to `docs/qa/audits/QA-<ISO date>.md`.** Never touch `docs/qa/audits/PRODUCT-2026-07-13.md` — that
+**Write to `docs/qa/audits/QA-<ISO date>.md`.** Never touch `docs/qa/audits/SUPERSEDED.md` — that
 document belongs to a human, is written at a different altitude, and an agent
 overwriting it would be the quietest kind of damage this audit could do.

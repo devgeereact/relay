@@ -1,10 +1,11 @@
 <script>
-  // LIBRARY → BIBLE. Rebuilt from docs/design/relay-main-library-screen.png.
+  // LIBRARY → BIBLE.
   //
   //   BOOKS rail  ·  the chapter  ·  the verse inspector
   //
-  // The mockup's three panes, its Slides/Read/Table segment, its 25-per-page
-  // footer and its right-hand inspector, section for section.
+  // Three panes, a Slides/Read/Table segment, a 25-per-page footer and a
+  // right-hand inspector. Rebuilt from a rendered reference that was deleted on
+  // 2026-09-21; the structure it gave is the five lines above.
   //
   // ── Where the CONTENT differs from the mockup ─────────────────────────────
   //

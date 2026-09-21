@@ -284,7 +284,7 @@ about where it came from.
 
 The ATEM model lists, the Media Player's upload speed and slot count, and the $75
 converter price were read out of
-[archive/2026-09-15-timers-templates-stage-design.md](archive/2026-09-15-timers-templates-stage-design.md)
+[archive/WAVE-DESIGNS.md](archive/WAVE-DESIGNS.md)
 §1.4, which records them as confirmed against Blackmagic's own tech-spec pages in
 **September 2026**. They were not re-checked against those pages while this
 document was written. Blackmagic's product pages are the place to check them:

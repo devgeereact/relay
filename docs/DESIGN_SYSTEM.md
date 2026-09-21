@@ -514,8 +514,14 @@ to a volunteer — Channels did, in monospace, five times.
 
 ## 9. Reference material
 
-Rendered screen references live in [`design/`](design/) as PNGs — the console, the live
-production interface, Templates and its editor, Channels, Planner, Library, Settings, Stage
-display and its editor, Help, the splash, and a design-system sheet. They are a **record of
-intent**, not a spec: where a PNG and `app.css` disagree, the stylesheet shipped and the PNG did
-not.
+**There is none, and that is the current state rather than an omission.** Thirteen rendered
+screen references lived in `docs/design/` as PNGs — the console, the live production interface,
+Templates and its editor, Channels, Planner, Library, Settings, Stage display and its editor,
+Help, the splash and a design-system sheet. They were **deleted on 2026-09-21**, on the
+operator's instruction, because the product no longer works from that design.
+
+They were only ever a **record of intent**, never a spec: this document and `src/app.css` always
+outranked them, and the twelve source comments that cited one by name have each been rewritten
+to state what the reference gave rather than to point at it. Nothing about the shipped look
+changed when they went. **This document and the stylesheet are the reference now**, which is
+what they were in practice already.
