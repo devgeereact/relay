@@ -170,6 +170,11 @@ different things and they have different costs:
 **Recommendation:** the second and third. The first is a guarantee Relay cannot honestly make
 over a church wifi, and claiming it would be the kind of promise this repository deletes.
 
+**RULED, 2026-09-21: the second and third. BUILT as RG-220.** A clip carries the instant Relay
+sent it; every page corrects itself against Relay's clock, which `beat_ack` already gives it. The
+stage's copy is corrected against the same instant, so the countdown beside it agrees with what the
+congregation is watching. A held clip stops being corrected and is not caught up on resume.
+
 ---
 
 ## Order of work

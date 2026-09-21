@@ -832,7 +832,7 @@
       // `TemplateRender` reads it off the content. The list is the reason this door
       // has dropped fields before (`next_reference`), so a field added to the wire
       // and not added here is a kiosk screen disagreeing with the wall beside it.
-      content = { kind: m.content_kind, reference: m.reference, text: m.text, translation: m.translation, media_url: sameHostMediaUrl(m.media_url, location.hostname), media_kind: m.media_kind, template_id: m.template_id, template_json: m.template_json, template_pinned: m.template_pinned, countdown_to: m.countdown_to, countdown_from: m.countdown_from, countdown_paused_ms: m.countdown_paused_ms, countdown_done: m.countdown_done, countdown_warn_ms: m.countdown_warn_ms, stage_note: m.stage_note, next_reference: m.next_reference, next_text: m.next_text, service_started_at: m.service_started_at, service_target_ms: m.service_target_ms };
+      content = { kind: m.content_kind, reference: m.reference, text: m.text, translation: m.translation, media_url: sameHostMediaUrl(m.media_url, location.hostname), media_kind: m.media_kind, template_id: m.template_id, template_json: m.template_json, template_pinned: m.template_pinned, countdown_to: m.countdown_to, countdown_from: m.countdown_from, countdown_paused_ms: m.countdown_paused_ms, countdown_done: m.countdown_done, countdown_warn_ms: m.countdown_warn_ms, stage_note: m.stage_note, next_reference: m.next_reference, next_text: m.next_text, service_started_at: m.service_started_at, service_target_ms: m.service_target_ms, media_started_at: m.media_started_at };
       // THE CONFIGURED DEFAULT, which this page cannot read for itself.
       applyWarnDefault(m.countdown_warn_default_ms);
       visible = true;

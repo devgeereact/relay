@@ -85,6 +85,7 @@
   } from './timers.js';
   import { alertStep } from './stagealert.js';
   import { applyMediaTransport } from './mediatransport.js';
+  import { syncSeek } from './mediasync.js';
 
   export let template = {};
   export let content = null; // { reference, text, translation }
@@ -1181,7 +1182,39 @@
     reportMedia();
   }
 
+  /**
+   * PULL THIS PLAYER BACK TO WHERE THE CLIP SHOULD BE (RG-220).
+   *
+   * Called on the events the player already fires, so there is no timer of its
+   * own: the clip reports its position several times a second while it plays and
+   * that is exactly when the question is worth asking.
+   *
+   * The baseline is Relay's clock (`content.media_started_at` against
+   * `Date.now() + hostOffsetMs`), never a leader screen — a leader would make
+   * the whole wall follow whichever browser buffered worst. `syncSeek` owns
+   * every refusal, including the held clip and the one past its end.
+   */
+  const syncMedia = () => {
+    const el = videoEl;
+    if (!el) return;
+    const want = syncSeek({
+      startedAt: content?.media_started_at,
+      now: Date.now() + (hostOffsetMs || 0),
+      duration: el.duration,
+      position: el.currentTime,
+      paused: !!mediaTransport?.paused,
+      looping: !!el.loop,
+    });
+    if (want == null) return;
+    try {
+      el.currentTime = want;
+    } catch {
+      /* a video with no metadata cannot be seeked; the next event will. */
+    }
+  };
+
   const reportMedia = () => {
+    syncMedia();
     if (!onMedia) return;
     const el = videoEl;
     const dur = el ? el.duration * 1000 : NaN;

@@ -9,6 +9,7 @@
   import { sameHostMediaUrl } from './lib/outputurl.js';
   import { clipRemainingMs, CLIP_WARN_MS } from './lib/mediaclock.js';
   import { applyMediaTransport } from './lib/mediatransport.js';
+  import { syncSeek } from './lib/mediasync.js';
   // Mobile stage-display remote — the preacher opens this on a phone/iPad (via
   // QR or the LAN URL) to see the live verse + reference in real time. No Tauri
   // runtime: it connects to the kiosk WebSocket hub (:8031) for content, exactly
@@ -645,7 +646,31 @@
   // countdown that keeps running after the cue it belonged to.
   let clipEl = null;
   let clipLeft = null;
-  const readClip = () => (clipLeft = clipRemainingMs(clipEl));
+  const readClip = () => {
+    // AND PULL IT BACK TO WHERE THE CLIP SHOULD BE (RG-220). The preacher's copy
+    // is corrected against the same instant as every congregation screen — which
+    // is what makes the figure beside it (RG-213) a fact about the moment
+    // everybody else is watching rather than about this browser's own luck.
+    // `syncSeek` owns every refusal, the held clip included.
+    if (clipEl && clipStart != null) {
+      const want = syncSeek({
+        startedAt: clipStart,
+        now: Date.now() + hostOffsetMs,
+        duration: clipEl.duration,
+        position: clipEl.currentTime,
+        paused: !!xport?.paused,
+        looping: !!clipEl.loop,
+      });
+      if (want != null) {
+        try {
+          clipEl.currentTime = want;
+        } catch {
+          /* no metadata yet; the next event will. */
+        }
+      }
+    }
+    clipLeft = clipRemainingMs(clipEl);
+  };
   // ── AND IT DOES WHAT EVERY OTHER SCREEN IS DOING (RG-214) ──────────────────
   //
   // The hub sends `media_transport` to every client. This page ignored it and
@@ -664,9 +689,12 @@
   // it when one slide replaces another, so a held clip handed its Pause to the
   // next one and the following slide arrived frozen with nothing to say why.
   let clipUrl = null;
+  /** When Relay sent this clip, on Relay's clock. Null until a slide arrives. */
+  let clipStart = null;
   $: clipNow = stageMedia?.kind === 'video' ? stageMedia.url : null;
   $: if (clipNow !== clipUrl) {
     clipUrl = clipNow;
+    clipStart = stageMedia?.startedAt ?? null;
     xport = null;
     actedReplay = null;
     clipLeft = null;
@@ -1028,7 +1056,16 @@
       // `media_url: null` takes it down, which is the one door for both
       // directions and the same shape `background` uses.
       if (!acceptsStageMessage(myRole)) return;
-      stageMedia = m.media_url ? { url: sameHostMediaUrl(m.media_url, location.hostname), kind: m.media_kind || 'image' } : null;
+      stageMedia = m.media_url
+        ? {
+            url: sameHostMediaUrl(m.media_url, location.hostname),
+            kind: m.media_kind || 'image',
+            // WHEN RELAY SENT IT (RG-220) — the instant this page corrects its
+            // own copy against. `null` from an older engine, and `syncSeek`
+            // corrects nothing without it.
+            startedAt: Number.isFinite(m.started_at) ? m.started_at : null,
+          }
+        : null;
     } else if (m.kind === 'stage_zones') {
       // A LIVE CHANGE. The initial read is over HTTP on connect (see
       // `loadStageZones`) because this page is the only consumer of this map

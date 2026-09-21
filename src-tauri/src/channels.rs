@@ -178,6 +178,25 @@ pub struct OutputContent {
     /// that is supposed to describe the AI's path.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trace_id: Option<u64>,
+    /// WHEN RELAY SENT THIS CLIP, on Relay's own clock (ms since the epoch).
+    ///
+    /// The baseline every screen corrects itself against (RG-220). The operator
+    /// asked for *"all media in sync"* and chose the two things Relay can
+    /// honestly do: every screen STARTS together and is pulled back when it
+    /// drifts. Frame-exact playback across independent browsers on church wifi
+    /// is not one of them.
+    ///
+    /// It is a fact about the SENDING, so it is stamped at the one door content
+    /// leaves by (`main::broadcast_with_clock`, rule 36) rather than at each
+    /// path that can put a picture up — a media path added next year carries it
+    /// by construction. Every page already knows Relay's clock through
+    /// `beat_ack`, so each one works out where the clip should be and seeks
+    /// itself; nothing is elected, and no screen has to wait for a round trip.
+    ///
+    /// `None` for content with no clip, and for anything built before this
+    /// existed: `mediasync::syncSeek` corrects nothing without it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub media_started_at: Option<i64>,
 }
 
 /// A connected physical display, shaped for the Channels UI. `index` is the
@@ -1295,6 +1314,9 @@ pub(crate) fn kiosk_content_json(content: &OutputContent) -> String {
         // — the last leg of the latency chain, over the real church network. See
         // `OutputContent::trace_id` and the `rendered` message the hub accepts.
         "trace_id": content.trace_id,
+        // WHEN RELAY SENT THE CLIP (RG-220). Every screen corrects itself
+        // against this and Relay's clock, which `beat_ack` already gives them.
+        "media_started_at": content.media_started_at,
     })
     .to_string()
 }
@@ -1437,7 +1459,32 @@ fn background_retention(msg: &str) -> Option<Option<String>> {
 /// retained at all is that a stage tablet reconnecting mid-sermon would otherwise
 /// come back blank (rule 43).
 fn stage_media_frame_json(url: Option<&str>, kind: Option<&str>) -> String {
-    serde_json::json!({ "kind": "stage_media", "media_url": url, "media_kind": kind }).to_string()
+    serde_json::json!({
+        "kind": "stage_media",
+        "media_url": url,
+        "media_kind": kind,
+        // WHEN IT STARTED, on Relay's clock, so the preacher's copy is corrected
+        // against the same instant as the congregation's (RG-220). Without it
+        // the stage countdown added in RG-213 is about a different moment from
+        // the one everybody else is watching, which is the third of the three
+        // things "all media in sync" could mean and the one the operator said
+        // mattered most.
+        //
+        // `null` when the slide is being taken DOWN: there is nothing to be in
+        // sync with, and a stamp there would be a fact about an absence.
+        "started_at": url.map(|_| now_epoch_ms()),
+    })
+    .to_string()
+}
+
+/// Relay's own clock, in epoch milliseconds — the baseline a screen corrects
+/// against. `0` before the UNIX epoch, which never happens, so no caller has to
+/// handle an error.
+fn now_epoch_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 /// Is this the frame that decides what MEDIA a stage screen is holding?
@@ -5847,6 +5894,72 @@ mod tests {
             "the look map or its bytes arrived AFTER the verse they dress — a \
              screen joining mid-reading paints its blanket template and then \
              repaints in front of a congregation: {order:?}"
+        );
+    }
+
+    /// A SLIDE ON THE PREACHER'S SCREEN CARRIES THE INSTANT IT WAS SENT (RG-220).
+    ///
+    /// The operator asked for *"all media in sync"* and chose the two things
+    /// Relay can honestly do: every screen starts together and is corrected when
+    /// it drifts. The correction is each screen's own and needs one fact from
+    /// here — when the clip started, on Relay's clock. The page cannot infer it:
+    /// it knows when the FRAME arrived, which is a fact about the network.
+    ///
+    /// Taking the slide DOWN carries no instant, because there is nothing to be
+    /// in sync with and a stamp on an absence is a claim about nothing.
+    #[test]
+    fn a_stage_slide_says_when_relay_sent_it_and_a_removal_does_not() {
+        let up: serde_json::Value = serde_json::from_str(&stage_media_frame_json(
+            Some("http://x/media/7"),
+            Some("video"),
+        ))
+        .unwrap();
+        let at = up["started_at"]
+            .as_i64()
+            .expect("no instant on a stage slide");
+        // A real clock, not a zero: `now_epoch_ms` falls back to 0 only before
+        // the UNIX epoch, and a 0 here would sync every screen to 1970.
+        assert!(
+            at > 1_600_000_000_000,
+            "started_at is not a wall clock: {at}"
+        );
+
+        let down: serde_json::Value =
+            serde_json::from_str(&stage_media_frame_json(None, None)).unwrap();
+        assert!(
+            down["started_at"].is_null(),
+            "taking a slide down claimed an instant: {down}"
+        );
+    }
+
+    /// AND SO DOES A CLIP ON THE CONGREGATION'S SCREENS.
+    ///
+    /// The same fact by the other door. `kiosk_content_json` is the wire form
+    /// every browser source receives, and a field missing from it is the exact
+    /// bug this function's own doc comment records about `next_reference`.
+    #[test]
+    fn a_kiosk_content_frame_carries_the_instant_the_clip_started() {
+        let content = OutputContent {
+            kind: Some("media".into()),
+            media_url: Some("http://x/media/7".into()),
+            media_kind: Some("video".into()),
+            media_started_at: Some(1_700_000_000_000),
+            ..Default::default()
+        };
+        let v: serde_json::Value = serde_json::from_str(&kiosk_content_json(&content)).unwrap();
+        assert_eq!(v["media_started_at"], 1_700_000_000_000i64);
+
+        // A verse has no clip, so it claims no instant — `syncSeek` corrects
+        // nothing without one, and a stamp here would be a fact about nothing.
+        let verse = OutputContent {
+            kind: Some("scripture".into()),
+            reference: "John 3:16".into(),
+            ..Default::default()
+        };
+        let v: serde_json::Value = serde_json::from_str(&kiosk_content_json(&verse)).unwrap();
+        assert!(
+            v["media_started_at"].is_null(),
+            "a verse claimed a clip start"
         );
     }
 

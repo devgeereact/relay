@@ -876,6 +876,19 @@ fn broadcast_with_clock<R: tauri::Runtime>(
     // counter, and a replay number a screen has already seen is a replay that does
     // nothing.
     handle.state::<channels::MediaTransport>().reset();
+    // …AND THE INSTANT IT STARTED, so every screen can agree about where it is
+    // (RG-220). Stamped here, at the one door content leaves by, for rule 36's
+    // reason: a media path added next year carries it by construction and there
+    // is no second call site to forget. Only for content that actually has a
+    // clip — `media_started_at` on a verse would be a fact about nothing, and
+    // `syncSeek` corrects nothing without a duration in any case.
+    //
+    // It is NOT overwritten if a caller has already set one: a replay or a
+    // re-send of the same clip is the caller's decision to make, and this is the
+    // default rather than an authority.
+    if content.media_url.is_some() && content.media_started_at.is_none() {
+        content.media_started_at = Some(now_epoch_ms());
+    }
     if let Err(bad) = pipeline::preflight(&content) {
         // The screens are left exactly as they were. Doing nothing quietly is the
         // failure being fixed, so this is said in three places: stdout for a

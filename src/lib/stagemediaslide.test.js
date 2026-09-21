@@ -348,3 +348,63 @@ describe('the clip on the stage obeys the same transport as every other screen',
     expect(clip().loop, 'the next clip inherited the last one’s loop').toBe(false);
   });
 });
+
+// ── AND IT IS PLAYING THE SAME MOMENT AS EVERY OTHER SCREEN (RG-220) ────────
+//
+// The wiring, not the rule: `mediasync.test.js` holds what `syncSeek` decides
+// and this holds that the page actually asks it and acts on the answer. Both
+// halves are needed — a correct rule nothing calls is the shape of every defect
+// in this repository's register.
+describe('the clip on the stage is corrected onto Relay’s clock', () => {
+  const clip = () => host.querySelector('video.slide');
+  const at = (v, duration, currentTime) => {
+    Object.defineProperty(v, 'duration', { value: duration, configurable: true });
+    v.currentTime = currentTime;
+  };
+
+  it('a slide that arrives late is pulled to where the clip should be', async () => {
+    await open(2);
+    await send(ROLES);
+    // Relay sent it ten seconds ago; this browser has just started playing.
+    await send({
+      kind: 'stage_media',
+      media_url: 'http://x/media/7',
+      media_kind: 'video',
+      started_at: Date.now() - 10_000,
+    });
+    const v = clip();
+    at(v, 120, 0.4);
+    v.dispatchEvent(new Event('timeupdate'));
+    await tick();
+    expect(v.currentTime, 'the preacher is watching a different moment').toBeCloseTo(10, 0);
+  });
+
+  it('a slide already in step is left exactly alone — a seek is visible', async () => {
+    await open(2);
+    await send(ROLES);
+    await send({
+      kind: 'stage_media',
+      media_url: 'http://x/media/7',
+      media_kind: 'video',
+      started_at: Date.now() - 10_000,
+    });
+    const v = clip();
+    at(v, 120, 10.3);
+    v.dispatchEvent(new Event('timeupdate'));
+    await tick();
+    expect(v.currentTime).toBe(10.3);
+  });
+
+  it('and an engine that sends no instant corrects nothing', async () => {
+    // The older frame shape. A page that guessed a baseline would drag every
+    // clip to zero on the first beat.
+    await open(2);
+    await send(ROLES);
+    await send({ ...SLIDE, media_kind: 'video' });
+    const v = clip();
+    at(v, 120, 42);
+    v.dispatchEvent(new Event('timeupdate'));
+    await tick();
+    expect(v.currentTime).toBe(42);
+  });
+});
