@@ -107,7 +107,7 @@ describe('the grid is rendered, and its presses go through the arbiter', () => {
   });
 
   it('a cell reads ON AIR from the store, never from "we pressed the button"', () => {
-    const rule = src.slice(src.indexOf('$: cellLive = '), src.indexOf('$: cellLive = ') + 1600);
+    const rule = src.slice(src.indexOf('$: cellLive = '), src.indexOf('$: cellLive = ') + 3200);
     // EVERY branch now has to agree with the wall, not only the verse one. The
     // plan branch used to ask the playhead alone — and the playhead is restored
     // from the saved session on mount, so a relaunch painted a cell amber and
@@ -117,6 +117,31 @@ describe('the grid is rendered, and its presses go through the arbiter', () => {
     expect(rule).toMatch(/!\$screenBlack && \$liveContent\?\.reference === c\.reference/);
     // Nothing optimistic: the arbiter's cell is not consulted.
     expect(rule).not.toMatch(/gridPress|pressed/);
+  });
+
+  it('ONE song slide is live, even when three of them carry the same words', () => {
+    // THE DEFECT, from the operator's own screenshots: a song whose chorus is
+    // slides 1, 9 and 17 lit ALL THREE amber and said Live on each. The branch
+    // compared `$liveContent?.text === c.text`, and identical words are identical
+    // words — so the surface an operator steps through could not say which slide
+    // they were on, which is the whole job of the marker in an arrangement that
+    // repeats.
+    //
+    // The words alone cannot answer it, so the POSITION has to. `deckIdx` is
+    // where `→` resumes from and is already set from the fired cell (RG-186), so
+    // the deck already knows; the marker simply has to ask.
+    //
+    // The words stay in the comparison as a GUARD, not as the answer: an index
+    // held over from a previous song would otherwise paint a cell amber over a
+    // wall showing something else, and amber is never allowed to lie.
+    const rule = src.slice(src.indexOf('$: cellLive = '), src.indexOf('$: cellLive = ') + 3200);
+    const at = rule.indexOf("c.kind === 'song'");
+    expect(at, 'the song branch is gone').toBeGreaterThan(-1);
+    const song = rule.slice(at);
+    expect(song, 'a song cell still matches on words alone').toMatch(/c\.slideIdx === deckIdx/);
+    expect(song, 'the words stopped guarding the index').toMatch(
+      /\$liveContent\?\.text === c\.text/,
+    );
   });
 
   it('amber is ON AIR and steel blue is the preview — never the other way round', () => {

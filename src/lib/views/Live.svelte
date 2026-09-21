@@ -1918,7 +1918,25 @@
           !!$liveContent &&
           (c.text.trim() ? $liveContent.text === c.text : true)
       : c.kind === 'song'
-        ? !!c.text.trim() && !$screenBlack && $liveContent?.text === c.text
+        ? /* ONE SLIDE, EVEN WHEN THREE CARRY THE SAME WORDS (operator, 2026-09-21).
+             A song whose chorus is slides 1, 9 and 17 lit ALL THREE amber and said
+             `Live` on each, because this compared the WORDS and identical words are
+             identical. On the surface an operator steps through, in an arrangement
+             that repeats — which is what an arrangement is for — the marker could
+             not say which slide they were on.
+
+             The words cannot answer it, so the POSITION does. `deckIdx` is where
+             `→` resumes from and is already set from the fired cell (RG-186), so
+             the deck knew all along; this asks it.
+
+             THE WORDS STAY, as a guard rather than as the answer. An index held
+             over from a previous song would otherwise paint a cell amber over a
+             wall showing something else, and amber is never allowed to lie
+             (rule 18). Both must agree. */
+          !!c.text.trim() &&
+          !$screenBlack &&
+          c.slideIdx === deckIdx &&
+          $liveContent?.text === c.text
         : !!c.reference && !$screenBlack && $liveContent?.reference === c.reference;
 
   // How many times the previewed verse has ALREADY gone out this service.

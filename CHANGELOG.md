@@ -10,6 +10,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+### Only one song slide says Live
+
+A song whose chorus repeats — slides 1, 9 and 17 with the same words — lit **all three** amber and said *Live* on each, so the grid could not tell you which slide you were actually on. Only the one you fired is marked now, so stepping through an arrangement that repeats follows the arrangement.
+
 ### A word to the preacher no longer sounds like an emergency
 
 Every Stage Message took the preacher's whole screen with a flashing red panel — so *"wrap up in five"* looked exactly like *"stop, there is a medical incident"*. Quick tools now has two buttons for the same words. **Send to stage** puts them up as an ordinary note, where your stage template places them, without flashing or covering the reading. **Alert** is the flashing full-screen panel, for something that must stop the service. If your stage template has no place for a message, a note appears as a small strip along the foot rather than vanishing. (DECISIONS §116)
