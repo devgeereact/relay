@@ -238,6 +238,25 @@
   // full-frame clock straight over the camera on every layer-model lower third.
   $: showDefaultCountdown =
     layered && content?.countdown_to != null && !hasTimerLayer && countdownAllowed;
+  // ── THE SAME FALLBACK, FOR THE PREACHER'S CLOCKS (RG-224) ──────────────────
+  //
+  // A stage screen wearing a CONGREGATION template has no programme layer — and
+  // it should not: the running order has no business on a template designed for
+  // a wall. So the clocks arrived, found nowhere to paint, and the preacher had
+  // no clock at all, which is what the operator reported.
+  //
+  // Exactly the shape of `showDefaultCountdown` one line above, and the same
+  // trade: a designed layer is better, is what the template editor is for, and
+  // is NOT required for the thing to work. `programmeLayers` wins when there is
+  // one, so this can never be a second rail.
+  //
+  // **The gate is the ROLE and the role alone**, because `progSet` is already
+  // empty on any screen that is not a stage (`Output.svelte::shownProgramme`).
+  // That is the whole safety argument: a default keyed on the template rather
+  // than the role would put "Sermon · 4:12 left" in front of the building on
+  // every screen wearing an ordinary look, which is every screen a church owns.
+  $: hasProgrammeLayer = layered && layers.some((L) => L.bind === 'programme' && L.visible !== false);
+  $: showDefaultProgramme = layered && progRows.length > 0 && !hasProgrammeLayer;
   // ── THE TEMPLATE'S OWN DEFAULTS, WHICH ARE NOT THE APP'S ──────────────────
   // This component renders BOTH the console's preview and the congregation's
   // wall, so every fallback it reaches for is a fallback a church sees. Two of
@@ -1657,6 +1676,13 @@
   let progW = [];
   let progH = [];
   let progHeadH = [];
+  // The default rail's own three (RG-224). Separate rather than an extra slot in
+  // the arrays above, because those are indexed by LAYER and this rail has no
+  // layer — an index into a list of layers for a thing that is not one is how a
+  // measurement ends up describing the wrong box.
+  let defaultProgEl = null;
+  let defaultProgW = 0;
+  let defaultProgH = 0;
   function measureProgramme() {
     let moved = false;
     for (let i = 0; i < progEls.length; i += 1) {
@@ -1682,6 +1708,21 @@
       }
       if (progHeadH[i] !== hh) {
         progHeadH[i] = hh;
+        moved = true;
+      }
+    }
+    // THE DEFAULT RAIL MEASURES ITSELF THE SAME WAY. It has no layer, so it is
+    // not in the loop above; leaving it unmeasured would give it the `100px`
+    // fallback for ever and size its digits against a box it is not in.
+    if (defaultProgEl) {
+      const w = defaultProgEl.clientWidth | 0;
+      const h = defaultProgEl.clientHeight | 0;
+      if (defaultProgW !== w) {
+        defaultProgW = w;
+        moved = true;
+      }
+      if (defaultProgH !== h) {
+        defaultProgH = h;
         moved = true;
       }
     }
@@ -2434,6 +2475,42 @@
     {/each}
   {/if}
 
+  {#if showDefaultProgramme}
+    <!-- NO PROGRAMME LAYER, BUT CLOCKS ARE RUNNING (RG-224). A rail along the
+         foot, in the same shape a designed one takes, so an operator who adds
+         the layer later gets the same thing in a place they chose. Add a
+         Programme layer to the template to place it instead.
+
+         The box is written out rather than taken from a layer, because there is
+         no layer: full width, the bottom 8%, which is where every seeded stage
+         template puts it. `--lp-room` is deliberately absent — nothing measured
+         this rail — so `.lp-val` falls back to its `--lp-h` share, exactly as it
+         does for a designed rail before the first measurement lands. -->
+    {@const cells = programmeCells(progRows, programmeCapacity(defaultProgW))}
+    <div
+      class="lprog lprog-default"
+      class:overmedia={pictureBehind}
+      bind:this={defaultProgEl}
+      style="left:0%; top:92%; width:100%; height:8%; --tmrs:{cells.length}; --tch:{progCh}; {railHeightVar(defaultProgH)}"
+      aria-label="Programme">
+      {#each cells as t, j (j)}
+        {#if t.more}
+          <div class="lp-cell lp-more"><span class="lp-val lp-msg">+{t.more} more</span></div>
+        {:else}
+          <div class="lp-cell" class:warn={t.warn} class:over={t.over} class:held={t.held} data-timer-id={t.id}>
+            {#if t.label || t.held}
+              <span class="lp-head">
+                {#if t.label}<span class="lp-lbl">{t.label}</span>{/if}
+                {#if t.held}<span class="lp-state">Held</span>{/if}
+              </span>
+            {/if}
+            <span class="lp-val r-mono">{t.v}</span>
+          </div>
+        {/if}
+      {/each}
+    </div>
+  {/if}
+
   <!-- == THE STAGE MESSAGE == THE WHOLE SCREEN, NOT A LAYER.
        Requirement 5: *an unmistakable flashing state: full-bleed or near-full-
        bleed, high contrast, sustained for the alert duration, visible to someone
@@ -2559,6 +2636,15 @@
      the contrast rather than the blur.
      NO COLOUR CHANGE: the digits keep the template's own ink, and a warning or
      an over-run keeps its own (rule 18). This adds a surface, never a meaning. */
+  /* THE FALLBACK RAIL (RG-224). It borrows every rule `.lprog` has — it IS a
+     `.lprog` — and adds only the two things a designed layer carries on itself:
+     an ink, and enough of a backing that white digits are readable over whatever
+     the template happens to paint at its foot. A designed layer states its own
+     colour; this one has no designer to ask. */
+  .lprog-default {
+    color: #fff;
+    background: color-mix(in srgb, #000 55%, transparent);
+  }
   .lprog.overmedia {
     background: color-mix(in srgb, #000 62%, transparent);
     backdrop-filter: blur(6px);

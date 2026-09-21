@@ -399,3 +399,88 @@ describe('the programme rail earns a backing while a picture is behind it', () =
     expect(codeOnly(src)).toMatch(/\.lprog\.overmedia\s*\{/);
   });
 });
+
+// ── A CLOCK REACHES THE PREACHER WHATEVER TEMPLATE THE SCREEN WEARS (RG-224) ─
+//
+// The operator, running the packaged build: *"Timer should be able to show
+// regardless of whats on the stage screen"*, and *"My stage display not showing
+// what i have on the templete"*.
+//
+// What they were looking at was `output.html` on a stage-role screen wearing a
+// SCRIPTURE template — Classic Serif, which has no programme layer, because a
+// congregation template has no business carrying the running order. The rail is
+// already outside the content gate, so a panic control cannot take it; but with
+// no layer to place it in, there was nothing to place, and the clocks arrived
+// and painted nowhere.
+//
+// **The precedent is in this same component and is exactly this shape.**
+// `showDefaultCountdown`: no timer layer, but a countdown is on screen, so a
+// default is drawn and the comment says *"Add a Timer layer to the template to
+// place it instead"*. A designed layer is better and is not required for the
+// thing to work at all.
+//
+// The gate is the ROLE, not the template, and that is the half worth testing:
+// *"Sermon · 4:12 left"* behind a preacher is the running order in front of the
+// whole building, so a `main` screen with no programme layer must still show
+// nothing.
+describe('a stage screen with no programme layer still gets its clocks', () => {
+  /** A template with NO programme layer — a congregation look, on a stage screen. */
+  const PLAIN_TPL = {
+    id: 9,
+    name: 'Classic Serif',
+    layout: {
+      layers: [
+        { id: 'bg', type: 'background', fill: '#101820' },
+        { id: 'v', type: 'text', bind: 'verse', x: 6, y: 20, w: 88, h: 50, size: 5 },
+      ],
+    },
+    style: {},
+  };
+
+  async function plainStage(channel, roles) {
+    window.history.replaceState({}, '', `/output.html?channel=${channel}&template_id=9`);
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    app = new Output({ target: host });
+    await settle();
+    send({ kind: 'template', id: 9, template: PLAIN_TPL });
+    send({ kind: 'channel_roles', roles });
+    await settle();
+  }
+
+  it('paints a default rail, and says the clocks it was given', async () => {
+    await plainStage(2, { 1: 'main', 2: 'stage' });
+    send(timerFrame([wire({ label: 'Sermon', countdown_to: Date.now() + 240_000 })]));
+    await settle();
+    const rail = host.querySelector('.lprog');
+    expect(rail, 'the clocks reached a stage screen and painted nowhere').toBeTruthy();
+    expect(rail.textContent).toContain('Sermon');
+    expect(rail.textContent).toMatch(/\d:\d\d/);
+  });
+
+  it('and a designed layer still wins — the default is a fallback, not a second rail', async () => {
+    await outputPage(2, { 1: 'main', 2: 'stage' });
+    send(timerFrame([wire({ countdown_to: Date.now() + 240_000 })]));
+    await settle();
+    expect(host.querySelectorAll('.lprog'), 'two rails on one screen').toHaveLength(1);
+  });
+
+  it('THE REFUSAL: a congregation screen gets no default rail either', async () => {
+    // The whole safety argument, and the case that matters most in this file.
+    // A default that ignored the role would put the running order in front of
+    // the building on every screen wearing an ordinary template — which is every
+    // screen a church owns.
+    await plainStage(1, { 1: 'main', 2: 'stage' });
+    send(timerFrame([wire({ countdown_to: Date.now() + 240_000 })]));
+    await settle();
+    expect(host.querySelector('.lprog')).toBeNull();
+    expect(host.textContent).not.toContain('Sermon');
+  });
+
+  it('and nothing is drawn when no clock is running', async () => {
+    await plainStage(2, { 1: 'main', 2: 'stage' });
+    send(timerFrame([]));
+    await settle();
+    expect(host.querySelector('.lprog'), 'an empty rail on a screen with no clocks').toBeNull();
+  });
+});
