@@ -10,6 +10,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+### A switch that is greyed out now says why
+
+**Send crash reports** — the one control that decides whether anything leaves your computer — sat greyed out and explained nothing when Relay's engine was not answering. Every greyed-out *button* in Settings has explained itself since 2026-09-18; the switches could not, because there was no shared switch for them to go through. There is one now, and all three switches in Settings use it. The reason reaches both a mouse and a screen reader. (RG-168)
+
 ### Bring your own Bible
 
 If your church holds a licence for a version Relay does not ship, Settings → Scripture → **Import a Bible** takes it from a JSON file (66 books in order, chapters as lists of verses). Relay checks the whole file first and says exactly what is wrong if it refuses; importing over the same short code replaces it. Delete is two presses, and the bundled KJV and Berean Standard Bible cannot be deleted. Relay does not check the licence: that is yours. (RG-50, DECISIONS §113)

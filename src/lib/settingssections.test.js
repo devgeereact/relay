@@ -130,7 +130,7 @@ describe('§11 · eight sections, in the order an operator needs them', () => {
       return MARKUP_ONLY.slice(i, after.length ? after[0] : MARKUP_ONLY.length);
     };
     // General's five rows.
-    expect(sectionOf('ready'), 'safe mode').toMatch(/aria-label="Safe mode"/);
+    expect(sectionOf('ready'), 'safe mode').toMatch(/label="Safe mode"/);
     expect(sectionOf('ready'), 'screens at launch').toMatch(/Screens at launch/);
     expect(sectionOf('room'), 'service length').toMatch(/aria-label="Service length in minutes"/);
     expect(sectionOf('start'), 'application language').toMatch(/aria-label="Application language"/);
@@ -291,10 +291,8 @@ describe('acceptance 1 · no setting writes a preference nothing reads', () => {
     // `[^<]`, not `[^>]`: an arrow function in `on:click` carries a `>`, so a
     // scanner bounded by the first `>` stops in the middle of the handler and
     // reads a truncated tag. Attributes contain no `<`, so the close tag is the
-    // honest boundary.
-    const switches = [...MARKUP_ONLY.matchAll(/<button\b[^<]*?role="switch"[^<]*?><\/button>/g)].map(
-      (m) => m[0],
-    );
+    // honest boundary — `/>` since these went through `ui/Switch` (RG-168).
+    const switches = [...MARKUP_ONLY.matchAll(/<Switch\b[^<]*?\/>/g)].map((m) => m[0]);
     // The guard on the instrument: a scanner that finds nothing passes anything.
     expect(switches.length, 'Settings renders at least one switch').toBeGreaterThan(0);
     for (const s of switches) {
@@ -321,6 +319,15 @@ describe('acceptance 1 · no setting writes a preference nothing reads', () => {
     expect(STYLE).not.toMatch(/\.s-toggle\{/);
     expect(STYLE).not.toMatch(/\.s-knob\{/);
     expect(APPCSS).toMatch(/\.r-switch\{[^}]*width:38px;\s*height:21px/);
+    // …and the page reaches it through the component rather than by remembering
+    // the class, which is the same move the buttons made (RG-168). A raw
+    // `.r-switch` here is a switch that can forget `role`, `aria-checked` or the
+    // reason it is disabled — and one of the three did forget the last of them.
+    expect(
+      MARKUP_ONLY,
+      'a hand-rolled .r-switch is back — use ui/Switch, which carries the reason',
+    ).not.toMatch(/<button\b[^<]*class="r-switch"/);
+    expect(SCRIPT).toMatch(/import Switch from '\.\.\/ui\/Switch\.svelte'/);
   });
 
   // ── E1 · §12 · ONE INSTRUMENT, AND IT IS ACTUALLY USED ────────────────────
@@ -348,19 +355,21 @@ describe('acceptance 1 · no setting writes a preference nothing reads', () => {
 
     for (const b of BINARY) {
       it(`${b.label} is a switch, not a sentence on a button`, () => {
-        // NOT `[^>]*` for the attributes: an arrow function contains a `>`, so
-        // a tag scanner written that way stops at `() =` and silently reports
-        // that a switch has no handler. It ends at `></button>`, which is what
-        // actually closes one of these.
+        // THROUGH THE COMPONENT since 2026-09-21 (RG-168). `role`, `aria-checked`
+        // and `class="r-switch"` moved into `ui/Switch` and are asserted there
+        // (`uikit.test.js`), which is the point of it: three call sites each had
+        // to remember all three, and the one that mattered most forgot the
+        // reason a disabled switch owes the operator.
+        //
+        // NOT `[^>]*` for the attributes: an arrow function contains a `>`, so a
+        // tag scanner written that way stops at `() =` and silently reports that
+        // a switch has no handler. It ends at `/>`, which is what closes one of
+        // these now.
         const sw = MARKUP_ONLY.match(
-          new RegExp(`<button\\b[^<]*?aria-label="${b.label}"[^<]*?></button>`),
+          new RegExp(`<Switch\\b[^<]*?label="${b.label}"[^<]*?/>`),
         )?.[0];
         expect(sw, `no switch labelled “${b.label}”`).toBeTruthy();
-        // The shared instrument from `app.css`, never a local one.
-        expect(sw).toMatch(/class="r-switch"/);
-        // Announced as a switch, and its state readable without sight.
-        expect(sw).toMatch(/role="switch"/);
-        expect(sw).toMatch(/aria-checked=\{/);
+        expect(sw).toMatch(/checked=\{/);
         expect(sw).toMatch(new RegExp(`on:click=[^<]*${b.handler}`));
       });
     }
@@ -1169,13 +1178,12 @@ describe('the Update status row does not let its own sentence eat the name', () 
 // as still in progress. That is the precedence the component fixes once.
 describe('the component kit, and what adopting it buys', () => {
   it('no button on this page is hand-rolled any more', () => {
-    // `.r-switch` is deliberately NOT in this claim: §12's one instrument is a
-    // switch, `src/lib/ui/` publishes no `Switch`, and hand-writing a `title` at
-    // each call site is the drift §12 exists to stop — this file already asserts
-    // that Settings defines no switch of its own. So the gap is NAMED rather than
-    // glossed: RG-166 files the one measured instance (Send crash reports,
-    // disabled on `!$capture.available` with nothing said) and what closing it
-    // would take.
+    // `.r-switch` WAS deliberately outside this claim, and the exclusion cited
+    // RG-166 — a row about a countdown painting over a live camera. The row it
+    // meant is RG-168, and a citation that resolves to the wrong thing is worse
+    // than an uncited claim: it reads as evidence. Both halves are closed now.
+    // `ui/Switch` exists, the three switches go through it, and the assertion in
+    // *"Settings defines no switch of its own"* holds the absence of a raw one.
     const raw = [...MARKUP_ONLY.matchAll(/<button\b[^>]*class="([^"]*)"/g)]
       .map((m) => m[1])
       .filter((c) => /\br-btn\b/.test(c));
@@ -1183,6 +1191,19 @@ describe('the component kit, and what adopting it buys', () => {
       [],
     );
     expect(MARKUP_ONLY.match(/<Button\b/g).length).toBeGreaterThan(15);
+  });
+
+  it('and every disabled SWITCH says why as well — RG-168, the other half', () => {
+    // The gap the button half left open. `Send crash reports` is the measured
+    // instance: `disabled={!$capture.available || !!crashReadFailed}` on a raw
+    // `.r-switch` with no `title` and no `aria-describedby`, on the one control
+    // that decides whether anything leaves this machine.
+    const switches = [...MARKUP_ONLY.matchAll(/<Switch\b[\s\S]*?\/>/g)].map((m) => m[0]);
+    expect(switches.length, 'no switches found at all — the scanner narrowed').toBe(3);
+    const silent = switches
+      .filter((b) => /\bdisabled(?![-\w])/.test(b) && !/disabledReason=/.test(b))
+      .map((b) => b.replace(/\s+/g, ' ').slice(0, 80));
+    expect(silent, 'a disabled switch owes the operator a reason').toEqual([]);
   });
 
   it('and every disabled button says why, through the component that reaches both channels', () => {

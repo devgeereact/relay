@@ -1,6 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   import Button from '../ui/Button.svelte';
+  import Switch from '../ui/Switch.svelte';
   import { whyDisabled, ENGINE_OFF, SERVICE_LOCKED, MIC_LIVE, BUSY } from '../ui/whydisabled.js';
   // ── THE KIT, NOT A CLASS SOMEBODY REMEMBERED ──────────────────────────────
   //
@@ -1287,13 +1288,10 @@
                (rule 35). -->
           <div class="rw-nvctl s-nvpair">
             <span class="rw-nvv" class:s-armed={$safeMode}>{$safeMode ? 'on' : 'off'}</span>
-            <button
-              class="r-switch"
-              class:on={$safeMode}
-              role="switch"
-              aria-checked={$safeMode}
-              aria-label="Safe mode"
-              on:click={() => applySafeMode(!$safeMode)}></button>
+            <Switch
+              checked={$safeMode}
+              label="Safe mode"
+              on:click={() => applySafeMode(!$safeMode)} />
           </div>
         </div>
         <!-- SAFE MODE COULD NOT KEEP ITS PROMISE. Rose, never amber — amber is
@@ -2062,13 +2060,10 @@
                  its own is what an operator would reasonably read as saved. -->
             <span class="rw-nvv">{latMeasuring === null ? settingValue(null, { missing: 'not read yet' }) : latMeasuring ? 'on' : 'off · until you restart'}</span>
             {#if latMeasuring !== null}
-              <button
-                class="r-switch"
-                class:on={latMeasuring}
-                role="switch"
-                aria-checked={latMeasuring}
-                aria-label="Measuring latency"
-                on:click={() => toggleLatency(!latMeasuring)}></button>
+              <Switch
+                checked={latMeasuring}
+                label="Measuring latency"
+                on:click={() => toggleLatency(!latMeasuring)} />
             {/if}
           </div>
         </div>
@@ -2312,14 +2307,23 @@
           </div>
           <div class="rw-nvctl s-nvpair">
             <span class="rw-nvv" class:s-armed={crashOn}>{crashOn ? 'on' : 'off'}</span>
-            <button
-              class="r-switch"
-              class:on={crashOn}
-              role="switch"
-              aria-checked={crashOn}
-              aria-label="Send crash reports"
+            <!-- THE MEASURED INSTANCE OF RG-168. This was a raw `.r-switch` with
+                 no `title` and no `aria-describedby`, so the `!$capture.available`
+                 half of its `disabled` was explained by nothing at all — on the one
+                 control that decides whether anything leaves this machine. The
+                 `crashReadFailed` half already had the rose `[role="alert"]`
+                 paragraph below, and it keeps it; the sentence here is the one
+                 `whydisabled.js` writes, so it cannot disagree with the nineteen
+                 buttons on this page that say the same thing. -->
+            <Switch
+              checked={crashOn}
+              label="Send crash reports"
               disabled={!$capture.available || !!crashReadFailed}
-              on:click={() => toggleCrash(!crashOn)}></button>
+              disabledReason={whyDisabled([
+                !$capture.available && ENGINE_OFF,
+                !!crashReadFailed && 'Relay could not read this setting, so it will not change it. The message below says what failed.',
+              ])}
+              on:click={() => toggleCrash(!crashOn)} />
           </div>
         </div>
         <!-- The `{#if}` is OUTSIDE the block, not inside it: `.s-prose` carries a
