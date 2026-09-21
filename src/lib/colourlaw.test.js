@@ -558,3 +558,25 @@ describe('the colour law — amber means ON AIR, and every use is named', () => 
     expect(ms).toMatch(/variant=\{m\.recommended \? 'primary' : ''\}/);
   });
 });
+
+// 2026-09-21 · measured in a browser (RG-192). A HEARD claim not on any screen
+// wore `--v-amber` on its border and badge while the Program pane read CLEAR;
+// and `uncertain_book` — the class that put Numbers 3:16 on a wall — was pixel
+// identical to a paraphrase. Amber is the tally light; a claim is a claim.
+describe('the claim card does not wear the tally light, and the three methods look different', () => {
+  const live = readFileSync(resolve(process.cwd(), 'src/lib/views/Live.svelte'), 'utf8');
+  const rule = (sel) => {
+    const i = live.indexOf(sel);
+    expect(i, `${sel} not found`).toBeGreaterThan(-1);
+    return live.slice(i, live.indexOf('}', i));
+  };
+  it('a heard claim is steel until it is on the wall', () => {
+    expect(rule('.clm{')).not.toMatch(/--v-amber/);
+    expect(rule('.cbadge{')).not.toMatch(/--v-amber/);
+    expect(rule('.clm{')).toMatch(/--v-sel/);
+  });
+  it('book-uncertain has its own mark', () => {
+    expect(live).toMatch(/\.clm\.ub\{[^}]*dashed/);
+    expect(live).toMatch(/class:ub=\{d\.method === 'uncertain_book'\}/);
+  });
+});

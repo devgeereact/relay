@@ -9,7 +9,7 @@
 // whole time; Live.svelte rendered both kinds as "AI suggestion — 92% match". The
 // human in the loop was shown nothing to be a human in the loop WITH.
 import { describe, it, expect } from 'vitest';
-import { heard, methodKey, methodBadgeKey, methodNoteKey, showsConfidence, inLibrary, evidenceIsASpan } from './detect.js';
+import { heard, methodKey, methodBadgeKey, methodNoteKey, showsConfidence, inLibrary, evidenceIsASpan, orderClaims } from './detect.js';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -272,5 +272,27 @@ describe('a verse whose book came from memory', () => {
   it('is never shown a percentage and never reads as heard', () => {
     expect(showsConfidence(fromMemory)).toBe(false);
     expect(heard(fromMemory)).toBe(false);
+  });
+});
+
+// 2026-09-21 · measured in a browser (RG-192). With three claims pending at
+// 1440×900 the third card's Accept & fire sat below the fold of its own column,
+// and newest-first meant the one that fell off was the oldest — the HEARD one,
+// the only class that can auto-fire. A heard reference outranks a guess in the
+// column, whatever arrived last.
+describe('the claim column puts a heard reference first', () => {
+  const heardOld = { method: 'direct', reference: 'Numbers 10:29' };
+  const guessNew = { method: 'semantic', reference: 'John 3:16' };
+  const memNew = { method: 'uncertain_book', reference: 'Psalms 55:1', matched_text: 'verse 1' };
+  it('heard before every other kind, each group keeping its arrival order', () => {
+    expect(orderClaims([guessNew, memNew, heardOld]).map((d) => d.reference)).toEqual([
+      'Numbers 10:29',
+      'John 3:16',
+      'Psalms 55:1',
+    ]);
+  });
+  it('is stable for a list of one kind', () => {
+    expect(orderClaims([guessNew, memNew]).map((d) => d.reference)).toEqual(['John 3:16', 'Psalms 55:1']);
+    expect(orderClaims([])).toEqual([]);
   });
 });

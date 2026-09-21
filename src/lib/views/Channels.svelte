@@ -1241,6 +1241,12 @@
       <span class="rw-spring"></span>
       {#if !$capture.available}
         <span class="r-badge rose sm-badge"><span class="bd"></span>No engine</span>
+      {:else if $capture.outputError}
+        <!-- THE LAN SERVER IS NOT RUNNING (RG-191). Every network screen is dead
+             and Copy URL would hand out an address nothing answers. The fact was
+             in the store and rendered on Live only; this is the desk that hands
+             out the URLs, so it says so first. -->
+        <span class="r-badge rose sm-badge" title="Another program is holding Relay's ports, so OBS, kiosk screens and the preacher's phone cannot connect. The projector window is unaffected. The status bar's Reduced cell has the detail."><span class="bd"></span>Server not running · :8032 / :8031</span>
       {:else}
         <!-- NEVER AMBER: amber means something is on the wall, and a screen
              answering does not put it there. Green is "confirmed", and it is now

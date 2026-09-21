@@ -81,7 +81,16 @@
   import Loading from '../ui/Loading.svelte';
   import ErrorState from '../ui/ErrorState.svelte';
 
-  let health = freshChecks().diagnostics;
+  // EVERY STAGE, NOT THE FIRST (RG-190, 2026-09-21). This ran `diagnostics`
+  // alone — six of twenty-three probes — so nothing on :8031, nothing on :8032,
+  // a missing table and rule 25's boot-bricking scratch table all rendered
+  // "Ready for a service." The ladder the launch sequence climbs is the one the
+  // pre-service screen must climb.
+  const allChecks = () => {
+    const f = freshChecks();
+    return [...f.diagnostics, ...f.hardware, ...f.plugins, ...f.migration];
+  };
+  let health = allChecks();
   let checking = true;
 
   // ── THE PATH CHECK ────────────────────────────────────────────────────────
@@ -216,7 +225,7 @@
     checking = true;
     error = '';
     try {
-      health = await runChecks(freshChecks().diagnostics, makeProbes(), (partial) => {
+      health = await runChecks(allChecks(), makeProbes(), (partial) => {
         health = partial;
       });
     } catch (e) {

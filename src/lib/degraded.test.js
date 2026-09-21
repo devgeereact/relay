@@ -296,3 +296,26 @@ describe('the microphone this room uses (RG-121)', () => {
     expect(degradations({}).some((d) => d.id === 'mic')).toBe(false);
   });
 });
+
+// 2026-09-21 · OU-2 (RG-191). The LAN server failing to bind — OBS, kiosk and the
+// stage page all dead — was one raw line on Live and nothing anywhere else, while
+// Outputs handed out Copy URL to a server that was not running. It is a fact
+// about the whole room, so it belongs in the register every workspace reads.
+describe('the LAN output server failed to start', () => {
+  it('is BLOCKED for every network screen, and says which port', () => {
+    const rows = degradations({ ...OK, outputError: 'Address already in use (os error 48)' });
+    const lan = rows.find((r) => r.id === 'lan');
+    expect(lan, 'no row for a dead LAN server').toBeTruthy();
+    expect(lan.level).toBe('blocked');
+    expect(lan.title).toMatch(/8032|8031/);
+    expect(lan.what).toMatch(/OBS|browser|phone/i);
+  });
+  it('is absent when the server is up', () => {
+    expect(degradations({ ...OK, outputError: null }).some((r) => r.id === 'lan')).toBe(false);
+  });
+  it('and the shell feeds it the fact', () => {
+    const app = read('src/App.svelte');
+    const block = app.slice(app.indexOf('$: degraded = degradations({'), app.indexOf('});', app.indexOf('$: degraded = degradations({')));
+    expect(block).toMatch(/outputError: \$capture\.outputError/);
+  });
+});

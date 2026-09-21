@@ -96,3 +96,71 @@ describe('RG-116 · the readiness screen names the model and the language', () =
     expect(text(el)).toMatch(/nothing will be transcribed/);
   });
 });
+
+// 2026-09-21 · E-2 (RG-190). The hero ran SIX of twenty-three probes — only the
+// `diagnostics` stage — so nothing on :8031, nothing on :8032, a missing table
+// and rule 25's boot-bricking scratch table all rendered "Ready for a service."
+// The same ladder the launch sequence runs is the one this screen must run.
+describe('RG-190 · readiness runs every probe, not the first six', () => {
+  const HEALTHY = {
+    ping: () => true,
+    data_health: () => 31102,
+    stt_status: () => ({ loaded: true, model: '/m/ggml-large-v3-turbo.bin', language: 'en' }),
+    list_audio_devices: () => [{ id: 'a', name: 'Mic' }],
+    list_monitors: () => [{ index: 0, name: 'Built-in', width: 1512, height: 982, primary: true }],
+    list_output_channels: () => [{ id: 4, name: 'Lobby', render_target: 'network_client' }],
+    local_ip: () => '192.168.1.42',
+    system_hardware: () => ({ threads: 10, cores: 10, memory_total_gb: 32, memory_free_gb: 11, total_memory_bytes: 3.2e10, available_memory_bytes: 1.1e10, gpu_backends: ['Metal'], disk_free_gb: 300, total_disk_bytes: 9.9e11, free_disk_bytes: 3.1e11 }),
+    probe_integrations: () => [
+      { label: 'Relay kiosk hub', listening: true, port: 8031 },
+      { label: 'Relay HTTP', listening: true, port: 8032 },
+    ],
+    migration_status: () => ({ version: 5, expected: 5, manual_status: true, scratch_table: false, tables: ['verses', 'templates', 'output_channels', 'service_plans', 'plan_items', 'songs', 'song_sections', 'detections', 'services', 'service_events', 'perf_samples', 'voice_profiles', 'media_assets'].map((t) => ({ table: t, present: true })) }),
+    channel_status: () => [],
+    update_preflight: () => ({ ok: true, during_service: false, checks: [] }),
+  };
+  const withMock = (over = {}) => {
+    const table = { ...HEALTHY, ...over };
+    invoke.mockImplementation(async (cmd) => (cmd in table ? table[cmd]() : null));
+  };
+  const settleLong = async () => { for (let i = 0; i < 40; i++) await new Promise((r) => setTimeout(r, 0)); };
+
+  it('says nothing is ready when the kiosk hub is not listening and a browser screen needs it', async () => {
+    withMock({ probe_integrations: () => [{ label: 'Relay kiosk hub', listening: false, port: 8031 }, { label: 'Relay HTTP', listening: true, port: 8032 }] });
+    const el = await mountDashboard({ model: '/m/ggml-large-v3-turbo.bin', language: 'en' });
+    await settleLong();
+    expect(text(el)).not.toMatch(/Ready for a service\./);
+    expect(text(el)).toMatch(/8031/);
+  });
+
+  it('and a leftover scratch table from an interrupted migration is not "ready" either', async () => {
+    withMock({ migration_status: () => ({ ...HEALTHY.migration_status(), scratch_table: true }) });
+    const el = await mountDashboard({ model: '/m/ggml-large-v3-turbo.bin', language: 'en' });
+    await settleLong();
+    expect(text(el)).not.toMatch(/Ready for a service\./);
+  });
+});
+
+describe('RG-190 · and a healthy machine still reads ready, so the two tests above mean something', () => {
+  it('Ready for a service. when every probe answers well', async () => {
+    const table = {
+      ping: () => true,
+      data_health: () => 31102,
+      stt_status: () => ({ loaded: true, model: '/m/ggml-large-v3-turbo.bin', language: 'en' }),
+      list_audio_devices: () => [{ id: 'a', name: 'Mic' }],
+      list_monitors: () => [{ index: 0, name: 'Built-in', width: 1512, height: 982, primary: true }],
+      list_output_channels: () => [{ id: 4, name: 'Lobby', render_target: 'network_client' }],
+      local_ip: () => '192.168.1.42',
+      system_hardware: () => ({ threads: 10, cores: 10, memory_total_gb: 32, memory_free_gb: 11, total_memory_bytes: 3.2e10, available_memory_bytes: 1.1e10, gpu_backends: ['Metal'], disk_free_gb: 300, total_disk_bytes: 9.9e11, free_disk_bytes: 3.1e11 }),
+      probe_integrations: () => [{ label: 'Relay kiosk hub', listening: true, port: 8031 }, { label: 'Relay HTTP', listening: true, port: 8032 }],
+      migration_status: () => ({ version: 5, expected: 5, manual_status: true, scratch_table: false, tables: ['verses', 'templates', 'output_channels', 'service_plans', 'plan_items', 'songs', 'song_sections', 'detections', 'services', 'service_events', 'perf_samples', 'voice_profiles', 'media_assets'].map((t) => ({ table: t, present: true })) }),
+      channel_status: () => [],
+      update_preflight: () => ({ ok: true, during_service: false, checks: [] }),
+    };
+    invoke.mockImplementation(async (cmd) => (cmd in table ? table[cmd]() : null));
+    const el = await mountDashboard({ model: '/m/ggml-large-v3-turbo.bin', language: 'en' });
+    for (let i = 0; i < 40; i++) await new Promise((r) => setTimeout(r, 0));
+    expect(text(el)).toMatch(/Ready|worth a look/);
+    expect(text(el)).not.toMatch(/not working/);
+  });
+});

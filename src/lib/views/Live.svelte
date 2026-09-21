@@ -152,7 +152,7 @@
   import EmptyState from '../ui/EmptyState.svelte';
   import ErrorState from '../ui/ErrorState.svelte';
   import Loading from '../ui/Loading.svelte';
-  import { heard, methodBadgeKey, methodNoteKey, inLibrary, evidenceIsASpan } from '../detect.js';
+  import { heard, methodBadgeKey, methodNoteKey, inLibrary, evidenceIsASpan, orderClaims } from '../detect.js';
   import DetectionInspector from '../DetectionInspector.svelte';
   import { humanError as humanErrorBase } from '../errors.js';
   import { typeOf, payloadOf, slidesOf, slideAccent, cueSub, nextOf, stepFrom } from '../plan.js';
@@ -1337,7 +1337,9 @@
    * one already made, which is the wrong way round at the one moment it matters.
    */
   $: claimCards = [
-    ...dets.map((d) => ({ d, outcome: null, key: `p:${d.reference}` })),
+    // HEARD FIRST (RG-192): the one class that may auto-fire is never the one
+    // that falls below the fold. `orderClaims` is pure and tested in detect.js.
+    ...orderClaims(dets).map((d) => ({ d, outcome: null, key: `p:${d.reference}` })),
     ...$resolvedDetections.slice(0, Math.max(0, MAX_RESOLVED - dets.length)).map((d) => ({
       d,
       outcome: outcomeLabel(d),
@@ -2976,7 +2978,7 @@
                  (router.rs forbids it from ever auto-firing at ANY score). So the
                  guess gets cyan, and gets no number at all: a number that lies is
                  worse than no number. Cyan, NOT amethyst, which means rehearsal. -->
-            <article class="clm" class:guess={!heard(d)} class:done={!!card.outcome}>
+            <article class="clm" class:guess={!heard(d)} class:ub={d.method === 'uncertain_book'} class:done={!!card.outcome}>
               <div class="clm-top">
                 <span class="clm-ref">{d.reference}</span>
                 <!-- THE CHIP NAMES THE METHOD, not merely heard-vs-guessed.
@@ -3120,7 +3122,7 @@
   {#if $capture.audioError}
     <div class="audioerr" role="alert">The microphone stopped — {humanError($capture.audioError)} Check the cable, then press the microphone in Live audio.</div>
   {/if}
-  {#if $capture.outputError}<div class="audioerr">Output: {$capture.outputError}</div>{/if}
+  {#if $capture.outputError}<div class="audioerr" role="alert">The network output server is not running — {humanError($capture.outputError)} OBS, kiosk screens and the preacher's phone cannot connect; the projector window is unaffected.</div>{/if}
 
   <!-- ══ WHAT THE LAMPS CANNOT SAY ══
        The Output Status pane left this column: a screen's state is one lamp per
@@ -3809,7 +3811,11 @@
      down a column: amber for a reference Relay HEARD, cyan for a guess, grey
      once the claim has been decided and nothing is owed. */
   .clm{background:var(--v-surf2); border:1px solid var(--v-line);
-    border-left:3px solid var(--v-amber);
+    /* STEEL, NOT AMBER (RG-192, 2026-09-21). A heard claim is the thing the
+       operator is working on, and it is NOT on the wall until they press A —
+       amber is the tally light and this card wore it over a Program pane
+       reading CLEAR. The Program pane says on air; a card says claim. */
+    border-left:3px solid var(--v-sel);
     border-radius:var(--v-r-md); padding:11px 12px;
     display:flex; flex-direction:column; gap:8px}
   /* A GUESS MUST LOOK LIKE A GUESS. Amber reads as "Relay is confident" and a
@@ -3819,6 +3825,11 @@
      cannot also mean "this guess is shaky", or on the day both are true the
      operator reads the wrong one. */
   .clm.guess{border-left-color:var(--v-cyan)}
+  /* BOOK UNCERTAIN HAS ITS OWN MARK (RG-192). It was pixel-identical to a
+     paraphrase, and it is the class that put Numbers 3:16 on a wall: chapter
+     and verse heard, the book repaired or assumed. Dashed, so it reads as "a
+     reference with a hole in it" rather than "a guess about the meaning". */
+  .clm.ub{border-left-style:dashed}
   /* DECIDED. Grey, and quieter — it is a receipt, and nothing on it is
      actionable. It must never look like a claim still waiting for a press. */
   .clm.done{opacity:.62; border-left-color:var(--v-line2); background:var(--v-surf)}
@@ -3828,13 +3839,14 @@
     font-weight:700; letter-spacing:var(--v-tr-tight); color:var(--v-txt)}
   .cbadge{flex:0 0 auto; padding:2px 6px; border-radius:2px; font-family:var(--f-mono);
     font-size:var(--v-fs-kind); font-weight:600; letter-spacing:.08em; text-transform:uppercase;
-    background:var(--v-amber-soft); color:var(--v-amber)}
+    background:var(--v-sel-soft, rgba(91,156,248,.15)); color:var(--v-sel)}
   .cbadge.p{background:var(--v-cyan-soft); color:var(--v-cyan)}
   /* Confidence as a BAR — "0.92" means nothing to a volunteer. Only ever drawn
      for a heard reference, the only one whose number means what it appears to
      mean. A paraphrase gets the sentence below instead, and no number at all. */
   .conf{height:3px; border-radius:2px; background:var(--v-surf3); margin:0; overflow:hidden}
-  .conf i{display:block; height:100%; background:var(--v-amber); border-radius:2px}
+  /* STEEL (RG-192): a confidence bar is about a claim, not about the wall. */
+  .conf i{display:block; height:100%; background:var(--v-sel); border-radius:2px}
   .guess-note{margin:0; font-size:var(--v-fs-cap); line-height:1.45; color:var(--v-cyan)}
   /* THE EVIDENCE — the words that actually triggered the match. */
   .mt-q{margin:0; font-size:var(--v-fs-cap); line-height:1.5; color:var(--v-dim)}

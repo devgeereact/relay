@@ -209,3 +209,21 @@ describe('a screen configured for a display that is not connected says so', () =
     expect(card('Spare').textContent).not.toContain('not connected');
   });
 });
+
+// 2026-09-21 · OU-2 (RG-191). With the LAN server dead, Outputs still printed
+// `:8032 · http` as a standing fact and offered Copy URL. The fact is in the
+// store; this desk now reads it.
+describe('Outputs says when the LAN server is not running', () => {
+  itMounted('names the failure at the head of the screens list', async () => {
+    const Channels = (await import('./views/Channels.svelte')).default;
+    capture.update((s) => ({ ...s, outputError: 'Address already in use (os error 48)' }));
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    app = new Channels({ target: host });
+    for (let i = 0; i < 60; i += 1) await settle();
+    const txt = host.textContent.replace(/\s+/g, ' ');
+    expect(txt).toMatch(/not running|cannot connect|failed to start/i);
+    expect(txt).toMatch(/8032/);
+    capture.update((s) => ({ ...s, outputError: null }));
+  });
+});

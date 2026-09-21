@@ -87,6 +87,27 @@ In Templates, "Test on screens" now asks for a second press before putting
 sample scripture on the live screens, and is held back while a service is being
 recorded unless Rehearsal is on.
 
+### The readiness screen runs every check
+
+Settings → Before the service ran six of Relay's twenty-three startup checks
+and could say "Ready for a service." with nothing listening for OBS or the
+preacher's phone. It now runs all of them, the same ones Relay runs at launch.
+
+### When the network server is not running, every workspace says so
+
+If another program is holding Relay's ports, OBS, kiosk screens and the
+preacher's phone cannot connect. That used to appear as one line on Live.
+It is now in the status bar's Reduced cell on every workspace, at the top of
+Outputs → Screens, and the line on Live says what to do.
+
+### Suggestions: heard ones first, and coloured as claims
+
+A suggestion Relay heard is now always at the top of the list, so it cannot
+scroll out of reach behind guesses. It is coloured steel (the working colour)
+until it is on the screens; amber is only ever the on-air light. A suggestion
+whose book was uncertain now has a dashed edge so it does not look like a
+paraphrase.
+
 ### Connecting the preacher's phone
 
 When Relay cannot find a local network address, Sharing now explains the problem

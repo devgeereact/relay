@@ -80,6 +80,7 @@ The rules that follow from that:
   surfaces spend amethyst on a warning because this palette publishes no caution ink and every
   other colour is already a promise. That gap is filed, not improvised; `colourlaw.test.js`
   enumerates all of it and a human may overrule the ruling.
+- **A claim card is steel, not amber, until the wall says otherwise** (RG-192, 2026-09-21). A heard suggestion wore the tally light while the Program pane read CLEAR; a heard claim is *the thing you are working on* and gets `--v-sel` on its rule, its chip and its confidence bar. `uncertain_book` gets a dashed rule so it never reads as a paraphrase.
 - **A paraphrase is cyan and shows no percentage at all.** A TF-IDF cosine is not a probability,
   and a number that lies is worse than no number (DECISIONS §21). It is never amethyst, because
   amethyst already promises "rehearsal — this cannot reach the congregation", and a colour

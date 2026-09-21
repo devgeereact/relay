@@ -223,6 +223,22 @@ export function degradations(s = {}) {
     });
   }
 
+  // THE LAN OUTPUT SERVER DID NOT START (RG-191, 2026-09-21). One raw line on
+  // Live was the only report, while Outputs printed `:8032 · http` as a standing
+  // fact and offered Copy URL to a server nothing answered. Every browser screen,
+  // the OBS source and the preacher's phone are dead until it is fixed; the
+  // projector window is not, which is why this is not `blocked` for the whole
+  // desk but is for every screen that reaches Relay over the network.
+  if (typeof s.outputError === 'string' && s.outputError.trim()) {
+    out.push({
+      id: 'lan',
+      level: 'blocked',
+      title: 'The network output server (:8032 / :8031) is not running',
+      what: `OBS browser sources, kiosk screens and the preacher\u2019s phone cannot connect until it is. The projector window is unaffected. Relay said: ${s.outputError.trim()}`,
+      fix: 'Another program is probably holding the port. Close it and restart Relay \u2014 Outputs \u2192 Screens will stop saying so when the server is up.',
+    });
+  }
+
   const down = s.screensDown ?? [];
   if (down.length) {
     out.push({

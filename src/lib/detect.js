@@ -116,6 +116,20 @@ export function methodNoteKey(d) {
 export const showsConfidence = (d) => heard(d);
 
 /**
+ * The order the claim column shows pending claims in (RG-192, 2026-09-21).
+ *
+ * Measured at 1440×900 with three claims pending: the third card's Accept & fire
+ * was below the fold of its own column, and newest-first meant the one that fell
+ * off was the oldest — the HEARD one, the only class that may auto-fire and the
+ * one an operator most needs a hand on. A heard reference comes first, whatever
+ * arrived last; within each group the arrival order is kept.
+ */
+export function orderClaims(list) {
+  const arr = Array.isArray(list) ? list : [];
+  return [...arr.filter((d) => heard(d)), ...arr.filter((d) => !heard(d))];
+}
+
+/**
  * Is there actually a verse behind this reference?
  *
  * `emit_detections` deliberately does NOT drop a reference that parsed cleanly but
