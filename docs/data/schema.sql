@@ -261,7 +261,9 @@ CREATE TABLE media_assets (
 CREATE TABLE services (
     id    INTEGER PRIMARY KEY,
     date  TEXT NOT NULL,                  -- ISO 8601 date
-    title TEXT NOT NULL
+    title TEXT NOT NULL,
+    build TEXT                            -- `diagnostics::BUILD`, the commit that ran it (S13);
+                                          -- NULL on a row from before 2026-09-21
 );
 
 CREATE TABLE transcripts (

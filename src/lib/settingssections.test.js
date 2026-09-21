@@ -1230,4 +1230,13 @@ describe('the component kit, and what adopting it buys', () => {
       /\{:else if !langsAsked\}/,
     );
   });
+
+  // S13 (2026-09-21): which BUILD is running is a fact the field audit could not
+  // recover — a version is shared by every build of a branch. The marker sits
+  // beside the version on This machine, from the one command that carries it.
+  it('This machine names the build beside the version (S13)', () => {
+    expect(MARKUP_ONLY).toMatch(/rw-nvk">Version<[\s\S]{0,400}\{buildMarker/);
+    expect(SCRIPT).toMatch(/buildMarker\s*=\s*await\s+getBuildMarker\(\)/);
+  });
 });
+

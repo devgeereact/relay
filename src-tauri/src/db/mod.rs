@@ -431,6 +431,7 @@ fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
     ensure_media(conn)?;
     ensure_announcements(conn)?;
     ensure_service_events(conn)?; // the service timeline + latency snapshots
+    ensure_service_build(conn)?; // which build ran each service (S13)
     ensure_environment_profiles(conn)?; // a room, remembered
     ensure_history_indexes(conn)?; // the foreign keys every history query walks
                                    // The demo ledger. The TABLE is created for every install; nothing puts a row

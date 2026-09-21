@@ -18,6 +18,9 @@ pub struct ServiceSummary {
     pub duration_secs: f64,
     pub verses: i64,
     pub overrides: i64,
+    /// The build that ran it (`diagnostics::BUILD`), `None` for a row from before
+    /// the column existed (S13).
+    pub build: Option<String>,
 }
 
 /// A transcript line in a service detail view.
@@ -60,10 +63,20 @@ pub struct ServiceDetection {
 /// Create a service and return its id.
 pub fn create_service(conn: &Connection, date: &str, title: &str) -> rusqlite::Result<i64> {
     conn.execute(
-        "INSERT INTO services (date, title) VALUES (?1, ?2)",
-        (date, title),
+        "INSERT INTO services (date, title, build) VALUES (?1, ?2, ?3)",
+        (date, title, crate::diagnostics::BUILD),
     )?;
     Ok(conn.last_insert_rowid())
+}
+
+/// `services.build` — which build ran a service (S13, 2026-09-21). Additive and
+/// retryable: a duplicate column is the second boot, not a fault.
+pub fn ensure_service_build(conn: &Connection) -> rusqlite::Result<()> {
+    match conn.execute("ALTER TABLE services ADD COLUMN build TEXT", []) {
+        Ok(_) => Ok(()),
+        Err(e) if super::plans::is_duplicate_column(&e) => Ok(()),
+        Err(e) => Err(e),
+    }
 }
 
 /// Insert a transcript line; returns its id.
@@ -153,7 +166,8 @@ pub fn list_services(conn: &Connection) -> rusqlite::Result<Vec<ServiceSummary>>
                    JOIN transcripts t ON t.id = d.transcript_id
                   WHERE t.service_id = s.id),
                 (SELECT COUNT(*) FROM cues c
-                  WHERE c.service_id = s.id AND c.type = 'manual_override')
+                  WHERE c.service_id = s.id AND c.type = 'manual_override'),
+                s.build
            FROM services s
           ORDER BY s.id DESC",
     )?;
@@ -165,6 +179,7 @@ pub fn list_services(conn: &Connection) -> rusqlite::Result<Vec<ServiceSummary>>
             duration_secs: r.get(3)?,
             verses: r.get(4)?,
             overrides: r.get(5)?,
+            build: r.get(6)?,
         })
     })?;
     rows.collect()
@@ -635,6 +650,7 @@ mod timeline_tests {
         )
         .unwrap();
         ensure_service_events(&conn).unwrap();
+        ensure_service_build(&conn).unwrap();
         conn
     }
 
@@ -1296,5 +1312,28 @@ mod index_tests {
             plan.contains("idx_transcripts_service"),
             "the planner still scans transcripts: {plan}"
         );
+    }
+
+    /// A SERVICE RECORDS THE BUILD THAT RAN IT (S13). `FIELD-2026-09-20.md` §0:
+    /// "Build under test: not recorded by Relay." Now it is, on the row, so an
+    /// audit reading the database a day later can name the commit rather than
+    /// infer it from a file's timestamp.
+    #[test]
+    fn a_service_records_the_build_that_ran_it() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::init_fresh(&conn).unwrap();
+        ensure_service_build(&conn).unwrap(); // retryable, rule 25: a second boot
+        conn.execute(
+            "INSERT INTO services (id, date, title) VALUES (1, '2026-08-30', 'Before')",
+            [],
+        )
+        .unwrap();
+        let id = create_service(&conn, "2026-09-27", "Sunday").unwrap();
+        let list = list_services(&conn).unwrap();
+        let row = list.iter().find(|s| s.id == id).unwrap();
+        assert_eq!(row.build.as_deref(), Some(crate::diagnostics::BUILD));
+        // A row from before the column reads as an absence, never as this build.
+        let old = list.iter().find(|s| s.id == 1).unwrap();
+        assert_eq!(old.build, None);
     }
 }

@@ -178,6 +178,10 @@ fn main() {
             // DECISIONS §112). Restored, not re-aired: nothing here reaches a
             // congregation screen. Then every later change is written on its own
             // thread, so the registry never holds the database lock.
+            // ONE LINE NAMING THE BUILD, before anything else prints. The
+            // heartbeat below stays exactly one line per launch (rule 26);
+            // this is a different line with a different word.
+            println!("relay: build {} (v{})", diagnostics::BUILD, env!("CARGO_PKG_VERSION"));
             restore_timers(&app.handle().clone(), cd_now_ms());
             {
                 let h = app.handle().clone();
@@ -588,6 +592,7 @@ fn main() {
             list_books,
             chapter_verses,
             system_hardware,
+            build_marker,
             probe_integrations,
             migration_status,
             list_audio_devices,
@@ -4831,6 +4836,12 @@ fn list_audio_devices() -> Vec<audio::DeviceInfo> {
 ///
 /// Measures the volume holding APP-DATA, not the boot volume: models, media and
 /// the database all land there, and it is the one that fills up.
+/// Which build this is — `<short sha>[+dirty] <date>` (S13). Read-only.
+#[tauri::command]
+fn build_marker() -> &'static str {
+    diagnostics::BUILD
+}
+
 #[tauri::command]
 fn system_hardware() -> sysprobe::Hardware {
     sysprobe::read(&db::app_data_dir())
@@ -4932,11 +4943,15 @@ fn export_diagnostics(app: tauri::AppHandle) -> error::Result<String> {
         Fact::new("Version", app.package_info().version.to_string()),
         Fact::new(
             "Build",
-            if cfg!(debug_assertions) {
-                "development"
-            } else {
-                "release"
-            },
+            format!(
+                "{} · {}",
+                if cfg!(debug_assertions) {
+                    "development"
+                } else {
+                    "release"
+                },
+                diagnostics::BUILD
+            ),
         ),
         Fact::new(
             "Ports",

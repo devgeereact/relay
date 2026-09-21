@@ -265,7 +265,7 @@ that was working. If you see it, that passage is longer than the template was de
 
 **If something went wrong, send the diagnostic file** (Settings → This machine → export) rather
 than a photograph of the screen. It is built by naming every field that may be in it, so it
-cannot leak a transcript, a verse, a lyric, an announcement or your service titles.
+cannot leak a transcript, a verse, a lyric, an announcement or your service titles. It names the **build** that is running (also shown beside the version on This machine, and recorded on every service in History), so whoever reads it knows exactly which Relay you had.
 
 ---
 

@@ -2819,6 +2819,16 @@ return guardedRead('chapterVerses', async (call) => {
 }
 
 /** This machine's LAN IP so output URLs work on other devices. Null if offline. */
+/** Which build is running: `<short sha>[+dirty] <date>` (S13). Read-only; '' on failure. */
+export async function getBuildMarker() {
+try {
+  const call = await invoke();
+  return await call('build_marker');
+} catch {
+  return '';
+}
+}
+
 export async function localIp() {
 try {
   const call = await invoke();

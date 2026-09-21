@@ -67,7 +67,7 @@
     Math.round(
       (Object.keys(CATALOGUES[code] ?? {}).filter((k) => !k.startsWith('_')).length / TOTAL) * 100,
     );
-  import { capture, meter, initAudio, startCapture, stopCapture, setSensitivity, getSensitivity, setSttLanguage, setInputDevice, listTranslations, getActiveTranslation, setActiveTranslation, localIp, getCrashReporting, setCrashReporting, serviceTargetMinutes, loadServiceTarget, setServiceTarget, countdownWarnMs, loadCountdownWarnMs, setCountdownWarnMs, latencyReport, latencyReset, latencySetEnabled, serviceLock, loadServiceLock, setServiceLock, rooms, loadRooms, saveRoom, useRoom, deleteRoom,
+  import { capture, meter, initAudio, startCapture, stopCapture, setSensitivity, getSensitivity, setSttLanguage, setInputDevice, getBuildMarker, listTranslations, getActiveTranslation, setActiveTranslation, localIp, getCrashReporting, setCrashReporting, serviceTargetMinutes, loadServiceTarget, setServiceTarget, countdownWarnMs, loadCountdownWarnMs, setCountdownWarnMs, latencyReport, latencyReset, latencySetEnabled, serviceLock, loadServiceLock, setServiceLock, rooms, loadRooms, saveRoom, useRoom, deleteRoom,
     listOutputChannels, setChannelDisplay, activeVoiceProfile, languageReport, exportDiagnostics, readErrors,
     demoStatus, loadDemoContent, removeDemoContent } from '../stores/capture.js';
   // `Loading` and `ErrorState` are no longer imported HERE and that is the point
@@ -921,6 +921,8 @@
   let appVersion = '';
   let versionState = 'loading';
   const environment = import.meta.env?.DEV ? 'Development' : 'Production';
+  // WHICH BUILD (S13). A version is every build of a branch; this is the commit.
+  let buildMarker = '';
   let bootAt = 0;
   // Never a dash, not even for the instant before the first tick: a row that
   // says nothing is a row an operator has to guess about.
@@ -1001,6 +1003,7 @@
     } finally {
       dataLoaded = true; // distinguish "loading" from a genuinely empty list
     }
+    buildMarker = await getBuildMarker();
     try {
       lanIp = await localIp();
       lanState = 'ok';
@@ -1859,7 +1862,7 @@
         <div class="rw-nv"><span class="rw-nvk">Version</span><span class="rw-nvv">{settingValue(appVersion, {
             loading: versionState === 'loading',
             missing: 'could not be read',
-          })} · {environment}</span></div>
+          })} · {environment}{buildMarker ? ` · build ${buildMarker}` : ''}</span></div>
         <div class="rw-nv"><span class="rw-nvk">Uptime (this run)</span><span class="rw-nvv">{uptime}</span></div>
         <div class="rw-group">Live latency</div>
         <div class="s-prose">

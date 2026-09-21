@@ -10,6 +10,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+### Relay says which build it is
+
+Settings → This machine now shows the build beside the version, every service records the build that ran it, and the diagnostic file carries it. A version number is shared by every build of a branch, so after a service where something went wrong nobody could say exactly which code was running. Now the row says. (RG-209)
+
 ### Your clocks survive a restart
 
 If Relay quits mid-service — a crash, an update, a laptop closed — every timer used to vanish: the preacher's sermon clock and a countdown the room was watching. They now come back on relaunch. The stage screen gets its clock straight away. A countdown that was on the screens is not put back by itself; Live's Screen Countdown band shows it *counting, off the screens* with **Put back on screens**, so nothing reaches a congregation without a hand on it. Clocks from a rehearsal, or older than six hours, are not brought back. (RG-208, DECISIONS §112)

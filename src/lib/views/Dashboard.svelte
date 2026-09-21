@@ -502,7 +502,7 @@
         <tbody>
           {#each services.slice(0, 5) as s}
             <tr>
-              <td class="d-t">{s.title || 'Untitled service'}</td>
+              <td class="d-t" title={s.build ? `Ran on build ${s.build}` : 'Build not recorded (before 2026-09-21)'}>{s.title || 'Untitled service'}</td>
               <td>{when(s.date)}</td>
               <td class="r-mono">{mins(s.duration_secs)}</td>
               <td class="r-mono">{s.verses}</td>
