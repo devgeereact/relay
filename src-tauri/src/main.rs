@@ -3270,8 +3270,9 @@ fn clean_note(note: Option<String>) -> Option<String> {
 /// (now + `minutes`), then each output ticks the MM:SS locally — no per-second
 /// network traffic. `label` shows above the timer; `done_msg` replaces it at 0.
 ///
-/// This is the one place a countdown is CREATED. Re-aiming and holding one is
-/// [`adjust_countdown`], which can never create one.
+/// This is the one place a countdown is created, and since 2026-09-21 it is the
+/// only place one is touched at all: `adjust_countdown` re-aimed and held one and
+/// was deleted with the Screen Countdown's transport (DECISIONS §115).
 // GENERIC OVER THE RUNTIME (rule 24). It puts content on a wall, so it is fire-path
 // code, and welded to the concrete desktop handle it could not be driven from
 // `e2e.rs` — which is why the countdown was the one fire path with no end-to-end
@@ -3335,8 +3336,10 @@ fn start_countdown<R: tauri::Runtime>(
             // had a reader and no writer, so §7's short-countdown rule had never
             // fired in the product (see `OutputContent::countdown_from`).
             from_ms: now_ms,
-            // A countdown that has just been STARTED is running, always. Pausing is
-            // `adjust_countdown`, which is about a countdown already on a screen.
+            // A countdown that has just been STARTED is running, always. Nothing
+            // holds one any more: `adjust_countdown` was the only door and it went
+            // with the transport (DECISIONS §115). A plan cue can still carry a
+            // held figure, which is why the field stays.
             paused_ms: None,
             // The threshold chosen for THIS countdown, if the caller chose one.
             // It was hard-coded to `None` here, so the transport's own Start was
@@ -3484,8 +3487,9 @@ struct TimerView {
 /// START A TIMER WITHOUT PUTTING IT IN FRONT OF ANYBODY.
 ///
 /// It creates the timer and hands back its identity, and it publishes nothing. That
-/// is deliberate: `start_countdown` and `show_timer` are the only two things that
-/// may put a timer on a congregation screen, and a third door into that would be
+/// is deliberate: `start_countdown` is now the ONLY thing that may put a timer on a
+/// congregation screen — `show_timer` was the second until §115 — and another door
+/// into that would be
 /// the shape of bug this repository keeps finding — a guarantee kept on the doors
 /// somebody remembered.
 ///
@@ -3579,8 +3583,8 @@ fn start_timer<R: tauri::Runtime>(
 
 /// RE-AIM OR HOLD ONE TIMER BY ITS IDENTITY — the transport, addressed.
 ///
-/// `adjust_countdown` is the same action aimed at "whichever congregation timer is
-/// running", which is what the dock's transport means. This one names the timer, so
+/// `adjust_countdown` was the same action aimed at "whichever congregation timer is
+/// running" and is gone (§115); this one names the timer, so
 /// a console showing several can move the one under the operator's finger.
 ///
 /// The stage layouts an operator can choose between. Global, by name.
@@ -3751,8 +3755,8 @@ fn reset_timer<R: tauri::Runtime>(app: tauri::AppHandle<R>, timer_id: i64) -> er
     Ok(())
 }
 
-/// Like `adjust_countdown`, it publishes nothing: changing a number on a timer that
-/// is not on the screens must not put it on them.
+/// It publishes nothing: changing a number on a timer that is not on the screens
+/// must not put it on them. (`adjust_countdown` kept the same rule until §115.)
 #[tauri::command]
 fn adjust_timer<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -3775,7 +3779,7 @@ fn adjust_timer<R: tauri::Runtime>(
         .map_err(|e| timer_refusal(e, scope))?;
 
     // …unless it IS on the screens, in which case the wall must agree with the
-    // registry. Same rule, same reading of the same slot, as `adjust_countdown`.
+    // registry — the rule `adjust_countdown` kept too, before §115 deleted it.
     if adjusted.scope == timers::Scope::Both {
         if let Some(mut content) = channels::live_content(&app).filter(is_countdown_content) {
             let shown = timers::project_both(&adjusted);
@@ -3824,8 +3828,10 @@ fn list_timers<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> error::Result<Vec
         .collect())
 }
 
-/// Build the wire form of a `Both` timer. **The one place a timer becomes content**,
-/// so `start_countdown` and `show_timer` cannot put different things on a wall.
+/// Build the wire form of a `Both` timer. **The one place a timer becomes content.**
+/// It had three callers and has one; the guarantee it was written for — that two
+/// doors onto a wall cannot disagree about the same countdown — is now kept by
+/// there being one door (§115).
 fn countdown_content(
     timer: &timers::Timer,
     template_id: Option<i64>,
@@ -3835,9 +3841,10 @@ fn countdown_content(
     let shown = timers::project_both(timer);
     channels::OutputContent {
         kind: Some("countdown".into()),
-        // OFF THE TIMER, NOT OFF THE CALL. This function has three callers —
-        // `start_countdown`, `adjust_countdown` and `show_timer` — and a screen
-        // set that lived on the argument would be correct at the first and lost
+        // OFF THE TIMER, NOT OFF THE CALL. This function had three callers —
+        // `start_countdown`, `adjust_countdown` and `show_timer`, the last two
+        // deleted in §115 — and a screen set that lived on the argument would have
+        // been correct at the first and lost
         // at the other two, which is a countdown that leaks onto every screen in
         // the building the moment somebody holds it.
         channels: timer.channels.clone(),
@@ -4079,8 +4086,9 @@ fn find_propresenter<R: tauri::Runtime>(
 
 /// HOLD THE CLIP, LOOP IT, OR START IT AGAIN.
 ///
-/// Requirement 11's transport. Each argument is what `adjust_countdown` calls a
-/// re-aim: `None` means "leave that alone", so Pause cannot un-loop and Loop
+/// Requirement 11's transport. Each argument is a re-aim, the shape
+/// `adjust_countdown` used before §115 removed it: `None` means "leave that alone",
+/// so Pause cannot un-loop and Loop
 /// cannot un-pause. An operator presses one control at a time and the others must
 /// survive it.
 ///
@@ -4249,11 +4257,11 @@ fn media_file_is_on_disk(path: &str) -> bool {
 ///
 /// `kind` here is a lookup key into the content-look register, so a kind with no
 /// row simply falls through to the configured default — it is never silently
-/// unstyled. The timer registry adds no key: `start_countdown` and `show_timer`
-/// both ask for `"countdown"`, which is the row that already exists, because a
+/// unstyled. The timer registry adds no key: `start_countdown` asks for
+/// `"countdown"`, which is the row that already exists, because a
 /// congregation timer's content kind did not change. A `Stage`-scoped timer asks
 /// nothing of this function: it renders on the stage page, which has no
-/// congregation template to resolve, and `show_timer` refuses to project one.
+/// congregation template to resolve.
 fn cue_or_content_tpl(
     conn: &rusqlite::Connection,
     cue_template_id: Option<i64>,
