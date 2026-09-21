@@ -2354,7 +2354,7 @@
                    carries no `data-timer-id` and nothing counts it as one. -->
               <div class="lp-cell lp-more"><span class="lp-val lp-msg">+{t.more} more</span></div>
             {:else}
-              <div class="lp-cell" class:warn={t.warn} class:held={t.held} data-timer-id={t.id}>
+              <div class="lp-cell" class:warn={t.warn} class:over={t.over} class:held={t.held} data-timer-id={t.id}>
                 {#if t.label || t.held}
                   <span class="lp-head">
                     {#if t.label}<span class="lp-lbl">{t.label}</span>{/if}
@@ -2557,6 +2557,31 @@
      wears neither: it is not running out, it is where the operator left it. */
   .lp-cell.warn .lp-val {
     color: #f4515b;
+  }
+  /* ── TIME UP, AND IT ASKS FOR ATTENTION (operator, 2026-09-21) ─────────────
+     The congregation countdown has flashed on its warning since §7
+     (`.countdown.warn`), and the preacher's own rail — the one clock a person is
+     meant to ACT on — only ever changed colour. A red figure among red figures,
+     on a dark stage screen at arm's length under stage lighting, was the weakest
+     signal in the product pointed at the person with the least attention spare.
+
+     THE SAME 2s CADENCE as `cdwarn`, deliberately: two clocks flashing at two
+     rhythms in one room is two alarms, and an operator glancing between a wall
+     and a monitor should not have to tell them apart by tempo.
+
+     It marks `over`, not `warn` — see `timers.js::programmeRows` for why a flash
+     that runs for the whole warning window is a flash nobody sees. */
+  .lp-cell.over .lp-val {
+    animation: lpover 2s ease-in-out infinite;
+  }
+  @keyframes lpover {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.45;
+    }
   }
 
   /* == THE STAGE MESSAGE ===================================================
@@ -2765,6 +2790,13 @@
   }
   @media (prefers-reduced-motion: reduce) {
     .countdown.warn { text-shadow: 0 0 0.25em rgba(244, 81, 91, 0.85); }
+    /* A GLOW RATHER THAN NOTHING. Somebody who has asked for no animation has not
+       asked to be left out of the one clock they are meant to act on — the same
+       trade the countdown above makes, on the screen where it matters more. */
+    .lp-cell.over .lp-val {
+      animation: none;
+      text-shadow: 0 0 0.3em rgba(244, 81, 91, 0.9);
+    }
   }
   @keyframes cdwarn {
     0%, 100% { opacity: 1; }

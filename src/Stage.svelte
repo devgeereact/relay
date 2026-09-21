@@ -1410,7 +1410,7 @@
             <span class="tval msg">+{t.more} more</span>
           </div>
         {:else}
-          <div class="tmr" class:warn={t.warn} class:held={t.held} data-timer-id={t.id}>
+          <div class="tmr" class:warn={t.warn} class:over={t.over} class:held={t.held} data-timer-id={t.id}>
             {#if t.label || t.held}
               <span class="thead">
                 {#if t.label}<span class="tlabel">{t.label}</span>{/if}
@@ -1764,7 +1764,17 @@
   .fig.warn .figv { color: var(--v-red); }
   @media (prefers-reduced-motion: no-preference) {
     .fig.warn .figv, .railrow.warn { animation: cdwarn 2s ease-in-out infinite; }
-    .tmr.warn .tval { animation: cdwarn 2s ease-in-out infinite; }
+    /* ── ON `over`, NOT ON `warn` (operator, 2026-09-21) ────────────────────
+       This flashed for the whole warning window, which an operator sets and
+       which is routinely five minutes. A clock flashing for five minutes is one
+       somebody stops seeing, and then it says nothing at the moment it is for.
+       The steady red below keeps the window; this marks the boundary — time up,
+       and every second after it.
+
+       The two rows above are the congregation COUNTDOWN mirrored on this page
+       and keep the countdown's own rule (§7), because what they mirror is what a
+       room is looking at. This row is the preacher's own clock. */
+    .tmr.over .tval { animation: cdwarn 2s ease-in-out infinite; }
   }
   /* `inline-size`, not `size`: the row's WIDTH is definite (it is the frame) and
      its height is what its content asks for under a ceiling. `container-type: size`
@@ -1997,7 +2007,7 @@
      gets a glow instead of a pulse; the colour is the same either way. */
   @media (prefers-reduced-motion: reduce) {
     .fig.warn .figv, .railrow.warn { text-shadow: 0 0 .25em rgba(244, 81, 91, .85); }
-    .tmr.warn .tval { text-shadow: 0 0 .25em rgba(244, 81, 91, .85); }
+    .tmr.over .tval { text-shadow: 0 0 .25em rgba(244, 81, 91, .85); }
   }
   @keyframes cdwarn { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
   /* The Stage Note — confidence-monitor only, never on the main output. */

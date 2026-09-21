@@ -281,11 +281,15 @@ describe('RG-148 — the stage row wears the one warning rule', () => {
     const noPref = mediaBlocks(CSS, 'prefers-reduced-motion: no-preference');
     const reduce = mediaBlocks(CSS, 'prefers-reduced-motion: reduce');
 
-    const pulse = CSS.indexOf('.tmr.warn .tval { animation: cdwarn');
+    // ON `over` SINCE 2026-09-21, not on `warn`. It pulsed for the whole warning
+    // window — routinely five minutes — which is a pulse an operator stops seeing
+    // before the moment it exists for. The steady red keeps the window;
+    // `timers.js::programmeRows` carries the narrower fact.
+    const pulse = CSS.indexOf('.tmr.over .tval { animation: cdwarn');
     expect(pulse, 'the programme row never pulses').toBeGreaterThan(-1);
     expect(inside(noPref, pulse), 'the pulse is given to a viewer who asked for no motion').toBe(true);
 
-    const glow = /\.tmr\.warn \.tval \{ text-shadow: [^}]*\}/.exec(CSS);
+    const glow = /\.tmr\.over \.tval \{ text-shadow: [^}]*\}/.exec(CSS);
     expect(glow, 'no reduced-motion fallback on the programme row').toBeTruthy();
     expect(inside(reduce, glow.index)).toBe(true);
     expect(glow[0], 'a second opinion about red').toMatch(/244, ?81, ?91/);

@@ -154,6 +154,19 @@ export function programmeRows(timers, nowMs) {
       v: r.ms <= 0 ? `+${formatCountdown(-r.ms)}` : formatCountdown(r.ms),
       warn:
         !r.held && (r.ms <= 0 || countdownWarning(r.ms, countdownTotalMs(t), t?.warn_ms)),
+      // THE TIME HAS ACTUALLY GONE — a narrower fact than `warn`, and the rail
+      // flashes on this one (operator, 2026-09-21).
+      //
+      // `warn` covers the whole warning window, which an operator sets and which
+      // is routinely five minutes. A clock that flashes for five minutes is one
+      // somebody stops seeing, and then the flash says nothing at the moment it
+      // matters. So the steady red keeps the window and this marks the boundary:
+      // time up, and every second after it.
+      //
+      // NOT WHILE HELD, the same exemption `warn` already keeps. A sermon held
+      // two minutes over is a figure somebody chose to freeze (RG-175), and an
+      // alarm about a deliberate act is an alarm nobody can act on.
+      over: !r.held && r.ms <= 0,
     }));
 }
 

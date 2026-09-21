@@ -1,8 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { tick } from 'svelte';
-import { timerRemainingMs } from './timers.js';
+import { timerRemainingMs, programmeRows } from './timers.js';
 import { countdownRemainingMs } from './countdown.js';
 import { formatCountdown } from './layers.js';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a) => invoke(...a) }));
@@ -281,3 +283,121 @@ describe('five more minutes', () => {
     expect(block().textContent).toContain('Sermon');
   });
 });
+
+// ── A SERMON THAT HAS RUN OVER ASKS FOR ATTENTION (operator, 2026-09-21) ────
+//
+// "Timer not flashing red while it outrun... Make it flash and get attention when
+// outrun or when time is up."
+//
+// THE GAP THIS CLOSES IS A CONSISTENCY ONE. The congregation countdown has
+// flashed on its warning since §7 — `.countdown.warn { animation: cdwarn … }` —
+// and the preacher's own rail, the one clock a person is meant to ACT on, only
+// ever changed colour. A red figure among red figures on a dark stage screen, at
+// arm's length, under stage lighting, is the weakest signal in the product
+// pointed at the person with the least attention to spare.
+//
+// WHY `over` AND NOT `warn`. `warn` is true for the whole warning window, which
+// an operator sets and which is routinely five minutes. A clock flashing for five
+// minutes is a clock somebody stops looking at, and then the flash means nothing
+// when the time actually goes. So the steady red keeps the warning window and the
+// flash marks the boundary the operator asked about: time up, and every second
+// after it.
+//
+// WHAT THIS FILE CANNOT SEE: jsdom runs no animation. It asserts the CONTRACT —
+// that a row past zero is marked, that the mark drives an animation, and that the
+// mark is not the warning window — and the reduced-motion fallback, because an
+// operator who has turned motion off must still get a signal rather than nothing.
+describe('the rail flashes when the time has actually gone', () => {
+  const RENDER = readFileSync(resolve(process.cwd(), 'src/lib/TemplateRender.svelte'), 'utf8');
+
+  it('a row past zero is marked `over`, and one merely warning is not', () => {
+    const now = 1_700_000_000_000;
+    const gone = programmeRows(
+      [{ id: 1, countdown_to: now - 62_000, countdown_from: now - 600_000 }],
+      now,
+    );
+    expect(gone[0].over, 'a timer 62s past its deadline is not marked over').toBe(true);
+    expect(gone[0].v).toBe('+1:02');
+
+    // Inside the warning window but NOT past zero: red, never flashing.
+    const soon = programmeRows(
+      [{ id: 2, countdown_to: now + 30_000, countdown_from: now - 600_000, warn_ms: 120_000 }],
+      now,
+    );
+    expect(soon[0].warn, 'the warning window stopped warning').toBe(true);
+    expect(soon[0].over, 'a timer still running is being flashed').toBe(false);
+  });
+
+  it('a HELD timer past zero does not flash, because nothing is running out', () => {
+    // The same discipline `warn` already keeps: a preacher held two minutes over
+    // is a figure somebody chose to freeze, not an alarm (RG-175).
+    const now = 1_700_000_000_000;
+    const held = programmeRows(
+      [
+        {
+          id: 3,
+          countdown_to: now - 120_000,
+          countdown_from: now - 600_000,
+          countdown_paused_ms: -120_000,
+        },
+      ],
+      now,
+    );
+    expect(held[0].held).toBe(true);
+    expect(held[0].over, 'a held figure is flashing at the preacher').toBe(false);
+  });
+
+  it('the renderer drives an animation off that mark, not a colour alone', () => {
+    expect(RENDER, 'no `over` class on the cell').toMatch(/class:over=\{t\.over\}/);
+    expect(RENDER, 'the rail declares no flash').toMatch(/@keyframes\s+lpover/);
+    expect(RENDER, 'the mark drives nothing').toMatch(
+      /\.lp-cell\.over\s+\.lp-val\s*\{[^}]*animation:\s*lpover/,
+    );
+  });
+
+  it('and an operator with motion turned off still gets a signal', () => {
+    // The precedent is `.countdown.warn`'s own reduced-motion arm: the flash
+    // becomes a glow rather than nothing at all. A person who has asked for no
+    // animation has not asked to be left out of the one clock they act on.
+    const rm = RENDER.slice(RENDER.indexOf('@media (prefers-reduced-motion: reduce)'));
+    expect(rm).toMatch(/\.lp-cell\.over\s+\.lp-val\s*\{[^}]*(text-shadow|outline|box-shadow)/);
+  });
+});
+
+// ── AND THE PREACHER'S PHONE KEEPS THE SAME RULE ───────────────────────────
+//
+// Two surfaces render a Stage Timer: `output.html` through `TemplateRender` (a
+// monitor on HDMI) and `Stage.svelte` (the phone or tablet). They are the pair
+// this repository has most often got half-right — the Stage Message reached one
+// and not the other for five days (RG-156), and the rehearsal gate was true of
+// one publisher and false of another before that.
+//
+// The phone already flashed, and it flashed on `warn`: the WHOLE warning window,
+// routinely five minutes. So before this change the two surfaces disagreed in
+// both directions — the monitor never flashed, and the phone flashed so early
+// that the flash carried no information about the moment it was for.
+describe('both stage surfaces flash at the same moment, and it is the same moment', () => {
+  const PHONE = readFileSync(resolve(process.cwd(), 'src/Stage.svelte'), 'utf8');
+
+  it('the phone marks a timer that is over, from the one shared derivation', () => {
+    expect(PHONE, 'the phone cell carries no `over`').toMatch(/class:over=\{t\.over\}/);
+  });
+
+  it('…and flashes on THAT, not on the warning window', () => {
+    expect(PHONE, 'the phone still flashes for the whole warning window').not.toMatch(
+      /\.tmr\.warn\s+\.tval\s*\{\s*animation:/,
+    );
+    expect(PHONE, 'the phone stopped flashing altogether').toMatch(
+      /\.tmr\.over\s+\.tval\s*\{\s*animation:\s*cdwarn/,
+    );
+  });
+
+  it('but a timer merely inside its warning window is still RED on both', () => {
+    // The steady red is the warning; the flash is the boundary. Losing the red
+    // would trade one signal for another rather than adding one.
+    expect(PHONE).toMatch(/\.tmr\.warn\s+\.tval\s*\{[^}]*color:/);
+    const RENDER = readFileSync(resolve(process.cwd(), 'src/lib/TemplateRender.svelte'), 'utf8');
+    expect(RENDER).toMatch(/\.lp-cell\.warn\s+\.lp-val\s*\{[^}]*color:/);
+  });
+});
+

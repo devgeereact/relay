@@ -98,8 +98,14 @@ const SURFACES = [
     // answer one row up rather than inventing a second — same red, same cut.
     name: "the preacher's programme rail",
     file: 'src/Stage.svelte',
+    // THE COLOUR IS THE WARNING WINDOW AND THE GLOW IS THE BOUNDARY (2026-09-21).
+    // They were both on `warn` until the operator asked the rail to flash when
+    // the time actually goes. The steady red still marks the window; the pulse
+    // and its reduced-motion glow moved to `over`, because a signal that runs
+    // for the whole window is one nobody reads at the moment it is for. Both
+    // stage surfaces keep the same split — `stagetimerover.test.js` holds that.
     colour: /\.tmr\.warn \.tval \{ color: var\(--v-red\); \}/,
-    glow: /\.tmr\.warn \.tval \{ text-shadow: [^}]*\}/,
+    glow: /\.tmr\.over \.tval \{ text-shadow: [^}]*\}/,
   },
   // THE CONSOLE'S COUNTDOWN BAND IS NOT A SURFACE ANY MORE (2026-09-20, evening).
   //
