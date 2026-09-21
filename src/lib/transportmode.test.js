@@ -131,3 +131,29 @@ describe('the run surface uses this module and holds no second copy', () => {
     expect(code).not.toContain("=== 'no_passage'");
   });
 });
+
+// P-1's matcher. The `output://content` listener leaves the plan for scripture it
+// was not told to expect; a plan fire announces its reference first. Only
+// scripture can arrive unattended (the AI, the phone, spoken nav), so only
+// scripture is judged — a song or a picture only ever comes from a wrapper that
+// already knows whether it was a plan fire.
+import { contentIsExpectedPlanFire } from './transportmode.js';
+
+describe('contentIsExpectedPlanFire', () => {
+  it('matches the plan scripture it was told about, loosely spelled', () => {
+    expect(contentIsExpectedPlanFire({ kind: 'scripture', reference: 'Psalms 23:5' }, { reference: 'psalms  23:5' })).toBe(true);
+  });
+  it('does not match a different verse', () => {
+    expect(contentIsExpectedPlanFire({ kind: 'scripture', reference: 'Hosea 6:1' }, { reference: 'Psalms 23:5' })).toBe(false);
+  });
+  it('nothing expected means nothing matches', () => {
+    expect(contentIsExpectedPlanFire({ kind: 'scripture', reference: 'Hosea 6:1' }, null)).toBe(false);
+  });
+  it('non-scripture content is never judged here', () => {
+    expect(contentIsExpectedPlanFire({ kind: 'song', text: 'x' }, null)).toBe(true);
+    expect(contentIsExpectedPlanFire({ kind: 'media', media_url: 'u' }, null)).toBe(true);
+  });
+  it('a payload with no kind is scripture (the older shape)', () => {
+    expect(contentIsExpectedPlanFire({ reference: 'John 3:16' }, null)).toBe(false);
+  });
+});

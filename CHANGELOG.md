@@ -10,6 +10,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+### A verse Relay assumed is now offered, not fired
+
+When the preacher says "verse one" and Relay has to guess the book from the
+passage already on the screen, the verse now appears as a suggestion marked
+**From memory**, and is never put on the screens by itself. On 2026-09-20 that
+guess put Psalms 55:1 in front of a congregation while the preacher was quoting
+Hosea. A verse whose book the preacher actually named in the same breath still
+goes up as before.
+
+### The transport follows the wall, not the plan
+
+If Relay hears a verse and puts it up while a song or a notice from the plan is
+on the screens, the transport now switches to VERSE at once. It used to keep
+saying SLIDE, so the next arrow key fired the next plan slide over the reading.
+
+### Keys stay out of an open panel
+
+With a dialog open on Live, such as "Why this match?", the A, D, arrow and Space
+keys no longer act on the console underneath it. Pressing A with the panel open
+used to accept the first suggestion in the list, whichever one you were reading.
+B still blacks out the screens from anywhere.
+
 ### Connecting the preacher's phone
 
 When Relay cannot find a local network address, Sharing now explains the problem

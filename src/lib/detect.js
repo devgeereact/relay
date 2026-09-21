@@ -44,9 +44,21 @@ export function methodKey(d) {
   // "heard the reference" — that sentence would be a lie with a real parse
   // confidence standing behind it, which is how "hymn number three sixteen" put
   // Numbers 3:16 in front of a congregation. See detection.rs.
-  if (d?.method === 'uncertain_book') return 'live.book_name_uncertain';
+  if (d?.method === 'uncertain_book') {
+    return bookFromMemory(d) ? 'live.book_from_memory' : 'live.book_name_uncertain';
+  }
   return 'live.heard_the_reference';
 }
+
+/**
+ * A bare "verse N" that Relay answered from the passage on the screen. It arrives
+ * as `uncertain_book` — the book was not heard — with the evidence `"verse N"`,
+ * because that is all the preacher said. Distinct from a misheard book word: here
+ * nobody said ANY book, Relay assumed the one on the wall. FIELD 2026-09-20 put
+ * Psalms 55:1 up for Hosea 6:1 this way, labelled as heard.
+ */
+export const bookFromMemory = (d) =>
+  d?.method === 'uncertain_book' && /^verse \d+$/.test(String(d?.matched_text ?? ''));
 
 /**
  * The SHORT form of `methodKey`, for the claim card's chip.
@@ -67,7 +79,9 @@ export function methodBadgeKey(d) {
   if (d?.method === 'semantic') return 'live.badge_paraphrase';
   if (d?.method === 'quoted') return 'live.badge_quoted';
   if (d?.method === 'ambiguous') return 'live.badge_ambiguous';
-  if (d?.method === 'uncertain_book') return 'live.badge_book_uncertain';
+  if (d?.method === 'uncertain_book') {
+    return bookFromMemory(d) ? 'live.badge_from_memory' : 'live.badge_book_uncertain';
+  }
   return 'live.badge_heard';
 }
 
@@ -86,7 +100,9 @@ export function methodNoteKey(d) {
   if (d?.method === 'semantic') return 'live.not_a_spoken_reference';
   if (d?.method === 'quoted') return 'live.note_quoted';
   if (d?.method === 'ambiguous') return 'live.note_ambiguous';
-  if (d?.method === 'uncertain_book') return 'live.note_book_uncertain';
+  if (d?.method === 'uncertain_book') {
+    return bookFromMemory(d) ? 'live.note_from_memory' : 'live.note_book_uncertain';
+  }
   return null;
 }
 

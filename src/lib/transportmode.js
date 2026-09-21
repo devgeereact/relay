@@ -87,3 +87,26 @@ export function fallsThroughToPlan(outcome, planLength) {
   if (!(planLength > 0)) return false;
   return outcome?.kind === 'no_passage' || outcome?.kind === 'not_in_library';
 }
+
+/**
+ * P-1's question, asked of one `output://content` payload: is this the plan
+ * scripture the console said it was about to put up?
+ *
+ * Only scripture is judged. It is the one kind that can reach the wall with no
+ * wrapper running on this console — the AI's own fire, the preacher's phone, the
+ * spoken "next" — and therefore the one kind the listener has to decide about.
+ * A song, a picture or a countdown only ever arrives through a wrapper that
+ * already knew whether it was a plan fire, so those answer `true` here and the
+ * wrapper's own `keepPlan` is what decides.
+ *
+ * Loose on spelling because the plan holds what the operator typed and the wall
+ * holds what the corpus calls it. Nothing expected means nothing matches: the
+ * default has to be "this was not us".
+ */
+export function contentIsExpectedPlanFire(payload, expected) {
+  const kind = payload?.kind ?? SCRIPTURE;
+  if (kind !== SCRIPTURE) return true;
+  if (!expected?.reference) return false;
+  const norm = (s) => String(s ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+  return norm(payload?.reference) === norm(expected.reference);
+}

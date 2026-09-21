@@ -1276,20 +1276,29 @@ fn emit_detections<R: tauri::Runtime>(
         let anchor = detection::anchor_for_bare_verses(text);
         for n in detection::detect_bare_verses(text) {
             let from_memory = context.resolve_bare_verse(n);
-            let resolved = detection::resolve_bare_verse_for_window(
+            let resolved = detection::resolve_bare_verse_with_source(
                 text,
                 n,
                 anchor.as_ref(),
                 from_memory.as_ref(),
             );
-            if let Some(r) = resolved {
+            if let Some((r, source)) = resolved {
                 // "…and verse eighteen", resolved against the passage already on
                 // screen. The operator needs to see that this came from CONTEXT, not
                 // from a book name they never heard the preacher say.
+                //
+                // AND THE LABEL SAYS WHICH (FIELD 2026-09-20, RG-179). This was a
+                // hardcoded `Direct` for both sources, and rule 40 recorded the lie
+                // on purpose while one service was the evidence. The second service
+                // put **Psalms 55:1** on a wall for a preacher quoting Hosea 6:1:
+                // the book was misheard into a word no alias knows, memory answered
+                // with the psalm already up, and `Direct` at 0.88 auto-fired it.
+                // A book Relay assumed is `UncertainBook` — the router offers it and
+                // fires nothing. A book named in this breath is still heard.
                 candidates.push(Cand::single(
                     r,
                     0.88,
-                    DetectionMethod::Direct,
+                    DetectionMethod::for_bare_verse(source),
                     Some(format!("verse {n}")),
                 ));
             }

@@ -62,6 +62,7 @@
 // If you add a wrapper, put it in a group deliberately. "It seemed fine" is how a
 // panic key came to do nothing.
 
+import { contentIsExpectedPlanFire } from '../transportmode.js';
 import { writable, derived, get } from 'svelte/store';
 import { parseTemplateOverride } from '../templates.js';
 import { migrateTemplate } from '../templatemodel.js';
@@ -408,6 +409,25 @@ function leavePlan() {
   liveCue.update((c) => (c.onAir ? { ...c, onAir: false } : c));
 }
 
+/**
+ * THE PLAN FIRE THE CONSOLE IS ABOUT TO MAKE (P-1, 2026-09-21).
+ *
+ * An unattended fire — the AI, the phone, spoken nav — reaches this console only
+ * as `output://content`, and until this date that listener left `liveCue.onAir`
+ * alone. A detected verse painted over a song cue and the bar went on saying
+ * SLIDE, so the next `→` fired the next plan slide over the reading.
+ *
+ * The listener cannot simply always leave the plan: a plan fire raises the same
+ * event, and Tauri may deliver it AFTER the command's promise resolves — after
+ * `fireSlide` has marked the cue on air. So a plan fire says what it expects
+ * first, and the listener leaves the plan only for scripture it was not told
+ * about. One slot, last writer wins, which is right: there is one wall.
+ */
+let expectedPlanFire = null;
+function expectPlanFire(reference) {
+  expectedPlanFire = reference ? { reference } : null;
+}
+
 // Narrow slices of `capture`. A component that only needs one flag should
 // subscribe to one flag — `derived` only notifies when the value it selects
 // actually changes, so the app shell no longer re-renders because a device list
@@ -619,7 +639,14 @@ export async function initAudio() {
   if (!outputListenersUp) {
     try {
       const { listen } = await import('@tauri-apps/api/event');
-      await listen('output://content', (e) => { live.set(e.payload); screenBlack.set(false); noteOperatorAction('content', e.payload); });
+      await listen('output://content', (e) => {
+        live.set(e.payload);
+        screenBlack.set(false);
+        noteOperatorAction('content', e.payload);
+        // P-1. Scripture this console did not announce as a plan fire has replaced
+        // the plan slide on the wall. See `expectPlanFire`.
+        if (!contentIsExpectedPlanFire(e.payload, expectedPlanFire)) leavePlan();
+      });
       // `leavePlan()` HERE, not only in the wrappers — this is the half no wrapper
       // can reach. A clear that did not originate in this console still takes plan
       // content off the wall: `/api/clear` from the preacher's phone, the spoken
@@ -1336,6 +1363,9 @@ keepPlan = false,
 channels = null,
 ) {
 const call = await invoke();
+// BEFORE the call: the event this fire raises may land before the promise
+// resolves, and the listener must already know it is expected (P-1).
+if (keepPlan) expectPlanFire(reference);
 await call('manual_fire', { reference, stageNote, templateId, channels });
 if (keepPlan) return; // a plan slide fire — stay on the plan (Slide mode holds)
 // A hand-typed verse is not a plan cue. If the arrows still thought we were in

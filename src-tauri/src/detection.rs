@@ -139,6 +139,17 @@ impl DetectionMethod {
         matches!(self, DetectionMethod::Direct)
     }
 
+    /// The honest label for a bare "verse N". A book named in this window was
+    /// heard; a book taken from the passage on screen was assumed, which is what
+    /// `UncertainBook` already means ("chapter and verse heard, the book not"),
+    /// and the router caps it at Suggest at any score. FIELD 2026-09-20.
+    pub fn for_bare_verse(source: BareVerseSource) -> Self {
+        match source {
+            BareVerseSource::Anchor => DetectionMethod::Direct,
+            BareVerseSource::Memory => DetectionMethod::UncertainBook,
+        }
+    }
+
     /// Parse the wire name the console sends back when an operator accepts a
     /// suggestion. Anything unrecognised is treated as the most cautious reading —
     /// `Semantic` — because the question this answers is "may this number teach the
@@ -2393,23 +2404,46 @@ pub fn chapter_named(text: &str) -> bool {
 ///
 /// Pure, so the rule can be tested without an app: the defect above lived in the
 /// candidate assembly inside `emit_detections`, where no test could reach it.
-pub fn resolve_bare_verse_for_window(
+/// Where a bare verse's BOOK came from. The label on the wire follows it
+/// (`DetectionMethod::for_bare_verse`), because "heard" and "assumed" are
+/// different claims and rule 10 says only the first may reach a wall unattended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BareVerseSource {
+    /// A reference named in this window: "Luke 10 … verse 32". The book was said.
+    Anchor,
+    /// The passage already on the screen: "and verse eighteen". The book was not
+    /// said in this breath; Relay assumed it.
+    Memory,
+}
+
+/// `resolve_bare_verse_for_window`, and which of its three rules answered.
+///
+/// FIELD 2026-09-20 (service 24, 23.5 min): Psalms 55 on the wall, the preacher
+/// quoting Hosea 6:1 with the book misheard as a word no alias knows. Memory
+/// answered, correctly by rule 3 — and the candidate was then labelled `Direct`
+/// at 0.88 and auto-fired. Rule 40 kept that label on purpose while one service
+/// was the only evidence. This was the second. The resolution is unchanged; the
+/// SOURCE now travels with it so the label can stop lying.
+pub fn resolve_bare_verse_with_source(
     text: &str,
     n: i64,
     anchor: Option<&VerseRef>,
     memory: Option<&VerseRef>,
-) -> Option<VerseRef> {
+) -> Option<(VerseRef, BareVerseSource)> {
     if let Some(a) = anchor {
-        return Some(VerseRef {
-            book: a.book.clone(),
-            chapter: a.chapter,
-            verse: n,
-        });
+        return Some((
+            VerseRef {
+                book: a.book.clone(),
+                chapter: a.chapter,
+                verse: n,
+            },
+            BareVerseSource::Anchor,
+        ));
     }
     if chapter_named(text) {
         return None;
     }
-    memory.cloned()
+    memory.cloned().map(|m| (m, BareVerseSource::Memory))
 }
 
 pub fn detect_bare_verses(text: &str) -> Vec<i64> {
@@ -5449,7 +5483,7 @@ mod r4_audit {
             verse: 10,
         };
         assert_eq!(
-            resolve_bare_verse_for_window(heard, 10, None, Some(&memory)),
+            resolve_bare_verse_with_source(heard, 10, None, Some(&memory)),
             None,
             "FIELD F-8 reproduced: a verse was resolved against a chapter the \
              preacher did not say, while naming a different one out loud"
@@ -5471,8 +5505,8 @@ mod r4_audit {
             verse: 18,
         };
         assert_eq!(
-            resolve_bare_verse_for_window(heard, 18, None, Some(&memory)).as_ref(),
-            Some(&memory),
+            resolve_bare_verse_with_source(heard, 18, None, Some(&memory)),
+            Some((memory.clone(), BareVerseSource::Memory)),
             "mid-passage 'verse eighteen' must still resolve against the passage on screen"
         );
     }
@@ -5489,7 +5523,8 @@ mod r4_audit {
             chapter: 92,
             verse: 10,
         };
-        let got = resolve_bare_verse_for_window(heard, 10, Some(&anchor), Some(&memory))
+        let got = resolve_bare_verse_with_source(heard, 10, Some(&anchor), Some(&memory))
+            .map(|(r, _)| r)
             .expect("the window names a book, so it resolves");
         assert_eq!(got.reference_book_chapter_verse(), "1 Peter 5:10");
     }
@@ -7158,6 +7193,93 @@ mod phrase_bench {
             "{fires} offers over {windows} windows · {:?} total · {:?}/window",
             t0.elapsed(),
             t0.elapsed() / windows.max(1) as u32
+        );
+    }
+}
+
+/// FIELD 2026-09-20, service 24, 23.5 minutes in. The bare-verse path's second
+/// wrong verse on a real wall, and the one rule 40 said one service could not
+/// justify closing.
+///
+/// Psalms 55 had been on the wall since 19.4 minutes. The preacher then said
+/// *"Out of a prophet called Osir. In verse 1 he says, Come and let us return unto
+/// the Lord."* — Hosea 6:1, with the book misheard as a word no alias knows. Nothing
+/// parsed, no chapter was stated, so memory answered: **Psalms 55:1 at 0.88, labelled
+/// `Direct`, auto-fired.** The label was the lie: Relay did not hear "Psalms", it
+/// assumed it. Rule 10 says `Direct` means HEARD, and `UncertainBook` already exists
+/// for "chapter and verse heard, the book not" — which is exactly what a bare verse
+/// answered from memory is. It is capped at Suggest by the router at any score, so
+/// the operator gets the offer and the click, and the wall gets nothing unattended.
+#[cfg(test)]
+mod field_2026_09_20 {
+    use super::*;
+
+    const HEARD: &str = "Out of a prophet called Osir. In verse 1 he says, Come and let us \
+                         return unto the Lord.";
+
+    fn on_the_wall() -> VerseRef {
+        VerseRef {
+            book: "Psalms".into(),
+            chapter: 55,
+            verse: 22,
+        }
+    }
+
+    #[test]
+    fn a_verse_answered_from_memory_says_so() {
+        assert!(
+            anchor_for_bare_verses(HEARD).is_none(),
+            "precondition: 'Osir' parses to nothing"
+        );
+        assert!(!chapter_named(HEARD), "precondition: no chapter is stated");
+        assert!(
+            detect_bare_verses(HEARD).contains(&1),
+            "precondition: 'verse 1' is seen"
+        );
+        // `emit_detections` hands this function the passage on the wall with the
+        // bare number already substituted (`ContextMemory::resolve_bare_verse`), so
+        // "memory" here is Psalms 55 *verse 1*, not the verse that is up.
+        let memory = VerseRef {
+            verse: 1,
+            ..on_the_wall()
+        };
+        let got = resolve_bare_verse_with_source(HEARD, 1, None, Some(&memory));
+        assert_eq!(
+            got,
+            Some((
+                VerseRef {
+                    book: "Psalms".into(),
+                    chapter: 55,
+                    verse: 1,
+                },
+                BareVerseSource::Memory
+            )),
+            "memory still answers, and it must say that it did"
+        );
+    }
+
+    #[test]
+    fn a_verse_hung_on_a_book_named_in_this_breath_is_heard() {
+        let heard = "going through in Luke 10. If you read from verse 32";
+        let anchor = anchor_for_bare_verses(heard).expect("Luke 10 parses");
+        let got = resolve_bare_verse_with_source(heard, 32, Some(&anchor), Some(&on_the_wall()));
+        assert_eq!(got.map(|(_, s)| s), Some(BareVerseSource::Anchor));
+    }
+
+    /// The label follows the source. Memory is not hearing.
+    #[test]
+    fn memory_is_not_a_heard_book_and_an_anchor_is() {
+        assert_eq!(
+            DetectionMethod::for_bare_verse(BareVerseSource::Memory),
+            DetectionMethod::UncertainBook
+        );
+        assert_eq!(
+            DetectionMethod::for_bare_verse(BareVerseSource::Anchor),
+            DetectionMethod::Direct
+        );
+        assert!(
+            !DetectionMethod::for_bare_verse(BareVerseSource::Memory).may_auto_fire(),
+            "a verse whose book nobody said may never reach a wall unattended"
         );
     }
 }

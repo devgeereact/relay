@@ -248,3 +248,29 @@ describe('quoted scripture is a different KIND of claim', () => {
     expect(evidenceIsASpan(null)).toBe(false);
   });
 });
+
+// 2026-09-20 · service 24. A bare "verse 1" answered from the passage in memory
+// reached the wall as Psalms 55:1 while the preacher quoted Hosea 6:1. It now
+// arrives as `uncertain_book` with `matched_text` "verse 1", and the operator must
+// be able to tell THAT case from a misheard book word: nobody said any book here,
+// Relay assumed the one on the screen.
+describe('a verse whose book came from memory', () => {
+  const fromMemory = { method: 'uncertain_book', matched_text: 'verse 1', reference: 'Psalms 55:1' };
+  const misheard = { method: 'uncertain_book', matched_text: 'room two twelve', reference: 'Romans 2:12' };
+
+  it('says so, in all three registers', () => {
+    expect(methodKey(fromMemory)).toBe('live.book_from_memory');
+    expect(methodBadgeKey(fromMemory)).toBe('live.badge_from_memory');
+    expect(methodNoteKey(fromMemory)).toBe('live.note_from_memory');
+  });
+
+  it('and a misheard book word keeps its own words', () => {
+    expect(methodKey(misheard)).toBe('live.book_name_uncertain');
+    expect(methodBadgeKey(misheard)).toBe('live.badge_book_uncertain');
+  });
+
+  it('is never shown a percentage and never reads as heard', () => {
+    expect(showsConfidence(fromMemory)).toBe(false);
+    expect(heard(fromMemory)).toBe(false);
+  });
+});

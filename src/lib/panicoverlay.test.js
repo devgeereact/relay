@@ -159,7 +159,12 @@ describe('rule 44 — an overlay that disarms Escape must consume it', () => {
     for (const [path, store] of CONSUMED_BY_THE_ONE_LISTENER) {
       expect(MOUNTERS.map((m) => m.path)).toContain(path);
       // Named, and resolved BEFORE the blanket stand-down, or it is not consumed.
-      const stand = esc.indexOf('document.querySelector(');
+      // The stand-down is `overlayOpen()` since 2026-09-21, when the same probe
+      // was hoisted so the CONTEXT keys stand down too (Live D1); it used to be an
+      // inline `document.querySelector(`, which is still accepted here so a revert
+      // of that hoist cannot make this test pass for the wrong reason.
+      const stand = Math.max(esc.indexOf('overlayOpen()'), esc.indexOf('document.querySelector('));
+      expect(stand, 'the Escape branch no longer stands down for an overlay at all').toBeGreaterThan(-1);
       expect(esc.indexOf(store)).toBeGreaterThan(-1);
       expect(esc.indexOf(store)).toBeLessThan(stand);
     }
@@ -179,8 +184,12 @@ describe('rule 44 — an overlay that disarms Escape must consume it', () => {
     // the same commit — otherwise the new door is disarmed and unenumerated, which
     // is exactly how the four above happened.
     const guard = readFileSync(resolve(SRC, 'lib/shortcuts.js'), 'utf8');
-    const line = guard.slice(guard.indexOf('document.querySelector('));
-    const roles = [...line.slice(0, line.indexOf(')')).matchAll(/role="([a-z]+)"/g)].map(
+    // One list, `OVERLAY_ROLES`, read by `overlayOpen()` from BOTH the Escape
+    // branch and the context switch — so there is one place to add a fifth role.
+    const at = guard.indexOf('OVERLAY_ROLES =');
+    expect(at, 'shortcuts.js no longer keeps its overlay roles in one named list').toBeGreaterThan(-1);
+    const line = guard.slice(at);
+    const roles = [...line.slice(0, line.indexOf(';')).matchAll(/role="([a-z]+)"/g)].map(
       (m) => m[1],
     );
     expect(roles.sort()).toEqual([...DISARMING_ROLES].sort());

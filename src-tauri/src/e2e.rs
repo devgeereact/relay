@@ -5844,3 +5844,61 @@ fn a_refused_stage_timer_is_not_told_to_clear_the_screens() {
         "an unknown id must say so plainly: {err}"
     );
 }
+
+/// FIELD 2026-09-20 · service 24 · 23.5 min. Psalms 55 on the wall by hand; the
+/// preacher quotes Hosea 6:1 with the book misheard. **Psalms 55:1 auto-fired at
+/// 0.88.** Through the real path: the bare verse is OFFERED as `uncertain_book`,
+/// the wall is left alone, and the operator decides. RG-32's "wants a second
+/// Sunday" got its second Sunday.
+#[test]
+fn a_verse_answered_from_memory_is_offered_never_fired() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+    let offered: std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = offered.clone();
+    h.listen("detection://match", move |e| {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(e.payload()) {
+            sink.lock().unwrap().push(v);
+        }
+    });
+
+    manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "Psalms 55:22".into(),
+        None,
+        None,
+        None,
+    )
+    .expect("the operator's own fire");
+    settle();
+    assert_eq!(wall.references(), vec!["Psalms 55:22".to_string()]);
+
+    emit_detections(
+        &h,
+        "Out of a prophet called Osir. In verse 1 he says, Come and let us return unto the Lord.",
+        0,
+        true,
+        None,
+    );
+    settle();
+
+    assert_eq!(
+        wall.references(),
+        vec!["Psalms 55:22".to_string()],
+        "a verse nobody said the book of reached the congregation unattended: {:?}",
+        wall.last().map(|v| v["reference"].clone())
+    );
+    let got = offered.lock().unwrap();
+    let psalm = got
+        .iter()
+        .find(|v| v["reference"] == "Psalms 55:1")
+        .unwrap_or_else(|| panic!("Psalms 55:1 was not even offered: {got:?}"));
+    assert_eq!(
+        psalm["method"], "uncertain_book",
+        "the offer must say the book came from memory, not from the preacher"
+    );
+    assert_eq!(psalm["status"], "suggested");
+}

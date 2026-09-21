@@ -3051,7 +3051,7 @@ Widening the cap is not the fix; the cap is what stops a jump firing on prose.
 
 ### The decision: decline, rather than correct
 
-`detection::resolve_bare_verse_for_window` is now the one place a bare verse is resolved, and
+`detection::resolve_bare_verse_with_source` is now the one place a bare verse is resolved, and
 it is a pure function so the rule is testable at all. Three sources, in strict order:
 
 1. **A reference parsed from this window.** The words said it in this breath. §56.
@@ -5991,3 +5991,38 @@ operator not told that reads it as a bug.
 playlists, `Media`, `Stage`, `Theme`, `Timers`) — `proimport.rs` says plainly that it does
 not parse protobuf, so playlists do not become service plans. And nobody has yet run it
 against the real 726-file library.
+
+## 106. A verse whose book Relay assumed is offered, never fired (2026-09-21)
+
+**The case.** Rule 40 in CLAUDE.md resolves a bare *"verse N"* three ways: a book named in this
+window wins; a chapter stated with nothing parsed declines; otherwise the passage in memory
+answers. All three were right on 2026-09-20 and the third put **Psalms 55:1** on a congregation's
+wall for a preacher quoting **Hosea 6:1** — *"Out of a prophet called Osir. In verse 1 he says,
+Come and let us return unto the Lord."* The book was misheard into a word no alias knows, so
+nothing parsed and memory answered with the psalm that had been up for four minutes. The
+resolution was not the defect. The candidate was then labelled **`Direct` at a hardcoded 0.88**,
+and rule 10 says `Direct` means *heard*. Nobody said Psalms. RG-179.
+
+**Why it was left that way, and why that ends now.** Rule 40 recorded the label as a lie on
+purpose after the first field service (RG-32, "open on purpose"): making every in-passage *"and
+verse eighteen"* cost a click was too much to spend on one wrong verse in one service. The row
+said it *"wants a second and third Sunday"*. The second Sunday reproduced it. That is the
+evidence the deferral asked for, and the price it feared turns out to be the honest one: a
+verse whose book came from the screen and not from the preacher IS a claim the operator should
+look at, and a click is what looking costs.
+
+**The decision.** `detection::resolve_bare_verse_with_source` says which rule answered.
+`DetectionMethod::for_bare_verse` labels an **anchor** `Direct` (the book was said in this
+breath) and a **memory** answer `UncertainBook` — the variant that already means *"chapter and
+verse heard, the book not"*, and which `Router::decide` caps at Suggest at any score. The
+resolution rules are untouched; only the label moved, and the label is what the router reads.
+On the console the card reads **From memory** in cyan, with no percentage
+(`detect.js::bookFromMemory`), so the operator can tell it from a misheard book word.
+
+**What this deliberately does not do.** It does not drop the candidate: the operator may well
+want Psalms 55:1, and a silent discard is a different lie. It does not touch the anchor case,
+so *"Luke 10 … verse 32"* still fires as before. It does not raise a threshold; both readings
+that morning scored 0.88 against correct fires at 0.55, which is rule 10's whole point.
+
+**Pinned by** `detection::field_2026_09_20::*`, `e2e::a_verse_answered_from_memory_is_offered_never_fired`
+(watched to reproduce the wall with the old label) and `detect.test.js`.

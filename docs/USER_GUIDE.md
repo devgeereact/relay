@@ -140,6 +140,8 @@ right in an empty hall is wrong once it fills with people.
 - **"Heard the reference"** (gold) — the preacher *said* "John three sixteen". Relay shows you the words it heard and how confident it is.
 - **"Paraphrase — a guess"** (blue) — nobody said a reference. Relay matched the *meaning* against a verse, and it shows you which words made it think so. **There is no confidence number**, because the number would not mean anything. Read it, and decide.
 
+- **"From memory"** (blue) — the preacher said *"verse one"* and nothing else, so Relay took the book and chapter from the passage already on the screen. It is offered, never put up on its own, because the book was assumed, not heard. If the preacher has moved to another book, dismiss it.
+
 A paraphrase **never** goes on screen by itself. Ever. Only a reference Relay actually *heard* can do that, and only if you have left auto-fire on.
 
 **A half-reference waits for you.** If the preacher says *"turn to Psalm twenty-three"* — a book and a number, with no "chapter" or "verse" — Relay **offers** it rather than putting it up on its own. That is deliberate. Preachers say book names and numbers constantly without meaning a reference: *"Matthew, one of the twelve"*, *"number one… number two…"* — and "Numbers" is a book of the Bible. Say **"Psalm chapter twenty-three"** or **"Psalm twenty-three verse one"** and it goes straight up, because now you have said you mean it.
