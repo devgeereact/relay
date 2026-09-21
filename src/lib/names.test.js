@@ -153,6 +153,12 @@ const REGISTER = [
       // (DECISIONS §89, and the reversal recorded in `r6-contracts.test.js`).
       'src/lib/stagepageidentity.test.js',
       'src/lib/stageremote.test.js',
+      // RG-226 — the rule that says which of a stage screen's two layers RELAY is
+      // placing itself, and the desk sentence that reports it. Both name the
+      // binding, because the binding is what an operator goes looking for in the
+      // editor when the fallback is not where they wanted it.
+      'src/lib/stagelayers.js',
+      'src/lib/stagelayerhint.test.js',
       // Requirement 5 — the renderer now paints the alert itself, full-bleed, and
       // NAMES it: the label is the reduced-motion half of making a still red panel
       // unmistakable, so this is a real surface a preacher reads, not prose.

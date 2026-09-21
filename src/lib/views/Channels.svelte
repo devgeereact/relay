@@ -86,6 +86,7 @@
   import { stageTimers, timerRemainingMs, timerIsHeld } from '../timers.js';
   import { formatCountdown } from '../layers.js';
   import { STAGE_ZONES, DEFAULT_STAGE_ZONES, readStageZones } from '../stagelayout.js';
+  import { stagePlacement } from '../stagelayers.js';
   import {
     capture,
     templates,
@@ -1978,6 +1979,34 @@
               screen a <b>Stage Message</b> is painted on, and several screens may be
               stages — a confidence monitor and a preacher's tablet, for instance.
             </p>
+            <!-- WHAT RELAY IS PLACING ITSELF, AND HOW TO TAKE IT BACK (RG-226).
+                 Both fallbacks are right — an emergency has to reach a template
+                 designed before Stage Messages existed, and a clock that painted
+                 nowhere is a preacher with no clock — but doing the right thing
+                 SILENTLY is why an operator concluded their template was being
+                 ignored. It names the binding, because the binding is what they
+                 would go looking for in the editor. -->
+            <!-- THE RESOLVED look, not the screen's own row: a screen that
+                 FOLLOWS the content look has no template of its own and would
+                 otherwise be told Relay is placing nothing. `previewTemplate` is
+                 what this screen actually paints through. -->
+            {@const place = stagePlacement(previewTemplate)}
+            {#if place.any}
+              <p class="ch-stagehint">
+                This screen's template has no
+                {#if place.message && place.programme}
+                  <b>Stage Message</b> layer and no <b>Programme</b> layer
+                {:else if place.message}
+                  <b>Stage Message</b> layer
+                {:else}
+                  <b>Programme</b> layer
+                {/if}
+                — Relay is placing
+                {place.message && place.programme ? 'them' : 'it'} along the foot.
+                Add a text layer in Templates and set its <b>Content</b> to place
+                {place.message && place.programme ? 'them' : 'it'} yourself.
+              </p>
+            {/if}
             <!-- ONLY FOR A STAGE, because only `stage.html` has zones. Rendered
                  inside the role branch rather than beside it, so the control
                  cannot be offered for a screen it would do nothing to. -->
@@ -2557,6 +2586,14 @@
      is not rose, because nothing has failed here that the badge has not already
      named. It sits over the picture rather than beside it, so it cannot be read
      as belonging to the card below. */
+  /* ADVICE ABOUT A TEMPLATE, NEVER A CLAIM ABOUT A SCREEN (rule 18). Ochre is
+     the caution ink (DECISIONS §111); amber would say this screen is on air,
+     cyan that the AI guessed, amethyst that it is a rehearsal — none of the
+     three is true of a sentence about a layer. */
+  .ch-stagehint{ margin:6px 0 0; padding:6px 8px; border-radius:var(--v-r-sm);
+    font-size:var(--v-fs-lbl); line-height:1.45; color:var(--v-caution);
+    background:color-mix(in srgb, var(--v-caution) 10%, transparent);
+    border:1px solid color-mix(in srgb, var(--v-caution) 35%, transparent); }
   .ch-stale{ position:absolute; left:6px; top:6px; z-index:2;
     padding:2px 6px; border-radius:var(--v-r-sm);
     font-size:var(--v-fs-lbl); line-height:var(--v-lh-lbl); letter-spacing:.04em;

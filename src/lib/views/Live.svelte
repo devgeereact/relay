@@ -211,6 +211,8 @@
     setStageNext,
     startTimer,
     listTimers,
+    listMedia,
+    localIp,
     stopTimer,
     adjustTimer,
     resetTimer,
@@ -226,6 +228,7 @@
   // long is left on one. `timerRemainingMs` ENDS in `countdownRemainingMs`, which
   // stays the only countdown arithmetic on this side of the bridge.
   import { stageTimers, timerRemainingMs, timerIsHeld, timerAsRow } from '../timers.js';
+  import { mediaUrl } from '../bundledbackgrounds.js';
   import { planChannelsOf } from '../plan.js';
   // THE ONE DECISION LAYER FOR THE SCREEN COUNTDOWN. It moved out of Quick tools
   // on 2026-09-20 and its decisions did not move with it — they were already
@@ -954,6 +957,24 @@
     // the restore depends on the timer list, and a round trip in front of the
     // plan restore would delay the one thing this mount exists to get right.
     if (!dead) await loadProgrammeTimers();
+
+    // AND WHAT A MEDIA CUE LOOKS LIKE (RG-225). Last, unawaited by anything, for
+    // the same reason the timers are: no part of the restore depends on it, and
+    // a deck that paints its pictures a moment late is a deck, where a restore
+    // that waits for a media list is a delay on the one thing this mount exists
+    // to get right. A failure leaves `deckMedia` empty and the cells fall back to
+    // the slide they drew before — never a broken picture.
+    if (!dead) {
+      try {
+        const [rows, ip] = await Promise.all([listMedia(), localIp()]);
+        if (!dead) {
+          deckMedia = Array.isArray(rows) ? rows : [];
+          if (ip) deckHost = ip;
+        }
+      } catch {
+        /* the deck keeps its words; a thumbnail is not worth a banner. */
+      }
+    }
   });
 
   // ── LOAD WHOLE PLAN, FROM QUICK TOOLS ──────────────────────────────────────
@@ -1899,11 +1920,40 @@
    * be showing the operator something no congregation will ever see. That is the
    * whole value of a rendered thumbnail and the one way to throw it away.
    */
-  $: cellContent = (c) => ({
-    reference: c.ctype === 'song' ? null : c.label,
-    text: c.text || '',
-    translation: null,
-  });
+  // ── WHAT A MEDIA CUE LOOKS LIKE, ON THE SURFACE IT IS RUN FROM (RG-225) ────
+  //
+  // `list_media` once at mount and the host's own address, both already loaded
+  // by the Planner for the same job. A media cell carries its asset id
+  // (`slidegrid.js::mediaOf`) and this is the only place that turns one into a
+  // URL — through the SHARED builder, which is also what the wall, the Library
+  // and the Planner use, `bundled:` case included (DECISIONS §90).
+  //
+  // A DELETED ASSET PAINTS NOTHING. The three-way answer the Planner's inspector
+  // already makes: no id, a row that has gone, and a resolved one are different,
+  // and only the third has a picture. Guessing a URL from the id would paint a
+  // broken image, which is a worse claim than no claim.
+  let deckMedia = [];
+  let deckHost = 'localhost';
+  const cellMedia = (c, rows, host) => {
+    if (c?.mediaId == null) return null;
+    const row = rows.find((m) => m.id === c.mediaId);
+    if (!row || row.kind === 'document') return null;
+    return { url: mediaUrl(host, row), kind: c.mediaKind === 'video' ? 'video' : 'image' };
+  };
+
+  $: cellContent = (c) => {
+    const m = cellMedia(c, deckMedia, deckHost);
+    return {
+      reference: c.ctype === 'song' ? null : c.label,
+      text: c.text || '',
+      translation: null,
+      // The two fields `TemplateRender` paints a picture from. Absent rather than
+      // null for a cue with no asset, so nothing downstream has to tell an empty
+      // string from a missing one.
+      media_url: m?.url,
+      media_kind: m?.kind,
+    };
+  };
 
   /** Is this cell what is on the congregation's screen right now?
    *
