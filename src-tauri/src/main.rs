@@ -7131,6 +7131,10 @@ struct ChannelLiveness {
     /// ordinary case. Read by `describeScreen`, which will not call a screen On Air
     /// over a frame it has said is blank.
     media_error: Option<String>,
+    /// How many times this screen fell behind the hub and was re-synced (RG-195,
+    /// rule 33). Zero is the ordinary answer; a rising number is a screen or a
+    /// network that cannot keep up, and the desk should say so.
+    resyncs: u32,
     /// The screen answered for itself within `channels::BEAT_STALE_MS`.
     ///
     /// This is the only field here that can tell a working screen from a frozen
@@ -7407,6 +7411,7 @@ fn channel_status(
                     supported: true,
                     media: health.media_of(c.id),
                     media_error: health.media_error_of(c.id),
+                    resyncs: health.resyncs_of(c.id),
                     painting,
                     last_beat_ms: age,
                     paint_state: state,
@@ -7456,6 +7461,7 @@ fn channel_status(
                     supported: true,
                     media: health.media_of(c.id),
                     media_error: health.media_error_of(c.id),
+                    resyncs: health.resyncs_of(c.id),
                     painting,
                     last_beat_ms: age,
                     paint_state: state,
@@ -7473,6 +7479,7 @@ fn channel_status(
                 // A target Relay cannot drive reports nothing about a clip either.
                 media: None,
                 media_error: None,
+                resyncs: 0,
                 painting: false,
                 last_beat_ms: None,
                 paint_state: None,
@@ -7488,6 +7495,7 @@ fn channel_status(
                 // A target Relay cannot drive reports nothing about a clip either.
                 media: None,
                 media_error: None,
+                resyncs: 0,
                 painting: false,
                 last_beat_ms: None,
                 paint_state: None,

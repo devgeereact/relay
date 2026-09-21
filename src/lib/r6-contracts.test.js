@@ -91,7 +91,10 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       // so correcting it means threading an offset into the shared renderer —
       // its own change, with its own tests, on the surface that paints the
       // wall. Filed as S14; this row is what stops it being forgotten.
-      beat_ack: false,
+      // CLOSED 2026-09-21 (RG-194): the offset is threaded into `TemplateRender` as
+      // `hostOffsetMs`, the page keeps a median of the last five acks, and the same
+      // ack is what tells it the socket is alive (RG-193).
+      beat_ack: true,
       // NO ZONES ON A CONGREGATION SCREEN. `stage_zones` says which layout a
       // STAGE screen wears, and a layout is a set of `Stage.svelte` zones — a
       // page that draws none of them has nothing to apply. This is `false`

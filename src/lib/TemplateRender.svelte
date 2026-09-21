@@ -393,6 +393,15 @@
    * the beat and the desk can stop calling the screen On Air.
    */
   export let onMediaError = null;
+  /**
+   * RELAY'S CLOCK MINUS THIS SCREEN'S, in ms (RG-194, 2026-09-21). `countdown_to`
+   * is an absolute epoch produced on the Relay machine; a browser screen with a
+   * clock a minute out showed a minute of error to the room while the projector
+   * beside it was right. The page measures the offset from `beat_ack` and hands
+   * it here; the console and the native window pass nothing and get zero.
+   */
+  export let hostOffsetMs = 0;
+  $: if (cdTimer && Number.isFinite(hostOffsetMs)) now = Date.now() + hostOffsetMs;
   let mediaFailedUrl = null;
   const mediaFailed = (kind, url) => {
     mediaFailedUrl = url;
@@ -1526,8 +1535,8 @@
   else stopClock();
   function startClock() {
     if (cdTimer) return;
-    now = typeof Date !== 'undefined' ? Date.now() : 0;
-    cdTimer = setInterval(() => (now = Date.now()), 250);
+    now = typeof Date !== 'undefined' ? Date.now() + (hostOffsetMs || 0) : 0;
+    cdTimer = setInterval(() => (now = Date.now() + (hostOffsetMs || 0)), 250);
   }
   function stopClock() {
     if (cdTimer) {

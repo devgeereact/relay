@@ -664,6 +664,37 @@ impl MediaBeat {
     }
 }
 
+/// THE FRAMES A LAGGING SCREEN IS HANDED AGAIN (RG-195, 2026-09-21). The three
+/// that decide what a screen shows — the global retained frame, this screen's
+/// own targeted frame if it has one, and which screens are down — in the order
+/// hello sends them, so a screen that fell behind ends up where a screen that
+/// just joined would. Configuration frames (roles, looks, shows, templates) are
+/// not re-sent: they rarely change mid-service and the next change republishes.
+pub fn resync_frames(
+    last_screen: &Mutex<Option<String>>,
+    last_screen_by_channel: &Mutex<HashMap<i64, String>>,
+    screens_down: &Mutex<String>,
+    channel: Option<i64>,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Some(f) = last_screen.lock().ok().and_then(|g| g.clone()) {
+        out.push(f);
+    }
+    if let Some(ch) = channel {
+        if let Some(f) = last_screen_by_channel
+            .lock()
+            .ok()
+            .and_then(|m| m.get(&ch).cloned())
+        {
+            out.push(f);
+        }
+    }
+    if let Ok(g) = screens_down.lock() {
+        out.push(g.clone());
+    }
+    out
+}
+
 /// A screen's account of a picture or clip that did not load, off a JSON beat.
 /// Bounded, because a page on the LAN must not be able to push a novel into the
 /// desk's status row; absent when the beat says nothing, which is the honest
@@ -795,6 +826,11 @@ pub struct OutputHealth {
     /// and the desk printed On Air in amber over a blank frame. The page now says
     /// so on the beat it already sends, and a beat that says nothing clears it.
     media_errors: Arc<Mutex<HashMap<i64, String>>>,
+    /// HOW OFTEN A SCREEN FELL BEHIND AND WAS RE-SYNCED (RG-195, rule 33). A kiosk
+    /// client that lagged past the broadcast buffer used to skip frames in
+    /// silence — a `clear` among them was a panic control that never landed on
+    /// that screen. Counted, and shown, like every other shed on the path.
+    resyncs: Arc<Mutex<HashMap<i64, u32>>>,
     /// What was last REPORTED about each channel, so an edge can be detected and
     /// written to the service timeline exactly once.
     ///
@@ -864,6 +900,26 @@ impl OutputHealth {
     /// same lie as a stale paint state: an operator would be shown a clip counting
     /// down on a screen that stopped answering a minute ago, and the countdown is
     /// the one thing they are timing the next cue against.
+    /// A screen lagged and was handed the retained frames again. Counted per
+    /// channel; never reset for the life of the process, because a number that
+    /// goes back to zero hides the service it happened in.
+    pub fn note_resync(&self, channel_id: i64) {
+        if channel_id <= 0 {
+            return;
+        }
+        if let Ok(mut m) = self.resyncs.lock() {
+            *m.entry(channel_id).or_insert(0) += 1;
+        }
+    }
+
+    pub fn resyncs_of(&self, channel_id: i64) -> u32 {
+        self.resyncs
+            .lock()
+            .ok()
+            .and_then(|m| m.get(&channel_id).copied())
+            .unwrap_or(0)
+    }
+
     /// Record, or clear, the media failure a screen reported on its latest beat.
     pub fn note_media_error(&self, channel_id: i64, error: Option<String>) {
         if channel_id <= 0 {
@@ -3120,6 +3176,9 @@ pub async fn run_kiosk_server(
                 Ok(Err(_)) | Err(_) => return,
             };
             let (mut write, mut read) = ws.split();
+            // WHICH SCREEN THIS SOCKET IS, from its hello, so a lagging client can be
+            // handed its own retained frame again (RG-195).
+            let mut hello_channel: Option<i64> = None;
             // Dropped when this task ends by ANY route — break, error, or panic —
             // which is what keeps the online count from drifting upward over a
             // service as kiosk screens reconnect.
@@ -3145,7 +3204,32 @@ pub async fn run_kiosk_server(
                                 break;
                             }
                         }
-                        Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(broadcast::error::RecvError::Lagged(_)) => {
+                            // RE-SYNC, NOT SKIP (RG-195). The frames this client
+                            // missed may include the one that decides what it
+                            // shows — a `clear` is a panic control, and a panic
+                            // control that did not land on one screen with nothing
+                            // saying so is rule 15's exact failure. Hand it what a
+                            // screen that just joined would get, and count it.
+                            if let Some(ch) = hello_channel {
+                                health.note_resync(ch);
+                            }
+                            for f in resync_frames(
+                                &last_screen,
+                                &last_screen_by_channel,
+                                &screens_down,
+                                hello_channel,
+                            ) {
+                                if write
+                                    .send(tokio_tungstenite::tungstenite::Message::Text(f))
+                                    .await
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                            continue;
+                        }
                         Err(_) => break,
                     },
                     incoming = read.next() => match incoming {
@@ -3331,6 +3415,7 @@ pub async fn run_kiosk_server(
                                     if let Some(ch) =
                                         v.get("channel").and_then(|c| c.as_i64()).filter(|c| *c > 0)
                                     {
+                                        hello_channel = Some(ch);
                                         let mine = channel_tpls
                                             .lock()
                                             .ok()
@@ -8876,6 +8961,22 @@ mod rehearsal_tests {
         );
         let long: serde_json::Value = serde_json::from_str(&long).unwrap();
         assert!(media_error_from_json(&long).unwrap().len() <= 300);
+    }
+
+    /// 2026-09-21 · O-3 (RG-195). A kiosk client that fell more than the
+    /// broadcast buffer behind hit `RecvError::Lagged` and silently skipped
+    /// frames — a `clear` among them is a panic control that did not land on one
+    /// screen. Rule 33: every queue on the path counts what it sheds. The count
+    /// rides the status row so the desk can say "this screen was re-synced".
+    #[test]
+    fn a_lagging_screen_is_counted_and_the_count_survives_a_beat() {
+        let h = OutputHealth::default();
+        assert_eq!(h.resyncs_of(7), 0);
+        h.note_resync(7);
+        h.note_resync(7);
+        h.beat(7, PaintState::Content, "kiosk", BeatGap::default(), None);
+        assert_eq!(h.resyncs_of(7), 2);
+        assert_eq!(h.resyncs_of(8), 0, "another screen is not blamed");
     }
 
     #[test]

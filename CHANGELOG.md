@@ -108,6 +108,26 @@ until it is on the screens; amber is only ever the on-air light. A suggestion
 whose book was uncertain now has a dashed edge so it does not look like a
 paraphrase.
 
+### A frozen browser screen recovers by itself
+
+A screen connected over the network (OBS, a lobby TV, a kiosk) whose connection
+had silently died used to keep its last picture for the rest of the service.
+It now notices within six seconds and reconnects, and Relay hands it what is on
+the screens. It also reconnects the moment the device wakes or its network
+comes back.
+
+### The countdown on every screen keeps Relay's time
+
+A browser screen whose own clock was a minute out showed a countdown a minute
+wrong while the projector beside it was right. Every screen now takes the time
+from Relay, as the preacher's screen already did.
+
+### A screen that falls behind is caught up, and counted
+
+A network screen that could not keep up with Relay used to miss updates in
+silence, including a clear. It is now handed what is on the screens again, and
+Outputs counts how often that happened.
+
 ### Connecting the preacher's phone
 
 When Relay cannot find a local network address, Sharing now explains the problem

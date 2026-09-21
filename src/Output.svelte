@@ -16,7 +16,7 @@
   import { acceptsStageMessage, roleOf } from './lib/channelroles.js';
   import { resolveTokens } from './lib/styletokens.js';
   import { markOutput } from './lib/latency.js';
-  import { startBeat, paintState } from './lib/outputHealth.js';
+  import { startBeat, paintState, BEAT_INTERVAL_MS } from './lib/outputHealth.js';
 
   // Two modes, ONE renderer (TemplateRender): desktop (Tauri — DB template,
   // live edits over events) and kiosk/OBS (plain browser — built-in template by
@@ -488,6 +488,59 @@
   let unlisten = [];
   let ws = null;
   let kioskClosed = false;
+  let kioskHost = 'localhost';
+  // ── A SOCKET IS NOT A SCREEN (RG-193, 2026-09-21) ──────────────────────────
+  // `output.html` reconnected only on `onclose`/`onerror`, and a half-open socket
+  // — wifi roaming, a sleeping kiosk, a NAT timeout — fires neither. The last
+  // frame stood for the rest of a service while the desk read "Not responding".
+  // The stage page has kept this rule since DECISIONS §100: three unanswered
+  // beats and the socket is replaced. Same constant, same reason, on the door
+  // that faces the room.
+  const HOST_SAMPLES = 5;
+  const STALE_AFTER_MS = BEAT_INTERVAL_MS * 3;
+  let hostSamples = [];
+  /** Relay's clock minus this screen's, a median of the last five acks (RG-194). */
+  let hostOffsetMs = 0;
+  let lastAckAt = null;
+  let beatingSince = null;
+  let staleTimer = null;
+  $: expectsAck = channelId > 0;
+  function noteHostClock(at) {
+    if (typeof at !== 'number' || !Number.isFinite(at)) return;
+    const seen = Date.now();
+    lastAckAt = seen;
+    hostSamples = [...hostSamples, at - seen].slice(-HOST_SAMPLES);
+    const sorted = [...hostSamples].sort((a, b) => a - b);
+    hostOffsetMs = sorted[Math.floor(sorted.length / 2)];
+  }
+  /** Drop whatever socket there is and open a fresh one, now. */
+  function reconnectNow() {
+    if (kioskClosed) return;
+    if (ws) {
+      const old = ws;
+      ws = null;
+      old.onclose = null; // the retry path must not race this one
+      try { old.close(); } catch { /* already gone */ }
+    }
+    lastAckAt = null;
+    beatingSince = Date.now();
+    connectKiosk(kioskHost);
+  }
+  function staleTick() {
+    if (!expectsAck || !ws || ws.readyState !== 1) return;
+    const since = lastAckAt ?? beatingSince;
+    if (since === null) return;
+    if (Date.now() - since > STALE_AFTER_MS) reconnectNow();
+  }
+  const onWake = () => {
+    if (typeof document !== 'undefined' && document.hidden) return;
+    const since = lastAckAt ?? beatingSince;
+    if (expectsAck && ws && ws.readyState === 1 && since !== null && Date.now() - since > STALE_AFTER_MS) {
+      reconnectNow();
+    } else if (!ws || ws.readyState === 3) {
+      reconnectNow();
+    }
+  };
   // Video sound is enabled on the NATIVE output window only (the one running on
   // the operator's machine, wired to the house speakers). The kiosk/OBS page is
   // a browser source: OBS captures and mixes its audio itself, so unmuting there
@@ -905,13 +958,20 @@
       // Applies to the channel template AND to a matching on-screen override, so
       // editing the template that a live verse is using re-renders it at once.
       applyTemplateUpdate(m.id, m.template);
+    } else if (m.kind === 'beat_ack') {
+      // The hub answers every beat with its clock (DECISIONS §100). This is how
+      // the page knows the socket is alive AND what o'clock Relay thinks it is.
+      noteHostClock(m.at);
     }
   }
 
   function connectKiosk(host) {
     if (kioskClosed) return;
+    kioskHost = host;
+    if (ws && ws.readyState <= 1) return; // one socket at a time
     try {
       ws = new WebSocket(`ws://${host}:8031`);
+      if (beatingSince === null) beatingSince = Date.now();
       ws.onopen = () => {
         // Ask the hub for this channel's real template.
         try {
@@ -934,6 +994,7 @@
         }
       };
       ws.onclose = () => {
+        ws = null;
         if (!kioskClosed) setTimeout(() => connectKiosk(host), 1500);
       };
       ws.onerror = () => {
@@ -1104,6 +1165,9 @@
     //
     // `ws` is read through a getter: the kiosk socket is replaced on every
     // reconnect, so a captured reference would keep beating into a dead one.
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onWake);
+    if (typeof window !== 'undefined') window.addEventListener('online', onWake);
+    staleTimer = setInterval(staleTick, 1000);
     stopBeat = startBeat({
       channelId,
       // WHAT THIS SCREEN IS ACTUALLY SHOWING, not what it was last told. A screen
@@ -1124,6 +1188,9 @@
     // beat from it would say "still painting" about a screen that is closing.
     stopBeat();
     unlisten.forEach((u) => u());
+    if (staleTimer) clearInterval(staleTimer);
+    if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onWake);
+    if (typeof window !== 'undefined') window.removeEventListener('online', onWake);
     kioskClosed = true;
     if (ws) ws.close();
   });
@@ -1138,6 +1205,7 @@
   programme={shownProgramme}
   onMedia={noteMedia}
   onMediaError={noteMediaError}
+  {hostOffsetMs}
   {mediaTransport}
   transitionOverride={appliedTransition} />
 <!-- BLACKOUT NEVER BLACKS OUT A LOWER THIRD. On a keyed channel "black" would
