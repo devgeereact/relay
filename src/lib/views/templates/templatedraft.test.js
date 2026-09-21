@@ -216,3 +216,16 @@ describe('duplicate and import are unchanged', () => {
     expect(saves()[0].name).toMatch(/copy/);
   });
 });
+
+// 2026-09-21 · T-1 (RG-200). The autosave's catch rendered `'Live update failed: ' + e`
+// and the bridge sends `{kind, message}`, so the workspace's most frequent write
+// failed as "[object Object]". Every other catch in the file humanises.
+describe('the autosave failure is humanised', () => {
+  it('goes through errors.js like every other catch here', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { resolve } = await import('node:path');
+    const src = readFileSync(resolve(process.cwd(), 'src/lib/views/templates/TemplateEditor.svelte'), 'utf8');
+    expect(src).not.toMatch(/'Live update failed: ' \+ e\b/);
+    expect(src).toMatch(/Live update failed: ' \+ humanError\(e\)/);
+  });
+});

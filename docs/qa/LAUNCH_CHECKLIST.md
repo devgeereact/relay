@@ -79,7 +79,7 @@ Last run: **2026-09-15**, against `0.2.0-3` on `rebrand/wave3`. Findings live in
 | ❌ | **A macOS code-signing certificate exists** | `gh secret list` → **zero of the six `APPLE_*`** |
 | ❌ | **A Windows code-signing certificate exists** | `gh secret list` → **zero of the eight `AZURE_*`/`WINDOWS_*`** |
 | ✅ | The updater manifest is signed | `TAURI_SIGNING_PRIVATE_KEY` is set |
-| ⚠️ | **The updater endpoint resolves** | Not yet — the `updates` channel release is created by the first publish (RG-83, RG-114). Run the **Update channel** workflow from the Actions tab afterwards and watch it go green |
+| ✅ | **The updater endpoint resolves** | **Live** — see §1's row of the same name, which this row contradicted for a fortnight (Phase 1 audit, 2026-09-21). `npm run updater:check` reports 2 update endpoints live. One gate, one answer |
 | ⬜ | An update has been watched installing, once | never |
 | ⬜ | The microphone survives the first correctly-signed macOS build | `npm run tauri build && ./scripts/sign-local.sh` — **free, and it reproduces rule 17's trap without a certificate. Run it before buying anything** |
 | ⬜ | The offline bundle onto a stick, carried to a machine with no internet | `node scripts/offline-bundle.mjs` |

@@ -938,7 +938,7 @@
       savedTick = true;
       setTimeout(() => (savedTick = false), 1400);
       err = '';
-    } catch (e) { err = 'Live update failed: ' + e; }
+    } catch (e) { err = 'Live update failed: ' + humanError(e); }
     saving = false;
   }
   /** Insert the draft. This is the call `newFrom` used to make before anybody

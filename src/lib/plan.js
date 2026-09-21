@@ -585,6 +585,24 @@ export function fmtDuration(seconds, long = false) {
  * Pure, and here rather than in the component, because this is a rule about what
  * may be claimed and rules of that shape in this file are the ones that get tested.
  */
+/**
+ * What the run surface says beside a song cue whose arrangement went stale
+ * (RG-203, 2026-09-21). Rule 39: an arrangement built against a shape the song
+ * no longer has is "shown as needing checking" — and it was, on the Planner,
+ * which is a Tuesday surface. This is the sentence for Sunday's. Empty when
+ * there is nothing to say, so the header prints nothing rather than a dash.
+ */
+export function staleNote(item) {
+  if (!item || item.cue_type !== 'song') return '';
+  let stale = false;
+  try {
+    stale = !!JSON.parse(item.payload_json || '{}')?.arrangement_stale;
+  } catch {
+    stale = false;
+  }
+  return stale ? 'arrangement needs checking — the song changed since it was built' : '';
+}
+
 export function previewState(item, hasText, media) {
   if (!item) return { state: 'none', plate: false, message: '' };
   if (hasText) return { state: 'render', plate: true, message: '' };

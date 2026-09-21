@@ -319,3 +319,15 @@ describe('the LAN output server failed to start', () => {
     expect(block).toMatch(/outputError: \$capture\.outputError/);
   });
 });
+
+// 2026-09-21 · E-6 (RG-197). The repair for a missing microphone sent the
+// operator to "Settings → Audio", a section that does not exist. The microphone
+// is chosen in Settings → This room.
+describe('the repair for a missing microphone names a section that exists', () => {
+  it('says This room, not Audio', () => {
+    const row = degradations({ ...OK, micMissing: 'Shure MV7' }).find((r) => r.id === 'mic');
+    expect(row).toBeTruthy();
+    expect(row.fix).not.toMatch(/Settings\s*→\s*Audio/);
+    expect(row.fix).toMatch(/This room/);
+  });
+});

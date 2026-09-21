@@ -155,7 +155,7 @@
   import { heard, methodBadgeKey, methodNoteKey, inLibrary, evidenceIsASpan, orderClaims } from '../detect.js';
   import DetectionInspector from '../DetectionInspector.svelte';
   import { humanError as humanErrorBase } from '../errors.js';
-  import { typeOf, payloadOf, slidesOf, slideAccent, cueSub, nextOf, stepFrom } from '../plan.js';
+  import { typeOf, payloadOf, slidesOf, slideAccent, cueSub, nextOf, stepFrom, staleNote } from '../plan.js';
   import { gridSource, pressArbiter } from '../slidegrid.js';
   import { reflow } from '../reflow.js';
   import LiveRail from '../LiveRail.svelte';
@@ -1042,7 +1042,13 @@
   }
   async function stepLive(dir) {
     const to = stepFrom(items, liveCueId, liveSlide, dir);
-    if (!to) return; // ends of the plan are hard stops — never wrap
+    if (!to) {
+      // Ends of the plan are hard stops — never wrap. AND THEY SAY SO (RG-199):
+      // the VERSE half of this key names all four of its outcomes, and this half
+      // returned in silence, which is the original `nav` defect on its twin door.
+      flash(dir > 0 ? 'End of the plan — nothing after this cue.' : 'Start of the plan.');
+      return;
+    }
     await fireSlide(to.item, to.slide);
   }
 
@@ -1792,6 +1798,10 @@
     grid.source === 'plan' && !dateStatedIn(grid.title, openPlan?.plan_date)
       ? shortDate(openPlan?.plan_date)
       : '';
+  // A STALE ARRANGEMENT, SAID ON THE SURFACE THE SERVICE RUNS FROM (RG-203).
+  // The Planner showed it; Live, where the slides are about to be stepped, did
+  // not. Read off the live cue when there is one, else the selected cue.
+  $: staleWarning = staleNote(items.find((i) => i.id === (liveCueId ?? selId)) ?? null);
 
   /**
    * What a cell's kind chip says — the content kind, in the word `plan.js`'s one
@@ -2698,6 +2708,7 @@
              already says which empty it is, in a sentence. -->
         {#if grid.title}<span class="sg-cap">· {grid.title}</span>{/if}
         {#if gridSubtitle}<span class="sg-cap">· {gridSubtitle}</span>{/if}
+        {#if staleWarning}<span class="sg-cap sg-stale" role="status" title={staleWarning}>· {staleWarning}</span>{/if}
         <span class="spring"></span>
         <!-- ONE LINE, WITH THE COUNT LEADING IT (L2). The count and the sentence
              were two spans in two faces, so the right of this head read as two

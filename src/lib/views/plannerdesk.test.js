@@ -706,3 +706,19 @@ describe('P1/W3 · the rail foot', () => {
   // weaker copy scoped to one file is how two scanners come to disagree about what
   // they cover, and this repository has had that exact failure twice.
 });
+
+// 2026-09-21 · PL-8 (RG-204). Duplicate called `addPlanItem` alone, and that
+// inserts type, label, payload and template only — so a duplicated countdown
+// lost its five minutes, its timer binding and its screen set. "Duplicate" is a
+// word with a meaning; the three second writes are replayed from the source.
+describe('Duplicate carries the whole cue', () => {
+  it('replays duration, timer and screens after the add', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { resolve } = await import('node:path');
+    const src = readFileSync(resolve(process.cwd(), 'src/lib/views/ServicePlanner.svelte'), 'utf8');
+    const body = src.slice(src.indexOf('async function duplicateCue'), src.indexOf('async function', src.indexOf('async function duplicateCue') + 10));
+    expect(body).toMatch(/setPlanDuration\(newId/);
+    expect(body).toMatch(/setPlanTimer\(newId/);
+    expect(body).toMatch(/setPlanChannels\(newId/);
+  });
+});

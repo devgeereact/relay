@@ -128,6 +128,27 @@ A network screen that could not keep up with Relay used to miss updates in
 silence, including a clear. It is now handed what is on the screens again, and
 Outputs counts how often that happened.
 
+### Ten smaller things, each a sentence
+
+- Help now says how to turn a screen on (Outputs → Screens → Turn on) and
+  where the rehearsal signal is (the status bar), instead of describing
+  controls that were retired.
+- The advice for a missing microphone sends you to Settings → This room, which
+  exists.
+- In the Planner, Escape closes the arrangement picker, and the Escape and B
+  panic keys work while a cue row or its grip has focus.
+- The arrow keys say "End of the plan" and "Start of the plan" instead of
+  doing nothing.
+- The template editor's autosave error reads as words, not "[object Object]".
+- The Library's import picker no longer offers ProPresenter 6 and 5 files,
+  which Relay cannot read yet.
+- Live says "arrangement needs checking" beside the slides of a song whose
+  arrangement went stale, as the Planner already did.
+- Duplicating a cue keeps its length, its timer and its screens.
+- Deleting a template a screen wears as a look no longer fails with a database
+  error.
+- A stray invisible character in one source file no longer hides it from search.
+
 ### Connecting the preacher's phone
 
 When Relay cannot find a local network address, Sharing now explains the problem

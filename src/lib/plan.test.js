@@ -19,6 +19,7 @@ import {
   dropIndex,
   reorderTo,
   previewState,
+  staleNote,
   planChannelsOf,
 } from './plan.js';
 
@@ -532,5 +533,20 @@ describe('a cue whose clip is a codec other screens may not play', () => {
   it('says nothing for a codec every screen plays', () => {
     const v = previewState({ cue_type: 'media' }, false, { found: true, filename: 'a.mp4', codec: 'h264' });
     expect(v.warning ?? '').toBe('');
+  });
+});
+
+// 2026-09-21 · P-4 (RG-203). `arrangement_stale` was shown on the Planner and
+// nowhere on Live, the surface a service is actually run from. Rule 39 says a
+// stale arrangement is "shown as needing checking"; the run surface must say it
+// beside the slides it is about to step.
+describe('staleNote — the run surface says an arrangement needs checking', () => {
+  it('names it for a song cue whose arrangement went stale', () => {
+    const item = { cue_type: 'song', label: 'Amazing Grace', payload_json: JSON.stringify({ arrangement_stale: true }) };
+    expect(staleNote(item)).toMatch(/arrangement needs checking/i);
+  });
+  it('says nothing otherwise', () => {
+    expect(staleNote({ cue_type: 'song', payload_json: '{}' })).toBe('');
+    expect(staleNote(null)).toBe('');
   });
 });

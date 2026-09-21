@@ -49,7 +49,7 @@
       icon: '📽️',
       title: 'Nothing appears on the projector',
       body: [
-        ['Is the output window open?', 'On the <b>Live</b> tab, click <b>Open output</b>. It opens on the projector — the screen that is <i>not</i> this laptop.'],
+        ['Is the output window open?', 'Go to <b>Outputs → Screens</b>, pick the projector as the display for “Main screen”, and press <b>Turn on</b>. It opens on the projector — the screen that is <i>not</i> this laptop — and never over this console.'],
         ['Is it on the right screen?', 'Go to <b>Outputs → Screens</b> and set the display for “Main screen”. Relay lists every screen it can see.'],
         ['Still nothing?', 'Some projectors take a few seconds to wake. If Relay shows the verse in its own preview but the projector is dark, the problem is the cable or the projector input, not Relay.'],
       ],
@@ -94,7 +94,7 @@
       title: 'I want to practise without anyone seeing',
       body: [
         ['Press <b>Rehearse</b> on the Live tab.', 'Everything works exactly as it will on Sunday — the AI listens, suggestions appear, the plan runs, the arrow keys move — but <b>nothing reaches the projector, the stage monitor, OBS, or any other screen</b>. You can practise in the middle of a service if you want to.'],
-        ['You cannot miss it.', 'A purple band sits across the top of the app the whole time it is on, and the top bar says <b>REHEARSAL</b> instead of <b>On Air</b> on every tab.'],
+        ['You cannot miss it.', 'The status bar along the bottom reads <b>REHEARSAL</b> in purple the whole time it is on, on every workspace, and the Program pane wears the same colour instead of amber.'],
         ['It does not count.', 'A rehearsal is not saved to your service history, and the AI does not learn from it — otherwise practising would train it on things that never really happened.'],
         ['Going live clears the screens.', 'When you end the rehearsal, Relay blanks every output. The projector had been sitting on whatever was there before you started, and you have not looked at it in twenty minutes — so you put the next thing up deliberately, rather than being handed a wall you have forgotten about.'],
       ],

@@ -339,7 +339,11 @@
   const VID = ['mp4', 'mov', 'webm', 'mkv', 'm4v'];
   const DOC = ['pdf', 'pptx', 'ppt', 'key'];
   const TXT = ['txt', 'text', 'md', 'lyric', 'lyrics'];
-  const PRO = ['pro', 'pro6', 'pro5', 'proplaylist'];
+  // `.pro` (ProPresenter 7) and `.proplaylist` only (RG-202, 2026-09-21). `.pro6`
+  // and `.pro5` were offered here while `proimport.rs` scans raw bytes for
+  // `{\rtf1`; a ProPresenter 6 file stores its RTF base64-encoded inside XML, so
+  // every one read "unreadable" after the picker had said it was supported.
+  const PRO = ['pro', 'proplaylist'];
   // The file picker and the router are ONE list. They were two, and the picker's
   // was shorter — .bmp, .avif, .svg, .mkv, .m4v, .pro5 and .key were greyed out
   // in the dialog even though the importer handles them, so choosing one was

@@ -20,6 +20,33 @@ every edit: `.claude/hooks/relay-fast-gate.mjs`, path-filtered and report-only (
 
 ## 0. Current inventory
 
+Re-measured **2026-09-21**, on `phase2-service-readiness` (stacked on `stage-timers-mobile`),
+after the Phase 1 audit's batches 1 to 6a. Every value below was produced by the command
+beside it in this session; the 2026-09-17 block that follows is kept as history.
+
+| Count | Value | Command |
+|---|---|---|
+| Rust tests | **1000 passed / 0 failed / 17 ignored** | `cd src-tauri && cargo test` |
+| Frontend tests | **3411 passed, 230 files** | `npx vitest run` |
+| `e2e.rs` tests | **104 passed / 1 ignored** (the ignored one is `stt::e2e_latency`, matched by substring) | `cd src-tauri && cargo test e2e` |
+| Registered commands | **164** | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
+| qa-inventory | 164/164 addressed, 0 handlerless, 0 unnamed, 1 intentional orphan (`__r6probe.svelte`) | `node scripts/qa-inventory.mjs` |
+| Controls | **492**, 0 in components nothing renders | `node scripts/qa-inventory.mjs` |
+| Tauri events | **27** (28 literals; `tauri://localhost` is an origin string) | `grep -rhoE '"[a-z_]+://[a-z_]+"' src-tauri/src/*.rs \| sort -u` |
+| Numbered decisions | **§18 – §108** | `grep -cE '^## [0-9]+\. ' docs/DECISIONS.md` → 91 |
+| Register entries | **205** (189 closed, 1 withdrawn, 15 not closed) | `docs/qa/RELAY_GAP.md` §23, pinned by `relaygap.test.js` |
+| Dated audits | **12** | `ls docs/qa/audits \| wc -l` |
+| `#[ignore]`d benches | **17** | the `cargo test` summary line above |
+| `hardrules.test.js` rules | **8** | `grep -o "it('rule [0-9]*" src/lib/hardrules.test.js \| sort -u \| wc -l` |
+
+**One parallel-run flake, recorded rather than hidden.** One full `cargo test` on 2026-09-21
+failed `e2e::a_verse_that_no_screen_painted_is_counted_rather_than_silently_absent` alone; it
+passes alone, passes in `cargo test e2e`, and the next two full runs passed. It reads the global
+latency recorder under `latency::test_lock()`, and something else in the suite touches that
+recorder without the lock. Filed here so the next person who sees it does not re-diagnose it.
+
+### 2026-09-17 · `feat/consolidation` — kept as history
+
 Re-measured **2026-09-17**, on `feat/consolidation` — **the assembled tree**, with all
 three wave roots and all four agent branches merged and nothing in flight. This is the
 first block in this file that is a claim about a whole branch rather than about one
@@ -36,7 +63,7 @@ pass over it, and it is the tree the packaged bundle was built from.
 | Controls | **469** (0 in components nothing renders) | `node scripts/qa-inventory.mjs` |
 | Tauri events | **25** | `grep -rhoE '"[a-z_]+://[a-z_]+"' src-tauri/src/*.rs \| sort -u`, minus `tauri://localhost` |
 | Numbered decisions | **78** (§18–§95) | `grep -cE '^## [0-9]+\. ' docs/DECISIONS.md` |
-| Dated audits | **11** | `ls docs/qa/audits \| wc -l` |
+| Dated audits | **11** (at the time) | `ls docs/qa/audits \| wc -l` |
 
 `cargo fmt --all -- --check`, `clippy --all-targets -- -D warnings`, `npm run build`,
 `npm run version:check` and `npm run updater:check` all clean on the same tree.

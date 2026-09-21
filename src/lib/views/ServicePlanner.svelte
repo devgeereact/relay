@@ -937,7 +937,17 @@
         await reorderPlan(openPlan.id, order);
         await loadItems();
       }
-      if (newId != null) selId = newId;
+      // THE WHOLE CUE, NOT ITS FIRST WRITE (RG-204). `addPlanItem` inserts type,
+      // label, payload and template; duration, timer binding and screens are
+      // second writes, and a duplicate that dropped them lost a countdown's
+      // five minutes and its screen set. Replayed from the source, in the order
+      // the add panel writes them.
+      if (newId != null) {
+        if (selCue.duration_sec) await setPlanDuration(newId, selCue.duration_sec);
+        if (selCue.timer_minutes != null) await setPlanTimer(newId, selCue.timer_minutes);
+        if (selCue.channels_json) await setPlanChannels(newId, planChannelsOf(selCue.channels_json));
+        selId = newId;
+      }
       await refresh();
     });
   }
@@ -1259,9 +1269,11 @@
                     aria-label="Reorder {c.label} — drag, or use arrow up and arrow down"
                     on:pointerdown={(e) => onGripDown(c.id, e)}
                     on:click|stopPropagation={(e) => pick(c.id, e)}
-                    on:keydown|stopPropagation={(e) => {
-                      if (e.key === 'ArrowUp' && n > 0) { e.preventDefault(); move(c.id, -1, e); }
-                      else if (e.key === 'ArrowDown' && n < items.length - 1) { e.preventDefault(); move(c.id, 1, e); }
+                    on:keydown={(e) => {
+                      // Only the keys this grip uses stop here (RG-198); Esc and B
+                      // go on to the shell.
+                      if (e.key === 'ArrowUp' && n > 0) { e.preventDefault(); e.stopPropagation(); move(c.id, -1, e); }
+                      else if (e.key === 'ArrowDown' && n < items.length - 1) { e.preventDefault(); e.stopPropagation(); move(c.id, 1, e); }
                     }}>
                     <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor" aria-hidden="true"><circle cx="2" cy="2" r="1.1"/><circle cx="8" cy="2" r="1.1"/><circle cx="2" cy="7" r="1.1"/><circle cx="8" cy="7" r="1.1"/><circle cx="2" cy="12" r="1.1"/><circle cx="8" cy="12" r="1.1"/></svg>
                   </button>
@@ -1298,7 +1310,7 @@
                     aria-label={deleteLabel(1, c.label, cueDelArm === c.id)}
                     title={deleteLabel(1, c.label, cueDelArm === c.id)}
                     on:click|stopPropagation={() => (cueDelArm === c.id ? removeCues([c.id]) : armCueDelete(c.id))}
-                    on:keydown|stopPropagation>
+                    >
                     {#if cueDelArm === c.id}
                       <span class="sp-delarm r-mono" aria-hidden="true">AGAIN</span>
                     {:else}
@@ -1773,7 +1785,14 @@
   <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-noninteractive-element-interactions -->
   <div class="sp-arrback" role="presentation" on:click={() => (arrPick = null)}>
     <div class="sp-arrsheet" role="dialog" aria-modal="true" aria-label="Choose arrangement" use:trapFocus
-      on:click|stopPropagation on:keydown|stopPropagation>
+      on:click|stopPropagation
+      on:keydown={(e) => {
+        // Rule 44 (RG-198): an overlay that disarms Escape must consume it. This
+        // was a bare `|stopPropagation` under `trapFocus`, so Escape never reached
+        // the window handler that closes the sheet, and `shortcuts.js` had already
+        // stood down for the dialog. Every other key passes through untouched.
+        if (e.key === 'Escape') { e.stopPropagation(); arrPick = null; }
+      }}>
       <div class="sp-arrtitle">Add “{arrPick.song.title}”</div>
       <div class="r-lbl sp-arrsub">Choose an arrangement</div>
       <button class="sp-arropt r-focus" on:click={() => commitSong(arrPick.song, null)}>

@@ -317,3 +317,20 @@ describe('a folder import keeps the shelf a file came off', () => {
     expect(text()).toContain('HMYN 1');
   });
 });
+
+// 2026-09-21 · S-1 (RG-202). `.pro6` and `.pro5` were in the picker and the
+// router while `proimport.rs` scans raw bytes for `{\rtf1` — a ProPresenter 6
+// document stores its RTF base64-encoded inside XML, so every such file read
+// "unreadable" after the picker had said the format was supported. The picker
+// offers only what the parser can read.
+describe('the picker offers only what the parser can read', () => {
+  it('does not advertise ProPresenter 6 or 5 files', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { resolve } = await import('node:path');
+    const src = readFileSync(resolve(process.cwd(), 'src/lib/views/Library.svelte'), 'utf8');
+    const list = src.match(/const PRO = \[([^\]]*)\]/)[1];
+    expect(list).not.toMatch(/pro6|pro5/);
+    expect(list).toMatch(/'pro'/);
+    expect(list).toMatch(/'proplaylist'/);
+  });
+});

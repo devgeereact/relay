@@ -1,7 +1,18 @@
 # Stage reach, Planner craft, media transport and ProPresenter
 
-Date: 2026-09-19. Status: design, approved in outline, **no code written**. The
-operator chose "spec everything first, build nothing yet" on the evening before a
+Date: 2026-09-19. Status when written: design, approved in outline, no code written.
+
+> **Status on 2026-09-21: largely SHIPPED, and this document is now history.** Thirty commits
+> dated 2026-09-20 delivered SP1, 2b, 2c, 2d, 3a, 3b, 4a, 4b, 4c, 4d, 4f, 5a, 5b and 5d
+> (see the register RG-161 to RG-177 and DECISIONS §104, §105). Still not built: **4e**
+> (click semantics, contradicted by DECISIONS §81 on the run surface), **5c** (playlists into
+> plans), **5e** (media import, BLOCKED on the church's media folder) and the elapsed timer.
+> The "Verification status" block at the end describes the evening this was written and is
+> false about the code as it stands; it is kept because a frozen design should not be edited
+> to agree with what happened after it. Rulings that only lived here are now in
+> `docs/DECISIONS.md`.
+
+The operator chose "spec everything first, build nothing yet" on the evening before a
 service test.
 
 Companion document: [`../plans/2026-09-19-stage-timers-mobile.md`](../plans/2026-09-19-stage-timers-mobile.md).

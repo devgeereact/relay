@@ -93,10 +93,10 @@ above says the directory is the classifier.
 | [qa/LAUNCH_CHECKLIST.md](qa/LAUNCH_CHECKLIST.md) | One release gate list. Every box names its command or says it has never been checked |
 | [REBRAND.md](REBRAND.md) | The active build specification for Relay Studio — the brand, the workspace grammar, the template engine, and the twelve phases with their status. `AGENTS.md` step 2 sends readers here to find it |
 | [RELAY_V1_AUDIT.md](RELAY_V1_AUDIT.md) | The V1 production audit: the decision, three scorecards, the fix process, and every phase of both briefs dispositioned |
-| [qa/audits/](qa/audits/) | **Frozen.** **Eleven** dated audits (`ls qa/audits | wc -l`): three field services, two performance runs, one six-agent QA sweep, **four browser-driven passes** (waves 2, 3 and 5 on 2026-09-16, wave 4 on 2026-09-17) and the retired product audit. Closures go in a fix log at the top, never into the findings |
+| [qa/audits/](qa/audits/) | **Frozen.** **Twelve** dated audits (`ls qa/audits | wc -l`): four field services, two performance runs, one six-agent QA sweep, **four browser-driven passes** (waves 2, 3 and 5 on 2026-09-16, wave 4 on 2026-09-17) and the retired product audit. Closures go in a fix log at the top, never into the findings |
 
 **On ADRs:** [DECISIONS.md](DECISIONS.md) *is* the architecture-decision record — a single
-narrative log with reasoning and explicit non-goals, **78** numbered decisions (§18–§95) deep — `grep -cE '^## [0-9]+\. ' DECISIONS.md` —
+narrative log with reasoning and explicit non-goals, numbered decisions from §18 upward (run `grep -cE '^## [0-9]+\. ' DECISIONS.md` for the count; this line said 78 and §95 while the command answered 88 and §105, which is why it no longer carries a number) —
 plus 28 earlier ones carried as table rows (`sed -n '1,59p' DECISIONS.md | grep -cE '^\|'`,
 less the three header-and-separator pairs). **This line said 46 and §18–§63**, which had been
 wrong for twenty-nine decisions, in a paragraph four screens below this page's own rule that

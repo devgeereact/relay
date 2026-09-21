@@ -617,7 +617,7 @@ export function countdownParts(text) {
   // character and a keyed each needs them told apart.
   s.split(/(:)/).forEach((piece, i) => {
     if (piece === '') return;
-    out.push({ t: piece, sep: piece === ':', k: `${i} ${piece}` });
+    out.push({ t: piece, sep: piece === ':', k: `${i}\u0000${piece}` });
   });
   return out;
 }

@@ -219,7 +219,7 @@ export function degradations(s = {}) {
       level: 'reduced',
       title: `${s.micMissing} is not plugged in`,
       what: 'That is the microphone this machine used last time. Relay is listening on the computer\u2019s default input instead, which in a hall is usually much further from the preacher.',
-      fix: 'Plug it back in, or pick the right input in Settings \u2192 Audio.',
+      fix: 'Plug it back in, or pick the right input in Settings \u2192 This room.',
     });
   }
 
