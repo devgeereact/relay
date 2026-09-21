@@ -75,7 +75,7 @@ changed, because the rail also sets `--lp-h` from a measurement and that is the 
 
 ---
 
-## 3. The template editor, restrategised
+## 3. The template editor, restrategised — **BUILT, RG-217**
 
 **The problem is not the number of controls, it is that they are one list.** An operator opening
 this screen is doing one of four jobs, and the inspector asks them to hold all four at once.

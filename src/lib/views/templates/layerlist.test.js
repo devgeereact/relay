@@ -533,26 +533,29 @@ describe('S1 · the inspector opens on the selected object, not on the template'
 
   const sections = () => [...host.querySelectorAll('.te-designbody .te-sec')].map((h) => h.textContent.trim());
 
-  it('puts the object\'s own groups first and the template\'s facts last', async () => {
+  it('opens on the object, and the template is not in the column at all', async () => {
+    // RG-217 finished what this case started. The panel already opened on the
+    // object; the template's facts still sat at the foot of the SAME scroller,
+    // separated by a rule — and a rule is not a boundary an operator scrolling a
+    // long column notices. They are behind their own tab now, so "last" became
+    // "elsewhere" and the assertion changed shape with it.
     mount();
     await settle();
     rowFor('Plate').click();
     await settle();
     const s = sections();
-    expect(s[0], 'the panel still opens on the template').not.toBe('Template');
-    // `Template` is the trailing GROUP, not necessarily the last heading in it:
-    // task 8 gave `Content this template renders` its own `<h3 class="te-sec">`
-    // nested inside the Template group, so the group's last two headings are
-    // `Template` then its own subheading, in that order.
-    expect(s.slice(s.indexOf('Template')), 'the template group is not at the foot').toEqual([
-      'Template',
-      'Content this template renders',
-    ]);
-    expect(s).toContain('Position');
+    expect(s, 'the template is still a section of a layer').not.toContain('Template');
+    expect(s).toContain('Shape');
+    // The geometry is a collapsible group now rather than an `<h3>`, and that is
+    // the point of the regroup: dragging on the canvas is how an object is
+    // normally placed, and the numbers are for the one time two must agree.
+    expect(host.textContent).toMatch(/Where does it sit\?/);
   });
 
-  it('and the template controls are all still there, in one section', async () => {
+  it('and the template controls are all still there, behind the Template tab', async () => {
     mount();
+    await settle();
+    [...host.querySelectorAll('.te-scope button')].find((b) => /template/i.test(b.textContent)).click();
     await settle();
     expect(host.querySelector('#te-name'), 'the template name field went missing').toBeTruthy();
     // ONE register here now, not two. `Used for` — the global content-look

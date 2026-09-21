@@ -83,6 +83,37 @@
   let savedTick = false;
   let err = '';
   let selId = null;
+  // ── THE DESIGN PANEL IS FOUR JOBS, NOT ONE LIST (RG-217) ───────────────────
+  //
+  // `docs/superpowers/plans/2026-09-21-stage-templates-media.md` §3. The problem
+  // was never the NUMBER of controls; it is that one column asked an operator to
+  // hold four jobs at once, and then asked a fifth question at the bottom that
+  // was not about the object they had selected at all.
+  //
+  // `scope` is that fifth question given its own place: the TEMPLATE's name and
+  // the kinds it renders belong to the template, not to whichever layer happens
+  // to be selected, and they sat under the layer's controls where they read as
+  // more of the same list.
+  //
+  // `openGroup` is in-memory on purpose. A remembered collapse is a surface that
+  // opens differently for two operators on the same machine, and the defaults
+  // here are a decision — "how it reads" is used on every layer every time, the
+  // geometry is for the one occasion two layers must line up exactly, and the
+  // rest are touched about once a year.
+  let scope = 'object'; // object | template
+  let openGroup = { reads: true, where: false, more: false };
+  const toggleGroup = (k) => (openGroup = { ...openGroup, [k]: !openGroup[k] });
+  /**
+   * Does this object have a CONTENT binding — is it one of the kinds the
+   * property chain's final branch renders (text and timer)?
+   *
+   * Stated as the same list the chain tests, in the same order, because the two
+   * have to agree: a kind added to the chain and not here would have its binding
+   * row silently disappear, and a kind added here and not there would grow a
+   * second one.
+   */
+  const carriesBinding = (L) =>
+    !!L && !['background', 'media', 'region', 'band', 'shape'].includes(L.type);
   // THE ADD-LAYER MENU IS POSITIONED FIXED, anchored to the button's screen rect.
   //
   // It used to be `position:absolute; top:28px; right:0` inside `.te-addwrap`,
@@ -1547,11 +1578,24 @@
 
       <!-- ══ PROPERTIES ══ -->
       <aside class="te-pane te-design">
-        <div class="te-panehead"><span class="r-lbl">Design</span><span class="te-designfor r-mono">{sel ? layerLabel(sel) : ''}</span></div>
+        <div class="te-panehead">
+          <span class="r-lbl">Design</span>
+          <!-- WHICH QUESTION THIS PANEL IS ANSWERING (RG-217). The template's own
+               facts used to be the last section under a layer's controls, so an
+               operator scrolling an object's properties fell off the end of them
+               into a different subject with no boundary but a heading. -->
+          <span class="te-scope" role="tablist" aria-label="What this panel edits">
+            <button class="te-scopebtn" class:on={scope === 'object'} role="tab"
+              aria-selected={scope === 'object'} on:click={() => (scope = 'object')}>Object</button>
+            <button class="te-scopebtn" class:on={scope === 'template'} role="tab"
+              aria-selected={scope === 'template'} on:click={() => (scope = 'template')}>Template</button>
+          </span>
+          <span class="te-designfor r-mono">{scope === 'object' && sel ? layerLabel(sel) : ''}</span>
+        </div>
         <!-- THE OBJECTS ON THIS SLIDE. A wrapping strip, never a scrolling one:
              a tab that has scrolled behind a hidden scrollbar is a tab nobody
              knows is there. -->
-        {#if layers.length}
+        {#if scope === 'object' && layers.length}
           <div class="te-objtabs" role="tablist" aria-label="Objects on this slide">
             {#each layers as L (L.id)}
               <button
@@ -1572,11 +1616,9 @@
                  change, and every text object on a slide was called "Verse
                  text" after its binding. Empty falls back to the binding's own
                  label, which is what a fresh object already shows. -->
-            <div class="te-frow te-objname">
-              <label class="te-fk" for="te-oname">Object name</label>
-              <input id="te-oname" class="r-input te-fv" value={sel.name ?? ''} placeholder={layerLabel(sel)}
-                on:input={(e) => set('name', e.target.value)} />
-            </div>
+            <!-- The name moved into the panel's first group (RG-217): it is half
+                 of "what is this?", and the other half — the binding — could only
+                 ever be rendered down in the property chain. -->
             <div class="te-objacts">
               <button class="r-btn sm ghost" on:click={() => duplicate(sel.id)}>Duplicate</button>
               <button class="r-btn sm ghost" on:click={() => resetObject(sel.id)}>Reset this object</button>
@@ -1590,6 +1632,7 @@
           {/if}
         {/if}
         <div class="te-designbody r-scroll">
+          {#if scope === 'object'}
           <!-- ══ THE SELECTED OBJECT COMES FIRST (§3.2) ══════════════════════
                This panel used to open on the TEMPLATE — its name, the kinds of
                content it is used for, the kinds it shows — and an operator who
@@ -1607,51 +1650,35 @@
                Position group that did not agree with its twin and moved a
                locked object. One group in a slightly different place is a much
                smaller problem than two groups. -->
-          {#if sel && sel.type !== 'band' && !bandOf(layers, sel.id)}
-            <!-- POSITION — ONE GROUP, §3.2. These were reachable only by dragging
-                 on the canvas, so a keyboard-only operator could not place an
-                 object at all and nobody could place one exactly. Percentages of
-                 the frame, like everything else in a template.
 
-                 THERE USED TO BE TWO. A second Position group sat at the bottom of
-                 this panel writing the same four keys, and both rendered for every
-                 selected object — the same heading twice, over two different number
-                 grids. They did not agree: this one clamps to 0–100 and refuses a
-                 locked object, that one did neither, so typing into the lower grid
-                 moved a layer the operator had locked. The three Centre buttons were
-                 the only thing it had that this did not, and they are here now.
-
-                 A BAND AND ITS WORDS ARE NOT HERE, because x/y/w/h is not where any
-                 of them sits: a band is placed by `top`/`side` and its words by the
-                 band. Four numbers that change nothing is the defect DECISIONS §69
-                 closed, so they get the controls that do move them instead. -->
-            <h3 class="te-sec">Position</h3>
-            <div class="te-geom">
-              {#each [['x', 'X'], ['y', 'Y'], ['w', 'W'], ['h', 'H']] as [k, label]}
-                <label class="te-geomcell">
-                  <span class="r-lbl">{label}</span>
-                  <input
-                    class="te-num r-mono"
-                    type="number"
-                    min="0"
-                    max="100"
-                    step="0.5"
-                    value={Math.round((sel[k] ?? 0) * 10) / 10}
-                    disabled={sel.locked}
-                    on:input={(e) => geom(k, e.target.value)}
-                  />
-                </label>
-              {/each}
+          {#if sel}
+            <!-- 1 · WHAT IS THIS? Name and binding, and it does not collapse:
+                 everything below it is about an object whose job is already
+                 chosen, so this is the one thing that must never scroll away or
+                 be shut. The two halves used to sit at opposite ends of the
+                 panel — the name above the scroller, the binding buried in the
+                 property chain — which is the clearest single example of the
+                 "one list" this regroup is about (RG-217). -->
+            <div class="te-group te-what">
+              <div class="te-grouplbl r-lbl">What is this?</div>
+              {#if carriesBinding(sel)}
+                <div class="te-frow">
+                  <label class="te-fk" for="te-bind">Content</label>
+                  <select id="te-bind" class="r-select te-fv" value={sel.bind} on:change={(e) => set('bind', e.target.value)}>
+                    {#each BINDINGS as b}<option value={b.key}>{b.label}</option>{/each}
+                  </select>
+                </div>
+                {#if sel.bind === 'static'}
+                  <div class="te-frow"><label class="te-fk" for="te-txt">Text</label><input id="te-txt" class="r-input te-fv" value={sel.text || ''} on:input={(e) => set('text', e.target.value)} /></div>
+                {/if}
+              {/if}
+              <div class="te-frow te-objname">
+                <label class="te-fk" for="te-oname">Object name</label>
+                <input id="te-oname" class="r-input te-fv" value={sel.name ?? ''} placeholder={layerLabel(sel)}
+                  on:input={(e) => set('name', e.target.value)} />
+              </div>
             </div>
-            <div class="te-alignrow">
-              <button class="r-btn ghost te-alignbtn" on:click={() => center('x')} title="Centre horizontally">Centre H</button>
-              <button class="r-btn ghost te-alignbtn" on:click={() => center('y')} title="Centre vertically">Centre V</button>
-              <button class="r-btn ghost te-alignbtn" on:click={() => center('both')} title="Centre on canvas">Centre</button>
-            </div>
-            {#if sel.locked}<p class="te-fnote">This object is locked. Unlock it in the layer list to move it.</p>{/if}
-            <p class="te-fnote">Percent of the screen. Drag on the canvas — layers snap to centre and edges (hold Shift to place freely) — or type exact values.</p>
           {/if}
-
           {#if !sel}
             <!-- NOT `te-guide`. That class is the canvas's 1px alignment hairline
                  (position:absolute, background:var(--v-accent)), and this paragraph
@@ -1775,16 +1802,16 @@
                 <p class="te-fnote">Placed by <b>{layerLabel(selBand)}</b>: the band sets where this line sits and how wide it is. Height is its share of the band, and the band grows it when it gives ground.</p>
               {/if}
             {/if}
-            <h3 class="te-sec">Text</h3>
-            <div class="te-frow">
-              <label class="te-fk" for="te-bind">Content</label>
-              <select id="te-bind" class="r-select te-fv" value={sel.bind} on:change={(e) => set('bind', e.target.value)}>
-                {#each BINDINGS as b}<option value={b.key}>{b.label}</option>{/each}
-              </select>
-            </div>
-            {#if sel.bind === 'static'}
-              <div class="te-frow"><label class="te-fk" for="te-txt">Text</label><input id="te-txt" class="r-input te-fv" value={sel.text || ''} on:input={(e) => set('text', e.target.value)} /></div>
-            {/if}
+            <!-- 2 · HOW DOES IT READ? Open by default: this is the group used on
+                 every layer, every time, and it comes before anything
+                 decorative. The binding and the name left it for the group above
+                 — everything here is about a layer whose job is already chosen. -->
+            <div class="te-group" class:closed={!openGroup.reads}>
+              <button class="te-grouphead" aria-expanded={openGroup.reads} on:click={() => toggleGroup('reads')}>
+                <span class="te-groupi" aria-hidden="true">{openGroup.reads ? '▾' : '▸'}</span>
+                <span>How does it read?</span>
+              </button>
+              {#if openGroup.reads}
             <div class="te-frow">
               <label class="te-fk" for="te-font">Font</label>
               <select id="te-font" class="r-select te-fv" value={sel.font} on:change={(e) => set('font', e.target.value)}>
@@ -1831,7 +1858,17 @@
             </div>
             <div class="te-frow"><label class="te-fk" for="te-lh">Line height</label><span class="te-fv te-rangerow"><input id="te-lh" class="r-range" type="range" min="0.9" max="2" step="0.05" value={sel.lineHeight || 1.32} on:input={(e) => num('lineHeight', e.target.value)} use:rangeFill={sel.lineHeight || 1.32} /><span class="te-rnum r-mono">{(sel.lineHeight || 1.32).toFixed(2)}</span></span></div>
             <div class="te-frow"><label class="te-fk" for="te-ls">Spacing</label><span class="te-fv te-rangerow"><input id="te-ls" class="r-range" type="range" min="-0.05" max="0.4" step="0.01" value={sel.letterSpacing || 0} on:input={(e) => num('letterSpacing', e.target.value)} use:rangeFill={sel.letterSpacing || 0} /><span class="te-rnum r-mono">{(sel.letterSpacing || 0).toFixed(2)}em</span></span></div>
-            <h3 class="te-sec">Effects</h3>
+              {/if}
+            </div>
+            <!-- 4 · ANYTHING ELSE. Collapsed: these are the controls an operator
+                 touches about once a year, and they were sitting at the same
+                 visual weight as Colour. -->
+            <div class="te-group" class:closed={!openGroup.more}>
+              <button class="te-grouphead" aria-expanded={openGroup.more} on:click={() => toggleGroup('more')}>
+                <span class="te-groupi" aria-hidden="true">{openGroup.more ? '▾' : '▸'}</span>
+                <span>Anything else</span>
+              </button>
+              {#if openGroup.more}
             <div class="te-frow"><label class="te-fk" for="te-sh">Shadow</label><span class="te-fv te-rangerow"><input id="te-sh" class="r-range" type="range" min="0" max="1" step="0.05" value={sel.shadow || 0} on:input={(e) => num('shadow', e.target.value)} use:rangeFill={sel.shadow || 0} /><span class="te-rnum r-mono">{Math.round((sel.shadow || 0) * 100)}%</span></span></div>
             <div class="te-frow">
               <label class="te-fk" for="te-fit">Scale</label>
@@ -1853,13 +1890,68 @@
             </div>
             <button class="te-swrow" on:click={() => set('italic', !sel.italic)}><span>Italic</span><span class="r-switch" class:on={sel.italic}></span></button>
             <button class="te-swrow" on:click={() => set('scroll', !sel.scroll)}><span>Scroll (ticker)</span><span class="r-switch" class:on={sel.scroll}></span></button>
+              {/if}
+            </div>
           {/if}
 
-          <!-- ══ AND THE TEMPLATE ITSELF, UNDERNEATH ═════════════════════════
-               Unchanged controls; what moved is where they sit. The rule above
-               the heading is a real boundary: everything above it is about one
-               object on this slide, everything below it is about the template
-               all of them belong to. -->
+          {#if sel && sel.type !== 'band' && !bandOf(layers, sel.id)}
+            <!-- POSITION — ONE GROUP, §3.2. These were reachable only by dragging
+                 on the canvas, so a keyboard-only operator could not place an
+                 object at all and nobody could place one exactly. Percentages of
+                 the frame, like everything else in a template.
+
+                 THERE USED TO BE TWO. A second Position group sat at the bottom of
+                 this panel writing the same four keys, and both rendered for every
+                 selected object — the same heading twice, over two different number
+                 grids. They did not agree: this one clamps to 0–100 and refuses a
+                 locked object, that one did neither, so typing into the lower grid
+                 moved a layer the operator had locked. The three Centre buttons were
+                 the only thing it had that this did not, and they are here now.
+
+                 A BAND AND ITS WORDS ARE NOT HERE, because x/y/w/h is not where any
+                 of them sits: a band is placed by `top`/`side` and its words by the
+                 band. Four numbers that change nothing is the defect DECISIONS §69
+                 closed, so they get the controls that do move them instead. -->
+            <div class="te-group" class:closed={!openGroup.where}>
+              <button class="te-grouphead" aria-expanded={openGroup.where} on:click={() => toggleGroup('where')}>
+                <span class="te-groupi" aria-hidden="true">{openGroup.where ? '▾' : '▸'}</span>
+                <span>Where does it sit?</span>
+              </button>
+              {#if openGroup.where}
+            <div class="te-geom">
+              {#each [['x', 'X'], ['y', 'Y'], ['w', 'W'], ['h', 'H']] as [k, label]}
+                <label class="te-geomcell">
+                  <span class="r-lbl">{label}</span>
+                  <input
+                    class="te-num r-mono"
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.5"
+                    value={Math.round((sel[k] ?? 0) * 10) / 10}
+                    disabled={sel.locked}
+                    on:input={(e) => geom(k, e.target.value)}
+                  />
+                </label>
+              {/each}
+            </div>
+            <div class="te-alignrow">
+              <button class="r-btn ghost te-alignbtn" on:click={() => center('x')} title="Centre horizontally">Centre H</button>
+              <button class="r-btn ghost te-alignbtn" on:click={() => center('y')} title="Centre vertically">Centre V</button>
+              <button class="r-btn ghost te-alignbtn" on:click={() => center('both')} title="Centre on canvas">Centre</button>
+            </div>
+            {#if sel.locked}<p class="te-fnote">This object is locked. Unlock it in the layer list to move it.</p>{/if}
+            <p class="te-fnote">Percent of the screen. Drag on the canvas — layers snap to centre and edges (hold Shift to place freely) — or type exact values.</p>
+              {/if}
+            </div>
+          {/if}
+          {:else}
+          <!-- ══ AND THE TEMPLATE ITSELF, BEHIND ITS OWN TAB (RG-217) ════════
+               Unchanged controls; what moved is where they sit. They were the
+               last section under a layer's properties, separated by a rule — and
+               a rule is not a boundary an operator scrolling a long column
+               notices. They answer a different question from everything in the
+               object panel, so they are now a different panel. -->
           <h3 class="te-sec te-templatesec">Template</h3>
           <div class="te-frow"><label class="te-fk" for="te-name">Name</label><input id="te-name" class="r-input te-fv" bind:value={edit.name} /></div>
           <!-- "USED FOR" WAS HERE, AND IS NOW IN TWO PLACES INSTEAD OF THREE.
@@ -1897,6 +1989,7 @@
               </button>
             {/each}
           </div>
+          {/if}
         </div>
         {#if err}<div class="te-err" role="alert">{err}</div>{/if}
       </aside>
@@ -1920,6 +2013,38 @@
     color:var(--v-dim); cursor:pointer; text-align:left; }
   .te-legtoggle:hover{ background:var(--v-surf2); }
   .te-legtoggle .r-lbl{ flex:0 0 auto; }
+
+  /* ── THE FOUR GROUPS (RG-217) ──────────────────────────────────────────────
+     A group is a seam, not a box: a panel of nested cards at this width reads as
+     four things competing rather than one column with four jobs in it. The rule
+     above each head is the whole of the decoration. */
+  .te-group{ border-top:1px solid var(--v-line2); padding:8px 0 2px; }
+  .te-group:first-child{ border-top:0; padding-top:2px; }
+  .te-group.closed{ padding-bottom:8px; }
+  /* The head IS the control. A separate chevron button would be a second tab
+     stop for one action, and the whole row is the target an operator aims at. */
+  .te-grouphead{
+    display:flex; align-items:center; gap:6px; width:100%;
+    padding:2px 0; background:none; border:0; cursor:pointer;
+    font-size:var(--v-fs-lbl); line-height:var(--v-lh-lbl); font-weight:600;
+    letter-spacing:var(--v-tr-caps); text-transform:uppercase;
+    color:var(--v-dim); text-align:left;
+  }
+  .te-grouphead:hover{ color:var(--v-txt); }
+  .te-groupi{ flex:0 0 auto; font-size:var(--v-fs-cap); color:var(--v-faint); }
+  /* The one group that does not collapse gets the same type and no affordance,
+     so it does not read as a group somebody has failed to open. */
+  .te-grouplbl{ display:block; padding:2px 0 4px; }
+  .te-what{ padding-bottom:6px; }
+  /* WHICH PANEL THIS IS. Two words, in the head, where the question is asked. */
+  .te-scope{ display:inline-flex; gap:2px; margin-left:8px; }
+  .te-scopebtn{
+    padding:2px 8px; border-radius:var(--v-r-sm); cursor:pointer;
+    background:var(--v-surf2); border:1px solid var(--v-500);
+    color:var(--v-dim); font-size:var(--v-fs-lbl); line-height:var(--v-lh-lbl);
+  }
+  .te-scopebtn:hover{ background:var(--v-surf3); color:var(--v-txt); }
+  .te-scopebtn.on{ background:var(--v-sel-soft); border-color:var(--v-sel-line); color:var(--v-txt); font-weight:600; }
   /* THE VERDICT, in the one line that is always on screen. Rose when there is
      something to look at, dim italic when Relay CANNOT answer (a photograph
      behind the words), neither when it is clean — three different sentences for

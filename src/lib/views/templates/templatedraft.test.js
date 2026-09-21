@@ -147,6 +147,7 @@ describe('the draft becomes a row only when somebody says so', () => {
     mount();
     await drain();
     await chooseStarter();
+    await templateTab();
     const name = host.querySelector('#te-name');
     expect(name, 'the draft renders the template section like any saved row').toBeTruthy();
     name.value = 'Sunday evening';
@@ -158,6 +159,19 @@ describe('the draft becomes a row only when somebody says so', () => {
   });
 });
 
+/**
+ * Put the Design panel on the TEMPLATE, where its name now lives (RG-217).
+ *
+ * The name and the content-kind filter left the layer's property column: they
+ * are about the template, not about whichever object happens to be selected,
+ * and at the foot of a long scroll they read as more of the same list. Nothing
+ * about the draft rules changed, which is why every assertion is untouched.
+ */
+async function templateTab() {
+  [...host.querySelectorAll('.te-scope button')].find((b) => /template/i.test(b.textContent))?.click();
+  await drain();
+}
+
 describe('leaving a dirty draft asks, in the app', () => {
   it('arms a two-step on Back rather than leaving, and never calls confirm()', async () => {
     const confirmSpy = vi.fn(() => true);
@@ -168,6 +182,7 @@ describe('leaving a dirty draft asks, in the app', () => {
       mount();
       await drain();
       await chooseStarter();
+      await templateTab();
       const name = host.querySelector('#te-name');
       name.value = 'Sunday evening';
       name.dispatchEvent(new Event('input'));
