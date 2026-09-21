@@ -935,6 +935,7 @@
       $live ? $liveTemplatePinned : false,
       $templates.find((t) => t.id === $defaultTemplateId) || null,
       previewKindLook,
+      previewKind,
     ) || DEFAULT_TEMPLATE;
   // What the preview is a preview OF. "Sample" said the same thing for a screen
   // with its own look and for one following a look it never showed — rule 35 in
@@ -1021,6 +1022,10 @@
         $live ? $liveTemplatePinned : false,
         $templates.find((t) => t.id === $defaultTemplateId) || null,
         kindLook,
+        // THE KIND, so a card shows the house style on the words exactly as the
+        // wall does (RG-219). Without it this preview would be the one surface
+        // that disagrees with the screen it is a picture of.
+        previewKind,
       ) || DEFAULT_TEMPLATE;
     const i = parseInt(c.display_target ?? '', 10);
     const mon = Number.isFinite(i) ? (monitors.find((m) => m.index === i) ?? null) : null;

@@ -262,7 +262,17 @@
   $: planOnAir = $liveCue.onAir;
   // ONE resolution, read by the render AND by the branch that decides whether
   // there is anything to render with — two calls could disagree.
-  $: progTpl = resolveOutputTemplate(previewTpl, $liveTemplateOverride, $liveTemplatePinned);
+  // The KIND rides too (RG-219): the house style reaches scripture and song on
+  // the wall, and the console's program pane is a picture of the wall. A pane
+  // that resolved without it would be the one surface showing the old look.
+  $: progTpl = resolveOutputTemplate(
+    previewTpl,
+    $liveTemplateOverride,
+    $liveTemplatePinned,
+    $templates.find((t) => t.id === $defaultTemplateId) || null,
+    null,
+    $liveContent?.kind,
+  );
   const setLive = (cueId, slide) => liveCue.set({ cueId, slide, onAir: true });
 
   $: if (openPlan) setSession({ planId: openPlan.id, liveCueId, liveSlide, liveOnAir: planOnAir });

@@ -523,6 +523,7 @@ export function resolveOutputTemplate(
   pinned = false,
   fallback = null,
   kindLook = null,
+  kind = null,
 ) {
   // RUNGS 3 AND 4, IN ONE LINE: what this screen wears for this kind, else what it
   // wears for everything. Everything below asks about THIS, never about the two
@@ -533,7 +534,7 @@ export function resolveOutputTemplate(
   // `isKeyedTemplate(null)` is true — a template with no background layer is keyed,
   // and an absent template has no layers at all — so a following screen would have
   // "kept its keyed template", which is nothing, and painted an empty frame.
-  if (!screenLook) return override ?? fallback ?? null;
+  if (!screenLook) return inheritHouseStyle(override ?? fallback ?? null, fallback, kind);
   if (!override) return screenLook;
   // TRANSPARENCY LAW: a keyed (lower-third) screen never goes opaque for an opaque
   // override — the camera it keys over must not be covered. Wins over everything.
@@ -546,6 +547,50 @@ export function resolveOutputTemplate(
   // the per-screen templates they had deliberately set. See DECISIONS §29.)
   if (pinned) return override;
   return screenLook;
+}
+
+/**
+ * THE KINDS THAT FOLLOW THE HOUSE LOOK — the words, and only the words.
+ *
+ * The operator's ruling (RG-219): *"the default theme selected should be what
+ * activates for every section... both song lyrics and bible slide... Media,
+ * announcements and Planner items carry the templates set for them
+ * originally"*. Scripture and song are the two kinds where a church is looking
+ * at TEXT and expects one look; a picture, a notice and a countdown are their
+ * own designs and are left alone.
+ */
+const HOUSE_STYLE_KINDS = ['scripture', 'song'];
+
+/**
+ * The look a following screen wears, wearing the house STYLE but its own LAYOUT.
+ *
+ * ## Why style and not the whole template
+ *
+ * The lyrics look is a seeded row on purpose: every other built-in is
+ * scripture-shaped, so a lyric rendered through one puts the song TITLE on the
+ * wall where the reference goes. The layout has to stay a lyric layout, and what
+ * a church actually means by "our look" is the palette, the typeface and the
+ * background — which is exactly what a THEME was before themes were folded into
+ * templates (DECISIONS §87), and those are still the same flat `style` keys.
+ *
+ * ## What it refuses, and why each refusal is in the operator's own sentence
+ *
+ * A screen with a template OF ITS OWN never reaches here: DECISIONS §29 makes
+ * the per-screen template authoritative and an operator who assigned one must
+ * keep seeing exactly it. A PINNED cue is a deliberate choice for that item and
+ * is returned untouched further down. A kind nobody named inherits nothing,
+ * because silence is not consent — a kind added next year gets the old
+ * behaviour until somebody decides otherwise.
+ *
+ * It never mutates either row. Two screens resolving in the same tick must not
+ * be able to see each other's answer.
+ */
+function inheritHouseStyle(look, fallback, kind) {
+  if (!look || !fallback || look === fallback) return look;
+  if (!HOUSE_STYLE_KINDS.includes(kind)) return look;
+  const house = fallback.style;
+  if (!house || typeof house !== 'object' || !Object.keys(house).length) return look;
+  return { ...look, style: { ...(look.style ?? {}), ...house } };
 }
 
 /** Format an elapsed duration (ms) as a service timer: `M:SS`, or `H:MM:SS` once

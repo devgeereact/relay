@@ -88,7 +88,9 @@ describe('what Live tells the operator', () => {
     // disagree, so there is one — and the claim this test makes is unchanged:
     // the programme renders through the SAME resolution the wall does.
     expect(pane).toMatch(/template=\{progTpl\}/);
-    expect(live).toMatch(/\$: progTpl = resolveOutputTemplate\(previewTpl, \$liveTemplateOverride/);
+    // The call takes the content KIND now (RG-219) and so runs onto several
+    // lines, so the assertion matches the call rather than one line of it.
+    expect(live).toMatch(/\$: progTpl = resolveOutputTemplate\(\s*previewTpl,\s*\$liveTemplateOverride/);
     expect(pane).toMatch(/onFit=\{noteFit\}/);
     // And there is exactly ONE of it. Twenty thumbnails each reporting their own
     // fit would bury the one report that is about a congregation's screen.

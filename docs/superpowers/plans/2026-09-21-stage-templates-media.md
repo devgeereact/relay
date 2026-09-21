@@ -136,9 +136,11 @@ showing current content under a dead badge is the rule 35 failure in a new place
 - **6 · Library chapter picker — DONE, RG-216.** `ui/ChapterPicker.svelte`, mounted by Live's rail
   and by `Browse.svelte`; the Library's `<select>` is deleted rather than kept beside it. What a
   press MEANS stays with each surface.
-- **7 · The default template applies everywhere.** Audit `resolveOutputTemplate` per kind; scripture
-  and song lyrics follow the main output template on Live, preview and output; media, announcements
-  and Planner cues keep their own; media needs no template at all.
+- **7 · The default template applies everywhere — DONE, RG-219.** The operator ruled for the STYLE
+  rather than the whole template, which is also the only reading that does not put a song title on
+  a congregation screen. `resolveOutputTemplate` takes the content kind; scripture and song inherit
+  the configured default's `style` on Live, the Outputs cards and the wall; media, announcements
+  and countdowns keep their own; a per-screen template is untouched (DECISIONS §29).
 - **8 · Media previews — DONE, RG-215.** The Library's media pane and the Planner's cue inspector
   already painted the file; the running order and the Add-cue results did not, and those are the
   two lists a plan is built in. `ui/MediaThumb.svelte` is now the one rule for both.
