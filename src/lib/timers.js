@@ -42,6 +42,35 @@ export function stageTimers(list) {
   return list.filter((t) => t && t.scope === 'stage');
 }
 
+/**
+ * A REGISTRY TIMER IN THE SHAPE A RENDERER READS (RG-222).
+ *
+ * The same facts come in two spellings. The registry — what `list_timers` hands
+ * the console — calls them `target_ms`, `from_ms`, `paused_ms`, `done_msg`;
+ * `channels::timer_frame_json` renames them on the way to a screen, so
+ * `TemplateRender` and `programmeRows` only ever see `countdown_to`,
+ * `countdown_from`, `countdown_paused_ms`, `countdown_done`.
+ *
+ * Live reads the registry and previews through the renderer, so it has to cross
+ * that seam. It crosses here rather than in an object literal inside a view,
+ * because two copies of a rename is exactly how a field stops arriving on one
+ * surface and nobody notices for a fortnight — this repository has the scar
+ * under four different names.
+ *
+ * `warn_ms` and `id` are NOT renamed by the wire and are not renamed here.
+ */
+export function timerAsRow(t) {
+  return {
+    id: t?.id,
+    label: t?.label,
+    countdown_to: t?.target_ms ?? null,
+    countdown_from: t?.from_ms ?? null,
+    countdown_paused_ms: t?.paused_ms ?? null,
+    countdown_done: t?.done_msg ?? null,
+    warn_ms: t?.warn_ms ?? null,
+  };
+}
+
 /** A registry timer in the shape `countdownRemainingMs` reads. The one projection. */
 export function timerAsContent(t) {
   return {

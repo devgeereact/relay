@@ -225,7 +225,7 @@
   // The Stage Timer's two pure questions — which rows belong here, and how
   // long is left on one. `timerRemainingMs` ENDS in `countdownRemainingMs`, which
   // stays the only countdown arithmetic on this side of the bridge.
-  import { stageTimers, timerRemainingMs, timerIsHeld } from '../timers.js';
+  import { stageTimers, timerRemainingMs, timerIsHeld, timerAsRow } from '../timers.js';
   import { planChannelsOf } from '../plan.js';
   // THE ONE DECISION LAYER FOR THE SCREEN COUNTDOWN. It moved out of Quick tools
   // on 2026-09-20 and its decisions did not move with it — they were already
@@ -401,6 +401,11 @@
   // verse answers a question nobody asked, and it would be the last thing the
   // previous clip said rather than a fact about now.
   $: mediaLive = !!$live?.media_url && !$screenBlack;
+  // THE PROGRAMME, IN THE SHAPE A RENDERER READS (RG-222). `ptTimers` is the
+  // registry's spelling and `TemplateRender` only ever sees the wire's, so the
+  // rename crosses through the one shared projection rather than an object
+  // literal here — see `timers.js::timerAsRow`.
+  $: previewProgramme = Array.isArray(ptTimers) ? ptTimers.map(timerAsRow) : [];
   let clipErr = '';
   /**
    * THE CLIP ON THE WALL, AS AN ID — or `null` for one Relay ships.
@@ -2546,10 +2551,19 @@
                prop and not a field on the content on purpose: a verse replaces
                `$liveContent` and leaves `$background` exactly where it is, which
                is the whole of the feature. -->
+          <!-- THE SAME FACTS THE WALL IS HANDED (RG-222). Two props were missing
+               and each was a different lie on the one surface an operator trusts.
+               `mediaTransport`: Pause holds every screen in the building and this
+               pane went on playing, so the control that HAD worked read as though
+               it had not. `programme`: a template carrying a programme layer
+               previewed without its timers, so the operator could not see what
+               the preacher's screen was showing. -->
           <TemplateRender
             template={progTpl}
             content={$liveContent}
             backdrop={$background}
+            mediaTransport={$mediaTransport}
+            programme={previewProgramme}
             onFit={noteFit}
           />
         {:else if $background && progTpl}

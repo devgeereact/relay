@@ -2645,10 +2645,19 @@
        sliced into a shorter time that still reads as valid — RG-147) and the
        rail's own height. A figure may SHRINK to fit its box; it may not grow past
        what was asked for. The 12px floor stays: below it nothing is readable from
-       a platform anyway, and a figure that small is a box that is too small. */
+       a platform anyway, and a figure that small is a box that is too small.
+
+       THE 64px CEILING IS GONE, and it is why the operator reported the Size
+       control as dead (RG-223). It was a literal, not a fit: on a 1920×1080
+       screen with the seeded Programme layer and one timer, the per-column budget
+       is 294px and the rail's room is 72px, so `64px` was the smallest of the
+       three from about 3.3cqw upward — the dial moved for a turn and a half and
+       then nothing happened, however far it went. `max()` keeps the floor and
+       drops the ceiling; past that the rail's own HEIGHT binds, which is honest
+       and visible, because the box is drawn in the editor. */
     font-size: min(
       calc(var(--lp-sz, 2.2) * 1cqw),
-      clamp(12px, calc(92cqw / var(--tmrs) / var(--tch, 6) / 0.62), 64px),
+      max(12px, calc(92cqw / var(--tmrs) / var(--tch, 6) / 0.62)),
       var(--lp-room, calc(var(--lp-h, 100px) * 0.62))
     );
   }

@@ -166,3 +166,58 @@ describe('the figure gets the room the label is not using', () => {
     expect(programmeRoom(BARE_BELOW_PX - 0.01, 0)).toEqual(programmeRoom(BARE_BELOW_PX + 0.01, 0));
   });
 });
+
+// ── AND THE CEILING THAT MADE THE SIZE CONTROL LOOK DEAD (RG-223) ───────────
+//
+// The operator: *"Size still dosent move still... only the blur background
+// moved, not the timer itself"*.
+//
+// `--lp-sz` reached this layer in RG-212 and the control genuinely moved the
+// digits — for about one and a half turns of the dial, and then stopped. The
+// expression is `min(declared, widthBudget, room)` and `widthBudget` was a
+// `clamp(12px, …, 64px)`. That **64px is a literal, not a fit**, and on any
+// ordinary stage rail it is the smallest of the three long before the box is.
+//
+// Measured on a 1920×1080 screen, the seeded Programme layer (full width, 8%
+// tall, one timer, a six-character figure — `/tmp/sizemath.mjs`):
+//
+//   size   declared   width budget   room    painted
+//   2.2      42px        294px        72px     42px   ← the control works
+//   3        58px        294px        72px     58px   ← still working
+//   4        77px        294px        72px     64px   ← the CEILING binds
+//   6       115px        294px        72px     64px   ← nothing moves
+//   12      230px        294px        72px     64px   ← nothing moves
+//
+// The middle term — the per-column budget that stops `1:30:13` being sliced
+// (RG-147) — was never the thing binding: it is 294px there. The ceiling was.
+//
+// So the ceiling goes and the two REAL caps stay. Past that the rail's own
+// height binds, which is honest and visible: the box is drawn in the editor and
+// an operator who wants bigger digits can see they need a taller box.
+describe('the Size control is not capped by a number nobody chose', () => {
+  const val = rule('.lp-val');
+
+  it('still takes the smallest of the declared size and the two real caps', () => {
+    expect(val).toMatch(/font-size:\s*min\(/);
+    expect(val, 'the declared size is no longer a term').toMatch(/var\(--lp-sz/);
+    expect(val, 'the per-column budget went with the ceiling').toMatch(/var\(--tch/);
+    expect(val, 'the rail height cap went with the ceiling').toMatch(/var\(--lp-room/);
+  });
+
+  it('but the per-column budget has no hard upper bound any more', () => {
+    // A `clamp(min, …, MAX)` here is a ceiling on the DESIGNER, not on the fit.
+    // The floor stays: below 12px nothing is readable from a platform.
+    //
+    // THE WHOLE DECLARATION, not a sub-match. My first version of this matched
+    // `/(clamp|max)\([^;]*?--tch[^;]*?\)/` — non-greedy, so it stopped at the
+    // `)` closing `var(--tch, 6)` and never saw the ceiling it was written to
+    // find. It passed against the broken file, which is the scanner-narrowing
+    // failure this repository records under four other names.
+    const decl = val.slice(val.indexOf('font-size:'));
+    expect(decl, 'this test is reading nothing').toMatch(/--tch/);
+    expect(decl, 'a literal ceiling is back — see the measurement above').not.toMatch(
+      /clamp\([^;]*?,\s*\d+px\s*\)/s,
+    );
+    expect(decl, 'the 12px floor was lost with it').toMatch(/12px/);
+  });
+});

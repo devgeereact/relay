@@ -1823,6 +1823,15 @@
             <button class="r-btn quiet sm te-minilink" on:click={() => detectFonts(false)}>Use all computer fonts {fontMsg}</button>
             {#if missingFont}<p class="te-fwarn">“{fontLabel(missingFont)}” isn't installed here — outputs use a default. Install it to use it.</p>{/if}
             <div class="te-frow"><label class="te-fk" for="te-size">Size</label><span class="te-fv te-stepper"><input id="te-size" class="te-num r-mono" type="number" min="1" max="16" step="0.1" value={sel.size} on:input={(e) => num('size', e.target.value)} /><span class="te-unit r-mono">cqw</span></span></div>
+            {#if sel.bind === 'programme'}
+              <!-- WHY THE DIAL STOPS (RG-223). The rail's figures may shrink to
+                   fit the box and may never grow past it, so past a point the
+                   BOX is what is holding them and the control looks dead. That
+                   was reported as a bug and the 64px ceiling behind it is gone;
+                   this is the half that remains true and has to be said where
+                   the control is, not discovered by dragging. -->
+              <p class="te-fnote">Figures are capped by the box: make the layer taller in <b>Where does it sit?</b> for bigger digits.</p>
+            {/if}
             <div class="te-frow"><label class="te-fk" for="te-col">Colour</label><span class="te-fv te-swatch"><input id="te-col" type="color" value={isColor(sel.color) ? sel.color : '#ffffff'} on:input={(e) => set('color', e.target.value)} disabled={isThemeToken(sel.color)} /><span class="te-hex r-mono">{isThemeToken(sel.color) ? 'linked' : isColor(sel.color) ? sel.color.toUpperCase() : '#FFFFFF'}</span></span></div>
             <div class="te-frow"><label class="te-fk" for="te-colbind">Style link</label><select id="te-colbind" class="r-select te-fv" value={isThemeToken(sel.color) ? sel.color : 'custom'} on:change={(e) => bindToken('color', e.target.value, '#ffffff')}><option value="custom">Custom colour</option>{#each COLOUR_TOKENS as t}<option value={t.token}>{t.label}</option>{/each}</select></div>
             <div class="te-frow">
