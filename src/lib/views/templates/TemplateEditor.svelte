@@ -1620,6 +1620,57 @@
                     </div>
                   {/if}
                 {/each}
+
+                <!-- ══ THE FLOATING BAR ══ THE CONTROLS COME TO THE OBJECT (RG-229).
+                     The two or three properties touched on every layer used to
+                     mean crossing the window to a column on the right. This is
+                     the operator's own reference, and it is NOT a second set of
+                     controls: every button writes through the same `set`/`num`
+                     the panel writes through, so a change made here and a change
+                     made there are one change and the panel shows it at once.
+
+                     It carries only what the selected KIND can do. A control
+                     that does nothing for a shape is absent rather than greyed —
+                     a greyed control an operator cannot explain reads as a
+                     broken app, which is RG-223 stated as a rule.
+
+                     `stopPropagation` on the pointer: the bar sits inside the
+                     overlay, over the layer's own hit box, and a press must not
+                     start dragging the thing it is about. -->
+                {#if sel && sel.type !== 'background'}
+                  {@const fb = drawn.get(sel.id) || sel}
+                  {@const low = (Number(fb.y) || 0) < 12}
+                  <!-- svelte-ignore a11y-no-static-element-interactions -->
+                  <div
+                    class="te-float"
+                    class:below={low}
+                    style="left:{Math.max(0, Math.min(100, (Number(fb.x) || 0) + (Number(fb.w) || 0) / 2))}%; top:{low ? (Number(fb.y) || 0) + (Number(fb.h) || 0) : Number(fb.y) || 0}%;"
+                    on:pointerdown|stopPropagation
+                    role="toolbar"
+                    aria-label="{layerLabel(sel)} — quick controls">
+                    {#if sel.type === 'text' || sel.type === 'timer'}
+                      <span class="te-fgroup">
+                        <button class="te-fbtn" aria-label="Smaller" title="Smaller type" on:click={() => num('size', Math.max(0.5, Math.round(((sel.size ?? 3) - 0.2) * 10) / 10))}>−</button>
+                        <span class="te-fnum r-mono">{sel.size ?? 3}</span>
+                        <button class="te-fbtn" aria-label="Bigger" title="Bigger type" on:click={() => num('size', Math.min(16, Math.round(((sel.size ?? 3) + 0.2) * 10) / 10))}>+</button>
+                      </span>
+                      <span class="te-fsep"></span>
+                      <button class="te-fbtn wide" class:on={(sel.weight ?? 400) >= 600} aria-pressed={(sel.weight ?? 400) >= 600}
+                        aria-label="Bold" title="Bold" on:click={() => set('weight', (sel.weight ?? 400) >= 600 ? 400 : 700)}><b>B</b></button>
+                      <button class="te-fbtn wide" class:on={!!sel.italic} aria-pressed={!!sel.italic}
+                        aria-label="Italic" title="Italic" on:click={() => set('italic', !sel.italic)}><i>I</i></button>
+                      <span class="te-fsep"></span>
+                      {#each ['left', 'center', 'right'] as a}
+                        <button class="te-fbtn" class:on={sel.align === a} aria-label={TEXT_ALIGN_LABEL[a]} title={TEXT_ALIGN_LABEL[a]} on:click={() => set('align', a)}>
+                          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16"/><path d={a === 'left' ? 'M4 12h10' : a === 'right' ? 'M10 12h10' : 'M7 12h10'}/><path d="M4 18h16"/></svg>
+                        </button>
+                      {/each}
+                    {/if}
+                    <span class="te-fsep"></span>
+                    <button class="te-fbtn wide" aria-label="Place exactly" title="Open the position controls"
+                      on:click={() => { scope = 'object'; openGroup = { ...openGroup, where: true }; }}>Position</button>
+                  </div>
+                {/if}
               </div>
             {/if}
           </div>
@@ -2509,6 +2560,29 @@
   .te-botbar{ flex:0 0 auto; display:flex; align-items:center; gap:var(--v-sp-sm); padding:10px 12px; border-top:1px solid var(--v-line); }
   .te-botnote{ font-size:var(--v-fs-cap); color:var(--v-faint); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .te-botchip{ padding:5px 10px; border-radius:var(--v-r-md); background:var(--v-surf2); border:1px solid var(--v-line2); font-size:var(--v-fs-cap); color:var(--v-dim); }
+  /* ── THE FLOATING BAR (RG-229) ──────────────────────────────────────────────
+     Above the selection, centred on it, and BELOW it when the layer is near the
+     top — a bar drawn above a layer at y=2 hangs off the slide, and on a pane
+     that scrolls that is a bar nobody can reach.
+     Steel and neutral: this editor reaches no output, so amber (ON AIR), cyan
+     (the AI guessed) and amethyst (rehearsal) are all lies here (rule 18). */
+  .te-float{ position:absolute; z-index:6; transform:translate(-50%, calc(-100% - 10px));
+    display:flex; align-items:center; gap:3px; padding:4px 6px; white-space:nowrap;
+    border-radius:var(--v-r-md); background:var(--v-surf); border:1px solid var(--v-line2);
+    box-shadow:0 12px 28px rgba(0,0,0,.5); }
+  .te-float.below{ transform:translate(-50%, 10px); }
+  /* A TOOLBAR BUTTON on the floating bar: a 24px square that takes an icon or a
+     single letter, in a row of its own kind. It carries its own shape because
+     the bar has no shared group styling it. */
+  .te-fbtn{ min-width:24px; height:24px; padding:0 4px; display:grid; place-items:center;
+    cursor:pointer; background:transparent; border:1px solid transparent;
+    border-radius:var(--v-r-sm); color:var(--v-dim); font-size:var(--v-fs-lbl); }
+  .te-fbtn.wide{ padding:0 8px; }
+  .te-fbtn:hover{ background:var(--v-surf3); color:var(--v-txt); }
+  .te-fbtn.on{ background:var(--v-sel-soft); border-color:var(--v-sel-line); color:var(--v-txt); }
+  .te-fgroup{ display:inline-flex; align-items:center; border:1px solid var(--v-line2); border-radius:var(--v-r-sm); }
+  .te-fnum{ min-width:32px; text-align:center; font-size:var(--v-fs-cap); color:var(--v-txt); font-variant-numeric:tabular-nums; }
+  .te-fsep{ width:1px; height:16px; background:var(--v-line2); margin:0 2px; }
   .te-botwho{ font-size:var(--v-fs-lbl); color:var(--v-txt); font-weight:600;
     max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
