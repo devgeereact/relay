@@ -878,8 +878,23 @@
   $: previewContent = hasMediaLayer && BACKGROUNDS.length
     ? { ...SAMPLE, media_url: BACKGROUNDS[0].url, media_kind: 'image' }
     : SAMPLE;
-  const ZOOMS = [40, 55, 70, 85, 100];
-  let zoomIdx = ZOOMS.length - 1;
+  // ── THE ZOOM GOES PAST FIT (RG-228) ───────────────────────────────────────
+  //
+  // `zoom` is the board's width as a share of the PANE, and it stopped at 100 —
+  // fit. So the control could only ever make the slide smaller, and exact work
+  // on a small layer (a reference line, a figure on the rail) meant squinting at
+  // a 30px box with no way to get closer. Every editor of this kind goes past
+  // 100%; this one could not.
+  //
+  // The ceiling is 400 because past it a template's own `cqw` sizing stops being
+  // something a person can judge, and the pane already scrolls (`.te-stage` is
+  // `overflow:auto`) — the only thing that stopped it was `max-width:100%` on the
+  // wrapper, which is now lifted exactly when the board is wider than the pane.
+  //
+  // It remains a VIEW and touches no layer: a zoom that wrote into the model
+  // would resize something on a congregation screen for the rest of the service.
+  const ZOOMS = [40, 55, 70, 85, 100, 150, 200, 300, 400];
+  let zoomIdx = 4;
   $: zoom = ZOOMS[zoomIdx];
   let previewMode = false;
 
@@ -1282,12 +1297,32 @@
     </div>
   {:else}
     <div class="te-body">
-      <!-- ══ LAYERS ══ -->
-      <aside class="te-pane te-layers">
-        <div class="te-panehead">
-          <span class="r-lbl">Layers</span>
-          <div class="te-addwrap">
-            <button class="r-iconbtn te-addbtn" on:click|stopPropagation={toggleAdd} aria-expanded={addOpen} aria-haspopup="menu" aria-label="Add layer">＋</button>
+      <!-- ══ TOOLS ══ WHERE AN OBJECT COMES FROM (RG-227).
+           Creation lived behind a `＋` inside the Layers pane's own header, so
+           an operator asking "how do I add a picture" had to find a plus on a
+           panel about something else. Every editor of this kind puts it on a
+           rail, and so does the design the operator approved.
+
+           The binding menu is MOVED, not copied: the Text tool IS its button and
+           keeps the class the existing tests hold it by, rule 44's Escape
+           guarantee included. Two buttons onto one menu would be the twin door
+           this repository keeps deleting. -->
+      <nav class="te-tools" aria-label="Tools">
+        <!-- THE RESTING TOOL, AND IT DOES SOMETHING. A button that looks live
+             and does nothing is what `inventory.test.js` counts, and it counted
+             this one: an arrow that was pressed-looking and inert. Pressing it
+             DROPS the selection, which is the one thing an operator wants from
+             an arrow they have just clicked — and it makes no layer, which is
+             what separates it from every other tool on the rail. -->
+        <button class="te-tool" class:on={!sel} aria-label="Select" aria-pressed={!sel}
+          on:click={() => (selId = null)} title="Select and move — press to drop the selection">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 3l14 8-6 1.6L9.6 19z"/></svg>
+        </button>
+        <div class="te-addwrap">
+          <button class="te-tool te-addbtn" on:click|stopPropagation={toggleAdd} aria-expanded={addOpen} aria-haspopup="menu" aria-label="Text" title="Add text — pick what it shows">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M5 6h14M12 6v13M9 19h6"/></svg>
+          </button>
+
             {#if addOpen}
               <!-- The click handler is not an interaction: it stops the document-level
                    outside-click closer from seeing a click on the menu itself. Every real
@@ -1309,7 +1344,29 @@
                 {/each}
               </div>
             {/if}
-          </div>
+        </div>
+        <button class="te-tool" on:click={() => addLayer('shape')} aria-label="Shape" title="Add a shape">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2.5"/></svg>
+        </button>
+        <button class="te-tool" on:click={() => addLayer('media')} aria-label="Picture" title="Add a picture or clip placement">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M3 15l5-4 4 3 3-2 6 5"/></svg>
+        </button>
+        <button class="te-tool" on:click={() => addLayer('band')} aria-label="Band" title="Add a lower-third band">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="14" width="18" height="6" rx="1.5"/><path d="M3 6h18" opacity=".45"/></svg>
+        </button>
+        <button class="te-tool" on:click={() => addLayer('timer')} aria-label="Clock" title="Add a countdown">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 8v4.4l2.8 1.8"/></svg>
+        </button>
+        <span class="te-toolsep" aria-hidden="true"></span>
+        <button class="te-tool" on:click={() => addLayer('background')} aria-label="Background" title="Add a background">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16" opacity=".5"/></svg>
+        </button>
+      </nav>
+      <!-- ══ LAYERS ══ -->
+      <aside class="te-pane te-layers">
+        <div class="te-panehead">
+          <span class="r-lbl">Layers</span>
+          <span class="te-panenote2 r-mono">front to back</span>
         </div>
         <div class="te-layerlist r-scroll">
           {#each panelRows as row (row.L.id)}
@@ -1509,7 +1566,7 @@
           </div>
         {/if}
         <div class="te-stage">
-          <div class="te-board-wrap" style="width:{zoom}%">
+          <div class="te-board-wrap" class:over={zoom > 100} style="width:{zoom}%">
             {#if !previewMode}
               <div class="te-ruler te-ruler-x">{#each Array(11) as _, i}<span style="left:{i * 10}%">{i * 10}</span>{/each}</div>
               <div class="te-ruler te-ruler-y">{#each Array(11) as _, i}<span style="top:{i * 10}%">{i * 10}</span>{/each}</div>
@@ -1572,7 +1629,18 @@
           <span class="r-lbl">Canvas</span>
           <span class="te-botnote">{transparentBg ? 'Transparent — keys out in OBS / ATEM' : 'Opaque background'}</span>
           <span class="te-spring"></span>
-          {#if sel}<span class="te-botchip r-mono">{Math.round(sel.x)},{Math.round(sel.y)} · {Math.round(sel.w)}×{Math.round(sel.h)}</span>{/if}
+          <!-- WHAT IS SELECTED, NOT ONLY WHERE IT IS (RG-228). Four numbers with
+               nothing naming the layer is a readout an operator has to look away
+               from the canvas to interpret — and the SIZE was not among them,
+               which is the one figure RG-223 turned out to be an argument
+               about. -->
+          {#if sel}
+            <span class="te-botwho">{layerLabel(sel)}</span>
+            <span class="te-botchip r-mono">{Math.round(sel.x)},{Math.round(sel.y)} · {Math.round(sel.w)}×{Math.round(sel.h)}</span>
+            {#if sel.size != null && (sel.type === 'text' || sel.type === 'timer')}
+              <span class="te-botchip r-mono">{sel.size} cqw</span>
+            {/if}
+          {/if}
         </footer>
       </section>
 
@@ -2149,9 +2217,28 @@
      simplest one that exists. The rail is the column an operator opens this
      screen to use; the artboard loses 42px out of about a thousand and is still
      the largest thing on the desk. */
-  .te-body{ flex:1; min-height:0; display:grid; grid-template-columns:264px minmax(0,1fr) 300px; gap:12px; }
-  @media (max-width:1180px){ .te-body{ grid-template-columns:216px minmax(0,1fr) 268px; } }
-  @media (max-width:980px){ .te-shell{ height:auto; } .te-body{ grid-template-columns:1fr; } }
+  .te-body{ flex:1; min-height:0; display:grid; grid-template-columns:46px 264px minmax(0,1fr) 300px; gap:12px; }
+  @media (max-width:1180px){ .te-body{ grid-template-columns:46px 216px minmax(0,1fr) 268px; } }
+  /* The rail folds to a ROW above everything when the columns stack, rather than
+     being dropped: it is the only way to add an object, so losing it at a narrow
+     window would make the editor read-only. */
+  @media (max-width:980px){ .te-shell{ height:auto; } .te-body{ grid-template-columns:1fr; }
+    .te-tools{ flex-direction:row; width:auto; padding:6px 8px; }
+    .te-toolsep{ width:1px; height:20px; margin:0 4px; } }
+
+  /* ── THE TOOL RAIL (RG-227) ──────────────────────────────────────────────── */
+  .te-tools{ display:flex; flex-direction:column; align-items:center; gap:4px;
+    padding:8px 0; border-radius:var(--v-r-md);
+    background:var(--v-surf); border:1px solid var(--v-line2); }
+  .te-tool{ width:32px; height:32px; display:grid; place-items:center; cursor:pointer;
+    background:transparent; border:1px solid transparent; border-radius:var(--v-r-sm);
+    color:var(--v-dim); }
+  .te-tool:hover{ background:var(--v-surf3); color:var(--v-txt); }
+  /* Steel — the thing being worked on. NEVER amber: this editor reaches no
+     output, and amber means a screen is on air (rule 18). */
+  .te-tool.on{ background:var(--v-sel-soft); border-color:var(--v-sel-line); color:var(--v-txt); }
+  .te-toolsep{ width:20px; height:1px; background:var(--v-line2); margin:4px 0; }
+  .te-panenote2{ font-size:var(--v-fs-cap); color:var(--v-faint); }
 
   .te-pane{ display:flex; flex-direction:column; min-height:0; overflow:hidden; background:var(--v-surf); border:1px solid var(--v-line); border-radius:var(--v-r-lg); }
   .te-panehead{ display:flex; align-items:center; justify-content:space-between; gap:8px; padding:11px 13px; border-bottom:1px solid var(--v-line); flex:0 0 auto; }
@@ -2374,6 +2461,11 @@
   .te-stage::before{ content:""; position:absolute; inset:0; pointer-events:none; background:radial-gradient(130% 110% at 50% 32%, transparent 45%, rgba(0,0,0,.45) 100%); }
   /* board wrapper carries the rulers; the artboard sits inside, offset for them. */
   .te-board-wrap{ position:relative; max-width:100%; padding:18px 0 0 26px; flex:0 0 auto; z-index:1; }
+  /* PAST FIT, the cap is what has to give (RG-228). `.te-stage` already scrolls;
+     `max-width:100%` was silently holding the board at fit however far the
+     control was pushed, so the two zoom steps past 100 would have done nothing
+     at all and read as a dead control — the RG-223 complaint in another place. */
+  .te-board-wrap.over{ max-width:none; }
   .te-ruler{ position:absolute; color:var(--v-faint); font-family:var(--f-mono); font-size:7px; pointer-events:none; }
   .te-ruler-x{ top:2px; left:26px; right:0; height:14px; border-bottom:1px solid var(--v-line2); }
   .te-ruler-x span{ position:absolute; transform:translateX(1px); }
@@ -2417,6 +2509,8 @@
   .te-botbar{ flex:0 0 auto; display:flex; align-items:center; gap:var(--v-sp-sm); padding:10px 12px; border-top:1px solid var(--v-line); }
   .te-botnote{ font-size:var(--v-fs-cap); color:var(--v-faint); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .te-botchip{ padding:5px 10px; border-radius:var(--v-r-md); background:var(--v-surf2); border:1px solid var(--v-line2); font-size:var(--v-fs-cap); color:var(--v-dim); }
+  .te-botwho{ font-size:var(--v-fs-lbl); color:var(--v-txt); font-weight:600;
+    max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
   /* design panel */
   .te-designbody{ flex:1; min-height:0; overflow-y:auto; padding:14px; display:flex; flex-direction:column; gap:10px; }
