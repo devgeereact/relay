@@ -242,12 +242,29 @@
   import TemplateRender from './TemplateRender.svelte';
   import { humanError } from './errors.js';
   import { rangeFill } from './rangefill.js';
+  import { dbOf, meterFill, peakOf } from './meterscale.js';
   // The dock lives in the SHELL, on every workspace, so its Detection switch was
   // the one door out of safe mode that nothing asked about. See the switch itself.
   import { safeMode } from './boot/boot.js';
 
   $: lvl = Math.max(0, Math.min(1, $meter.level ?? 0));
   $: dbLabel = lvl > 0.0001 ? `${Math.round(20 * Math.log10(lvl))} dB` : '−∞ dB';
+  // ── THE METER (RG-257) ──────────────────────────────────────────────────────
+  //
+  // Fed from the same readings the trace is: `audio://chunk` carries `peaks`,
+  // sixteen TRUE peaks at 25 ms resolution, and `waveBuf` already keeps twenty
+  // seconds of them. So the held peak is a maximum over a buffer that exists,
+  // and nothing changed in Rust to get one.
+  //
+  // The BODY of the bar is the momentary level and the MARK is the held peak —
+  // the two figures every desk meter shows, and the reason a meter catches a
+  // clip that the eye would miss between two frames.
+  const PEAK_HOLD_MS = 1500;
+  $: metFill = meterFill(dbOf(lvl));
+  $: metClip = lvl >= CLIP_AT;
+  $: metPeak = peakOf(waveBuf, waveNow, PEAK_HOLD_MS);
+  $: metPeakFill = metPeak === null ? null : meterFill(dbOf(metPeak));
+  $: metPeakClip = metPeak !== null && metPeak >= CLIP_AT;
 
   // ── LIVE TRANSCRIPT · WHAT IT HEARD, WHEN IT HEARD IT (L3) ─────────────────
   //
@@ -432,6 +449,11 @@
   // the defect, not the courtesy.
   const FRAME_MS = 50;
   let waveBuf = [];
+  // THE CLOCK THE PEAK MARK DECAYS AGAINST (RG-257). Stamped where the trace is
+  // already repainted rather than on a timer of its own: a second timer for a
+  // second picture of the same signal is a second thing that can be left
+  // running, and `dockloop.test.js` exists because that has happened here.
+  let waveNow = Date.now();
   let cv = null;
   let cw = 0;
   let ch = 0;
@@ -459,6 +481,7 @@
   function onReading(m) {
     const now = Date.now();
     waveBuf = pushEnvelope(waveBuf, now, m?.peaks, !!m?.isVoice, m?.level ?? 0);
+    waveNow = now;
     signalSince = now;
     // Repaint immediately when the loop is not running, so a reading taken with
     // the microphone stopped (the reset `stopCapture` performs) still lands.
@@ -469,6 +492,10 @@
     raf = requestAnimationFrame(frame);
     if (ts - lastFrame < FRAME_MS) return;
     lastFrame = ts;
+    // The held peak slides down by FORGETTING, so it needs the clock to move
+    // even while no reading arrives — otherwise a mark set by one loud moment
+    // would stand until the next chunk rather than decaying.
+    waveNow = Date.now();
     draw();
   }
   function startLoop() {
@@ -849,6 +876,29 @@
     </div>
     <div class="dbody audbody">
       <div class="wavewrap">
+        <!-- ══ THE METER (RG-257) ══ The operator asked for the one OBS draws:
+             a horizontal bar on a decibel scale with a held peak. It is above
+             the trace rather than instead of it — the two answer different
+             questions, and neither is the other's summary. The meter says how
+             loud it is NOW and whether it clipped; the trace says what the room
+             has been doing for twenty seconds, which is what shows a preacher
+             stepping away from a microphone.
+
+             The COLOUR is the voice gate's own answer and never a level, which
+             is `readingKind`'s rule unchanged. There is no band calling a level
+             good, quiet or hot: that would be "this many dB = speech" in a
+             costume, and it is the absolute threshold rule 12 removed. The one
+             absolute mark is full scale, which DECISIONS §19 grants by name. -->
+        <div class="meter" aria-hidden="true">
+          <div class="mfill" class:voice={$meter.isVoice} class:clip={metClip} style="width:{metFill * 100}%"></div>
+          {#if metPeakFill !== null}
+            <i class="mpeak" class:clip={metPeakClip} style="left:{metPeakFill * 100}%"></i>
+          {/if}
+          <i class="mclip"></i>
+        </div>
+        <div class="mticks r-mono" aria-hidden="true">
+          <span>&minus;60</span><span>&minus;40</span><span>&minus;20</span><span>&minus;10</span><span>0</span>
+        </div>
         <!-- The trace itself carries no information a screen reader can use; the
              two facts it illustrates are the VOICE chip and the dB figure in the
              head, both of which are text. -->
@@ -1346,10 +1396,49 @@
   .audbody { display: flex; flex-direction: column; gap: 7px; }
   .wavewrap {
     position: relative; flex: 1 1 auto; min-height: 44px;
+    display: flex; flex-direction: column;
+    padding: 5px 6px 3px; box-sizing: border-box;
     border: 1px solid var(--v-rule); border-radius: var(--v-r-sm);
     background: linear-gradient(180deg, var(--v-void), var(--v-rule)); overflow: hidden;
   }
-  .wave { display: block; width: 100%; height: 100%; }
+  /* ── THE METER (RG-257) ────────────────────────────────────────────────────
+     A bar, its ticks, and the trace under both. The wrap is a column now: the
+     meter is the figure an operator checks at a glance and the trace is the
+     history they read when something is wrong, so the quick one is on top.
+
+     NO AMBER — that means a congregation is looking at something (rule 18) —
+     and no fourth colour. Steel, the gate's emerald, and rose at full scale:
+     the same three `readingKind` already names, for the same reasons. */
+  .meter {
+    position: relative; flex: 0 0 auto; height: 11px;
+    border-radius: var(--v-r-sm); background: var(--v-void); overflow: hidden;
+  }
+  .mfill {
+    position: absolute; left: 0; top: 0; bottom: 0;
+    background: var(--v-faint);
+  }
+  /* THE GATE'S OWN ANSWER, never a level. A bar that turned green at some
+     number of decibels would be drawing the voice gate as a threshold it is
+     not — rule 12, and the same refusal the trace makes. */
+  .mfill.voice { background: var(--v-emerald); }
+  .mfill.clip { background: var(--v-red); }
+  /* THE HELD PEAK. A hairline rather than a block: it marks an instant, and a
+     block would read as a second level. */
+  .mpeak {
+    position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px;
+    background: var(--v-txt);
+  }
+  .mpeak.clip { background: var(--v-red); }
+  /* FULL SCALE, and the only absolute mark on this picture (DECISIONS §19). */
+  .mclip {
+    position: absolute; right: 0; top: 0; bottom: 0; width: 1px;
+    background: var(--v-red-line, rgba(244, 81, 91, .5));
+  }
+  .mticks {
+    flex: 0 0 auto; display: flex; justify-content: space-between;
+    padding: 2px 0 1px; font-size: var(--v-fs-kind); color: var(--v-faint);
+  }
+  .wave { display: block; width: 100%; flex: 1 1 auto; min-height: 0; }
   .wavescale {
     position: absolute; inset: 0; pointer-events: none;
     background: repeating-linear-gradient(90deg, rgba(190,205,235,.035) 0 1px, transparent 1px 46px);

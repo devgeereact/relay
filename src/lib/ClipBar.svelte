@@ -40,7 +40,7 @@
   import { programmeScreen } from './channelroles.js';
   import { describeMediaClock, mediaIdFromUrl } from './mediaclock.js';
   import { clipPosition } from './clipposition.js';
-  import { formatCountdown } from './countdown.js';
+  import { formatCountdown } from './layers.js';
   import { humanError } from './errors.js';
 
   // WHICH SCREEN THE FIGURE IS ABOUT (RG-238), carried here whole rather than

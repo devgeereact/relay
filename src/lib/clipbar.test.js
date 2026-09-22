@@ -23,7 +23,9 @@
 // instruction — *"strategise on where to put the functionality that will not let
 // the workspace busy or rough"*. The strip is not rendered at all unless a clip
 // is on the screens.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
+import { tick } from 'svelte';
+import ClipBar from './ClipBar.svelte';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -154,5 +156,69 @@ describe('the scrub bar says only what it knows', () => {
   it('and the bar is absent, not zero, when no screen is reporting', () => {
     // A zero-length scrub bar looks usable and can move nothing.
     expect(BAR).toMatch(/\{#if\s+posMs\s*!==\s*null\}/);
+  });
+});
+
+// ── AND SOMETHING ACTUALLY RENDERS IT ───────────────────────────────────────
+//
+// Every case above reads the component as TEXT, which is the right instrument
+// for "is the control still in the shell" and the wrong one for "does it work".
+// It cost exactly what this repository says it costs: `formatCountdown` was
+// imported from `countdown.js`, which does not export it — it is `layers.js`'s —
+// and the whole file above stayed green while `npm run build` failed. A
+// component nothing renders is not covered, however green its tests.
+describe('mounted, with a clip on the screens', () => {
+  let app;
+  let host;
+
+  afterEach(() => {
+    app?.$destroy();
+    host?.remove();
+    app = null;
+    host = null;
+  });
+
+  async function mount() {
+    const { live, channelHealth, mediaTransport } = await import('./stores/capture.js');
+    live.set({ media_url: 'http://host:8032/media/7', kind: 'media' });
+    mediaTransport.set({ paused: false, loop: false, volume: 1 });
+    // ONE SCREEN, PAINTING, HALFWAY THROUGH A TWO MINUTE CLIP.
+    channelHealth.set({
+      1: {
+        online: true,
+        painting: true,
+        supported: true,
+        last_beat_ms: 0,
+        name: 'Main screen',
+        media: { pos_ms: 60_000, dur_ms: 120_000, paused: false },
+      },
+    });
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    app = new ClipBar({ target: host });
+    await tick();
+    await tick();
+    return host;
+  }
+
+  it('renders the transport, the figures and a usable scrub', async () => {
+    await mount();
+    expect(host.querySelector('.clipbar'), 'nothing rendered at all').toBeTruthy();
+    const scrub = host.querySelector('input[type="range"]');
+    expect(scrub, 'no scrub').toBeTruthy();
+    expect(Number(scrub.max)).toBe(120_000);
+    // THE FIGURES ARE REAL, which is the half a source scan cannot see: a
+    // `formatCountdown` that resolved to `undefined` renders as empty text and
+    // every assertion about the markup still passes.
+    expect(host.textContent).toMatch(/\d+:\d\d/);
+    expect(host.textContent).toContain('1:00');
+  });
+
+  it('renders nothing when no clip is on the screens', async () => {
+    const { live } = await import('./stores/capture.js');
+    await mount();
+    live.set({});
+    await tick();
+    expect(host.querySelector('.clipbar'), 'the strip outlived the clip').toBeNull();
   });
 });
