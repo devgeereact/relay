@@ -1508,7 +1508,12 @@
   <!-- THE MESSAGE TOOK THIS ROOM (RG-247). The reading is not rendered beneath
        one: two things in the same box, with a stacking rule deciding which the
        preacher reads, is the arrangement that put the words 140px low. -->
-  {#if zones.reading && msgPlace !== 'large' && !panelOpen}
+  <!-- AND THE RAIL TOOK IT AT REST (RG-253). `railTakesTheRoom` grew the timer
+       and left an empty reading area above it printing "— standby —", which cost
+       268px of a 844px phone. `stageresting.js` answers `programme` only when
+       there is no reading, no slide and no countdown, so there is never anything
+       in that region to yield — and the moment anything is fired it is back. -->
+  {#if zones.reading && msgPlace !== 'large' && !panelOpen && !railTakesTheRoom}
   <main class="stage" class:beside>
     <section class="reading" aria-label="Reading">
       {#if shown && content}

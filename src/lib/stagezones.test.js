@@ -295,6 +295,12 @@ describe('zones — everything the operator sent, and nothing they did not', () 
     );
 
     const { container } = await mount(programme(Date.now()));
+    // A READING IS UP FOR THIS CASE, since RG-253. With nothing fired the rail
+    // owns the whole screen and the reading area is not rendered at all, so
+    // `.rail` — where the stored `figures: 'beside'` now shows — would be absent
+    // for a reason that has nothing to do with the migration this case is about.
+    socket.onmessage({ data: JSON.stringify(verse) });
+    await tick();
     expect(container.querySelector('.progrow'), 'the new zone did not get its default').toBeTruthy();
 
     // …and the six that WERE stored are untouched, `figures` included — a

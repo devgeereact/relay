@@ -105,6 +105,39 @@ describe('how much room the time of day gets', () => {
   });
 });
 
+describe('the room the Stage Timer owns at rest', () => {
+  it('nothing fired: the reading area yields, so the timer is the screen', async () => {
+    // MEASURED at 390x844 with a Stage Timer running and nothing on any screen:
+    // `main.stage` still took 268px to print "— standby —" above the clock, and
+    // the drawing gives that room to the timer. RG-244 grew the rail and left the
+    // empty reading region in place; this is the half it did not do.
+    //
+    // Safe precisely because of what `railTakesTheRoom` means: `stageresting.js`
+    // only answers `programme` when there is no reading, no slide and no
+    // countdown, so there is never anything in that region to yield.
+    await open();
+    timers();
+    await tick();
+    expect(host.querySelector('.progrow.owns'), 'the rail does not own the room').toBeTruthy();
+    expect(host.querySelector('main.stage'), 'an empty reading area is still taking room').toBeNull();
+  });
+
+  it('and it comes back the moment anything is fired', async () => {
+    await open();
+    timers();
+    await tick();
+    send({
+      kind: 'content',
+      content_kind: 'scripture',
+      reference: 'John 3:16',
+      text: 'For God so loved the world',
+    });
+    await tick();
+    expect(host.querySelector('main.stage'), 'the reading did not come back').toBeTruthy();
+    expect(host.querySelector('.verse')).toBeTruthy();
+  });
+});
+
 describe('where the Stage Timer sits', () => {
   it('the timer comes BEFORE the clock, so the clock is at the foot', async () => {
     await open();
