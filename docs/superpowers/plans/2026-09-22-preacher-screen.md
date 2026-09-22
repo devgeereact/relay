@@ -1,5 +1,24 @@
 # The preacher's screen, rebuilt — 2026-09-22
 
+**Status: BUILT and superseded in one place — closed 2026-09-22.** Every item below shipped as
+RG-239 … RG-253. Read the register rows rather than this document for what the code does: a plan
+kept as a description of shipped code becomes a second source of truth, and this repository has
+been bitten by that more than once. What this file is still good for is the REASONING, which the
+register rows cite.
+
+**The one item that did not survive contact with the operator is §5's press-and-hold.** It
+shipped as RG-242 and was retired eight hours later by RG-246 on the operator's own instruction —
+*"there's no need to have any Hold button on the screen"*. The transport is a permanent bar along
+the foot instead, three 52px targets, which is a harder thing to hit by accident than the 26px
+header control the hold was protecting. The guard was a correct answer to the wrong shape.
+
+**Two later instructions overrode the drawing** and are recorded here so this file does not read
+as the last word: the wall clock is a small line BELOW the Stage Timer rather than beside it
+(RG-248, RG-249), and at rest the timer is the whole screen with no standby line above it
+(RG-253).
+
+<details><summary>The plan as written, 2026-09-22</summary>
+
 **Status: plan. No production code yet**, which is the brief's own first instruction. Every
 claim below says whether it was VERIFIED against the tree or is a DECISION this plan is taking,
 because the last two briefs each contained one thing that was already built and one that was a
@@ -89,3 +108,5 @@ it, the page honours it, and `Outputs → Stage layout` offers it. One delivery 
 
 Each lands with its test written first, and nothing here changes the kiosk hub's silence about
 who connected (DECISIONS §35).
+
+</details>
