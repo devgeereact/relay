@@ -12,6 +12,7 @@
   import { syncSeek } from './lib/mediasync.js';
   import { messagePlacement } from './lib/stagemessage.js';
   import { holdGuard, HOLD_MS } from './lib/holdguard.js';
+  import { restingLayout } from './lib/stageresting.js';
   // Mobile stage-display remote — the preacher opens this on a phone/iPad (via
   // QR or the LAN URL) to see the live verse + reference in real time. No Tauri
   // runtime: it connects to the kiosk WebSocket hub (:8031) for content, exactly
@@ -814,7 +815,21 @@
   // all: a countdown BESIDE a bodiless reading left 74% of the screen black and
   // squeezed the figures into a quarter. One flag, both layouts — the twin door
   // this repository keeps finding a guarantee missing from.
-  $: figuresTakeTheRoom = !readingHasBody && figureList.includes('countdown');
+  // ── WHO TAKES THE ROOM NOBODY ELSE IS USING (RG-244) ──────────────────────
+  //
+  // `stageresting.js` owns the rule. The countdown case is the one this page
+  // already had; what it was missing is the Stage Timer — the clock a preacher
+  // is actually working to — which left a large empty region above a small
+  // figure for the whole of a sermon.
+  $: resting = restingLayout({
+    reading: readingHasBody,
+    slide: !!(zones.media && stageMedia),
+    countdown: figureList.includes('countdown'),
+    // `programme` is this page's own name for the rail's rows — see line 565.
+    programme: zones.programme && programme.length > 0,
+  });
+  $: figuresTakeTheRoom = resting === 'figures';
+  $: railTakesTheRoom = resting === 'programme';
   // ACROSS THE BOTTOM, EVERY FIGURE IS ONE SIZE.
   //
   // `--ch` was per-figure, so each one filled its own cell — and side by side on
@@ -1627,6 +1642,7 @@
   {#if zones.programme && progCells.length && !panelOpen}
     <div
       class="progrow"
+      class:owns={railTakesTheRoom}
       style="--tmrs:{progCells.length}; --tch:{progCh}; --tmul:{timerMul}"
       aria-label="Programme">
       {#each progCells as t, i (i)}
@@ -2037,6 +2053,13 @@
      digits grow with the room they are given rather than overflowing a box that
      stayed the same — `.tval` is capped against `--progmax` and would otherwise
      ignore the setting entirely, which is RG-223 in a second place. */
+  /* AT REST THE RAIL TAKES THE ROOM (RG-244). It is a `flex-basis`, never a
+     height — a height is a floor a long label pushes past, which is how a clock
+     leaves the top of a monitor nobody is standing next to. The moment anything
+     is fired it goes back to its own size, because a reading is what this screen
+     is for. */
+  .progrow.owns { flex: 1 1 auto; --progmax: none; max-height: none; }
+  .progrow.owns .tval { font-size: min(calc(76cqw / var(--tmrs, 1) / (var(--tch, 6) * 0.62)), 46dvh); }
   .progrow { flex: 0 0 auto; flex-basis: auto; --progmax: calc(20dvh * var(--tmul, 1)); max-height: var(--progmax);
     overflow: hidden;
     container-type: inline-size;

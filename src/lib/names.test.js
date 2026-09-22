@@ -314,7 +314,13 @@ const REGISTER = [
       // a label in a dropdown, which is exactly the surface this register is for.
       'src/lib/layers.js',
       'src/lib/progtimertemplate.test.js',
-    ],
+      // RG-244 — the rule that decides who takes the room nobody else is using,
+      // and its test. Both name the clock because the whole question is which
+      // clock wins, and answering it in any other words would be the drift this
+      // register exists to stop.
+      'src/lib/stageresting.js',
+      'src/lib/stageresting.test.js',
+],
     // `'Congregation timer'` stays permitted: it is accurate prose in `timers.rs`
     // and `main.rs` describing a SCOPE, not a control anybody reads a label on.
     forbidden: ['Programme timer', 'Programme clock', 'Preacher timer', 'Sermon timer'],
