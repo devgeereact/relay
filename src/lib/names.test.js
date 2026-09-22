@@ -131,6 +131,9 @@ const REGISTER = [
       'src/lib/stores/capture.js',
       'src/lib/countdownwiring.test.js',
       'src/lib/quicktools.test.js',
+      // RG-258 — the card does one job at a time now, and this holds the picker
+      // that chooses which.
+      'src/lib/docklayout.test.js',
       'src/lib/r6-contracts.test.js',
       'src/lib/stagezones.test.js',
       // Wave 5 Track C — the binding, the receiver that may refuse the frame, the

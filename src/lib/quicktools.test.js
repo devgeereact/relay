@@ -128,6 +128,25 @@ function mount() {
   return host;
 }
 
+/**
+ * OPEN THE NAME BAND — RG-258.
+ *
+ * Quick tools does one job at a time since the approved canvas landed: a
+ * segmented picker in the head chooses between the Stage Message and the Name
+ * band, and the card opens on the message, which is the one that changes
+ * mid-sermon. Every case below used to find the Name band already rendered.
+ *
+ * What each case ASSERTS is unchanged — this is the door, not the subject.
+ */
+async function openNameBand() {
+  const pick = [...host.querySelectorAll('.qpick button')].find(
+    (b) => b.textContent.trim() === 'Name',
+  );
+  expect(pick, 'no Name tab in Quick tools').toBeTruthy();
+  pick.click();
+  await tick();
+}
+
 async function settle(ms = 10) {
   await new Promise((r) => setTimeout(r, ms));
   await tick();
@@ -159,6 +178,7 @@ describe('the name band', () => {
   it('offers the templates whose SHAPE is a lower third, and only those', async () => {
     mount();
     await settle();
+    await openNameBand();
     const pick = host.querySelector('[aria-label="Which lower third"]');
     expect(pick).not.toBeNull();
     const options = [...pick.querySelectorAll('option')].map((o) => o.textContent);
@@ -169,6 +189,7 @@ describe('the name band', () => {
     cap.templates.set([NOT_A_BAND]);
     mount();
     await settle();
+    await openNameBand();
     expect(host.textContent).toContain('No lower third yet');
     expect(host.querySelector('[aria-label="Name for the lower third"]')).toBeNull();
   });
@@ -176,6 +197,7 @@ describe('the name band', () => {
   it('sends the NAME as the words and the ROLE as the line beneath it', async () => {
     mount();
     await settle();
+    await openNameBand();
     const name = host.querySelector('[aria-label="Name for the lower third"]');
     const role = host.querySelector('[aria-label="Role for the lower third"]');
     name.value = 'Ade Ogunlana';
@@ -202,6 +224,7 @@ describe('the name band', () => {
   it('cannot fire a band with no name in it', async () => {
     mount();
     await settle();
+    await openNameBand();
     expect(byLabel('To programme').disabled).toBe(true);
     byLabel('To programme').click();
     await settle();
@@ -211,6 +234,7 @@ describe('the name band', () => {
   it('Preview renders it here and reaches no screen', async () => {
     mount();
     await settle();
+    await openNameBand();
     const name = host.querySelector('[aria-label="Name for the lower third"]');
     name.value = 'Ade Ogunlana';
     name.dispatchEvent(new Event('input'));
@@ -515,10 +539,18 @@ describe('L3 · the tools are one card, repeated', () => {
   });
 
   it('every tool head is the same head — a mono caption left, its own slot right', async () => {
+    // ONE AT A TIME SINCE RG-258, so the two heads are collected across the two
+    // tabs rather than off one render. The rule this case holds — every tool
+    // head is the same head — is unchanged and is now checked on both.
     mount();
     await settle();
-    const heads = [...host.querySelectorAll('.qblock .qhead')];
-    expect(heads).toHaveLength(2);
+    const heads = [];
+    for (const tab of ['Stage', 'Name']) {
+      [...host.querySelectorAll('.qpick button')].find((b) => b.textContent.trim() === tab)?.click();
+      await tick();
+      heads.push(...host.querySelectorAll('.qblock .qhead'));
+    }
+    expect(heads, 'a tab rendered no head, or rendered two').toHaveLength(2);
     for (const h of heads) {
       // ONE caption class across all three. The countdown used `.dcap` and the
       // other two `.r-lbl`; they render the same and are not the same thing, so
@@ -529,8 +561,9 @@ describe('L3 · the tools are one card, repeated', () => {
       // The caption is the FIRST thing in the head, in every one of them.
       expect(h.firstElementChild.classList.contains('r-lbl')).toBe(true);
     }
+    // Collected Stage-first, which is the order the card opens in.
     expect(heads.map((h) => h.querySelector('.r-lbl').textContent.trim()))
-      .toEqual(['Name band', 'Stage Message']);
+      .toEqual(['Stage Message', 'Name band']);
   });
 
   // ── C2 · THE COUNTDOWN BLOCK, CLEANED — RETIRED 2026-09-20 ──────────────
@@ -580,7 +613,13 @@ describe('L3 · the tools are one card, repeated', () => {
     // and this scan would then report a clean card having looked at nothing.
     const rows = [...body.matchAll(/<div class="([^"]*)"[^>]*role="group"/g)].map((m) => m[1]);
     expect(rows.length, 'no grouped button row in the card at all').toBeGreaterThanOrEqual(1);
-    for (const cls of rows) expect(cls.split(/\s+/)).toContain('qbtns');
+    // `.qpick` IS EXEMPT, and named rather than filtered by a pattern: it is a
+    // segmented picker in the HEAD (RG-258), not a row of actions in a body, and
+    // `.qbtns`'s fixed track count is a rule about the latter. Filtering it out
+    // by shape would let the next real row leave without failing.
+    for (const cls of rows.filter((c) => !c.split(/\s+/).includes('qpick'))) {
+      expect(cls.split(/\s+/)).toContain('qbtns');
+    }
   });
 
   it('the name band no longer hangs its contents off an 80px indent', async () => {
@@ -593,6 +632,7 @@ describe('L3 · the tools are one card, repeated', () => {
 
     mount();
     await settle();
+    await openNameBand();
     // The two fields are stacked and full width, as the prototype's `.lt3` has
     // them — not a pair squeezed side by side into ~95px each.
     const name = host.querySelector('[aria-label="Name for the lower third"]');

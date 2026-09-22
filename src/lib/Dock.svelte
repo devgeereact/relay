@@ -763,6 +763,16 @@
   let ltRole = '';
   let ltId = null;
   let ltPreview = false;
+  /**
+   * WHICH QUICK TOOL HAS THE CARD (RG-258).
+   *
+   * `stage` first, because it is the one that changes mid-sermon: a name band is
+   * set once before a service and a Stage Message is typed while somebody is
+   * speaking. Deliberately NOT persisted — the card should open on the thing an
+   * operator reaches for under pressure, not on whatever they last looked at on
+   * a Tuesday.
+   */
+  let qtool = 'stage';
   onMount(() => { loadTemplates(); });
   $: bands = $templates.filter((t) => templateKind(t) === 'lower-third');
   $: if (ltId == null && bands.length) ltId = bands[0].id;
@@ -1100,6 +1110,25 @@
           : 'No plan chosen yet — open Planner and press Run in Live'}>Load whole plan</button>
     </div>
     <div class="dbody tools r-scroll">
+      <!-- ── ONE JOB AT A TIME (RG-258) ────────────────────────────────────────
+           The two blocks below were stacked, each getting half a 178px card:
+           two labels, three inputs, five buttons and an optional preview in the
+           room one of them needs. The approved drawing puts a picker in the
+           head — the slot this card already uses for one — and gives whichever
+           job is chosen the whole body.
+
+           NOTHING WAS REMOVED. The rework is a layout, and a tidier card that
+           quietly lost the Name band would be the worse outcome.
+
+           It opens on the STAGE MESSAGE because that is the one that changes
+           mid-sermon: a name band is set once before a service, and a message
+           is typed while somebody is speaking. -->
+      <div class="qpick" role="group" aria-label="Which quick tool">
+        <button class="qp" class:on={qtool === 'stage'} aria-pressed={qtool === 'stage'}
+          on:click={() => (qtool = 'stage')}>Stage</button>
+        <button class="qp" class:on={qtool === 'name'} aria-pressed={qtool === 'name'}
+          on:click={() => (qtool = 'name')}>Name</button>
+      </div>
       <!-- TWO BLOCKS, AND IT USED TO BE THREE (operator instruction, 2026-09-20).
            The congregation countdown was the first of them and is now a band of
            its own directly above the Stage Timer on Live's run surface. §2 named three things that
@@ -1119,6 +1148,7 @@
            its figure and the alert puts its badge; the two fields are the
            prototype's stacked full-width `.tin`s rather than a pair squeezed
            into a ~200px card under an 80px indent that had no label above it. -->
+      {#if qtool === 'name'}
       <div class="qblock">
         <div class="qhead">
           <span class="r-lbl">Name band</span>
@@ -1152,11 +1182,13 @@
         <p class="qcap">No lower third yet — make one in Templates (New → Lower Third).</p>
       {/if}
       </div>
+      {/if}
 
       <!-- ── The Stage Message (§5) ──────────────────────────────────────────
            The stage monitor and nothing else. `sendStageAlert` publishes a frame
            kind that exists inside the stage renderer, so no congregation channel
            can show it — the guarantee is in `channels.rs`, not in this label. -->
+      {#if qtool === 'stage'}
       <div class="qblock" class:onstage={$stageAlert}>
         <div class="qhead">
           <span class="r-lbl">Stage Message</span>
@@ -1188,6 +1220,7 @@
           <button class="r-btn sm ghost" on:click={clearPreacher} disabled={busy || !$stageAlert}>Take down</button>
         </div>
       </div>
+      {/if}
       {#if err}<p class="derr" role="alert">{err}</p>{/if}
     </div>
   </div>
@@ -1241,7 +1274,7 @@
              So End service is simply the control it always was, rather than the
              one the transport borrowed a slot from. -->
         <button
-          class="r-cbtn endsvc wide"
+          class="r-cbtn endsvc"
           data-on={recording ? '1' : '0'}
           on:click={() => run(endService)}
           disabled={busy || !recording || !$capture.available}
@@ -1274,7 +1307,7 @@
              between the operator and the wall is one more thing that can be got
              wrong in a file nobody opens during a service. The reason is added in
              place; the control is untouched. -->
-        <button class="r-cbtn black" data-on={$screenBlack ? '1' : '0'} on:click={doBlack} disabled={!$capture.available}
+        <button class="r-cbtn black wide" data-on={$screenBlack ? '1' : '0'} on:click={doBlack} disabled={!$capture.available}
           title={$capture.available ? undefined : PANIC_OFF} aria-describedby={$capture.available ? undefined : 'dock-panic-why'}>
           {$screenBlack ? 'Black — restore' : 'Blackout'}
         </button>
@@ -1598,6 +1631,25 @@
      differences between two neighbours in one 200px column, which is why they
      read as three degrees of finish. `.r-tile` is the house card and these are
      its tokens. */
+  /* THE PICKER (RG-258). A segmented control in the head, the same shape the
+     Name band's own picker has, so the card reads as one instrument with a
+     switch rather than two instruments sharing a box.
+     Steel for the chosen one, which is this product's selection ink — never
+     amber, which means a congregation is looking at something. */
+  .qpick {
+    flex: 0 0 auto; align-self: flex-start;
+    display: inline-flex; gap: 2px; padding: 2px;
+    border: 1px solid var(--v-500); border-radius: var(--v-r-sm);
+    background: var(--v-bg);
+  }
+  .qp {
+    min-height: 24px; padding: 0 10px; cursor: pointer;
+    border: 0; border-radius: calc(var(--v-r-sm) - 2px);
+    background: transparent; color: var(--v-faint);
+    font-family: var(--f-body); font-size: var(--v-fs-lbl); font-weight: 600;
+  }
+  .qp.on { background: var(--v-surf2); color: var(--v-txt); }
+  .qp:focus-visible { outline: 2px solid var(--v-sel); outline-offset: 1px; }
   .qblock {
     display: flex; flex-direction: column; gap: 5px; padding: 7px; margin-bottom: 6px;
     background: var(--v-surf); border: 1px solid var(--v-line); border-radius: var(--v-r-lg);

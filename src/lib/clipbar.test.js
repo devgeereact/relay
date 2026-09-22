@@ -71,10 +71,21 @@ describe('the media transport has left the Controls card', () => {
 });
 
 describe('the strip is in the shell, and only while a clip is live', () => {
-  it('App mounts it, not Live and not the dock', () => {
-    expect(APP).toMatch(/<ClipBar\b/);
-    expect(LIVE, 'a second set of controls').not.toMatch(/<ClipBar\b/);
+  it('the programme pane mounts it, and nothing else does (RG-259)', () => {
+    // THIS CASE REVERSED, and the reversal is the record. It shipped as a shell
+    // strip because `mediacontrols.test.js` asserts `Live.svelte` carries no
+    // transport ROW — and it still does, because what Live mounts is this one
+    // shared component rather than a second set of markup. RG-237's guarantee
+    // was ever "one set of controls", and one component in one place is the
+    // strictest form of it.
+    //
+    // The drawing's reason is the better one: a scrub bar means something on
+    // the frame it refers to and almost nothing on a strip across the shell.
+    expect(LIVE).toMatch(/<ClipBar\b/);
+    expect(APP, 'a second set of controls').not.toMatch(/<ClipBar\b/);
     expect(DOCK, 'a second set of controls').not.toMatch(/<ClipBar\b/);
+    // AND IT IS THE SAME COMPONENT, over the picture rather than beside it.
+    expect(LIVE).toMatch(/<ClipBar over \/>/);
   });
 
   it('renders nothing at all when no clip is on the screens', () => {

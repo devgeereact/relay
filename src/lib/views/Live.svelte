@@ -139,6 +139,7 @@
   import { mediaTransport, setMediaTransport, sendStageMedia, stageMedia } from '../stores/capture.js';
   import { programmeScreen, describeStageReach, describeCountdownReach } from '../channelroles.js';
   import TemplateRender from '../TemplateRender.svelte';
+  import ClipBar from '../ClipBar.svelte';
   import {
     resolveOutputTemplate,
     isKeyedTemplate,
@@ -2504,6 +2505,19 @@
            how long is left of the one on air, over the frame of the one that is
            next (RG-236). -->
       <div class="screen">
+        <!-- ══ THE CLIP'S CONTROLS, ON THE CLIP (RG-259) ══
+             The approved drawing's home for them, and it is the right one: a
+             scrub bar means something on the frame it refers to and almost
+             nothing on a strip across the shell. They shipped in the shell
+             first because `mediacontrols.test.js` asserts this file carries no
+             transport ROW — and it still does, because this is the one shared
+             component mounted rather than a second set of markup. RG-237's
+             guarantee was ever "one set of controls", and one component mounted
+             in one place is the strictest form of that.
+
+             It renders nothing at all while no clip is on the screens, so the
+             pane is untouched for most of a service. -->
+        <ClipBar over />
         {#if $live && progTpl}
           <!-- THE STANDING BACKGROUND RIDES WITH THE CONTENT, because the wall
                paints both and this pane must not disagree with the wall. It is a

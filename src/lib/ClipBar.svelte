@@ -59,6 +59,20 @@
   });
   $: mainId = programmeScreen(rows).channel?.id ?? null;
 
+  /**
+   * OVER THE PICTURE, OR ALONG THE SHELL.
+   *
+   * `over` is the approved drawing's form: the programme pane's own chrome,
+   * on the frame the operator is already watching, which is the only place a
+   * scrub bar refers to something visible. The plain form is the shell strip it
+   * shipped as first, kept because the pane is not mounted on every workspace
+   * and a clip plays on all of them.
+   *
+   * ONE COMPONENT EITHER WAY. Two skins of one control is a look; two controls
+   * is the twin door this repository keeps deleting.
+   */
+  export let over = false;
+
   let err = '';
   let dragging = false;
   let dragMs = 0;
@@ -145,8 +159,13 @@
        on the screens. Icons and a bar: no words on the controls, because the
        four shapes are the ones every player in the world uses, and every one of
        them carries an `aria-label` for the operator who cannot see shapes. -->
-  <section class="clipbar" aria-label="The clip on the screens">
-    <span class="cb-name" title={$live?.media_url ?? ''}>{($live?.media_url ?? '').split('/').pop()}</span>
+  <section class="clipbar" class:over aria-label="The clip on the screens">
+    {#if !over}
+      <!-- THE NAME IS THE SHELL FORM'S ONLY. Over the picture the frame itself
+           says which clip this is, and printing the file name across it would be
+           the caption for a thing the operator is looking at. -->
+      <span class="cb-name" title={$live?.media_url ?? ''}>{($live?.media_url ?? '').split('/').pop()}</span>
+    {/if}
 
     <button
       class="cb-btn"
@@ -270,4 +289,39 @@
   .cb-t { flex: 0 0 auto; font-size: var(--v-fs-b1); color: var(--v-dim); font-variant-numeric: tabular-nums; }
   .cb-none { flex: 1 1 auto; min-width: 0; font-size: var(--v-fs-b1); color: var(--v-caution); }
   .cb-err { flex: 0 0 auto; font-size: var(--v-fs-b1); color: var(--v-red); }
+
+  /* ── OVER THE PICTURE (RG-259) ─────────────────────────────────────────────
+     The approved drawing's form. A gradient rather than a bar, because the
+     clip is what is being looked at and a solid strip across it is a hole
+     punched through the thing it is about — the same trade RG-212 made for the
+     programme rail and RG-256 for the stage plate.
+
+     The inks go light here and only here: this sits on a photograph rather
+     than on the console's own ground, so the tokens that read correctly on
+     `--v-surf2` would vanish against a bright frame. It spends no law colour
+     either way. */
+  .clipbar.over {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 4;
+    height: auto;
+    padding: 18px 10px 8px;
+    border-top: 0;
+    background: linear-gradient(to top, rgba(8, 9, 11, .92) 55%, rgba(8, 9, 11, 0));
+  }
+  .clipbar.over .cb-btn {
+    background: rgba(232, 234, 238, .1);
+    border-color: rgba(232, 234, 238, .22);
+    color: #fff;
+  }
+  .clipbar.over .cb-btn.on {
+    background: var(--v-sel-soft);
+    border-color: var(--v-sel-line);
+    color: var(--v-sel);
+  }
+  .clipbar.over .cb-t { color: rgba(255, 255, 255, .78); }
+  .clipbar.over .cb-scrub { accent-color: #fff; }
+  .clipbar.over .cb-scrub.held { accent-color: rgba(255, 255, 255, .5); }
 </style>
