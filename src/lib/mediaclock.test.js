@@ -326,3 +326,63 @@ describe('the rest of the transport is reachable from the run surface', () => {
     expect(DOCK).toMatch(/\{#if mediaClock\.known && mediaClock\.durationMs\}/);
   });
 });
+
+// ── THE CLOCK IS ABOUT THE SCREEN THE OPERATOR IS WATCHING (RG-238) ─────────
+//
+// The operator: *"everything should work with whats live and whats on any
+// screen ... what operators see is whats on screen"*. The readout said
+// `0:25 left · from STAGE MONITOR` while the programme pane showed the main
+// screen's clip — because the rule answers with whichever screen has the LEAST
+// remaining, and a stage monitor that started a moment earlier wins that.
+//
+// The shortest remaining is still the right answer for the question *when does
+// the first screen run out*. It is the wrong answer for *how long is left of
+// what I am watching*, and the second is what a desk readout beside a Pause
+// button is asked. So the MAIN screen answers when it has a clip, and the
+// soonest answers when it does not — which is still every screen a church has
+// not given a role to.
+describe('which screen the clock is about', () => {
+  const row = (id, name, remaining, over = {}) => ({
+    id,
+    name,
+    painting: true,
+    media: { dur_ms: 120_000, pos_ms: 120_000 - remaining, paused: false },
+    ...over,
+  });
+
+  it('the main screen answers, even when another is further through', () => {
+    const d = describeMediaClock(
+      [row(1, 'Main screen', 90_000), row(2, 'STAGE MONITOR', 25_000)],
+      { mainId: 1 },
+    );
+    expect(d.from).toBe('Main screen');
+    expect(d.remainingMs).toBe(90_000);
+  });
+
+  it('and the soonest still answers when the main screen has no clip', () => {
+    const d = describeMediaClock(
+      [row(1, 'Main screen', 90_000, { media: null }), row(2, 'STAGE MONITOR', 25_000)],
+      { mainId: 1 },
+    );
+    expect(d.from).toBe('STAGE MONITOR');
+    expect(d.remainingMs).toBe(25_000);
+  });
+
+  it('with no main screen named, nothing changes — this is an addition, not a rewrite', () => {
+    const rows = [row(1, 'Main screen', 90_000), row(2, 'STAGE MONITOR', 25_000)];
+    expect(describeMediaClock(rows)).toEqual(describeMediaClock(rows, {}));
+    expect(describeMediaClock(rows).from).toBe('STAGE MONITOR');
+  });
+
+  it('a disagreement is still measured across ALL of them', () => {
+    // The spread is about the screens in the room, not about the one being
+    // quoted: two screens far apart is one stalled or buffering, and that is
+    // exactly what an operator needs before cueing something over it.
+    const d = describeMediaClock(
+      [row(1, 'Main screen', 90_000), row(2, 'STAGE MONITOR', 25_000)],
+      { mainId: 1 },
+    );
+    expect(d.disagree).toBe(true);
+    expect(d.screens).toBe(2);
+  });
+});

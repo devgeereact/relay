@@ -215,8 +215,10 @@
     channelHealth,
     sendStageMedia,
     stageMedia,
+    listOutputChannels,
   } from './stores/capture.js';
   import { describeMediaClock, mediaIdFromUrl } from './mediaclock.js';
+  import { programmeScreen } from './channelroles.js';
   import { session, setSession } from './session.js';
 
   // ── THE CLIP, AND THE ONE SET OF CONTROLS OVER IT (RG-237) ─────────────────
@@ -232,8 +234,16 @@
   // preview would be a number about nothing. `channelHealth` is the same map
   // Live read it from, so the two cannot disagree — there is only one of them
   // now in any case.
+  // WHICH SCREEN THE FIGURE IS ABOUT (RG-238). `programmeScreen` is the one rule
+  // for "the screen the operator is watching" — the same one Live's programme
+  // pane is a picture of — so the desk cannot quote one screen while the pane
+  // shows another. With no main screen set it answers nothing and the clock
+  // falls back to the soonest, exactly as before.
+  let dockChannels = [];
+  $: mainScreenId = programmeScreen(dockChannels).channel?.id ?? null;
   $: mediaClock = describeMediaClock(
     Object.entries($channelHealth).map(([id, row]) => ({ ...row, id: Number(id) })),
+    { mainId: mainScreenId },
   );
   $: clipLive = !!$live?.media_url && !$screenBlack;
   /**
@@ -663,6 +673,10 @@
     } catch {
       /* `sensitivityKnown` stays false, and the card says so in words */
     }
+    // WHICH SCREEN IS THE MAIN ONE (RG-238). GROUP 2: `listOutputChannels`
+    // swallows and answers `[]`, so a failure leaves the clock quoting the
+    // soonest screen — the behaviour it had before — rather than nothing.
+    dockChannels = await listOutputChannels();
   });
   // ── THE MICROPHONE, ON THE RUN SURFACE (L3, operator instruction) ──────────
   //

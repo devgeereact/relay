@@ -70,6 +70,7 @@ function clipOf(row) {
   const pos = Number(m.pos_ms);
   if (!Number.isFinite(dur) || dur <= 0 || !Number.isFinite(pos) || pos < 0) return null;
   return {
+    id: row.id,
     name: row.name || `Screen ${row.id}`,
     remaining: Math.max(0, Math.round(dur - Math.min(pos, dur))),
     paused: !!m.paused,
@@ -90,7 +91,7 @@ function clipOf(row) {
  *   paused: boolean, from: string|null, screens: number, disagree: boolean,
  * }}
  */
-export function describeMediaClock(rows) {
+export function describeMediaClock(rows, { mainId = null } = {}) {
   const clips = (Array.isArray(rows) ? rows : []).map(clipOf).filter(Boolean);
   if (!clips.length) {
     return {
@@ -112,7 +113,21 @@ export function describeMediaClock(rows) {
   }
   // The shortest remaining: the operator is preparing for the moment the first
   // screen runs out, not for an average.
+  // ── WHICH SCREEN THE FIGURE IS ABOUT (RG-238) ──────────────────────────────
+  //
+  // The shortest remaining is the right answer to *when does the first screen
+  // run out*, and the wrong one to *how long is left of what I am watching* —
+  // which is what a readout beside a Pause button is asked. The desk said
+  // `0:25 left · from STAGE MONITOR` while the operator was looking at the main
+  // screen's clip, because a monitor that started a moment earlier wins a
+  // comparison on remaining time.
+  //
+  // So the MAIN screen answers when it has a clip, and the soonest answers when
+  // it does not — which is still every screen a church has not given a role to,
+  // so nothing changes for an install that has not opened Outputs.
   const soonest = clips.reduce((a, b) => (b.remaining < a.remaining ? b : a));
+  const main = mainId == null ? null : (clips.find((c) => c.id === mainId) ?? null);
+  const quoted = main ?? soonest;
   const spread =
     Math.max(...clips.map((c) => c.remaining)) - Math.min(...clips.map((c) => c.remaining));
   // PAUSED IS THE SCREENS' ANSWER, NOT A VOTE. If any screen says it is paused
@@ -122,13 +137,13 @@ export function describeMediaClock(rows) {
   return {
     known: true,
     text: paused
-      ? `${formatCountdown(soonest.remaining)} left · held`
-      : `${formatCountdown(soonest.remaining)} left`,
-    remainingMs: soonest.remaining,
-    durationMs: soonest.duration,
-    positionMs: soonest.position,
+      ? `${formatCountdown(quoted.remaining)} left · held`
+      : `${formatCountdown(quoted.remaining)} left`,
+    remainingMs: quoted.remaining,
+    durationMs: quoted.duration,
+    positionMs: quoted.position,
     paused,
-    from: soonest.name,
+    from: quoted.name,
     screens: clips.length,
     disagree: clips.length > 1 && spread > DRIFT_TOLERANCE_MS,
   };
