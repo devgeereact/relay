@@ -87,8 +87,12 @@ const has = (el, sel) => Boolean(el?.querySelector(sel));
 describe('the four groups, and what each one opens as', () => {
   it('a text object is grouped, not listed', async () => {
     const el = await open();
-    for (const g of ['what is this', 'how does it read', 'where does it sit', 'anything else'])
+    // THREE now, not four: *where does it sit* went to its own tab in RG-230,
+    // where it sits beside the stacking order rather than under everything else
+    // and shut. What is left in this column is the object's own reading.
+    for (const g of ['what is this', 'how does it read', 'anything else'])
       expect(group(el, g), `no “${g}” group`).toBeTruthy();
+    expect(group(el, 'where does it sit'), 'the geometry is in two places').toBeFalsy();
   });
 
   it('“how does it read” is open, because it is the one used on every layer', async () => {
@@ -99,17 +103,15 @@ describe('the four groups, and what each one opens as', () => {
     expect(has(group(el, 'how does it read'), '#te-col')).toBe(true);
   });
 
-  it('“where” and “anything else” start closed, and open on a press', async () => {
+  it('“anything else” starts closed, and opens on a press', async () => {
     const el = await open();
-    const where = group(el, 'where does it sit');
-    expect(isOpen(where), 'the numbers are for the rare case, not the common one').toBe(false);
-    expect(has(where, '.te-geom'), 'a closed group still rendered its body').toBe(false);
-    where.querySelector('.te-grouphead').click();
+    const more = group(el, 'anything else');
+    expect(isOpen(more), 'the once-a-year controls are open by default').toBe(false);
+    expect(has(more, '#te-sh'), 'a closed group still rendered its body').toBe(false);
+    more.querySelector('.te-grouphead').click();
     await drain(2);
-    expect(isOpen(group(el, 'where does it sit'))).toBe(true);
-    expect(has(group(el, 'where does it sit'), '.te-geom')).toBe(true);
-
-    expect(isOpen(group(el, 'anything else'))).toBe(false);
+    expect(isOpen(group(el, 'anything else'))).toBe(true);
+    expect(has(group(el, 'anything else'), '#te-sh')).toBe(true);
   });
 
   it('“what” is not collapsible at all — everything else is about an object whose job is chosen', async () => {

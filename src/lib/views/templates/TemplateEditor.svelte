@@ -100,8 +100,28 @@
   // here are a decision — "how it reads" is used on every layer every time, the
   // geometry is for the one occasion two layers must line up exactly, and the
   // rest are touched about once a year.
-  let scope = 'object'; // object | template
-  let openGroup = { reads: true, where: false, more: false };
+  let scope = 'object'; // object | position | template
+  /**
+   * TAKE THIS OBJECT THE WHOLE WAY TO ONE END OF THE STACK (RG-230).
+   *
+   * `moveLayer` walks one place, which is the layer list's ↑ ↓; Arrange also
+   * wants "to front" and "to back", and an operator pressing Forward eleven
+   * times is an operator the panel has failed. It reuses `moveInOrder` rather
+   * than splicing the array itself, so a band's words keep the one rule about
+   * where they may go — a word cannot leave its band by being sent to the back.
+   */
+  function moveLayerEnd(id, dir) {
+    for (let i = 0; i < 64; i += 1) {
+      const before = edit.layout.layers || [];
+      const after = moveInOrder(before, id, dir);
+      if (after === before) return;
+      edit.layout.layers = after;
+    }
+    edit = edit;
+  }
+  // `where` went to its own tab (RG-230); what is left here is the two groups
+  // that stayed in the object column.
+  let openGroup = { reads: true, more: false };
   const toggleGroup = (k) => (openGroup = { ...openGroup, [k]: !openGroup[k] });
   /**
    * Does this object have a CONTENT binding — is it one of the kinds the
@@ -1668,7 +1688,7 @@
                     {/if}
                     <span class="te-fsep"></span>
                     <button class="te-fbtn wide" aria-label="Place exactly" title="Open the position controls"
-                      on:click={() => { scope = 'object'; openGroup = { ...openGroup, where: true }; }}>Position</button>
+                      on:click={() => (scope = 'position')}>Position</button>
                   </div>
                 {/if}
               </div>
@@ -1706,6 +1726,8 @@
           <span class="te-scope" role="tablist" aria-label="What this panel edits">
             <button class="te-scopebtn" class:on={scope === 'object'} role="tab"
               aria-selected={scope === 'object'} on:click={() => (scope = 'object')}>Object</button>
+            <button class="te-scopebtn" class:on={scope === 'position'} role="tab"
+              aria-selected={scope === 'position'} on:click={() => (scope = 'position')}>Position</button>
             <button class="te-scopebtn" class:on={scope === 'template'} role="tab"
               aria-selected={scope === 'template'} on:click={() => (scope = 'template')}>Template</button>
           </span>
@@ -1714,7 +1736,7 @@
         <!-- THE OBJECTS ON THIS SLIDE. A wrapping strip, never a scrolling one:
              a tab that has scrolled behind a hidden scrollbar is a tab nobody
              knows is there. -->
-        {#if scope === 'object' && layers.length}
+        {#if scope !== 'template' && layers.length}
           <div class="te-objtabs" role="tablist" aria-label="Objects on this slide">
             {#each layers as L (L.id)}
               <button
@@ -1751,7 +1773,84 @@
           {/if}
         {/if}
         <div class="te-designbody r-scroll">
-          {#if scope === 'object'}
+          {#if scope === 'position'}
+            <!-- ══ POSITION ══ ITS OWN PANEL (RG-230) ═════════════════════════
+                 The geometry was a collapsed group at the foot of the object's
+                 column — reachable, under everything else, and shut by default.
+                 The approved design gives it a tab, with the one thing that had
+                 no home but the layer list: the stacking order.
+
+                 NO SECOND ALIGN-TO-THE-FRAME. `.te-alignbar` on the canvas has
+                 done that since it was written, and a second set here would be
+                 two doors onto one job. -->
+            {#if !sel}
+              <p class="te-fnote te-emptyhint">Select a layer to place it.</p>
+            {/if}
+            {#if sel}
+              <h3 class="te-sec">Arrange</h3>
+              <div class="te-arrange">
+                <button class="r-btn ghost sm" on:click={() => moveLayer(sel.id, 1)} title="One place toward the front">Forward</button>
+                <button class="r-btn ghost sm" on:click={() => moveLayer(sel.id, -1)} title="One place toward the back">Backward</button>
+                <button class="r-btn ghost sm" on:click={() => moveLayerEnd(sel.id, 1)} title="All the way to the front">To front</button>
+                <button class="r-btn ghost sm" on:click={() => moveLayerEnd(sel.id, -1)} title="All the way to the back">To back</button>
+              </div>
+              <p class="te-fnote">The top of the layer list is the front. A word inside a band moves within its band and never out of it.</p>
+            {/if}
+            <!-- A BAND AND ITS WORDS ARE NOT HERE, because x/y/w/h is not where
+                 either of them sits: a band is placed by `top`/`side` and its
+                 words by the band. Four numbers that change nothing is the
+                 defect DECISIONS §69 closed. -->
+            {#if sel && sel.type !== 'band' && !bandOf(layers, sel.id)}
+            <!-- POSITION — ONE GROUP, §3.2. These were reachable only by dragging
+                 on the canvas, so a keyboard-only operator could not place an
+                 object at all and nobody could place one exactly. Percentages of
+                 the frame, like everything else in a template.
+
+                 THERE USED TO BE TWO. A second Position group sat at the bottom of
+                 this panel writing the same four keys, and both rendered for every
+                 selected object — the same heading twice, over two different number
+                 grids. They did not agree: this one clamps to 0–100 and refuses a
+                 locked object, that one did neither, so typing into the lower grid
+                 moved a layer the operator had locked. The three Centre buttons were
+                 the only thing it had that this did not, and they are here now.
+
+                 A BAND AND ITS WORDS ARE NOT HERE, because x/y/w/h is not where any
+                 of them sits: a band is placed by `top`/`side` and its words by the
+                 band. Four numbers that change nothing is the defect DECISIONS §69
+                 closed, so they get the controls that do move them instead. -->
+            <h3 class="te-sec">Exact</h3>
+            <div class="te-geom">
+              {#each [['x', 'X'], ['y', 'Y'], ['w', 'W'], ['h', 'H']] as [k, label]}
+                <label class="te-geomcell">
+                  <span class="r-lbl">{label}</span>
+                  <input
+                    class="te-num r-mono"
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.5"
+                    value={Math.round((sel[k] ?? 0) * 10) / 10}
+                    disabled={sel.locked}
+                    on:input={(e) => geom(k, e.target.value)}
+                  />
+                </label>
+              {/each}
+            </div>
+            <div class="te-alignrow">
+              <button class="r-btn ghost te-alignbtn" on:click={() => center('x')} title="Centre horizontally">Centre H</button>
+              <button class="r-btn ghost te-alignbtn" on:click={() => center('y')} title="Centre vertically">Centre V</button>
+              <button class="r-btn ghost te-alignbtn" on:click={() => center('both')} title="Centre on canvas">Centre</button>
+            </div>
+            {#if sel.locked}<p class="te-fnote">This object is locked. Unlock it in the layer list to move it.</p>{/if}
+            <p class="te-fnote">Percent of the screen, so a template scales the same at any output size. Drag on the canvas — layers snap to centre and edges (hold Shift to place freely) — or type exact values.</p>
+            <!-- NO ROTATE, AND THE PANEL SAYS SO. Nothing downstream renders a
+                 rotated layer, so the field would move a number no screen reads
+                 — the defect DECISIONS §69 closed seven controls of. When the
+                 renderer grows rotation it belongs here, and a stated absence is
+                 how the next person finds that out. -->
+            <p class="te-fnote te-absent">No <b>Rotate</b>: nothing that paints a screen renders a rotated layer yet, so the control would move a number nothing reads.</p>
+          {/if}
+          {:else if scope === 'object'}
           <!-- ══ THE SELECTED OBJECT COMES FIRST (§3.2) ══════════════════════
                This panel used to open on the TEMPLATE — its name, the kinds of
                content it is used for, the kinds it shows — and an operator who
@@ -2022,57 +2121,6 @@
             </div>
           {/if}
 
-          {#if sel && sel.type !== 'band' && !bandOf(layers, sel.id)}
-            <!-- POSITION — ONE GROUP, §3.2. These were reachable only by dragging
-                 on the canvas, so a keyboard-only operator could not place an
-                 object at all and nobody could place one exactly. Percentages of
-                 the frame, like everything else in a template.
-
-                 THERE USED TO BE TWO. A second Position group sat at the bottom of
-                 this panel writing the same four keys, and both rendered for every
-                 selected object — the same heading twice, over two different number
-                 grids. They did not agree: this one clamps to 0–100 and refuses a
-                 locked object, that one did neither, so typing into the lower grid
-                 moved a layer the operator had locked. The three Centre buttons were
-                 the only thing it had that this did not, and they are here now.
-
-                 A BAND AND ITS WORDS ARE NOT HERE, because x/y/w/h is not where any
-                 of them sits: a band is placed by `top`/`side` and its words by the
-                 band. Four numbers that change nothing is the defect DECISIONS §69
-                 closed, so they get the controls that do move them instead. -->
-            <div class="te-group" class:closed={!openGroup.where}>
-              <button class="te-grouphead" aria-expanded={openGroup.where} on:click={() => toggleGroup('where')}>
-                <span class="te-groupi" aria-hidden="true">{openGroup.where ? '▾' : '▸'}</span>
-                <span>Where does it sit?</span>
-              </button>
-              {#if openGroup.where}
-            <div class="te-geom">
-              {#each [['x', 'X'], ['y', 'Y'], ['w', 'W'], ['h', 'H']] as [k, label]}
-                <label class="te-geomcell">
-                  <span class="r-lbl">{label}</span>
-                  <input
-                    class="te-num r-mono"
-                    type="number"
-                    min="0"
-                    max="100"
-                    step="0.5"
-                    value={Math.round((sel[k] ?? 0) * 10) / 10}
-                    disabled={sel.locked}
-                    on:input={(e) => geom(k, e.target.value)}
-                  />
-                </label>
-              {/each}
-            </div>
-            <div class="te-alignrow">
-              <button class="r-btn ghost te-alignbtn" on:click={() => center('x')} title="Centre horizontally">Centre H</button>
-              <button class="r-btn ghost te-alignbtn" on:click={() => center('y')} title="Centre vertically">Centre V</button>
-              <button class="r-btn ghost te-alignbtn" on:click={() => center('both')} title="Centre on canvas">Centre</button>
-            </div>
-            {#if sel.locked}<p class="te-fnote">This object is locked. Unlock it in the layer list to move it.</p>{/if}
-            <p class="te-fnote">Percent of the screen. Drag on the canvas — layers snap to centre and edges (hold Shift to place freely) — or type exact values.</p>
-              {/if}
-            </div>
-          {/if}
           {:else}
           <!-- ══ AND THE TEMPLATE ITSELF, BEHIND ITS OWN TAB (RG-217) ════════
                Unchanged controls; what moved is where they sit. They were the
@@ -2164,6 +2212,11 @@
      so it does not read as a group somebody has failed to open. */
   .te-grouplbl{ display:block; padding:2px 0 4px; }
   .te-what{ padding-bottom:6px; }
+  /* Four buttons in two rows — the stacking order, on the Position tab (RG-230). */
+  .te-arrange{ display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:6px; padding:2px 0 6px; }
+  /* A STATED ABSENCE, not a warning: nothing is wrong, and a control that does
+     not exist yet is worth naming so the next person does not go looking. */
+  .te-absent{ color:var(--v-faint); }
   /* WHICH PANEL THIS IS. Two words, in the head, where the question is asked. */
   .te-scope{ display:inline-flex; gap:2px; margin-left:8px; }
   .te-scopebtn{

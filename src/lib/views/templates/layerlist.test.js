@@ -546,10 +546,14 @@ describe('S1 · the inspector opens on the selected object, not on the template'
     const s = sections();
     expect(s, 'the template is still a section of a layer').not.toContain('Template');
     expect(s).toContain('Shape');
-    // The geometry is a collapsible group now rather than an `<h3>`, and that is
-    // the point of the regroup: dragging on the canvas is how an object is
-    // normally placed, and the numbers are for the one time two must agree.
-    expect(host.textContent).toMatch(/Where does it sit\?/);
+    // The geometry left this column entirely in RG-230: it has its own tab now,
+    // beside the stacking order, rather than being a shut group under everything
+    // else. The object column is the object's own reading.
+    expect(host.textContent).not.toMatch(/Where does it sit\?/);
+    expect(
+      [...host.querySelectorAll('.te-scope button')].some((b) => b.textContent.trim() === 'Position'),
+      'the geometry went nowhere',
+    ).toBe(true);
   });
 
   it('and the template controls are all still there, behind the Template tab', async () => {
