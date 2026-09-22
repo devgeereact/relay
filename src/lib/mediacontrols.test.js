@@ -21,7 +21,11 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { codeOnly } from './codeonly.js';
 
-const DOCK = readFileSync(resolve(__dirname, 'Dock.svelte'), 'utf8');
+// RG-254: the transport left the Controls card for a strip of its own in the
+// shell. Still one set, still in the shell, still not on Live — which is the
+// whole of RG-237's guarantee, and is why the move did not have to weaken it.
+const DOCK = readFileSync(resolve(__dirname, 'ClipBar.svelte'), 'utf8');
+const DOCKCARD = readFileSync(resolve(__dirname, 'Dock.svelte'), 'utf8');
 const LIVE = readFileSync(resolve(__dirname, 'views/Live.svelte'), 'utf8');
 
 describe('the controls are in the shell', () => {
@@ -33,8 +37,13 @@ describe('the controls are in the shell', () => {
   });
 
   it('play, pause and replay are all there, named', () => {
-    for (const label of ['Play', 'Pause', 'Replay'])
-      expect(dock, `no ${label} in the dock`).toMatch(new RegExp(label));
+    // THE WORDS LEFT WITH THE CARD (RG-254). The operator asked for *"just the
+    // Icons like the play icon, pause icon and all"*, so the controls are
+    // shapes now — which means the NAME has to be somewhere a screen reader
+    // reaches, and an `aria-label` is that place. Asserting the visible word
+    // would be asserting the thing the operator asked to remove.
+    for (const label of ['Hold the clip', 'Let the clip run', 'again from the beginning'])
+      expect(dock, `nothing is labelled "${label}"`).toContain(label);
   });
 
   it('and the clip clock rides with them, from the screens', () => {
@@ -58,13 +67,19 @@ describe('and there is only one set of them', () => {
     // the wrong use of the one card that may never scroll, and ending a service
     // is reachable from the readiness screen where it is read rather than
     // reached for under pressure.
-    expect(codeOnly(DOCK), 'the dead button is still taking the space').not.toMatch(/No service/);
+    expect(codeOnly(DOCKCARD), 'the dead button is still taking the space').not.toMatch(/No service/);
   });
 
   it('and Clear screens is still the full-width control along the bottom', () => {
     // Rule 15, unchanged and asserted here because this card was rearranged:
     // the panic control may never be behind an overflow edge or out of order.
-    expect(codeOnly(DOCK)).toMatch(/Clear screens/);
-    expect(codeOnly(DOCK)).toMatch(/ctlbody/);
+    // THE CARD, not the strip: `Clear screens` never moved, and this case is
+    // about the card that was rearranged around it.
+    expect(codeOnly(DOCKCARD)).toMatch(/Clear screens/);
+    expect(codeOnly(DOCKCARD)).toMatch(/ctlbody/);
+    // AND THE STRIP DOES NOT CARRY A PANIC CONTROL. It is rendered only while a
+    // clip is up, so a copy of Clear screens on it would be a panic control
+    // that comes and goes — which is rule 15 inverted.
+    expect(codeOnly(DOCK), 'a panic control that disappears with the clip').not.toMatch(/Clear screens/);
   });
 });

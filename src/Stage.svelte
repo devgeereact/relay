@@ -705,8 +705,12 @@
     readClip();
   }
   $: clipWarn = clipLeft != null && clipLeft <= CLIP_WARN_MS;
+  // THE CLIP LEFT THIS LIST (RG-256). It is painted on the picture now, and the
+  // same number in two places is two places that can disagree the first time
+  // either one moves. The rail keeps the facts that are about the SERVICE — the
+  // countdown, the time of day, the elapsed — and the clip's own clock belongs
+  // to the clip.
   $: figureList = [
-    ...(clipLeft != null ? ['clip'] : []),
     ...(zones.countdown && cdRemain != null ? ['countdown'] : []),
     ...(zones.clock ? ['clock'] : []),
     ...(zones.elapsed && elapsedText ? ['elapsed'] : []),
@@ -748,9 +752,7 @@
   // difference and the reason `railList` survives — but it takes every other
   // figure from this list rather than re-deciding it.
   $: figCells = figureList.map((f) =>
-    f === 'clip'
-      ? { k: 'Clip', v: formatCountdown(clipLeft), warn: clipWarn }
-      : f === 'countdown'
+    f === 'countdown'
         ? { k: 'Countdown', v: cdFinished ? cdDone || '0:00' : cdText, warn: cdWarn, done: cdFinished }
         : f === 'clock'
           ? { k: 'Time', v: clock }
@@ -1547,6 +1549,24 @@
             on:pause={readClip} on:seeked={readClip} on:ended={readClip}
             autoplay muted playsinline></video>
           {/key}
+          {#if clipLeft != null}
+            <!-- HOW LONG IS LEFT, ON THE CLIP (RG-256). The operator asked for
+                 it *"on the stage display with a blur as earlier"*, and the
+                 blur being remembered is `.lprog.overmedia` on the OTHER page
+                 (RG-212) — this page has never had one. The figure itself has
+                 been here since RG-213, in the rail beside the picture; what
+                 changes is that it is now on the picture, where somebody
+                 glancing up finds it without reading the rail.
+
+                 It is frosted rather than filled for the reason RG-212 gave
+                 about the other rail: the clip is what the room is watching,
+                 and an opaque bar punched through it is a worse answer than a
+                 clock nobody can read. -->
+            <div class="clipplate" class:warn={clipWarn} role="status" aria-live="off">
+              <span class="clipk">Clip</span>
+              <span class="clipv">{formatCountdown(clipLeft)}</span>
+            </div>
+          {/if}
         {:else}
           <img class="slide" src={stageMedia.url} alt="" />
         {/if}
@@ -1852,6 +1872,10 @@
   .reading { flex: 1 1 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
     text-align: center; padding: 24px; gap: 18px; min-height: 0; min-width: 0;
     container-type: size;
+    /* `relative` is what lets the clip's own clock sit ON the clip (RG-256)
+       rather than beside it. `container-type` already establishes a containing
+       block for sizes; this is the one for POSITION. */
+    position: relative;
     overflow: auto; overscroll-behavior: contain; }
   /* THE RAIL IS ITS OWN CONTAINER. `size`, not `inline-size`, so the stack can be
      a share of the rail's HEIGHT as well — which is what stops three stacked
@@ -2259,6 +2283,53 @@
     object-fit: contain;
     object-position: center;
   }
+  /* ── HOW LONG IS LEFT OF THE CLIP (RG-256) ─────────────────────────────────
+     Frosted, not filled. It sits over a moving picture, so an opaque bar would
+     punch a hole through the thing the room is watching — the same trade
+     RG-212 made for the programme rail on `output.html`, which is the blur the
+     operator was remembering.
+
+     `backdrop-filter` is a PROGRESSIVE ENHANCEMENT and the wash under it is not
+     decoration: where the filter is unsupported the wash alone is what keeps a
+     white figure off a white frame.
+
+     `cqw`, like everything else on this page, so it is the same share of the
+     screen on a phone on a lectern and on a monitor across a platform.
+
+     NOT AMBER, which means a congregation is looking at something, and not
+     cyan, which means the AI is guessing. The warning colour is the countdown's
+     own red — a claim about TIME, which is what this is. */
+  .clipplate {
+    position: absolute;
+    left: 50%;
+    bottom: 4cqh;
+    transform: translateX(-50%);
+    z-index: 2;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 2.2cqw;
+    padding: 1.6cqh 3cqw;
+    border-radius: 1.6cqw;
+    background: rgba(8, 10, 14, .42);
+    border: 1px solid rgba(255, 255, 255, .14);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+  }
+  .clipk {
+    font-family: var(--f-mono); font-weight: 700; letter-spacing: .16em;
+    text-transform: uppercase; line-height: 1.1;
+    font-size: clamp(var(--v-fs-fig), 1.9vmin, 24px);
+    color: rgba(242, 244, 248, .66);
+  }
+  .clipv {
+    font-family: var(--f-mono); font-variant-numeric: tabular-nums; font-weight: 700;
+    line-height: 1; color: #fff;
+    font-size: min(9cqw, 9cqh);
+  }
+  /* THIRTY SECONDS, and the figure is `CLIP_WARN_MS` rather than a number typed
+     here — the same threshold the desk uses. */
+  .clipplate.warn { border-color: var(--v-red-line, rgba(244, 81, 91, .5)); }
+  .clipplate.warn .clipv { color: var(--v-red); }
   .idle { font-family: var(--f-mono); color: var(--v-faint); letter-spacing: .1em;
     /* The scale step is the FLOOR on a phone, not the size on a platform monitor —
        a stage screen resting at "— standby —" in 14px type reads as a screen that

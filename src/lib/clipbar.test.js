@@ -1,0 +1,158 @@
+// THE CLIP CARRIES ITS OWN CONTROLS, AND THEY LEAVE THE CONTROLS CARD (RG-254).
+//
+// The operator: *"I want to remove the Media functionality, like the play, loop
+// and all from the control and look for a suitable place to fix it... I just want
+// the Icons like the play icon, pause icon and all with the media slider... also
+// the level and all i dont think its needed"*.
+//
+// **Why it left.** The Controls card is the one card in the product that may
+// never scroll (rule 15), because `Clear screens` may never be behind an overflow
+// edge. It was spending most of its room on a transport for a clip that is not
+// playing for most of a service, and eight controls plus a scrub, a level slider
+// and a clock were squeezed into a 178px card beside the panic controls.
+//
+// **Where it went, and why not the programme pane.** `mediacontrols.test.js`
+// holds RG-237's guarantee — ONE set of controls, in the shell, over every
+// screen — by asserting `Live.svelte` carries no transport row. The programme
+// pane is inside `Live.svelte`, so putting the chrome there would have meant
+// rewriting that guarantee to build a convenience. A strip in the SHELL keeps it
+// as written and keeps the controls reachable from Templates and Outputs too,
+// which is the half of RG-237 that made it a shell control in the first place.
+//
+// **It costs nothing when there is no clip**, which is the operator's other
+// instruction — *"strategise on where to put the functionality that will not let
+// the workspace busy or rough"*. The strip is not rendered at all unless a clip
+// is on the screens.
+import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+const read = (p) => readFileSync(resolve(p), 'utf8');
+const BAR = read('src/lib/ClipBar.svelte');
+const DOCK = read('src/lib/Dock.svelte');
+const APP = read('src/App.svelte');
+const LIVE = read('src/lib/views/Live.svelte');
+
+describe('the media transport has left the Controls card', () => {
+  it('the dock renders no transport and no clip clock', () => {
+    // The whole block, by every name it went under.
+    for (const gone of [
+      'clipbar',
+      'clipscrub',
+      'cliplevel',
+      'cliptime',
+      'clipvol',
+      'Scrub the clip',
+      'Clip volume on the screens',
+    ]) {
+      expect(DOCK, `the dock still carries \`${gone}\``).not.toContain(gone);
+    }
+  });
+
+  it('and the Controls card gets End service back for good', () => {
+    // It was the `{:else}` of `{#if clipLive}` — inert most of a service and
+    // replaced by a transport the rest of it. With the transport gone it is
+    // simply the control it always was.
+    expect(DOCK).toMatch(/endsvc/);
+    expect(DOCK, 'the card still branches on a clip').not.toMatch(/\{#if clipLive\}/);
+  });
+
+  it('nothing anywhere offers a clip LEVEL any more', () => {
+    // The operator's own words. Nothing outside the dock ever read it: the wire
+    // field and its clamp stay, so a template or a cue could set one later, but
+    // there is no longer a control on the desk for a decision nobody makes from
+    // the desk — the sound comes off the desk, not off the screens.
+    for (const src of [BAR, DOCK, LIVE]) {
+      expect(src).not.toContain('Clip volume on the screens');
+    }
+  });
+});
+
+describe('the strip is in the shell, and only while a clip is live', () => {
+  it('App mounts it, not Live and not the dock', () => {
+    expect(APP).toMatch(/<ClipBar\b/);
+    expect(LIVE, 'a second set of controls').not.toMatch(/<ClipBar\b/);
+    expect(DOCK, 'a second set of controls').not.toMatch(/<ClipBar\b/);
+  });
+
+  it('renders nothing at all when no clip is on the screens', () => {
+    // NOT a disabled bar and not an empty rail: absent. A strip that is always
+    // there is exactly the "busy or rough" workspace the operator asked to
+    // avoid, and a disabled transport over no clip is a control that owes a
+    // reason it cannot give.
+    expect(BAR).toMatch(/\{#if\s+clipLive\}/);
+  });
+
+  it('is icons and nothing else, each named for somebody who cannot see it', () => {
+    // Four controls, four labels. An icon-only button with no `aria-label` is a
+    // button that does not exist for a screen reader, and this one fires to
+    // every screen in the building.
+    // The LABELS, not the attribute spelling: Play/Pause names itself from the
+    // state it is in, so its label is a ternary rather than a literal
+    // attribute. Asserting the quoting would be asserting a spelling.
+    for (const label of [
+      'Hold the clip on every screen',
+      'Let the clip run on every screen',
+      'Start the clip again from the beginning',
+      'Repeat the clip when it ends',
+      "Put this on the preacher's screen as well",
+    ]) {
+      expect(BAR, `no control is labelled "${label}"`).toContain(label);
+    }
+    // And every one of them IS an aria-label, rather than a title or a tooltip
+    // that a screen reader never reaches.
+    expect((BAR.match(/aria-label/g) ?? []).length).toBeGreaterThanOrEqual(5);
+  });
+
+  it('spends no law colour on a clip', () => {
+    // Amber means ON AIR, cyan means the AI is guessing, amethyst means
+    // rehearsal. A transport is none of those — it is a control, and the ON AIR
+    // claim beside it belongs to the screens, not to this bar.
+    const css = BAR.slice(BAR.lastIndexOf('<style>'));
+    expect(css).not.toMatch(/--v-amber|--v-cyan|--v-amethyst/);
+  });
+});
+
+describe('the scrub bar says only what it knows', () => {
+  it('asks clipPosition, rather than drawing the polled figure raw', () => {
+    expect(BAR).toContain("from './clipposition.js'");
+    expect(BAR).toMatch(/clipPosition\(/);
+  });
+
+  it('sends the seek on the DROP, never on every pixel of the drag', () => {
+    // Each frame reaches every screen in the building. A drag across a two
+    // minute clip would be hundreds of broadcasts and a wall that stutters
+    // while the handle moves. This was RG-221's rule and it survives the move.
+    //
+    // ASSERTED ON WHAT `on:input` DOES, not on whether it exists. The first
+    // version of this case sliced from `<input` to the first `>` and required
+    // no `on:input` at all — and the first `>` in that tag is the one inside
+    // `=>`, so the slice ended before the handler and the case passed over a
+    // tag that had one. A scanner that quietly narrows passes everything.
+    //
+    // There IS an `on:input` and there has to be: it is what makes the handle
+    // follow the operator's finger. What matters is that it touches a local
+    // variable and nothing else — `seek` is the only thing that reaches a
+    // screen, and it is bound to `change`, which fires on the drop.
+    expect(BAR).toMatch(/on:input=\{\(e\) => \(dragMs = Number\(e\.target\.value\)\)\}/);
+    expect(BAR).toMatch(/on:change=\{\(e\) => seek\(/);
+    const onInput = BAR.slice(BAR.indexOf('on:input='), BAR.indexOf('on:change='));
+    for (const reaches of ['send(', 'setMediaTransport', 'seek(']) {
+      expect(onInput, `the drag reaches the screens through ${reaches}`).not.toContain(reaches);
+    }
+    // And `seek` itself is the one door to the wire from this control.
+    expect(BAR).toMatch(/const seek = \(ms\) => \{[\s\S]*?send\(\{ seekMs:/);
+  });
+
+  it('the handle belongs to the operator while they are holding it', () => {
+    // The old control re-applied `value=` on every 2s poll, so a poll landing
+    // mid-drag snapped the handle back to where the screen last said it was.
+    expect(BAR).toMatch(/dragging/);
+    expect(BAR).toMatch(/on:pointerdown/);
+  });
+
+  it('and the bar is absent, not zero, when no screen is reporting', () => {
+    // A zero-length scrub bar looks usable and can move nothing.
+    expect(BAR).toMatch(/\{#if\s+posMs\s*!==\s*null\}/);
+  });
+});

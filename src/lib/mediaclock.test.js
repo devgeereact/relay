@@ -133,7 +133,12 @@ const LIVE = readFileSync(resolve(__dirname, 'views/Live.svelte'), 'utf8');
 // building whatever workspace the operator is on, so its controls sit beside
 // Clear screens rather than on one surface out of six. The rule below did not
 // change — only which file asks it.
-const DOCK = readFileSync(resolve(__dirname, 'Dock.svelte'), 'utf8');
+// AND THEN OUT OF THE DOCK AGAIN (RG-254). It is a strip of its own in the
+// shell now, rendered only while a clip is on the screens — the Controls card
+// may never scroll, and it was spending most of its room on a transport for a
+// thing that is not playing for most of a service. The rules below are
+// unchanged; only the file that answers them is.
+const DOCK = readFileSync(resolve(__dirname, 'ClipBar.svelte'), 'utf8');
 
 describe('the shell asks the screens', () => {
   it('feeds the clock from channel health, not from its own preview', () => {
@@ -205,7 +210,7 @@ describe('the run surface can put the clip on the preacher screen too', () => {
     // A control that reported a success it did not achieve is the failure
     // `panic.test.js` exists for one surface up.
     const fn = DOCK.slice(DOCK.indexOf('async function toStage'));
-    expect(fn.slice(0, 400)).toMatch(/clipErr = humanError\(e\)/);
+    expect(fn.slice(0, 400)).toMatch(/err = humanError\(e\)/);
   });
 });
 
@@ -303,27 +308,47 @@ describe('the clip’s length and position, for the control that moves it', () =
 // that Live actually offers the two controls, and the two judgements that make
 // them usable rather than merely present.
 describe('the rest of the transport is reachable from the run surface', () => {
-  it('offers a scrub and a level, both named for somebody who cannot see them', () => {
+  it('offers a scrub, named for somebody who cannot see it', () => {
     expect(DOCK, 'no scrub on the desk').toMatch(/aria-label="Scrub the clip"/);
-    // NOT "Volume": this is the clip's level on the SCREENS, not the operator's
-    // own monitoring, and an operator under pressure could confuse the two.
-    expect(DOCK).toMatch(/aria-label="Clip volume on the screens"/);
+  });
+
+  it('and no LEVEL, which the operator asked to be rid of (RG-254)', () => {
+    // *"also the level and all i dont think its needed"*. Nothing outside this
+    // control ever read it: the wire field and its clamp stay, so a cue could
+    // set one later, but the desk offers no control for a decision nobody makes
+    // from the desk — the sound comes off the desk, not off the screens.
+    //
+    // This case used to REQUIRE the slider. It is kept, reversed, rather than
+    // deleted: a rule that changed direction on an operator's instruction is
+    // worth more as a record than as an absence.
+    expect(DOCK, 'the level came back').not.toMatch(/aria-label="Clip volume on the screens"/);
   });
 
   it('sends the scrub on the DROP, never on every pixel of the drag', () => {
     // `on:input` fires per pixel and each one is a frame to every screen in the
     // building — a drag across a two-minute clip would be hundreds of broadcasts
     // and a wall that stutters while the handle moves.
+    //
+    // THE RULE IS ABOUT WHAT REACHES A SCREEN, not about which handlers exist,
+    // and this case was written the narrower way. There IS an `on:input` since
+    // RG-254 and there has to be: it is what keeps the handle under the
+    // operator's finger instead of letting a two-second poll snap it back. What
+    // matters is that it moves a local variable, and that `seek` — the only
+    // thing that reaches the wire — hangs off `change`, which fires on the drop.
     const bar = DOCK.slice(DOCK.indexOf('aria-label="Scrub the clip"'));
     const tag = bar.slice(0, bar.indexOf('/>'));
-    expect(tag, 'the scrub fires on every pixel of the drag').not.toMatch(/on:input/);
-    expect(tag).toMatch(/on:change=\{\(e\) => clip\(\{ seekMs:/);
+    expect(tag).toMatch(/on:input=\{\(e\) => \(dragMs = /);
+    expect(tag, 'the drag reaches the screens').not.toMatch(/send\(|setMediaTransport/);
+    expect(tag).toMatch(/on:change=\{\(e\) => seek\(/);
   });
 
   it('and neither appears when no screen is reporting a clip', () => {
     // A scrub bar over an unknown length looks usable and can move nothing,
     // which is the defect DECISIONS §69 closed seven Settings controls of.
-    expect(DOCK).toMatch(/\{#if mediaClock\.known && mediaClock\.durationMs\}/);
+    // Asked of `clipPosition`'s answer since RG-255, which is the one place
+    // that decides whether a position can honestly be shown at all — it is
+    // `null` for an unknown clip AND for a beat too old to trust.
+    expect(DOCK).toMatch(/\{#if posMs !== null\}/);
   });
 });
 

@@ -14,6 +14,7 @@
   import { session, setSession, resolveActiveTab } from './lib/session.js';
   import FirstRun from './lib/FirstRun.svelte';
   import Dock from './lib/Dock.svelte';
+  import ClipBar from './lib/ClipBar.svelte';
   import Splash from './lib/Splash.svelte';
   import BootSequence from './lib/boot/BootSequence.svelte';
   import BrandMark from './lib/ui/BrandMark.svelte';
@@ -767,6 +768,14 @@
          a service, and the four controls that change what a congregation sees.
          In the SHELL, not inside Live — an operator editing a template still
          needs Clear screens within one reach. -->
+    <!-- THE CLIP'S OWN CONTROLS (RG-254), between the desk and the dock and
+         only while a clip is on the screens. In the SHELL for the reason the
+         dock is: an operator in Templates or Outputs can still hold a clip
+         without going back to Live — and `views/Live.svelte` may not carry a
+         transport row, which is how RG-237's "one set of controls" is held.
+         It renders nothing at all when nothing is playing, so the row costs no
+         height for most of a service. -->
+    {#if !liveFullscreen}<ClipBar />{/if}
     {#if !liveFullscreen}<Dock />{/if}
 
     <!-- THE STATUS BAR (docs/REBRAND.md §2). 26px of facts, left to right in the

@@ -235,9 +235,15 @@ describe('the clip on the stage says how long is left of it', () => {
     await tick();
     return v;
   };
-  const railText = () => host.querySelector('.figrow, .rail')?.textContent ?? '';
+  // THE CLOCK MOVED ONTO THE PICTURE (RG-256). These cases asserted it in the
+  // rail beside the clip, which is where RG-213 put it and where it stayed until
+  // the operator asked for it *"on the stage display with a blur"*. The
+  // guarantees below are unchanged — a figure only once the length is known, it
+  // goes with the clip, and a still picture gets none — and only the place they
+  // are read from has moved. `stageclipclock.test.js` owns the plate itself.
+  const railText = () => host.querySelector('.clipplate')?.textContent ?? '';
 
-  it('counts down beside the reading, labelled, once the player knows the length', async () => {
+  it('counts down on the clip, labelled, once the player knows the length', async () => {
     await open(2);
     await send(ROLES);
     await send({ ...SLIDE, media_kind: 'video' });
@@ -258,6 +264,7 @@ describe('the clip on the stage says how long is left of it', () => {
     expect(railText()).toMatch(/Clip/i);
     await send({ kind: 'stage_media', media_url: null, media_kind: null });
     expect(railText(), 'a figure about a clip that is no longer on the screen').not.toMatch(/Clip/i);
+    expect(host.querySelector('.clipplate'), 'the plate outlived the clip').toBeNull();
   });
 
   it('a still picture gets no countdown, because it does not end', async () => {

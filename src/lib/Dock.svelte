@@ -234,46 +234,10 @@
   // preview would be a number about nothing. `channelHealth` is the same map
   // Live read it from, so the two cannot disagree — there is only one of them
   // now in any case.
-  // WHICH SCREEN THE FIGURE IS ABOUT (RG-238). `programmeScreen` is the one rule
-  // for "the screen the operator is watching" — the same one Live's programme
-  // pane is a picture of — so the desk cannot quote one screen while the pane
-  // shows another. With no main screen set it answers nothing and the clock
-  // falls back to the soonest, exactly as before.
-  let dockChannels = [];
-  $: mainScreenId = programmeScreen(dockChannels).channel?.id ?? null;
-  $: mediaClock = describeMediaClock(
-    Object.entries($channelHealth).map(([id, row]) => ({ ...row, id: Number(id) })),
-    { mainId: mainScreenId },
-  );
-  $: clipLive = !!$live?.media_url && !$screenBlack;
-  /**
-   * THE CLIP ON THE WALL, AS AN ID — or `null` for one Relay ships.
-   *
-   * A bundled picture has no row under `/media/<id>` (DECISIONS §90), so there
-   * is no id to send and the control says so instead of guessing at one.
-   */
-  $: clipMediaId = mediaIdFromUrl($live?.media_url);
-  $: clipOnStage = $stageMedia != null && $stageMedia === clipMediaId;
-  async function toStage() {
-    clipErr = '';
-    try {
-      await sendStageMedia(clipOnStage ? null : clipMediaId);
-    } catch (e) {
-      clipErr = humanError(e);
-    }
-  }
-  let clipErr = '';
-  async function clip(change) {
-    clipErr = '';
-    try {
-      await setMediaTransport(change);
-    } catch (e) {
-      // GROUP 1 (throws), and it is shown rather than swallowed: a Pause that
-      // failed silently leaves a clip running under an operator who believes
-      // they stopped it, and the next cue goes out over the top of it.
-      clipErr = humanError(e);
-    }
-  }
+  // THE CLIP'S STATE WENT WITH ITS CONTROLS (RG-254). `mediaClock`,
+  // `clipLive`, `clipMediaId`, `clipOnStage`, `toStage` and `clip` are
+  // `lib/ClipBar.svelte`'s now — including RG-238's main-screen rule, which
+  // travelled whole rather than being restated here and there.
   import { templateKind } from './templateKind.js';
   import TemplateRender from './TemplateRender.svelte';
   import { humanError } from './errors.js';
@@ -1217,67 +1181,24 @@
              While a clip is on the screens this is the transport; the rest of
              the time it is the End service control it replaced, so the row is
              never empty and never inert for no reason. -->
-        {#if clipLive}
-          <div class="clipbar">
-            <button class="r-cbtn clipbtn" on:click={() => clip({ paused: !$mediaTransport.paused })}
-              aria-pressed={$mediaTransport.paused}
-              title={$mediaTransport.paused ? 'Let the clip run on every screen' : 'Hold the clip on every screen'}
-            >{$mediaTransport.paused ? 'Play' : 'Pause'}</button>
-            <button class="r-cbtn clipbtn" on:click={() => clip({ replay: true })}
-              title="Start the clip again from the beginning, on every screen">Replay</button>
-            <button class="r-cbtn clipbtn" class:on={$mediaTransport.loop} aria-pressed={$mediaTransport.loop}
-              on:click={() => clip({ loop: !$mediaTransport.loop })}
-              title={$mediaTransport.loop ? 'Stop repeating at the end' : 'Repeat the clip when it ends'}>Loop</button>
-            <!-- AND ONTO THE PREACHER'S SCREEN TOO. Scripture overrides it
-                 there, so this is additive rather than a second wall. -->
-            <button class="r-cbtn clipbtn" class:on={clipOnStage} aria-pressed={clipOnStage}
-              disabled={clipMediaId == null} on:click={toStage}
-              title={clipMediaId == null
-                ? 'A picture Relay ships cannot be sent on its own'
-                : clipOnStage
-                  ? "Take it off the preacher's screen"
-                  : "Put this on the preacher's screen as well"}
-            >{clipOnStage ? 'On stage' : 'To stage'}</button>
-            <!-- SCRUB AND LEVEL CAME WITH THE REST (RG-221 lives here now). On
-                 the drop, never on every pixel of the drag: each frame reaches
-                 every screen in the building, and a drag across a two-minute
-                 clip would be hundreds of broadcasts and a wall that stutters
-                 while the handle moves. -->
-            {#if mediaClock.known && mediaClock.durationMs}
-              <input class="r-range clipscrub" type="range" min="0" max={mediaClock.durationMs} step="250"
-                value={mediaClock.positionMs ?? 0} aria-label="Scrub the clip"
-                title="Drag to move the clip. Every screen follows."
-                on:change={(e) => clip({ seekMs: Number(e.target.value) })} />
-            {/if}
-            <span class="cliplevel">
-              <span class="r-lbl">Level</span>
-              <input class="r-range" type="range" min="0" max="1" step="0.05"
-                value={$mediaTransport.volume ?? 1} aria-label="Clip volume on the screens"
-                title="How loud the clip is on the output screens"
-                on:change={(e) => clip({ volume: Number(e.target.value) })} />
-              <span class="r-mono clipvol">{Math.round(($mediaTransport.volume ?? 1) * 100)}%</span>
-            </span>
-            <!-- HOW LONG IS LEFT, from the screens rather than from any player in
-                 this process. `unknown` says so in words: a dash reads as "this
-                 clip has no clock" and a zero as "it has finished". -->
-            <span class="cliptime r-mono" class:unknown={!mediaClock.known}>{mediaClock.known ? mediaClock.text : 'no screen reporting'}</span>
-          </div>
-          {#if clipErr}<span class="cliperr" role="alert">{clipErr}</span>{/if}
-        {:else}
-          <!-- The label is the STATE, like Blackout and Rehearse below it. With no
-               service open it says so and is inert: "End service" over nothing to
-               end reads exactly like "End service" over a recording church, which
-               is the one thing this button may not do. -->
-          <button
-            class="r-cbtn endsvc wide"
-            data-on={recording ? '1' : '0'}
-            on:click={() => run(endService)}
-            disabled={busy || !recording || !$capture.available}
-            title={recording
-              ? 'Stop recording this service. The transcript, the fires and the timeline are kept — History reads them back, from All history on the readiness screen.'
-              : 'Nothing is being recorded. A service starts when you start listening.'}
-          >{recording ? 'End service' : 'Not recording'}</button>
-        {/if}
+        <!-- THE CLIP'S CONTROLS LEFT THIS CARD (RG-254). They were the
+             clip-live half of this slot: eight controls, a scrub, a level
+             slider and a clock, in the one card that may never scroll, for a
+             thing that is not playing for most of a service. They are
+             `lib/ClipBar.svelte` now, a strip in the shell that is not rendered
+             at all while no clip is on the screens.
+
+             So End service is simply the control it always was, rather than the
+             one the transport borrowed a slot from. -->
+        <button
+          class="r-cbtn endsvc wide"
+          data-on={recording ? '1' : '0'}
+          on:click={() => run(endService)}
+          disabled={busy || !recording || !$capture.available}
+          title={recording
+            ? 'Stop recording this service. The transcript, the fires and the timeline are kept — History reads them back, from All history on the readiness screen.'
+            : 'Nothing is being recorded. A service starts when you start listening.'}
+        >{recording ? 'End service' : 'Not recording'}</button>
         <button
           class="r-cbtn rehearse"
           data-on={$rehearsing ? '1' : '0'}
@@ -1652,22 +1573,6 @@
   /* The controls card takes the height it is given and divides it among the
      buttons. `overflow:hidden`, not `auto`: a panic control that can be scrolled
      out of reach is a panic control that will be, exactly once, on a Sunday. */
-  /* THE CLIP'S OWN ROW (RG-237). Three equal buttons with the clock under them,
-     in the slot `End service` had — the same footprint, so the card's height and
-     the order rule 15 depends on are untouched. */
-  .clipbar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
-  .clipbtn { min-width: 0; }
-  .clipscrub { grid-column: 1 / -1; width: 100%; }
-  .cliplevel { grid-column: 1 / -1; display: flex; align-items: center; gap: 6px; }
-  .cliplevel .r-range { flex: 1; min-width: 0; }
-  .clipvol { flex: 0 0 auto; min-width: 34px; text-align: right;
-    font-size: var(--v-fs-lbl); color: var(--v-dim); font-variant-numeric: tabular-nums; }
-  .cliptime { grid-column: 1 / -1; text-align: center; padding-top: 2px;
-    font-size: var(--v-fs-lbl); color: var(--v-dim); font-variant-numeric: tabular-nums; }
-  /* NOT a dash and not a zero — see the markup. Faint, because a screen that is
-     not reporting is a fact about the screens, not an alarm about the clip. */
-  .cliptime.unknown { color: var(--v-faint); font-variant-numeric: normal; }
-  .cliperr { display: block; padding-top: 3px; font-size: var(--v-fs-lbl); color: var(--v-rose); }
   .ctlbody { display: flex; flex-direction: column; overflow: hidden; }
   .ctlbody .r-ctl { flex: 1; align-content: stretch; grid-auto-rows: 1fr; gap: 5px; }
   .ctlbody :global(.r-cbtn) { height: auto; min-height: 32px; }
