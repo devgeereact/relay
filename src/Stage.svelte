@@ -11,7 +11,6 @@
   import { applyMediaTransport } from './lib/mediatransport.js';
   import { syncSeek } from './lib/mediasync.js';
   import { messagePlacement } from './lib/stagemessage.js';
-  import { holdGuard, HOLD_MS } from './lib/holdguard.js';
   import { restingLayout } from './lib/stageresting.js';
   // Mobile stage-display remote — the preacher opens this on a phone/iPad (via
   // QR or the LAN URL) to see the live verse + reference in real time. No Tauri
@@ -139,14 +138,6 @@
   // Hits the LAN HTTP API on :8031's sibling port (:8032/api/*), which runs the
   // SAME fire/nav path the console does. LAN-only, no auth (see channels.rs).
   let showCtl = false;
-  // A press that has to be meant (RG-242). `holding` is only the fill that shows
-  // the press is registering; the DECISION is `hold`'s, and it is clock-free.
-  const hold = holdGuard();
-  let holding = false;
-  // When the panel was opened, so the `click` that follows the opening
-  // `pointerup` does not shut it again. `null` once it is closed.
-  let openedAt = null;
-  $: if (!showCtl) openedAt = null;
   let q = '';
   let results = [];
   let searching = false;
@@ -790,15 +781,7 @@
   // panic control having taken this screen, and a message goes down with the
   // screen (DECISIONS §91) — so it is asked here rather than inside the rule,
   // which is about what is on the screen and not about whether there is one.
-  $: msgPlace = down
-    ? 'none'
-    : messagePlacement({
-        message: alert,
-        urgent: alertUrgent,
-        // The two things that are worth more of the screen than a message is.
-        reading: !!(shown && content),
-        slide: !!(zones.media && stageMedia),
-      });
+  $: msgPlace = down ? 'none' : messagePlacement({ message: alert, urgent: alertUrgent });
   // …AND "THE READING HAS NO BODY" IS NOT THE SAME CLAIM AS "A COUNTDOWN IS
   // RUNNING", WHICH IS THE ONE THE EXCEPTION WAS WRITTEN FOR.
   //
@@ -1446,42 +1429,9 @@
   <header>
     <span class="brand">Relay · Stage</span>
     <span class="status" class:on={connected && !stale}><i></i>{reach}</span>
-    <!-- A PRESS THAT HAS TO BE MEANT (RG-242). This panel FIRES to every screen
-         in the building, and it opened on a single tap of a small button in the
-         header of a page somebody is holding mid-sermon. `holdGuard` is the
-         rule; `on:click` is deliberately absent so a tap does nothing at all
-         rather than doing something smaller.
-
-         CLOSING IS STILL ONE TAP. A control that is hard to open and hard to
-         shut is a control in the way — and nothing goes to a screen by closing
-         it, so there is nothing to protect against. -->
-    <button
-      class="ctl-toggle"
-      class:active={showCtl}
-      class:holding={holding}
-      style="--hold:{HOLD_MS}ms"
-      on:pointerdown={(e) => { if (showCtl) return; holding = true; hold.down(e.timeStamp); }}
-      on:pointerup={(e) => {
-        if (showCtl) return;
-        holding = false;
-        if (hold.up(e.timeStamp)) {
-          showCtl = true;
-          // The `click` that follows this very `pointerup` must not close what
-          // it just opened. A pointer sequence ends in both events, and the
-          // close path below is deliberately on `click` so a keyboard reaches
-          // it — Enter and Space fire a click and no pointer events at all.
-          openedAt = e.timeStamp;
-        }
-      }}
-      on:click={(e) => {
-        if (!showCtl) return;
-        if (openedAt !== null && e.timeStamp - openedAt < 400) return;
-        showCtl = false;
-      }}
-      on:pointercancel={() => { holding = false; hold.cancel(); }}
-      on:pointerleave={() => { holding = false; hold.cancel(); }}
-      aria-label={showCtl ? 'Close the control panel' : 'Control panel — press and hold to open'}
-    >{showCtl ? 'Done' : 'Hold'}</button>
+    <!-- The control's own button left this header (RG-246). The transport is a
+         bar along the foot now and the search is on it, so there is nothing here
+         to open and nothing to guard. -->
   </header>
 
   {#if unidentified}
@@ -1509,14 +1459,16 @@
          business stops being an alarm. -->
     <div class="alert {alertSize}" role="status" aria-live="assertive">{alert}</div>
   {/if}
-  {#if msgPlace === 'strip'}
-    <!-- BESIDE A READING. The strip along the foot, because a reading is why the
-         preacher is looking at the screen and a message may not take that room
-         while one is up. It pulses (RG-239): the operator asked for every
-         message to catch an eye that is not looking for it, not only an alert. -->
-    <div class="quietmsg pulse" role="status" aria-live="polite">{alert}</div>
-  {/if}
   {#if msgPlace === 'large'}
+    <!-- OVER EVERYTHING BUT THE CLOCK (RG-245). It shipped as a strip beside a
+         reading and the operator overruled that on a phone: a Stage Message is
+         the desk speaking to one person mid-sermon, it is never ambient, and the
+         reading in their hand is the thing it is most often about.
+
+         The CLOCK is the exception, and it is this page's job rather than the
+         rule's: `.progrow` and `.figrow` are painted after this block and sit
+         above it, so the preacher still knows how long is left while they
+         read. -->
     <!-- NOTHING ELSE ON SCREEN, SO THE MESSAGE TAKES THE ROOM (RG-239).
          It was this same strip whether the screen was full of verse or entirely
          empty — one line of small type on a dark phone, read from a platform by
@@ -1688,10 +1640,10 @@
        loses is the ability to change it from the tablet. -->
   {#if showCtl}
     <section class="ctl">
-      <div class="nav-row">
-        <button class="nav-btn" on:click={() => nav('prev')} disabled={busy}>‹ Prev</button>
-        <button class="nav-btn" on:click={() => nav('next')} disabled={busy}>Next ›</button>
-      </div>
+      <!-- The nav pair left this panel for the bar along the foot (RG-246),
+           which is on the screen whether the search is open or not. Two Prev
+           buttons on one page would be the twin door this repository keeps
+           deleting. -->
       <form class="search" on:submit|preventDefault={doSearch}>
         <input
           type="search"
@@ -1732,6 +1684,32 @@
       </div>
     </footer>
   {/if}
+
+  <!-- ══ THE TRANSPORT ══ ALWAYS ON THE SCREEN (RG-246).
+       It was behind a button in the header, and then behind a 550ms hold on that
+       button (RG-242). Both were answers to the wrong shape: a preacher's own
+       controls are not a thing to go looking for mid-sentence, and a bar that is
+       always there cannot be opened by accident because there is nothing to
+       open.
+
+       Three targets at 52px on a bar of their own is a harder thing to hit by
+       accident than a 26px control in a header ever was, which is what retires
+       the guard rather than merely removing it.
+
+       `aria-label` on the search button and nowhere else: the two nav buttons
+       say what they do in words already. -->
+  <nav class="sctl" aria-label="Put a verse on the screens">
+    <button class="sctl-btn" on:click={() => nav('prev')} disabled={busy}>‹ Previous</button>
+    <button class="sctl-btn" on:click={() => nav('next')} disabled={busy}>Next ›</button>
+    <button
+      class="sctl-btn sctl-find"
+      class:on={showCtl}
+      aria-label="Search for a verse"
+      aria-pressed={showCtl}
+      on:click={() => (showCtl = !showCtl)}>
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4.3-4.3"/></svg>
+    </button>
+  </nav>
 </div>
 
 <style>
@@ -1927,7 +1905,13 @@
      was what o'clock it was.
      15% gives the reading 54px back at 1080 and leaves the clock at a size no
      platform has ever struggled with (the figure is bounded below). */
+  /* ABOVE THE MESSAGE (RG-245). A Stage Message covers the reading now, and the
+     clock is the one thing it may not take — the preacher still has to know how
+     long is left while they read it. `position: relative` is what lets a row in
+     normal flow carry a z-index at all, and the opaque background is what stops
+     the message showing through it. */
   .figrow { flex: 0 0 15%; min-height: 0; overflow: hidden; container-type: size;
+    position: relative; z-index: 45;
     display: flex; border-top: 1px solid var(--s-seam); background: var(--s-wash); }
   /* A pre-service countdown is the whole reason anyone is looking at this page, and
      a countdown cue has a label and no body. The figures take the room the reading
@@ -2062,6 +2046,8 @@
   .progrow.owns .tval { font-size: min(calc(76cqw / var(--tmrs, 1) / (var(--tch, 6) * 0.62)), 46dvh); }
   .progrow { flex: 0 0 auto; flex-basis: auto; --progmax: calc(20dvh * var(--tmul, 1)); max-height: var(--progmax);
     overflow: hidden;
+    /* Above the message, for the reason `.figrow` records. */
+    position: relative; z-index: 45;
     container-type: inline-size;
     display: flex; gap: 10px; padding: 8px 18px;
     border-top: 1px solid var(--s-seam); background: var(--s-wash); }
@@ -2313,27 +2299,8 @@
     color: #fff;
     overflow: hidden;
   }
-  .quietmsg {
-    position: fixed;
-    left: env(safe-area-inset-left);
-    right: env(safe-area-inset-right);
-    bottom: calc(env(safe-area-inset-bottom) + 2vh);
-    z-index: 40;
-    margin: 0 3vw;
-    padding: 1.1vh 2.4vw;
-    border-radius: var(--s-r-md);
-    background: rgba(0, 0, 0, .62);
-    border: 1px solid var(--s-edge);
-    color: #fff;
-    font-family: var(--f-body);
-    font-size: clamp(14px, 3.4vw, 30px);
-    line-height: var(--s-lh-prose);
-    text-align: center;
-    overflow: hidden;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-  }
+  /* `.quietmsg` went with the strip (RG-245). A Stage Message has one shape
+     now: the reading's room, over whatever is in it. */
   .alert {
     /* FIXED, and above everything. This is read by somebody mid-sentence in front
        of a congregation; it does not share the screen with a clock. */
@@ -2435,22 +2402,44 @@
     display: inline-flex; align-items: center; justify-content: center; }
   /* Steel — see `.zonebtn.on`. A toggle that is switched on is not on air. */
   .ctl-toggle.active { color: var(--v-sel); border-color: var(--v-sel-line); background: var(--v-sel-soft); }
-  /* THE PRESS REGISTERING, so a hold is not a button that ignores you for half a
-     second. It fills over exactly `--hold`, the same figure the rule uses, so the
-     fill cannot promise a different threshold from the one that decides.
-     Reduced motion gets the steady state rather than a sweep — the press still
-     shows, it simply does not travel. */
-  .ctl-toggle.holding { border-color: var(--v-sel-line); color: var(--v-sel); }
-  @media (prefers-reduced-motion: no-preference) {
-    .ctl-toggle.holding {
-      background: linear-gradient(to right, var(--v-sel-soft) 0 0) left / 0% 100% no-repeat;
-      animation: ctlhold var(--hold, 550ms) linear forwards;
-    }
-    @keyframes ctlhold { to { background-size: 100% 100%; } }
+  /* ── THE TRANSPORT ALONG THE FOOT (RG-246) ────────────────────────────────
+     Above everything, including a Stage Message, for the same reason the clock
+     is: it is how the preacher moves, and a message must not take it. Below the
+     ALERT, which is the one thing entitled to the whole screen.
+
+     `env(safe-area-inset-bottom)` so the home indicator does not sit on the
+     buttons. 52px targets: 44 is the floor, and a transport somebody has to aim
+     at is a transport they will not use mid-sermon. */
+  .sctl {
+    position: relative;
+    z-index: 45;
+    flex: 0 0 auto;
+    box-sizing: border-box;
+    display: grid;
+    grid-template-columns: 1fr 1fr 58px;
+    gap: 8px;
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--s-seam);
+    background: var(--s-wash);
   }
-  @media (prefers-reduced-motion: reduce) {
-    .ctl-toggle.holding { background: var(--v-sel-soft); }
+  .sctl-btn {
+    min-height: 52px;
+    display: grid;
+    place-items: center;
+    padding: 0 10px;
+    cursor: pointer;
+    border-radius: var(--s-r-md);
+    background: var(--v-surf2);
+    border: 1px solid var(--v-500);
+    color: var(--v-txt);
+    font-family: var(--f-body);
+    font-size: clamp(14px, 3.6vw, 19px);
+    font-weight: 600;
   }
+  .sctl-btn:disabled { opacity: .45; }
+  /* STEEL, never amber. This reaches a screen, but it is not a claim that one is
+     on air — rule 18, and the colour guard the operator asked to keep. */
+  .sctl-btn.on { background: var(--v-sel-soft); border-color: var(--v-sel-line); color: var(--v-sel); }
   .ctl { flex: 0 0 auto; display: flex; flex-direction: column; gap: var(--s-gap); padding: 16px 18px;
     border-top: 1px solid var(--s-seam); background: var(--s-wash);
     max-height: 60dvh; overflow-y: auto; }

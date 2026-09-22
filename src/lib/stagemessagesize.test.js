@@ -23,17 +23,22 @@ import { messagePlacement } from './stagemessage.js';
 const at = (over = {}) =>
   messagePlacement({ message: 'Wrap up in five', urgent: false, reading: false, slide: false, ...over });
 
-describe('messagePlacement — which of the three a message gets', () => {
+describe('messagePlacement — which of the two a message gets', () => {
   it('nothing else on screen: the message takes the reading’s room', () => {
     expect(at()).toBe('large');
   });
 
-  it('a reading is up: the strip, because the reading is why they are looking', () => {
-    expect(at({ reading: true })).toBe('strip');
+  it('a reading is up: it takes that room too (RG-245)', () => {
+    // THE DECISION REVERSED. This shipped as a strip along the foot, on the
+    // argument that a reading is why the preacher is looking at the screen. The
+    // operator watched it on a phone and overruled it: a Stage Message is the
+    // desk speaking to ONE person mid-sermon and is never ambient, and the
+    // reading they are holding is the thing it is most often about.
+    expect(at({ reading: true })).toBe('large');
   });
 
-  it('a slide is up: the strip too — the operator put that there to be read', () => {
-    expect(at({ slide: true })).toBe('strip');
+  it('a slide is up: the same', () => {
+    expect(at({ slide: true })).toBe('large');
   });
 
   it('an alert is the whole screen whatever else is on it', () => {
@@ -100,14 +105,16 @@ describe('the preacher’s screen paints the three states', () => {
     expect(host.querySelector('.bigmsg').textContent).toContain('Wrap up in five');
   });
 
-  it('with a reading up it is the strip, and the reading keeps its room', async () => {
+  it('with a reading up it covers it, and the clock survives (RG-245)', async () => {
     await open();
     send({ kind: 'content', content_kind: 'scripture', reference: 'John 3:16', text: 'For God so loved' });
     msg('Wrap up in five');
     await settle();
-    expect(host.querySelector('.quietmsg'), 'the message took the reading’s room').toBeTruthy();
-    expect(host.querySelector('.bigmsg')).toBeNull();
-    expect(host.textContent).toContain('For God so loved');
+    expect(host.querySelector('.bigmsg'), 'the message is still a strip beside a reading').toBeTruthy();
+    expect(host.querySelector('.quietmsg'), 'the strip survived the reversal').toBeNull();
+    // THE ONE THING A MESSAGE MAY NOT TAKE. The preacher still has to know how
+    // long is left while they read it.
+    expect(host.querySelector('.progrow, .figrow'), 'the message covered the clock').toBeTruthy();
   });
 
   it('an alert is the whole screen, over a reading', async () => {
@@ -130,7 +137,7 @@ describe('the preacher’s screen paints the three states', () => {
 
     send({ kind: 'content', content_kind: 'scripture', reference: 'John 3:16', text: 'For God so loved' });
     await settle();
-    expect(host.querySelector('.quietmsg.pulse'), 'the strip does not move').toBeTruthy();
+    expect(host.querySelector('.bigmsg .pulse'), 'it stopped moving over a reading').toBeTruthy();
   });
 
   it('a reduced-motion viewer gets the colour without the movement', async () => {

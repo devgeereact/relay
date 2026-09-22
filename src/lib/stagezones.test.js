@@ -120,18 +120,9 @@ async function click(text) {
  *
  * What each case ASSERTS is unchanged — this is the door, not the subject.
  */
-/** Open the control panel the way RG-242 made it open: a press and a HOLD. */
+/** Open the control panel the way RG-246 made it open: the search button. */
 async function holdOpen() {
-  const b = button('Hold');
-  // BOTH stamps are forced. jsdom gives a synthetic event the real time since
-  // the page loaded, so an unforced `pointerdown` can be LATER than a forced
-  // `pointerup` and the hold reads as negative.
-  const down = new PointerEvent('pointerdown', { bubbles: true });
-  Object.defineProperty(down, 'timeStamp', { value: 0 });
-  b.dispatchEvent(down);
-  const up = new PointerEvent('pointerup', { bubbles: true });
-  Object.defineProperty(up, 'timeStamp', { value: 5_000 });
-  b.dispatchEvent(up);
+  host.querySelector('.sctl-find').click();
   await tick();
 }
 
@@ -901,7 +892,11 @@ describe('an open panel yields the programme rail', () => {
     expect(container.querySelector('.progrow')).toBeNull();
     expect(container.querySelector('.verse')).toBeTruthy();
 
-    await click('Done');
+    // The same button shuts it. The panel's own `Done` went with the header
+    // controls (RG-246): the transport bar is where opening and closing both
+    // live now, so there is one control rather than two that must agree.
+    host.querySelector('.sctl-find').click();
+    await tick();
     expect(container.querySelector('.progrow')).toBeTruthy();
   });
 
