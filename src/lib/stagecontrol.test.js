@@ -74,10 +74,25 @@ async function open() {
   await tick();
   socket.onopen?.();
   await tick();
-  // The control panel is behind its own toggle.
-  const toggle = [...host.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Control');
-  expect(toggle, 'no Control toggle on the stage page').toBeTruthy();
-  toggle.click();
+  // The control panel is behind a press and HOLD since RG-242: it fires to every
+  // screen in the building and used to open on one tap of a small button in the
+  // header of a page a preacher is holding mid-sermon.
+  const toggle = [...host.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Hold');
+  expect(
+    toggle,
+    `no control toggle; buttons are ${JSON.stringify([...host.querySelectorAll('button')].map((b) => b.textContent.trim()))}`,
+  ).toBeTruthy();
+  // BOTH stamps are forced. jsdom gives a synthetic event the real time since
+  // the page loaded, so an unforced `pointerdown` can be LATER than a forced
+  // `pointerup` and the hold reads as negative.
+  const down = new PointerEvent('pointerdown', { bubbles: true });
+  Object.defineProperty(down, 'timeStamp', { value: 0 });
+  toggle.dispatchEvent(down);
+  // `timeStamp` is read from the event, so a synthetic pair a millisecond apart
+  // is a TAP however long the test takes — the hold has to be expressed here.
+  const held = new PointerEvent('pointerup', { bubbles: true });
+  Object.defineProperty(held, 'timeStamp', { value: 5_000 });
+  toggle.dispatchEvent(held);
   await tick();
   await tick();
 }

@@ -231,7 +231,10 @@ describe('RG-154 — the height cap measures something that exists', () => {
     // The honest fix the register asked for: the row's ceiling and the digits'
     // cap are the same measurement, so they cannot drift, and the unit is one
     // that actually resolves. `dvh` is the page's own frame (`.sr` is `100dvh`).
-    expect(PROGROW).toMatch(/--progmax:\s*[\d.]+dvh/);
+    expect(PROGROW).toMatch(// `calc(20dvh * var(--tmul))` since RG-240: the operator's size multiplies the
+    // row's ceiling, because `.tval` is capped against it and would otherwise
+    // ignore the setting entirely — RG-223 in a second place.
+    /--progmax:\s*calc\([\d.]+dvh \* var\(--tmul/);
     expect(PROGROW).toMatch(/max-height:\s*var\(--progmax\)/);
     expect(TVAL).toMatch(/calc\(\s*var\(--progmax\)\s*\*\s*[\d.]+\s*\)/);
   });

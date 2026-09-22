@@ -3524,14 +3524,10 @@
   /* HARD RIGHT, MONO, UPPERCASE. The reference is the one figure on this head an
      operator reads from across a booth, and in the body face it sat at a
      different weight and rhythm from everything beside it. */
-  .mon-clip{display:flex; align-items:baseline; gap:8px; padding:4px 10px;
-    font-size:var(--v-fs-b2); color:var(--v-txt); border-bottom:1px solid var(--v-line)}
-  .mon-clip.unknown{color:var(--v-dim)}
-  .mon-clipfrom{color:var(--v-faint); font-size:var(--v-fs-b3)}
   /* Rose, which already means a fault on this surface. Not amber: amber is ON AIR
      and a screen falling behind is not a claim about what a congregation sees. */
-  /* The second transport row. Its own line, so a scrub handle can never move the
-     Pause button sideways under an operator's hand. */
+  /* The clip's own rules went with the transport (RG-237); what is left here is
+     the next-up clock, which is this pane's own. */
   /* The clip's remaining time, over the corner of the NEXT-UP frame. Ochre would
      be a caution and this is not one; neutral over a scrim, because it sits on
      whatever picture the cue happens to be. */
@@ -3540,17 +3536,8 @@
     background:color-mix(in srgb, var(--v-void) 72%, transparent);
     border:1px solid var(--v-line2); color:var(--v-txt);
     font-size:var(--v-fs-lbl); font-variant-numeric:tabular-nums; }
-  .mon-clip2{ display:flex; align-items:center; gap:10px; padding:2px 0 4px; }
-  .mon-scrub{ flex:1 1 auto; min-width:0; }
-  .mon-vol{ flex:0 0 auto; display:flex; align-items:center; gap:6px; }
-  .mon-vol .r-range{ width:78px; }
-  .mon-volnum{ min-width:34px; text-align:right; color:var(--v-dim);
-    font-size:var(--v-fs-lbl); font-variant-numeric:tabular-nums; }
-  .mon-clipwarn{color:var(--v-red); font-size:var(--v-fs-b3)}
-  .mon-cliperr{color:var(--v-red); font-size:var(--v-fs-b3)}
   /* Steel, which already means "this is the state you chose" on this surface. Not
      amber, which is ON AIR and belongs to the tag above the pane. */
-  .mon-clip .r-btn.on{color:var(--v-sel); border-color:var(--v-sel-line)}
   .mon-name{min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
     font-size:var(--v-fs-cap); letter-spacing:.09em; text-transform:uppercase;
     color:var(--v-faint)}

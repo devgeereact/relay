@@ -179,7 +179,11 @@ const REGISTER = [
       'src/lib/TemplateRender.svelte',
       'src/lib/layers.js',
       'src/lib/stores/capture.js',
-      'src/lib/stagezones.test.js',
+      // RG-241 took the zone picker off the phone, so this file reads a zone's
+      // state off what the page PAINTS rather than off a toggle's label — and
+      // stopped saying the zone's name in the process. `stagelayout.test.js`
+      // still names it, over the operator's path.
+      'src/lib/stagelayout.test.js',
       'src/lib/surface.test.js',
       'src/lib/views/Live.svelte',
       'src/lib/views/ServicePlanner.svelte',
@@ -260,7 +264,8 @@ const REGISTER = [
       'src/lib/layers.test.js',
       'src/lib/quicktools.test.js',
       'src/lib/screencountdown.test.js',
-      'src/lib/stagezones.test.js',
+      // Same as Stage Note above: RG-241 left this file reading the screen
+      // rather than a picker, so it no longer says the zone's name.
       'src/lib/templateKind.js',
       'src/lib/views/Live.svelte',
       'src/lib/wayback.test.js',
@@ -293,7 +298,8 @@ const REGISTER = [
       'src/lib/stagetimerhold.test.js',
       'src/lib/stagetimerover.test.js',
       'src/lib/stagetimerreach.test.js',
-      'src/lib/stagezones.test.js',
+      // RG-241: this file reads the rail off `.progrow` now rather than off a
+      // picker's label, so it no longer says the zone's name.
       'src/lib/timers.test.js',
       // Requirement 6 — Outputs → Preacher's screen names the zone in its mirror
       // and the rows on the rail beneath it. That is the operator's word for a

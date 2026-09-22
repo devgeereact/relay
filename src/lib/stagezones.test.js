@@ -24,6 +24,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { tick } from 'svelte';
+import { DEFAULT_STAGE_ZONES } from './stagelayout.js';
 
 const Stage = (await import('../Stage.svelte')).default;
 const { formatCountdown } = await import('./layers.js');
@@ -108,6 +109,46 @@ async function click(text) {
   await tick();
 }
 
+/**
+ * SET THE ZONES THE WAY AN OPERATOR NOW DOES (RG-241).
+ *
+ * The picker left the phone: it was one tap from the screen a preacher is
+ * reading mid-sermon, and on an unassigned screen it let that person switch off
+ * the clock they were relying on. Every case below used to reach the zones by
+ * tapping it; they reach them the way the product does now, over the layout
+ * frame the desk publishes.
+ *
+ * What each case ASSERTS is unchanged — this is the door, not the subject.
+ */
+/** Open the control panel the way RG-242 made it open: a press and a HOLD. */
+async function holdOpen() {
+  const b = button('Hold');
+  // BOTH stamps are forced. jsdom gives a synthetic event the real time since
+  // the page loaded, so an unforced `pointerdown` can be LATER than a forced
+  // `pointerup` and the hold reads as negative.
+  const down = new PointerEvent('pointerdown', { bubbles: true });
+  Object.defineProperty(down, 'timeStamp', { value: 0 });
+  b.dispatchEvent(down);
+  const up = new PointerEvent('pointerup', { bubbles: true });
+  Object.defineProperty(up, 'timeStamp', { value: 5_000 });
+  b.dispatchEvent(up);
+  await tick();
+}
+
+async function assign(over) {
+  // The frame is a MAP, screen id → that screen's zones: the hub addresses no
+  // client (DECISIONS §35), so every page is sent every screen's layout and
+  // picks out its own. This fixture is channel 2.
+  socket.onmessage({
+    data: JSON.stringify({
+      kind: 'stage_zones',
+      zones: { 2: { ...DEFAULT_STAGE_ZONES, ...over } },
+    }),
+  });
+  await tick();
+  await tick();
+}
+
 const verse = {
   kind: 'content',
   reference: 'Romans 8:28',
@@ -172,14 +213,16 @@ describe('zones — everything the operator sent, and nothing they did not', () 
     const { container } = await mount({ ...verse, stage_note: note });
     expect(container.querySelector('.noterow')).toBeTruthy();
 
-    await click('Zones');
-    await click('Stage Note');
-    await tick();
+    await assign({ note: false });
     expect(container.querySelector('.noterow')).toBeNull();
-    expect(JSON.parse(localStorage.getItem(ZONE_KEY)).note).toBe(false);
 
+    // AND IT IS THE OPERATOR'S, so it survives a reload of the phone because the
+    // desk sends it again — not because the phone wrote it down. That is the
+    // difference RG-241 made: the arrangement is a fact about the screen, held
+    // where the person responsible for it can see it.
     cleanup();
     const again = await mount({ ...verse, stage_note: note });
+    await assign({ note: false });
     expect(again.container.querySelector('.noterow')).toBeNull();
   });
 
@@ -225,17 +268,19 @@ describe('zones — everything the operator sent, and nothing they did not', () 
       'every other zone ships on; this one must too',
     ).toBeTruthy();
 
-    await click('Zones');
-    await click('Stage Timer');
-    await tick();
+    await assign({ programme: false });
 
     // Not hidden — GONE. `.progrow` is a `flex-basis: auto` row, so a switched-off
     // rail that still rendered would keep taking the room it needs for its content.
     expect(container.querySelector('.progrow')).toBeNull();
-    expect(JSON.parse(localStorage.getItem(ZONE_KEY)).programme).toBe(false);
 
+    // The phone writes nothing down any more (RG-241) — the arrangement is the
+    // desk's and arrives again on the next connection, which is what makes it a
+    // fact about the SCREEN rather than about whichever device was pointed at
+    // it. So the reopened page is asked, and answers.
     cleanup();
     const again = await mount(programme(Date.now()));
+    await assign({ programme: false });
     expect(again.container.querySelector('.progrow')).toBeNull();
   });
 
@@ -265,22 +310,15 @@ describe('zones — everything the operator sent, and nothing they did not', () 
     // migration that quietly resets a device's layout is a migration nobody asked
     // for. `figures` is the one of the seven that is not a boolean, so it is the
     // one a key-by-key loop is most likely to lose.
-    await click('Zones');
-    const pressed = (label) =>
-      [...container.querySelectorAll('.zonebtn')]
-        .find((b) => b.textContent.trim() === label)
-        ?.getAttribute('aria-pressed');
-    // `Stage Note`, not `Note`. Wave 5's name register gave this zone the name the
-    // rest of the product uses for the same thing, and wave 4 wrote this assertion
-    // against the older label on a branch that could not see it. A `?.` on a lookup
-    // that misses returns `undefined`, so the failure read as "a stored choice was
-    // reset" when the choice was fine and the BUTTON was what had moved — which is
-    // why the message now names the label it is looking for.
-    expect(pressed('Stage Note'), 'a stored choice was reset, or the zone was renamed').toBe(
-      'false',
-    );
-    expect(pressed('Stage Timer')).toBe('true');
-    expect(pressed('Figures beside the reading')).toBe('true');
+    // …and the six that WERE stored are untouched, `figures` included. There is
+    // no panel to read them off any more (RG-241), so they are read where they
+    // now show: the note is off because the stored layout says so, the rail is
+    // on because the new zone got its default, and the figures are beside the
+    // reading because `figures` is the one stored value that is not a boolean
+    // and is the one a key-by-key loop is most likely to lose.
+    expect(container.querySelector('.noterow'), 'a stored choice was reset').toBeNull();
+    expect(container.querySelector('.progrow'), 'the new zone did not get its default').toBeTruthy();
+    expect(container.querySelector('.rail'), 'the stored figures placement was lost').toBeTruthy();
   });
 });
 
@@ -293,9 +331,7 @@ describe('the stacked rail clock', () => {
       countdown_to: Date.now() + remaining,
     });
 
-    await click('Zones');
-    await click('Figures beside the reading');
-    await tick();
+    await assign({ figures: 'beside' });
 
     const rail = container.querySelector('.rail');
     expect(rail, 'the figures did not move beside the reading').toBeTruthy();
@@ -567,9 +603,7 @@ describe('the Stage Message', () => {
   it('takes the whole screen even when every zone is switched off', async () => {
     const { container } = await mount(verse);
 
-    await click('Zones');
-    for (const z of ['Reading', 'Screen Countdown', 'Clock']) await click(z);
-    await tick();
+    await assign({ reading: false, countdown: false, clock: false });
     expect(container.querySelector('.reading')).toBeNull();
 
     socket.onmessage({
@@ -668,9 +702,7 @@ describe('S4 · the stage reads as one instrument', () => {
       countdown_to: Date.now() + 3_725_000,
       service_started_at: Date.now() - 60_000,
     });
-    await click('Zones');
-    await click('Figures beside the reading');
-    await tick();
+    await assign({ figures: 'beside' });
 
     const rows = [...container.querySelectorAll('.rail .railrow')];
     expect(rows.length, 'the rail did not render').toBeGreaterThan(1);
@@ -750,9 +782,7 @@ describe('S4 · the stage reads as one instrument', () => {
       text: null,
       countdown_to: Date.now() + 120_000,
     });
-    await click('Zones');
-    await click('Figures beside the reading');
-    await tick();
+    await assign({ figures: 'beside' });
 
     const rail = container.querySelector('.rail');
     expect(rail).toBeTruthy();
@@ -775,9 +805,7 @@ describe('S4 · the stage reads as one instrument', () => {
     const { container } = await mount({ ...verse, service_started_at: Date.now() - 60_000 });
     expect(container.querySelector('main.stage')).toBeTruthy();
 
-    await click('Zones');
-    await click('Reading');
-    await tick();
+    await assign({ reading: false });
 
     expect(container.querySelector('.reading'), 'the reading is off').toBeNull();
     expect(
@@ -859,28 +887,16 @@ describe('an open panel yields the programme rail', () => {
     return r.container;
   }
 
-  it('the Zones panel takes the rail’s room and leaves the verse alone', async () => {
-    const container = await reading();
-    await click('Zones');
-    expect(container.querySelector('.zonepanel'), 'the panel did not open').toBeTruthy();
-    // GONE, not hidden. `.progrow` is a flex row with `flex-basis: auto`, so a rail
-    // that still rendered would still be taking the room the reading needs.
-    expect(
-      container.querySelector('.progrow'),
-      'the rail and both panels shared the column with the verse',
-    ).toBeNull();
-    expect(container.querySelector('.verse'), 'the reading is what this screen is for').toBeTruthy();
-
-    // …and it comes straight back. The panel is a moment, not a choice.
-    await click('Zones');
-    expect(container.querySelector('.progrow')).toBeTruthy();
-  });
-
+  // THE ZONES PANEL'S TWO CASES WENT WITH THE PANEL (RG-241). The guarantee they
+  // held — an open panel yields the RAIL's room and never the verse's — is the
+  // Control panel's alone now, and the case below is the whole of it. Deleting
+  // them rather than pointing them at the surviving panel keeps this file from
+  // asserting the same thing twice under two names.
   it('the Control panel does the same, because it is the same column', async () => {
     // The second door. The measurement in §2.3 opened BOTH, and a fix that knew
     // about one of them would be this repository's recurring bug once more.
     const container = await reading();
-    await click('Control');
+    await holdOpen();
     expect(container.querySelector('.ctl'), 'the panel did not open').toBeTruthy();
     expect(container.querySelector('.progrow')).toBeNull();
     expect(container.querySelector('.verse')).toBeTruthy();
@@ -889,17 +905,4 @@ describe('an open panel yields the programme rail', () => {
     expect(container.querySelector('.progrow')).toBeTruthy();
   });
 
-  it('yielding is not switching the zone off — the device keeps its layout', async () => {
-    // A zone is a choice a device keeps across reloads; this is a moment. Writing
-    // the zone would mean a preacher who opened the panel once lost the rail for
-    // good, and would have to find the switch to get it back.
-    const container = await reading();
-    await click('Zones');
-    const pressed = [...container.querySelectorAll('.zonebtn')]
-      .find((b) => b.textContent.trim() === 'Stage Timer')
-      ?.getAttribute('aria-pressed');
-    expect(pressed, 'the panel turned the zone off behind the operator').toBe('true');
-    const stored = localStorage.getItem(ZONE_KEY);
-    expect(stored === null || JSON.parse(stored).programme === true).toBe(true);
-  });
 });

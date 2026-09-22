@@ -87,6 +87,7 @@
   import { formatCountdown } from '../layers.js';
   import { STAGE_ZONES, DEFAULT_STAGE_ZONES, readStageZones } from '../stagelayout.js';
   import { stagePlacement } from '../stagelayers.js';
+  import { TIMER_SIZES, readTimerSize } from '../stagelayout.js';
   import {
     capture,
     templates,
@@ -642,6 +643,11 @@
   let selLayout = null;
   let layoutName = '';
   let layoutZones = { ...DEFAULT_STAGE_ZONES };
+  // HOW BIG THE PREACHER'S CLOCK IS (RG-240). It rides in the same blob the
+  // zones do, so a screen can never be holding one operator's zones and
+  // another's size, and the operator sets it here because the picker is no
+  // longer on the phone at all (RG-241).
+  let layoutTimerSize = 'normal';
   let layoutBusy = false;
   let layoutDelArm = null;
 
@@ -650,6 +656,7 @@
     selLayout != null &&
     layoutSaved != null &&
     (layoutName.trim() !== layoutSaved.name ||
+      layoutTimerSize !== readTimerSize(layoutSaved.zones) ||
       STAGE_ZONES.some((z) => !!layoutZones[z.key] !== !!(readStageZones(layoutSaved.zones) ?? DEFAULT_STAGE_ZONES)[z.key]));
   /** Which screens wear this layout — the same fact the delete refusal names. */
   $: layoutWornBy = channels.filter((c) => c.stage_layout_id === selLayout).map((c) => c.name);
@@ -658,12 +665,14 @@
     selLayout = l.id;
     layoutName = l.name;
     layoutZones = { ...(readStageZones(l.zones) ?? DEFAULT_STAGE_ZONES) };
+    layoutTimerSize = readTimerSize(l.zones);
     layoutDelArm = null;
   }
   function newLayout() {
     selLayout = 'new';
     layoutName = '';
     layoutZones = { ...DEFAULT_STAGE_ZONES };
+    layoutTimerSize = 'normal';
     layoutDelArm = null;
   }
   const toggleLayoutZone = (key) =>
@@ -681,7 +690,10 @@
       const id = await upsertStageLayout(
         selLayout === 'new' ? null : selLayout,
         layoutName,
-        layoutZones,
+        // The size travels WITH the zones, in one blob on one path. A second
+        // column or a second frame would be two writers over one screen's
+        // appearance, which is the twin door this repository keeps deleting.
+        { ...layoutZones, timer_size: layoutTimerSize },
       );
       stageLayouts = (await listStageLayouts()) ?? [];
       // Select what was just saved BY THE ID THE ENGINE GAVE BACK, rather than
@@ -2345,6 +2357,22 @@
                 aria-pressed={layoutZones[z.key]}
                 disabled={layoutBusy}
                 on:click={() => toggleLayoutZone(z.key)}>{z.label}</button>
+            {/each}
+          </div>
+
+          <!-- HOW BIG THE CLOCK IS (RG-240). A platform monitor across a room
+               and a phone on a lectern want different figures, and until this
+               existed the page sized itself from its own box with nobody able
+               to say otherwise. -->
+          <div class="r-lbl ch-lzlbl">Timer size</div>
+          <div class="ch-lzones">
+            {#each TIMER_SIZES as t (t.key)}
+              <button
+                class="r-btn ghost sm ch-lz"
+                class:on={layoutTimerSize === t.key}
+                aria-pressed={layoutTimerSize === t.key}
+                disabled={layoutBusy}
+                on:click={() => (layoutTimerSize = t.key)}>{t.label}</button>
             {/each}
           </div>
 

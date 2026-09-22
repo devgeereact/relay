@@ -10,6 +10,8 @@
   import { clipRemainingMs, CLIP_WARN_MS } from './lib/mediaclock.js';
   import { applyMediaTransport } from './lib/mediatransport.js';
   import { syncSeek } from './lib/mediasync.js';
+  import { messagePlacement } from './lib/stagemessage.js';
+  import { holdGuard, HOLD_MS } from './lib/holdguard.js';
   // Mobile stage-display remote — the preacher opens this on a phone/iPad (via
   // QR or the LAN URL) to see the live verse + reference in real time. No Tauri
   // runtime: it connects to the kiosk WebSocket hub (:8031) for content, exactly
@@ -23,7 +25,14 @@
   import { startBeat, paintState, BEAT_INTERVAL_MS } from './lib/outputHealth.js';
   // ONE LIST OF ZONES, shared with the desk that assigns them. A second copy
   // here would be a desk offering a zone this page does not draw.
-  import { STAGE_ZONES as ZONES, DEFAULT_STAGE_ZONES, readStageZones } from './lib/stagelayout.js';
+  import {
+    STAGE_ZONES as ZONES,
+    DEFAULT_STAGE_ZONES,
+    readStageZones,
+    readStageFigures,
+    readTimerSize,
+    timerScale,
+  } from './lib/stagelayout.js';
 
   // ── WHICH SCREEN THIS IS ────────────────────────────────────────────────────
   //
@@ -129,6 +138,14 @@
   // Hits the LAN HTTP API on :8031's sibling port (:8032/api/*), which runs the
   // SAME fire/nav path the console does. LAN-only, no auth (see channels.rs).
   let showCtl = false;
+  // A press that has to be meant (RG-242). `holding` is only the fill that shows
+  // the press is registering; the DECISION is `hold`'s, and it is clock-free.
+  const hold = holdGuard();
+  let holding = false;
+  // When the panel was opened, so the `click` that follows the opening
+  // `pointerup` does not shut it again. `null` once it is closed.
+  let openedAt = null;
+  $: if (!showCtl) openedAt = null;
   let q = '';
   let results = [];
   let searching = false;
@@ -325,9 +342,16 @@
   let deviceZones = { ...DEFAULT_STAGE_ZONES };
   let assignedZones = null;
   $: zones = assignedZones ?? deviceZones;
-  $: operatorSet = assignedZones !== null;
-  let figures = 'bottom'; // 'bottom' | 'beside'
-  let showZones = false;
+  // WHERE THE FIGURES SIT, and WHO SAID SO. `deviceFigures` is what this device
+  // had stored; `assignedFigures` is the operator's, and it wins — the same
+  // shape as the zones beside it (RG-241).
+  let deviceFigures = 'bottom'; // 'bottom' | 'beside'
+  let assignedFigures = null;
+  $: figures = assignedFigures ?? deviceFigures;
+  // HOW BIG THE CLOCK IS (RG-240). Always a size: a figure has to be drawn at
+  // something, so this has no null the way the two above do.
+  let timerSize = 'normal';
+  $: timerMul = timerScale(timerSize);
 
   function loadZones() {
     try {
@@ -339,31 +363,15 @@
       // its own default rather than absent, and a corrupt value cannot delete one.
       for (const z of ZONES)
         if (typeof saved[z.key] === 'boolean') deviceZones[z.key] = saved[z.key];
-      if (saved.figures === 'beside' || saved.figures === 'bottom') figures = saved.figures;
+      if (saved.figures === 'beside' || saved.figures === 'bottom') deviceFigures = saved.figures;
     } catch {
       /* defaults stand */
     }
   }
-  function saveZones() {
-    try {
-      localStorage.setItem(ZONE_KEY, JSON.stringify({ ...deviceZones, figures }));
-    } catch {
-      /* the layout still applies to this session */
-    }
-  }
-  function toggleZone(key) {
-    // An operator's layout is not editable from the device it is displayed on:
-    // two people changing one screen from two places is how a stage ends up
-    // showing something nobody chose. The panel says so rather than silently
-    // ignoring the tap.
-    if (operatorSet) return;
-    deviceZones = { ...deviceZones, [key]: !deviceZones[key] };
-    saveZones();
-  }
-  function setFigures(v) {
-    figures = v;
-    saveZones();
-  }
+  // `toggleZone`, `setFigures` and `saveZones` went with the panel (RG-241).
+  // Nothing on this page writes the arrangement any more — a stored one is READ
+  // (`loadZones`), so a tablet configured by hand keeps what it had, and every
+  // new choice is the operator's.
 
   // Countdown mirror — ticked by the same 1s timer as the wall clock.
   let cdTo = null;
@@ -612,7 +620,7 @@
   //
   // This is NOT the `programme` zone. A zone is a choice a device keeps; this is a
   // moment, and `relay.stage.zones` is untouched by it.
-  $: panelOpen = showZones || showCtl;
+  $: panelOpen = showCtl;
 
   let frameW = 1024;
   $: capacity = programmeCapacity(frameW);
@@ -775,6 +783,21 @@
   // thing that page is being looked at for — so the figures take the room the
   // reading is not using. Still a flex BASIS, still clipped.
   $: readingHasBody = !!(visible && content?.text);
+  // ── WHICH SHAPE A STAGE MESSAGE TAKES (RG-239) ──────────────────────
+  //
+  // `stagemessage.js` owns the rule and this is its one caller. `down` is a
+  // panic control having taken this screen, and a message goes down with the
+  // screen (DECISIONS §91) — so it is asked here rather than inside the rule,
+  // which is about what is on the screen and not about whether there is one.
+  $: msgPlace = down
+    ? 'none'
+    : messagePlacement({
+        message: alert,
+        urgent: alertUrgent,
+        // The two things that are worth more of the screen than a message is.
+        reading: !!(shown && content),
+        slide: !!(zones.media && stageMedia),
+      });
   // …AND "THE READING HAS NO BODY" IS NOT THE SAME CLAIM AS "A COUNTDOWN IS
   // RUNNING", WHICH IS THE ONE THE EXCEPTION WAS WRITTEN FOR.
   //
@@ -1195,13 +1218,22 @@
   function applyStageZones(map) {
     if (!map || typeof map !== 'object' || !channelId) {
       assignedZones = null;
+      assignedFigures = null;
+      timerSize = 'normal';
       return;
     }
     const mine = map[String(channelId)];
     if (!mine || typeof mine !== 'object') {
       assignedZones = null;
+      assignedFigures = null;
+      timerSize = 'normal';
       return;
     }
+    // THE OTHER TWO THINGS A LAYOUT CARRIES (RG-240, RG-241). They ride in the
+    // same blob rather than on a second frame, so a screen can never be holding
+    // one operator's zones and another's sizes.
+    assignedFigures = readStageFigures(mine);
+    timerSize = readTimerSize(mine);
     // Key by key off the DEFAULTS, exactly as `loadZones` does: a zone added in
     // a later version arrives on its own default rather than absent, and a
     // corrupt value cannot delete one.
@@ -1399,12 +1431,42 @@
   <header>
     <span class="brand">Relay · Stage</span>
     <span class="status" class:on={connected && !stale}><i></i>{reach}</span>
-    <button class="ctl-toggle" class:active={showZones} on:click={() => (showZones = !showZones)} aria-label="Choose what this screen shows">
-      Zones
-    </button>
-    <button class="ctl-toggle" class:active={showCtl} on:click={() => (showCtl = !showCtl)} aria-label="Control panel">
-      {showCtl ? 'Done' : 'Control'}
-    </button>
+    <!-- A PRESS THAT HAS TO BE MEANT (RG-242). This panel FIRES to every screen
+         in the building, and it opened on a single tap of a small button in the
+         header of a page somebody is holding mid-sermon. `holdGuard` is the
+         rule; `on:click` is deliberately absent so a tap does nothing at all
+         rather than doing something smaller.
+
+         CLOSING IS STILL ONE TAP. A control that is hard to open and hard to
+         shut is a control in the way — and nothing goes to a screen by closing
+         it, so there is nothing to protect against. -->
+    <button
+      class="ctl-toggle"
+      class:active={showCtl}
+      class:holding={holding}
+      style="--hold:{HOLD_MS}ms"
+      on:pointerdown={(e) => { if (showCtl) return; holding = true; hold.down(e.timeStamp); }}
+      on:pointerup={(e) => {
+        if (showCtl) return;
+        holding = false;
+        if (hold.up(e.timeStamp)) {
+          showCtl = true;
+          // The `click` that follows this very `pointerup` must not close what
+          // it just opened. A pointer sequence ends in both events, and the
+          // close path below is deliberately on `click` so a keyboard reaches
+          // it — Enter and Space fire a click and no pointer events at all.
+          openedAt = e.timeStamp;
+        }
+      }}
+      on:click={(e) => {
+        if (!showCtl) return;
+        if (openedAt !== null && e.timeStamp - openedAt < 400) return;
+        showCtl = false;
+      }}
+      on:pointercancel={() => { holding = false; hold.cancel(); }}
+      on:pointerleave={() => { holding = false; hold.cancel(); }}
+      aria-label={showCtl ? 'Close the control panel' : 'Control panel — press and hold to open'}
+    >{showCtl ? 'Done' : 'Hold'}</button>
   </header>
 
   {#if unidentified}
@@ -1421,7 +1483,7 @@
     </p>
   {/if}
 
-  {#if alert && !down && alertUrgent}
+  {#if msgPlace === 'alert'}
     <!-- THE WHOLE SCREEN, AND ONLY WHEN IT WAS ASKED FOR (DECISIONS §116). A
          preacher reads this from a platform, mid-sentence, without looking for
          it. Outside the zone layout on purpose: an instruction that a
@@ -1432,11 +1494,28 @@
          business stops being an alarm. -->
     <div class="alert {alertSize}" role="status" aria-live="assertive">{alert}</div>
   {/if}
-  {#if alert && !down && !alertUrgent}
-    <!-- A QUIET WORD. Along the foot, over nothing, never flashing. This page
-         draws its own zones rather than a template, so there is no
-         `stage_message` layer to defer to and the strip is the placement. -->
-    <div class="quietmsg" role="status" aria-live="polite">{alert}</div>
+  {#if msgPlace === 'strip'}
+    <!-- BESIDE A READING. The strip along the foot, because a reading is why the
+         preacher is looking at the screen and a message may not take that room
+         while one is up. It pulses (RG-239): the operator asked for every
+         message to catch an eye that is not looking for it, not only an alert. -->
+    <div class="quietmsg pulse" role="status" aria-live="polite">{alert}</div>
+  {/if}
+  {#if msgPlace === 'large'}
+    <!-- NOTHING ELSE ON SCREEN, SO THE MESSAGE TAKES THE ROOM (RG-239).
+         It was this same strip whether the screen was full of verse or entirely
+         empty — one line of small type on a dark phone, read from a platform by
+         somebody mid-sentence.
+
+         WHAT SEPARATES THIS FROM AN ALERT, and the separation is deliberate:
+         this takes the READING's box and an alert takes the whole screen; this
+         is ochre on the page's own ground and an alert is rose, full-bleed; this
+         pulses its text and an alert flashes its panel. A reader who cannot see
+         one of those still has the other two. -->
+    <div class="bigmsg" role="status" aria-live="polite">
+      <span class="bigmsg-k">From the desk</span>
+      <span class="bigmsg-v pulse">{alert}</span>
+    </div>
   {/if}
 
   <!-- ══ ZONES ══ NOTHING MAY LEAVE THE SCREEN (docs/REBRAND.md §5).
@@ -1516,7 +1595,12 @@
     <div class="figrow" class:tall={figuresTakeTheRoom} class:only={!zones.reading}
       style="--figs:{figureList.length}; --ch:{figCh}" aria-label="Figures">
       {#each figCells as c (c.k)}
-        <div class="fig" class:warn={c.warn} class:done={c.done}>
+        <!-- THE CLOCK IS SECONDARY (RG-243). A row where the time of day is
+             exactly as large as the time remaining has not decided what the
+             screen is for — and `--ch` made them the same size by
+             construction. The clock keeps its switch; what changes is its
+             weight. -->
+        <div class="fig" class:warn={c.warn} class:done={c.done} class:secondary={c.k === 'Time'}>
           <span class="figk">{c.k}</span>
           <span class="figv">{c.v}</span>
         </div>
@@ -1543,7 +1627,7 @@
   {#if zones.programme && progCells.length && !panelOpen}
     <div
       class="progrow"
-      style="--tmrs:{progCells.length}; --tch:{progCh}"
+      style="--tmrs:{progCells.length}; --tch:{progCh}; --tmul:{timerMul}"
       aria-label="Programme">
       {#each progCells as t, i (i)}
         {#if t.more}
@@ -1576,43 +1660,16 @@
     <div class="noterow"><span class="note-lbl">Stage Note</span><span class="notetxt">{note}</span></div>
   {/if}
 
-  {#if showZones}
-    <section class="zonepanel" aria-label="Zones">
-      <!-- A DISABLED CONTROL THAT SAYS NOTHING IS A BROKEN CONTROL. When an
-           operator has assigned a layout to this screen, these toggles are not
-           this device's to change — two people editing one screen from two
-           places is how a stage ends up showing something nobody chose. So they
-           are disabled AND the reason is written here, rather than the taps
-           being silently ignored. -->
-      {#if operatorSet}
-        <p class="zonenote" role="status">
-          The desk has given this screen a layout, so these are set from there.
-        </p>
-      {/if}
-      <div class="zonegrid">
-        {#each ZONES as z (z.key)}
-          <button
-            class="zonebtn"
-            class:on={zones[z.key]}
-            aria-pressed={zones[z.key]}
-            disabled={operatorSet}
-            title={operatorSet ? 'Set by the desk for this screen' : null}
-            on:click={() => toggleZone(z.key)}>
-            {z.label}
-          </button>
-        {/each}
-      </div>
-      <div class="zonegrid">
-        <button class="zonebtn" class:on={figures === 'bottom'} aria-pressed={figures === 'bottom'} on:click={() => setFigures('bottom')}>
-          Figures across the bottom
-        </button>
-        <button class="zonebtn" class:on={figures === 'beside'} aria-pressed={figures === 'beside'} on:click={() => setFigures('beside')}>
-          Figures beside the reading
-        </button>
-      </div>
-      <p class="zonefoot">Kept on this device only. Nothing here changes any other screen.</p>
-    </section>
-  {/if}
+  <!-- THE ZONE PICKER IS GONE FROM THIS PAGE (RG-241). It was one tap from the
+       screen a preacher is reading mid-sermon, and on a screen with no assigned
+       layout it wrote `localStorage` — so the person the screen exists for could
+       switch off the clock they were relying on and nobody at the desk would
+       know. The operator chooses, from Outputs, over the layout path that
+       already exists.
+
+       A device's STORED arrangement is still read (`loadZones`), so a tablet
+       somebody configured by hand last month keeps exactly what it had. What it
+       loses is the ability to change it from the tablet. -->
   {#if showCtl}
     <section class="ctl">
       <div class="nav-row">
@@ -1900,10 +1957,22 @@
        divided by the characters it actually has.
        Height share 58% → 52%: the row is shorter now (see `.figrow`) and it
        carries a label that has to fit above the figure rather than beside it. */
-    font-size: min(
+    /* STATED ONCE, so the secondary figure below can be a SHARE of it rather
+       than a second number that has to be kept in step (RG-243). `em` would not
+       do: it resolves against the PARENT's size, not the size this rule just
+       computed, so `0.42em` would be a share of the row's inherited type and
+       not of the figure at all. */
+    --figsz: min(
       calc(92cqw / var(--figs, 1) / (var(--ch, 5) * 0.62)),
       52cqh
-    ); }
+    );
+    font-size: var(--figsz); }
+  /* DERIVED from the figure's own size rather than stated again: a second
+     literal would be a second number to keep in step, and the two would drift —
+     which is exactly RG-223, where a literal ceiling quietly beat the size
+     somebody had chosen. `0.42em` is a share of the size `.fig .figv` computed,
+     whatever that turned out to be. */
+  .fig.secondary .figv { font-size: calc(var(--figsz) * 0.42); color: var(--v-dim); }
   .fig.warn .figv { color: var(--v-red); }
   @media (prefers-reduced-motion: no-preference) {
     .fig.warn .figv, .railrow.warn { animation: cdwarn 2s ease-in-out infinite; }
@@ -1963,7 +2032,12 @@
      tied to the ceiling it is a share of. On a mobile browser with a collapsing
      toolbar it tracks the frame the row is in rather than the smallest viewport
      that frame might become. */
-  .progrow { flex: 0 0 auto; flex-basis: auto; --progmax: 20dvh; max-height: var(--progmax);
+  /* `--tmul` is the operator's size (RG-240): 1 for Normal, and more for a
+     platform monitor across a room. It multiplies the row's CEILING, so the
+     digits grow with the room they are given rather than overflowing a box that
+     stayed the same — `.tval` is capped against `--progmax` and would otherwise
+     ignore the setting entirely, which is RG-223 in a second place. */
+  .progrow { flex: 0 0 auto; flex-basis: auto; --progmax: calc(20dvh * var(--tmul, 1)); max-height: var(--progmax);
     overflow: hidden;
     container-type: inline-size;
     display: flex; gap: 10px; padding: 8px 18px;
@@ -2160,6 +2234,62 @@
      the foot, inside the safe area, and takes no more room than it needs. No
      animation — the alarm is the other thing, and two things that move are two
      alarms. */
+  /* ── A MESSAGE THAT IS NOTICED (RG-239) ────────────────────────────────────
+     The operator asked for every message to catch an eye, not only an alert.
+     OCHRE, because rule 18 leaves it the only free ink: amber means ON AIR,
+     cyan means the AI guessed, amethyst means a rehearsal, and rose is what the
+     alert already uses — spending any of those here would make this message say
+     something it does not mean.
+
+     REDUCED MOTION GETS AN EQUIVALENT, NOT A QUIETER STATE: the text rests at
+     the caution ink rather than pulsing to it, so a viewer who has asked for no
+     animation still sees a coloured message rather than a plain one. */
+  @media (prefers-reduced-motion: no-preference) {
+    .pulse { animation: stagepulse 2s ease-in-out infinite; }
+    @keyframes stagepulse {
+      0%, 100% { color: #fff; }
+      50% { color: var(--v-caution, #c9962f); }
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pulse { color: var(--v-caution, #c9962f); }
+  }
+  /* THE LARGE FORM. It sits in the reading's own box and is capped by it, so it
+     can never take more room than a reading would have had — and `overflow:
+     hidden` means a message too long to fit is CLIPPED rather than pushing the
+     clock off a phone. `11cqw` is the share of the frame the drawing settles on;
+     the two clamps are the floor a phone needs and the ceiling a platform
+     monitor should not pass. */
+  .bigmsg {
+    position: absolute;
+    inset: 0;
+    z-index: 40;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 1.6vh;
+    padding: 2.4vh 4vw;
+    border-left: 0.9vw solid var(--v-caution, #c9962f);
+    background: var(--s-bg, #05070a);
+    overflow: hidden;
+  }
+  .bigmsg-k {
+    flex: 0 0 auto;
+    font-family: var(--f-mono);
+    font-size: clamp(10px, 2.6vw, 20px);
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--v-caution, #c9962f);
+  }
+  .bigmsg-v {
+    font-family: var(--f-body);
+    font-weight: 700;
+    font-size: clamp(4vh, 11cqw, 13vh);
+    line-height: 1.12;
+    color: #fff;
+    overflow: hidden;
+  }
   .quietmsg {
     position: fixed;
     left: env(safe-area-inset-left);
@@ -2282,6 +2412,22 @@
     display: inline-flex; align-items: center; justify-content: center; }
   /* Steel — see `.zonebtn.on`. A toggle that is switched on is not on air. */
   .ctl-toggle.active { color: var(--v-sel); border-color: var(--v-sel-line); background: var(--v-sel-soft); }
+  /* THE PRESS REGISTERING, so a hold is not a button that ignores you for half a
+     second. It fills over exactly `--hold`, the same figure the rule uses, so the
+     fill cannot promise a different threshold from the one that decides.
+     Reduced motion gets the steady state rather than a sweep — the press still
+     shows, it simply does not travel. */
+  .ctl-toggle.holding { border-color: var(--v-sel-line); color: var(--v-sel); }
+  @media (prefers-reduced-motion: no-preference) {
+    .ctl-toggle.holding {
+      background: linear-gradient(to right, var(--v-sel-soft) 0 0) left / 0% 100% no-repeat;
+      animation: ctlhold var(--hold, 550ms) linear forwards;
+    }
+    @keyframes ctlhold { to { background-size: 100% 100%; } }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .ctl-toggle.holding { background: var(--v-sel-soft); }
+  }
   .ctl { flex: 0 0 auto; display: flex; flex-direction: column; gap: var(--s-gap); padding: 16px 18px;
     border-top: 1px solid var(--s-seam); background: var(--s-wash);
     max-height: 60dvh; overflow-y: auto; }
