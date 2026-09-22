@@ -36,6 +36,29 @@ const TARGET_RATE: u32 = 16_000; // whisper input rate
 /// re-detected on every pass — which is why `router::DEFAULT_DEBOUNCE_MS` is
 /// derived from this value rather than picked independently. Keep them coupled.
 pub const WINDOW_SECS: usize = 8;
+
+/// **A FULL WINDOW IS A BOUNDARY, NOT A PLACE TO DROP AUDIO — RG-262.**
+///
+/// The decode loop kept the last `WINDOW_SECS` of an open utterance and drained
+/// the front, and `transcribe` decodes the whole window each pass. So a FINAL
+/// carried the last eight seconds of the utterance and nothing before it: a
+/// preacher speaking for forty seconds without a 1.4 s gap produced one line of
+/// about eight seconds, and the other thirty-two existed only as partials, each
+/// overwriting the last.
+///
+/// **Measured in a real service rather than argued.** Across 982 rows of the
+/// author's own database no transcript line anywhere exceeds 160 characters —
+/// that ceiling IS this window, visible in the data — and service 24, ninety
+/// three minutes of preaching, produced 9,987 characters in total.
+///
+/// So a window that has no room CLOSES. The text is emitted and kept, the window
+/// is cleared, and the audio that would not fit starts the next one. Nothing is
+/// decoded twice and nothing is thrown away; the cost is that a word straddling
+/// the boundary can be split, which is a far smaller harm than losing four
+/// fifths of a sermon.
+pub(crate) fn window_is_full(window_len: usize, incoming: usize, max_window: usize) -> bool {
+    window_len + incoming > max_window
+}
 /// The SLOWEST the worker will step: one pass per second of new audio. This is
 /// also the ceiling the real-time budget is judged against, and it is what the
 /// cadence used to be, always, on every machine.
@@ -127,6 +150,15 @@ pub struct TranscriptUpdate {
     pub text: String,
     pub language: String,
     pub is_final: bool,
+    /// **THE UTTERANCE IS STILL GOING — RG-262.** `true` when this final closed
+    /// because the window filled rather than because the speaker stopped.
+    ///
+    /// It is a FINAL for every purpose that keeps text: it is shown, it is
+    /// persisted, and it is not overwritten by the next partial. It is NOT an
+    /// utterance boundary, and the detection side must not treat it as one —
+    /// rule 28's corroboration exemption exists because "no next pass is coming",
+    /// and after a forced close the next pass is coming immediately.
+    pub continued: bool,
     pub timestamp_ms: u64,
     /// The decode pass this text came out of (`latency::begin_pass`). Rides to the
     /// console and on to detection so ONE identifier spans microphone to
@@ -405,6 +437,10 @@ fn worker<F>(
     let threads = (cores / 2).clamp(1, 4) as i32;
 
     let mut window: Vec<f32> = Vec::with_capacity(TARGET_RATE as usize * WINDOW_SECS);
+    // Audio that arrived with no room left in the window (RG-262). It starts the
+    // next window rather than being drained off the front of this one.
+    let mut carry: Vec<f32> = Vec::new();
+    let mut force_close = false;
     let max_window = TARGET_RATE as usize * WINDOW_SECS;
     let mut new_since_step = 0usize;
     // Cadence, and the measurement that drives it. Starts at the old fixed second
@@ -555,10 +591,15 @@ fn worker<F>(
                 continue; // fully overlapping — nothing new
             }
             let resampled = resample_linear(new_slice, chunk.sample_rate, TARGET_RATE);
-            window.extend_from_slice(&resampled);
-            if window.len() > max_window {
-                let drop = window.len() - max_window;
-                window.drain(..drop);
+            // RG-262. A window with no room left is CLOSED rather than drained:
+            // the audio that will not fit is held back and starts the next one,
+            // so the text of what has already been heard is emitted and kept
+            // instead of falling off the front unsaid.
+            if window_is_full(window.len(), resampled.len(), max_window) {
+                force_close = true;
+                carry.extend_from_slice(&resampled);
+            } else {
+                window.extend_from_slice(&resampled);
             }
             new_since_step += resampled.len();
 
@@ -574,10 +615,17 @@ fn worker<F>(
 
         // ONE decode per batch. `final` wins: the speaker has stopped, and the
         // finalized text is what the console keeps.
-        if !want_final && !want_step {
+        // A FORCED CLOSE IS A DECODE, whatever the cadence says. The window is
+        // full; waiting for the next step would mean draining it after all.
+        if !want_final && !want_step && !force_close {
             continue;
         }
-        let is_final = want_final;
+        // AND IT IS A FINAL, because the window really is closing: the text has
+        // to be kept, and a partial is a line that gets overwritten. It is NOT
+        // the end of what the preacher is saying, and `continued` is how the
+        // detection side is told the difference (RG-262).
+        let is_final = want_final || force_close;
+        let continued = force_close && !want_final;
         let started = std::time::Instant::now();
         let window_ms = window.len() as u64 * 1000 / TARGET_RATE as u64;
         let trace = crate::latency::begin_pass(
@@ -620,6 +668,7 @@ fn worker<F>(
                     text,
                     language: detected,
                     is_final,
+                    continued,
                     timestamp_ms: last_ts_ms,
                     trace_id: trace,
                 });
@@ -635,9 +684,23 @@ fn worker<F>(
         oldest_pending_us = None;
         if is_final {
             window.clear();
-            // The utterance is closed; the next voiced chunk starts a new one.
-            voice_opened_us = None;
+            // THE AUDIO THAT WOULD NOT FIT STARTS THE NEXT WINDOW (RG-262).
+            // Held back rather than dropped, which is the whole of the change:
+            // before this the same samples were drained off the front and their
+            // words were never said in any line anybody kept.
+            if !carry.is_empty() {
+                window.extend_from_slice(&carry);
+                carry.clear();
+            }
+            // A FORCED CLOSE DOES NOT END THE UTTERANCE. The preacher is still
+            // speaking; only the window ended, so the voice stays open and the
+            // latency trace goes on measuring the same breath.
+            if !continued {
+                // The utterance is closed; the next voiced chunk starts a new one.
+                voice_opened_us = None;
+            }
         }
+        force_close = false;
 
         // Whisper cannot keep up with the preacher on this machine. Say so ONCE,
         // with the numbers — a transcript that silently runs late is the hardest
@@ -1531,6 +1594,68 @@ mod deoverlap_tests {
             rms: 0.1,
             is_voice: true,
         }
+    }
+
+    /// FOUR FIFTHS OF A SERMON WAS NEVER WRITTEN DOWN — RG-262.
+    ///
+    /// The operator: *"make the live transcript capture everything being said
+    /// without hiding or dismissing any part"*. The loss was not in the store
+    /// (uncapped since 2026-09-20), not in the card (a paint budget that grows on
+    /// scroll) and not in the database (every final is kept). It was here: the
+    /// window drained its front, `transcribe` decodes the whole window, so a
+    /// final carried the last eight seconds of an utterance and nothing before.
+    ///
+    /// **Measured in a real database rather than argued.** Across 982 rows of the
+    /// author's own services no line exceeds 160 characters — that ceiling IS the
+    /// eight-second window, visible in the data — and service 24, ninety three
+    /// minutes of preaching, produced 9,987 characters in total.
+    #[test]
+    fn a_full_window_closes_rather_than_dropping_what_it_cannot_hold() {
+        let max = TARGET_RATE as usize * WINDOW_SECS;
+
+        // Room left: the audio goes in.
+        assert!(!window_is_full(0, 1000, max));
+        assert!(!window_is_full(max - 1000, 1000, max));
+
+        // NO ROOM: the window closes. The old rule made room by draining the
+        // front, and the words in those samples were never said in any line
+        // anybody kept.
+        assert!(window_is_full(max, 1, max));
+        assert!(window_is_full(max - 999, 1000, max));
+    }
+
+    /// AND A FORCED CLOSE IS NOT AN UTTERANCE END.
+    ///
+    /// Rule 28's corroboration exemption rests on "a FINAL window is exempt — no
+    /// next pass is coming". After a window fills, the next pass is coming
+    /// immediately, because the preacher has not stopped. `continued` is how the
+    /// two are told apart, and `main::handle_transcript` hands
+    /// `is_final && !continued` to the detector for exactly that reason.
+    ///
+    /// Recovering four fifths of a sermon may not cost one of rule 10's, 28's or
+    /// 30's guarantees — rule 34, which this repository has had to write down
+    /// three times.
+    #[test]
+    fn the_transcript_event_can_say_the_speaker_has_not_stopped() {
+        let ended = TranscriptUpdate {
+            text: "and he said unto them".into(),
+            language: "en".into(),
+            is_final: true,
+            continued: false,
+            timestamp_ms: 1000,
+            trace_id: 1,
+        };
+        let filled = TranscriptUpdate {
+            continued: true,
+            ..ended.clone()
+        };
+
+        // BOTH are finals for every purpose that keeps text: shown, persisted,
+        // and never overwritten by the next partial.
+        assert!(ended.is_final && filled.is_final);
+        // Only one of them is a boundary the detector may relax a rule at.
+        assert!(ended.is_final && !ended.continued);
+        assert!(!(filled.is_final && !filled.continued));
     }
 
     /// THE BUG THIS EXISTS FOR. `audio.rs` emits `CHUNK_MS = 400` every

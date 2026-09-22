@@ -453,21 +453,19 @@ describe('the chapter picker', () => {
     expect(chip).toContain('tabular-nums');
   });
 
-  it('the chapter grid says what a press does, where the press happens', async () => {
+  it('the chapter grid no longer carries a standing caption (RG-261)', async () => {
+    // REVERSED, NOT DELETED. This required the caption, on the argument that a
+    // press should say what it does where the press happens. The argument still
+    // holds and the operator overruled the PLACE: a legend standing over a grid
+    // of a hundred and fifty chapters is read once and then never again, and it
+    // was costing a line of the rail every Sunday for a promise nobody was
+    // re-reading. The promise moved to the controls themselves, which is the
+    // case below and is the one that now carries the guarantee.
     mountBooks();
     await settle(0);
     bookRow('Genesis').click();
     await tick();
-
-    const cap = host.querySelector('.cp-cap');
-    expect(cap).not.toBeNull();
-    // Browsing opens a chapter in the grid. It is NOT the search half's
-    // sentence, which is true of a hit and false of a chapter: §9 makes a single
-    // press on a search HIT send a verse to the programme. One legend over both
-    // meanings would read the same whether or not a congregation is looking at
-    // something, which is rule 35 on a caption.
-    expect(cap.textContent).toMatch(/no screen changes/i);
-    expect(cap.textContent).not.toMatch(/send/i);
+    expect(document.querySelector('.cp-cap'), 'the caption came back').toBeNull();
   });
 
   it('every chapter says, on itself, that it reaches no screen', async () => {

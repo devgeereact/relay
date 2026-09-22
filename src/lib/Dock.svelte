@@ -1100,14 +1100,10 @@
            PREACHER'S monitor is currently on it. Nothing else here claims
            anything. -->
       {#if $stageAlert}<span class="dmeta on-stage r-mono">ON STAGE</span>{/if}
-      <!-- `Load whole plan` — the prototype's one header control (§2). -->
-      <button
-        class="r-btn sm ghost dk-btn"
-        on:click={loadWholePlan}
-        disabled={!planChosen}
-        title={planChosen
-          ? 'Put the running order back in the slide grid on Live'
-          : 'No plan chosen yet — open Planner and press Run in Live'}>Load whole plan</button>
+      <!-- `Load whole plan` WENT TO THE SLIDES HEAD (RG-261). The operator
+           asked for the room, and this card does one job at a time now
+           (RG-258) — the picker needs the slot. It belongs beside the grid it
+           stages in any case. -->
     </div>
     <div class="dbody tools r-scroll">
       <!-- ── ONE JOB AT A TIME (RG-258) ────────────────────────────────────────
@@ -1642,6 +1638,8 @@
     border: 1px solid var(--v-500); border-radius: var(--v-r-sm);
     background: var(--v-bg);
   }
+  /* A TAB (RG-258). One of two, choosing which job has the card — it changes
+     what Quick tools shows and reaches no screen. */
   .qp {
     min-height: 24px; padding: 0 10px; cursor: pointer;
     border: 0; border-radius: calc(var(--v-r-sm) - 2px);

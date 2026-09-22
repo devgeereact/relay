@@ -684,6 +684,8 @@
      colour — amber is never spent on this screen, because nothing here is on air. */
   .lib-tl{ margin-top:18px; }
   .lib-tl-list{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:2px; }
+  /* A LIST ROW, not a button that looks like one: it is a line of the service
+     timeline, and pressing it opens that moment rather than acting on it. */
   .lib-tl-row{ display:flex; align-items:baseline; gap:10px; padding:5px 8px;
     border-radius:var(--v-r-sm); background:var(--v-surf2); font-size:var(--v-fs-b2); }
   .lib-tl-at{ flex:0 0 52px; color:var(--v-faint); font-size:var(--v-fs-b3); }

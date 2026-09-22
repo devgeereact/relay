@@ -4115,6 +4115,14 @@ fn find_propresenter<R: tauri::Runtime>(
 /// Live reads the transport's effect from THAT rather than from the fact that a
 /// command returned `Ok`. A control that reported its own instruction back as an
 /// outcome is rule 35 with extra steps.
+///
+/// **It DOES hand back the frame it published (RG-260), and that is not the same
+/// claim.** A frame is the instruction; the beat is the outcome. This returned
+/// `()` and the console rebuilt its own copy from the arguments it had passed
+/// in, which carried no `replay_epoch` and no `seek_epoch` — so the console's
+/// own preview could act on neither a replay nor a scrub, and diverged from
+/// every screen in the building the moment either was pressed. One instruction
+/// now has one shape.
 #[tauri::command]
 fn set_media_transport<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -4131,10 +4139,10 @@ fn set_media_transport<R: tauri::Runtime>(
     // reset the sound to full is the shape of every "one control moved another"
     // bug this transport exists to avoid.
     volume: Option<f64>,
-) -> error::Result<()> {
+) -> error::Result<channels::TransportFrame> {
     let frame = transport.apply(paused, looping, replay.unwrap_or(false), seek_ms, volume);
     channels::media_transport(&app, frame);
-    Ok(())
+    Ok(frame)
 }
 
 /// PUT SOMETHING ON THE PREACHER'S OWN SCREEN, or take it off (`None`).
@@ -6522,7 +6530,16 @@ fn handle_transcript(
         handle,
         &update.text,
         router_clock_ms(),
-        update.is_final,
+        // **A FORCED CLOSE IS NOT AN UTTERANCE END — RG-262, and this is the
+        // line that keeps rule 34.** A window that filled up is closed so its
+        // text is kept, but the preacher is still speaking, so the next pass IS
+        // coming. Rule 28's corroboration exemption rests on exactly the opposite
+        // ("a FINAL window is exempt — no next pass is coming"), and handing it
+        // `true` here would let an eight-second window auto-fire a reference the
+        // decoder has not yet had a chance to revise. Four fifths of a sermon was
+        // being lost; recovering it may not cost a single one of rule 10's,
+        // 28's or 30's guarantees.
+        update.is_final && !update.continued,
         Some(update.trace_id),
     );
 }

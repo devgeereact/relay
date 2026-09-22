@@ -32,7 +32,8 @@
 // `cdPress`, where somebody weighing it again will be standing.
 //
 // `docs/REBRAND.md` §2 named the card's contents: the countdown, the **name
-// band**, and the **Stage Message**, with `Load whole plan` in its header.
+// band** and the **Stage Message**, one at a time behind a picker in its head
+// (RG-258). `Load whole plan` was here too and went to the slides head (RG-261).
 // §2 has since been brought into line and now describes TWO blocks, so the
 // sentence that used to stand here — "§2's list is now one longer than the card
 // … the spec is the older document" — is no longer true and has been removed
@@ -330,68 +331,26 @@ describe('the emergency announcement is not in Quick tools', () => {
   });
 });
 
-describe('Load whole plan', () => {
-  it('is disabled, and says why, until the Planner has handed a plan over', async () => {
+describe('Load whole plan went to the slides head (RG-261)', () => {
+  // MOVED, NOT DELETED, and the four cases that drove it from here move with
+  // it: `livedesk.test.js` owns the button now, because the operator asked for
+  // the room this card was spending on it — Quick tools does one job at a time
+  // since RG-258 and the picker needs the slot — and because the control's whole
+  // effect is on the slide grid it now sits above.
+  //
+  // WHAT IS ASSERTED HERE IS WHAT IS LEFT: that the dock no longer offers it,
+  // so a second copy cannot quietly reappear beside the first. The behaviour —
+  // disabled until the Planner hands a plan over, re-stages it, survives Close
+  // plan, and reaches no fire path — is asserted where the button is.
+  it('the dock no longer carries it', async () => {
     mount();
     await settle();
-    const btn = byLabel('Load whole plan');
-    expect(btn).not.toBeNull();
-    expect(btn.disabled).toBe(true);
-    expect(btn.getAttribute('title')).toContain('Run in Live');
-  });
-
-  it('re-stages the plan the Planner chose, and switches to Live', async () => {
-    mount();
-    await settle();
-    setSession({ planId: 4 });
-    await settle();
-    const btn = byLabel('Load whole plan');
-    expect(btn.disabled).toBe(false);
-    btn.click();
-    await settle();
-    const s = JSON.parse(JSON.stringify(getSession()));
-    expect(s.activeTab).toBe('live');
-    expect(s.planId).toBe(4);
-  });
-
-  // Live's Close plan clears `session.planId`. A button that went dead the moment
-  // an operator closed a plan would be useless in exactly the case it exists for:
-  // putting the running order back after the preacher went off it.
-  it('survives the operator closing the plan on Live', async () => {
-    mount();
-    await settle();
-    setSession({ planId: 4 });
-    await settle();
-    setSession({ planId: null });
-    await settle();
-    expect(byLabel('Load whole plan').disabled).toBe(false);
-    byLabel('Load whole plan').click();
-    await settle();
-    expect(getSession().planId).toBe(4);
-  });
-
-  // It only ever moves the PLAYHEAD and the grid. What a congregation is looking
-  // at is `$live`, and nothing on this path touches it (docs/REBRAND.md §2).
-  it('reaches no fire path', async () => {
-    mount();
-    await settle();
-    setSession({ planId: 4 });
-    await settle();
-    invoke.mockClear();
-    byLabel('Load whole plan').click();
-    await settle();
-    for (const cmd of ['fire_content', 'manual_fire', 'fire_media', 'start_countdown', 'clear_screens']) {
-      expect(called(cmd), `Load whole plan reached ${cmd}`).toHaveLength(0);
-    }
+    expect(
+      [...host.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Load whole plan'),
+      'two doors onto one plan',
+    ).toBe(false);
   });
 });
-
-function getSession() {
-  let v;
-  const un = session.subscribe((s) => (v = s));
-  un();
-  return v;
-}
 
 describe('the card is what is left in it, in one place', () => {
   // THE COUNT HAS BEEN FOUR, THEN THREE, AND IS NOW TWO — and both removals were
@@ -411,7 +370,10 @@ describe('the card is what is left in it, in one place', () => {
     const body = card.slice(0, card.indexOf('<span class="dk">Controls</span>'));
     expect(body).toContain('Name band');
     expect(body).toContain('Stage Message');
-    expect(body).toContain('Load whole plan');
+    // `Load whole plan` left this card for the slides head (RG-261). COMMENTS
+    // STRIPPED: the note recording where it went names it, and a scan of raw
+    // source cannot tell a control from a sentence about one.
+    expect(body.replace(/<!--[\s\S]*?-->/g, '')).not.toContain('Load whole plan');
     // The removal, asserted here as well as in `screencountdown.test.js`: this is
     // the file that says what the card IS, so it has to be the file that notices
     // the card growing a third block back.

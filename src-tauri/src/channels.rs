@@ -1214,7 +1214,21 @@ impl Default for MediaTransportState {
 }
 
 /// What every screen is told about the clip it is playing.
-#[derive(Clone, Copy)]
+///
+/// `Serialize` because the console is handed this same frame back by
+/// `set_media_transport` (RG-260). It used to rebuild its own copy out of the
+/// arguments it had passed in — `{paused, loop, volume}` — so its preview was
+/// handed an object with no epochs at all and could act on neither a replay nor
+/// a scrub. Two shapes for one instruction is two things that can disagree, and
+/// they did, on the surface an operator watches to decide what the room is
+/// seeing.
+///
+/// **It is still not an outcome.** A frame is the INSTRUCTION; the beat
+/// (`MediaBeat`) is what says whether a screen obeyed, and Live reads the effect
+/// from there. `serde(rename_all = "camelCase")` so the console receives the
+/// field names its own player rule already reads.
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TransportFrame {
     pub paused: bool,
     pub looping: bool,

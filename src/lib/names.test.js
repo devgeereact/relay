@@ -144,6 +144,9 @@ const REGISTER = [
       'src/lib/stagealertpanic.test.js',
       'src/lib/stagemessage.test.js',
       'src/lib/stagemessagenative.test.js',
+      // RG-266 — the one place that says the big screen flashes too, and where
+      // to look first when it does not (the channel's role).
+      'src/lib/selectionsafety.test.js',
       'src/lib/views/Channels.svelte',
       // Wave 3 — the two files that hold what a PANIC CONTROL does to a Stage
       // Message (DECISIONS §91) and to the console's mirror of it. They were

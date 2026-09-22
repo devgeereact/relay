@@ -450,7 +450,19 @@ describe('B2 · and everything that is NOT a button is named, and says what it i
       // Walk the rules WITH their preceding text, so a comment above one is
       // visible. Matching `([^{}]*)\{` captures everything since the last brace,
       // comments included, which is exactly the span a reader would see.
-      for (const m of style.matchAll(/\}([^{}]*)\{([^{}]*)\}/g)) {
+      //
+      // **IT USED TO READ EVERY OTHER RULE AND NOBODY NOTICED (RG-261).**
+      // `\}([^{}]*)\{([^{}]*)\}` consumes a closing brace, a rule, AND its
+      // closing brace, and `matchAll` does not overlap — so the next match had
+      // to start from the rule AFTER the one just read. Which half of a
+      // stylesheet got looked at was therefore a function of how many rules
+      // preceded it, and adding three rules to `Live.svelte` moved `.reh-end`
+      // from the unexamined half to the examined one, where it turned out to
+      // have been an unnamed shape since it was written.
+      //
+      // A scanner that quietly narrows passes everything, which this file's own
+      // header says in the other direction. The lookahead reads every rule.
+      for (const m of style.matchAll(/\}([^{}]*)\{(?=([^{}]*)\})/g)) {
         const lead = m[1];
         const sel = lead.replace(/\/\*[\s\S]*?\*\//g, '').trim();
         const bare = sel.match(/^\.([a-zA-Z0-9_-]+)$/);

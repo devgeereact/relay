@@ -95,11 +95,20 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       // `hostOffsetMs`, the page keeps a median of the last five acks, and the same
       // ack is what tells it the socket is alive (RG-193).
       beat_ack: true,
-      // NO ZONES ON A CONGREGATION SCREEN. `stage_zones` says which layout a
-      // STAGE screen wears, and a layout is a set of `Stage.svelte` zones — a
-      // page that draws none of them has nothing to apply. This is `false`
-      // because there is nothing for it to do, not because it is withheld.
-      stage_zones: false,
+      // ZONES REACH THIS PAGE TOO NOW — RG-265, and the verdict is reversed
+      // rather than edited away.
+      //
+      // It read `false` on the argument that a layout is a set of
+      // `Stage.svelte` zones and this page draws none of them. That was true of
+      // the ZONES and false of the frame: the same frame carries `timer_size`,
+      // the Normal / Large / Huge the operator sets per screen in Outputs, and
+      // a stage-role screen served by `output.html` was the one surface it
+      // never reached. So an operator set Huge for the platform monitor, the
+      // phone grew, and the projector did not — a control reporting success
+      // over the screen it was set for.
+      //
+      // This page still applies no ZONE. It reads one field off the frame.
+      stage_zones: true,
       content: true,
       clear: true,
       black: true, // a panic control

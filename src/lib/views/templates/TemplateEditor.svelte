@@ -2288,6 +2288,8 @@
   .te-absent{ color:var(--v-faint); }
   /* WHICH PANEL THIS IS. Two words, in the head, where the question is asked. */
   .te-scope{ display:inline-flex; gap:2px; margin-left:8px; }
+  /* A TAB. One of four, choosing which panel the inspector shows — it changes
+     what this editor displays and nothing about a template. */
   .te-scopebtn{
     padding:2px 8px; border-radius:var(--v-r-sm); cursor:pointer;
     background:var(--v-surf2); border:1px solid var(--v-500);
@@ -2403,6 +2405,8 @@
   .te-tools{ display:flex; flex-direction:column; align-items:center; gap:4px;
     padding:8px 0; border-radius:var(--v-r-md);
     background:var(--v-surf); border:1px solid var(--v-line2); }
+  /* A TOOL in the rail, the shape every canvas editor uses: it ARMS what the
+     next press on the board will do rather than doing anything itself. */
   .te-tool{ width:32px; height:32px; display:grid; place-items:center; cursor:pointer;
     background:transparent; border:1px solid transparent; border-radius:var(--v-r-sm);
     color:var(--v-dim); }

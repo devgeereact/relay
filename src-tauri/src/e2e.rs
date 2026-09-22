@@ -4673,6 +4673,97 @@ fn a_blackout_answers_the_same_way_as_a_clear() {
     );
 }
 
+/// THE CONSOLE IS TOLD WHAT EVERY SCREEN WAS TOLD — RG-260.
+///
+/// The operator: *"what's on screen is different from what's on the console...
+/// when the replay button is clicked, only the operator's screen replays... I
+/// want the media to work using just one control for all screens or output"*.
+///
+/// **The divergence was structural, not a race.** `set_media_transport` built the
+/// frame, published it to every screen, and returned `()`. The console then
+/// rebuilt its own copy out of the arguments it had passed in — `{paused, loop,
+/// volume}` and nothing else — so the console's preview was handed an object
+/// with no `replay_epoch` and no `seek_epoch`, and `applyMediaTransport` acts on
+/// a replay or a scrub ONLY when it sees an epoch it has not seen. Two shapes for
+/// one instruction, and only one of them complete.
+///
+/// So the command hands the frame back. **It still says nothing about whether a
+/// screen obeyed** — that distinction is the reason the old doc comment refused a
+/// return value, and it survives: a frame is the INSTRUCTION, the beat is the
+/// outcome, and Live still reads the effect from `MediaBeat`. What changes is
+/// that the console stops guessing at the instruction it just gave.
+#[test]
+fn the_transport_command_hands_back_the_frame_it_published() {
+    let app = app();
+    let h = app.handle().clone();
+    let mut kiosk = qa::Kiosk::attach(&h);
+
+    let first = set_media_transport(
+        h.clone(),
+        h.state::<channels::MediaTransport>(),
+        None,
+        None,
+        Some(true),
+        None,
+        None,
+    )
+    .expect("replay");
+    settle();
+
+    // THE FRAME THE CONSOLE IS HANDED AND THE FRAME THE SCREENS RECEIVED ARE THE
+    // SAME FRAME. Asserted field by field against the published JSON rather than
+    // against the struct, because the wire is what a screen actually acts on and
+    // a serialiser that dropped a field would satisfy any assertion made against
+    // the struct alone.
+    let mut published = None;
+    while let Some(m) = kiosk.next() {
+        if m.contains(r#""kind":"media_transport""#) {
+            published = Some(m);
+        }
+    }
+    let wire: serde_json::Value =
+        serde_json::from_str(&published.expect("nothing reached the screens")).expect("valid JSON");
+    assert_eq!(
+        wire["replay_epoch"].as_u64(),
+        Some(first.replay_epoch),
+        "the console was handed a different replay epoch from the screens"
+    );
+    assert!(
+        first.replay_epoch > 0,
+        "a replay that bumped no counter cannot reach a screen at all"
+    );
+    assert!(!first.paused, "replay means the clip is running");
+
+    // AND A SCRUB CARRIES ITS BASELINE. Without `started_at` the corrector on
+    // every page drags the clip back to where the fire implied within two
+    // seconds — the operator moves the handle, the picture jumps back, and the
+    // product looks broken. The console needs it for exactly the same reason:
+    // its preview runs the same corrector.
+    let scrubbed = set_media_transport(
+        h.clone(),
+        h.state::<channels::MediaTransport>(),
+        None,
+        None,
+        None,
+        Some(42_000),
+        None,
+    )
+    .expect("scrub");
+    assert_eq!(scrubbed.seek_ms, 42_000);
+    assert!(
+        scrubbed.seek_epoch > first.seek_epoch,
+        "a scrub that bumped no counter is a frame a screen has already seen"
+    );
+    assert!(
+        scrubbed.started_at.is_some(),
+        "the scrub carried no baseline, so every screen will undo it"
+    );
+    assert_eq!(
+        scrubbed.replay_epoch, first.replay_epoch,
+        "a scrub moved the replay counter, which would restart every clip"
+    );
+}
+
 /// THE DESK SETS A SECOND CLOCK AND THE RAIL CARRIES ONE — RG-250, END TO END.
 ///
 /// `timers::tests` proves the registry rule and the stage page's own suites prove

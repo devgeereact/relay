@@ -159,12 +159,40 @@ describe('the transport asks for one thing and leaves the rest', () => {
   });
 
   it('pausing does not un-loop, which is the whole point of the nulls', async () => {
-    const { cap, get } = await load();
+    // WHERE THIS GUARANTEE LIVES MOVED, and the case moved with it (RG-260).
+    //
+    // The frontend used to MERGE — `loop: loop ?? t.loop` — so "Pause leaves the
+    // loop alone" was a rule kept in two places, once in `MediaTransport::apply`
+    // and once here. Two copies of one rule is two things that can disagree, and
+    // the frontend's copy was the lossy one: it carried three of the frame's
+    // seven fields and dropped both epochs, so the console could act on neither
+    // a replay nor a scrub.
+    //
+    // The store is now whatever Rust hands back, whole. So this asserts what the
+    // console DOES with the answer — takes it verbatim — and the rule itself is
+    // asserted where it is implemented, in `timers`-style unit tests over
+    // `apply` and in `e2e::the_transport_command_hands_back_the_frame_it_published`.
+    const { invoke, cap, get } = await load();
+    invoke.mockResolvedValue({
+      paused: true,
+      looping: true,
+      replayEpoch: 0,
+      seekEpoch: 0,
+      seekMs: 0,
+      volume: 1,
+      startedAt: null,
+    });
     await cap.setMediaTransport({ loop: true });
     await cap.setMediaTransport({ paused: true });
-    // The level rides in the store too, and survives both — it is a fact about
-    // the room rather than about this clip (RG-221).
-    expect(get(cap.mediaTransport)).toEqual({ paused: true, loop: true, volume: 1 });
+    expect(get(cap.mediaTransport)).toEqual({
+      paused: true,
+      loop: true,
+      replayEpoch: 0,
+      seekEpoch: 0,
+      seekMs: 0,
+      volume: 1,
+      startedAt: null,
+    });
   });
 
   it('a replay means the clip is running, not seeked and stopped', async () => {

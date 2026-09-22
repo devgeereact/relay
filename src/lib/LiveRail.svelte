@@ -414,13 +414,19 @@
                surfaces: the search half above sends a verse to the programme,
                while browsing only ever opens a chapter in the grid, and one
                legend over both meanings is the sentence that reads the same
-               whether or not a congregation is looking at something (rule 35). -->
+               whether or not a congregation is looking at something (rule 35).
+
+               THE STANDING CAPTION IS GONE (RG-261), on the operator's
+               instruction. The promise it made is not: every chapter carries it
+               on its own `openTitle`, which is where somebody asking "what does
+               this do" actually looks — on the control, rather than in a legend
+               over a grid of a hundred and fifty of them that an operator has
+               read every Sunday since the panel existed. -->
           <ChapterPicker
             book={b.book}
             count={b.chapters}
             current={openedChapter?.book === b.book ? openedChapter.chapter : null}
             {disabled}
-            caption="Opens in the grid · no screen changes"
             openTitle={(bk, c) => `Open ${bk} ${c} in the slide grid — nothing reaches a screen`}
             onPick={(c) => stage(b.book, c)} />
         {/if}
@@ -524,6 +530,8 @@
     font-family: var(--f-mono); font-size: var(--v-fs-cap); letter-spacing: var(--v-tr-caps);
     color: var(--v-dim);
   }
+  /* A LIST ROW — a book, or a song. Pressing it opens or stages; it is a line
+     in a list rather than an action with a shape of its own. */
   .lr-row {
     display: flex; align-items: center; gap: 7px; width: 100%; text-align: left;
     padding: 5px 7px; border: 0; border-radius: var(--v-r-sm); cursor: pointer;

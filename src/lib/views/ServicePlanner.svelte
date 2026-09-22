@@ -1021,6 +1021,25 @@
     return { url: mediaUrl(host, row), kind: p.kind === 'video' ? 'video' : 'image' };
   };
 
+  /**
+   * THE PICTURE A SLIDE IN THE INSPECTOR SHOWS — RG-264.
+   *
+   * `cueThumb`'s rule, read off the SLIDE rather than off the cue: the Slides
+   * tab walks `slidesOf`'s output, and a song or a scripture cue yields several
+   * slides of which none is media. `plan.js` already puts `media_id` and
+   * `media_kind` on the slide it builds; this is their first reader.
+   *
+   * Null for a deleted asset and for a document — no frame to paint, and
+   * `fire_media` refuses to put one on a screen in any case — so a missing
+   * picture falls back to the words rather than to a broken image.
+   */
+  const slideThumb = (s, rows, host) => {
+    if (s?.media_id == null) return null;
+    const row = rows.find((m) => m.id === s.media_id);
+    if (!row || row.kind === 'document') return null;
+    return { url: mediaUrl(host, row), kind: s.media_kind === 'video' ? 'video' : 'image' };
+  };
+
   $: previewContent = !selCue
     ? null
     : selCue.cue_type === 'scripture'
@@ -1786,8 +1805,21 @@
           </div>
           <div class="sp-slides">
             {#each selSlides as s, i}
+              <!-- A MEDIA SLIDE LOOKS LIKE ITS PICTURE (RG-264). `slidesOf`
+                   gives a media slide `text: ''` by construction, so this
+                   printed `{s.text || s.label}` — the file name, dim grey on a
+                   dark card. `IMG_3427.mov` tells nobody which clip that is, and
+                   this is the tab an operator opens to check what a cue puts up.
+
+                   `cueThumb`'s rule read off the SLIDE rather than the cue, so a
+                   deleted asset paints nothing here exactly as it does on the
+                   running order, and the URL is built by the one builder. -->
+              {@const th = slideThumb(s, allMedia, mediaHost)}
               <div class="sp-slide">
                 <span class="sp-slidetag" style="color:{slideAccent(s.tag)};border-color:{slideAccent(s.tag)}">{s.tag}</span>
+                {#if th}
+                  <span class="sp-slidepic"><MediaThumb url={th.url} kind={th.kind} size={34} /></span>
+                {/if}
                 <span class="sp-slidetext">{s.text || s.label}</span>
                 <span class="sp-slideidx r-mono">{String(i + 1).padStart(2, '0')}</span>
               </div>
@@ -2280,6 +2312,9 @@
     display:flex; align-items:center; }
   .sp-slidetag{ position:absolute; left:10px; top:9px; font-family:var(--f-mono); font-size:var(--v-fs-cap); font-weight:700;
     letter-spacing:.06em; padding:2px 5px; border-radius:var(--v-r-sm); border:1px solid currentColor; }
+  /* THE PICTURE SITS BETWEEN THE TAG AND THE WORDS (RG-264), so the row still
+     reads tag · what · number and a slide with no picture keeps its shape. */
+  .sp-slidepic{ flex:0 0 auto; display:flex; align-items:center; }
   .sp-slidetext{ font-size:var(--v-fs-b2); line-height:1.45; color:var(--v-dim); white-space:pre-line;
     display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
   .sp-slideidx{ position:absolute; right:10px; bottom:7px; font-size:var(--v-fs-cap); color:var(--v-500); }

@@ -14,6 +14,8 @@
     setCountdownWarnDefault,
   } from './lib/layers.js';
   import { acceptsStageMessage, roleOf } from './lib/channelroles.js';
+  import { readTimerSize } from './lib/stagelayout.js';
+  import { railScale } from './lib/bigstagetimer.js';
   import { resolveTokens } from './lib/styletokens.js';
   import { markOutput } from './lib/latency.js';
   import { startBeat, paintState, BEAT_INTERVAL_MS } from './lib/outputHealth.js';
@@ -206,6 +208,14 @@
   // content it would be broadcast to every screen, and the only thing between it
   // and a lobby TV would be which layers that TV's template happens to have.
   let roles = {};
+  /**
+   * HOW BIG THE OPERATOR ASKED THIS SCREEN'S CLOCK TO BE — RG-265.
+   *
+   * `normal` until a `stage_zones` frame says otherwise, which is what a layout
+   * saved before the key existed and an install that never opened the control
+   * both mean.
+   */
+  let timerSize = 'normal';
   let stageMessage = '';
   /** Note or alarm (DECISIONS §116). False is the safe default on every door. */
   let stageUrgent = false;
@@ -951,6 +961,17 @@
       if (Number.isFinite(m.started_at) && content?.media_url) {
         content = { ...content, media_started_at: m.started_at };
       }
+    } else if (m.kind === 'stage_zones') {
+      // THE OPERATOR'S STAGE LAYOUT REACHES THE BIG SCREEN TOO (RG-265).
+      // `stage.html` has honoured Timer size since RG-240 and this page never
+      // asked, so an operator who set Huge for the platform monitor moved the
+      // phone and nothing else — a control reporting success over a screen it
+      // did not touch, which is rule 35 in a different coat.
+      //
+      // The hub addresses no client (DECISIONS §35), so every page is sent
+      // every screen's layout and picks its own out by id.
+      const mine = m.zones?.[String(channelId)] ?? m.zones?.[channelId];
+      timerSize = readTimerSize(mine);
     } else if (m.kind === 'stage_alert') {
       // ONLY A STAGE. No role is not a stage — a lobby TV and a streaming feed
       // both arrive here with no role at all, and a filter whose default is yes
@@ -1236,6 +1257,7 @@
   backdrop={shownBackdrop}
   audio={isDesktop}
   stageMessage={shownStageMessage}
+  timerScale={railScale(timerSize)}
   {stageUrgent}
   programme={shownProgramme}
   onMedia={noteMedia}

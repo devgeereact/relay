@@ -227,6 +227,36 @@ export const transcript = writable({ partial: '', finals: [], finalsAt: [] });
  * Pure on purpose: `at` is passed in rather than read from the clock, so the
  * ordering and alignment can be asserted deterministically.
  */
+/**
+ * THE TIME CODE A TRANSCRIPT LINE CARRIES — RG-263.
+ *
+ * `h:mm:ss` from the position of the audio in the capture, which is what a
+ * recording of the same service shows at the same instant. That is the figure an
+ * operator lines a transcript up against; a wall clock is not, because it says
+ * when a DECODE reached the webview rather than when the words were spoken — up
+ * to eight seconds plus a decode later.
+ *
+ * `TranscriptUpdate.timestamp_ms` has carried this since the module was written
+ * and the console destructured it away: `grep -rn "timestamp_ms" src/` returned
+ * nothing at all before this.
+ *
+ * HOURS, always, because services run past one — the export's own `fmt_secs`
+ * prints `93:31` for ninety-three minutes, a figure that reads as ninety-three
+ * seconds to anybody who has not been told otherwise.
+ *
+ * An absent or unusable position yields `''` rather than `0:00:00`: a line with
+ * no time code is from an older build or a path that never carried one, and a
+ * zero would place it at the start of the service.
+ */
+export function stampOf(ms) {
+  if (!Number.isFinite(ms) || ms < 0) return '';
+  const s = Math.floor(ms / 1000);
+  const hh = Math.floor(s / 3600);
+  const mm = Math.floor((s % 3600) / 60);
+  const ss = s % 60;
+  return `${hh}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
+}
+
 export function applyTranscript(t, { text, is_final }, at) {
   if (!is_final) return { ...t, partial: text };
   return {
@@ -1209,7 +1239,12 @@ unlistenStt = await listen('stt://transcript', (e) => {
     lastLang = language;
     capture.update((s) => ({ ...s, detectedLang: language }));
   }
-  const at = new Date().toLocaleTimeString('en-GB');
+  // THE TIME CODE, NOT THE ARRIVAL TIME (RG-263). This was
+  // `new Date().toLocaleTimeString('en-GB')` — the moment the decode reached the
+  // webview, which is up to eight seconds plus a decode after the words were
+  // said, at second resolution and with no date. `timestamp_ms` is the position
+  // of the audio in the capture and was already on the wire.
+  const at = stampOf(timestamp_ms);
   transcript.update((t) => applyTranscript(t, { text, is_final }, at));
   // Tell Rust when this actually reached the operator's eyes. Everything before
   // this point the backend can time itself; the webview's own share of the delay
@@ -2652,7 +2687,7 @@ export const mediaTransport = writable({ paused: false, loop: false, volume: 1 }
  */
 export async function setMediaTransport({ paused, loop, replay, seekMs, volume } = {}) {
   const call = await invoke();
-  await call('set_media_transport', {
+  const frame = await call('set_media_transport', {
     paused: paused ?? null,
     // `looping` across the bridge: the wire says `loop` and Rust cannot.
     looping: loop ?? null,
@@ -2663,15 +2698,43 @@ export async function setMediaTransport({ paused, loop, replay, seekMs, volume }
     seekMs: seekMs ?? null,
     volume: volume ?? null,
   });
-  // After, never before, and only what was actually asked for.
-  mediaTransport.update((t) => ({
-    paused: replay ? false : (paused ?? t.paused),
-    loop: loop ?? t.loop,
-    // The room's level, and it survives the next fire — unlike `paused` and
-    // `loop`, which the engine resets on new content. An operator who turned a
-    // clip down for a quiet room did not mean "for this clip only".
-    volume: volume ?? t.volume ?? 1,
-  }));
+  // ── THE FRAME THE SCREENS WERE SENT, VERBATIM (RG-260) ─────────────────────
+  //
+  // This used to rebuild the store out of the arguments it had just passed in —
+  // `{paused, loop, volume}`, three fields where the wire carries seven — and
+  // the two it dropped were the EPOCHS. The console's own programme preview
+  // renders through the same `TemplateRender` and the same `applyMediaTransport`
+  // a projector does, and that rule acts on a replay or a scrub only when it
+  // sees an epoch it has not seen. So Pause and Loop worked everywhere while
+  // Replay and Scrub worked on every screen in the building and did nothing on
+  // the surface the operator was watching to decide whether they had.
+  //
+  // One instruction, one shape. `set_media_transport` returns the frame it
+  // published and this takes it whole; nothing here re-derives a field, so
+  // nothing here can disagree with a screen about what was asked for.
+  //
+  // `looping` → `loop` is the ONE translation, and it exists because Rust cannot
+  // name a field `loop`. It is done here, once, rather than in the player rule:
+  // `applyMediaTransport` is shared with the preacher's page and reads `t.loop`.
+  //
+  // AFTER, NEVER BEFORE. A store written ahead of the call would claim a hold no
+  // screen was ever told about — and it throws, so a failed call leaves the
+  // store exactly as it was.
+  if (frame && typeof frame === 'object') {
+    mediaTransport.set({
+      paused: !!frame.paused,
+      loop: !!frame.looping,
+      replayEpoch: frame.replayEpoch ?? null,
+      seekEpoch: frame.seekEpoch ?? null,
+      seekMs: frame.seekMs ?? 0,
+      volume: frame.volume ?? 1,
+      // THE BASELINE A SCRUB IMPLIES (RG-220). `null` on every frame that
+      // carries no scrub, so a reader cannot mistake an old baseline for a new
+      // one.
+      startedAt: frame.startedAt ?? null,
+    });
+  }
+  return frame;
 }
 
 /**

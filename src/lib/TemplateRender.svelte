@@ -84,6 +84,7 @@
     programmeRoom,
   } from './timers.js';
   import { alertStep } from './stagealert.js';
+  import { RAIL_BASE_PCT } from './bigstagetimer.js';
   import { applyMediaTransport } from './mediatransport.js';
   import { syncSeek } from './mediasync.js';
 
@@ -141,6 +142,20 @@
    * neither is a stage screen.
    */
   export let programme = [];
+  /**
+   * HOW MUCH ROOM THE FALLBACK PROGRAMME RAIL TAKES — RG-265.
+   *
+   * A MULTIPLIER, never a setting. `bigstagetimer.js::railScale` is the one
+   * place that turns Normal / Large / Huge into a number, and it re-exports the
+   * phone's own steps — a renderer that knew what `huge` meant would be a second
+   * opinion about a control the operator set once, and this component is shared
+   * with the console's panes and the Templates editor besides.
+   *
+   * 1 for every caller that does not pass one, which is all of them but
+   * `Output.svelte`: a designed rail states its own box and is untouched by
+   * this.
+   */
+  export let timerScale = 1;
   /**
    * How deep this render is inside a composite. 0 is the screen itself.
    *
@@ -1644,6 +1659,9 @@
   // surfaces that can hand one over already trim - this is the renderer refusing
   // to paint a full-bleed red panel over a string nobody typed.
   $: stageAlert = (stageMessage || '').trim();
+  // Clamped, because a rail that took half a projector would be a clock
+  // standing in front of the words it is there to time.
+  $: railPct = Math.min(30, RAIL_BASE_PCT * (Number(timerScale) || 1));
   /**
    * DOES THIS TEMPLATE DECLARE ANYWHERE FOR A QUIET WORD TO GO?
    *
@@ -2508,11 +2526,15 @@
          this rail — so `.lp-val` falls back to its `--lp-h` share, exactly as it
          does for a designed rail before the first measurement lands. -->
     {@const cells = programmeCells(progRows, programmeCapacity(defaultProgW))}
+    <!-- ITS HEIGHT IS THE OPERATOR'S (RG-265). `RAIL_BASE_PCT` was a flat 8,
+         which is 86 pixels on a 1080p projector read from ten metres — and the
+         Normal / Large / Huge control the operator set for this screen reached
+         the phone and stopped there. -->
     <div
       class="lprog lprog-default"
       class:overmedia={pictureBehind}
       bind:this={defaultProgEl}
-      style="left:0%; top:92%; width:100%; height:8%; --tmrs:{cells.length}; --tch:{progCh}; {railHeightVar(defaultProgH)}"
+      style="left:0%; top:{100 - railPct}%; width:100%; height:{railPct}%; --tmrs:{cells.length}; --tch:{progCh}; {railHeightVar(defaultProgH)}"
       aria-label="Programme">
       {#each cells as t, j (j)}
         {#if t.more}

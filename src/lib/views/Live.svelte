@@ -137,6 +137,29 @@
   import { transportMode, fallsThroughToPlan } from '../transportmode.js';
   import { describeMediaClock, mediaIdFromUrl } from '../mediaclock.js';
   import { mediaTransport, setMediaTransport, sendStageMedia, stageMedia } from '../stores/capture.js';
+
+  /**
+   * WHAT THE PROGRAMME PANE RENDERS — the live content, with the scrub's own
+   * baseline on it (RG-260).
+   *
+   * `TemplateRender`'s corrector pulls a player back to where Relay's clock says
+   * the clip should be, measured from `content.media_started_at`. A scrub MOVES
+   * that instant — Rust sets `started_at = now - seek_ms` for exactly this
+   * reason — and every output page restates it (`Output.svelte`, the
+   * `media_transport` branch).
+   *
+   * This pane did not, so after a scrub it kept the baseline the FIRE implied,
+   * the corrector found it adrift and pulled the picture back, and the surface
+   * an operator watches to decide what the room is seeing was the one surface
+   * disagreeing with the room. Taken from the transport store, which since
+   * RG-260 IS the frame the screens were sent — so the console and a projector
+   * correct against the same instant by construction rather than by two copies
+   * happening to agree.
+   */
+  $: progContent =
+    $liveContent && $mediaTransport?.startedAt != null
+      ? { ...$liveContent, media_started_at: $mediaTransport.startedAt }
+      : $liveContent;
   import { programmeScreen, describeStageReach, describeCountdownReach } from '../channelroles.js';
   import TemplateRender from '../TemplateRender.svelte';
   import ClipBar from '../ClipBar.svelte';
@@ -2100,6 +2123,22 @@
   // compensate: that would shrink Preview and Program for every operator to pay
   // for a setting one of them used to choose, and it is a design change nobody
   // asked for. Measured in the T2 review note.
+  /**
+   * PUT THE RUNNING ORDER BACK IN THE GRID — RG-261, moved from Quick tools.
+   *
+   * The plan the PLANNER handed over, not the one currently open: Close plan
+   * clears `session.planId`, and a button that died the moment an operator
+   * closed a plan would be useless in exactly the case it exists for — putting
+   * the running order back after the preacher went off it.
+   */
+  let lastPlanId = null;
+  $: if ($session.planId != null) lastPlanId = $session.planId;
+  $: planChosen = lastPlanId != null;
+  const loadWholePlan = () => {
+    if (lastPlanId == null) return;
+    setSession({ activeTab: 'live', planId: lastPlanId });
+  };
+
   $: fullscreen = !!$session.liveFullscreen;
   const setFullscreen = (v) => setSession({ liveFullscreen: v });
 
@@ -2539,7 +2578,7 @@
                The programme belongs to the stage, and the stage previews it. -->
           <TemplateRender
             template={progTpl}
-            content={$liveContent}
+            content={progContent}
             backdrop={$background}
             mediaTransport={$mediaTransport}
             onFit={noteFit}
@@ -2752,6 +2791,27 @@
           <Button variant="ghost" size="sm" class="mini" on:click={leave}
             title="Stop running {openPlan.title}">Close plan</Button>
         {/if}
+        <!-- LOAD WHOLE PLAN CAME UP HERE (RG-261), out of the Quick tools head.
+             The operator asked for the room: that card does one job at a time
+             now (RG-258) and the picker needs the slot this button had. It
+             belongs beside the slides it stages in any case — it is the one
+             control in the product whose whole effect is on this grid.
+
+             WHAT IT COSTS, stated rather than found later: the dock is in the
+             shell and this header is not, so the button is Live's now. It does
+             survive full screen, because only the dock is unmounted there. Its
+             `activeTab: 'live'` is left in place and is a no-op from here.
+
+             NOT inside `.view-ctl`: `livedesk.test.js` asserts that container's
+             exact button set, and it is the sizer plus full screen — a control that
+             only stages does not belong in it. -->
+        <button
+          class="sg-load"
+          on:click={loadWholePlan}
+          disabled={!planChosen}
+          title={planChosen
+            ? 'Put the running order back in the slide grid'
+            : 'No plan chosen yet — open Planner and press Run in Live'}>Load whole plan</button>
         <!-- THE VIEW CONTROL LIVES HERE NOW (L2), not in the browsing rail.
              It changes how the console LOOKS and never what reaches a screen,
              and in the rail it was among the loudest things in a column whose
@@ -2897,8 +2957,13 @@
         <span class="sr-only" role="status" aria-live="polite" aria-atomic="true">{liveMsg}</span>
         {#if liveMsg}
           <span class="flash" aria-hidden="true"><i class="fd"></i>{liveMsg}</span>
-        {:else}
-          <span class="flash idle" aria-hidden="true">{openPlan ? openPlan.title : 'No plan loaded'}</span>
+        {:else if !openPlan}
+          <!-- THE PLAN'S NAME IS IN THE HEAD (RG-261), four inches above this
+               and on screen at the same moment — the duplication the operator
+               photographed. What is left is the one state the head does NOT
+               say: that no plan is loaded at all, which is a fact about this
+               pane rather than a title repeated. -->
+          <span class="flash idle" aria-hidden="true">No plan loaded</span>
         {/if}
       </footer>
     </section>
@@ -3259,6 +3324,16 @@
      weight — `.seg` was declared here and matched nothing else: `LiveRail`'s
      collection switch is `.lr-seg`, its own class with its own rules, because
      Svelte scopes a component's styles and this `.seg` never reached it. */
+  /* LOAD WHOLE PLAN (RG-261), pushed to the right with the view control rather
+     than sitting against the slides count — it is an action on this grid, and
+     the head reads left to right as what is staged, then how many, then what
+     you can do about it. */
+  .sg-load{ flex:0 0 auto; height:24px; padding:0 9px; cursor:pointer;
+    border:1px solid var(--v-500); border-radius:var(--v-r-sm);
+    background:var(--v-surf2); color:var(--v-txt);
+    font-family:var(--f-body); font-size:var(--v-fs-lbl); font-weight:600; }
+  .sg-load:disabled{ opacity:var(--s-off,.45); cursor:default; }
+  .sg-load:focus-visible{ outline:2px solid var(--v-sel); outline-offset:2px; }
   .view-ctl{ flex:0 0 auto; display:flex; align-items:center; gap:5px; }
   /* 22px, not the shared 26px: this row is 22px tall and has clipped a label
      before. The readout is one or two mono characters on a fixed width, so the
@@ -3307,6 +3382,10 @@
 
   .reh-dot{width:8px; height:8px; border-radius:50%; flex:0 0 auto; background:var(--v-amethyst);
     box-shadow:0 0 9px var(--v-amethyst); animation:pulse 1.7s ease-in-out infinite}
+  /* A BUTTON, and amethyst on purpose: it is the one control that ends a
+     rehearsal, and amethyst is what rehearsal means everywhere else (rule 18).
+     Unnamed since it was written — the scanner read every other rule and this
+     one fell in the half nobody looked at (RG-261). */
   .reh-end{flex:0 0 auto; padding:7px 14px; border-radius:var(--v-r-md); cursor:pointer;
     font-family:var(--f-body); font-size:var(--v-fs-cap); font-weight:700; letter-spacing:.06em;
     text-transform:uppercase; background:var(--v-amethyst); border:0; color:var(--v-void)}
@@ -3725,6 +3804,8 @@
      this grid has always had, so a console with no stored choice is unchanged. */
   .sgrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(var(--sg-min,158px),1fr));
     gap:var(--v-sp-sm)}
+  /* A GRID CELL. The slide itself, pressed to send it — the shape IS the
+     slide, which is why it carries a thumbnail rather than a label. */
   .sg-cell{display:flex; flex-direction:column; gap:5px; padding:0; text-align:left;
     background:none; border:0; cursor:pointer; min-width:0; font-family:var(--f-body)}
   .sg-cell:disabled{opacity:.45; cursor:not-allowed}
