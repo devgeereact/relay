@@ -586,9 +586,15 @@ describe('the Stage Message', () => {
     expect(style, 'the unreachable step is still in the stylesheet').not.toContain('.alert.sm {');
   });
 
-  it('and the short message is still §5’s own figure, unchanged', () => {
+  it('and the short message is the boldest, largest thing on the page (RG-251)', () => {
+    // §5's OWN FIGURE WAS 8.5cqw AND THE OPERATOR OVERRULED IT on the built
+    // page: *"the alert on the mobile should be bold as in the artifacts"*. On a
+    // 390px phone 8.5cqw is 33px for a phrase, on the one panel whose purpose is
+    // to stop a service. The ceiling was measured rather than argued — a
+    // 138-character message, near the `ALERT_MAX` cap, renders 274px of text in
+    // an 813px box at the new middle step.
     const style = SRC.slice(SRC.indexOf('<style>'));
-    expect(style).toMatch(/\.alert\.xl \{ font-size: 8\.5cqw; \}/);
+    expect(style).toMatch(/\.alert\.xl \{ font-size: 15cqw; \}/);
   });
 
   it('takes the whole screen even when every zone is switched off', async () => {
@@ -890,7 +896,13 @@ describe('an open panel yields the programme rail', () => {
     await holdOpen();
     expect(container.querySelector('.ctl'), 'the panel did not open').toBeTruthy();
     expect(container.querySelector('.progrow')).toBeNull();
-    expect(container.querySelector('.verse')).toBeTruthy();
+    // THE READING YIELDS ITS ROOM TOO, SINCE RG-252. This case asserted the
+    // opposite until 2026-09-22, and it was right about the rail and wrong about
+    // the reading for a measurable reason: `.ctl` and the reading are both static
+    // rows in one column, so at 390×844 the verse was clipped THROUGH THE MIDDLE
+    // OF A LINE under the search box. The panel is what the screen is for while
+    // it is open.
+    expect(container.querySelector('.verse')).toBeNull();
 
     // The same button shuts it. The panel's own `Done` went with the header
     // controls (RG-246): the transport bar is where opening and closing both

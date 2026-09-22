@@ -20,6 +20,8 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { messagePlacement } from './stagemessage.js';
 
+const SRC = readFileSync(resolve('src/Stage.svelte'), 'utf8');
+
 const at = (over = {}) =>
   messagePlacement({ message: 'Wrap up in five', urgent: false, reading: false, slide: false, ...over });
 
@@ -115,6 +117,43 @@ describe('the preacher’s screen paints the three states', () => {
     // THE ONE THING A MESSAGE MAY NOT TAKE. The preacher still has to know how
     // long is left while they read it.
     expect(host.querySelector('.progrow, .figrow'), 'the message covered the clock').toBeTruthy();
+  });
+
+  it('it takes the reading’s ROOM, not the whole page (RG-247)', async () => {
+    // MEASURED ON A REAL PHONE-SIZED VIEWPORT, not argued. `.bigmsg` was
+    // `position: absolute; inset: 0` against the page, while the comment beside
+    // it said "it sits in the reading's own box". The rule and the sentence
+    // disagreed, and the rule won: at 390×844 the message spanned all 844px and
+    // centred its text at y=420 — under 281px of clock rows that paint over it,
+    // so the words a preacher is meant to read sat 140px below the middle of the
+    // room they actually had, with 63px of clearance above the clock.
+    //
+    // A message that is IN the column cannot make that mistake: the rows follow
+    // it, the browser does the arithmetic, and nothing has to know how tall the
+    // clocks happen to be today.
+    await open();
+    send({ kind: 'content', content_kind: 'scripture', reference: 'John 3:16', text: 'For God so loved' });
+    msg('Wrap up in five');
+    await settle();
+    // COMMENTS STRIPPED FIRST. The rule below is explained by a comment that
+    // QUOTES the declaration it replaced, so a scanner reading the raw text
+    // fails on the prose describing the fix — the opposite of this repository's
+    // usual scanner fault, and the same lesson: read what paints, not what is
+    // written beside it.
+    const decls = (css) => css.replace(/\/\*[\s\S]*?\*\//g, '');
+    const from = SRC.indexOf('.bigmsg {');
+    const rule = decls(SRC.slice(from, SRC.indexOf('}', from)));
+    expect(rule, 'the message is positioned against the PAGE').not.toMatch(/position:\s*absolute/);
+    expect(rule, 'the message is positioned against the PAGE').not.toMatch(/inset:\s*0/);
+    // AND IT TAKES THE ROOM RATHER THAN SITTING OVER IT: the verse is gone from
+    // the page while a message is up, so there is no second thing competing for
+    // the same box and no z-index deciding which one a preacher reads.
+    expect(host.querySelector('.verse'), 'the reading is still under the message').toBeNull();
+    // The clock rows still come AFTER it, in that order, which is what makes
+    // them visible without a stacking rule.
+    const order = [...host.querySelectorAll('.bigmsg, .figrow, .progrow')].map((n) => n.className.split(' ')[0]);
+    expect(order[0]).toBe('bigmsg');
+    expect(order.length, 'a clock row went with the reading').toBeGreaterThan(1);
   });
 
   it('an alert is the whole screen, over a reading', async () => {

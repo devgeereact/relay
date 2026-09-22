@@ -827,6 +827,14 @@
   // countdown's pairs to FILL the rail — which sizing them for an eight-character
   // clock two rows down would quietly undo.
   $: figCh = figCells.reduce((n, c) => Math.max(n, (c.v || '').length || 5), 5);
+  /* THE WALL CLOCK IS NOT A SERVICE FIGURE (RG-249). The row is a flat 15% of the
+     screen whatever is in it, and most of a sermon the only thing in it is what
+     o'clock it is — a fact that makes no claim about this service, given the same
+     room as a countdown, an elapsed time and a clip. The operator, reading the
+     built page: *"the current time card is too big... the main focus should be
+     the timer"*. The row is marked here rather than sized here, because how much
+     room a row gets is the stylesheet's decision and this is the fact it needs. */
+  $: clockOnly = figCells.length > 0 && figCells.every((c) => c.k === 'Time');
 
   // HOW MANY CHARACTERS THE READING HAS, handed to the stylesheet so the verse can
   // be sized to the room instead of to a fixed ceiling. docs/REBRAND.md §3.4 —
@@ -1497,7 +1505,10 @@
        and a stage monitor showing only a clock gave half of itself to a region
        with nothing in it. Rendered at 1920×1080 with Reading off: 480px of black
        above the figures. -->
-  {#if zones.reading}
+  <!-- THE MESSAGE TOOK THIS ROOM (RG-247). The reading is not rendered beneath
+       one: two things in the same box, with a stacking rule deciding which the
+       preacher reads, is the arrangement that put the words 140px low. -->
+  {#if zones.reading && msgPlace !== 'large' && !panelOpen}
   <main class="stage" class:beside>
     <section class="reading" aria-label="Reading">
       {#if shown && content}
@@ -1555,24 +1566,6 @@
       </aside>
     {/if}
   </main>
-  {/if}
-
-  {#if !beside && figureList.length}
-    <!-- ACROSS THE BOTTOM. Also its own container, for the same reason. -->
-    <div class="figrow" class:tall={figuresTakeTheRoom} class:only={!zones.reading}
-      style="--figs:{figureList.length}; --ch:{figCh}" aria-label="Figures">
-      {#each figCells as c (c.k)}
-        <!-- THE CLOCK IS SECONDARY (RG-243). A row where the time of day is
-             exactly as large as the time remaining has not decided what the
-             screen is for — and `--ch` made them the same size by
-             construction. The clock keeps its switch; what changes is its
-             weight. -->
-        <div class="fig" class:warn={c.warn} class:done={c.done} class:secondary={c.k === 'Time'}>
-          <span class="figk">{c.k}</span>
-          <span class="figv">{c.v}</span>
-        </div>
-      {/each}
-    </div>
   {/if}
 
   <!-- ══ THE STAGE TIMERS ══ One row per Stage Timer, and no row at all when there are
@@ -1675,6 +1668,25 @@
       {/if}
     </section>
   {/if}
+  {#if !beside && figureList.length}
+    <!-- ACROSS THE BOTTOM. Also its own container, for the same reason. -->
+    <div class="figrow" class:tall={figuresTakeTheRoom} class:only={!zones.reading}
+      class:clockonly={clockOnly}
+      style="--figs:{figureList.length}; --ch:{figCh}" aria-label="Figures">
+      {#each figCells as c (c.k)}
+        <!-- THE CLOCK IS SECONDARY (RG-243). A row where the time of day is
+             exactly as large as the time remaining has not decided what the
+             screen is for — and `--ch` made them the same size by
+             construction. The clock keeps its switch; what changes is its
+             weight. -->
+        <div class="fig" class:warn={c.warn} class:done={c.done} class:secondary={c.k === 'Time'}>
+          <span class="figk">{c.k}</span>
+          <span class="figv">{c.v}</span>
+        </div>
+      {/each}
+    </div>
+  {/if}
+
   {#if zones.next && next && !down}
     <footer class="next">
       <span class="next-lbl">Up Next</span>
@@ -1911,11 +1923,18 @@
      normal flow carry a z-index at all, and the opaque background is what stops
      the message showing through it. */
   .figrow { flex: 0 0 15%; min-height: 0; overflow: hidden; container-type: size;
-    position: relative; z-index: 45;
     display: flex; border-top: 1px solid var(--s-seam); background: var(--s-wash); }
   /* A pre-service countdown is the whole reason anyone is looking at this page, and
      a countdown cue has a label and no body. The figures take the room the reading
      is not using — a different BASIS, never a height, and still clipped. */
+  /* THE CLOCK ALONE GETS A LINE, NOT A PANEL (RG-249). A share of the screen is
+     right for a row of service figures and wrong for the wall clock on its own:
+     the figure is bounded below by its own type size, so the extra room was
+     empty space between a reading and the timer under it. `.tall` and `.only`
+     still win where they apply — a countdown or a screen with no reading on it
+     are both cases where the figures ARE what the screen is for. */
+  .figrow.clockonly { flex-basis: 8%; }
+  .figrow.clockonly .figv { font-size: min(calc(46cqw / var(--ch, 5) / 0.62), 62cqh); }
   .figrow.tall { flex-basis: 58%; }
   .figrow.only { flex: 1 1 0; }
   /* A GRID, NOT A CENTRED COLUMN. Each figure used to be sized to its OWN
@@ -2046,14 +2065,22 @@
   .progrow.owns .tval { font-size: min(calc(76cqw / var(--tmrs, 1) / (var(--tch, 6) * 0.62)), 46dvh); }
   .progrow { flex: 0 0 auto; flex-basis: auto; --progmax: calc(20dvh * var(--tmul, 1)); max-height: var(--progmax);
     overflow: hidden;
-    /* Above the message, for the reason `.figrow` records. */
-    position: relative; z-index: 45;
     container-type: inline-size;
-    display: flex; gap: 10px; padding: 8px 18px;
+    /* CENTRED, BOTH WAYS (RG-248). A single Stage Timer — the normal case — used
+       to print its digits hard against the left edge of a row that spans the
+       frame, because `.tmr` is `flex: 1 1 0` and text is left-aligned by
+       default. Two or more still divide the row evenly; `center` only decides
+       where the set sits when it does not fill it. */
+    display: flex; justify-content: center; gap: 10px; padding: 8px 18px;
     border-top: 1px solid var(--s-seam); background: var(--s-wash); }
   /* `min-width: 0` on the item, or a long label refuses to shrink and pushes the
      last timer off the end of a screen nobody is standing next to. */
-  .tmr { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 2px; overflow: hidden; }
+  .tmr { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column;
+    /* And the digits sit in the MIDDLE of whatever room the timer has, which
+       is the whole page while `.progrow.owns` is on it. Left and top was an
+       accident of the defaults rather than a decision. */
+    align-items: center; justify-content: center; text-align: center;
+    gap: 2px; overflow: hidden; }
   /* A LABEL-LESS TIMER IS DIGITS ALONE. The label element is not rendered at all
      rather than rendered empty, so the row closes up instead of leaving a gap the
      height of a word — wave 5 Track G makes label-less the dock's default and this
@@ -2177,7 +2204,10 @@
      `.next-ref` keeps its own .06em and is deliberately NOT folded in: that line is
      `nowrap` with an ellipsis, so widening its tracking would spend characters of
      the citation a preacher is being shown next. */
-  .ref { font-family: var(--f-mono); font-size: clamp(13px, 2.6cqw, 40px); letter-spacing: var(--s-tr-caps); text-transform: uppercase; color: var(--v-amber); }
+  /* BOLD, LIKE EVERYTHING ELSE ON THIS PAGE (RG-251). The figures were 700 and
+     the prose was not, so the numbers were built for the room and the words for
+     a desk. This is read across a platform by somebody mid-sentence. */
+  .ref { font-family: var(--f-mono); font-weight: 700; font-size: clamp(13px, 2.6cqw, 40px); letter-spacing: var(--s-tr-caps); text-transform: uppercase; color: var(--v-amber); }
   /* THE READING FILLS THE ROOM IT HAS.
      `clamp(26px, 7vw, 64px)` is a ceiling, and on the screen this page exists for
      it was the binding one: a 1920×1080 platform monitor gave a verse 64px of type
@@ -2203,7 +2233,7 @@
      takes over: the reading SCROLLS rather than clipping, because a preacher
      reading aloud must not lose the end of a passage. That is unchanged behaviour
      for long passages; what changed is every short one. */
-  .verse { --vcpl: 16; font-family: var(--f-serif); line-height: 1.28; color: var(--v-txt);
+  .verse { --vcpl: 16; font-family: var(--f-serif); font-weight: 700; line-height: 1.28; color: var(--v-txt);
     max-width: calc(var(--vcpl) * 1ch);
     font-size: max(26px, min(
       calc(94cqw / var(--vcpl) / 0.49),
@@ -2270,9 +2300,19 @@
      the two clamps are the floor a phone needs and the ceiling a platform
      monitor should not pass. */
   .bigmsg {
-    position: absolute;
-    inset: 0;
-    z-index: 40;
+    /* IN THE COLUMN, NOT OVER IT (RG-247). This was `position: absolute; inset:
+       0` while the comment above it said "it sits in the reading's own box" —
+       the sentence described the intent and the rule described the page, and the
+       rule is what painted. Measured at 390×844 with a reading up: the message
+       spanned all 844px and centred its text at y=420, under 281px of clock rows
+       that paint over it, so the words were 140px below the middle of the room
+       they actually had and cleared the clock by 63px.
+       As a flex item it TAKES the reading's room — the reading is not rendered
+       beneath it — the rows follow it, and the browser does the arithmetic. No
+       stacking rule decides which of two things a preacher reads, because there
+       is only ever one. */
+    flex: 1 1 0;
+    min-height: 0;
     box-sizing: border-box;
     display: flex;
     flex-direction: column;
@@ -2312,8 +2352,11 @@
     padding: 4cqw;
     text-align: center;
     font-family: var(--f-body);
-    font-weight: 700;
-    line-height: 1.15;
+    /* 800, and it is the only thing on the page at 800 — this panel's whole job
+       is to stop a service, so it outweighs the clocks rather than matching
+       them. */
+    font-weight: 800;
+    line-height: 1.1;
     color: #fff;
     text-shadow: 0 0.02em 0.06em rgba(0, 0, 0, 0.75);
     background: #c8121c;
@@ -2330,9 +2373,14 @@
      A rule no state can reach is a rule that looks like it works. Deleted rather
      than kept for a cap that might move — `ALERT_STEPS` above holds the two figures
      together, so if the cap does move the steps move with it. */
-  .alert.xl { font-size: 8.5cqw; }
-  .alert.lg { font-size: 6cqw; }
-  .alert.md { font-size: 4.2cqw; }
+  /* THE FIGURES THE DRAWING ASKS FOR (RG-251), and the headroom that makes them
+     safe: measured at 390x844 against the real face, the longest message the
+     backend will deliver (`ALERT_MAX` = 140 characters) wraps to seven lines at
+     9cqw and uses 282px of an 813px box. `6cqw` — 23px on a phone — was the
+     previous middle step, on a panel read from a platform mid-sentence. */
+  .alert.xl { font-size: 15cqw; }
+  .alert.lg { font-size: 11cqw; }
+  .alert.md { font-size: 9cqw; }
   @media (prefers-reduced-motion: no-preference) {
     .alert { animation: stagealert 1.4s ease-in-out infinite; }
   }
@@ -2363,7 +2411,7 @@
      and both were a twelfth of the verse on a platform monitor. */
   .next-ref { font-family: var(--f-mono); font-size: clamp(12px, 1.4cqw, 22px); letter-spacing: .06em; color: var(--v-amber);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .next-text { font-family: var(--f-head); font-size: clamp(16px, 1.9cqw, 30px); color: var(--v-dim); line-height: var(--s-lh-bound);
+  .next-text { font-family: var(--f-head); font-weight: 600; font-size: clamp(16px, 1.9cqw, 30px); color: var(--v-dim); line-height: var(--s-lh-bound);
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   /* Landscape — a platform monitor, a lobby TV, a phone turned sideways — gets a
      wider measure, and the fit above re-reads it: more characters per line is
@@ -2403,16 +2451,14 @@
   /* Steel — see `.zonebtn.on`. A toggle that is switched on is not on air. */
   .ctl-toggle.active { color: var(--v-sel); border-color: var(--v-sel-line); background: var(--v-sel-soft); }
   /* ── THE TRANSPORT ALONG THE FOOT (RG-246) ────────────────────────────────
-     Above everything, including a Stage Message, for the same reason the clock
-     is: it is how the preacher moves, and a message must not take it. Below the
-     ALERT, which is the one thing entitled to the whole screen.
+     A row in the column like the clocks, so a Stage Message cannot take it: the
+     message is a flex item beside it now rather than a sheet over it (RG-247),
+     and the ALERT is still the one thing entitled to the whole screen.
 
      `env(safe-area-inset-bottom)` so the home indicator does not sit on the
      buttons. 52px targets: 44 is the floor, and a transport somebody has to aim
      at is a transport they will not use mid-sermon. */
   .sctl {
-    position: relative;
-    z-index: 45;
     flex: 0 0 auto;
     box-sizing: border-box;
     display: grid;
@@ -2440,9 +2486,15 @@
   /* STEEL, never amber. This reaches a screen, but it is not a claim that one is
      on air — rule 18, and the colour guard the operator asked to keep. */
   .sctl-btn.on { background: var(--v-sel-soft); border-color: var(--v-sel-line); color: var(--v-sel); }
-  .ctl { flex: 0 0 auto; display: flex; flex-direction: column; gap: var(--s-gap); padding: 16px 18px;
+  /* IT TAKES THE READING'S ROOM (RG-252), so it grows into it: with `flex: 0 0
+     auto` and no reading rendered, nothing in the column grew and 130px of black
+     sat below the transport bar. `max-height: 60dvh` went with the same change —
+     it was a ceiling for a panel SHARING the screen with a verse, and there is no
+     verse under it now. */
+  .ctl { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; gap: var(--s-gap);
+    padding: 16px 18px;
     border-top: 1px solid var(--s-seam); background: var(--s-wash);
-    max-height: 60dvh; overflow-y: auto; }
+    overflow-y: auto; }
   .nav-row { display: flex; gap: var(--s-gap); }
   /* 18px IS A THUMB SIZE AND IT STAYS - see the note beside `.brand`. This is the
      label on a 52px target a preacher presses without looking at it, which is a
@@ -2482,8 +2534,8 @@
      because it IS the control that puts scripture in front of a congregation. */
   .result:active { background: var(--v-sel-soft); border-color: var(--v-sel-line); }
   .result:disabled { opacity: var(--s-off); }
-  .r-ref { font-family: var(--f-mono); font-size:var(--v-fs-b1); letter-spacing: var(--s-tr-caps); text-transform: uppercase; color: var(--v-amber); }
-  .r-text { font-family: var(--f-serif); font-size: var(--v-fs-ttl); color: var(--v-dim); line-height: var(--s-lh-bound);
+  .r-ref { font-family: var(--f-mono); font-weight: 700; font-size:var(--v-fs-b1); letter-spacing: var(--s-tr-caps); text-transform: uppercase; color: var(--v-amber); }
+  .r-text { font-family: var(--f-serif); font-weight: 600; font-size: var(--v-fs-ttl); color: var(--v-dim); line-height: var(--s-lh-bound);
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .no-results { font-family: var(--f-mono); font-size:var(--v-fs-b1); color: var(--v-faint); }
 

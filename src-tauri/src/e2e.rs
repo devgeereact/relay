@@ -4718,17 +4718,12 @@ fn ending_a_service_takes_the_programme_clocks_off_the_preachers_rail() {
         None,
     )
     .expect("a programme timer");
-    let notices = start_timer(
-        h.clone(),
-        2.0,
-        "Notices".into(),
-        String::new(),
-        "stage".into(),
-        None,
-        Some(8),
-        None,
-    )
-    .expect("a second programme timer");
+    // ONE STAGE CLOCK, BECAUSE THERE CAN ONLY BE ONE (RG-250). This started a
+    // second programme timer, `Notices`, and asserted that ending the service
+    // took both. A new stage timer now replaces the one that was running, so the
+    // second start would take `Sermon` before `end_service` was ever called and
+    // the assertion below would pass over a clock nothing had ended. A test that
+    // cannot fail is the thing rule 34's neighbours keep warning about.
     let wall_clock = start_timer(
         h.clone(),
         5.0,
@@ -4741,7 +4736,7 @@ fn ending_a_service_takes_the_programme_clocks_off_the_preachers_rail() {
     )
     .expect("a congregation countdown");
     settle();
-    assert_eq!(list_timers(h.clone()).expect("list").len(), 3);
+    assert_eq!(list_timers(h.clone()).expect("list").len(), 2);
 
     let mut kiosk = qa::Kiosk::attach(&h);
     end_service(
@@ -4758,8 +4753,8 @@ fn ending_a_service_takes_the_programme_clocks_off_the_preachers_rail() {
         .map(|t| t.timer.id)
         .collect();
     assert!(
-        !left.contains(&sermon) && !left.contains(&notices),
-        "a finished service left its programme clocks running on the preacher's \
+        !left.contains(&sermon),
+        "a finished service left its programme clock running on the preacher's \
          screen: {left:?}"
     );
     assert!(

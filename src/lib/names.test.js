@@ -296,6 +296,7 @@ const REGISTER = [
       'src/lib/stageprogrow.test.js',
       'src/lib/stagelayout.test.js',
       'src/lib/stagetimerhold.test.js',
+      'src/lib/stagetimerplace.test.js',
       'src/lib/stagetimerover.test.js',
       'src/lib/stagetimerreach.test.js',
       // RG-241: this file reads the rail off `.progrow` now rather than off a
