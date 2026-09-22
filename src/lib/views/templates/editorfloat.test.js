@@ -50,6 +50,11 @@ async function open(layerId = 'a') {
 const bar = () => host.querySelector('.te-float');
 const btn = (label) =>
   [...(bar()?.querySelectorAll('button') ?? [])].find((b) => (b.getAttribute('aria-label') || '') === label);
+/** The panel's own copy of these controls lives on Style now (RG-231). */
+const styleTab = async () => {
+  [...host.querySelectorAll('.te-scope button')].find((b) => b.textContent.trim() === 'Style')?.click();
+  await drain(2);
+};
 const pick = async (name) => {
   [...host.querySelectorAll('.te-layer')].find((r) => r.textContent.includes(name)).click();
   await drain();
@@ -114,6 +119,7 @@ describe('it writes the same model the panel writes', () => {
     await open('a');
     btn('Bigger').click();
     await drain();
+    await styleTab();
     const inPanel = host.querySelector('#te-size');
     expect(Number(inPanel.value), 'the panel and the bar disagree about the size').toBeGreaterThan(5.2);
     // And the canvas foot, which reads the template, moved with it.
@@ -124,6 +130,7 @@ describe('it writes the same model the panel writes', () => {
     await open('a');
     btn('Text aligned left').click();
     await drain();
+    await styleTab();
     const on = [...host.querySelectorAll('.te-seg .te-segbtn')].find((b) => b.classList.contains('on'));
     expect(on.getAttribute('aria-label'), 'the panel still shows the old alignment').toMatch(/left/i);
   });

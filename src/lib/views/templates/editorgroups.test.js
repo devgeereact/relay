@@ -74,6 +74,18 @@ beforeEach(() => {
 afterEach(() => { cmp?.$destroy(); cmp = null; host?.remove(); host = null; });
 
 // A group is titled by a HEAD (collapsible) or a LABEL (the one that is not).
+/**
+ * Put the panel on STYLE, where the look controls now live (RG-231).
+ *
+ * The approved canvas keeps an object's identity and its look apart: Content
+ * answers *what is this*, Style answers *how does it read*. The groups below did
+ * not change — only which tab they sit behind.
+ */
+async function styleTab(el) {
+  [...el.querySelectorAll('.te-scope button')].find((b) => b.textContent.trim() === 'Style')?.click();
+  await drain(2);
+}
+
 const group = (el, name) =>
   [...el.querySelectorAll('.te-group')].find((g) =>
     (g.querySelector('.te-grouphead') ?? g.querySelector('.te-grouplbl'))
@@ -87,16 +99,19 @@ const has = (el, sel) => Boolean(el?.querySelector(sel));
 describe('the four groups, and what each one opens as', () => {
   it('a text object is grouped, not listed', async () => {
     const el = await open();
-    // THREE now, not four: *where does it sit* went to its own tab in RG-230,
-    // where it sits beside the stacking order rather than under everything else
-    // and shut. What is left in this column is the object's own reading.
-    for (const g of ['what is this', 'how does it read', 'anything else'])
+    // The four groups are behind TWO tabs now (RG-231): Content answers *what is
+    // this*, Style answers *how does it read* and *anything else*, and *where
+    // does it sit* went to its own tab in RG-230.
+    expect(group(el, 'what is this'), 'the identity left the Content tab').toBeTruthy();
+    await styleTab(el);
+    for (const g of ['how does it read', 'anything else'])
       expect(group(el, g), `no “${g}” group`).toBeTruthy();
     expect(group(el, 'where does it sit'), 'the geometry is in two places').toBeFalsy();
   });
 
   it('“how does it read” is open, because it is the one used on every layer', async () => {
     const el = await open();
+    await styleTab(el);
     expect(isOpen(group(el, 'how does it read'))).toBe(true);
     expect(has(group(el, 'how does it read'), '#te-font')).toBe(true);
     expect(has(group(el, 'how does it read'), '#te-size')).toBe(true);
@@ -105,6 +120,7 @@ describe('the four groups, and what each one opens as', () => {
 
   it('“anything else” starts closed, and opens on a press', async () => {
     const el = await open();
+    await styleTab(el);
     const more = group(el, 'anything else');
     expect(isOpen(more), 'the once-a-year controls are open by default').toBe(false);
     expect(has(more, '#te-sh'), 'a closed group still rendered its body').toBe(false);
@@ -124,6 +140,7 @@ describe('the four groups, and what each one opens as', () => {
 
   it('the rare controls are in “anything else”, not beside Colour', async () => {
     const el = await open();
+    await styleTab(el);
     group(el, 'anything else').querySelector('.te-grouphead').click();
     await drain(2);
     const more = group(el, 'anything else');

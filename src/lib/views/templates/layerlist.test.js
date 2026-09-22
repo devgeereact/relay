@@ -417,6 +417,18 @@ describe('S1 · drag to reorder, driven through the arrows that already work', (
   });
 });
 
+/**
+ * Readability moved to the inspector's STYLE tab (RG-231).
+ *
+ * It was the biggest thing in the LEFT column and the least used, folded under a
+ * list about something else entirely. Nothing about the panel changed — only
+ * which tab it sits behind — so every assertion below is untouched.
+ */
+async function openStyle() {
+  [...host.querySelectorAll('.te-scope button')].find((b) => b.textContent.trim() === 'Style')?.click();
+  await settle();
+}
+
 describe('S1 · the readability panel folds, and its one visible line is a real status line', () => {
   const withStyle = (style) => ({ ...structuredClone(TEMPLATE), style });
 
@@ -442,6 +454,7 @@ describe('S1 · the readability panel folds, and its one visible line is a real 
   it('starts folded — the essay is one row until it is asked for', async () => {
     mountStyled({});
     await settle();
+    await openStyle();
     const toggle = host.querySelector('.te-legtoggle');
     expect(toggle, 'no readability heading').toBeTruthy();
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
@@ -452,6 +465,7 @@ describe('S1 · the readability panel folds, and its one visible line is a real 
   it('and opens to exactly what was there before, caveat included', async () => {
     mountStyled({});
     await settle();
+    await openStyle();
     host.querySelector('.te-legtoggle').click();
     await settle();
     expect(host.querySelector('.te-legtoggle').getAttribute('aria-expanded')).toBe('true');
@@ -484,6 +498,7 @@ describe('S1 · the readability panel folds, and its one visible line is a real 
     // precisely the defect the rule names.
     mountStyled({ background: '#000000', verseColor: '#0a0a0a', refColor: '#0b0b0b' });
     await settle();
+    await openStyle();
     const bad = host.querySelector('.te-legsum');
     expect(bad.textContent.trim()).toMatch(/to look at/);
     expect(bad.classList.contains('bad')).toBe(true);
@@ -491,6 +506,7 @@ describe('S1 · the readability panel folds, and its one visible line is a real 
     host.remove();
     mountStyled({ background: '#000000', verseColor: '#ffffff', refColor: '#ffffff' });
     await settle();
+    await openStyle();
     const ok = host.querySelector('.te-legsum');
     expect(ok.textContent.trim()).not.toMatch(/to look at/);
     expect(ok.classList.contains('bad')).toBe(false);
@@ -502,6 +518,7 @@ describe('S1 · the readability panel folds, and its one visible line is a real 
     // nothing on screen able to turn them off.
     mountStyled({});
     await settle();
+    await openStyle();
     host.querySelector('.te-legtoggle').click();
     await settle();
     [...host.querySelectorAll('.te-legbtn')][0].click();
@@ -545,7 +562,10 @@ describe('S1 · the inspector opens on the selected object, not on the template'
     await settle();
     const s = sections();
     expect(s, 'the template is still a section of a layer').not.toContain('Template');
-    expect(s).toContain('Shape');
+    // The KIND's own controls are the Style tab's since RG-231 — Content answers
+    // what the object is, Style how it looks.
+    await openStyle();
+    expect(sections()).toContain('Shape');
     // The geometry left this column entirely in RG-230: it has its own tab now,
     // beside the stacking order, rather than being a shut group under everything
     // else. The object column is the object's own reading.
@@ -635,6 +655,7 @@ describe('S1 · the alignment strip writes percentages, and only where they mean
   it('does not share a name with the inspector row that aligns the words inside the object', async () => {
     mount();
     await settle();
+    await openStyle();
     rowFor('Verse').click();
     await settle();
 

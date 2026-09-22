@@ -108,13 +108,14 @@ describe('zoom is a view, never the template', () => {
 
   it('a zoom moves NO layer — it is a view and the template is untouched', async () => {
     await open();
-    const before = foot();
+    // The SELECTION's own numbers, not the whole foot: the zoom control lives on
+    // the foot now (RG-231), so its own readout changes there by design.
+    const shown = () => [...host.querySelectorAll('.te-botchip')].map((c) => c.textContent.trim());
+    const before = shown();
     zoomBtn('Zoom in').click();
     zoomBtn('Zoom in').click();
     await drain();
-    // The readout reads the TEMPLATE, so if a zoom had written into the model
-    // these numbers would have moved with it.
-    expect(foot(), 'the zoom resized a layer').toBe(before.replace(/$/, ''));
+    expect(shown(), 'the zoom resized a layer').toEqual(before);
   });
 
   it('and it stops at both ends rather than running away', async () => {

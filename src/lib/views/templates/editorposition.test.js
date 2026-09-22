@@ -58,9 +58,11 @@ beforeEach(() => {
 afterEach(() => { cmp?.$destroy(); cmp = null; host?.remove(); host = null; });
 
 describe('the third tab', () => {
-  it('sits beside Object and Template', async () => {
+  it('sits beside Content, Style and Template', async () => {
     await open();
-    for (const name of ['Object', 'Position', 'Template'])
+    // `Object` became `Content` in RG-231, when the look controls moved to a
+    // `Style` tab of their own.
+    for (const name of ['Content', 'Style', 'Position', 'Template'])
       expect(tab(name), `no ${name} tab`).toBeTruthy();
   });
 
