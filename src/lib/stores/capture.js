@@ -638,7 +638,24 @@ export async function initAudio() {
     // selected last time, and nothing said so.
     call('get_setting', { key: INPUT_DEVICE_KEY }).catch(() => null),
   ]);
-  const chosen = chooseInputDevice({ stored: storedDevice, devices });
+  // A RESOLVED NULL IS NOT A REJECTION (RG-267). `.catch(() => [])` above guards
+  // a THROW and says nothing about the shape of a success — and a backend that
+  // answers `null` (an older build, a renamed command, a read with no answer)
+  // put `null` straight into the store, where the microphone picker's `{#each}`
+  // threw `only works with iterable values` and the crash panel took the whole
+  // console down: *"The console stopped responding."* over a working engine.
+  //
+  // The harm was out of all proportion to the cause. A missing device list
+  // should cost an empty picker; it cost every control in the product.
+  const deviceList = Array.isArray(devices) ? devices : [];
+  // AND THE SAME FOR THE MODEL. `Live.svelte` renders `$capture.stt.loaded`
+  // while it is being constructed, so a `stt_status` that resolved `null` threw
+  // before the run surface existed — the console opened on a crash panel rather
+  // than on a missing-model line. An unknown model reads as "no model"; it does
+  // not read as a product that will not open.
+  const sttStatus =
+    stt && typeof stt === 'object' ? stt : { loaded: false, model: null, language: null };
+  const chosen = chooseInputDevice({ stored: storedDevice, devices: deviceList });
   // `get_thresholds` returns the same four facts `detection://thresholds` carries,
   // deliberately: the event is how a surface hears about a change and this is how
   // it starts out, and a surface that learned two different things from the two
@@ -647,8 +664,8 @@ export async function initAudio() {
   capture.update((s) => ({
     ...s,
     available: true,
-    devices,
-    stt,
+    devices: deviceList,
+    stt: sttStatus,
     thresholds: gate ? { auto_fire: gate.auto_fire, suggest: gate.suggest } : s.thresholds,
     sensitivity: gateRead ? Number(gate.sensitivity) : s.sensitivity,
     sensitivityKnown: s.sensitivityKnown || gateRead,
@@ -3350,6 +3367,22 @@ async function guardedRead(key, run, fallback, onFail) {
 try {
   const value = await run(await invoke());
   readErrors.update((m) => (m[key] ? { ...m, [key]: null } : m));
+  // A RESOLVED NULL IS NOT A REJECTION — RG-267, and this is the choke point
+  // rather than the third hand-written guard (rule 36).
+  //
+  // The fallback below has always been used on a THROW and never on a
+  // resolution, so a backend that answered `null` — an older build, a renamed
+  // command, a read with genuinely no answer — put `null` where a caller was
+  // about to `.map`, `.some` or `{#each}` it. Three instances were found in one
+  // pass over the built console, and each took the WHOLE console down with
+  // *"The console stopped responding."* over a working engine.
+  //
+  // DELIBERATELY NARROW: only an ARRAY fallback coerces. An array is the one
+  // fallback that states a SHAPE a caller then relies on. `null` means "no
+  // answer" and a null answer is exactly that; an object fallback would need to
+  // know which of its keys matter, which is the call site's business and not
+  // this function's.
+  if (Array.isArray(fallback) && !Array.isArray(value)) return fallback;
   return value;
 } catch (e) {
   readErrors.update((m) => ({ ...m, [key]: e }));

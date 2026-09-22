@@ -215,7 +215,6 @@
     channelHealth,
     sendStageMedia,
     stageMedia,
-    listOutputChannels,
   } from './stores/capture.js';
   import { describeMediaClock, mediaIdFromUrl } from './mediaclock.js';
   import { programmeScreen } from './channelroles.js';
@@ -664,10 +663,18 @@
     } catch {
       /* `sensitivityKnown` stays false, and the card says so in words */
     }
-    // WHICH SCREEN IS THE MAIN ONE (RG-238). GROUP 2: `listOutputChannels`
-    // swallows and answers `[]`, so a failure leaves the clock quoting the
-    // soonest screen — the behaviour it had before — rather than nothing.
-    dockChannels = await listOutputChannels();
+    // THE CHANNEL READ WENT WITH THE CLIP (RG-254) AND ITS CALL DID NOT.
+    //
+    // `dockChannels` was deleted with the transport — RG-238's main-screen rule
+    // travelled whole to `ClipBar.svelte` — and this line kept assigning to it.
+    // Svelte compiles an assignment to an undeclared name without complaint, so
+    // `npm run build` was clean and the SUITE was green; it is a runtime
+    // `ReferenceError` in a module that runs in strict mode, thrown from
+    // `onMount`, which the crash panel then reported as *"The console stopped
+    // responding."*
+    //
+    // Found by driving the built console rather than by any instrument in the
+    // repository — which is the whole argument for doing that (RG-267).
   });
   // ── THE MICROPHONE, ON THE RUN SURFACE (L3, operator instruction) ──────────
   //
