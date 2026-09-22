@@ -227,8 +227,9 @@
   // The Stage Timer's two pure questions — which rows belong here, and how
   // long is left on one. `timerRemainingMs` ENDS in `countdownRemainingMs`, which
   // stays the only countdown arithmetic on this side of the bridge.
-  import { stageTimers, timerRemainingMs, timerIsHeld, timerAsRow } from '../timers.js';
+  import { stageTimers, timerRemainingMs, timerIsHeld } from '../timers.js';
   import { mediaUrl } from '../bundledbackgrounds.js';
+  import { previewOfCell } from '../previewcell.js';
   import { planChannelsOf } from '../plan.js';
   // THE ONE DECISION LAYER FOR THE SCREEN COUNTDOWN. It moved out of Quick tools
   // on 2026-09-20 and its decisions did not move with it — they were already
@@ -404,11 +405,6 @@
   // verse answers a question nobody asked, and it would be the last thing the
   // previous clip said rather than a fact about now.
   $: mediaLive = !!$live?.media_url && !$screenBlack;
-  // THE PROGRAMME, IN THE SHAPE A RENDERER READS (RG-222). `ptTimers` is the
-  // registry's spelling and `TemplateRender` only ever sees the wire's, so the
-  // rename crosses through the one shared projection rather than an object
-  // literal here — see `timers.js::timerAsRow`.
-  $: previewProgramme = Array.isArray(ptTimers) ? ptTimers.map(timerAsRow) : [];
   let clipErr = '';
   /**
    * THE CLIP ON THE WALL, AS AN ID — or `null` for one Relay ships.
@@ -1650,18 +1646,17 @@
   // it is still in the detection panel, where accepting it is one press. The
   // override is transient: taking it clears it, and the preview goes back to the
   // ordinary order.
+  // A MEDIA CUE PREVIEWS AS THE MEDIA (RG-236). `previewOfCell` is the rule;
+  // both cell-shaped branches go through it, so the pane cannot describe a
+  // picture one way when it is cued and another when it is next.
   $: previewContent = gridPreview
-    ? { reference: gridPreview.label, text: gridPreview.text || gridPreview.label, translation: null }
+    ? previewOfCell(gridPreview, cellMedia(gridPreview, deckMedia, deckHost)?.url ?? null)
     : dets[0]
       ? { reference: dets[0].reference, text: dets[0].text ?? '', translation: null }
       : previewSlide
         ? { reference: previewCue.item.label, text: previewSlide.text || previewSlide.label, translation: null }
         : gridNextCell
-          ? {
-              reference: gridNextCell.reference ?? gridNextCell.label,
-              text: gridNextCell.text || gridNextCell.label,
-              translation: null,
-            }
+          ? previewOfCell(gridNextCell, cellMedia(gridNextCell, deckMedia, deckHost)?.url ?? null)
           : null;
   $: previewLabel = gridPreview
     ? gridPreview.label
@@ -2289,7 +2284,19 @@
       </header>
       <div class="screen">
         {#if previewTpl && previewContent}
-          <TemplateRender template={previewTpl} content={previewContent} />
+          <!-- STILL, and for the same reason the deck is (RG-235): this pane is
+               a picture of what is COMING, and a clip playing here beside the
+               one that is on air is two moving pictures competing for the
+               operator's eye. -->
+          <TemplateRender template={previewTpl} content={previewContent} still />
+          {#if previewContent.media_kind === 'video' && mediaClock.known}
+            <!-- HOW LONG IS LEFT OF THE ONE ON AIR, over the one that is next
+                 (RG-236). It is the figure an operator is actually timing the
+                 next cue against, which is why it belongs on the pane that
+                 answers "what is next" rather than over the programme.
+                 NOT amber: amber means ON AIR and this is a fact about a clip. -->
+            <span class="mon-nextclock r-mono" aria-live="polite">{mediaClock.text}</span>
+          {/if}
         {:else}
           <div class="screen-empty">
             {previewTpl ? 'Nothing cued' : 'No active template — activate one in Templates'}
@@ -2486,114 +2493,16 @@
            a zero, and that sentence is the useful half: a dash reads as "this clip
            has no clock", a zero reads as "it has finished", and an operator told
            that no screen is answering goes and looks at one. -->
-      {#if mediaLive}
-        <div class="mon-clip" class:unknown={!mediaClock.known} aria-live="polite">
-          <!-- THE TRANSPORT. No amber on any of it: amber is ON AIR and these are
-               instructions about a clip, not a claim that a congregation is
-               looking at one.
+      <!-- THE CLIP'S CONTROLS ARE IN THE SHELL NOW (RG-237). They were here, on
+           a workspace, and a clip plays on every screen in the building whatever
+           tab the operator is on — so they belong beside Clear screens, Blackout
+           and Rehearse in the dock, which is mounted once and survives a crashed
+           view. Two sets over one clip would be the twin door this repository
+           keeps deleting, so this one is gone rather than hidden.
 
-               `Replay` is not disabled while held, deliberately — starting a clip
-               again is exactly what an operator reaches for when it is stopped in
-               the wrong place, and the engine treats replay as "play it from the
-               top" rather than "seek and stay stopped". -->
-          <button
-            class="r-btn sm ghost"
-            on:click={() => clip({ paused: !$mediaTransport.paused })}
-            aria-pressed={$mediaTransport.paused}
-            title={$mediaTransport.paused ? 'Let the clip run' : 'Hold the clip where it is'}
-            >{$mediaTransport.paused ? 'Play' : 'Pause'}</button>
-          <button class="r-btn sm ghost" on:click={() => clip({ replay: true })} title="Start the clip again from the beginning">Replay</button>
-          <!-- AND ONTO THE PREACHER'S SCREEN TOO. Requirement 10, from the surface
-               an operator is already driving. Scripture overrides it there, so this
-               is additive rather than a second wall.
-
-               Disabled for a picture Relay ships, with the reason in the title
-               rather than a control that looks pressable and does nothing. -->
-          <button
-            class="r-btn sm ghost"
-            class:on={onStage}
-            disabled={liveMediaId == null}
-            aria-pressed={onStage}
-            on:click={toStage}
-            title={liveMediaId == null
-              ? 'A picture Relay ships cannot be sent on its own'
-              : onStage
-                ? "Take it off the preacher's screen"
-                : "Put this on the preacher's screen as well"}
-            >{onStage ? 'On stage' : 'To stage'}</button>
-          <button
-            class="r-btn sm ghost"
-            class:on={$mediaTransport.loop}
-            on:click={() => clip({ loop: !$mediaTransport.loop })}
-            aria-pressed={$mediaTransport.loop}
-            title={$mediaTransport.loop ? 'Stop repeating at the end' : 'Repeat the clip when it ends'}
-            >Loop</button>
-          <span class="r-mono">{mediaClock.text}</span>
-          {#if mediaClock.known && mediaClock.from}
-            <span class="mon-clipfrom">from {mediaClock.from}</span>
-          {/if}
-          {#if clipErr}
-            <!-- Humanised, and shown rather than swallowed: a transport control
-                 that failed quietly is a control reporting a success it did not
-                 achieve (rule 15's lesson, one surface over). -->
-            <span class="mon-cliperr" role="alert">{clipErr}</span>
-          {/if}
-          {#if mediaClock.disagree}
-            <!-- A REAL GAP BETWEEN TWO SCREENS IS NOT DRIFT. Separate players are
-                 never in lockstep, but a large spread is one screen stalled or
-                 buffering, and that is exactly what an operator needs before they
-                 cue something over it. -->
-            <span class="mon-clipwarn">screens disagree</span>
-          {/if}
-        </div>
-        <!-- ── THE REST OF THE TRANSPORT (RG-221) ──────────────────────────────
-             Play, Pause, Replay and Loop are not the whole of a transport, and
-             the operator said so: a church could not start a clip thirty seconds
-             in, could not go back to a line the preacher wanted again, and could
-             not turn a clip down under a spoken introduction.
-
-             ON ITS OWN ROW, because the row above is the one an operator hits
-             under pressure and a scrub handle is the last thing that should move
-             the Pause button sideways.
-
-             `on:change`, never `on:input`: dragging a handle fires input on every
-             pixel, and each one is a frame to every screen in the building. The
-             change event is the drop. -->
-        {#if mediaClock.known && mediaClock.durationMs}
-          <div class="mon-clip2">
-            <input
-              class="r-range mon-scrub"
-              type="range"
-              min="0"
-              max={mediaClock.durationMs}
-              step="250"
-              value={mediaClock.positionMs ?? 0}
-              aria-label="Scrub the clip"
-              title="Drag to move the clip. Every screen follows."
-              on:change={(e) => clip({ seekMs: Number(e.target.value) })}
-            />
-            <!-- NOT `aria-label="Volume"` alone: this is the clip's level on the
-                 screens, not the operator's own monitoring, and the two are
-                 different things an operator could otherwise confuse under
-                 pressure. -->
-            <span class="mon-vol">
-              <span class="r-lbl">Level</span>
-              <input
-                class="r-range"
-                type="range"
-                min="0"
-                max="1"
-                step="0.05"
-                value={$mediaTransport.volume ?? 1}
-                aria-label="Clip volume on the screens"
-                title="How loud the clip is on the output screens"
-                on:change={(e) => clip({ volume: Number(e.target.value) })}
-              />
-              <span class="r-mono mon-volnum">{Math.round(($mediaTransport.volume ?? 1) * 100)}%</span>
-            </span>
-          </div>
-        {/if}
-      {/if}
+           What is left on this pane about the clip is on the PREVIEW beside it:
+           how long is left of the one on air, over the frame of the one that is
+           next (RG-236). -->
       <div class="screen">
         {#if $live && progTpl}
           <!-- THE STANDING BACKGROUND RIDES WITH THE CONTENT, because the wall
@@ -2601,19 +2510,24 @@
                prop and not a field on the content on purpose: a verse replaces
                `$liveContent` and leaves `$background` exactly where it is, which
                is the whole of the feature. -->
-          <!-- THE SAME FACTS THE WALL IS HANDED (RG-222). Two props were missing
-               and each was a different lie on the one surface an operator trusts.
-               `mediaTransport`: Pause holds every screen in the building and this
-               pane went on playing, so the control that HAD worked read as though
-               it had not. `programme`: a template carrying a programme layer
-               previewed without its timers, so the operator could not see what
-               the preacher's screen was showing. -->
+          <!-- THE SAME FACTS THE WALL IS HANDED — and no more (RG-222, RG-234).
+               `mediaTransport` belongs here: Pause holds every screen in the
+               building and this pane went on playing, so the control that HAD
+               worked read as though it had not.
+
+               `programme` does NOT. RG-222 handed it over so a stage template
+               would preview with its clocks, and the operator saw the cost the
+               same day: this pane is a picture of the MAIN screen, which never
+               shows the running order — the rail is role-gated at the output
+               page for exactly that reason — so RG-224's fallback drew a clock
+               over a clip that was on air. A congregation's preview showing
+               "Sermon · 4:12 left" makes the same claim the screen itself would.
+               The programme belongs to the stage, and the stage previews it. -->
           <TemplateRender
             template={progTpl}
             content={$liveContent}
             backdrop={$background}
             mediaTransport={$mediaTransport}
-            programme={previewProgramme}
             onFit={noteFit}
           />
         {:else if $background && progTpl}
@@ -2901,7 +2815,10 @@
                          wall that has no look at all. The plate needs a template
                          that EXISTS and keys; the absence gets nothing. -->
                     {#if cellTemplate(c) && isKeyedTemplate(cellTemplate(c))}<CameraPlate />{/if}
-                    <TemplateRender template={cellTemplate(c) ?? {}} content={cellContent(c)} />
+                    <!-- STILL (RG-235). A deck cell is a thumbnail of a cue, and
+                         four video cues meant four clips playing at once under
+                         the one that is actually on air. -->
+                    <TemplateRender template={cellTemplate(c) ?? {}} content={cellContent(c)} still />
                   {/if}
                   <!-- THE KIND, TOP-LEFT, IN WHOLE WORDS — as the prototype
                        draws it: `NOTICE`, `SCRIPTURE`, `SONG`, `MEDIA`.
@@ -3615,6 +3532,14 @@
      and a screen falling behind is not a claim about what a congregation sees. */
   /* The second transport row. Its own line, so a scrub handle can never move the
      Pause button sideways under an operator's hand. */
+  /* The clip's remaining time, over the corner of the NEXT-UP frame. Ochre would
+     be a caution and this is not one; neutral over a scrim, because it sits on
+     whatever picture the cue happens to be. */
+  .mon-nextclock{ position:absolute; left:8px; bottom:8px; z-index:3;
+    padding:2px 7px; border-radius:var(--v-r-sm);
+    background:color-mix(in srgb, var(--v-void) 72%, transparent);
+    border:1px solid var(--v-line2); color:var(--v-txt);
+    font-size:var(--v-fs-lbl); font-variant-numeric:tabular-nums; }
   .mon-clip2{ display:flex; align-items:center; gap:10px; padding:2px 0 4px; }
   .mon-scrub{ flex:1 1 auto; min-width:0; }
   .mon-vol{ flex:0 0 auto; display:flex; align-items:center; gap:6px; }

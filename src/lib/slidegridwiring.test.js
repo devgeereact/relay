@@ -165,7 +165,9 @@ describe('the grid is rendered, and its presses go through the arbiter', () => {
   // so cqw resolves against the thumbnail, and the fit report stays the wall's.
   it('a cell RENDERS the slide, through the one renderer', () => {
     const cell = src.slice(src.indexOf('<span class="sg-thumb">'), src.indexOf('</span>\n                <span class="sg-meta">'));
-    expect(cell).toMatch(/<TemplateRender template=\{cellTemplate\(c\) \?\? \{\}\} content=\{cellContent\(c\)\} \/>/);
+    expect(cell).toMatch(// `still` since RG-235: a cell is a thumbnail of a cue, and a grid of playing
+    // clips is what the operator asked to stop. Same renderer, same inputs.
+    /<TemplateRender template=\{cellTemplate\(c\) \?\? \{\}\} content=\{cellContent\(c\)\} still \/>/);
     // No second renderer, and no second fit path.
     expect(src).not.toMatch(/SlideThumb|MiniRender|fitCell/);
   });

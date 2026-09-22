@@ -637,14 +637,17 @@ describe('the End service button says which of its two states it is in', () => {
     new Dock({ target: host });
     for (let i = 0; i < 4; i++) await settle();
   }
-  const btn = () => [...host.querySelectorAll('.r-cbtn')].find((b) => /End service|No service/.test(b.textContent));
+  const btn = () => [...host.querySelectorAll('.r-cbtn')].find((b) => /End service|Not recording/.test(b.textContent));
 
   it('with nothing recording it says so and refuses to be pressed', async () => {
     const cap = await import('./stores/capture.js');
     cap.capture.update((s) => ({ ...s, available: true }));
     cap.serviceLock.set({ engaged: false, held_back: [], recording: false });
     await mount();
-    expect(btn().textContent.trim()).toBe('No service');
+    // `Not recording` since RG-237: the slot is shared with the clip transport
+    // now, and "No service" read as a claim about the button's own subject where
+    // what it means is that nothing is being recorded.
+    expect(btn().textContent.trim()).toBe('Not recording');
     expect(btn().disabled).toBe(true);
     expect(btn().dataset.on).toBe('0');
     cap.capture.update((s) => ({ ...s, available: false }));

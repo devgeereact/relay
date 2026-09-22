@@ -428,6 +428,26 @@
    */
   export let mediaTransport = null;
   /**
+   * PAINT THE FIRST FRAME AND STOP THERE (RG-235).
+   *
+   * A deck cell is a thumbnail of a cue, and four video cues in a plan meant
+   * four clips playing at once under the one that is actually on air — on the
+   * surface an operator works from for a whole service.
+   *
+   * It is a property of the RENDER and not of the content, because the same clip
+   * is live on a wall and a thumbnail in a deck at the same instant and only one
+   * of them is playing. Default `false`, so every surface that paints a
+   * congregation screen is unchanged by construction: a surface has to ask.
+   *
+   * A still is not a paused clip. `preload="metadata"` fetches enough for a
+   * frame and never the file, so twenty cues are twenty small requests rather
+   * than twenty downloads over a church's network. It reports nothing through
+   * `onMedia` either — a thumbnail answering "where is the clip" would put a
+   * deck cell's position into the readout an operator times the next cue
+   * against.
+   */
+  export let still = false;
+  /**
    * A PICTURE OR CLIP THAT DID NOT LOAD, or `null` once one has (2026-09-21, O-4).
    *
    * Six media elements and not one `on:error`: a 404, a codec the webview cannot
@@ -1234,6 +1254,7 @@
   };
 
   const reportMedia = () => {
+    if (still) return;
     syncMedia();
     if (!onMedia) return;
     const el = videoEl;
@@ -2203,7 +2224,7 @@
             <div class="lmediabox" style="{boxStyle(L)} border-radius:{L.radius || 0}cqw; opacity:{L.opacity == null ? 1 : L.opacity};">
               {#if content.media_kind === 'video'}
                 <!-- svelte-ignore a11y-media-has-caption -->
-                <video class="lmediafill" src={content.media_url} style="object-fit:{L.fit === 'contain' ? 'contain' : 'cover'};" bind:this={videoEl} on:error={() => mediaFailed('video', content.media_url)} on:loadeddata={mediaLoaded} autoplay loop={!!mediaTransport?.loop} muted={!audio} playsinline on:loadedmetadata={() => { routeAudio(); reportMedia(); }} on:timeupdate={reportMedia} on:pause={reportMedia} on:play={reportMedia} on:ended={reportMedia}></video>
+                <video class="lmediafill" src={content.media_url} style="object-fit:{L.fit === 'contain' ? 'contain' : 'cover'};" bind:this={videoEl} on:error={() => mediaFailed('video', content.media_url)} on:loadeddata={mediaLoaded} autoplay={!still} loop={!still && !!mediaTransport?.loop} preload={still ? "metadata" : "auto"} muted={!audio} playsinline on:loadedmetadata={() => { routeAudio(); reportMedia(); }} on:timeupdate={reportMedia} on:pause={reportMedia} on:play={reportMedia} on:ended={reportMedia}></video>
               {:else}
                 <img class="lmediafill" src={content.media_url} style="object-fit:{L.fit === 'contain' ? 'contain' : 'cover'};" alt="" on:error={() => mediaFailed('image', content.media_url)} on:load={mediaLoaded} />
               {/if}
@@ -2300,7 +2321,7 @@
            layer to the template to position it instead. -->
       {#if content.media_kind === 'video'}
         <!-- svelte-ignore a11y-media-has-caption -->
-        <video class="media" src={content.media_url} bind:this={videoEl} on:error={() => mediaFailed('video', content.media_url)} on:loadeddata={mediaLoaded} autoplay loop={!!mediaTransport?.loop} muted={!audio} playsinline on:loadedmetadata={() => { routeAudio(); reportMedia(); }} on:timeupdate={reportMedia} on:pause={reportMedia} on:play={reportMedia} on:ended={reportMedia}></video>
+        <video class="media" src={content.media_url} bind:this={videoEl} on:error={() => mediaFailed('video', content.media_url)} on:loadeddata={mediaLoaded} autoplay={!still} loop={!still && !!mediaTransport?.loop} preload={still ? "metadata" : "auto"} muted={!audio} playsinline on:loadedmetadata={() => { routeAudio(); reportMedia(); }} on:timeupdate={reportMedia} on:pause={reportMedia} on:play={reportMedia} on:ended={reportMedia}></video>
       {:else}
         <img class="media" src={content.media_url} alt="" on:error={() => mediaFailed('image', content.media_url)} on:load={mediaLoaded} />
       {/if}
@@ -2351,7 +2372,7 @@
          sensible behaviour and keeps old templates working. -->
     {#if content.media_kind === 'video'}
       <!-- svelte-ignore a11y-media-has-caption -->
-      <video class="media" src={content.media_url} bind:this={videoEl} on:error={() => mediaFailed('video', content.media_url)} on:loadeddata={mediaLoaded} autoplay loop={!!mediaTransport?.loop} muted={!audio} playsinline on:loadedmetadata={() => { routeAudio(); reportMedia(); }} on:timeupdate={reportMedia} on:pause={reportMedia} on:play={reportMedia} on:ended={reportMedia}></video>
+      <video class="media" src={content.media_url} bind:this={videoEl} on:error={() => mediaFailed('video', content.media_url)} on:loadeddata={mediaLoaded} autoplay={!still} loop={!still && !!mediaTransport?.loop} preload={still ? "metadata" : "auto"} muted={!audio} playsinline on:loadedmetadata={() => { routeAudio(); reportMedia(); }} on:timeupdate={reportMedia} on:pause={reportMedia} on:play={reportMedia} on:ended={reportMedia}></video>
     {:else}
       <img class="media" src={content.media_url} alt="" on:error={() => mediaFailed('image', content.media_url)} on:load={mediaLoaded} />
     {/if}

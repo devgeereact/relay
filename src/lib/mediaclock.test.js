@@ -129,11 +129,16 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const LIVE = readFileSync(resolve(__dirname, 'views/Live.svelte'), 'utf8');
+// THE TRANSPORT MOVED TO THE SHELL (RG-237). A clip plays on every screen in the
+// building whatever workspace the operator is on, so its controls sit beside
+// Clear screens rather than on one surface out of six. The rule below did not
+// change — only which file asks it.
+const DOCK = readFileSync(resolve(__dirname, 'Dock.svelte'), 'utf8');
 
-describe('the run surface asks the screens', () => {
+describe('the shell asks the screens', () => {
   it('feeds the clock from channel health, not from its own preview', () => {
-    const call = LIVE.match(/describeMediaClock\(([\s\S]*?)\n\s*\);/);
-    expect(call, 'Live no longer calls describeMediaClock').not.toBeNull();
+    const call = DOCK.match(/describeMediaClock\(([\s\S]*?)\n\s*\);/);
+    expect(call, 'nothing calls describeMediaClock').not.toBeNull();
     expect(call[1]).toMatch(/channelHealth/);
     // If this ever reads a bound video element or the live content's own fields,
     // the readout has stopped being a fact about the screens.
@@ -143,15 +148,15 @@ describe('the run surface asks the screens', () => {
   it('shows the readout only while a clip is what is on the screens', () => {
     // Beside a verse it would be the last thing the PREVIOUS clip said, which is
     // a stale number in a slot an operator reads as current.
-    expect(LIVE).toMatch(/mediaLive\s*=\s*!!\$live\?\.media_url/);
-    expect(LIVE).toMatch(/\{#if mediaLive\}/);
+    expect(DOCK).toMatch(/clipLive\s*=\s*!!\$live\?\.media_url/);
+    expect(DOCK).toMatch(/\{#if clipLive\}/);
   });
 
   it('spends no law colour on it', () => {
     // Amber is ON AIR and this is a fact about a clip, not a claim that a
     // congregation is looking at one. The tag above the pane already makes that
     // claim and is the only thing entitled to.
-    const block = LIVE.slice(LIVE.indexOf('.mon-clip{'), LIVE.indexOf('.mon-name{'));
+    const block = DOCK.slice(DOCK.indexOf('.clipbar {'), DOCK.indexOf('.ctlbody {'));
     expect(block).not.toMatch(/--v-amber|--v-amethyst|--v-cyan/);
   });
 });
@@ -183,22 +188,23 @@ describe('the run surface can put the clip on the preacher screen too', () => {
     // `sendStageMedia(null)` is the take-down, the same one door for both
     // directions the engine uses. A separate "clear" call would be a second door
     // onto one piece of state.
-    const fn = LIVE_SRC.slice(LIVE_SRC.indexOf('async function toStage'));
-    expect(fn.slice(0, 400)).toMatch(/sendStageMedia\(onStage \? null : liveMediaId\)/);
+    const fn = DOCK.slice(DOCK.indexOf('async function toStage'));
+    expect(fn.slice(0, 400)).toMatch(/sendStageMedia\(clipOnStage \? null : clipMediaId\)/);
   });
 
   it('refuses a picture Relay ships rather than guessing an id', () => {
     // DECISIONS §90: a bundled asset has no row under `/media/<id>`, so there is
     // nothing to address. The control says so in its title instead of looking
     // pressable and doing nothing.
-    expect(LIVE_SRC).toMatch(/disabled=\{liveMediaId == null\}/);
-    expect(LIVE_SRC).toMatch(/A picture Relay ships cannot be sent on its own/);
+    // In the dock since RG-237, with the rest of the transport.
+    expect(DOCK).toMatch(/disabled=\{clipMediaId == null\}/);
+    expect(DOCK).toMatch(/A picture Relay ships cannot be sent on its own/);
   });
 
   it('shows the failure rather than swallowing it', () => {
     // A control that reported a success it did not achieve is the failure
     // `panic.test.js` exists for one surface up.
-    const fn = LIVE_SRC.slice(LIVE_SRC.indexOf('async function toStage'));
+    const fn = DOCK.slice(DOCK.indexOf('async function toStage'));
     expect(fn.slice(0, 400)).toMatch(/clipErr = humanError\(e\)/);
   });
 });
@@ -298,17 +304,17 @@ describe('the clip’s length and position, for the control that moves it', () =
 // them usable rather than merely present.
 describe('the rest of the transport is reachable from the run surface', () => {
   it('offers a scrub and a level, both named for somebody who cannot see them', () => {
-    expect(LIVE, 'no scrub on the desk').toMatch(/aria-label="Scrub the clip"/);
+    expect(DOCK, 'no scrub on the desk').toMatch(/aria-label="Scrub the clip"/);
     // NOT "Volume": this is the clip's level on the SCREENS, not the operator's
     // own monitoring, and an operator under pressure could confuse the two.
-    expect(LIVE).toMatch(/aria-label="Clip volume on the screens"/);
+    expect(DOCK).toMatch(/aria-label="Clip volume on the screens"/);
   });
 
   it('sends the scrub on the DROP, never on every pixel of the drag', () => {
     // `on:input` fires per pixel and each one is a frame to every screen in the
     // building — a drag across a two-minute clip would be hundreds of broadcasts
     // and a wall that stutters while the handle moves.
-    const bar = LIVE.slice(LIVE.indexOf('aria-label="Scrub the clip"'));
+    const bar = DOCK.slice(DOCK.indexOf('aria-label="Scrub the clip"'));
     const tag = bar.slice(0, bar.indexOf('/>'));
     expect(tag, 'the scrub fires on every pixel of the drag').not.toMatch(/on:input/);
     expect(tag).toMatch(/on:change=\{\(e\) => clip\(\{ seekMs:/);
@@ -317,6 +323,6 @@ describe('the rest of the transport is reachable from the run surface', () => {
   it('and neither appears when no screen is reporting a clip', () => {
     // A scrub bar over an unknown length looks usable and can move nothing,
     // which is the defect DECISIONS §69 closed seven Settings controls of.
-    expect(LIVE).toMatch(/\{#if mediaClock\.known && mediaClock\.durationMs\}/);
+    expect(DOCK).toMatch(/\{#if mediaClock\.known && mediaClock\.durationMs\}/);
   });
 });

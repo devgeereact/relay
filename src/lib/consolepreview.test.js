@@ -41,8 +41,18 @@ describe('the pane is handed the same facts the wall is', () => {
     );
   });
 
-  it('carries the programme, so a stage template previews with its clocks', () => {
-    expect(programPane(), 'the programme never reaches the preview').toMatch(/programme=\{/);
+  it('does NOT carry the programme — this pane previews a CONGREGATION screen', () => {
+    // RG-222 handed it the clocks so a stage template would preview with them.
+    // That was wrong and the operator saw it within the day: this pane is a
+    // picture of the MAIN screen, which never shows the running order (the rail
+    // is role-gated at the output page for exactly that reason), and RG-224's
+    // fallback rail then drew `14:57` over a clip that was on air.
+    //
+    // "Sermon · 4:12 left" on a preview of a congregation screen is the same
+    // claim as on the screen itself: it says the wall is showing it.
+    expect(programPane(), 'the running order is previewed on a congregation screen').not.toMatch(
+      /programme=\{/,
+    );
   });
 
   it('and the output page — the other door — carries both, as it already did', () => {
@@ -51,6 +61,8 @@ describe('the pane is handed the same facts the wall is', () => {
     // test rather than with prose.
     const out = codeOnly(OUTPUT);
     expect(out).toMatch(/\{mediaTransport\}/);
+    // The output page still carries it, gated on the screen's ROLE — which is
+    // what Live has no business second-guessing.
     expect(out).toMatch(/programme=\{shownProgramme\}/);
   });
 });

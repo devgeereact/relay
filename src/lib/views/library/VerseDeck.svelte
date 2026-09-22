@@ -377,7 +377,10 @@
                 reference: v.hideReference ? null : (v.label ?? v.reference),
                 text: v.text,
                 translation: v.translation,
-              }} />
+                media_url: v.media,
+                media_kind: v.mediaKind,
+              }}
+              still />
           {:else}
             <!-- Even without a template the card must show what the WALL will
                  show: a lyric slide projects the lyric, not the section name. -->

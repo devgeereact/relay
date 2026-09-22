@@ -1425,7 +1425,10 @@
                        picture that is merely old looks exactly like a current
                        one. -->
                   {#if k.frame}
-                    <TemplateRender template={k.tpl} content={k.frame} />
+                    <!-- STILL (RG-235): a card is a picture of a screen, and a
+                         wall of playing clips is what the operator asked to
+                         stop. The screen itself plays; this is its portrait. -->
+                    <TemplateRender template={k.tpl} content={k.frame} still />
                   {/if}
                   {#if k.stale}
                     <span class="ch-stale r-mono">Last seen</span>
