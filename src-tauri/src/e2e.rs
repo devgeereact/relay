@@ -4673,6 +4673,101 @@ fn a_blackout_answers_the_same_way_as_a_clear() {
     );
 }
 
+/// THE DESK SETS A SECOND CLOCK AND THE RAIL CARRIES ONE — RG-250, END TO END.
+///
+/// `timers::tests` proves the registry rule and the stage page's own suites prove
+/// the render. Neither drives the DOOR: `start_timer` is what the dock, the timer
+/// desk, a plan cue and a room all call, and until this test existed the claim
+/// "an operator sets a second timer and the first one goes" was assembled from
+/// two halves that had never been run together.
+///
+/// It asserts on the FRAME rather than the registry, because the frame is what a
+/// preacher's screen is painted from — a registry that is right and a frame that
+/// is stale is exactly the failure rule 35 keeps finding.
+#[test]
+fn a_second_stage_timer_set_from_the_desk_leaves_one_clock_on_the_rail() {
+    let app = app();
+    let h = app.handle().clone();
+    let mut kiosk = qa::Kiosk::attach(&h);
+
+    start_timer(
+        h.clone(),
+        25.0,
+        "Sermon".into(),
+        String::new(),
+        "stage".into(),
+        None,
+        None,
+        None,
+    )
+    .expect("the first programme timer");
+    settle();
+
+    let congregation = start_timer(
+        h.clone(),
+        5.0,
+        "Service begins in".into(),
+        "Welcome".into(),
+        "both".into(),
+        None,
+        None,
+        None,
+    )
+    .expect("a congregation countdown");
+
+    let second = start_timer(
+        h.clone(),
+        2.0,
+        "Notices".into(),
+        String::new(),
+        "stage".into(),
+        None,
+        None,
+        None,
+    )
+    .expect("a second programme timer");
+    settle();
+
+    // THE LAST FRAME IS WHAT THE SCREEN IS HOLDING. An earlier one carrying two
+    // rows would be a rail that flickered rather than a rail that is wrong, and
+    // the assertion has to be about the state it settles in.
+    let mut frames = Vec::new();
+    while let Some(m) = kiosk.next() {
+        if m.contains(r#""kind":"timer""#) {
+            frames.push(m);
+        }
+    }
+    let last = frames
+        .last()
+        .expect("setting a timer told the stage tablet nothing");
+    let v: serde_json::Value = serde_json::from_str(last).expect("valid JSON");
+    let rows = v["timers"].as_array().expect("a timers array");
+    assert_eq!(
+        rows.len(),
+        1,
+        "the preacher's rail is carrying more than one clock: {last}"
+    );
+    assert_eq!(
+        rows[0]["id"].as_i64(),
+        Some(second),
+        "the rail kept the clock the operator replaced: {last}"
+    );
+    assert_eq!(rows[0]["label"].as_str(), Some("Notices"));
+
+    // AND THE CONGREGATION'S COUNTDOWN IS UNTOUCHED. It is not on this frame at
+    // all — the stage frame is `Scope::Stage` only — so the registry is where
+    // that half is read.
+    let ids: Vec<i64> = list_timers(h.clone())
+        .expect("list")
+        .iter()
+        .map(|t| t.timer.id)
+        .collect();
+    assert!(
+        ids.contains(&congregation),
+        "setting a stage clock took the congregation's countdown: {ids:?}"
+    );
+}
+
 /// ENDING THE SERVICE TAKES THE PROGRAMME CLOCKS, AND LEAVES THE CONGREGATION'S.
 ///
 /// `TimerRegistry` never reaps, and until this landed nothing ever stopped a
