@@ -23,6 +23,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import { codeOnly } from './codeonly.js';
 
 const ROOT = path.resolve(__dirname, '../..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
@@ -33,7 +34,7 @@ const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 function styleOf(file) {
   const src = read(file);
   const at = src.indexOf('<style>');
-  return src.slice(at, src.lastIndexOf('</style>')).replace(/\/\*[\s\S]*?\*\//g, '');
+  return codeOnly(src.slice(at, src.lastIndexOf('</style>')));
 }
 
 /** The [start, end) extents of every `@media (...query...)` block, by brace

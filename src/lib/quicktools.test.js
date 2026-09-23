@@ -87,6 +87,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { tick } from 'svelte';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { codeOnly } from './codeonly.js';
 
 const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a) => invoke(...a) }));
@@ -373,7 +374,7 @@ describe('the card is what is left in it, in one place', () => {
     // `Load whole plan` left this card for the slides head (RG-261). COMMENTS
     // STRIPPED: the note recording where it went names it, and a scan of raw
     // source cannot tell a control from a sentence about one.
-    expect(body.replace(/<!--[\s\S]*?-->/g, '')).not.toContain('Load whole plan');
+    expect(codeOnly(body)).not.toContain('Load whole plan');
     // The removal, asserted here as well as in `screencountdown.test.js`: this is
     // the file that says what the card IS, so it has to be the file that notices
     // the card growing a third block back.

@@ -18,6 +18,7 @@ import { tick } from 'svelte';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import Stage from '../Stage.svelte';
+import { codeOnly } from './codeonly.js';
 
 // THE STYLESHEET ALONE. `.tmr { flex: 1 1 0 }` also appears in a JS comment 1400
 // lines above the rule it describes, and a scanner reading the whole file found
@@ -25,7 +26,7 @@ import Stage from '../Stage.svelte';
 // is this repository's recurring instrument fault in miniature.
 const FILE = readFileSync(resolve('src/Stage.svelte'), 'utf8');
 const SRC = FILE.slice(FILE.lastIndexOf('<style>'));
-const decls = (css) => css.replace(/\/\*[\s\S]*?\*\//g, '');
+const decls = (css) => codeOnly(css);
 const ruleFor = (sel) => {
   const from = SRC.indexOf(sel + ' {');
   expect(from, `no rule for ${sel}`).toBeGreaterThan(-1);

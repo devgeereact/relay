@@ -236,7 +236,7 @@ describe('L4 · the picker is in the take rack, and the take is never below it',
     const END = '  :global(.ibtn){';
     expect(style.indexOf(END), 'the end boundary of the band has moved').toBeGreaterThan(0);
     const band = style.slice(style.indexOf('  .rk-x .xcap{'), style.indexOf(END));
-    const rules = band.replace(/\/\*[\s\S]*?\*\//g, '');
+    const rules = codeOnly(band);
     expect(rules).not.toMatch(/--v-amber|--v-amethyst|--v-cyan/);
     expect(rules).toMatch(/\.rk-x\.on \.xpick\{border-color:var\(--v-accent-line\)/);
   });

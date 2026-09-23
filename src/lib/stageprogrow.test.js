@@ -30,6 +30,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { formatCountdown } from './layers.js';
+import { codeOnly } from './codeonly.js';
 
 const ROOT = path.resolve(__dirname, '../..');
 
@@ -40,10 +41,7 @@ const ROOT = path.resolve(__dirname, '../..');
 function styleOf(file) {
   const src = fs.readFileSync(path.join(ROOT, file), 'utf8');
   const at = src.indexOf('<style>');
-  return src
-    .slice(at, src.lastIndexOf('</style>'))
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/\s+/g, ' ');
+  return codeOnly(src.slice(at, src.lastIndexOf('</style>'))).replace(/\s+/g, ' ');
 }
 
 /** The body of the first rule with this exact selector.

@@ -22,6 +22,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { codeOnly } from './codeonly.js';
 
 const FILE = readFileSync(resolve('src/Stage.svelte'), 'utf8');
 // The stylesheet alone: this page's script quotes its own rules in comments, and
@@ -30,7 +31,7 @@ const SRC = FILE.slice(FILE.lastIndexOf('<style>'));
 const decls = (sel) => {
   const from = SRC.indexOf(sel + ' {');
   expect(from, `no rule for ${sel}`).toBeGreaterThan(-1);
-  return SRC.slice(from, SRC.indexOf('}', from)).replace(/\/\*[\s\S]*?\*\//g, '');
+  return codeOnly(SRC.slice(from, SRC.indexOf('}', from)));
 };
 const weight = (sel) => {
   const m = decls(sel).match(/font-weight:\s*(\d+)/);

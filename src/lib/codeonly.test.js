@@ -132,7 +132,36 @@ describe('and no scanner has grown its own chain again — RG-169', () => {
     ).toEqual([]);
   });
 
-  it('…and the twenty-six that had one are all reaching for the shared stripper', () => {
+  it('nothing strips BLOCK comments by hand either — RG-283', () => {
+    // THE SWEEP ABOVE CLOSED ONE DIRECTION AND LEFT THE OTHER OPEN, which is this
+    // repository's most-repeated instrument fault wearing the costume of the
+    // instrument built to stop it. The HTML half of the chain was forbidden the
+    // day `codeonly.js` was written; the CSS half was not — and the CSS half is
+    // the MORE dangerous of the two, because it is the one that ate 7 KB of
+    // `Stage.svelte`. Twenty-two live call sites across fifteen scanners were
+    // still hand-rolling it, and CodeQL found them before this file did.
+    //
+    // NEITHER HALF IS SPELLED OUT HERE, deliberately, and that is worth its own
+    // sentence: writing the retired chain into this comment makes the sweep
+    // report its own file. The stripper does blank a `//` line — but a stray
+    // quote in an earlier comment can leave a run open across the newline, so
+    // the `//` is read as being inside a string and the line survives. That is a
+    // real limit of `codeOnly` and it is recorded rather than worked around: it
+    // costs a false ALARM, never a blind spot, which is the cheap direction.
+    //
+    // Same design as the sweep above and for the same reason: the input is
+    // stripped first, so the files that NAME the retired chain in prose are
+    // honestly clean and nobody is ever paid to delete an explanation.
+    const offenders = files.filter((f) =>
+      /replace\(\/\\\/\\\*/.test(codeOnly(readFileSync(join(ROOT, f), 'utf8'))),
+    );
+    expect(
+      offenders,
+      'use `codeOnly` from src/lib/codeonly.js — a private chain is how a scanner goes blind (RG-283)',
+    ).toEqual([]);
+  });
+
+  it('…and every file that had one is reaching for the shared stripper', () => {
     // The other half of the claim. Forbidding the chain is satisfied by a file
     // that stops stripping altogether, which would be a scanner reading prose as
     // code — so the count of files that IMPORT the stripper is asserted too, and
@@ -140,6 +169,6 @@ describe('and no scanner has grown its own chain again — RG-169', () => {
     const importers = files.filter((f) =>
       /from '\.{1,2}(\/\.\.)*\/?codeonly\.js'/.test(readFileSync(join(ROOT, f), 'utf8')),
     );
-    expect(importers.length, 'a scanner stopped stripping instead of converting').toBeGreaterThanOrEqual(26);
+    expect(importers.length, 'a scanner stopped stripping instead of converting').toBeGreaterThanOrEqual(50);
   });
 });

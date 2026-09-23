@@ -635,6 +635,7 @@ describe('countdownRemainingMs answers past zero only when asked', () => {
 
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { codeOnly } from './codeonly.js';
 
 /** The stage page's own source, for the one assertion that is about a CSS rule
  *  rather than about a rendered row. jsdom computes no layout, so a claim about
@@ -778,7 +779,7 @@ describe('a held programme row says it is held', () => {
     // records which treatment that gets: the page's own ink. Amber means ON AIR,
     // cyan means a guess, amethyst means rehearsal, and none of those is true of a
     // clock somebody paused.
-    const style = SRC.slice(SRC.indexOf('<style>')).replace(/\/\*[\s\S]*?\*\//g, '');
+    const style = codeOnly(SRC.slice(SRC.indexOf('<style>')));
     const i = style.indexOf('.tstate {');
     expect(i, 'no rule for .tstate').toBeGreaterThan(-1);
     const rule = style.slice(i, style.indexOf('}', i));

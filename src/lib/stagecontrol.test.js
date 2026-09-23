@@ -36,6 +36,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { tick } from 'svelte';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { codeOnly } from './codeonly.js';
 
 const Stage = (await import('../Stage.svelte')).default;
 
@@ -230,7 +231,7 @@ describe('the search panel takes the reading’s room', () => {
     const FILE = readFileSync(resolve('src/Stage.svelte'), 'utf8');
     const style = FILE.slice(FILE.lastIndexOf('<style>'));
     const from = style.indexOf('.ctl {');
-    const rule = style.slice(from, style.indexOf('}', from)).replace(/\/\*[\s\S]*?\*\//g, '');
+    const rule = codeOnly(style.slice(from, style.indexOf('}', from)));
     expect(rule, 'the panel does not grow into the room it took').toMatch(/flex:\s*1 1 0/);
     expect(rule, 'a ceiling written for a panel that shared the screen').not.toMatch(
       /max-height:\s*60dvh/,

@@ -498,7 +498,7 @@ describe('C2 · the audio card wears icon toggles, with the switch semantics int
     const markup = codeOnly(src);
     const rows = markup.slice(markup.indexOf('<div class="audrow">'), markup.indexOf('</div>\n    </div>'));
     expect(rows).not.toMatch(/amber/);
-    const style = src.slice(src.indexOf('<style>')).replace(/\/\*[\s\S]*?\*\//g, '');
+    const style = codeOnly(src.slice(src.indexOf('<style>')));
     const rule = style.slice(style.indexOf('\n  .audtog {'), style.indexOf('\n  .dcap {'));
     expect(rule).not.toMatch(/--v-amber|--v-amethyst|--v-cyan/);
     expect(rule, 'the on state paints nothing at all').toMatch(/--v-emerald/);
@@ -746,9 +746,7 @@ describe('the transcript card paints a window, and the window grows', () => {
   it('does not reintroduce a cap on the STORE', () => {
     // The store is the session's memory; this file may cap what it PAINTS and
     // must never cap what is kept.
-    const CAP = readFileSync(resolve(process.cwd(), 'src/lib/stores/capture.js'), 'utf8')
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/^[ \t]*\/\/.*$/gm, '');
+    const CAP = codeOnly(readFileSync(resolve(process.cwd(), 'src/lib/stores/capture.js'), 'utf8'));
     expect(CAP).not.toMatch(/finals: \[[^\]]*\]\.slice\(/);
     expect(CAP).not.toMatch(/finalsAt: \[[^\]]*\]\.slice\(/);
   });

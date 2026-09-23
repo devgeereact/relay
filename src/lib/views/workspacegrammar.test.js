@@ -416,7 +416,7 @@ const SWEPT_HEX_ONLY = [
 // explanation — which is the more valuable half.
 const styleOf = (src) => {
   const i = src.lastIndexOf('<style>');
-  return (i === -1 ? '' : src.slice(i)).replace(/\/\*[\s\S]*?\*\//g, '');
+  return codeOnly(i === -1 ? '' : src.slice(i));
 };
 
 describe('§1 · the token sweep — wave 4', () => {
@@ -572,7 +572,7 @@ describe('§1 · the control metrics', () => {
   // The rule's body, by selector, with comments stripped so a retired value
   // documented in prose cannot satisfy or break an assertion.
   const ruleFor = (sel) => {
-    const bare = css.replace(/\/\*[\s\S]*?\*\//g, '');
+    const bare = codeOnly(css);
     const i = bare.indexOf(sel + '{');
     expect(i, `no rule for ${sel}`).toBeGreaterThan(-1);
     return bare.slice(i, bare.indexOf('}', i));
@@ -698,7 +698,7 @@ describe('the retired red never comes back', () => {
 
   it('is in no stylesheet and no component', () => {
     const offenders = files.filter((f) => {
-      const body = read(f).replace(/\/\*[\s\S]*?\*\//g, '');
+      const body = codeOnly(read(f));
       return /rgba\(\s*239\s*,\s*68\s*,\s*68/.test(body);
     });
     expect(offenders, 'use var(--v-red) / --v-red-soft / --v-red-line').toEqual([]);
@@ -789,7 +789,7 @@ describe('the retired red never comes back', () => {
     const seen = read('src/lib/views/library/VerseDeck.svelte');
     expect(seen, 'VerseDeck no longer mentions the retired amber even in prose')
       .toMatch(/rgba\(255, ?176, ?0/);
-    const stripped = seen.replace(/\/\*[\s\S]*?\*\//g, '');
+    const stripped = codeOnly(seen);
     expect(stripped, 'the retired amber is back in VerseDeck\'s code')
       .not.toMatch(/rgba\(255, ?176, ?0/);
   });
@@ -797,7 +797,7 @@ describe('the retired red never comes back', () => {
 
 describe('§1 · one button, everywhere', () => {
   const css = read('src/app.css');
-  const bare = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const bare = codeOnly(css);
   const ruleFor = (sel) => {
     const i = bare.indexOf(sel + '{');
     expect(i, `no rule for ${sel}`).toBeGreaterThan(-1);
@@ -1131,7 +1131,7 @@ describe('§1 · a button is the shared one, or a named shape — Planner · Out
     const offenders = [];
     for (const f of B3) {
       const src = read(f);
-      const style = rawStyleOf(src).replace(/\/\*[\s\S]*?\*\//g, '');
+      const style = codeOnly(rawStyleOf(src));
       const companions = new Set();
       for (const b of buttonsIn(templateOf(src))) {
         const classes = classesOf(b.attrs);

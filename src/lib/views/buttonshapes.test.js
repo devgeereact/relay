@@ -306,7 +306,7 @@ describe('B2 · a button in a row of buttons uses the shared control', () => {
     const offenders = [];
     for (const f of FILES) {
       const src = read(f);
-      const style = styleOf(src).replace(/\/\*[\s\S]*?\*\//g, '');
+      const style = codeOnly(styleOf(src));
       // Classes that ride alongside a shared instrument in this file.
       const riders = new Set();
       for (const b of buttons(src)) {
@@ -343,7 +343,7 @@ describe('B2 · a button in a row of buttons uses the shared control', () => {
     //
     // The vocabulary is READ OUT of app.css rather than restated here, so this
     // cannot drift from the thing it is about.
-    const css = read('src/app.css').replace(/\/\*[\s\S]*?\*\//g, '');
+    const css = codeOnly(read('src/app.css'));
     const known = new Set();
     for (const m of css.matchAll(/\.r-btn((?:\.[a-zA-Z0-9_-]+)+)[\s,{:]/g)) {
       for (const v of m[1].split('.').filter(Boolean)) known.add(v);
@@ -365,7 +365,7 @@ describe('B2 · a button in a row of buttons uses the shared control', () => {
       // caught is a variant name that DOES NOTHING, wherever it should have been
       // declared.
       const own = new Set();
-      for (const m of styleOf(src).replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/\.([a-zA-Z0-9_-]+)(?=[\s,{:.>+~[])/g)) {
+      for (const m of codeOnly(styleOf(src)).matchAll(/\.([a-zA-Z0-9_-]+)(?=[\s,{:.>+~[])/g)) {
         own.add(m[1]);
       }
       for (const b of buttons(src)) {
@@ -464,10 +464,10 @@ describe('B2 · and everything that is NOT a button is named, and says what it i
       // header says in the other direction. The lookahead reads every rule.
       for (const m of style.matchAll(/\}([^{}]*)\{(?=([^{}]*)\})/g)) {
         const lead = m[1];
-        const sel = lead.replace(/\/\*[\s\S]*?\*\//g, '').trim();
+        const sel = codeOnly(lead).trim();
         const bare = sel.match(/^\.([a-zA-Z0-9_-]+)$/);
         if (!bare || !own.has(bare[1])) continue;
-        if (!SHAPE.test(m[2].replace(/\/\*[\s\S]*?\*\//g, ''))) continue;
+        if (!SHAPE.test(codeOnly(m[2]))) continue;
         if (/\/\*/.test(lead)) continue; // it explains itself
         offenders.push(`${f}: .${bare[1]} draws a shape and does not say what it is`);
       }

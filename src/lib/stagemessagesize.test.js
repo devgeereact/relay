@@ -19,6 +19,7 @@ import { tick } from 'svelte';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { messagePlacement } from './stagemessage.js';
+import { codeOnly } from './codeonly.js';
 
 const SRC = readFileSync(resolve('src/Stage.svelte'), 'utf8');
 
@@ -140,7 +141,7 @@ describe('the preacher’s screen paints the three states', () => {
     // fails on the prose describing the fix — the opposite of this repository's
     // usual scanner fault, and the same lesson: read what paints, not what is
     // written beside it.
-    const decls = (css) => css.replace(/\/\*[\s\S]*?\*\//g, '');
+    const decls = (css) => codeOnly(css);
     const from = SRC.indexOf('.bigmsg {');
     const rule = decls(SRC.slice(from, SRC.indexOf('}', from)));
     expect(rule, 'the message is positioned against the PAGE').not.toMatch(/position:\s*absolute/);

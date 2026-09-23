@@ -87,7 +87,7 @@ describe('L4 · the live cell and the cued cell are unmistakable at 158px', () =
     // not entitled to either: amethyst on a live cell would read "nothing is
     // reaching the congregation" over something that is.
     const edge = STYLE.slice(STYLE.indexOf('\n  .sg-thumb{'), STYLE.indexOf('\n  .sg-tag{'));
-    const rules = edge.replace(/\/\*[\s\S]*?\*\//g, '');
+    const rules = codeOnly(edge);
     expect(rules).not.toMatch(/--v-amethyst|--v-cyan|--v-rose|--v-emerald/);
     // And the two it IS entitled to are the two it already had.
     expect(rules).toMatch(/--v-amber/);
