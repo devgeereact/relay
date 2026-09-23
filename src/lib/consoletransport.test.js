@@ -147,10 +147,14 @@ describe('the console preview is told where the scrub put the clip', () => {
     );
   });
 
-  it('and it takes it from the transport store, which is the frame itself', () => {
-    // NOT a second subscription to anything, and not a copy: the store IS the
-    // frame the screens were sent, so the console and a projector correct
-    // against the same instant by construction.
-    expect(LIVE).toMatch(/\$mediaTransport\.startedAt/);
+  it('and it takes it from the transport store, through the one rule (RG-271)', () => {
+    // THE STORE IS STILL THE SOURCE — that is RG-260 and it stands. What changed
+    // is that the figure is no longer applied unconditionally: `startedAt` is
+    // only ever set by a SCRUB and nothing clears it, so after one scrub every
+    // clip fired for the rest of a service was previewed against that scrub's
+    // baseline. `baselineFor` decides which instant belongs to the clip that is
+    // actually up.
+    expect(LIVE).toMatch(/\$mediaTransport\?\.startedAt/);
+    expect(LIVE).toMatch(/baselineFor\(/);
   });
 });

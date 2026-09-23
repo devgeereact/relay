@@ -80,8 +80,10 @@ describe('the inspector and the output page resolve the same way', () => {
     // Announcement look on a lower-third screen.
     expect(page).toMatch(
       // The sixth argument is the content KIND (RG-219): scripture and song wear
-      // the configured default's style, media and notices keep their own.
-      /resolveOutputTemplate\(t, override, !!content\?\.template_pinned, defaultTpl, kindLook, content\?\.kind\)/,
+      // the configured default's style, media and notices keep their own. The
+      // SEVENTH is this screen's role (RG-272), because a pinned plan cue may
+      // not redesign a stage display.
+      /resolveOutputTemplate\(t, override, !!content\?\.template_pinned, defaultTpl, kindLook, content\?\.kind, myRole\)/,
     );
     // And the component is actually handed that answer, not a second one built
     // inline — a preview resolved twice is a preview that can disagree with itself.

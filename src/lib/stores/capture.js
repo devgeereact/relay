@@ -1247,7 +1247,7 @@ unlistenAudio = await listen('audio://chunk', (e) => {
   meter.set({ level: rms, isVoice: is_voice, peaks: Array.isArray(peaks) ? peaks : [] });
 });
 unlistenStt = await listen('stt://transcript', (e) => {
-  const { text, is_final, language, trace_id } = e.payload;
+  const { text, is_final, language, trace_id, timestamp_ms } = e.payload;
   // Only touch `capture` when the detected language actually CHANGES. A Svelte
   // writable notifies every subscriber on every `set`, so updating it on each
   // transcript event re-rendered the whole app shell several times a second for

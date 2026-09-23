@@ -524,6 +524,19 @@ export function resolveOutputTemplate(
   fallback = null,
   kindLook = null,
   kind = null,
+  /**
+   * WHAT THIS SCREEN IS FOR — RG-272. `'stage'`, or anything else.
+   *
+   * The preacher's monitor is an instrument rather than a canvas: zones, a
+   * clock, a message and a reading, laid out for one person reading from a
+   * platform. A plan cue that pins a scripture template picked for the
+   * PROJECTOR took it over, so loading a plan redesigned the stage display
+   * mid-service by a decision that was never about it.
+   *
+   * Defaults to no role, which is not a stage — a lobby TV and a stream feed
+   * both arrive with none, and a filter whose default is yes is not a filter.
+   */
+  role = null,
 ) {
   // RUNGS 3 AND 4, IN ONE LINE: what this screen wears for this kind, else what it
   // wears for everything. Everything below asks about THIS, never about the two
@@ -545,6 +558,11 @@ export function resolveOutputTemplate(
   // sees exactly the template they assigned to each screen. (This reverses the old
   // "content look overrides every screen" — operators found it silently replaced
   // the per-screen templates they had deliberately set. See DECISIONS §29.)
+  // A PINNED CUE DOES NOT REDESIGN THE PREACHER'S SCREEN (RG-272). Narrow on
+  // purpose: it applies only when this screen is a stage AND has a template of
+  // its own to keep. A stage screen that was never given one has nothing to
+  // protect, and showing the verse beats showing nothing.
+  if (pinned && role === 'stage' && screenLook) return screenLook;
   if (pinned) return override;
   return screenLook;
 }

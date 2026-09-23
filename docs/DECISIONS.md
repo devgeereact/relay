@@ -6217,6 +6217,30 @@ unparseable row skipped, the restore filter), and
 `e2e::a_relaunch_brings_the_clocks_back_without_putting_one_on_a_wall`, watched to fail with
 the stage publish removed. RG-208.
 
+### The one narrowing, 2026-09-23 (RG-269)
+
+The operator: *"When Application close clear all active timer running or if not its running it
+should display on the right output...stage"*. `restore_timers` publishes to the stage
+unconditionally, so a running stage clock left in the registry at quitting time came back on a
+preacher's screen at the next launch, counting from a moment that had passed, with nobody having
+asked for it. `db::restorable`'s six-hour horizon covers last Sunday and does nothing for this
+afternoon.
+
+**A CLEAN exit now stops the clocks a relaunch would paint by itself and would still be counting**
+— `main::stop_clocks_a_relaunch_would_paint`, from a real `RunEvent::Exit` arm, writing the
+registry synchronously because a quitting process does not wait for the `relay-timers` thread.
+That is running `Scope::Stage` clocks and nothing else. A HELD timer stays, because it was not
+running and comes back at the figure somebody parked it at. **A congregation countdown stays**,
+because everything above is what it is for: it comes back to the desk behind **Put back on
+screens** and never to a wall, so it cannot paint itself unasked.
+
+**A crash, a force-quit and a power cut never reach `RunEvent::Exit`**, so two of the three cases
+this section was written for — a crash, and a laptop closed and opened — keep every clock exactly
+as before. The one that changes is an update restart mid-service, which costs the operator one
+press of the sermon clock. `timers::tests::a_clean_exit_takes_the_running_stage_clocks_and_nothing_else`
+and `e2e::a_clean_exit_stops_the_running_stage_clock_and_leaves_the_rest`, both halves of the
+second watched to fail.
+
 ## 113. A church may import a Bible it holds a licence for, in the KJV file's shape (2026-09-21)
 
 **On the operator's "go ahead with what's remaining"; RG-50's option two, which §110 left as "still needs its own design".**

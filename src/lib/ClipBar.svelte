@@ -40,6 +40,7 @@
   import { programmeScreen } from './channelroles.js';
   import { describeMediaClock, mediaIdFromUrl } from './mediaclock.js';
   import { clipPosition } from './clipposition.js';
+  import { readingIsAboutThisClip } from './clipbaseline.js';
   import { formatCountdown } from './layers.js';
   import { humanError } from './errors.js';
 
@@ -82,6 +83,21 @@
 
   $: clipLive = !!$live?.media_url && !$screenBlack;
   $: clipMediaId = mediaIdFromUrl($live?.media_url);
+  // WHEN THE CLIP ON THE SCREENS LAST CHANGED (RG-271). A screen reports once
+  // per 2s beat and the console polls on its own 2s timer, so for a few seconds
+  // after a fire the newest reading here is still about the clip BEFORE it — a
+  // clip that had run to 1:18 drew the new one's bar near its end and then
+  // snapped to zero. The url rather than the id, because a bundled picture has
+  // no id and would otherwise read as "unchanged" forever.
+  let clipUrl = null;
+  let clipChangedAt = null;
+  $: {
+    const url = $live?.media_url ?? null;
+    if (url !== clipUrl) {
+      clipUrl = url;
+      clipChangedAt = Date.now();
+    }
+  }
   $: clipOnStage = $stageMedia != null && $stageMedia === clipMediaId;
 
   $: clock = describeMediaClock(
@@ -116,14 +132,17 @@
     if (tick) clearInterval(tick);
   });
 
-  $: posMs = clipPosition({
-    positionMs: clock.positionMs,
-    durationMs: clock.durationMs,
-    paused: clock.paused,
-    known: clock.known,
-    seenAt,
-    now,
-  });
+  // A reading older than the change is about the clip that is gone.
+  $: posMs = !readingIsAboutThisClip(seenAt, clipChangedAt)
+    ? null
+    : clipPosition({
+        positionMs: clock.positionMs,
+        durationMs: clock.durationMs,
+        paused: clock.paused,
+        known: clock.known,
+        seenAt,
+        now,
+      });
   // THE HANDLE IS THE OPERATOR'S WHILE THEY ARE HOLDING IT. The old control
   // re-applied `value=` on every two-second poll, so a poll landing mid-drag
   // snapped the handle back to where the screen last said the clip was.
@@ -139,8 +158,23 @@
     }
   }
 
-  const seek = (ms) => {
+  /**
+   * THE HANDLE GOES BACK TO THE CLIP — RG-271.
+   *
+   * `dragging` was set on `pointerdown` and cleared only by `seek`, which hangs
+   * off `change`. A press on the thumb that releases without moving it fires no
+   * `change` at all, so the flag stayed true for the rest of the service and
+   * `shownMs` went on reporting `dragMs`: a bar frozen where a finger last
+   * touched it, over a clip that was still running.
+   *
+   * One door, so the three ways a gesture can end cannot drift apart.
+   */
+  const endDrag = () => {
     dragging = false;
+  };
+
+  const seek = (ms) => {
+    endDrag();
     send({ seekMs: Math.round(ms) });
   };
 
@@ -207,6 +241,9 @@
         aria-label="Scrub the clip"
         aria-valuetext="{formatCountdown(shownMs)} of {formatCountdown(clock.durationMs)}"
         on:pointerdown={() => (dragging = true)}
+        on:pointerup={endDrag}
+        on:pointercancel={endDrag}
+        on:blur={endDrag}
         on:input={(e) => (dragMs = Number(e.target.value))}
         on:change={(e) => seek(Number(e.target.value))} />
       <span class="cb-t r-mono">&minus;{formatCountdown(leftMs ?? 0)}</span>

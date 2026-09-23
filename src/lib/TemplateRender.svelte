@@ -2589,33 +2589,21 @@
        not cover the reading — that is the whole distinction the operator asked
        for (DECISIONS §116). -->
   {#if stageAlert && !stageUrgent && !hasMessageLayer}
-    <div class="lmsg" role="status" aria-live="polite">{stageAlert}</div>
+    <div class="lmsg" role="status" aria-live="polite">
+      <!-- THE WORDS IN AN ELEMENT OF THEIR OWN (RG-268). A bare text node cannot
+           be coloured or animated apart from the plate it sits on, and the
+           distinction this whole path rests on is that a MESSAGE pulses its text
+           while an ALARM flashes its panel. `Stage.svelte`'s `.bigmsg-v pulse`,
+           on the surface that never had it. -->
+      <span class="lmsg-v pulse">{stageAlert}</span>
+    </div>
   {/if}
 </div>
 
 <style>
-  /* THE QUIET STRIP. Along the foot, inside the safe area, at a size that reads
-     from a platform without taking the screen. No animation: an alarm is the
-     other control, and two things that both move are two alarms. */
-  .lmsg {
-    position: absolute;
-    left: 4cqw;
-    right: 4cqw;
-    bottom: 3cqh;
-    z-index: 3;
-    padding: 0.8cqh 1.2cqw;
-    border-radius: 0.6cqw;
-    background: rgba(0, 0, 0, 0.55);
-    border: 1px solid rgba(255, 255, 255, 0.22);
-    color: #fff;
-    font-size: 3.2cqw;
-    line-height: 1.25;
-    text-align: center;
-    overflow: hidden;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-  }
+  /* The quiet strip's rules live beside the alarm's, under THE STAGE MESSAGE
+     below, because the two are one decision (DECISIONS §116) and reading either
+     of them alone is how they came to disagree. */
   .stage {
     position: absolute;
     inset: 0;
@@ -2929,6 +2917,83 @@
     }
     .lalert-lbl {
       display: block;
+    }
+  }
+
+  /* == THE QUIET STRIP — A WORD THAT IS SEEN, NOT SHOUTED (DECISIONS §116) ===
+     The other half of the Stage Message, and it sits here rather than at the top
+     of the stylesheet so that nobody can change one of the two renderings while
+     reading only the other. That is how this one came to be the thing it is.
+
+     RG-268, the operator with a screenshot of a stage TV: *"Stage message sent
+     still not flashing catching attention ... its just showing a gray/white text
+     which can easily be missed."* It was white on a black plate behind a
+     hairline white border, which is the presentation of a caption, and a caption
+     is the one thing a message from the desk must not read as.
+
+     `Stage.svelte` had already answered this for the phone (RG-239): the caution
+     ink, a rule down the edge, and a gentle pulse of the TEXT. This is that
+     answer, on the surface that never got it — so the tablet and the TV in one
+     room now say the same thing in the same way, which is the whole point of
+     building the presentation twice.
+
+     WHAT IT IS STILL NOT. It does not flash its PANEL and it does not take the
+     screen; `.lalert` above does both, and that distinction is the operator's
+     own (§116). A message pulses its text; an alarm flashes its panel.
+
+     OCHRE, because rule 18 leaves it the only free ink: amber means ON AIR, cyan
+     means the AI guessed, amethyst means a rehearsal, and red is the alarm's.
+     None of those promises is true of a quiet word to a preacher.
+     `colourlaw.test.js` carries `.lmsg` in its caution sweep. */
+  .lmsg {
+    position: absolute;
+    left: 4cqw;
+    right: 4cqw;
+    bottom: 3cqh;
+    z-index: 3;
+    padding: 0.9cqh 1.4cqw;
+    border-radius: 0.6cqw;
+    background: rgba(0, 0, 0, 0.62);
+    /* A RULE, NOT A HAIRLINE. Sized in `cqw` like everything else here, so it is
+       the same share of the screen on a 24" monitor and on a projector. */
+    border-left: 0.9cqw solid var(--v-caution, #c9a24a);
+    box-shadow: 0 0 0 0.12cqw var(--v-caution-line, rgba(201, 162, 74, 0.42));
+    font-size: 3.2cqw;
+    line-height: 1.25;
+    text-align: center;
+    overflow: hidden;
+  }
+  /* THE RESTING COLOUR, and the answer when neither media query applies. A
+     browser that reports no motion preference at all gets the coloured message
+     rather than the grey one, which is the failure direction that matters. */
+  .lmsg-v {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    font-weight: 700;
+    color: var(--v-caution, #c9a24a);
+  }
+  /* THE PULSE, and the phone's cycle unchanged. Gentle on purpose: it has to be
+     unmistakably alive from a platform without competing with the alarm, which
+     is twice as fast and moves a whole red panel. */
+  @media (prefers-reduced-motion: no-preference) {
+    .lmsg-v.pulse {
+      animation: stagemsg 2s ease-in-out infinite;
+    }
+  }
+  @keyframes stagemsg {
+    0%, 100% { color: #fff; }
+    50% { color: var(--v-caution, #c9a24a); }
+  }
+  /* AND REDUCED MOTION GETS AN EQUIVALENT, NOT A QUIETER STATE: the words rest
+     AT the caution ink rather than pulsing to it, so a viewer who asked for no
+     animation still reads a coloured message rather than a plain one. Nothing
+     here animates, filters or fades — a brightness pulse under another word
+     would be the setting ignored. */
+  @media (prefers-reduced-motion: reduce) {
+    .lmsg-v {
+      color: var(--v-caution, #c9a24a);
     }
   }
 

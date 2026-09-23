@@ -619,6 +619,14 @@ describe('the colour law — caution has its own ink, and it is neither promise'
     ['src/lib/views/Channels.svelte', '.ch-downnow', 'a screen the operator took down'],
     ['src/lib/views/Channels.svelte', '.ch-stage-warn', 'no screen has the stage role'],
     ['src/lib/views/templates/TemplateEditor.svelte', '.te-fwarn', "a template's font did not load"],
+    // THE TWO STAGE MESSAGES, added 2026-09-23 with RG-268. A word from the desk
+    // to the preacher is the textbook caution: it warns, it promises nothing
+    // about a screen, and it is not a failure. The phone got the ink with RG-239
+    // and the big screen was left grey for two days, which is exactly the drift
+    // an enumerated sweep exists to catch — so both surfaces are named here and
+    // neither can lose it alone.
+    ['src/lib/TemplateRender.svelte', '.lmsg', 'an ordinary Stage Message, on a stage screen'],
+    ['src/Stage.svelte', '.bigmsg', 'the same Stage Message, on the preacher’s phone'],
   ];
 
   it.each(CAUTIONS)('%s %s — %s — wears the caution ink and no promise colour', (f, sel) => {

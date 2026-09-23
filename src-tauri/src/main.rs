@@ -685,8 +685,89 @@ fn main() {
             verse_repeat_count,
             open_ndi_output
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Relay");
+        .build(tauri::generate_context!())
+        .expect("error while running Relay")
+        .run(|app, event| {
+            // THE ONE THING THAT HAPPENS ON THE WAY OUT (RG-269). `RunEvent::Exit`
+            // is a CLEAN exit and nothing else: a crash, a force-quit or a power
+            // cut never reaches here, which is exactly the line this rule wants
+            // drawn. DECISIONS §112 promises the clocks survive a crash, and a
+            // crash still keeps them.
+            if let tauri::RunEvent::Exit = event {
+                stop_clocks_a_relaunch_would_paint(app);
+            }
+        });
+}
+
+/// STOP THE CLOCKS A RELAUNCH WOULD PUT ON A SCREEN BY ITSELF — RG-269.
+///
+/// The operator: *"When Application close clear all active timer running or if not
+/// its running it should display on the right output...stage"*.
+///
+/// `restore_timers` publishes to the stage unconditionally, because a programme
+/// clock is the one thing that reaches a preacher's screen without a content frame.
+/// So a running stage clock left in the registry at quitting time came back on that
+/// screen at the next launch, counting from a moment that had passed, with nobody
+/// having asked for it. `db::restorable` drops anything over six hours old, which
+/// covers last Sunday and does nothing at all for this afternoon.
+///
+/// ## The rule, and the two things it deliberately leaves
+///
+/// **It takes a clock only if a relaunch would PAINT it and it would still be
+/// counting.** That is one sentence and it decides both exemptions:
+///
+/// - **A HELD timer stays.** It was not running, so nothing about it goes stale: it
+///   comes back at the figure somebody parked it at, which is the figure they
+///   parked. Taking it would be taking a decision the operator made.
+/// - **A congregation countdown (`Scope::Both`) stays.** §112 restores it to the
+///   DESK and never to a wall — Live's Screen Countdown band offers it as
+///   *counting, off the screens* behind **Put back on screens** — so it cannot
+///   paint itself unasked, which is the whole harm here. It is also the clock a
+///   church most wants back after a mid-service relaunch.
+///
+/// ## What this costs, stated rather than discovered
+///
+/// An UPDATE restart is a clean exit, so a church that updates mid-service loses the
+/// sermon clock and has to press it again. That is the price, and it is one press of
+/// a control the operator is already looking at, against a preacher's screen showing
+/// a clock nobody started. Of §112's three motivating cases — a crash, an update, a
+/// laptop closed and opened — only the middle one is a clean exit, and the other two
+/// keep every clock exactly as they did.
+///
+/// Generic over the runtime (rule 24) so `e2e.rs` can drive the real thing.
+fn stop_clocks_a_relaunch_would_paint<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> usize {
+    let n = {
+        let reg = app.state::<timers::TimerRegistry>();
+        reg.stop_running(timers::Scope::Stage)
+    };
+    if n == 0 {
+        return 0;
+    }
+    println!("timers: {n} running stage clock(s) stopped on exit — a relaunch will not paint them");
+    // WRITTEN ON THIS THREAD, not through the sink. The sink hands its snapshot to
+    // `relay-timers` and a process that is quitting does not wait for that thread
+    // to drain, so the registry change would be lost and the next launch would
+    // restore exactly the clock this just stopped.
+    let (next_id, set) = {
+        let reg = app.state::<timers::TimerRegistry>();
+        reg.saveable()
+    };
+    {
+        let db = app.state::<Db>();
+        let conn = match db.0.lock() {
+            Ok(c) => c,
+            Err(e) => e.into_inner(),
+        };
+        if let Err(e) = db::save_timers(&conn, next_id, &set) {
+            eprintln!("timers: could not write the stopped clocks ({e}) — the next launch may still have them");
+        }
+    }
+    // AND TELL THE STAGE. A kiosk browser source on another machine outlives
+    // Relay's own window and keeps rendering the last frame it was sent, so
+    // without this the clock stays on the preacher's screen after Relay has gone.
+    // No lock is held here (rule 2); both blocks above released theirs.
+    channels::publish_timers(app);
+    n
 }
 
 /// Minimum semantic cosine to even consider a paraphrase candidate. Below this

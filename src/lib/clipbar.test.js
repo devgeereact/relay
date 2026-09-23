@@ -233,3 +233,42 @@ describe('mounted, with a clip on the screens', () => {
     expect(host.querySelector('.clipbar'), 'the strip outlived the clip').toBeNull();
   });
 });
+
+// ── A DRAG THAT NEVER ENDS FREEZES THE BAR (RG-271) ─────────────────────────
+//
+// `dragging` is set on `pointerdown` and cleared only in `seek`, which hangs off
+// `change`. A press on the thumb that releases without moving it fires no
+// `change` at all, so `dragging` stayed true for the rest of the service and
+// `shownMs` went on reporting `dragMs` — a bar frozen where a finger last
+// touched it, over a clip that was still running. That is half of *"operator
+// still see something different from whats on the output screens"*.
+describe('the handle is given back when the finger leaves', () => {
+  const BAR = readFileSync(resolve('src/lib/ClipBar.svelte'), 'utf8');
+
+  it('releases on pointerup and on cancel, not only on change', () => {
+    expect(BAR, 'a press that does not move the handle never lets go').toMatch(/on:pointerup=/);
+    expect(BAR, 'a cancelled gesture keeps the bar').toMatch(/on:pointercancel=/);
+  });
+
+  it('and the release is the same one door, so it cannot drift', () => {
+    // `endDrag` rather than three copies of `dragging = false`.
+    expect(BAR).toMatch(/const endDrag = \(\) =>/);
+  });
+});
+
+// ── AND THE BAR IS BLANK UNTIL A READING ABOUT THIS CLIP ARRIVES (RG-271) ───
+describe('a new clip does not inherit the last one’s bar', () => {
+  const SRC = readFileSync(resolve('src/lib/ClipBar.svelte'), 'utf8');
+
+  it('the strip notices when the clip on the screens changed', () => {
+    expect(SRC).toMatch(/clipChangedAt/);
+    // THE URL, not the id: a bundled picture has no id, and comparing ids would
+    // read as "unchanged" forever.
+    expect(SRC).toMatch(/\$live\?\.media_url \?\? null/);
+  });
+
+  it('and refuses a reading older than that, through the one rule', () => {
+    expect(SRC).toContain("from './clipbaseline.js'");
+    expect(SRC).toMatch(/readingIsAboutThisClip\(seenAt, clipChangedAt\)/);
+  });
+});

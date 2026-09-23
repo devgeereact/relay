@@ -335,3 +335,50 @@ describe('CONSTRAINT 4 · the hub does not retain it, and must not start', () =>
     expect(rust).toMatch(/Deliberately NOT retained by the hub/);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PART 3 · THE QUIET STRIP, ON THE PAGE — RG-268.
+//
+// The operator, with a screenshot of a stage TV: *"Stage message sent still not
+// flashing catching attention ... its just showing a gray/white text which can
+// easily be missed."*
+//
+// The stylesheet half of this is in `stagemessagenative.test.js`, beside the rest
+// of DECISIONS §116. What is asserted HERE is the half a stylesheet cannot carry:
+// that the words the preacher reads are inside an element of their own, so the
+// pulse has something to run on. The strip used to be one `<div>` with the text
+// as a bare child, and a rule cannot colour half a text node.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('an ordinary Stage Message is SEEN, not merely present — RG-268', () => {
+  const strip = () => host.querySelector('.lmsg');
+
+  it('a non-urgent message lands in the strip, and its words in their own element', async () => {
+    await outputPage(2, { 1: 'main', 2: 'stage' });
+    send({ kind: 'stage_alert', text: MESSAGE, urgent: false });
+    await settle();
+    expect(strip(), 'no quiet strip at all').toBeTruthy();
+    const words = host.querySelector('.lmsg-v');
+    expect(words, 'the words are a bare text node — nothing can pulse them').toBeTruthy();
+    expect(words.textContent).toContain(MESSAGE);
+    expect(words.className, 'the words do not carry the pulse class').toContain('pulse');
+  });
+
+  it('and it is still not the alarm — no full-bleed panel came with it', async () => {
+    // The distinction DECISIONS §116 exists for, asserted from the page rather
+    // than from the stylesheet: an ordinary send must not raise `.lalert`.
+    await outputPage(2, { 1: 'main', 2: 'stage' });
+    send({ kind: 'stage_alert', text: MESSAGE, urgent: false });
+    await settle();
+    expect(panel(), 'an ordinary word raised the alarm').toBeNull();
+    expect(strip()).toBeTruthy();
+  });
+
+  it('and an urgent one is the alarm and NOT the strip', async () => {
+    await outputPage(2, { 1: 'main', 2: 'stage' });
+    send({ kind: 'stage_alert', text: MESSAGE, urgent: true });
+    await settle();
+    expect(panel()).toBeTruthy();
+    expect(strip(), 'both renderings at once is two messages').toBeNull();
+  });
+});

@@ -475,7 +475,8 @@
   // rule is shared and only the wire shape differs.
   $: kindLook = channelLookTemplate(channelLooks, channelId, content?.kind, lookCache);
   $: activeTemplate =
-    resolveOutputTemplate(t, override, !!content?.template_pinned, defaultTpl, kindLook, content?.kind) ||
+    // `myRole` (RG-272): a pinned plan cue may not redesign a STAGE screen.
+    resolveOutputTemplate(t, override, !!content?.template_pinned, defaultTpl, kindLook, content?.kind, myRole) ||
     DEFAULT_TEMPLATE;
   // Set on mount; a no-op until then so onDestroy is safe if mounting threw.
   let stopBeat = () => {};

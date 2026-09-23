@@ -446,6 +446,54 @@ impl TimerRegistry {
         doomed.len()
     }
 
+    /// TAKE EVERY TIMER IN ONE SCOPE THAT IS STILL RUNNING, reporting how many —
+    /// RG-269.
+    ///
+    /// The same shape as [`Self::stop_scope`] and for the same reason: it reads two
+    /// facts that are ON the timer — its scope, and whether it is held — and asks
+    /// nothing of a clock, a database or a screen. There is no `now_ms` here on
+    /// purpose. A clock past zero is still running, and "has it finished" is a
+    /// question this rule does not need to ask to answer correctly.
+    ///
+    /// **A HELD TIMER IS NOT A RUNNING ONE**, which is the whole distinction the
+    /// caller wants. `paused_ms` is the figure somebody deliberately parked, and a
+    /// parked figure is the same figure whenever it comes back; a running one is a
+    /// deadline, and a deadline that has passed unattended is the harm.
+    ///
+    /// Its one caller is `main::stop_clocks_a_relaunch_would_paint`, which is where
+    /// the reasoning about WHICH scope lives.
+    pub fn stop_running(&self, scope: Scope) -> usize {
+        let mut g = self.inner();
+        let doomed: Vec<TimerId> = g
+            .timers
+            .values()
+            .filter(|t| t.scope == scope && t.paused_ms.is_none())
+            .map(|t| t.id)
+            .collect();
+        for id in &doomed {
+            g.timers.remove(id);
+        }
+        drop(g);
+        if !doomed.is_empty() {
+            self.announce();
+        }
+        doomed.len()
+    }
+
+    /// THE WHOLE REGISTRY, AS THE SINK WOULD SEE IT — the counter and the rows.
+    ///
+    /// For a caller that must write the registry on ITS OWN thread rather than
+    /// through the sink. There is exactly one: the clean-exit hook, because the
+    /// sink hands its snapshot to a persistence thread and a process that is
+    /// quitting does not wait for that thread to drain. Everything else uses the
+    /// sink, which is the rule rather than the exception (DECISIONS §112).
+    pub fn saveable(&self) -> (TimerId, Vec<Timer>) {
+        let g = self.inner();
+        let mut all: Vec<Timer> = g.timers.values().cloned().collect();
+        all.sort_by_key(|t| t.id);
+        (g.next_id, all)
+    }
+
     /// TAKE EVERY TIMER THAT WAS STARTED INSIDE A REHEARSAL, reporting how many —
     /// RG-150.
     ///
@@ -1491,13 +1539,84 @@ mod tests {
         reg.start(r);
         reg.stop_started_in_rehearsal();
         assert_eq!(count(), 8, "stop_started_in_rehearsal announces");
+        let c = reg.start(five(now, Scope::Stage));
+        assert_eq!(count(), 9);
+        reg.stop_running(Scope::Stage);
+        assert_eq!(count(), 10, "stop_running announces");
+        reg.stop_running(Scope::Stage);
+        assert_eq!(count(), 10, "an empty stop_running announces nothing");
+        let _ = c;
 
         // The snapshot handed over is the WHOLE registry, and carries next_id.
         let (next_id, len) = *seen.lock().unwrap().last().unwrap();
         assert_eq!(len, 0);
         assert_eq!(
-            next_id, 3,
-            "three ids were handed out and none may be reused"
+            next_id, 4,
+            "four ids were handed out and none may be reused"
+        );
+    }
+
+    /// A CLEAN EXIT TAKES THE CLOCKS A RELAUNCH WOULD PAINT BY ITSELF — RG-269.
+    ///
+    /// The operator: *"When Application close clear all active timer running or
+    /// if not its running it should display on the right output...stage"*. A
+    /// stage clock left running was written by the sink, restored by the next
+    /// launch and published to the stage without anybody asking for it, so the
+    /// preacher's screen came up counting from a moment that had passed.
+    ///
+    /// The registry's half of that is one rule and it asks nothing of a clock but
+    /// the two facts on the timer itself: its scope, and whether it is held. No
+    /// `now_ms`, no database, no screen. Which timers this is applied TO is
+    /// `main::stop_clocks_a_relaunch_would_paint`, and the reasoning for the two
+    /// deliberate exemptions is written there.
+    #[test]
+    fn a_clean_exit_takes_the_running_stage_clocks_and_nothing_else() {
+        let now = 1_000_000;
+        let reg = TimerRegistry::default();
+        // RESTORED rather than started: `start` evicts an older stage clock
+        // (RG-250), and this rule has to be true of a registry carrying several.
+        let running = Timer {
+            id: 1,
+            ..five(now, Scope::Stage)
+        };
+        let held = Timer {
+            id: 2,
+            paused_ms: Some(now + 60_000),
+            ..five(now, Scope::Stage)
+        };
+        let wall = Timer {
+            id: 3,
+            ..five(now, Scope::Both)
+        };
+        let wall_held = Timer {
+            id: 4,
+            paused_ms: Some(now),
+            ..five(now, Scope::Both)
+        };
+        reg.restore(4, vec![running, held, wall, wall_held]);
+
+        assert_eq!(
+            reg.stop_running(Scope::Stage),
+            1,
+            "it must report what it took"
+        );
+        assert!(
+            reg.get(1).is_none(),
+            "a running stage clock survived a clean exit and comes back counting"
+        );
+        assert!(
+            reg.get(2).is_some(),
+            "a HELD clock is a figure somebody parked, not a clock that ran all night"
+        );
+        assert!(
+            reg.get(3).is_some(),
+            "the congregation countdown is DECISIONS §112's and no relaunch paints it"
+        );
+        assert!(reg.get(4).is_some());
+        assert_eq!(
+            reg.stop_running(Scope::Stage),
+            0,
+            "a second pass takes nothing"
         );
     }
 

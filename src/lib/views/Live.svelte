@@ -156,13 +156,15 @@
    * correct against the same instant by construction rather than by two copies
    * happening to agree.
    */
+  $: progBaseline = baselineFor($liveContent?.media_started_at, $mediaTransport?.startedAt);
   $: progContent =
-    $liveContent && $mediaTransport?.startedAt != null
-      ? { ...$liveContent, media_started_at: $mediaTransport.startedAt }
+    $liveContent && progBaseline != null
+      ? { ...$liveContent, media_started_at: progBaseline }
       : $liveContent;
   import { programmeScreen, describeStageReach, describeCountdownReach } from '../channelroles.js';
   import TemplateRender from '../TemplateRender.svelte';
   import ClipBar from '../ClipBar.svelte';
+  import { baselineFor } from '../clipbaseline.js';
   import {
     resolveOutputTemplate,
     isKeyedTemplate,

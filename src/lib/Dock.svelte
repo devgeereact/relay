@@ -1107,10 +1107,28 @@
            PREACHER'S monitor is currently on it. Nothing else here claims
            anything. -->
       {#if $stageAlert}<span class="dmeta on-stage r-mono">ON STAGE</span>{/if}
-      <!-- `Load whole plan` WENT TO THE SLIDES HEAD (RG-261). The operator
-           asked for the room, and this card does one job at a time now
-           (RG-258) — the picker needs the slot. It belongs beside the grid it
-           stages in any case. -->
+      <!-- ── THE PICKER IS IN THE HEAD (RG-270) ─────────────────────────────
+           The operator, 2026-09-23: *"I want you to move Stage | Name to the
+           same bar as QUICK TOOLS where Load whole plan was before"*.
+
+           `Load whole plan` WENT TO THE SLIDES HEAD (RG-261) and left this slot
+           empty — and it is the slot the picker was described as living in from
+           the day it was built. The RG-258 note under `.qpick` says *a segmented
+           control in the head*; the markup put it at the top of the body, so the
+           card spent a band of its own height restating a choice the head had
+           room for. It is the head's right-hand control now and the body is
+           whichever job is chosen, whole. That room is what the request is for.
+
+           NOTHING CHANGED ABOUT THE CHOICE ITSELF: two tabs, `aria-pressed` on
+           the chosen one, and it still opens on the STAGE MESSAGE, because that
+           is the one that changes mid-sermon — a name band is set once before a
+           service, and a message is typed while somebody is speaking. -->
+      <div class="qpick" role="group" aria-label="Which quick tool">
+        <button class="qp" class:on={qtool === 'stage'} aria-pressed={qtool === 'stage'}
+          on:click={() => (qtool = 'stage')}>Stage</button>
+        <button class="qp" class:on={qtool === 'name'} aria-pressed={qtool === 'name'}
+          on:click={() => (qtool = 'name')}>Name</button>
+      </div>
     </div>
     <div class="dbody tools r-scroll">
       <!-- ── ONE JOB AT A TIME (RG-258) ────────────────────────────────────────
@@ -1118,20 +1136,11 @@
            two labels, three inputs, five buttons and an optional preview in the
            room one of them needs. The approved drawing puts a picker in the
            head — the slot this card already uses for one — and gives whichever
-           job is chosen the whole body.
+           job is chosen the whole body. The picker reached that head at RG-270;
+           until then it sat here, at the top of the body it was meant to free.
 
            NOTHING WAS REMOVED. The rework is a layout, and a tidier card that
-           quietly lost the Name band would be the worse outcome.
-
-           It opens on the STAGE MESSAGE because that is the one that changes
-           mid-sermon: a name band is set once before a service, and a message
-           is typed while somebody is speaking. -->
-      <div class="qpick" role="group" aria-label="Which quick tool">
-        <button class="qp" class:on={qtool === 'stage'} aria-pressed={qtool === 'stage'}
-          on:click={() => (qtool = 'stage')}>Stage</button>
-        <button class="qp" class:on={qtool === 'name'} aria-pressed={qtool === 'name'}
-          on:click={() => (qtool = 'name')}>Name</button>
-      </div>
+           quietly lost the Name band would be the worse outcome. -->
       <!-- TWO BLOCKS, AND IT USED TO BE THREE (operator instruction, 2026-09-20).
            The congregation countdown was the first of them and is now a band of
            its own directly above the Stage Timer on Live's run surface. §2 named three things that
@@ -1353,7 +1362,19 @@
      640, and the dock scrolls rather than clipping.
 
      `height:auto` with a max is deliberate: the fixed 178px is a rack height for
-     a desk, and stacked cards on a phone need their own. */
+     a desk, and stacked cards on a phone need their own.
+
+     THE CONTROL THAT OVERLAPPED IS GONE AND ANOTHER ONE TOOK ITS SLOT (RG-270).
+     Quick tools' head now carries the Stage/Name picker where `Load whole plan`
+     used to sit, so the 768px measurement above is about the same slot again.
+     The picker is the narrower of the two — two 11px words inside 8px of padding
+     each, against a three-word label inside the same — and `.dhead`'s
+     `flex-wrap` is what actually holds the guarantee either way: a head that
+     cannot fit its caption and its control side by side wraps rather than
+     running into the card beside it, and `.dpanel`'s 150px floor below gives the
+     wrapped head somewhere to be. NOT RE-MEASURED IN A BROWSER: this machine
+     cannot screenshot the app, so the claim here is the arithmetic and the
+     wrap rule, not a rendered observation. */
   @media (max-width: 900px) {
     .dock {
       grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -1634,21 +1655,35 @@
      differences between two neighbours in one 200px column, which is why they
      read as three degrees of finish. `.r-tile` is the house card and these are
      its tokens. */
-  /* THE PICKER (RG-258). A segmented control in the head, the same shape the
-     Name band's own picker has, so the card reads as one instrument with a
-     switch rather than two instruments sharing a box.
+  /* THE PICKER (RG-258, into the head at RG-270). A segmented control in the
+     head, the same shape the Name band's own picker has, so the card reads as
+     one instrument with a switch rather than two instruments sharing a box.
      Steel for the chosen one, which is this product's selection ink — never
-     amber, which means a congregation is looking at something. */
+     amber, which means a congregation is looking at something.
+
+     IT IS 22px TALL, AND THAT IS THE WHOLE SIZING RULE. `.dhead` is a centred
+     flex row with `min-height:26px` and 3px of padding, and it carried one
+     control before this — `Load whole plan`, an `.r-btn.sm`, which is 22px. A
+     picker taller than that does not overflow anything and gives no warning: it
+     GROWS the head, and the head is a band that has to line up across four
+     cards in a rack. At the 24px buttons and 2px trough it had in the body it
+     measures 30px, which is a 36px head beside three 28px ones. So the buttons
+     are 18px inside a 1px trough and a 1px edge, and the head is the height it
+     was.
+
+     `align-self` is gone with it: it was `flex-start` for a column, and in a
+     row that top-aligns the picker against a head whose every other child is
+     centred. */
   .qpick {
-    flex: 0 0 auto; align-self: flex-start;
-    display: inline-flex; gap: 2px; padding: 2px;
+    flex: 0 0 auto;
+    display: inline-flex; gap: 2px; padding: 1px;
     border: 1px solid var(--v-500); border-radius: var(--v-r-sm);
     background: var(--v-bg);
   }
   /* A TAB (RG-258). One of two, choosing which job has the card — it changes
      what Quick tools shows and reaches no screen. */
   .qp {
-    min-height: 24px; padding: 0 10px; cursor: pointer;
+    min-height: 18px; padding: 0 8px; cursor: pointer;
     border: 0; border-radius: calc(var(--v-r-sm) - 2px);
     background: transparent; color: var(--v-faint);
     font-family: var(--f-body); font-size: var(--v-fs-lbl); font-weight: 600;

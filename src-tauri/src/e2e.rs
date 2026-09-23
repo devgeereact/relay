@@ -5569,3 +5569,119 @@ fn a_relaunch_brings_the_clocks_back_without_putting_one_on_a_wall() {
     );
     assert_eq!(wall.count(), 0, "restoring put content on the wall");
 }
+
+/// A CLEAN EXIT TAKES THE CLOCK A RELAUNCH WOULD PAINT BY ITSELF — RG-269.
+///
+/// The operator: *"When Application close clear all active timer running or if
+/// not its running it should display on the right output...stage"*.
+///
+/// The test above is the promise (§112) and this one is its edge. `restore_timers`
+/// publishes to the stage unconditionally, so a running stage clock left in the
+/// registry at quitting time came back on a preacher's screen at the next launch,
+/// counting from a moment that had passed, with nobody having asked for it. A
+/// congregation countdown never had that problem: it comes back to the DESK and
+/// waits behind **Put back on screens**, which is why it is deliberately left
+/// alone here and the assertions below say so.
+///
+/// Three things are asserted, and the middle one is the load-bearing one: the
+/// SAVED ROWS no longer carry the running clock. Stopping it only in memory would
+/// look identical on this side of the exit and be worth nothing on the other,
+/// because the sink writes on a thread of its own and a process that is quitting
+/// does not wait for it.
+///
+/// Watched to fail with the exit hook not called: the stage clock is still in the
+/// registry, still in the saved rows, and no frame goes to the tablet.
+#[test]
+fn a_clean_exit_stops_the_running_stage_clock_and_leaves_the_rest() {
+    let app = app();
+    let h = app.handle().clone();
+    let now = 1_700_000_000_000;
+    let running = timers::Timer {
+        id: 3,
+        label: "Sermon".into(),
+        done_msg: String::new(),
+        target_ms: now + 1_200_000,
+        from_ms: now - 600_000,
+        paused_ms: None,
+        warn_ms: Some(300_000),
+        scope: timers::Scope::Stage,
+        configured_ms: 1_800_000,
+        until_ms: None,
+        plan_item_id: None,
+        started_in_rehearsal: false,
+        channels: None,
+    };
+    let held = timers::Timer {
+        id: 4,
+        label: "Notices".into(),
+        paused_ms: Some(now + 300_000),
+        ..running.clone()
+    };
+    let wall_clock = timers::Timer {
+        id: 5,
+        scope: timers::Scope::Both,
+        label: "Service starts in".into(),
+        ..running.clone()
+    };
+    {
+        let db = h.state::<Db>();
+        let conn = db.0.lock().unwrap();
+        db::save_timers(&conn, 5, &[running, held, wall_clock]).unwrap();
+    }
+    assert_eq!(restore_timers(&h, now), 3);
+    let wall = Wall::watch(&h);
+    let mut kiosk = qa::Kiosk::attach(&h);
+    settle();
+    kiosk.drain();
+
+    let n = stop_clocks_a_relaunch_would_paint(&h);
+    settle();
+
+    assert_eq!(n, 1, "one running stage clock, and only it");
+    let reg = h.state::<timers::TimerRegistry>();
+    assert!(
+        reg.get(3).is_none(),
+        "the sermon clock survived the quit and comes back counting"
+    );
+    assert!(
+        reg.get(4).is_some(),
+        "a HELD clock was taken — it was not running, and its figure is the one somebody parked"
+    );
+    assert!(
+        reg.get(5).is_some(),
+        "the congregation countdown was taken; DECISIONS §112 brings it back to the desk, never to a wall"
+    );
+
+    // THE HALF THAT SURVIVES THE PROCESS. The sink writes on its own thread and a
+    // quitting process does not wait for it, so the exit hook writes here.
+    let (next_id, rows) = {
+        let db = h.state::<Db>();
+        let conn = db.0.lock().unwrap();
+        db::load_timers(&conn).unwrap()
+    };
+    assert_eq!(
+        rows.iter().map(|t| t.id).collect::<Vec<_>>(),
+        vec![4, 5],
+        "the saved rows still carry the running clock — the next launch paints it"
+    );
+    assert_eq!(next_id, 5, "an id may never be handed out twice");
+
+    // AND THE STAGE IS TOLD. A browser source on another machine outlives Relay's
+    // own window; without this it keeps rendering the last frame it was sent, so
+    // the clock stays on the preacher's screen after Relay has gone.
+    let frames = kiosk.drain();
+    let timer_frames: Vec<&String> = frames.iter().filter(|f| f.contains("\"timers\"")).collect();
+    assert!(
+        !timer_frames.is_empty(),
+        "the stage was not told its clock had stopped: {frames:?}"
+    );
+    assert!(
+        !timer_frames.last().unwrap().contains("\"Sermon\""),
+        "the stage was told, and the stopped clock was still in the frame: {timer_frames:?}"
+    );
+    assert!(
+        frames.iter().all(|f| !f.contains("content_kind")),
+        "quitting put content on a screen: {frames:?}"
+    );
+    assert_eq!(wall.count(), 0, "quitting put content on the wall");
+}

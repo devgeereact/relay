@@ -57,6 +57,22 @@ describe('Quick tools does one job at a time', () => {
     expect(text(), 'both jobs are showing at once').not.toContain('Name band');
   });
 
+  // THE PICKER MOVED TO THE HEAD (RG-270, operator instruction 2026-09-23):
+  // *"I want you to move Stage | Name to the same bar as QUICK TOOLS where Load
+  // whole plan was before"*. `Load whole plan` vacated that slot at RG-261, and
+  // the body is for whichever job is chosen, which is the room the request is
+  // about. The case asserts BOTH directions — in the head AND not in the body —
+  // because a picker duplicated into the head would satisfy the first alone.
+  it('and the picker sits in the card’s head, in the slot Load whole plan left', async () => {
+    await mount();
+    const card = [...host.querySelectorAll('.dpanel')].find(
+      (p) => p.querySelector('.dk')?.textContent.trim() === 'Quick tools',
+    );
+    expect(card, 'no Quick tools card').toBeTruthy();
+    expect(card.querySelector('.dhead .qpick'), 'the picker is not in the head').toBeTruthy();
+    expect(card.querySelector('.dbody .qpick'), 'the picker is still in the body').toBeNull();
+  });
+
   it('and the picker swaps which one has the card', async () => {
     await mount();
     button('Name')?.click();

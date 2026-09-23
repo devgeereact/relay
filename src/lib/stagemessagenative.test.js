@@ -215,12 +215,21 @@ describe('a quiet word and an alarm are different things — DECISIONS §116', (
     );
   });
 
-  it('…and it does not flash, which is the whole distinction', () => {
+  // REVERSED, 2026-09-23, RG-268. This test used to read "…and it does not
+  // flash, which is the whole distinction" and assert that NOTHING in the strip
+  // moved. That was too broad a reading of §116 and it is what left the big
+  // screen grey: the distinction the phone actually draws is that *a message
+  // pulses its text and an alert flashes its panel* (`Stage.svelte`), not that
+  // an ordinary message is motionless. The old claim is kept below, narrowed to
+  // the PANEL, which is the half that was ever load-bearing.
+  it('…and the PANEL still does not flash, which is the alarm’s job alone', () => {
     const strip = /\.lmsg\s*\{[\s\S]*?\}/.exec(RENDER);
     expect(strip, 'the strip has no styling').toBeTruthy();
-    expect(strip[0], 'the quiet strip animates — then it is a second alarm').not.toMatch(
+    expect(strip[0], 'the quiet strip’s panel animates — then it is a second alarm').not.toMatch(
       /animation:/,
     );
+    // And it is still a strip, not the screen: `.lalert` is `inset: 0`.
+    expect(strip[0], 'the quiet strip took the whole screen').not.toMatch(/inset:\s*0/);
   });
 
   it('the page carries urgency from both doors', () => {
@@ -229,3 +238,115 @@ describe('a quiet word and an alarm are different things — DECISIONS §116', (
   });
 });
 
+
+// ── A MESSAGE THAT IS NOTICED, ON THE BIG SCREEN TOO (RG-268) ───────────────
+//
+// The operator, with a screenshot of a stage TV: *"Stage message sent still not
+// flashing catching attention as mentioned earlier... its just showing a
+// gray/white text which can easily be missed."*
+//
+// RG-239 gave the phone's ordinary message the caution ink, a rule down its edge
+// and a gentle pulse of its text. The big screen kept the strip it was built
+// with: white on a black plate, a hairline white border, no colour and nothing
+// moving. So the two stage surfaces disagreed about what an ordinary message
+// looks like, and which one a preacher got depended on whether the church put a
+// tablet or a TV in front of him — the same asymmetry RG-156 filed one door
+// along, arriving as a whisper rather than as silence.
+//
+// WHAT MUST SURVIVE. An ALERT is still the full-bleed red panel that flashes
+// (DECISIONS §116). A message pulses its TEXT; an alarm flashes its PANEL. That
+// sentence is `Stage.svelte`'s and it is the whole distinction, so the tests
+// below assert the ink, the rule and the pulse on the WORDS, and the two tests
+// above assert that the plate they sit on still does neither.
+//
+// COLOUR LAW (rule 18): ochre is the only free ink. Amber means ON AIR, cyan
+// means the AI guessed, amethyst means a rehearsal and red is the alarm's.
+// `colourlaw.test.js` carries `.lmsg` in its caution sweep.
+//
+//   npx vitest run src/lib/stagemessagenative.test.js
+describe('the quiet word is SEEN on the big screen as well — RG-268', () => {
+  const RENDER = readFileSync(resolve(process.cwd(), 'src/lib/TemplateRender.svelte'), 'utf8');
+  const STYLE = RENDER.slice(RENDER.indexOf('<style>'));
+  /** The CSS block of one selector, or '' if it is gone. */
+  const rule = (sel) => {
+    const m = STYLE.match(new RegExp(`${sel.replace(/[.]/g, '\\.')}\\s*\\{([^}]*)\\}`));
+    return m ? m[1] : '';
+  };
+
+  it('the words are the caution ink, not the grey a volunteer misses', () => {
+    // The whole of the operator's complaint in one assertion. `color: #fff` on a
+    // black plate is what the screenshot showed.
+    const r = rule('.lmsg-v');
+    expect(r, 'there is no element carrying the words on their own').not.toBe('');
+    expect(r, 'the words are still painted in a colour that promises nothing').toMatch(
+      /var\(--v-caution/,
+    );
+  });
+
+  it('and the plate carries a visible rule in the same ink', () => {
+    // A border the operator can see from a platform, rather than the hairline
+    // `rgba(255,255,255,.22)` that read as part of the slide.
+    const r = rule('.lmsg');
+    expect(r).not.toBe('');
+    expect(r, 'no left rule — the strip is still an unmarked plate').toMatch(
+      /border-left:[^;]*var\(--v-caution/,
+    );
+    expect(r, 'the strip still wears the hairline white border it was missed in').not.toMatch(
+      /border:\s*1px solid rgba\(255, 255, 255/,
+    );
+  });
+
+  // EVERY `@media (prefers-reduced-motion: <pref>)` body, rather than the first
+  // one. `stagealerttemplate.test.js` reads the FIRST of each for `.lalert`, so a
+  // rule for the strip placed above it would quietly retarget that instrument at
+  // this one — a scanner that narrows while still passing, which is the shape
+  // `ipc.test.js` records twice. This one enumerates instead.
+  const motionBlocks = (pref) =>
+    [...STYLE.matchAll(new RegExp(`@media \\(prefers-reduced-motion: ${pref}\\)\\s*\\{`, 'g'))]
+      .map((m) => STYLE.slice(m.index, STYLE.indexOf('\n  }\n', m.index) + 5));
+
+  it('the words pulse, which is the phone’s answer and now this one', () => {
+    // BEHIND `no-preference`, exactly as `Stage.svelte` has it. A pulse that runs
+    // for a viewer who asked for no animation is not a gentler alarm, it is a
+    // setting ignored.
+    expect(STYLE, 'nothing pulses at all').toMatch(/@keyframes stagemsg/);
+    const blocks = motionBlocks('no-preference').filter((b) => b.includes('.lmsg-v'));
+    expect(blocks.length, 'the pulse is not gated on no-preference').toBe(1);
+    expect(blocks[0]).toMatch(/animation: stagemsg/);
+  });
+
+  it('and reduced motion keeps the colour and drops the movement', () => {
+    // AN EQUIVALENT, NOT A QUIETER STATE — the phone's rule verbatim: the text
+    // rests AT the caution ink rather than pulsing to it, so the message is still
+    // a coloured message rather than a plain one.
+    const blocks = motionBlocks('reduce').filter((b) => b.includes('.lmsg-v'));
+    expect(blocks.length, 'reduced motion is not answered for the strip').toBe(1);
+    expect(blocks[0]).toMatch(/var\(--v-caution/);
+    expect(blocks[0], 'the reduced-motion answer is the pulse under another word').not.toMatch(
+      /animation|filter:\s*brightness/,
+    );
+  });
+
+  it('the scanner sees a motion block when there is one, and none when there is not', () => {
+    // The guard on the guard. A helper that silently matched nothing would make
+    // the two tests above pass by counting zero, and this repository has shipped
+    // that mistake twice.
+    expect(motionBlocks('no-preference').length).toBeGreaterThan(0);
+    expect(motionBlocks('no-such-preference').length).toBe(0);
+    expect(motionBlocks('reduce').some((b) => b.includes('.lalert'))).toBe(true);
+  });
+
+  it('the pulse never touches the ALERT’s ink, and the alert never loses its own', () => {
+    // Rule 18 stated as a test rather than as a comment. The two renderings may
+    // not converge: a caution that turned red would be an alarm nobody raised,
+    // and an alarm that turned ochre would be an alarm nobody hears.
+    expect(rule('.lalert'), 'the alarm stopped being red').toMatch(/#c8121c/);
+    expect(rule('.lmsg-v'), 'the quiet message reached for the alarm’s red').not.toMatch(
+      /#c8121c|var\(--v-red|var\(--v-rose/,
+    );
+    for (const promise of ['--v-amber', '--v-cyan', '--v-amethyst']) {
+      expect(rule('.lmsg'), `the strip paints ${promise}`).not.toContain(promise);
+      expect(rule('.lmsg-v'), `the words paint ${promise}`).not.toContain(promise);
+    }
+  });
+});

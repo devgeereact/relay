@@ -69,13 +69,19 @@ describe('the console keeps what the engine sent', () => {
     const { readFileSync } = await import('node:fs');
     const { resolve } = await import('node:path');
     const src = readFileSync(resolve('src/lib/stores/capture.js'), 'utf8');
+    //
+    // COMMENTS STRIPPED, AND THE DESTRUCTURE ASSERTED BY NAME. This case read
+    // the raw body for the word `timestamp_ms` and passed on the COMMENT that
+    // explains the change, while the destructure beside it never gained the
+    // field — so `stampOf(timestamp_ms)` was a `ReferenceError` that crashed
+    // the console thirteen times before an operator's screenshot found it.
+    // A scanner that matches prose is a scanner that matches anything.
     const listener = src.slice(src.indexOf("listen('stt://transcript'"));
-    const body = listener.slice(0, listener.indexOf('});'));
-    expect(body, 'the time code is still being discarded').toMatch(/timestamp_ms/);
-    // AND IT IS WHAT THE LINE IS STAMPED WITH. Reading the field and then
-    // stamping the line with `new Date()` anyway would satisfy a grep and
-    // change nothing an operator sees.
-    expect(body).toMatch(/stampOf\(/);
+    const body = listener.slice(0, listener.indexOf('});')).replace(/\/\/[^\n]*/g, '');
+    expect(body, 'the field is never taken off the payload').toMatch(
+      /const \{[^}]*\btimestamp_ms\b[^}]*\} = e\.payload/,
+    );
+    expect(body, 'the line is stamped with something else').toMatch(/stampOf\(timestamp_ms\)/);
   });
 
   it('and the card renders it', async () => {
