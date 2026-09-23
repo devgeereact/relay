@@ -996,6 +996,15 @@
       } catch {
         /* the deck keeps its words; a thumbnail is not worth a banner. */
       }
+      // AND IT SAYS SO WHEN IT CAME BACK EMPTY (RG-275). The catch above is
+      // right that a thumbnail is not worth a banner, and it made the one
+      // failure an operator reported invisible: *"the snapshot of the media
+      // still not showing"*, with nothing anywhere to say whether the list had
+      // failed, the asset was gone, or the cue carried no id at all. The grid
+      // renders a picture correctly when it is given one — that is now pinned
+      // by a mounted test — so the remaining question is always about the data,
+      // and this is the only place that knows the answer.
+      if (!dead) deckMediaEmpty = deckMedia.length === 0;
     }
   });
 
@@ -1955,6 +1964,16 @@
   // broken image, which is a worse claim than no claim.
   let deckMedia = [];
   let deckHost = 'localhost';
+  /**
+   * THE MEDIA LIST CAME BACK WITH NOTHING IN IT — RG-275.
+   *
+   * Not an error and not a claim that anything is broken: a church with no
+   * imported media is the ordinary first-Sunday case. It is the one fact that
+   * separates *"this cue's asset was deleted"* from *"Relay could not read the
+   * library at all"*, and without it a media cell that draws no picture gives
+   * an operator nothing to act on.
+   */
+  let deckMediaEmpty = false;
   const cellMedia = (c, rows, host) => {
     if (c?.mediaId == null) return null;
     const row = rows.find((m) => m.id === c.mediaId);
@@ -2873,6 +2892,18 @@
                   {#if c.empty}
                     <span class="sg-void">Nothing to show</span>
                   {:else}
+                    <!-- WHY THIS CUE HAS NO PICTURE (RG-275). A media cue whose
+                         asset cannot be found draws its words, which is right,
+                         and said nothing about WHY — so a deleted file, a cue
+                         saved without an id and a library Relay could not read
+                         were one silent outcome. Each of the three is a
+                         different thing for an operator to do next. -->
+                    {#if c.mediaId != null && !cellMedia(c, deckMedia, deckHost)}
+                      <span class="sg-nomedia r-mono"
+                        >{deckMediaEmpty ? 'no media library' : 'file missing'}</span>
+                    {:else if c.ctype === 'media' && c.mediaId == null}
+                      <span class="sg-nomedia r-mono">no file chosen</span>
+                    {/if}
                     <!-- A KEYED template is a band over a camera Relay never
                          takes, so previewed against nothing it is an empty dark
                          rectangle — right on the wall, useless on a cell. The
@@ -3837,6 +3868,13 @@
   /* A cue the grid could not expand. It is DRAWN rather than dropped (see
      `planCells`) so the count under the grid agrees with the plan, and it is
      disabled rather than firing nothing. */
+  /* A CAPTION, not a control (RG-275): it says why a media cue has no picture,
+     in the corner of the cell, over whatever the words drew. Ochre, because it
+     is a caution about this cue and never a claim about a screen. */
+  .sg-nomedia{position:absolute; left:4px; bottom:4px; z-index:3; padding:1px 5px;
+    border-radius:var(--v-r-sm); background:rgba(0,0,0,.66);
+    font-size:var(--v-fs-kind); letter-spacing:.06em; text-transform:uppercase;
+    color:var(--v-caution)}
   .sg-void{position:absolute; inset:0; display:grid; place-items:center; padding:8px;
     text-align:center; font-size:var(--v-fs-b3); letter-spacing:.05em; color:var(--v-faint)}
   .sg-cell:hover .sg-thumb{border-color:var(--v-sel-line)}
