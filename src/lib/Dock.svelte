@@ -215,7 +215,12 @@
     channelHealth,
     sendStageMedia,
     stageMedia,
+    detections,
+    resolvedDetections,
   } from './stores/capture.js';
+  import { rememberMarks } from './transcriptmark.js';
+  import { methodBadgeKey } from './detect.js';
+  import { t } from './i18n.js';
   import { describeMediaClock, mediaIdFromUrl } from './mediaclock.js';
   import { programmeScreen } from './channelroles.js';
   import { session, setSession } from './session.js';
@@ -241,29 +246,32 @@
   import TemplateRender from './TemplateRender.svelte';
   import { humanError } from './errors.js';
   import { rangeFill } from './rangefill.js';
-  import { dbOf, meterFill, peakOf } from './meterscale.js';
   // The dock lives in the SHELL, on every workspace, so its Detection switch was
   // the one door out of safe mode that nothing asked about. See the switch itself.
   import { safeMode } from './boot/boot.js';
 
   $: lvl = Math.max(0, Math.min(1, $meter.level ?? 0));
   $: dbLabel = lvl > 0.0001 ? `${Math.round(20 * Math.log10(lvl))} dB` : '−∞ dB';
-  // ── THE METER (RG-257) ──────────────────────────────────────────────────────
+  // ── ONE INSTRUMENT, NOT TWO (RG-276) ───────────────────────────────────────
   //
-  // Fed from the same readings the trace is: `audio://chunk` carries `peaks`,
-  // sixteen TRUE peaks at 25 ms resolution, and `waveBuf` already keeps twenty
-  // seconds of them. So the held peak is a maximum over a buffer that exists,
-  // and nothing changed in Rust to get one.
+  // RG-257 put a horizontal dB meter above the trace on the reasoning that the
+  // two answer different questions. The operator, looking at the rendered card:
+  // *"LIVE AUDIO wave will be good better to have than having both as in
+  // screenshoot"*. The meter is gone and the WAVEFORM stays.
   //
-  // The BODY of the bar is the momentary level and the MARK is the held peak —
-  // the two figures every desk meter shows, and the reason a meter catches a
-  // clip that the eye would miss between two frames.
-  const PEAK_HOLD_MS = 1500;
-  $: metFill = meterFill(dbOf(lvl));
-  $: metClip = lvl >= CLIP_AT;
-  $: metPeak = peakOf(waveBuf, waveNow, PEAK_HOLD_MS);
-  $: metPeakFill = metPeak === null ? null : meterFill(dbOf(metPeak));
-  $: metPeakClip = metPeak !== null && metPeak >= CLIP_AT;
+  // The reasoning that was wrong is worth keeping, because it is the sort that
+  // sounds right on paper: both instruments were honest, and neither was
+  // redundant in the abstract. What settled it is the box. This card is 178px
+  // tall and already holds a Mic row and a Sens row, so a bar, a dB ruler and a
+  // trace left the trace with about a third of the card - three pictures of one
+  // signal, none of them big enough to read at a booth's viewing distance. The
+  // trace is the one that shows a preacher stepping away from a microphone,
+  // which is the failure an operator is actually watching for, and clipping is
+  // still visible on it because `readingKind` paints a clipped run rose.
+  //
+  // The dB FIGURE survives, in the head, where `dbLabel` has always been: the
+  // meter's one unique fact is a number, and a number belongs in the meta slot
+  // rather than in 25px of card.
 
   // ── LIVE TRANSCRIPT · WHAT IT HEARD, WHEN IT HEARD IT (L3) ─────────────────
   //
@@ -316,6 +324,26 @@
     at: $transcript.finalsAt?.[i] ?? '',
   }));
   $: tlines = allLines.slice(-trShown);
+
+  // ── WHICH LINES RELAY HEARD SCRIPTURE IN (RG-278) ─────────────────────────
+  //
+  // The operator: *"when you hear any paraphrasing of the scripture or an actual
+  // scripture can it be colour coded?"*. Two different claims — a reference
+  // Relay HEARD, and a meaning it GUESSED at — printed in one ink until now.
+  //
+  // THE CLAIMS IN HAND ARE BOTH LISTS, and that is not tidiness. `detections`
+  // holds only what is still awaiting an operator, so an AUTO-FIRE is never in
+  // it: the one case where the AI acted alone would have been the one line with
+  // no mark on it. `resolvedDetections` is the receipt of what happened, which
+  // is where an auto-fire lives.
+  //
+  // `markMemo` is mutated and NEVER reassigned. A fold that returned a new memo
+  // could not live in a `$:` block — assigning it inside the block that reads it
+  // invalidates it and re-runs for ever, because `safe_not_equal` always
+  // invalidates an object. See `transcriptmark.js`.
+  const markMemo = new Map();
+  $: claimsInHand = [...$detections, ...$resolvedDetections];
+  $: lineMarks = rememberMarks(tlines, claimsInHand, markMemo);
   // A NEW SERVICE STARTS THE WINDOW AGAIN. `finals` is emptied when a session is
   // reset, and a window left at several thousand would then be a budget nobody
   // set for a card with four lines in it.
@@ -448,11 +476,6 @@
   // the defect, not the courtesy.
   const FRAME_MS = 50;
   let waveBuf = [];
-  // THE CLOCK THE PEAK MARK DECAYS AGAINST (RG-257). Stamped where the trace is
-  // already repainted rather than on a timer of its own: a second timer for a
-  // second picture of the same signal is a second thing that can be left
-  // running, and `dockloop.test.js` exists because that has happened here.
-  let waveNow = Date.now();
   let cv = null;
   let cw = 0;
   let ch = 0;
@@ -480,7 +503,6 @@
   function onReading(m) {
     const now = Date.now();
     waveBuf = pushEnvelope(waveBuf, now, m?.peaks, !!m?.isVoice, m?.level ?? 0);
-    waveNow = now;
     signalSince = now;
     // Repaint immediately when the loop is not running, so a reading taken with
     // the microphone stopped (the reset `stopCapture` performs) still lands.
@@ -491,10 +513,6 @@
     raf = requestAnimationFrame(frame);
     if (ts - lastFrame < FRAME_MS) return;
     lastFrame = ts;
-    // The held peak slides down by FORGETTING, so it needs the clock to move
-    // even while no reading arrives — otherwise a mark set by one loud moment
-    // would stand until the next chunk rather than decaying.
-    waveNow = Date.now();
     draw();
   }
   function startLoop() {
@@ -893,29 +911,20 @@
     </div>
     <div class="dbody audbody">
       <div class="wavewrap">
-        <!-- ══ THE METER (RG-257) ══ The operator asked for the one OBS draws:
-             a horizontal bar on a decibel scale with a held peak. It is above
-             the trace rather than instead of it — the two answer different
-             questions, and neither is the other's summary. The meter says how
-             loud it is NOW and whether it clipped; the trace says what the room
-             has been doing for twenty seconds, which is what shows a preacher
-             stepping away from a microphone.
+        <!-- ══ ONE INSTRUMENT (RG-276) ══ A horizontal dB meter sat here from
+             RG-257 until the operator saw the two of them in one card: *"LIVE
+             AUDIO wave will be good better to have than having both as in
+             screenshoot"*. The bar, its held peak and the dB ruler under it are
+             gone and the trace has their 25px.
 
-             The COLOUR is the voice gate's own answer and never a level, which
-             is `readingKind`'s rule unchanged. There is no band calling a level
-             good, quiet or hot: that would be "this many dB = speech" in a
-             costume, and it is the absolute threshold rule 12 removed. The one
-             absolute mark is full scale, which DECISIONS §19 grants by name. -->
-        <div class="meter" aria-hidden="true">
-          <div class="mfill" class:voice={$meter.isVoice} class:clip={metClip} style="width:{metFill * 100}%"></div>
-          {#if metPeakFill !== null}
-            <i class="mpeak" class:clip={metPeakClip} style="left:{metPeakFill * 100}%"></i>
-          {/if}
-          <i class="mclip"></i>
-        </div>
-        <div class="mticks r-mono" aria-hidden="true">
-          <span>&minus;60</span><span>&minus;40</span><span>&minus;20</span><span>&minus;10</span><span>0</span>
-        </div>
+             THE dB RULER WENT WITH THE BAR, deliberately, and it was the closer
+             call. It was the meter's x-axis, and under the trace the horizontal
+             axis is TIME - which `INPUT · 20s` below already states. A row of
+             decibel figures along a time axis is a picture labelled with the
+             wrong units, and that is worse than a picture with no ruler at all.
+             The trace's own vertical axis stays unlabelled for the reason it
+             always was: it is amplitude against a box height, and rule 12 does
+             not let this card say what any absolute number on it would mean. -->
         <!-- The trace itself carries no information a screen reader can use; the
              two facts it illustrates are the VOICE chip and the dB figure in the
              head, both of which are text. -->
@@ -1083,7 +1092,16 @@
     </div>
     <div class="dbody tbody r-scroll" bind:this={trBody} on:scroll={onTrScroll}>
       {#each tlines as l, i (i + '·' + l.at)}
-        <p class="trl"><span class="tt r-mono">{l.at}</span><span class="tx">{l.t}</span></p>
+        {@const m = lineMarks[i]}
+        <!-- THE REFERENCE IS PRINTED, not only coloured. An operator who cannot
+             tell cyan from white under a projector glow still reads which verse
+             Relay thinks it heard, and the method's own word is on the chip.
+             NO PERCENTAGE, ever: only `direct` has a real parse confidence and a
+             number beside a cosine is worse than no number (rule 18). -->
+        <p class="trl" class:mk-heard={m?.kind === 'heard'} class:mk-guess={m?.kind === 'guess'}>
+          <span class="tt r-mono">{l.at}</span><span class="tx">{l.t}</span>
+          {#if m}<span class="tref r-mono">{m.reference}<i class="tkind">{$t(methodBadgeKey(m.claim))}</i></span>{/if}
+        </p>
       {/each}
       {#if $transcript.partial}
         <!-- WHAT IS BEING SAID RIGHT NOW. `now` rather than a clock time,
@@ -1458,43 +1476,11 @@
     border: 1px solid var(--v-rule); border-radius: var(--v-r-sm);
     background: linear-gradient(180deg, var(--v-void), var(--v-rule)); overflow: hidden;
   }
-  /* ── THE METER (RG-257) ────────────────────────────────────────────────────
-     A bar, its ticks, and the trace under both. The wrap is a column now: the
-     meter is the figure an operator checks at a glance and the trace is the
-     history they read when something is wrong, so the quick one is on top.
-
-     NO AMBER — that means a congregation is looking at something (rule 18) —
-     and no fourth colour. Steel, the gate's emerald, and rose at full scale:
-     the same three `readingKind` already names, for the same reasons. */
-  .meter {
-    position: relative; flex: 0 0 auto; height: 11px;
-    border-radius: var(--v-r-sm); background: var(--v-void); overflow: hidden;
-  }
-  .mfill {
-    position: absolute; left: 0; top: 0; bottom: 0;
-    background: var(--v-faint);
-  }
-  /* THE GATE'S OWN ANSWER, never a level. A bar that turned green at some
-     number of decibels would be drawing the voice gate as a threshold it is
-     not — rule 12, and the same refusal the trace makes. */
-  .mfill.voice { background: var(--v-emerald); }
-  .mfill.clip { background: var(--v-red); }
-  /* THE HELD PEAK. A hairline rather than a block: it marks an instant, and a
-     block would read as a second level. */
-  .mpeak {
-    position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px;
-    background: var(--v-txt);
-  }
-  .mpeak.clip { background: var(--v-red); }
-  /* FULL SCALE, and the only absolute mark on this picture (DECISIONS §19). */
-  .mclip {
-    position: absolute; right: 0; top: 0; bottom: 0; width: 1px;
-    background: var(--v-red-line, rgba(244, 81, 91, .5));
-  }
-  .mticks {
-    flex: 0 0 auto; display: flex; justify-content: space-between;
-    padding: 2px 0 1px; font-size: var(--v-fs-kind); color: var(--v-faint);
-  }
+  /* ── THE METER IS GONE (RG-276) ────────────────────────────────────────────
+     A bar, a held peak, a full-scale mark and a decibel ruler were declared here
+     from RG-257 until the operator saw the rendered card. The wrap is still a
+     column because the trace and its `INPUT · 20s` label want one; there is
+     simply one child in it now. */
   .wave { display: block; width: 100%; flex: 1 1 auto; min-height: 0; }
   .wavescale {
     position: absolute; inset: 0; pointer-events: none;
@@ -1631,6 +1617,51 @@
      guessed at a verse) and never amber. */
   .trl.cur { background: var(--v-sel-soft); border-left-color: var(--v-sel); }
   .trl.cur .tx { color: var(--v-txt); }
+
+  /* ── THE TWO KINDS OF SCRIPTURE CLAIM, ON THE LINE THEY CAME FROM (RG-278) ─
+     Three states and no fourth: no mark, a reference Relay HEARD, a meaning it
+     GUESSED at. Both marked lines are lifted out of `--v-dim` to the page's
+     ordinary text, because something is being said about them; the ink on the
+     chip is what separates the two.
+
+     A GUESS IS CYAN — rule 18, and it is the one colour here that carries a
+     promise: cyan means the AI is guessing and a paraphrase is exactly that.
+     `semantic`, `quoted`, `ambiguous` and `uncertain_book` all land here,
+     because the router caps all four at Suggest at any score (rule 10) and none
+     of them was heard. The chip names which, so the five stay distinguishable
+     in the one place there is room to say so.
+
+     A HEARD REFERENCE IS THE PAGE'S OWN NEUTRAL, and that is a choice rather
+     than a shortage. Amber is ON AIR and a transcript line is not a screen;
+     amethyst is rehearsal; ochre is a caution and this is not one; grey is CUED.
+     Steel was the obvious candidate and is wrong HERE specifically: `.cur`
+     three rules above spends steel on the line being said right now, and two
+     steel treatments 2px apart in a 152px card is the collision this law exists
+     to stop. Emerald reads as healthy, which would be a claim about an outcome.
+     The section hues are a position in the running order, never a kind. So the
+     stronger claim wears no colour at all and is carried by weight and a
+     hairline edge — which is also the honest ranking: the coloured line is the
+     one an operator would otherwise miss. */
+  .trl.mk-heard, .trl.mk-guess { background: var(--v-surf2); }
+  .trl.mk-heard .tx, .trl.mk-guess .tx { color: var(--v-txt); }
+  .trl.mk-heard { border-left-color: var(--v-500); }
+  .trl.mk-guess { border-left-color: var(--v-cyan-line); }
+  .tref {
+    flex: 0 0 auto; margin-left: auto; align-self: flex-start;
+    display: flex; gap: 5px; align-items: baseline;
+    padding: 1px 5px; border-radius: var(--v-r-sm);
+    font-size: var(--v-fs-fig); white-space: nowrap;
+  }
+  .trl.mk-heard .tref {
+    color: var(--v-txt); background: var(--v-surf3); border: 1px solid var(--v-500);
+  }
+  .trl.mk-guess .tref {
+    color: var(--v-cyan); background: var(--v-cyan-soft); border: 1px solid var(--v-cyan-line);
+  }
+  /* The method's own word, in the vocabulary the claim card already uses
+     (`detect.js::methodBadgeKey`) — one concept, one name. Quieter than the
+     reference, because WHICH VERSE is what the operator is scanning for. */
+  .tkind { font-style: normal; opacity: .72; font-size: var(--v-fs-cap); }
   .caret {
     display: inline-block; width: 6px; height: 11px; margin-left: 2px;
     vertical-align: -1px; background: var(--v-sel);
@@ -1643,7 +1674,24 @@
   @keyframes trcaret { 50% { opacity: 0; } }
   .trl.empty { color: var(--v-faint); font-family: var(--f-mono); font-size: var(--v-fs-cap); }
 
-  .tools { display: flex; flex-direction: column; gap: 6px; justify-content: flex-start; overflow-y: auto; }
+  /* ── THE ONLY BODY OF THE FOUR THAT IS A FIXED STACK (RG-277) ─────────────
+     `.dbody`'s 8px is right for the other three: two of them hold an instrument
+     that takes whatever height it is given, and the Controls card divides its
+     own. This one holds a field and a button row whose heights are the shared
+     controls' and cannot flex, so its content either fits in 178px or it does
+     not. 6px buys 4px of the 10px of headroom the Name band needed, and it is
+     the cheapest of the three places that room came from - the other two being
+     the block's own padding and its inner gap.
+
+     `overflow-y: auto` STAYS, and is not the fix. It is the floor under a font
+     that renders larger than measured or a future row; the arithmetic above it
+     is what makes the normal card fit, and `docklayout.test.js` prices that
+     arithmetic rather than trusting this line. */
+  .tools {
+    display: flex; flex-direction: column; gap: 6px;
+    padding: 6px 9px;
+    justify-content: flex-start; overflow-y: auto;
+  }
   /* ── ONE INSTRUMENT, THREE TIMES (L3, docs/REBRAND.md §2) ─────────────────
      The prototype's `.tmr`, `.lt3` and `.alrt` are one card repeated: the same
      ground, the same 7px padding, the same 5px inner gap, a head whose left is a
@@ -1690,8 +1738,19 @@
   }
   .qp.on { background: var(--v-surf2); color: var(--v-txt); }
   .qp:focus-visible { outline: 2px solid var(--v-sel); outline-offset: 1px; }
+  /* THE CARD, TIGHTENED, AND ITS TRAILING MARGIN GONE (RG-277). 7px of padding
+     and a 5px inner gap were drawn for a card that stacked two blocks; since
+     RG-258 exactly one renders, so the `margin-bottom: 6px` under it spaced it
+     from nothing at all and `.tools`' own 6px gap is what separates siblings if
+     a second block ever returns. 6px and 4px keep the block reading as a card
+     and give the Name band the rest of the room it was missing.
+
+     EVERY PROPERTY `quicktools.test.js` REQUIRES THIS RULE TO OWN IS STILL
+     HERE - background, border, border-radius, padding, gap - because the thing
+     that test is holding is that no tool gets a second kind of card, and a
+     value is not a second card. */
   .qblock {
-    display: flex; flex-direction: column; gap: 5px; padding: 7px; margin-bottom: 6px;
+    display: flex; flex-direction: column; gap: 4px; padding: 6px;
     background: var(--v-surf); border: 1px solid var(--v-line); border-radius: var(--v-r-lg);
   }
   .qhead { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; row-gap: 4px; }
@@ -1739,14 +1798,42 @@
      their own outcome through `run()` and the error line above. */
   .dk-btn { flex: 0 0 auto; margin-left: 6px; }
   /* The head's right-hand slot, like the countdown's figure and the alert's
-     badge. Width only — the height is the shared control's. */
-  .ltpick { flex: 1 1 auto; min-width: 0; }
+     badge. Width only — the height is the shared control's.
+
+     `flex: 1 1 0`, AND THE `auto` IT REPLACED COST A WHOLE ROW (RG-277).
+     `.r-select` carries `width: 100%`, so an `auto` basis resolved to the full
+     width of the head — the select then could not share a line with the label
+     beside it and `.qhead`'s `flex-wrap` did the only thing it could, which was
+     put it on its own. Measured in Chromium at both 1440 and 1024: a 44px head
+     where a 26px one was drawn, on the one tab that had no 18px to spare. A
+     zero basis makes it take the room LEFT, which is what the drawing shows and
+     what the label beside it always assumed. `min-width: 0` stays: it is what
+     lets a long band name truncate rather than widen the head. */
+  .ltpick { flex: 1 1 0; min-width: 0; }
   /* NO 80px INDENT (L3). It hung the fields, the buttons, the preview and the
      caption under a label that is in the HEAD, not in the column — so a third of
      a 200px card was empty and the name band was the one tool whose contents did
      not start at the card's edge. */
+  /* THE ONE THING THAT GENUINELY CANNOT FIT (RG-277), AND WHERE IT SITS IS THE
+     WHOLE ANSWER. A 16:9 box at the card's own width is 111px tall at 1024 and
+     164px at 1440, and the Name band has about 10px spare once its select, its
+     two fields and its button row are in - so no bounding makes this fit, and
+     pretending otherwise would mean a preview too small to check a name in.
+
+     It is LAST, after the button row, and that is what the rule is. Everything
+     in this card that can push the body past its height - this preview, its
+     caption, and the error line below the blocks - sits BELOW the actions, so
+     opening the preview scrolls the preview into view and never pushes `To
+     programme` out of reach. The same ordering rule rule 15 keeps on `Clear
+     screens`, applied to a card that is allowed to scroll.
+
+     `max-width` RATHER THAN `max-height`, so the cap keeps the aspect ratio:
+     a max-height against `aspect-ratio: 16 / 9` and a 100% width squashes the
+     picture, and a squashed WYSIWYG preview is a preview that lies. 240px is
+     135px tall, which bounds the scroll to about one button row. */
   .ltprev {
     aspect-ratio: 16 / 9; container-type: inline-size;
+    align-self: center; width: 100%; max-width: 240px;
     background: var(--v-void); border: 1px solid var(--v-line2);
     border-radius: var(--v-r-sm); overflow: hidden;
   }

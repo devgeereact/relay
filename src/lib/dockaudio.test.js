@@ -753,3 +753,66 @@ describe('the transcript card paints a window, and the window grows', () => {
     expect(CAP).not.toMatch(/finalsAt: \[[^\]]*\]\.slice\(/);
   });
 });
+
+// ── ONE INSTRUMENT, NOT TWO (RG-276) ────────────────────────────────────────
+//
+// These five cases were `meterscale.test.js`'s *"the Live audio card wears the
+// meter"*, and every one of them is REVERSED here rather than deleted. They are
+// kept because the reasoning that put the meter on the card was good reasoning
+// and will be made again: a bar answers *how loud is it now, and did it clip*,
+// a trace answers *what has the room been doing*, and neither is the other's
+// summary. That argument is still true and it still lost.
+//
+// What it lost to is the box. The operator, looking at the rendered card:
+// *"LIVE AUDIO wave will be good better to have than having both as in
+// screenshoot"*. Live audio is 178px tall and also carries a Mic row and a Sens
+// row, so a bar plus a decibel ruler plus a trace is three pictures of one
+// signal with about a third of a card each. The trace is the one that shows a
+// preacher stepping away from a microphone; clipping stays visible on it,
+// because `readingKind` paints a clipped run rose; and the meter's one unique
+// fact, the figure, is still in the head as `dbLabel`.
+//
+// `meterscale.js` had exactly one consumer and went with the bar, so its pure
+// arithmetic cases went too - an unmounted module is a defect in this
+// repository, and so is a green test file for one.
+describe('the Live audio card wears ONE instrument (RG-276 reverses RG-257)', () => {
+  it('draws no meter bar, no held peak and no full-scale mark', () => {
+    expect(src, 'the meter bar is back').not.toMatch(/class="meter"/);
+    expect(src, 'the meter fill is back').not.toMatch(/class="mfill/);
+    expect(src, 'the held peak is back').not.toMatch(/class="mpeak/);
+    expect(src, 'the full-scale mark is back').not.toMatch(/class="mclip/);
+  });
+
+  it('draws no decibel ruler, because under the trace the axis is TIME', () => {
+    // This was the closer call of the two. A dB scale under a bar labels the
+    // bar; the same row under the trace labels a TIME axis with decibels, and
+    // `INPUT · 20s` already states what that axis actually is. A picture
+    // labelled in the wrong units is worse than one with no ruler.
+    expect(src, 'the decibel ruler is back under a time axis').not.toMatch(/class="mticks/);
+    expect(src).toMatch(/INPUT · \{WAVE_SPAN_MS \/ 1000\}s/);
+  });
+
+  it('does not import an arithmetic module that nothing renders', () => {
+    expect(src, 'meterscale.js is imported again').not.toContain('meterscale');
+  });
+
+  it('keeps the trace, which is the instrument that survived', () => {
+    expect(src).toMatch(/<canvas class="wave"/);
+  });
+
+  it('keeps the dB FIGURE in the head, so no measurement was lost with the bar', () => {
+    // The bar and the figure said the same thing in two sizes. The figure is
+    // the compact one and it was already in the meta slot, so removing the bar
+    // costs the card no fact at all.
+    expect(src).toMatch(/\$: dbLabel = /);
+    expect(src).toMatch(/class="db r-mono">\{dbLabel\}/);
+  });
+
+  it('runs no clock for a mark that is no longer drawn', () => {
+    // `waveNow` existed only so the held peak could decay on the frame the
+    // trace already repaints on. With no peak there is nothing to decay, and a
+    // variable stamped every frame and read by nobody is the second thing
+    // `dockloop.test.js` exists to stop being left running.
+    expect(src, 'the peak clock outlived the peak').not.toContain('waveNow');
+  });
+});

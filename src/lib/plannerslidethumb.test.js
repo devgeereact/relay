@@ -100,7 +100,8 @@ describe('the Slides tab shows a clip as its first frame', () => {
     expect(slide, 'no slide rendered at all').toBeTruthy();
     const thumb = slide.querySelector('.mthumb video, .mthumb img');
     expect(thumb, 'the slide still says only its filename').toBeTruthy();
-    expect(thumb.getAttribute('src')).toBe('http://192.168.1.50:8032/media/9');
+    expect(thumb.getAttribute('src')).toBe(// The `#t=0.1` is the seek that makes a frame appear at all (RG-279).
+      'http://192.168.1.50:8032/media/9#t=0.1');
   });
 
   it('a clip is a VIDEO element at metadata, which is what paints a first frame', async () => {

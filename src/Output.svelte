@@ -1259,6 +1259,7 @@
   audio={isDesktop}
   stageMessage={shownStageMessage}
   timerScale={railScale(timerSize)}
+  stageClip={myRole === 'stage'}
   {stageUrgent}
   programme={shownProgramme}
   onMedia={noteMedia}

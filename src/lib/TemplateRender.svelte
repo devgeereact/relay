@@ -84,6 +84,14 @@
     programmeRoom,
   } from './timers.js';
   import { alertStep } from './stagealert.js';
+  // A STILL ASKS FOR ITS FRAME (RG-279): `preload="metadata"` sizes the element
+  // and paints nothing. NEVER on a playing clip — the fragment is a seek, and it
+  // would drag the wall back to 0.1s on every re-render.
+  import { posterUrl } from './posterframe.js';
+  // ONE threshold and one formatter, shared with the phone (RG-280): two
+  // surfaces showing the same figure from two constants is a figure that will
+  // one day differ between the stage and the desk.
+  import { clipRemainingMs, CLIP_WARN_MS } from './mediaclock.js';
   import { RAIL_BASE_PCT } from './bigstagetimer.js';
   import { applyMediaTransport } from './mediatransport.js';
   import { syncSeek } from './mediasync.js';
@@ -156,6 +164,27 @@
    * this.
    */
   export let timerScale = 1;
+  /**
+   * IS THIS SCREEN A STAGE? — RG-280.
+   *
+   * Decides one thing: whether the clip playing here is given a countdown. A
+   * congregation must not be shown one — it is the preacher's cue to get ready
+   * and not theirs — so this defaults to false and `Output.svelte` passes its
+   * own role.
+   *
+   * RG-256 put this clock on `stage.html`, the phone. This page had none of any
+   * kind, which is why the operator asked three times about a screen they had
+   * labelled STAGE MONITOR.
+   */
+  export let stageClip = false;
+  /** How long is left of the clip on this screen, or `null` (RG-280). */
+  let clipLeft = null;
+  // A CLOCK MAY NOT OUTLIVE THE CLIP IT COUNTS (RG-280). `videoEl` is
+  // `bind:this`, so Svelte nulls it the moment the clip unmounts - a verse
+  // fired over a video would otherwise leave the last reading frozen on the
+  // platform monitor, which is rule 35 in a smaller costume.
+  $: if (!videoEl || still) clipLeft = null;
+  $: clipWarn = clipLeft != null && clipLeft <= CLIP_WARN_MS;
   /**
    * How deep this render is inside a composite. 0 is the screen itself.
    *
@@ -1270,6 +1299,11 @@
 
   const reportMedia = () => {
     if (still) return;
+    // HOW LONG IS LEFT (RG-280), read on the events the player already fires so
+    // there is no timer of its own. `clipRemainingMs` answers null for every
+    // pre-knowledge state — a zero reads as "it has finished" about a clip that
+    // has not started.
+    clipLeft = stageClip ? clipRemainingMs(videoEl) : null;
     syncMedia();
     if (!onMedia) return;
     const el = videoEl;
@@ -2242,7 +2276,7 @@
             <div class="lmediabox" style="{boxStyle(L)} border-radius:{L.radius || 0}cqw; opacity:{L.opacity == null ? 1 : L.opacity};">
               {#if content.media_kind === 'video'}
                 <!-- svelte-ignore a11y-media-has-caption -->
-                <video class="lmediafill" src={content.media_url} style="object-fit:{L.fit === 'contain' ? 'contain' : 'cover'};" bind:this={videoEl} on:error={() => mediaFailed('video', content.media_url)} on:loadeddata={mediaLoaded} autoplay={!still} loop={!still && !!mediaTransport?.loop} preload={still ? "metadata" : "auto"} muted={!audio} playsinline on:loadedmetadata={() => { routeAudio(); reportMedia(); }} on:timeupdate={reportMedia} on:pause={reportMedia} on:play={reportMedia} on:ended={reportMedia}></video>
+                <video class="lmediafill" src={still ? posterUrl(content.media_url) : content.media_url} style="object-fit:{L.fit === 'contain' ? 'contain' : 'cover'};" bind:this={videoEl} on:error={() => mediaFailed('video', content.media_url)} on:loadeddata={mediaLoaded} autoplay={!still} loop={!still && !!mediaTransport?.loop} preload={still ? "metadata" : "auto"} muted={!audio} playsinline on:loadedmetadata={() => { routeAudio(); reportMedia(); }} on:timeupdate={reportMedia} on:pause={reportMedia} on:play={reportMedia} on:ended={reportMedia}></video>
               {:else}
                 <img class="lmediafill" src={content.media_url} style="object-fit:{L.fit === 'contain' ? 'contain' : 'cover'};" alt="" on:error={() => mediaFailed('image', content.media_url)} on:load={mediaLoaded} />
               {/if}
@@ -2339,7 +2373,7 @@
            layer to the template to position it instead. -->
       {#if content.media_kind === 'video'}
         <!-- svelte-ignore a11y-media-has-caption -->
-        <video class="media" src={content.media_url} bind:this={videoEl} on:error={() => mediaFailed('video', content.media_url)} on:loadeddata={mediaLoaded} autoplay={!still} loop={!still && !!mediaTransport?.loop} preload={still ? "metadata" : "auto"} muted={!audio} playsinline on:loadedmetadata={() => { routeAudio(); reportMedia(); }} on:timeupdate={reportMedia} on:pause={reportMedia} on:play={reportMedia} on:ended={reportMedia}></video>
+        <video class="media" src={still ? posterUrl(content.media_url) : content.media_url} bind:this={videoEl} on:error={() => mediaFailed('video', content.media_url)} on:loadeddata={mediaLoaded} autoplay={!still} loop={!still && !!mediaTransport?.loop} preload={still ? "metadata" : "auto"} muted={!audio} playsinline on:loadedmetadata={() => { routeAudio(); reportMedia(); }} on:timeupdate={reportMedia} on:pause={reportMedia} on:play={reportMedia} on:ended={reportMedia}></video>
       {:else}
         <img class="media" src={content.media_url} alt="" on:error={() => mediaFailed('image', content.media_url)} on:load={mediaLoaded} />
       {/if}
@@ -2390,7 +2424,7 @@
          sensible behaviour and keeps old templates working. -->
     {#if content.media_kind === 'video'}
       <!-- svelte-ignore a11y-media-has-caption -->
-      <video class="media" src={content.media_url} bind:this={videoEl} on:error={() => mediaFailed('video', content.media_url)} on:loadeddata={mediaLoaded} autoplay={!still} loop={!still && !!mediaTransport?.loop} preload={still ? "metadata" : "auto"} muted={!audio} playsinline on:loadedmetadata={() => { routeAudio(); reportMedia(); }} on:timeupdate={reportMedia} on:pause={reportMedia} on:play={reportMedia} on:ended={reportMedia}></video>
+      <video class="media" src={still ? posterUrl(content.media_url) : content.media_url} bind:this={videoEl} on:error={() => mediaFailed('video', content.media_url)} on:loadeddata={mediaLoaded} autoplay={!still} loop={!still && !!mediaTransport?.loop} preload={still ? "metadata" : "auto"} muted={!audio} playsinline on:loadedmetadata={() => { routeAudio(); reportMedia(); }} on:timeupdate={reportMedia} on:pause={reportMedia} on:play={reportMedia} on:ended={reportMedia}></video>
     {:else}
       <img class="media" src={content.media_url} alt="" on:error={() => mediaFailed('image', content.media_url)} on:load={mediaLoaded} />
     {/if}
@@ -2570,6 +2604,16 @@
        Message over a cleared screen is still a Stage Message. It comes down when
        the page stops handing one over, which `Output.svelte` does on a role
        change and on both panic controls (DECISIONS §91). -->
+  <!-- ══ HOW LONG IS LEFT OF THE CLIP (RG-280) ══ on a stage screen only.
+       Frosted rather than filled, for the reason RG-212 and RG-256 both
+       recorded: the clip is what the room is watching, and an opaque bar
+       punched through it is a worse answer than a clock nobody can read. -->
+  {#if stageClip && clipLeft != null}
+    <div class="lclip" class:warn={clipWarn} role="status" aria-live="off">
+      <span class="lclip-k">Clip</span>
+      <span class="lclip-v">{formatCountdown(clipLeft)}</span>
+    </div>
+  {/if}
   {#if stageAlert && stageUrgent}
     <div class="lalert {alertStep(stageAlert)}" role="status" aria-live="assertive">
       <!-- SHOWN ONLY UNDER REDUCED MOTION (see the stylesheet). With the pulse
@@ -2841,6 +2885,55 @@
      console pane: `fixed` would escape the box and paint over the operator's
      own chrome. `.stage` is `position: absolute; inset: 0` on an output page, so
      on the screen this IS the screen. */
+  /* ══ THE CLIP CLOCK ON A BIG STAGE SCREEN (RG-280) ══
+     Same plate, same ink and the same warning threshold as the phone's
+     `.clipplate` in `Stage.svelte`: a preacher who checks the tablet and then
+     looks up at the platform monitor must not be told two different things.
+     FROSTED, not filled - the clip is what the room is watching, and a solid
+     bar punched through it is a worse answer than a clock nobody reads.
+     Sized in cqw so it holds its proportion on a 24-inch monitor and a wall. */
+  .lclip {
+    position: absolute;
+    left: 50%;
+    bottom: 4cqh;
+    transform: translateX(-50%);
+    z-index: 55;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 2.2cqw;
+    padding: 1.4cqh 2.6cqw;
+    border-radius: 1.4cqw;
+    background: rgba(8, 10, 14, 0.42);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    pointer-events: none;
+  }
+  .lclip-k {
+    /* LITERALS, NOT CONSOLE TOKENS. `seal.test.js` holds the rule and it is the
+       right one: this component also paints a congregation screen, where the
+       operator's stylesheet does not exist and a `var(--f-mono)` resolves to
+       nothing. The phone may name tokens because it is only ever the phone. */
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    line-height: 1.1;
+    font-size: min(1.6cqw, 2.4cqh);
+    color: rgba(242, 244, 248, 0.66);
+  }
+  .lclip-v {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    font-size: min(4.4cqw, 7cqh);
+    color: #f2f4f8;
+  }
+  /* The last 30 seconds. Red, and the same red the phone and the wall use -
+     this is the only figure on a stage screen that is about to run out. */
+  .lclip.warn { border-color: rgba(244, 81, 91, 0.5); }
+  .lclip.warn .lclip-v { color: #f4515b; }
   .lalert {
     position: absolute;
     inset: 0;

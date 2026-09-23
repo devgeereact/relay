@@ -1,4 +1,7 @@
 <script>
+  // THE FRAME IS ASKED FOR (RG-279). `preload="metadata"` sizes the element
+  // and paints nothing; the fragment is what pulls one frame.
+  import { posterUrl } from '../../posterframe.js';
   // THE DECK — reference: relay-main-library-screen.png, centre pane.
   //
   // ONE card for every content type in the Library: scripture, saved verses,
@@ -269,7 +272,7 @@
           <span class="vd-rthumb">
             {#if v.mediaKind === 'video'}
               <!-- svelte-ignore a11y-media-has-caption -->
-              <video src={v.media} preload="metadata" muted playsinline></video>
+              <video src={posterUrl(v.media)} preload="metadata" muted playsinline></video>
             {:else}
               <img src={v.media} alt="" loading="lazy" />
             {/if}
@@ -358,7 +361,7 @@
                  text template would show an empty frame with a filename under it. -->
             {#if v.mediaKind === 'video'}
               <!-- svelte-ignore a11y-media-has-caption -->
-              <video class="vd-media" src={v.media} preload="metadata" muted playsinline></video>
+              <video class="vd-media" src={posterUrl(v.media)} preload="metadata" muted playsinline></video>
               <span class="vd-play" aria-hidden="true">
                 <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
               </span>

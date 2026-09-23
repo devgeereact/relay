@@ -1,4 +1,7 @@
 <script>
+  // THE FRAME IS ASKED FOR (RG-279). `preload="metadata"` sizes the element
+  // and paints nothing; the fragment is what pulls one frame.
+  import { posterUrl } from '../posterframe.js';
   // A PICTURE, SMALL, IN A LIST — the one place a media item is recognisable.
   //
   // The Library's media pane has painted the file itself since it was written,
@@ -32,7 +35,7 @@
     {#if kind === 'video'}
       <!-- `preload="metadata"`: enough for the first frame, never the file. A
            running order with twenty clips in it must not fetch twenty videos. -->
-      <video src={url} preload="metadata" muted playsinline aria-hidden="true"></video>
+      <video src={posterUrl(url)} preload="metadata" muted playsinline aria-hidden="true"></video>
     {:else}
       <!-- `alt=""`: the name is already on the row beside this, and a screen
            reader announcing the filename twice is worse than not at all. -->

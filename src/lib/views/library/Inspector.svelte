@@ -1,4 +1,7 @@
 <script>
+  // THE FRAME IS ASKED FOR (RG-279). `preload="metadata"` sizes the element
+  // and paints nothing; the fragment is what pulls one frame.
+  import { posterUrl } from '../../posterframe.js';
   /**
    * THE LIBRARY INSPECTOR — what is true of the thing in hand (REBRAND §10).
    *
@@ -179,7 +182,7 @@
         {#if item.media}
           {#if item.mediaKind === 'video'}
             <!-- svelte-ignore a11y-media-has-caption -->
-            <video src={item.media} preload="metadata" muted playsinline></video>
+            <video src={posterUrl(item.media)} preload="metadata" muted playsinline></video>
           {:else}
             <img src={item.media} alt="" />
           {/if}

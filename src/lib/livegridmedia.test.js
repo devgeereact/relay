@@ -95,7 +95,10 @@ describe('the slide grid paints a media cue', () => {
     expect(media, 'no media cell in the grid').toBeTruthy();
     const pic = media.querySelector('video, img');
     expect(pic, 'the media cell is still only its filename').toBeTruthy();
-    expect(pic.getAttribute('src')).toBe('http://192.168.1.50:8032/media/9');
+    // THE FRAGMENT IS THE PICTURE (RG-279). `preload="metadata"` sizes the
+    // element and paints nothing, so a cell without `#t=` is a black box with a
+    // play icon on it - which is exactly what the operator reported twice.
+    expect(pic.getAttribute('src')).toBe('http://192.168.1.50:8032/media/9#t=0.1');
   });
 
   it('a still picture paints too', async () => {

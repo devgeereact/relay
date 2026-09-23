@@ -652,3 +652,99 @@ describe('the colour law — caution has its own ink, and it is neither promise'
     expect(rule('src/app.css', '.no-such-rule-anywhere')).toBe('');
   });
 });
+
+// ───────────────────────────────────────────────────────────────────────────
+// CYAN'S OWN SWEEP — RG-282.
+//
+// Amber has a file sweep over the whole tree. Amethyst has one. Cyan, until
+// today, had neither: it was held only where `plan.js` returned it, so any
+// component anywhere could spend "the AI is guessing" on a surface that is not
+// about a claim, and every instrument in the repository would stay green. That
+// is the gap the amber sweep exists to close, missing on the one promise colour
+// this product's whole gate is built around.
+//
+// **What cyan promises**, and it is narrower than "AI": *Relay is not certain
+// this is what was said.* Rule 18 spends a paragraph on why it may never carry a
+// percentage — a TF-IDF cosine is not a probability — so the colour IS the
+// number. A surface wearing it is claiming the reading behind it might be wrong.
+//
+// WHAT THIS DOES NOT SEE, stated so it is not read as more, exactly as the amber
+// and amethyst sweeps state theirs: a component wearing `app.css`'s shared
+// `.r-badge.cyan` / `.r-chip.cyan` / `.r-stat.cyan` WITHOUT naming the word is
+// outside it by construction. Those rules argue for themselves where they are
+// defined. This is the files that reach for cyan THEMSELVES.
+describe('the colour law — cyan means a guess, and every use is named', () => {
+  const ROOT = resolve(__dirname, '../..');
+  const read = (f) => readFileSync(resolve(ROOT, f), 'utf8');
+  const code = (f) => codeOnly(read(f));
+
+  /** Every .svelte and .js under src/, derived rather than typed. */
+  const sources = (() => {
+    const out = [];
+    const walk = (dir) => {
+      for (const name of readdirSync(join(ROOT, dir))) {
+        const rel = `${dir}/${name}`;
+        if (statSync(join(ROOT, rel)).isDirectory()) walk(rel);
+        else if ((name.endsWith('.svelte') || name.endsWith('.js')) && !name.endsWith('.test.js')) out.push(rel);
+      }
+    };
+    walk('src');
+    return out;
+  })();
+
+  const paintsCyan = (f) => /var\(--v-cyan/.test(code(f));
+
+  it('the scanner sees a real instance and does not read a comment', () => {
+    // Guards the guard. A sweep matching nothing passes every assertion below
+    // vacuously, which is how `ipc.test.js` narrowed twice while looking
+    // exhaustive — this repository's most-repeated instrument fault.
+    expect(sources.length, 'no sources found at all').toBeGreaterThan(60);
+    expect(paintsCyan('src/lib/views/Live.svelte')).toBe(true);
+    // `plan.js` names the cyan tokens ONLY in the doc comment recording which
+    // taxonomy was taken AWAY from them. A scanner counting that would fail on a
+    // correct file, and the cheapest way to go green would be deleting the
+    // explanation of the bug.
+    expect(read('src/lib/plan.js')).toMatch(/--v-cyan/);
+    expect(paintsCyan('src/lib/plan.js')).toBe(false);
+  });
+
+  it('every surface wearing cyan is one where Relay might be wrong', () => {
+    // WHAT EACH ENTRY MUST BE: a claim the AI made that a person has not yet
+    // confirmed, the control that adjudicates one, or the evidence behind it.
+    // "It needed to look technical" is not on the list.
+    const ALLOWED = new Map([
+      // THE CLAIM ITSELF, on the three surfaces that show one.
+      ['src/lib/views/Live.svelte', 'the guess card, its note, the paraphrase badge and Why this match?'],
+      ['src/lib/Dock.svelte', 'the transcript line a claim was parsed from, and its method chip (RG-278)'],
+      ['src/lib/LiveRail.svelte', 'the one-line reason a match is a guess rather than a hearing'],
+      // THE EVIDENCE BEHIND ONE.
+      ['src/lib/DetectionInspector.svelte', 'the inspector — what was heard, what was matched, and how'],
+      // WHAT RELAY DECIDED, AFTER THE FACT.
+      ['src/lib/views/library/History.svelte', 'the badge naming a past fire as a guess rather than a hearing'],
+      // THE TOKEN'S OWN DEFINITION AND THE SHARED CLASSES BUILT ON IT.
+      ['src/tokens.css', 'the definition'],
+      ['src/app.css', 'the shared .r-badge/.r-chip/.r-stat cyan variants'],
+    ]);
+    const offenders = sources.filter((f) => paintsCyan(f) && !ALLOWED.has(f));
+    expect(offenders, 'cyan spent where Relay is not guessing').toEqual([]);
+    // AND THE LIST MAY ONLY SHRINK. An entry for a file that stopped painting
+    // cyan is an amnesty nobody revisits — the same rule the amethyst block
+    // keeps, and the reason that block could be read down rather than counted.
+    const stale = [...ALLOWED.keys()].filter((f) => !paintsCyan(f));
+    expect(stale, 'listed, but no longer paints cyan').toEqual([]);
+  });
+
+  it('and no surface that wears it also prints a percentage beside it', () => {
+    // Rule 18's other half, on the two cards that render a claim. A cosine is not
+    // a probability and a number that lies is worse than no number, so the colour
+    // carries the whole of the uncertainty. This reads the RENDERED markup rather
+    // than the stylesheet: the defect would be a `{…}%` on a line the CSS is
+    // perfectly correct about.
+    for (const f of ['src/lib/Dock.svelte', 'src/lib/LiveRail.svelte']) {
+      const src = code(f);
+      const guessRows = [...src.matchAll(/mk-guess|lr-why\.guess|\.guess\b/g)];
+      expect(guessRows.length, `${f} no longer has a guess surface`).toBeGreaterThan(0);
+      expect(src, `${f} prints a percentage on a guess`).not.toMatch(/guess[^\n]*\{[^}]*%\}/);
+    }
+  });
+});
