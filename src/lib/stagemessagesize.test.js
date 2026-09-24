@@ -188,7 +188,10 @@ describe('the preacher’s screen paints the three states', () => {
     // — this page has two, and the other one is about a countdown's warning. A
     // scanner that took the first would be reading the wrong rule and would
     // pass or fail for reasons that have nothing to do with a message.
-    const at = src.indexOf('.pulse { color: var(--v-caution');
+    // `--v-red` since RG-295, when the operator asked for the message to be red;
+    // the assertion is that the reduced-motion answer carries the SAME ink the
+    // pulse would have reached, whatever that ink is this month.
+    const at = src.indexOf('.pulse { color: var(--v-red');
     expect(at, 'a reduced-motion viewer gets no colour at all').toBeGreaterThan(-1);
     const before = src.slice(0, at);
     expect(

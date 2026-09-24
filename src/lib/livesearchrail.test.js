@@ -556,3 +556,89 @@ describe('the chapter picker', () => {
     expect(host.querySelector('.lr-fire').classList.contains('r-btn')).toBe(true);
   });
 });
+
+// ── THE SONGS HALF DEBOUNCES TOO, AND FOR THE SAME REASON (RG-300) ──────────
+//
+// The scripture half has carried a 220 ms debounce since it was written, with
+// the reason in a comment above it: "`search_scripture` runs a semantic pass over
+// the corpus and an operator types a reference one character at a time." The
+// songs half is the SAME BOX — one `q`, one `<input>`, two collections — and it
+// had no debounce at all: `$: if (tab === 'songs') loadSongs(q)` fires on every
+// keystroke.
+//
+// Why that costs more than it looks. Tauri runs a `#[tauri::command]` that is not
+// `async fn` ON THE MAIN THREAD, and `search_songs` is one of the 162 sync
+// commands: it takes the app-wide `Db` mutex (`main.rs`) and runs
+// `title LIKE '%…%' OR author LIKE '%…%'` with a correlated `COUNT(*)` subquery
+// per row (`db/songs.rs::query_song_summaries`). On macOS the main thread is the
+// UI run loop, and the lock it wants is the one the detect thread holds while it
+// persists a transcript line or a fire. So a keystroke in this box during a
+// service is a full table scan and a lock wait on the thread that draws the
+// window — thirteen of them for "amazing grace", typed at speed.
+//
+// The second half is a correctness bug rather than a cost: the scripture half
+// checks `asked === q.trim()` before it publishes, precisely so "a slow search
+// must not label itself with a query the operator has since typed past". The
+// songs half assigned whatever came back, so two calls answering out of order
+// left the list showing the OLDER query's results with the newer one in the box.
+describe('the songs half of the rail', () => {
+  /** Type `text` a character at a time, the way an operator does. */
+  async function typeSongQuery(text, gapMs = 20) {
+    const box = host.querySelector('.lr-q');
+    for (let i = 1; i <= text.length; i++) {
+      box.value = text.slice(0, i);
+      box.dispatchEvent(new Event('input'));
+      await new Promise((r) => setTimeout(r, gapMs));
+    }
+  }
+
+  const songCalls = () => invoke.mock.calls.filter((c) => c[0] === 'search_songs');
+
+  it('asks the backend ONCE for a query typed at speed, not once per keystroke', async () => {
+    invoke.mockImplementation(async (cmd) => (cmd === 'search_songs' ? [] : []));
+    mount();
+    host.querySelectorAll('.lr-seg button')[1].click(); // Songs
+    await settle();
+    invoke.mockClear();
+
+    await typeSongQuery('amazing grace'); // 13 characters
+    await settle();
+
+    // One search for the settled query. It was thirteen — one per keystroke —
+    // each a main-thread table scan under the app-wide database lock.
+    expect(songCalls().length).toBe(1);
+    expect(songCalls()[0][1]).toMatchObject({ query: 'amazing grace' });
+  });
+
+  it('a slow answer to a query the operator has typed past does not replace the list', async () => {
+    // Two searches, answered out of order: the first (stale) resolves LAST.
+    const OLD = [{ id: 1, title: 'Old answer', author: '', section_count: 1 }];
+    const NEW = [{ id: 2, title: 'New answer', author: '', section_count: 1 }];
+    let n = 0;
+    invoke.mockImplementation(async (cmd, args) => {
+      if (cmd !== 'search_songs') return [];
+      n += 1;
+      if (n === 1) {
+        await new Promise((r) => setTimeout(r, 260));
+        return OLD;
+      }
+      return NEW;
+    });
+    mount();
+    host.querySelectorAll('.lr-seg button')[1].click();
+    await settle();
+    invoke.mockClear();
+    n = 0;
+
+    const box = host.querySelector('.lr-q');
+    box.value = 'aa';
+    box.dispatchEvent(new Event('input'));
+    await new Promise((r) => setTimeout(r, 240)); // let the first search go out
+    box.value = 'bb';
+    box.dispatchEvent(new Event('input'));
+    await settle(500); // both answers land, the stale one last
+
+    const shown = [...host.querySelectorAll('.lr-row .lr-n')].map((e) => e.textContent.trim());
+    expect(shown).toEqual(['New answer']);
+  });
+});

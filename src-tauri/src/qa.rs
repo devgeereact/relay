@@ -107,8 +107,15 @@ pub(crate) fn bare_app() -> tauri::App<tauri::test::MockRuntime> {
         // `state::<Phrases>()` on every window, which PANICS rather than failing
         // with a readable message. Ten e2e tests found that within a minute of
         // the index landing, which is the fixture doing its job.
-        .manage(Phrases(detection::PhraseIndex::build(&corpus)))
-        .manage(Semantic(SemanticIndex::build(&corpus)))
+        // BEHIND AN `RwLock`, exactly as the real app manages them (RG-300): a
+        // translation switch rebuilds both, and a fixture that held bare indexes
+        // could not exercise that at all.
+        .manage(Phrases(std::sync::RwLock::new(
+            detection::PhraseIndex::build(&corpus),
+        )))
+        .manage(Semantic(std::sync::RwLock::new(SemanticIndex::build(
+            &corpus,
+        ))))
         .manage(Context(Mutex::new(ContextMemory::default())))
         // mock_context, NOT generate_context!(): the real macro embeds Info.plist as a
         // link symbol, and expanding it a second time fails with
@@ -602,8 +609,13 @@ mod cold_start {
             .expect("create_voice_profile");
 
         // --- app_settings: Settings → Bible translations (and every other pref)
-        set_active_translation(h.state::<Db>(), h.state::<servicelock::ServiceLock>(), 1)
-            .expect("set_active_translation");
+        set_active_translation(
+            h.clone(),
+            h.state::<Db>(),
+            h.state::<servicelock::ServiceLock>(),
+            1,
+        )
+        .expect("set_active_translation");
 
         // --- services: starting to listen starts recording (capture.js
         //     `startCapture` calls `start_service` before `start_capture`).

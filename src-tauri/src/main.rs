@@ -81,12 +81,12 @@ struct Stt(Mutex<Option<SttEngine>>);
 struct Routing(Mutex<Router>);
 
 /// The semantic (paraphrase) index, built once from the corpus at startup.
-struct Semantic(SemanticIndex);
+struct Semantic(std::sync::RwLock<SemanticIndex>);
 
 /// The contiguous-phrase index. Built from the same corpus as `Semantic` and
 /// answering the opposite question: not "which verse means this" but "which
 /// verse did the preacher just READ ALOUD". See `detection::PhraseIndex`.
-struct Phrases(detection::PhraseIndex);
+struct Phrases(std::sync::RwLock<detection::PhraseIndex>);
 
 /// "Current passage" state for resolving bare verse references ("verse 4").
 #[derive(Default)]
@@ -264,8 +264,12 @@ fn main() {
                     })
                     .collect()
             };
-            app.manage(Phrases(detection::PhraseIndex::build(&corpus)));
-            app.manage(Semantic(SemanticIndex::build(&corpus)));
+            app.manage(Phrases(std::sync::RwLock::new(
+                detection::PhraseIndex::build(&corpus),
+            )));
+            app.manage(Semantic(std::sync::RwLock::new(SemanticIndex::build(
+                &corpus,
+            ))));
             app.manage(Context(Mutex::new(ContextMemory::default())));
 
             // Start the kiosk WebSocket server (network_client render target) on
@@ -1470,9 +1474,19 @@ fn emit_detections<R: tauri::Runtime>(
         //     strongly and would otherwise pad the list exactly when the first
         //     answer was already correct.
         // Both are configuration (§ thresholds are config, not constants).
-        for (r, score, terms) in
-            worth_suggesting(sem.0.top_k_explained(text, SEMANTIC_SUGGESTIONS_MAX))
-        {
+        // READ GUARD (RG-300). Readers do not block readers, so the detection path
+        // costs what the bare field cost; the one writer is a translation switch,
+        // which the service lock refuses while a service is recording.
+        //
+        // A POISONED INDEX SUGGESTS NOTHING rather than panicking. The only writer
+        // runs off the live path, so this can practically only follow a panic
+        // elsewhere — and an empty suggestion list is the same answer an empty
+        // corpus gives, on a path that must never bring the service down.
+        let semantic_hits = match sem.0.read() {
+            Ok(idx) => worth_suggesting(idx.top_k_explained(text, SEMANTIC_SUGGESTIONS_MAX)),
+            Err(_) => Vec::new(),
+        };
+        for (r, score, terms) in semantic_hits {
             candidates.push(Cand::single(
                 r,
                 score.min(0.95),
@@ -1504,7 +1518,10 @@ fn emit_detections<R: tauri::Runtime>(
         // your own eyes" names no book at all, and that phrase is verbatim in
         // Romans 12:16 as well as in the Proverbs 3 the preacher was reading.
         let quoted_in = anchor.as_ref().map(|r| r.book.as_str());
-        let mut quoted = phrases.0.quoted(text, quoted_in, QUOTED_SUGGESTIONS_MAX);
+        let mut quoted = match phrases.0.read() {
+            Ok(g) => g.quoted(text, quoted_in, QUOTED_SUGGESTIONS_MAX),
+            Err(_) => Vec::new(),
+        };
         if quoted_in.is_none() {
             if let Some(on_screen) = context.current().map(|r| r.book.clone()) {
                 quoted.sort_by_key(|h| h.r.book != on_screen);
@@ -2229,7 +2246,11 @@ fn search_scripture(
     query: String,
 ) -> error::Result<Vec<SearchHit>> {
     let conn = db.0.lock()?;
-    Ok(search_verses(&conn, &sem.0, query.trim()))
+    let idx = sem
+        .0
+        .read()
+        .map_err(|_| error::Error::refused("the scripture index is unavailable — restart Relay"))?;
+    Ok(search_verses(&conn, &idx, query.trim()))
 }
 
 /// The scripture search itself, over a connection + semantic index — shared by
@@ -2512,7 +2533,10 @@ fn remote_api<R: tauri::Runtime>(
                 let sem = app.state::<Semantic>();
                 let guard = db.0.lock();
                 match guard {
-                    Ok(conn) => search_verses(&conn, &sem.0, &q),
+                    Ok(conn) => match sem.0.read() {
+                        Ok(idx) => search_verses(&conn, &idx, &q),
+                        Err(_) => vec![],
+                    },
                     Err(_) => vec![],
                 }
             };
@@ -5707,14 +5731,77 @@ fn delete_translation(
 }
 
 #[tauri::command]
-fn set_active_translation(
+fn set_active_translation<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     db: tauri::State<'_, Db>,
     lock: tauri::State<'_, servicelock::ServiceLock>,
     id: i64,
 ) -> error::Result<()> {
     lock.guard("set_active_translation")?;
-    let conn = db.0.lock()?;
-    db::set_setting(&conn, "active_translation", &id.to_string()).map_err(Into::into)
+    {
+        let conn = db.0.lock()?;
+        db::set_setting(&conn, "active_translation", &id.to_string())?;
+    }
+    // AND THE INDEXES THAT READ THAT SETTING ARE REBUILT — RG-300.
+    //
+    // `Semantic` and `Phrases` were built ONCE, in `setup`, from
+    // `db::all_verses`, which scopes itself to the active translation. Writing
+    // the setting and stopping there left both detectors scanning the PREVIOUS
+    // translation's corpus until the app was relaunched — while every verse READ
+    // was correctly scoped to the new one. So the console would show BSB words
+    // for a reference the paraphrase detector found in KJV vocabulary, and
+    // nothing on any surface would say the two disagreed: a wrong-verse risk
+    // wearing a settings bug's clothes.
+    //
+    // The lock is DROPPED above before this runs, because `rebuild_corpus_indexes`
+    // takes it again — the ordinary rule, stated here because the write and the
+    // rebuild read as one action and are not.
+    rebuild_corpus_indexes(&app)
+}
+
+/// Rebuild the two corpus indexes from whatever translation is active now.
+///
+/// **The one door**, per rule 36: anything that changes which verses Relay should
+/// be scanning calls this, rather than each caller remembering two `build`s. It
+/// is ~305 ms of work over 31,102 verses, and it is deliberately synchronous —
+/// the alternative is a window that says the translation changed while the
+/// detectors have not caught up, which is the defect being fixed wearing a
+/// progress bar.
+///
+/// **It cannot run during a service.** Every caller is behind
+/// `ServiceLock::guard`, so the live path never meets a write lock here. That is
+/// what makes a plain `RwLock` the right shape: readers never block each other,
+/// and the only writer is an operator at a settings screen between services.
+fn rebuild_corpus_indexes<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> error::Result<()> {
+    let corpus: Vec<(VerseRef, String)> = {
+        let db = app.state::<Db>();
+        let conn = db.0.lock()?;
+        db::all_verses(&conn)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|v| {
+                (
+                    VerseRef {
+                        book: v.book,
+                        chapter: v.chapter,
+                        verse: v.verse,
+                    },
+                    v.text,
+                )
+            })
+            .collect()
+    };
+    // BOTH, OR THE PAIR DISAGREES. A quotation index over one translation and a
+    // paraphrase index over another is worse than either being stale.
+    let phrases = detection::PhraseIndex::build(&corpus);
+    let semantic = SemanticIndex::build(&corpus);
+    if let Ok(mut g) = app.state::<Phrases>().0.write() {
+        *g = phrases;
+    }
+    if let Ok(mut g) = app.state::<Semantic>().0.write() {
+        *g = semantic;
+    }
+    Ok(())
 }
 
 /// Set the STT language: a code ("yo"/"sw"/"ha"/"en"/…) or null for auto-detect

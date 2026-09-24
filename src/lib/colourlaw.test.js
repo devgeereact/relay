@@ -619,14 +619,7 @@ describe('the colour law — caution has its own ink, and it is neither promise'
     ['src/lib/views/Channels.svelte', '.ch-downnow', 'a screen the operator took down'],
     ['src/lib/views/Channels.svelte', '.ch-stage-warn', 'no screen has the stage role'],
     ['src/lib/views/templates/TemplateEditor.svelte', '.te-fwarn', "a template's font did not load"],
-    // THE TWO STAGE MESSAGES, added 2026-09-23 with RG-268. A word from the desk
-    // to the preacher is the textbook caution: it warns, it promises nothing
-    // about a screen, and it is not a failure. The phone got the ink with RG-239
-    // and the big screen was left grey for two days, which is exactly the drift
-    // an enumerated sweep exists to catch — so both surfaces are named here and
-    // neither can lose it alone.
-    ['src/lib/TemplateRender.svelte', '.lmsg', 'an ordinary Stage Message, on a stage screen'],
-    ['src/Stage.svelte', '.bigmsg', 'the same Stage Message, on the preacher’s phone'],
+    // THE TWO STAGE MESSAGES LEFT THIS LIST ON 2026-09-24 — see the block below.
   ];
 
   it.each(CAUTIONS)('%s %s — %s — wears the caution ink and no promise colour', (f, sel) => {
@@ -635,6 +628,60 @@ describe('the colour law — caution has its own ink, and it is neither promise'
     expect(r, `${sel} does not paint --v-caution`).toMatch(/var\(--v-caution/);
     expect(r, `${sel} still paints the tally light`).not.toMatch(/var\(--v-amber/);
     expect(r, `${sel} still paints the rehearsal colour`).not.toMatch(/var\(--v-amethyst/);
+  });
+
+  // ── THE TWO STAGE MESSAGES ARE RED NOW, AND BOTH OR NEITHER (RG-295) ───────
+  //
+  // They were in the caution list above, added with RG-268, and the reasoning was
+  // good: a word from the desk to the preacher warns, promises nothing about a
+  // screen, and is not a failure — the textbook caution.
+  //
+  // The operator overruled it, in the plainest terms available to them and about
+  // the one surface they are the sole judge of: *"when the message is sent make
+  // it flashing red text so it can catch attention of the preacher"*. The person
+  // the message is FOR says it was not catching their eye. That is evidence of a
+  // kind no colour rule outranks.
+  //
+  // WHAT THE LAW STILL REQUIRES, and what this block holds instead:
+  //
+  //   1. **Both surfaces or neither.** One message, two screens the preacher may
+  //      look at in the same second. RG-268 was filed because the phone had an
+  //      ink the big screen did not for two days; the same drift in the other
+  //      direction is the same defect.
+  //   2. **Neither promise colour, still.** Amber is ON AIR and amethyst is
+  //      rehearsal, and a message is neither. Red was never a promise colour —
+  //      rule 18 spends it on destructive and on failure — which is why this
+  //      request was available to grant at all.
+  //   3. **The alarm must still be unmistakably different.** §116's line between
+  //      a note and an alarm now rests on SHAPE alone: a note is a strip or a
+  //      panel beside the screen's own content, an alarm is the whole screen in a
+  //      solid red field. Asserted here, because it is the guarantee that the ink
+  //      used to carry and nothing else was holding.
+  const STAGE_MESSAGES = [
+    ['src/lib/TemplateRender.svelte', '.lmsg', 'an ordinary Stage Message, on a stage screen'],
+    ['src/Stage.svelte', '.bigmsg', 'the same Stage Message, on the preacher’s phone'],
+  ];
+
+  it.each(STAGE_MESSAGES)('%s %s — %s — is red, and no promise colour', (f, sel) => {
+    const r = rule(f, sel);
+    expect(r, `${sel} is gone from ${f}`).not.toBe('');
+    expect(r, `${sel} does not paint the red the operator asked for`).toMatch(/var\(--v-red/);
+    expect(r, `${sel} paints the tally light`).not.toMatch(/var\(--v-amber/);
+    expect(r, `${sel} paints the rehearsal colour`).not.toMatch(/var\(--v-amethyst/);
+  });
+
+  it('and the ALARM is still a different thing from across a room', () => {
+    // The shape test, which is what §116 now rests on. `.lalert` fills the screen
+    // with a solid field; `.lmsg` is a box with a rule down its side. If a future
+    // change made the note a full red field too, the preacher would have no way
+    // to tell "wrap up" from "stop the service", and this is the only instrument
+    // that would notice.
+    const alert = rule('src/lib/TemplateRender.svelte', '.lalert');
+    const note = rule('src/lib/TemplateRender.svelte', '.lmsg');
+    expect(alert, 'the alarm no longer fills the screen').toMatch(/inset:\s*0/);
+    expect(alert, 'the alarm is no longer a solid field').toMatch(/background:\s*#c8121c/);
+    expect(note, 'the note has become a full-bleed panel like the alarm').not.toMatch(/inset:\s*0/);
+    expect(note, 'the note lost the rule that distinguishes it').toMatch(/border-left:/);
   });
 
   it('the SLIDE badge on the transport is steel, not the tally light — the wall may be clear', () => {

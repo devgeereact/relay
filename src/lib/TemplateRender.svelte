@@ -3189,8 +3189,11 @@
     background: rgba(0, 0, 0, 0.62);
     /* A RULE, NOT A HAIRLINE. Sized in `cqw` like everything else here, so it is
        the same share of the screen on a 24" monitor and on a projector. */
-    border-left: 0.9cqw solid var(--v-caution, #c9a24a);
-    box-shadow: 0 0 0 0.12cqw var(--v-caution-line, rgba(201, 162, 74, 0.42));
+    /* RED, ON THE OPERATOR'S INSTRUCTION OF 2026-09-23 (RG-295, DECISIONS §116
+       amended). See the note above `.lmsg-v` for what that cost and what now
+       carries the note/alarm line instead. */
+    border-left: 0.9cqw solid var(--v-red, #f4515b);
+    box-shadow: 0 0 0 0.12cqw var(--v-red-line, rgba(244, 81, 91, 0.42));
     font-size: 3.2cqw;
     line-height: 1.25;
     text-align: center;
@@ -3205,7 +3208,7 @@
     -webkit-box-orient: vertical;
     overflow: hidden;
     font-weight: 700;
-    color: var(--v-caution, #c9a24a);
+    color: var(--v-red, #f4515b);
   }
   /* THE PULSE, and the phone's cycle unchanged. Gentle on purpose: it has to be
      unmistakably alive from a platform without competing with the alarm, which
@@ -3217,7 +3220,7 @@
   }
   @keyframes stagemsg {
     0%, 100% { color: #fff; }
-    50% { color: var(--v-caution, #c9a24a); }
+    50% { color: var(--v-red, #f4515b); }
   }
   /* AND REDUCED MOTION GETS AN EQUIVALENT, NOT A QUIETER STATE: the words rest
      AT the caution ink rather than pulsing to it, so a viewer who asked for no
@@ -3226,7 +3229,7 @@
      would be the setting ignored. */
   @media (prefers-reduced-motion: reduce) {
     .lmsg-v {
-      color: var(--v-caution, #c9a24a);
+      color: var(--v-red, #f4515b);
     }
   }
   /* ══ AND WITH NOTHING ON THE SCREEN, THE WORDS TAKE IT (RG-285) ══
@@ -3236,13 +3239,21 @@
      `right` and `bottom` are released here rather than left to the browser's
      over-constraint rule.
 
-     THE INK IS UNCHANGED AND THAT IS DELIBERATE. `--v-caution` is what rule 18
-     leaves a message that warns and promises nothing about a screen, and RG-268
-     enumerated this exact selector in `colourlaw.test.js` beside the phone's.
-     What the operator reported — that the word did not catch an eye — is
-     answered by the ROOM and the SIZE, which is what the phone's own answer to
-     the same complaint was. The ink is the one part of this request left open;
-     the RG-285 row records why. */
+     THE INK IS RED, ON THE OPERATOR'S EXPLICIT INSTRUCTION (RG-295): *"when the
+     message is sent make it flashing red text so it can catch attention of the
+     preacher"*. It was `--v-caution`, which is what rule 18 leaves a message
+     that warns and promises nothing about a screen, and that was the right
+     reading of §116 until the person the message is FOR said it was not
+     catching their eye.
+
+     WHAT THIS COSTS, said here rather than discovered: §116 drew the line
+     between a note and an alarm, and the ink was half of how that line was
+     drawn. It now rests entirely on SHAPE — a note is a strip or a panel with
+     the screen's own content beside it, an alarm (`.lalert`) takes the whole
+     screen in a solid red field and pulses the panel rather than the text.
+     Those are still unmistakably different from the back of a room, which is
+     the test that matters. §116 is amended to say so; it is not overruled by
+     this comment. */
   .lmsg.fills {
     right: auto;
     bottom: auto;
@@ -3254,7 +3265,7 @@
     border-radius: 0;
     /* A rule down the whole side rather than beside a line of text: at this size
        the strip's 0.9cqw edge reads as a border on a panel, which is furniture. */
-    border-left: 1.4cqw solid var(--v-caution, #c9a24a);
+    border-left: 1.4cqw solid var(--v-red, #f4515b);
     box-shadow: none;
     background: rgba(0, 0, 0, 0.72);
     /* 8cqw against the strip's 3.2. The strip shares the foot with a reading and

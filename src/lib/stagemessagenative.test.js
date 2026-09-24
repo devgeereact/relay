@@ -259,9 +259,18 @@ describe('a quiet word and an alarm are different things — DECISIONS §116', (
 // below assert the ink, the rule and the pulse on the WORDS, and the two tests
 // above assert that the plate they sit on still does neither.
 //
-// COLOUR LAW (rule 18): ochre is the only free ink. Amber means ON AIR, cyan
-// means the AI guessed, amethyst means a rehearsal and red is the alarm's.
-// `colourlaw.test.js` carries `.lmsg` in its caution sweep.
+// COLOUR LAW (rule 18) — AND THE INK CHANGED AGAIN ON 2026-09-24 (RG-295).
+// These cases read `--v-caution` when they were written, which was right: ochre
+// was the only free ink, and a message warns and promises nothing about a
+// screen. The operator then said, about the one surface they are the sole judge
+// of: *"when the message is sent make it flashing red text so it can catch
+// attention of the preacher"*. The person the message is FOR reports it is not
+// catching their eye, and that is evidence no colour rule outranks.
+//
+// So these now read `--v-red`. Amber and amethyst are still forbidden here and
+// still asserted; red was never a promise colour, which is why the request could
+// be granted at all. `colourlaw.test.js` holds both surfaces together — both or
+// neither — and holds the shape test that §116's note/alarm line now rests on.
 //
 //   npx vitest run src/lib/stagemessagenative.test.js
 describe('the quiet word is SEEN on the big screen as well — RG-268', () => {
@@ -273,13 +282,13 @@ describe('the quiet word is SEEN on the big screen as well — RG-268', () => {
     return m ? m[1] : '';
   };
 
-  it('the words are the caution ink, not the grey a volunteer misses', () => {
+  it('the words are the red the operator asked for, not the grey they missed', () => {
     // The whole of the operator's complaint in one assertion. `color: #fff` on a
     // black plate is what the screenshot showed.
     const r = rule('.lmsg-v');
     expect(r, 'there is no element carrying the words on their own').not.toBe('');
-    expect(r, 'the words are still painted in a colour that promises nothing').toMatch(
-      /var\(--v-caution/,
+    expect(r, 'the words are still painted in a colour the preacher missed').toMatch(
+      /var\(--v-red/,
     );
   });
 
@@ -289,7 +298,7 @@ describe('the quiet word is SEEN on the big screen as well — RG-268', () => {
     const r = rule('.lmsg');
     expect(r).not.toBe('');
     expect(r, 'no left rule — the strip is still an unmarked plate').toMatch(
-      /border-left:[^;]*var\(--v-caution/,
+      /border-left:[^;]*var\(--v-red/,
     );
     expect(r, 'the strip still wears the hairline white border it was missed in').not.toMatch(
       /border:\s*1px solid rgba\(255, 255, 255/,
@@ -317,11 +326,11 @@ describe('the quiet word is SEEN on the big screen as well — RG-268', () => {
 
   it('and reduced motion keeps the colour and drops the movement', () => {
     // AN EQUIVALENT, NOT A QUIETER STATE — the phone's rule verbatim: the text
-    // rests AT the caution ink rather than pulsing to it, so the message is still
+    // rests AT the message ink rather than pulsing to it, so the message is still
     // a coloured message rather than a plain one.
     const blocks = motionBlocks('reduce').filter((b) => b.includes('.lmsg-v'));
     expect(blocks.length, 'reduced motion is not answered for the strip').toBe(1);
-    expect(blocks[0]).toMatch(/var\(--v-caution/);
+    expect(blocks[0]).toMatch(/var\(--v-red/);
     expect(blocks[0], 'the reduced-motion answer is the pulse under another word').not.toMatch(
       /animation|filter:\s*brightness/,
     );
@@ -336,14 +345,25 @@ describe('the quiet word is SEEN on the big screen as well — RG-268', () => {
     expect(motionBlocks('reduce').some((b) => b.includes('.lalert'))).toBe(true);
   });
 
-  it('the pulse never touches the ALERT’s ink, and the alert never loses its own', () => {
-    // Rule 18 stated as a test rather than as a comment. The two renderings may
-    // not converge: a caution that turned red would be an alarm nobody raised,
-    // and an alarm that turned ochre would be an alarm nobody hears.
+  it('the note and the alarm are still different things, now that they share an ink', () => {
+    // REWRITTEN 2026-09-24 (RG-295). This used to assert that the note must NOT
+    // reach for red at all, and that was the whole of how the two were kept
+    // apart. The operator asked for the note to be red, so that separation had
+    // to move somewhere or be given up — and giving it up would mean a preacher
+    // cannot tell "wrap up" from "stop the service".
+    //
+    // It moved to SHAPE, which is the stronger test anyway because it is what a
+    // person actually reads from the back of a room: the alarm is the whole
+    // screen in a solid field, the note is a box with a rule down its side.
     expect(rule('.lalert'), 'the alarm stopped being red').toMatch(/#c8121c/);
-    expect(rule('.lmsg-v'), 'the quiet message reached for the alarm’s red').not.toMatch(
-      /#c8121c|var\(--v-red|var\(--v-rose/,
+    expect(rule('.lalert'), 'the alarm no longer fills the screen').toMatch(/inset:\s*0/);
+    expect(rule('.lmsg'), 'the note became a full-bleed panel like the alarm').not.toMatch(
+      /inset:\s*0/,
     );
+    expect(rule('.lmsg'), 'the note lost the rule that distinguishes it').toMatch(/border-left:/);
+    // The alarm's own solid field is NOT the note's ink, and never was: `#c8121c`
+    // is a panel colour and `--v-red` is an ink. They are allowed to be cousins.
+    expect(rule('.lmsg-v'), 'the words became the alarm’s panel colour').not.toMatch(/#c8121c/);
     for (const promise of ['--v-amber', '--v-cyan', '--v-amethyst']) {
       expect(rule('.lmsg'), `the strip paints ${promise}`).not.toContain(promise);
       expect(rule('.lmsg-v'), `the words paint ${promise}`).not.toContain(promise);

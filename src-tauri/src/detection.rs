@@ -4620,6 +4620,22 @@ mod perf {
     /// that claim can be re-checked rather than believed.
     ///
     /// (If the corpus ever grows well beyond one translation, re-run this first.)
+    ///
+    /// ── TWO THINGS THIS CORPUS CANNOT SEE, AND THE FIGURES IT GETS WRONG ─────
+    ///
+    /// The corpus below is 31,100 copies of ONE sentence with a serial number in
+    /// it, which is the right size and the wrong shape. Measured against the real
+    /// KJV by `measure_query_repair_on_the_real_corpus`, the same two numbers are
+    /// **build ≈ 305 ms** and **top_k ≈ 4.6 ms** — not 112 and 2.6. The conclusion
+    /// does not move (4.6 ms once a second is still under half a percent of a
+    /// core, and the scan still stays), but the figures quoted above and in
+    /// `CLAUDE.md` describe a synthetic corpus rather than the one that ships.
+    ///
+    /// And every word of the query below is in vocabulary, so `repair_query`
+    /// returns at its first line for every token and is never exercised here at
+    /// all — on the branch built for tier-1 languages, where unknown words are the
+    /// normal case rather than the corner. That is measured in the other test too:
+    /// **0.33 ms per unknown word**, which is why it is left alone.
     #[test]
     #[ignore = "measurement, not a test — run with --ignored --nocapture"]
     fn measure_semantic_top_k() {
@@ -4657,6 +4673,106 @@ mod perf {
         println!("\n  SemanticIndex over {} verses:", corpus.len());
         println!("    build:     {build_ms:.0} ms (once, at startup)");
         println!("    top_k:     {per_query_ms:.2} ms per query (~1 query/sec live)");
+        println!();
+    }
+
+    /// THE SAME QUESTION, ASKED OF THE REAL CORPUS AND A REAL MISHEARING.
+    ///
+    /// `measure_semantic_top_k` above is the measurement every "the scan stays a
+    /// linear scan" decision rests on, and it has one blind spot that matters more
+    /// than the scan does: its corpus is 31,100 copies of ONE sentence and its
+    /// query is entirely in-vocabulary, so `repair_query` returns at its first
+    /// line (`self.idf.contains_key(t)`) for every token and is never measured at
+    /// all.
+    ///
+    /// `repair_query` is the branch that cannot be reasoned about from the code.
+    /// For every query token of four characters or more that the corpus has never
+    /// seen, it walks **the whole vocabulary** and runs `edit_distance_within`
+    /// against each candidate. There is a length pre-filter and no index. The
+    /// tier-1 case is exactly the one that produces unknown tokens by the
+    /// handful — whisper on Yorùbá, Swahili or code-switched preaching — so the
+    /// worst case is not a corner, it is the target market.
+    ///
+    /// Why it is worth a number rather than an argument: this runs inside
+    /// `emit_detections`, which holds `Db`, `Routing` and `Context` **together**
+    /// for its whole body (`main.rs`), and ~120 of Relay's 167 Tauri commands open
+    /// with `db.0.lock()`. Tauri runs a command that is not `async fn` on the MAIN
+    /// THREAD, which on macOS is the UI run loop. So every millisecond spent here,
+    /// once per transcript partial, is a millisecond in which an operator's click
+    /// can be waiting — and "the console drags during a sermon" is what that looks
+    /// like from the other side of the screen.
+    ///
+    /// Run: `cargo test --release perf::measure_query_repair -- --ignored --nocapture`
+    #[test]
+    #[ignore = "measurement, not a test — run with --ignored --nocapture"]
+    fn measure_query_repair_on_the_real_corpus() {
+        #[derive(serde::Deserialize)]
+        struct KjvBook {
+            chapters: Vec<Vec<String>>,
+        }
+        const RAW: &str = include_str!("../data/kjv.json");
+        let books: Vec<KjvBook> =
+            serde_json::from_str(RAW.trim_start_matches('\u{feff}')).expect("kjv.json parses");
+        let mut corpus: Vec<(VerseRef, String)> = Vec::new();
+        for (bi, b) in books.iter().enumerate() {
+            for (ci, ch) in b.chapters.iter().enumerate() {
+                for (vi, t) in ch.iter().enumerate() {
+                    corpus.push((
+                        VerseRef {
+                            book: format!("Book{bi}"),
+                            chapter: ci as i64 + 1,
+                            verse: vi as i64 + 1,
+                        },
+                        t.clone(),
+                    ));
+                }
+            }
+        }
+
+        let t0 = Instant::now();
+        let idx = SemanticIndex::build(&corpus);
+        let build_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
+        // IN VOCABULARY — what the existing benchmark measures.
+        let known = "for god so loved the world that he gave his only begotten son                      that whosoever believeth in him should not perish";
+        // OUT OF VOCABULARY — the same sentence as whisper hears it through an
+        // accent. Every one of these is a word the Bible does not contain, and
+        // every one is four characters or more, so every one walks the vocabulary.
+        let misheard = "for godd soo lovedd the worlde thatt hee gavv hiss onlie begoten sunne                         thatt whoseover beleiveth inn himm shuld nott perishe";
+
+        let bench = |q: &str| {
+            let _ = idx.top_k(q, 1);
+            let t = Instant::now();
+            const N: usize = 20;
+            for _ in 0..N {
+                let _ = idx.top_k(q, 1);
+            }
+            t.elapsed().as_secs_f64() * 1000.0 / N as f64
+        };
+        // AND THE ORDINARY CASE, which is the one that decides whether any of this
+        // matters: an English sentence with a couple of words whisper got wrong.
+        // A worst case nobody meets is not a budget.
+        let typical = "for god soo loved the world that he gave his only begoten son \
+                       that whosoever believeth in him should not perish";
+        let known_ms = bench(known);
+        let typical_ms = bench(typical);
+        let misheard_ms = bench(misheard);
+
+        println!(
+            "\n  REAL KJV corpus — {} verses, {} vocabulary terms",
+            corpus.len(),
+            idx.idf.len()
+        );
+        println!("    build:                    {build_ms:.0} ms (once, at startup)");
+        println!("    top_k, every word known:  {known_ms:.2} ms per query");
+        println!(
+            "    top_k, 2 words misheard:  {typical_ms:.2} ms per query  <-- the ordinary case"
+        );
+        println!("    top_k, 20 words misheard: {misheard_ms:.2} ms per query <-- repair_query walks the vocabulary");
+        println!(
+            "    cost of one unknown word: {:.2} ms",
+            (misheard_ms - known_ms) / 20.0
+        );
         println!();
     }
 }
@@ -7341,6 +7457,113 @@ mod phrase_bench {
     /// One line per transcript window. Needs the bundled KJV, so it builds the
     /// whole 31,102-verse index; that is the point, because `MAX_GRAM_VERSES` and
     /// `PHRASE_RARE_FRACTION` mean nothing on a seven-verse fixture.
+    /// **READ THE BIBLE BACK AND COUNT THE WRONG VERSES — the measurement that
+    /// says whether a quoted verse may reach a wall.**
+    ///
+    /// `READING_RUN_WORDS`' own doc records this simulation and its result (42
+    /// wrong verses at a run of eight, every one an exact tie, all 42 removed by
+    /// the sole rule). It records them in PROSE. This repository's rule is that a
+    /// contract stated in a comment is not a contract, and that gap cost it the
+    /// `stopCapture` throw-vs-swallow bug for as long as the comment existed.
+    ///
+    /// **The CI scorecard cannot see this change at all** — measured, not
+    /// assumed: `eval::print_scorecard` reports 0.0% with the promotion on and
+    /// 0.0% with `for_quotation` forced back to `Quoted`, because its 82 cases
+    /// are spoken references and not a preacher reading a verse aloud. An
+    /// instrument that returns the same number either way is not evidence about
+    /// this gate, and quoting it as though it were would be the worst kind of
+    /// reassurance. So the number lives here, beside the rule it is about.
+    ///
+    /// `cargo test read_the_bible_back -- --ignored --nocapture`. Ignored because
+    /// it builds a phrase index over 31,102 verses and reads a sample of them
+    /// back; it is a benchmark, not a gate.
+    #[test]
+    #[ignore]
+    fn read_the_bible_back_and_count_wrong_verses() {
+        let kjv: serde_json::Value =
+            serde_json::from_str(include_str!("../data/kjv.json").trim_start_matches('\u{feff}'))
+                .expect("kjv");
+        let mut corpus: Vec<(VerseRef, String)> = Vec::new();
+        for book in kjv.as_array().expect("books") {
+            let abbrev = book["abbrev"].as_str().unwrap_or("?").to_string();
+            for (ci, chapter) in book["chapters"]
+                .as_array()
+                .expect("chapters")
+                .iter()
+                .enumerate()
+            {
+                for (vi, verse) in chapter.as_array().expect("verses").iter().enumerate() {
+                    corpus.push((
+                        VerseRef {
+                            book: abbrev.clone(),
+                            chapter: ci as i64 + 1,
+                            verse: vi as i64 + 1,
+                        },
+                        verse.as_str().unwrap_or("").to_string(),
+                    ));
+                }
+            }
+        }
+        let idx = PhraseIndex::build(&corpus);
+        println!("index over {} verses", corpus.len());
+
+        // A DETERMINISTIC SAMPLE, so the figure is the same on every machine and
+        // in every run. A random one would make a regression look like luck.
+        let step = corpus.len() / 1500;
+        let sample: Vec<&(VerseRef, String)> = corpus.iter().step_by(step.max(1)).collect();
+
+        // NO BOOK NAMED, which is the case this rule is about: the preacher is
+        // READING, not announcing. A book in the window settles a tie by itself
+        // (rule 40), so including one would measure the easy half.
+        let mut would_fire_wrong = 0usize;
+        let mut would_fire_right = 0usize;
+        let mut ties_refused = 0usize;
+        for (r, text) in &sample {
+            if text.split_whitespace().count() < READING_RUN_WORDS {
+                continue;
+            }
+            for h in idx.quoted(text, None, 3) {
+                let method = DetectionMethod::for_quotation(h.run, h.sole);
+                if method != DetectionMethod::Reading {
+                    if h.run >= READING_RUN_WORDS && &h.r != r {
+                        ties_refused += 1;
+                    }
+                    continue;
+                }
+                if &h.r == r {
+                    would_fire_right += 1;
+                } else {
+                    would_fire_wrong += 1;
+                    println!(
+                        "  WRONG: read {} {}:{} → would fire {} {}:{} (run {})",
+                        r.book, r.chapter, r.verse, h.r.book, h.r.chapter, h.r.verse, h.run
+                    );
+                }
+            }
+        }
+        let total = would_fire_right + would_fire_wrong;
+        let rate = if total == 0 {
+            0.0
+        } else {
+            would_fire_wrong as f64 * 100.0 / total as f64
+        };
+        println!(
+            "read back {} verses · {would_fire_right} correct · {would_fire_wrong} wrong \
+             · {rate:.1}% wrong-verse rate (SPEC target: <5%) · {ties_refused} shared runs \
+             refused a wall by the sole rule",
+            sample.len()
+        );
+        // The claim `READING_RUN_WORDS` makes, asserted rather than described.
+        assert_eq!(
+            would_fire_wrong, 0,
+            "a verse read aloud would have put a DIFFERENT verse on a wall"
+        );
+        assert!(
+            would_fire_right > 100,
+            "the simulation fired almost nothing, so its zero means nothing"
+        );
+    }
+
     #[test]
     #[ignore]
     fn what_a_real_service_would_have_been_offered() {

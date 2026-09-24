@@ -2368,11 +2368,11 @@
     .pulse { animation: stagepulse 2s ease-in-out infinite; }
     @keyframes stagepulse {
       0%, 100% { color: #fff; }
-      50% { color: var(--v-caution, #c9962f); }
+      50% { color: var(--v-red, #f4515b); }
     }
   }
   @media (prefers-reduced-motion: reduce) {
-    .pulse { color: var(--v-caution, #c9962f); }
+    .pulse { color: var(--v-red, #f4515b); }
   }
   /* THE LARGE FORM. It sits in the reading's own box and is capped by it, so it
      can never take more room than a reading would have had — and `overflow:
@@ -2400,7 +2400,9 @@
     justify-content: center;
     gap: 1.6vh;
     padding: 2.4vh 4vw;
-    border-left: 0.9vw solid var(--v-caution, #c9962f);
+    /* RED, with the big screen, on the operator's instruction (RG-295). The two
+       surfaces are one message and may never differ. */
+    border-left: 0.9vw solid var(--v-red, #f4515b);
     background: var(--s-bg, #05070a);
     overflow: hidden;
   }
@@ -2410,7 +2412,7 @@
     font-size: clamp(10px, 2.6vw, 20px);
     letter-spacing: .16em;
     text-transform: uppercase;
-    color: var(--v-caution, #c9962f);
+    color: var(--v-red, #f4515b);
   }
   .bigmsg-v {
     font-family: var(--f-body);

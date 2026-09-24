@@ -166,15 +166,38 @@
   let hits = [];
   let hitsFor = null;
   let searchT;
+  let songsT;
+
+  /**
+   * THE ONE DELAY THIS BOX KEEPS, for both halves of it.
+   *
+   * It was a bare `220` inside `armSearch` and the songs half had no delay at
+   * all — which is how one `<input>` came to treat the same keystroke two
+   * different ways. Named once so the two cannot drift apart again.
+   */
+  const SEARCH_MS = 220;
 
   onMount(loadBooks);
-  onDestroy(() => clearTimeout(searchT));
+  onDestroy(() => {
+    clearTimeout(searchT);
+    clearTimeout(songsT);
+  });
 
   async function loadBooks() {
     booksLoaded = false;
     books = (await listBooks()) ?? [];
     booksLoaded = true;
   }
+
+  /**
+   * WHICH QUERY THE LIST IN FRONT OF THE OPERATOR IS AN ANSWER TO.
+   *
+   * The scripture half has always checked this before publishing — "a slow search
+   * must not label itself with a query the operator has since typed past" — and
+   * this half did not, so two calls answering out of order left the older query's
+   * songs on screen under the newer query's text. Same guarantee, same box.
+   */
+  let songsFor = null;
 
   /**
    * The song list, fetched the first time the Songs half is opened and on every
@@ -185,13 +208,42 @@
    * operator think their library is gone.
    */
   async function loadSongs(query) {
+    const text = String(query ?? '').trim();
+    songsFor = text;
     songsLoaded = false;
     songsAsked = true;
-    const text = String(query ?? '').trim();
-    songs = (text ? await searchSongs(text) : await listSongs()) ?? [];
+    const rows = (text ? await searchSongs(text) : await listSongs()) ?? [];
+    if (songsFor !== text) return; // typed past — a later call owns the list now
+    songs = rows;
     songsLoaded = true;
   }
-  $: if (tab === 'songs') loadSongs(q);
+
+  /**
+   * DEBOUNCED, FOR THE SAME REASON THE SCRIPTURE HALF IS — and it is the same box.
+   *
+   * `$: if (tab === 'songs') loadSongs(q)` ran on every keystroke, and a keystroke
+   * here is not cheap: Tauri runs a `#[tauri::command]` that is not `async fn` on
+   * the MAIN THREAD, `search_songs` is one of those, and it takes the app-wide
+   * `Db` mutex and runs `title LIKE '%…%' OR author LIKE '%…%'` with a correlated
+   * `COUNT(*)` per row. On macOS the main thread is the UI run loop and that lock
+   * is the one the detect thread holds while it persists a transcript line, so
+   * "amazing grace" typed at speed was thirteen table scans and thirteen lock
+   * waits on the thread that draws the window — measured, `livesearchrail.test.js`.
+   *
+   * AN EMPTY BOX IS NOT TYPING. It is the tab opening, or the operator clearing
+   * the field, and making them wait out a delay meant for a keyboard is the
+   * opposite of what the delay is for — so that one call goes straight through.
+   */
+  function armSongs(text) {
+    clearTimeout(songsT);
+    const query = String(text ?? '').trim();
+    if (!query) {
+      loadSongs('');
+      return;
+    }
+    songsT = setTimeout(() => loadSongs(query), SEARCH_MS);
+  }
+  $: if (tab === 'songs') armSongs(q);
 
   function setTab(next) {
     if (tab === next) return;
@@ -222,7 +274,7 @@
         hits = rows ?? [];
         hitsFor = asked;
       }
-    }, 220);
+    }, SEARCH_MS);
   }
   $: armSearch(q, tab);
 

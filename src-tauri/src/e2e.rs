@@ -3008,7 +3008,7 @@ fn r9_the_search_finds_a_reference_however_it_is_typed() {
     let conn = db.0.lock().expect("db");
     let sem = h.state::<Semantic>();
     let top = |q: &str| {
-        search_verses(&conn, &sem.0, q)
+        search_verses(&conn, &sem.0.read().expect("semantic index"), q)
             .first()
             .map(|h| format!("{} {}:{}", h.verse.book, h.verse.chapter, h.verse.verse))
     };
@@ -3037,7 +3037,7 @@ fn r9_a_reference_outranks_a_phrase() {
 
     // "John 3:16" is also a phrase that appears in no verse; the reference must
     // win, and win FIRST, because that is what the person typing it meant.
-    let hits = search_verses(&conn, &sem.0, "john 3:16");
+    let hits = search_verses(&conn, &sem.0.read().expect("semantic index"), "john 3:16");
     let first = hits.first().expect("a reference always finds its verse");
     assert_eq!(
         (
@@ -3061,7 +3061,11 @@ fn r9_a_query_that_is_mostly_not_scripture_returns_nothing_rather_than_guessing(
     // This used to come back with NINETEEN verses, Ezekiel 26:9 at the top,
     // because the full-text index returns anything that matched any term. A
     // confident wrong answer is worse than an empty list: the operator acts on it.
-    let junk = search_verses(&conn, &sem.0, "quantum shepherd tractor engine banana");
+    let junk = search_verses(
+        &conn,
+        &sem.0.read().expect("semantic index"),
+        "quantum shepherd tractor engine banana",
+    );
     assert!(
         junk.len() <= 8,
         "a query with one real word in five came back with {} verses",
@@ -3069,10 +3073,19 @@ fn r9_a_query_that_is_mostly_not_scripture_returns_nothing_rather_than_guessing(
     );
 
     // A word that is in no verse at all finds nothing, and says so by being empty.
-    assert!(search_verses(&conn, &sem.0, "flibbertigibbet").is_empty());
+    assert!(search_verses(
+        &conn,
+        &sem.0.read().expect("semantic index"),
+        "flibbertigibbet"
+    )
+    .is_empty());
 
     // And the thing the floor must NOT break: a real phrase still lands.
-    let psalm = search_verses(&conn, &sem.0, "the lord is my shepherd");
+    let psalm = search_verses(
+        &conn,
+        &sem.0.read().expect("semantic index"),
+        "the lord is my shepherd",
+    );
     let first = psalm
         .first()
         .expect("a real phrase must still find its verse");
@@ -3102,7 +3115,7 @@ fn r9_searching_never_puts_anything_on_a_screen() {
         let db = h.state::<Db>();
         let conn = db.0.lock().expect("db");
         let sem = h.state::<Semantic>();
-        let hits = search_verses(&conn, &sem.0, q);
+        let hits = search_verses(&conn, &sem.0.read().expect("semantic index"), q);
         assert!(!hits.is_empty(), "{q} found nothing");
     }
     settle();
@@ -3125,7 +3138,7 @@ fn r9_every_shape_in_the_brief_finds_its_verse() {
     let conn = db.0.lock().expect("db");
     let sem = h.state::<Semantic>();
     let top = |q: &str| {
-        search_verses(&conn, &sem.0, q)
+        search_verses(&conn, &sem.0.read().expect("semantic index"), q)
             .first()
             .map(|h| format!("{} {}:{}", h.verse.book, h.verse.chapter, h.verse.verse))
     };
@@ -3164,7 +3177,7 @@ fn r9_a_book_prefix_is_a_search_feature_and_never_a_detection() {
         ("thessal 4 16", "1 Thessalonians 4:16"),
         ("revela 22 13", "Revelation 22:13"),
     ] {
-        let hits = search_verses(&conn, &sem.0, query);
+        let hits = search_verses(&conn, &sem.0.read().expect("semantic index"), query);
         let found = hits
             .iter()
             .any(|h| format!("{} {}:{}", h.verse.book, h.verse.chapter, h.verse.verse) == want);
@@ -3200,7 +3213,7 @@ fn r9_every_hit_says_why_it_matched() {
         "lamp unto my feet",
         "there is therefore no condemnation in christ",
     ] {
-        let hits = search_verses(&conn, &sem.0, q);
+        let hits = search_verses(&conn, &sem.0.read().expect("semantic index"), q);
         assert!(!hits.is_empty(), "{q} found nothing");
         for hit in &hits {
             assert!(
@@ -3226,14 +3239,18 @@ fn r9_every_hit_says_why_it_matched() {
     }
 
     // A reference the operator typed is NOT a guess, and says so.
-    let typed = search_verses(&conn, &sem.0, "rom 8 28");
+    let typed = search_verses(&conn, &sem.0.read().expect("semantic index"), "rom 8 28");
     let first = typed.first().expect("rom 8 28");
     assert_eq!(first.method, "reference");
     assert!(!first.guess);
     assert!(first.why.contains("rom 8 28"), "{:?}", first.why);
 
     // A prefix Relay expanded IS a guess, and names the book it chose.
-    let pref = search_verses(&conn, &sem.0, "philipp 4 13");
+    let pref = search_verses(
+        &conn,
+        &sem.0.read().expect("semantic index"),
+        "philipp 4 13",
+    );
     let hit = pref
         .iter()
         .find(|h| h.method == "prefix")
@@ -3246,7 +3263,7 @@ fn r9_every_hit_says_why_it_matched() {
     // and the operator has to be able to tell it from a reference they typed.
     let para = search_verses(
         &conn,
-        &sem.0,
+        &sem.0.read().expect("semantic index"),
         "there is therefore no condemnation in christ",
     );
     let guess = para
@@ -3258,7 +3275,11 @@ fn r9_every_hit_says_why_it_matched() {
     assert!(guess.matched.is_empty(), "{:?}", guess.matched);
 
     // A word hit quotes the words that landed, and never the weak ones.
-    let words = search_verses(&conn, &sem.0, "lamp unto my feet");
+    let words = search_verses(
+        &conn,
+        &sem.0.read().expect("semantic index"),
+        "lamp unto my feet",
+    );
     let w = words
         .iter()
         .find(|h| h.method == "words" || h.method == "phrase")
@@ -3292,7 +3313,7 @@ fn r9_nothing_a_search_offers_can_reach_an_auto_fire() {
     // detect with — so ask the router what it would do with one.
     let mut router = crate::router::Router::default();
     for query in ["philipp 4 13", "gene 1 1", "revela 22 13"] {
-        for hit in search_verses(&conn, &sem.0, query) {
+        for hit in search_verses(&conn, &sem.0.read().expect("semantic index"), query) {
             if hit.method != "prefix" {
                 continue;
             }
@@ -3326,7 +3347,7 @@ fn r9_a_hit_is_still_a_verse_row_on_the_wire() {
     let conn = db.0.lock().expect("db");
     let sem = h.state::<Semantic>();
 
-    let hits = search_verses(&conn, &sem.0, "ps 23 1");
+    let hits = search_verses(&conn, &sem.0.read().expect("semantic index"), "ps 23 1");
     let first = hits.first().expect("ps 23 1");
     let json = serde_json::to_value(first).expect("a hit serialises");
     let obj = json.as_object().expect("an object");
@@ -5883,4 +5904,83 @@ fn dbg_rank() {
     emit_detections(&h, "our text this morning is Romans chapter eight verse twenty eight but first hear this for I am persuaded that neither death nor life nor angels nor principalities nor powers nor things present nor things to come", 0, true, None);
     settle();
     println!("WALL count={} last={:?}", wall.count(), wall.last());
+}
+
+// ── SWITCHING TRANSLATION MUST MOVE THE DETECTORS TOO — RG-300 ──────────────
+//
+// `Semantic` and `Phrases` were built exactly ONCE, in `main.rs`'s `setup`, from
+// `db::all_verses` — which scopes itself to the active translation.
+// `set_active_translation` wrote the setting and stopped there, so after an
+// operator switched from the KJV to the BSB both detectors went on scanning the
+// PREVIOUS translation's corpus until the app was relaunched, while every verse
+// READ was correctly scoped to the new one.
+//
+// The console would then show BSB words under a reference the paraphrase
+// detector found using KJV vocabulary, and nothing on any surface would say the
+// two disagreed — because both halves look exactly as they do when they agree.
+// A wrong-verse risk wearing a settings bug's clothes.
+//
+// THE TEST ASKS THE INDEX, not the setting. Asserting that the command wrote
+// `active_translation` is asserting the half that was never broken.
+#[test]
+fn switching_translation_rebuilds_the_indexes_that_read_it() {
+    let app = qa::bare_app();
+    let h = app.handle().clone();
+
+    // Two translations, and the second one's words are NOT the first's. The text
+    // is deliberately unlike anything in the KJV so a hit can only come from the
+    // new corpus.
+    let (other_id, marker) = {
+        let db = h.state::<Db>();
+        let conn = db.0.lock().expect("db");
+        conn.execute(
+            "INSERT INTO translations (name, abbreviation, language, license_type)
+             VALUES ('Test Version', 'TSTV', 'en', 'public_domain')",
+            [],
+        )
+        .expect("insert translation");
+        let tid = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO verses (translation_id, book, chapter, verse, text)
+             VALUES (?1, 'John', 3, 16, 'zarquon vellichor sonder kenopsia liberosis')",
+            rusqlite::params![tid],
+        )
+        .expect("insert verse");
+        (tid, "zarquon vellichor sonder kenopsia liberosis")
+    };
+
+    // BEFORE: the words are in the database and the index has never seen them.
+    {
+        let sem = h.state::<Semantic>();
+        let idx = sem.0.read().expect("semantic");
+        assert!(
+            idx.top_k_explained(marker, 5).is_empty(),
+            "the index already knew a translation nobody has switched to"
+        );
+    }
+
+    set_active_translation(
+        h.clone(),
+        h.state::<Db>(),
+        h.state::<servicelock::ServiceLock>(),
+        other_id,
+    )
+    .expect("set_active_translation");
+
+    // AFTER: the detectors are reading the corpus the operator chose.
+    let sem = h.state::<Semantic>();
+    let idx = sem.0.read().expect("semantic");
+    let hits = idx.top_k_explained(marker, 5);
+    assert!(
+        !hits.is_empty(),
+        "the paraphrase detector is still scanning the translation that was \
+         switched away from"
+    );
+
+    let phrases = h.state::<Phrases>();
+    let pidx = phrases.0.read().expect("phrases");
+    assert!(
+        !pidx.quoted(marker, None, 5).is_empty(),
+        "the quotation detector is still scanning the old translation"
+    );
 }

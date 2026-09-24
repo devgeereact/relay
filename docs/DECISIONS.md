@@ -6648,3 +6648,34 @@ go to stderr, because putting them in front of an operator needs an emitter in
 that lands a self-healed glitch is invisible and only the final failure reaches a
 banner. The mechanism is real; the surface is owed.
 
+## 120. The note is red too, and the line it used to hold now rests on shape (2026-09-24)
+
+**Amends §116.** That decision drew the line between a note and an alarm, and the INK was half of
+how it was drawn: ochre for a word from the desk, a full-bleed flashing red panel for an emergency.
+Rule 18 agreed — red is spent on destructive and on failure, and a message is neither.
+
+**The operator overruled it, about the one surface they are the sole judge of:** *"when the message
+is sent make it flashing red text so it can catch attention of the preacher — just as on the
+Preacher screen."* This is the second report of the same thing. RG-239 gave the phone the caution
+ink and a pulse; RG-268 gave the big screen the same after the operator said it was *"just showing
+a gray/white text which can easily be missed"*; and the person the message is FOR has now said that
+the ochre is still not catching their eye. That is evidence of a kind no colour rule outranks, and
+it is worth naming plainly that this reverses a position taken three days earlier on the same
+person's instruction.
+
+**What that costs, and where the guarantee went.** §116's distinction cannot be allowed to
+disappear — a preacher who cannot tell *"wrap up"* from *"stop the service"* is worse off than one
+who misses a note. It now rests entirely on **shape**:
+
+- a **note** is a strip at the foot, or a panel with the screen's own content beside it, with a
+  rule down one side and its TEXT pulsing;
+- an **alarm** is the whole screen in a solid `#c8121c` field with the PANEL pulsing.
+
+Those are unmistakably different from the back of a room, which is the test that matters — and
+arguably a better test than a hue, which a projector's colour profile can flatten. `colourlaw.test.js`
+asserts the shapes rather than only the inks, and holds both surfaces together: **both or neither**,
+because RG-268 was filed precisely because the phone had an ink the big screen did not for two days.
+
+**What did NOT change.** Amber still means ON AIR and amethyst still means rehearsal, and neither
+may appear on either surface; both are still asserted. The alarm keeps its own field colour. A
+message still never claims anything about what a congregation is looking at.
