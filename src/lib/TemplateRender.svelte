@@ -93,6 +93,16 @@
   // one day differ between the stage and the desk.
   import { clipRemainingMs, CLIP_WARN_MS } from './mediaclock.js';
   import { RAIL_BASE_PCT } from './bigstagetimer.js';
+  // WHO TAKES A STAGE SCREEN NOBODY HAS FIRED TO (RG-285). One function over
+  // `stageresting.js`, which is the preacher's phone's own rule — imported and
+  // never restated, so the two surfaces in one room cannot hold two opinions
+  // about when a clock may take a screen.
+  import {
+    stageFill,
+    fillGeometry,
+    clipCoversTimer,
+    FILL_SIZE_CQW,
+  } from './stagefill.js';
   import { applyMediaTransport } from './mediatransport.js';
   import { syncSeek } from './mediasync.js';
 
@@ -1714,6 +1724,46 @@
   $: progNow = now || (typeof Date !== 'undefined' ? Date.now() : 0);
   $: progRows = programmeRows(progSet, progNow);
   $: progCh = programmeCh(progRows);
+  // ── THE CLIP STANDS IN FOR THE CLOCK (RG-288) ──────────────────────────────
+  //
+  // *"When a Media is Playing I want you to Cover the Stage timer with the clip
+  // countdown... and return the timer back when the media is cleared or done."*
+  //
+  // `clipCoversTimer` owns the rule and says at the line why it asks for time
+  // REMAINING rather than for a figure: `clipRemainingMs` answers 0 for a clip
+  // that has finished and is still mounted, and a cover keyed on "is there a
+  // figure" would hold the rail off a preacher's screen for the rest of the
+  // service behind a dead 0:00.
+  $: clipCovers = clipCoversTimer({ stage: stageClip, still, remainingMs: clipLeft });
+  // ── AND WHO TAKES THE SCREEN WHEN NOTHING HAS BEEN FIRED TO IT (RG-285) ────
+  //
+  // The three content facts go straight to `stageresting.js` through
+  // `stageFill`, so a `timer` verdict here is exactly the phone's `programme`
+  // verdict. `progRows` is empty on any screen that is not a stage
+  // (`Output.svelte::shownProgramme`), and `stageMessage` is refused by any
+  // channel whose role is not `stage` — so the gate is the ROLE, as it already
+  // was for the rail itself, and no new surface can be enlarged by this.
+  $: fillWhat = stageFill({
+    reading: !!(content?.text || content?.reference),
+    slide: !!content?.media_url,
+    countdown: content?.countdown_to != null,
+    timers: progRows.length,
+    // A note only. An ALERT is already the whole screen and flashes
+    // (DECISIONS §116); giving it a share of a layout would make it smaller.
+    message: !!stageAlert && !stageUrgent && !hasMessageLayer,
+    clipCovers,
+  });
+  $: fillGeo = fillGeometry(fillWhat);
+  // ONE rail fills, never all of them. A template with two `programme` layers
+  // draws two rails, and two rails each told to take the whole frame is one rail
+  // painted over another — so the first VISIBLE one takes it and the rest are
+  // not drawn while it does.
+  $: fillRailId = fillGeo.timer
+    ? (programmeLayers.find(({ L }) => L.visible !== false)?.L?.id ?? null)
+    : null;
+  /** The box a filling part is given, in the same percent `boxStyle` draws in. */
+  const fillStyle = (box) =>
+    `left:0%; top:${box.top}%; width:100%; height:${box.height}%;`;
   // ── AND THE OVERFLOW RULE MEASURES THE BOX, NOT THE WINDOW ──────────────────
   //
   // `Stage.svelte` reads `innerWidth` and says at the line why it is allowed to:
@@ -1756,11 +1806,38 @@
   let defaultProgEl = null;
   let defaultProgW = 0;
   let defaultProgH = 0;
+  /**
+   * A rail's CONTENT height — what a cell inside it actually has to work with.
+   *
+   * `clientHeight` is the padding box, and `programmeRoom` is asked about the
+   * content box. The two were the same number for as long as no rail had any
+   * padding, which is exactly how this kind of thing hides.
+   */
+  const innerHeightOf = (el) => {
+    if (!el) return 0;
+    const cs = typeof getComputedStyle === 'function' ? getComputedStyle(el) : null;
+    const pad = cs ? (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0) : 0;
+    return Math.max(0, (el.clientHeight | 0) - Math.round(pad));
+  };
+  /** The row gap a cell puts between its head and its figure, in px. */
+  const gapUnder = (cell) => {
+    if (!cell || typeof getComputedStyle !== 'function') return 0;
+    const g = parseFloat(getComputedStyle(cell).rowGap);
+    return Number.isFinite(g) ? Math.ceil(g) : 0;
+  };
   function measureProgramme() {
     let moved = false;
     for (let i = 0; i < progEls.length; i += 1) {
       const w = progEls[i] ? progEls[i].clientWidth | 0 : 0;
-      const h = progEls[i] ? progEls[i].clientHeight | 0 : 0;
+      // THE ROOM A CELL HAS, WHICH IS NOT THE RAIL'S `clientHeight` (RG-285).
+      // `clientHeight` includes PADDING, and a filling rail has 2cqw of it —
+      // 77px on a 1080p screen. Handing that to `programmeRoom` as the rail's
+      // height is the same arithmetic error the comment below records, made one
+      // box further out: the figure was capped at 462px inside a 409px cell and
+      // `2:25` was cut through the middle along the bottom of a projector,
+      // measured in a real engine at 1920x1080. An unpadded rail is unchanged,
+      // because its padding is zero.
+      const h = progEls[i] ? innerHeightOf(progEls[i]) : 0;
       // AND WHAT THE LABEL ABOVE THE FIGURE IS ACTUALLY TAKING. `--lp-h` alone
       // was not enough: capping the figure at a SHARE of the rail reserves
       // nothing for the head, and the two only fit at 16:9 by arithmetic
@@ -1769,8 +1846,15 @@
       // the rail height, and `overflow: hidden` cuts the digits through the
       // middle. Measured at 900x300: head 9.90 + gap 3.60 + figure 13.02 into
       // a 21.00 rail, and 42% of every digit gone.
+      // AND THE GAP UNDER IT GOES WITH IT. `.lp-cell` puts `0.4cqw` between the
+      // head and the figure, so the head's own share of the cell is the word
+      // plus that gap — 8px at 1920, which is what tipped the filling rail over
+      // its box. The comment above already names the gap in its measurement
+      // (`head 9.90 + gap 3.60 + figure 13.02`) and then did not subtract it.
       const head = progEls[i] ? progEls[i].querySelector('.lp-head') : null;
-      const hh = head ? Math.ceil(head.getBoundingClientRect().height) : 0;
+      const hh = head
+        ? Math.ceil(head.getBoundingClientRect().height) + gapUnder(head.parentElement)
+        : 0;
       if (progW[i] !== w) {
         progW[i] = w;
         moved = true;
@@ -1789,7 +1873,7 @@
     // fallback for ever and size its digits against a box it is not in.
     if (defaultProgEl) {
       const w = defaultProgEl.clientWidth | 0;
-      const h = defaultProgEl.clientHeight | 0;
+      const h = innerHeightOf(defaultProgEl);
       if (defaultProgW !== w) {
         defaultProgW = w;
         moved = true;
@@ -2511,15 +2595,20 @@
        wall shows NOTHING". It draws only where a template asks for it and only
        where the PAGE has handed rows over, which it does for a `stage`-role
        screen and for nothing else. -->
-  {#if progRows.length}
+  <!-- AND THE CLIP MAY TAKE ITS PLACE (RG-288). Only ever on a stage screen,
+       only for a VIDEO, and only while that video has time left to run — the
+       rule and the reason are in `stagefill.js::clipCoversTimer`. -->
+  {#if progRows.length && !clipCovers}
     {#each programmeLayers as { L }, i (L.id)}
-      {#if L.visible !== false}
+      {#if L.visible !== false && (!fillGeo.timer || L.id === fillRailId)}
+        {@const fills = fillGeo.timer && L.id === fillRailId}
         {@const cells = programmeCells(progRows, programmeCapacity(progW[i]))}
         <div
           class="lprog"
           class:overmedia={pictureBehind}
+          class:fills
           bind:this={progEls[i]}
-          style="{boxStyle(L)} --tmrs:{cells.length}; --tch:{progCh}; --lp-sz:{railSize(L)}; {railRoomVars(progH[i], progHeadH[i])} color:{L.color || '#fff'}; font-family:{fontFamOf(L.font)}; opacity:{L.opacity == null ? 1 : L.opacity};"
+          style="{fills ? fillStyle(fillGeo.timer) : boxStyle(L)} --tmrs:{cells.length}; --tch:{progCh}; --lp-sz:{fills ? FILL_SIZE_CQW : railSize(L)}; {railRoomVars(progH[i], progHeadH[i])} color:{L.color || '#fff'}; font-family:{fontFamOf(L.font)}; opacity:{L.opacity == null ? 1 : L.opacity};"
           aria-label="Programme">
           {#each cells as t, j (j)}
             {#if t.more}
@@ -2528,10 +2617,13 @@
               <div class="lp-cell lp-more"><span class="lp-val lp-msg">+{t.more} more</span></div>
             {:else}
               <div class="lp-cell" class:warn={t.warn} class:over={t.over} class:held={t.held} data-timer-id={t.id}>
-                {#if t.label || t.held}
+                {#if t.label || t.state}
                   <span class="lp-head">
                     {#if t.label}<span class="lp-lbl">{t.label}</span>{/if}
-                    {#if t.held}<span class="lp-state">Held</span>{/if}
+                    <!-- `Held`, or `TIME UP` past zero (RG-286). One field, from
+                         `timers.js::programmeRows`, so this rail and the phone's
+                         cannot spell the same clock's state two ways. -->
+                    {#if t.state}<span class="lp-state">{t.state}</span>{/if}
                   </span>
                 {/if}
                 <!-- ALWAYS A FIGURE, NEVER PROSE - `--tch` budgets this column
@@ -2548,7 +2640,7 @@
     {/each}
   {/if}
 
-  {#if showDefaultProgramme}
+  {#if showDefaultProgramme && !clipCovers}
     <!-- NO PROGRAMME LAYER, BUT CLOCKS ARE RUNNING (RG-224). A rail along the
          foot, in the same shape a designed one takes, so an operator who adds
          the layer later gets the same thing in a place they chose. Add a
@@ -2564,21 +2656,26 @@
          which is 86 pixels on a 1080p projector read from ten metres — and the
          Normal / Large / Huge control the operator set for this screen reached
          the phone and stopped there. -->
+    <!-- AND WITH NOTHING FIRED IT TAKES THE WHOLE SCREEN (RG-285), which is what
+         `stage.html` has done since RG-244. `--lp-sz` is lifted with it: the
+         Size field is a share of a DESIGNED box, and there is no designed box
+         while the rail IS the screen. -->
     <div
       class="lprog lprog-default"
       class:overmedia={pictureBehind}
+      class:fills={!!fillGeo.timer}
       bind:this={defaultProgEl}
-      style="left:0%; top:{100 - railPct}%; width:100%; height:{railPct}%; --tmrs:{cells.length}; --tch:{progCh}; {railHeightVar(defaultProgH)}"
+      style="{fillGeo.timer ? `${fillStyle(fillGeo.timer)} --lp-sz:${FILL_SIZE_CQW};` : `left:0%; top:${100 - railPct}%; width:100%; height:${railPct}%;`} --tmrs:{cells.length}; --tch:{progCh}; {railHeightVar(defaultProgH)}"
       aria-label="Programme">
       {#each cells as t, j (j)}
         {#if t.more}
           <div class="lp-cell lp-more"><span class="lp-val lp-msg">+{t.more} more</span></div>
         {:else}
           <div class="lp-cell" class:warn={t.warn} class:over={t.over} class:held={t.held} data-timer-id={t.id}>
-            {#if t.label || t.held}
+            {#if t.label || t.state}
               <span class="lp-head">
                 {#if t.label}<span class="lp-lbl">{t.label}</span>{/if}
-                {#if t.held}<span class="lp-state">Held</span>{/if}
+                {#if t.state}<span class="lp-state">{t.state}</span>{/if}
               </span>
             {/if}
             <span class="lp-val r-mono">{t.v}</span>
@@ -2632,8 +2729,20 @@
        failure RG-156 filed. It does not flash, does not fill the screen and does
        not cover the reading — that is the whole distinction the operator asked
        for (DECISIONS §116). -->
+  <!-- AND WITH NOTHING ON THE SCREEN IT TAKES THE ROOM (RG-285), which is the
+       phone's own answer: `stagemessage.js::messagePlacement` gives a note the
+       reading's whole box, because *"a Stage Message is the desk speaking to ONE
+       person in the middle of a sermon — it is never ambient"* (RG-239/RG-245).
+       §116's line is untouched and is what the `reading`/`slide` half of
+       `stageFill` keeps: over a reading this is still the modest foot strip,
+       because a NOTE MAY NOT COVER THE READING. -->
   {#if stageAlert && !stageUrgent && !hasMessageLayer}
-    <div class="lmsg" role="status" aria-live="polite">
+    <div
+      class="lmsg"
+      class:fills={!!fillGeo.message}
+      style={fillGeo.message ? fillStyle(fillGeo.message) : ''}
+      role="status"
+      aria-live="polite">
       <!-- THE WORDS IN AN ELEMENT OF THEIR OWN (RG-268). A bare text node cannot
            be coloured or animated apart from the plate it sits on, and the
            distinction this whole path rests on is that a MESSAGE pulses its text
@@ -2699,8 +2808,27 @@
     display: flex;
     gap: 1cqw;
     align-items: stretch;
+    /* CENTRED, the way the phone's `.progrow` has been since RG-248. The cells
+       are `flex: 1 1 0` so they fill the rail and this decides nothing for them
+       — it decides where the set sits when it does NOT fill, which is every rail
+       carrying a `+N more` cell (`flex: 0 1 auto`). Left was the default's
+       answer rather than anybody's. */
+    justify-content: center;
     overflow: hidden;
     z-index: 3;
+  }
+  /* ══ THE RAIL OWNS THE SCREEN (RG-285) ══
+     Only ever on a stage-role screen with nothing fired to it — the rule is
+     `stagefill.js`, which is `stageresting.js` with two extra facts, so this and
+     the preacher's phone answer the same question the same way.
+     It is only the BOX that changes: the cells, the caps, the warning colour and
+     the TIME UP flash are the rail's own and are untouched, which is what keeps
+     a filled rail and a corner rail the same instrument at two sizes. */
+  .lprog.fills {
+    /* The gap is a share of the container, and the container is now the screen —
+       1cqw of 1920 is 19px between two clocks, which reads as a seam. */
+    gap: 3cqw;
+    padding: 2cqw;
   }
   /* THE PLATE THE RAIL EARNS OVER A PICTURE (RG-212).
      A wash and a blur rather than a solid block: the clip is the thing the
@@ -2727,12 +2855,24 @@
   }
   /* `min-width: 0` on the item, or a long label refuses to shrink and pushes the
      last timer off the end of a screen nobody is standing next to. */
+  /* AND THE DIGITS SIT IN THE MIDDLE OF WHATEVER ROOM THE TIMER HAS (RG-289).
+     The operator: *"aligh the text on the stage timer properly so it dosent just
+     stay to one side"*. A column flex box leaves `align-items: stretch` and text
+     at its default alignment, so a single timer printed its figure hard against
+     the left edge of a cell that spans the rail — measured at 1920x1080 with the
+     seeded Programme layer: the digits started 12px from the left of a 1896px
+     cell and ended 1631px short of its right edge.
+     `Stage.svelte`'s `.tmr` says the same thing at the same line and has since
+     RG-248: *"left and top was an accident of the defaults rather than a
+     decision"*. This is the other rail, two days behind. */
   .lp-cell {
     flex: 1 1 0;
     min-width: 0;
     display: flex;
     flex-direction: column;
+    align-items: center;
     justify-content: center;
+    text-align: center;
     gap: 0.4cqw;
     overflow: hidden;
   }
@@ -3088,6 +3228,46 @@
     .lmsg-v {
       color: var(--v-caution, #c9a24a);
     }
+  }
+  /* ══ AND WITH NOTHING ON THE SCREEN, THE WORDS TAKE IT (RG-285) ══
+     The phone's `large` form (`stagemessage.js`), on the surface that only ever
+     had the strip. The box comes from `stagefill.js::fillGeometry` as an inline
+     style, in the same percent every other box on this page is drawn in, so
+     `right` and `bottom` are released here rather than left to the browser's
+     over-constraint rule.
+
+     THE INK IS UNCHANGED AND THAT IS DELIBERATE. `--v-caution` is what rule 18
+     leaves a message that warns and promises nothing about a screen, and RG-268
+     enumerated this exact selector in `colourlaw.test.js` beside the phone's.
+     What the operator reported — that the word did not catch an eye — is
+     answered by the ROOM and the SIZE, which is what the phone's own answer to
+     the same complaint was. The ink is the one part of this request left open;
+     the RG-285 row records why. */
+  .lmsg.fills {
+    right: auto;
+    bottom: auto;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 1.6cqh;
+    padding: 3cqh 5cqw;
+    border-radius: 0;
+    /* A rule down the whole side rather than beside a line of text: at this size
+       the strip's 0.9cqw edge reads as a border on a panel, which is furniture. */
+    border-left: 1.4cqw solid var(--v-caution, #c9a24a);
+    box-shadow: none;
+    background: rgba(0, 0, 0, 0.72);
+    /* 8cqw against the strip's 3.2. The strip shares the foot with a reading and
+       is capped by it; this has the screen. */
+    font-size: 8cqw;
+  }
+  /* FOUR LINES, NOT TWO. The clamp is what stops a long message pushing a clock
+     off the screen, and with the room to spare it may have more of them — the
+     cap on what can arrive is `stagealert.js::ALERT_MAX`, which is 140
+     characters, so four lines at this size cannot be reached by a message the
+     backend will deliver and nothing is silently cut. */
+  .lmsg.fills .lmsg-v {
+    -webkit-line-clamp: 4;
   }
 
   /* THE REGION IS ITS OWN CONTAINER — the whole point of a composite. `cqw`

@@ -40,28 +40,46 @@
 //
 // Pure: no store, no bridge, no clock. Everything it knows is in its argument.
 
-/** Whole percentage points, or null. `null` is the absence — never `NaN%`, which
- *  is a figure on screen that is nobody's setting. */
-function pct(v) {
+/** A readiness figure, 0-100, as a string — or null. `null` is the absence, never
+ *  `0`, which is itself a setting ("never fire") and would read as one.
+ *
+ *  ── WHY THIS IS NOT `Math.round(threshold * 100)` ANY MORE ──────────────────
+ *
+ *  It was, and it printed the raw confidence bar: the dial's cautious end (0)
+ *  showed `Auto-fire above 90%` and its eager end (100) showed `30%`. A figure
+ *  printed under a slider reads as that slider's setting, and that one ran the
+ *  opposite way to it — the operator's objection of 2026-09-23, verbatim: *"when
+ *  the sensor is on Auto fire above 100, then it auto fires not when on 0."*
+ *
+ *  A threshold cannot be made to rise with eagerness; a bar you must clear is
+ *  lower when more gets through. So the printed QUANTITY changed rather than its
+ *  direction, and `Thresholds::readiness` in router.rs is where it is worked out
+ *  — beside the curve, in the one language that owns the mapping. Nothing here
+ *  re-derives it, for the same reason nothing here re-derives the dial position
+ *  (DECISIONS §96, §117). */
+function figure(v) {
   const n = Number(v);
-  return Number.isFinite(n) ? `${Math.round(n * 100)}%` : null;
+  return Number.isFinite(n) ? `${Math.round(n)}` : null;
 }
 
 /**
  * Turn the capture store's gate facts into what a surface may show.
  *
- * @param {object} [state] the four facts, as `capture.js` holds them:
+ * @param {object} [state] the facts, as `capture.js` holds them:
  *   `available` (is the bridge attached), `sensitivityKnown` (has the engine ever
- *   answered), `sensitivity` (the dial position Rust reported), `thresholds`
- *   (`{auto_fire, suggest}`) and `gateOnDial` (does that dial position actually
- *   produce those thresholds).
+ *   answered), `sensitivity` (the dial position Rust reported), `readiness`
+ *   (`{auto_fire, suggest}` on the 0-100 scale that rises with the dial) and
+ *   `gateOnDial` (does that dial position actually produce that gate).
  * @returns {{readable: boolean, dial: number, autoPct: string|null,
  *            suggestPct: string|null, drifted: boolean, note: string}}
+ *   `autoPct`/`suggestPct` are READINESS figures, 0-100, higher = more is fired.
+ *   The names are kept so no caller has to be found and changed; the meaning is
+ *   documented on `figure` above and stated on both surfaces that print them.
  */
 export function describeGate(state) {
   const s = state || {};
-  const autoPct = pct(s.thresholds?.auto_fire);
-  const suggestPct = pct(s.thresholds?.suggest);
+  const autoPct = figure(s.readiness?.auto_fire);
+  const suggestPct = figure(s.readiness?.suggest);
   const dial = Number.isFinite(Number(s.sensitivity)) ? Number(s.sensitivity) : 50;
 
   // A reading needs all three: something to ask, an answer, and numbers in it.

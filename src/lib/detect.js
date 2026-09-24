@@ -36,6 +36,13 @@ export function methodKey(d) {
   // it on a wall, so it is not `direct` and never will be: a preacher quotes far
   // more scripture than a congregation is shown. See detection.rs::PhraseIndex.
   if (d?.method === 'quoted') return 'live.quoted_scripture';
+  // `reading` — a run of the preacher's own words long enough, and held by one
+  // verse alone, that Relay is treating it as the verse being READ (DECISIONS
+  // §118, the operator's instruction of 2026-09-23). It is the ONE method other
+  // than `direct` that may reach a wall unattended, and the card must say so
+  // rather than letting it wear the paraphrase's sentence — which promises a
+  // guarantee that no longer holds here. See detection.rs::Reading.
+  if (d?.method === 'reading') return 'live.read_aloud';
   if (d?.method === 'ambiguous') return 'live.ambiguous_reference';
   // `uncertain_book` — the chapter and verse were heard, the BOOK was not. Either
   // an edit-distance repair of a misheard word, or an everyday word that happens
@@ -78,6 +85,7 @@ export const bookFromMemory = (d) =>
 export function methodBadgeKey(d) {
   if (d?.method === 'semantic') return 'live.badge_paraphrase';
   if (d?.method === 'quoted') return 'live.badge_quoted';
+  if (d?.method === 'reading') return 'live.badge_reading';
   if (d?.method === 'ambiguous') return 'live.badge_ambiguous';
   if (d?.method === 'uncertain_book') {
     return bookFromMemory(d) ? 'live.badge_from_memory' : 'live.badge_book_uncertain';
@@ -99,6 +107,7 @@ export function methodBadgeKey(d) {
 export function methodNoteKey(d) {
   if (d?.method === 'semantic') return 'live.not_a_spoken_reference';
   if (d?.method === 'quoted') return 'live.note_quoted';
+  if (d?.method === 'reading') return 'live.note_reading';
   if (d?.method === 'ambiguous') return 'live.note_ambiguous';
   if (d?.method === 'uncertain_book') {
     return bookFromMemory(d) ? 'live.note_from_memory' : 'live.note_book_uncertain';
@@ -112,6 +121,13 @@ export function methodNoteKey(d) {
  * ONLY for a heard reference. Printing "61%" beside a cosine invites the operator
  * to read it as "61% likely to be right", which is exactly what it is not — and
  * a number that lies is worse than no number, because it looks like information.
+ *
+ * `reading` may AUTO-FIRE since DECISIONS §118 and still shows no number, which
+ * is the point worth keeping separate: whether a claim may reach a wall and
+ * whether its number means anything are two questions, and they only looked like
+ * one while `direct` was the answer to both. A reading's confidence is derived
+ * from how many words ran together — a count, on a scale of its own — so it is
+ * exactly the kind of figure this function exists to keep off the screen.
  */
 export const showsConfidence = (d) => heard(d);
 
@@ -171,4 +187,5 @@ export const inLibrary = (d) => d?.in_library !== false;
  * were. Same principle as `showsConfidence`: a presentation that lies about what
  * kind of thing it is showing is worse than showing nothing.
  */
-export const evidenceIsASpan = (d) => d?.method === 'direct' || d?.method === 'quoted';
+export const evidenceIsASpan = (d) =>
+  d?.method === 'direct' || d?.method === 'quoted' || d?.method === 'reading';

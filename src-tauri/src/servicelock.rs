@@ -148,6 +148,14 @@ pub const PROTECTED: &[(&str, &str)] = &[
     // ── Takes the engine away mid-sermon ────────────────────────────────────
     ("download_model", "downloading a speech model"),
     ("select_stt_model", "changing the speech model"),
+    // Not the engine — what the engine is ALLOWED TO DO with what it hears.
+    // Turning "follow the reader" on or off changes what may reach a
+    // congregation's screen with nobody pressing anything, which is the one
+    // decision on this list that is invisible until it has already happened.
+    (
+        "set_follow_the_reader",
+        "changing whether Relay follows a reader",
+    ),
     ("load_stt_model", "reloading the speech model"),
     (
         "install_model_file",

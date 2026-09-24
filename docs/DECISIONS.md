@@ -6417,3 +6417,234 @@ strip renders exactly when there is nowhere declared, the strip does not animate
 page's doors carry urgency. `stagezones`, `stagepanic` and `stagealerttemplate` now send
 `urgent: true`, because what they test is the alarm; each says so at the top of the file.
 
+
+## 117. The gate is printed as readiness, not as the bar it has to clear (2026-09-23)
+
+The operator, looking at the two figures under the sensitivity dial: *"I want the armed sensors to
+work in the other direction now... when the sensor is on Auto fire above 100, then it auto fires not
+when on 0. Suggest above should be 20 below the auto-fire above."*
+
+They were right, and the fault was not the dial. `Auto-fire above` and `Suggest above` were printed
+as the raw confidence bars, immediately under a slider that runs the other way: the dial's cautious
+end (0) printed `Auto-fire above 90%`, and its eager end (100) printed `30%`. A number sitting under
+a control reads as that control's setting, so the read-out said Relay was keenest exactly where it
+fires least.
+
+**A threshold cannot be made to rise with eagerness.** A bar you must clear is LOWER when more gets
+through; that is arithmetic and not a choice, so turning the figure round was never available. What
+changed instead is the QUANTITY printed. Both figures are now readiness — `100 - threshold` — which
+is the thing the operator is actually setting: 0 means nothing is fired, 100 means anything is.
+`Thresholds::readiness` in `router.rs` owns it, beside the curve, for the same reason
+`to_sensitivity` and `follows_dial` live there: a copy of the arithmetic in the frontend would be a
+second opinion about one gate, which is the defect §96 was written to end.
+
+**The sign of the 20 follows the scale.** On the threshold scale a suggestion sits 20 BELOW the
+auto bar. On the readiness scale it sits 20 ABOVE it, because a suggestion is the easier of the two
+bars and an easier bar is a higher readiness. It is the same 20 points the operator asked for and it
+cannot point the same way on both scales; stated here rather than left to be discovered by whoever
+next reads the two figures and thinks one of them is inverted.
+
+**`SUGGEST_BAND = 0.20` replaces a second curve.** `suggest` used to interpolate 0.70 → 0.35 → 0.20
+alongside an auto bar of 0.90 → 0.50 → 0.30, so the band between "offer it" and "put it up" narrowed
+from 20 points to 10 as the dial moved right — narrowest at precisely the end where an operator most
+wants things offered rather than fired. One number, one relationship, applied in `from_sensitivity`
+and nowhere else. **The auto-fire curve itself is untouched**, so the gate a church is running today
+does not move: only the second bar and both printed figures do.
+
+The single baseline still holds by construction — `Thresholds::default() == from_sensitivity(50)` —
+and these figures gate `Direct` detections alone. Semantic, Quoted, Ambiguous and UncertainBook can
+never auto-fire at any dial position, whatever these numbers say (rule 10, `Router::decide`).
+
+`src/lib/gate.js` is the one place the figures become words, and it keeps the three facts rule 35
+requires apart: there is no engine; the engine has not answered yet (50 is both the shipped default
+and an ordinary real setting, so the figure alone cannot tell them apart); and the gate is not where
+the dial would put it, which happens whenever a voice profile restores what it learned, a room is
+applied, or the self-calibration moves it. `null` is the absence and never `0`, because `0` is
+itself a setting — "never fire" — and would read as one.
+
+## 118. A stage screen with nothing on it belongs to the clock and to the desk (2026-09-23)
+
+**On the operator's instruction:** *"When there is no Text on the screen and there is a timing,
+Enlarge the timer to make it more visible and fill the screen"*, and *"Both screens should behave
+like the Preachers screen... when there is no text utilise the full space for the timer and stage
+message when there there is timer running or a stage message"*.
+
+### What was wrong, and it was wrong in one direction only
+
+There are two supported ways to put a screen in front of a preacher (§89): `stage.html`, the phone,
+and `output.html` with a `stage`-role channel. **Everything in this decision already existed on the
+phone.** RG-244 gave it `restingLayout`, so a clock takes the height while nothing is fired; RG-248
+centred its digits; RG-239 and RG-245 gave a word from the desk the reading's whole box. The big
+screen had none of the three, and the operator was looking at the big screen: a 130px rail across
+the foot of a 1080p projector with 950px of black above it, and the digits hard against the left
+edge of it.
+
+That is RG-224, RG-265 and RG-280 for the fourth time. **A feature built for the phone is not a
+feature until the other stage surface has it**, and the honest way to stop paying that is to make
+the rule shared rather than to copy it again.
+
+### The decision
+
+`stagefill.js` is ONE function over `stageresting.js`. It does not re-decide anything the phone's
+rule decides — its test asserts the two agree on every combination of inputs — and it adds only the
+two facts the phone does not have: a clip's own countdown can have taken the rail's place, and the
+template may declare a home for a note that this page must not override.
+
+- Nothing fired, a Stage Timer running → the rail is the screen.
+- Nothing fired, a note from the desk → the note is the screen.
+- Both → they **stack**, words above and digits below, 55/45. Never overlapped, which is the
+  arrangement RG-247 measured at 140px off the middle of a phone.
+- **Anything on the screen and neither of them takes a pixel.** A reading, a slide and a
+  congregation countdown all win, always, and §116's line — *a note may not cover the reading* — is
+  the same sentence said about a clock.
+
+### What this is NOT, because the gate matters more than the layout
+
+It is not a new surface and it does not widen who may see a running order. `Output.svelte` hands no
+programme and no Stage Message to a channel whose role is not `stage`, so the inputs are already
+empty on every congregation screen in the building and the gate is still the ROLE (§89). Nothing
+here can enlarge something that was never there.
+
+### What holds it
+
+`stagefill.test.js` — the rule against the phone's over every input, the geometry, the clip's cover
+including the zero-that-is-not-a-null, and all of it rendered through a real `output.html` on a
+stage-role channel with a congregation screen beside it showing nothing.
+
+**And one thing it could not hold, which is recorded rather than glossed.** jsdom lays nothing out,
+so the fill was measured in Chromium at 1920x1080 — where it immediately showed a clipped clock that
+every green test had missed. The cause was `clientHeight` (the padding box) being handed to
+`programmeRoom` (which is asked about the content box), and the fix is a measurement, not a
+constant. RG-285 carries the figures.
+
+---
+
+## 119. A reference interrupted by a pause is still one reference, and a microphone that dies is not the end of the service (2026-09-23)
+
+Two operator instructions, one morning, and they turn out to be the same complaint
+seen from two ends of the same pipe: *the live transcript keeps losing things.*
+
+> *"when audio is listening if a scripture is called make sure to hear the full
+> bible verse before breaking transcript to keep accuracy… when you hear psalms and
+> there is a pause in the voice, wait to hear the next couple sentence for any
+> chapter and verse before breaking transcript."*
+
+> *"make sure live transcript dosent stop. as long as there is audio coming in….
+> when audio input switch, continue transcript once audio is dected…"*
+
+### The pause (RG-284)
+
+`SILENCE_FINALIZE` is 7 chunker hops — 1.4 s — and finalizing CLEARS the rolling
+window. So "Turn with me to Psalms", a page turn, "chapter twenty-three, verse one"
+is decoded as two windows: one holding a book with no numbers, one holding numbers
+with no book. Neither is a reference. Nothing downstream can rejoin them, because
+`detection.rs` is handed one window at a time on purpose.
+
+This is not a new observation. `SILENCE_FINALIZE`'s own comment records it when the
+value was raised from 5 to 7 — *"the second half of 'Romans chapter eight … verse
+twenty-eight' was being decoded with no memory of the first half"* — and 1.4 s was
+simply a better guess than 1 s, not an answer.
+
+**So the threshold stops being a constant.** `stt::finalize_after` is the one place
+it is chosen, and when the words decoded so far end on something that could be the
+START of a reference the window is held for `DANGLING_SILENCE_FINALIZE` instead —
+15 hops, 3.0 s. The unit is SILENCE: the moment the preacher speaks the run resets
+and the window stays open for as long as they keep talking, so three seconds of
+held silence buys the whole of the next sentence, which is what was asked for.
+
+**Three seconds is bounded and the bound has a reason.** `WINDOW_SECS` is 8 s; a
+phrase ending on a book name has already spent two or three of them. A hold long
+enough to fill the window on its own would force-close it (RG-262) BEFORE the
+chapter arrived — buying nothing and still postponing every FINAL, which is what
+carries persistence and the spoken commands (rule 33). `window_is_full` remains the
+hard ceiling whatever the constant says.
+
+**What it deliberately does not do**, and this is §34 restated rather than
+re-litigated: a reading that ALREADY parses at the tail is not delayed. Guarding
+every tail match costs about a second on essentially every auto-fire, and
+`RefMatch::is_provisional` already owns "the verse number has not arrived yet" at
+the detection layer. This is only about the pause before any number has been said.
+
+**The interface is the judgement call, and it is written down rather than made
+quietly.** `stt.rs` decodes; it does not know what a book is, and after this change
+it still does not. There is no alias table here, no book list, no language list and
+no grammar. The question is asked of `detection::detect_direct` — the public parser
+that owns all four — as a PROBE: *does appending a chapter and verse make a
+reference appear at the tail that was not there before?* The alternative was a
+`detection::` predicate written for this one caller: a better name and a worse
+boundary, being a second entry point into the parser with its own view of what a
+book name is, to be kept in step with the first. The probe cannot drift from
+`detect_direct`, because it IS `detect_direct`.
+
+**What it gets wrong is measured, not guessed.** Rule 10's ordinary English words
+that are also one-token aliases — `job`, `song`, `mark` — make the answer true at
+the end of a sentence with nothing to do with scripture. On 1331 finalized lines
+from the author's own services, 19 (1.4%) would be held, each by up to 1600 ms;
+nothing fires and nothing is lost. Two adjacent pairs gain a reference the two
+halves do not: **Psalms 1:1**, a real call to worship that Relay detected nothing
+for, and **Nahum 2:1**, from a mishearing joined to a recitation of book names.
+Both are whole-chapter at 0.45 and route to `Suggest`; neither can reach a wall.
+One correct suggestion gained and one wrong one, at this sample — which is not an
+accuracy improvement and is not claimed as one.
+
+**And the half that could not be measured at all.** The other effect of holding the
+window is acoustic: whisper decodes the numbers with the book name still in its
+context, which is where a gain would actually come from. That needs audio. There is
+no recorded church audio on this machine, `stt::realtime` could not be run, and
+that claim is NOT TESTED.
+
+### The microphone (RG-291)
+
+Rule 5 makes a dead device stop the loop, store the reason, write the debug
+recording and raise `audio://error`. Every word of that is right and all of it ends
+there. A USB mic that glitches, an input another application takes for a moment, a
+desk feed re-plugged — each one ended the transcript for the rest of the service,
+and the only way back was an operator noticing and pressing Start.
+
+**The operator is not asking for rule 5 to be undone. They are asking for the step
+after it.** So nothing about the stop changes: the loop still exits, the reason is
+still the FIRST one cpal gave, the recording for that segment is still on disk
+before anything is reported — and on its own `-2`, `-3` … path, so a resume can
+never truncate the segment before it (F-11).
+
+What is added is a **bounded, backed-off re-open**: 500 ms, 1 s, 2 s, 4 s, 8 s, and
+then it stops. 15.5 s is what a person takes to notice a cable, push it back in and
+let the OS re-enumerate. Unbounded would be a microphone that never admits it is
+gone, and an operator watching "Reconnecting" for the rest of a service with no
+banner and no way to tell it from a working one — rule 35 with extra steps.
+
+**Two flags where there was one.** An operator pressing Stop and a microphone dying
+were the same `AtomicBool`, which is fine for a loop that only ever exits, and
+useless to a loop that has to decide whether to try again. `stop` belongs to
+`AudioEngine` and is never reset; `dead` belongs to the attempt, and
+`note_stream_error` sets that one.
+
+**A resume is evidenced by audio, never by an open.** A device can be resolved,
+report every config it supports, accept `play()` and deliver no frames at all —
+that is exactly the failure `DEAD_INPUT_MS` exists for. So "listening again" is said
+by a buffer arriving and by nothing else, once per attempt, and it names the input
+it resumed ON: "it came back" and "it came back on a microphone nobody chose" are
+different facts (RG-121). The budget resets when audio flows, so a glitch in the
+first minute does not spend the chances for a different one an hour later.
+
+**The service lock is deliberately not consulted.** `servicelock.rs` holds back
+irreversible actions and things that take the speech engine away. A microphone
+coming back is neither, and changing microphone mid-service — the desk feed died,
+plug in a handheld — is the ordinary thing this desk is for. §40: the operator
+outranks it, always.
+
+**And `setInputDevice` was the same gap by a second door.** It updated the store and
+persisted the setting and never told the engine, so a change of microphone took
+effect at the NEXT `start_capture`. It now stops and reopens a running capture — and
+a stop that did NOT stop ends there rather than opening a second capture thread on
+one device, which is `micstop.test.js`'s bug one level up.
+
+### What is NOT delivered, and is not claimed
+
+`Recovery` carries the three facts rule 35 requires be distinguishable — `Lost`
+(and trying again), `Listening` (audio is arriving, from this input), `GaveUp`. They
+go to stderr, because putting them in front of an operator needs an emitter in
+`main.rs` and a line in `degraded.js`, and neither was this change's to make. Until
+that lands a self-healed glitch is invisible and only the final failure reaches a
+banner. The mechanism is real; the surface is owed.
+

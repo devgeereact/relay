@@ -152,6 +152,11 @@ const REGISTER = [
       // grey for two days. A sweep that could not name the concept it guards
       // would be guarding a selector rather than a surface.
       'src/lib/colourlaw.test.js',
+      // RG-285 — the note takes a resting stage screen's room rather than a
+      // strip along its foot, which is `stagemessage.js`'s `large` form on the
+      // surface that only ever had the strip. It names the concept because the
+      // whole case is about which of the two renderings a word gets.
+      'src/lib/stagefill.test.js',
       'src/lib/views/Channels.svelte',
       // Wave 3 — the two files that hold what a PANIC CONTROL does to a Stage
       // Message (DECISIONS §91) and to the console's mirror of it. They were
@@ -332,6 +337,12 @@ const REGISTER = [
       // register exists to stop.
       'src/lib/stageresting.js',
       'src/lib/stageresting.test.js',
+      // RG-285 — the same rule, on the OTHER preacher's screen. `stagefill.js`
+      // is one function over `stageresting.js` and its test asserts the two
+      // agree on every input, so both name the clock for the same reason the
+      // two rows above it do.
+      'src/lib/stagefill.js',
+      'src/lib/stagefill.test.js',
 ],
     // `'Congregation timer'` stays permitted: it is accurate prose in `timers.rs`
     // and `main.rs` describing a SCOPE, not a control anybody reads a label on.

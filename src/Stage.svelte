@@ -1624,10 +1624,15 @@
           </div>
         {:else}
           <div class="tmr" class:warn={t.warn} class:over={t.over} class:held={t.held} data-timer-id={t.id}>
-            {#if t.label || t.held}
+            <!-- `Held`, or `TIME UP` past zero (RG-286, operator). ONE FIELD,
+                 from `timers.js::programmeRows`, because the big screen's rail
+                 renders the same rows — a word spelled here and again there is
+                 two rails with an opinion about the same clock, which is this
+                 repository's oldest shape of bug. -->
+            {#if t.label || t.state}
               <span class="thead">
                 {#if t.label}<span class="tlabel">{t.label}</span>{/if}
-                {#if t.held}<span class="tstate">Held</span>{/if}
+                {#if t.state}<span class="tstate">{t.state}</span>{/if}
               </span>
             {/if}
             <!-- ALWAYS A FIGURE, NEVER PROSE. `--tch` budgets this column from the

@@ -163,6 +163,53 @@ export function degradations(s = {}) {
     });
   }
 
+  // ── A MICROPHONE THAT WENT AWAY, AND WHAT IS BEING DONE ABOUT IT (RG-291) ──
+  //
+  // THREE STATES, THREE ROWS, and they may never collapse into one. `audio.rs`
+  // now gives a lost device a bounded run of re-opens, so "it is gone" stopped
+  // being the only thing that could be true. A register that said the same thing
+  // while Relay was retrying, while it was listening again on the wrong input,
+  // and while it had given up would be rule 35 on the one fact that decides
+  // whether anything is transcribed at all.
+  //
+  // `gave_up` is BLOCKED and sits with `audioError` above it in the ordering that
+  // `summarise` applies; a retry in progress is REDUCED, because Relay may well
+  // be listening again in a second and the operator has nothing to do yet.
+  //
+  // The `listening` case is deliberately NOT silent when the input changed. That
+  // is RG-121's finding on this path: a silent fallback once put Relay on a
+  // laptop microphone at the back of a booth with a desk feed plugged in, and
+  // "it came back" and "it came back on a microphone nobody chose" are two
+  // different facts. A clean resume on the chosen input says nothing at all.
+  const rec = s.audioRecovery;
+  if (rec?.state === 'gave_up') {
+    out.push({
+      id: 'audiorecovery',
+      level: 'blocked',
+      title: 'The microphone did not come back',
+      what: `Relay tried ${rec.attempts ?? 'several'} times and has stopped trying, so nothing is being transcribed or detected. Firing verses by hand works exactly as normal.`,
+      fix: 'Check the cable and the input device, then press the microphone in the Live audio card to start again.',
+    });
+  } else if (rec?.state === 'lost') {
+    out.push({
+      id: 'audiorecovery',
+      level: 'reduced',
+      title: 'The microphone went away — Relay is reconnecting',
+      what: `Nothing is being transcribed until it is back. Attempt ${rec.attempt ?? '?'} of ${rec.of ?? '?'}. Firing verses by hand works exactly as normal.`,
+      fix: 'Nothing to do yet. If it is a cable, push it back in — Relay will pick the audio up by itself when it hears any.',
+    });
+  } else if (rec?.state === 'listening' && rec.was_default && s.inputDevice) {
+    // `s.inputDevice` is the input the operator CHOSE; `''` is the system default
+    // deliberately chosen, which is not this case.
+    out.push({
+      id: 'audiorecovery',
+      level: 'reduced',
+      title: 'Relay came back on a different microphone',
+      what: `It is listening again on ${rec.input ?? 'the system default'}, which is not the input that was chosen (${s.inputDevice}). The transcript is running, from a microphone nobody picked for this room.`,
+      fix: 'Stop the microphone, choose the right input in the Live audio card, and start it again.',
+    });
+  }
+
   // Only worth saying while the microphone is actually live: detection being off
   // with nothing playing into it is not a degradation, it is Tuesday.
   if (s.detectionOn === false && s.capturing && s.sttLoaded !== false) {

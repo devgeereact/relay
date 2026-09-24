@@ -165,18 +165,30 @@ describe('the stage page shows the Stage Timers', () => {
     spy.mockRestore();
   });
 
-  it('shows the digits alone when a timer has no label', async () => {
-    // Wave 5 Track G makes label-less the dock's default, so this page has to
-    // survive it already. A collapsed or clipped box is the failure to avoid: an
-    // empty label must give up its room, not take it.
+  it('calls a timer nobody named TIMER, rather than showing digits alone', async () => {
+    // ── REVERSED ON THE OPERATOR'S INSTRUCTION, 2026-09-23 (RG-287) ──────────
+    //
+    // This case used to assert the opposite — *"shows the digits alone when a
+    // timer has no label"* — on the reasoning that Wave 5 Track G makes
+    // label-less the dock's default and an empty label must give up its room
+    // rather than take it. The operator, looking at a platform monitor:
+    // *"Defult timer text should be TIMER not just empty."*
+    //
+    // The half of the old rule that was protecting something is KEPT and is
+    // tested elsewhere: `programmeRoom` stands the whole head down below
+    // `BARE_BELOW_PX`, so a rail too short for a name and a clock still spends
+    // its height on the clock. What changes is a rail that HAS the room.
+    //
+    // The default is applied in `programmeRows` and nowhere else, so the phone
+    // (here) and the stage TV (`stagefill.test.js`) have it or neither does.
     const at = 1_700_000_000_000;
     vi.useFakeTimers();
     vi.setSystemTime(at);
     await mount();
 
     await deliver({ kind: 'timer', timers: [entry(1, '', 5, at)] });
-    expect(rows()).toEqual([['', '5:00']]);
-    expect(host.querySelector('[data-timer-id] .tlabel')).toBeNull();
+    expect(rows()).toEqual([['TIMER', '5:00']]);
+    expect(host.querySelector('[data-timer-id] .tlabel').textContent).toBe('TIMER');
   });
 
   it('takes the rows away when the hub sends an empty set', async () => {

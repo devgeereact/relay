@@ -236,9 +236,10 @@
       "id": "para-john-316",
       "lang": "en",
       "text": "For God loved the world so much that he gave his only son, that whoever believes in him should not perish but have everlasting life.",
-      "expect": [],
-      "must_not_fire": true,
-      "note": "A quoted paraphrase. May be SUGGESTED, must never auto-fire — a TF-IDF cosine is not a probability."
+      "expect": [
+        "John 3:16"
+      ],
+      "note": "RECLASSIFIED 2026-09-23. This was labelled a paraphrase that must never auto-fire, and the label was wrong from the day it was written: NINE of its words — 'in him should not perish but have everlasting life' — are John 3:16 verbatim, and no other verse holds that run. Nothing could see it, because the harness ran no quoted path until DECISIONS §118. Relay does not guess here; it heard nine consecutive words of the verse, so under the operator's instruction of 2026-09-23 the verse goes up. `para-john-316-reworded` is the negative control this case used to be, with the quotation taken out of it."
     },
     {
       "id": "para-psalm-23",
@@ -652,6 +653,74 @@
       "source": "R4-audit",
       "text": "Job one day said to his friends",
       "expect": []
+    },
+    {
+      "id": "para-john-316-reworded",
+      "lang": "en",
+      "text": "God cared for humanity so deeply that he handed over his one and only child, so that anyone trusting him would not be lost but would live for ever.",
+      "expect": [],
+      "must_not_fire": true,
+      "note": "The negative control `para-john-316` was supposed to be: John 3:16 retold with no run of its words in it. A TF-IDF cosine is not a probability and may never auto-fire, at any score."
+    },
+    {
+      "id": "read-john-316",
+      "lang": "en",
+      "text": "For God so loved the world, that he gave his only begotten Son, that whosoever believeth in him should not perish, but have everlasting life.",
+      "expect": [
+        "John 3:16"
+      ],
+      "note": "A preacher READING the verse. Twenty-five words verbatim, held by one verse. DECISIONS §118 — the operator asked for this to go up without being asked for."
+    },
+    {
+      "id": "read-matthew-1128",
+      "lang": "en",
+      "text": "Come unto me, all ye that labour and are heavy laden, and I will give you rest.",
+      "expect": [
+        "Matthew 11:28"
+      ],
+      "note": "Read aloud, no reference spoken. Sixteen words, one verse."
+    },
+    {
+      "id": "read-proverbs-35",
+      "lang": "en",
+      "text": "Trust in the LORD with all thine heart; and lean not unto thine own understanding.",
+      "expect": [
+        "Proverbs 3:5"
+      ],
+      "note": "Ten words verbatim, one verse — two above the floor."
+    },
+    {
+      "id": "read-psalm-23-2",
+      "lang": "en",
+      "text": "The LORD is my shepherd; I shall not want. He maketh me to lie down in green pastures: he leadeth me beside the still waters.",
+      "expect": [
+        "Psalms 23:2"
+      ],
+      "note": "Two verses read in one breath. The LONGEST run wins, and it is verse 2 (sixteen words) rather than verse 1 (seven, below the floor) — which is the verse the preacher had most recently read. Rule 29: one window, one wall."
+    },
+    {
+      "id": "read-tied-caleb",
+      "lang": "en",
+      "text": "and Caleb said, He that smiteth Kirjathsepher, and taketh it, to him will I give Achsah my daughter to wife.",
+      "expect": [
+        "Joshua 15:16"
+      ],
+      "must_not_fire": true,
+      "note": "TWENTY words verbatim — and Judges 1:12 and Joshua 15:16 are word-for-word identical, so Relay would be CHOOSING, not hearing. Measured 2026-09-23: reading 1,500 real verses back produced 42 wrong verses at a run of eight, and every one was a pair like this. Offered, never fired. Same shape as RG-178."
+    },
+    {
+      "id": "neg-good-man-and-just",
+      "lang": "en",
+      "text": "Now our brother was a good man and a just, and he served this church faithfully for many years.",
+      "expect": [],
+      "note": "SEVEN words of Luke 23:50 by accident — the module's own example of the noise a floor of four produced. One below READING_RUN_WORDS, so it may be offered and can never be fired."
+    },
+    {
+      "id": "neg-shepherd-talk",
+      "lang": "en",
+      "text": "I want to talk this morning about what it means to be a shepherd to the people God has given you.",
+      "expect": [],
+      "note": "Preaching ABOUT a verse with none of its words in a row. The paraphrase index may reach for Psalms 23; the quoted path must find nothing at all."
     }
   ]
 }

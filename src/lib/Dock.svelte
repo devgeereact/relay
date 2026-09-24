@@ -971,9 +971,9 @@
           class="r-select micpick"
           value={$capture.inputDevice}
           on:change={(e) => setInputDevice(e.target.value)}
-          disabled={!$capture.available || $capture.capturing}
+          disabled={!$capture.available}
           title={$capture.capturing
-            ? 'Stop listening to change the microphone — the device is chosen when capture opens.'
+            ? 'Change the microphone now — Relay moves the running capture onto it and picks the transcript back up when it hears audio.'
             : 'Which microphone Relay opens when you start listening.'}
           aria-label="Microphone input device">
           <option value="">System default</option>
@@ -1228,13 +1228,29 @@
                the preacher's monitor is painting at that moment. -->
           {#if $stageAlert}<span class="qbadge">on stage</span>{/if}
         </div>
-        <input
-          class="r-input tin wide"
-          type="text"
+        <!-- ══ THE FIELD TAKES THE SLACK (RG-292) ══
+             A TEXTAREA, not a taller input. The messages this sends are
+             sentences, and an `<input>` shows one line of them however tall it
+             is drawn, scrolling the rest sideways out of sight. The operator
+             asked for the content to be visible inside the card, which is a
+             wrapping control.
+
+             ENTER STILL SENDS, which is the whole reason the single-line
+             control was chosen in the first place; Shift+Enter is the newline.
+             Taking the keyboard send away to buy a bigger box would be a worse
+             trade than the dead space being fixed. -->
+        <textarea
+          class="r-input tin wide msgin"
           bind:value={stageMsg}
+          rows="2"
           placeholder="Wrap up · Five minutes left · Stand by"
           aria-label="Stage Message — stage monitor only"
-          on:keydown={(e) => e.key === 'Enter' && toPreacher(false)} />
+          on:keydown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              toPreacher(false);
+            }
+          }} />
         <!-- `primary`, not `pri`. `pri` is not a class this stylesheet defines,
              so the one button in Quick tools that is meant to read as the
              primary action had been rendering as a plain `.r-btn` — invisible,
@@ -1691,6 +1707,10 @@
     display: flex; flex-direction: column; gap: 6px;
     padding: 6px 9px;
     justify-content: flex-start; overflow-y: auto;
+    /* The block below stretches, so this has to be able to give it the room —
+       a column that only ever hands out its children's own heights has no
+       slack to give (RG-292). */
+    min-height: 0;
   }
   /* ── ONE INSTRUMENT, THREE TIMES (L3, docs/REBRAND.md §2) ─────────────────
      The prototype's `.tmr`, `.lt3` and `.alrt` are one card repeated: the same
@@ -1752,6 +1772,31 @@
   .qblock {
     display: flex; flex-direction: column; gap: 4px; padding: 6px;
     background: var(--v-surf); border: 1px solid var(--v-line); border-radius: var(--v-r-lg);
+    /* AND IT STRETCHES TO THE CARD (RG-292). RG-277 made this block FIT; the
+       operator then asked for the third of the card below it that was doing
+       nothing. Fitting and filling are different questions and only the first
+       had been answered. `min-height: 0` is not decoration: without it a flex
+       child refuses to shrink below its content, which is how a stretching
+       block becomes a scrolling one - and `min-content` rather than `0`,
+       because a block that may shrink below its own content spills its
+       children over the card's edge with no scrollbar to find them. The Name
+       band has 10px of headroom; `0` would have taken the action row off the
+       bottom of it and nothing would have said so. `.tools` still scrolls, and
+       that is the right place for it. */
+    flex: 1 1 auto; min-height: min-content;
+  }
+  /* THE FIELD IS THE ONE ROW THAT GROWS. Every other row in the block is a
+     fixed box — a label, a 26px control, a 22px button row — so if nothing
+     grows the leftover is dead space by construction. The floor is the shared
+     control's own height, because a grow with no floor is a field that vanishes
+     on a short card: the opposite failure and just as bad.
+
+     `resize: none` because the drag handle a textarea draws by default would
+     let an operator pull this field over the Controls card beside it, and
+     `Clear screens` may never be painted over (rule 44). */
+  .msgin {
+    flex: 1 1 auto; min-height: 26px; height: auto;
+    resize: none; padding: 4px 8px; line-height: 1.35;
   }
   .qhead { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; row-gap: 4px; }
   .qspring { flex: 1 1 auto; min-width: 0; }

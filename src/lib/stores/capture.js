@@ -123,7 +123,15 @@ export const capture = writable({
   // from `get_thresholds` on init. Kept in step with Thresholds::default() in
   // router.rs, which IS from_sensitivity(50); it used to say 0.9/0.6, which was
   // the other, contradictory baseline.
-  thresholds: { auto_fire: 0.5, suggest: 0.35 },
+  thresholds: { auto_fire: 0.5, suggest: 0.3 },
+  // THE SAME GATE AS AN OPERATOR READS IT, 0-100 and rising with the dial.
+  //
+  // Derived in Rust (`Thresholds::readiness`) beside the curve it is a question
+  // about, and carried on every door that carries the thresholds — the launch
+  // read, the event, and what confirm/dismiss hand back — so it can never be one
+  // write behind them. `null` until the engine has answered: a `0` here is itself
+  // a setting ("never fire") and would read as one. See gate.js and DECISIONS §117.
+  readiness: null,
   // THE DIAL POSITION, AND WHETHER ANYBODY HAS ACTUALLY ASKED. `sensitivity` is
   // `to_sensitivity(thresholds)` — the one inverse mapping, computed in Rust so
   // the two directions cannot drift — and `sensitivityKnown` is the answer to a
@@ -149,6 +157,11 @@ export const capture = writable({
   // has not drifted, it is simply unread, and claiming otherwise would be
   // inventing the worse of the two facts.
   gateOnDial: true,
+  // IS RELAY FOLLOWING A READER? (DECISIONS §118, the operator's instruction of
+  // 2026-09-23.) The church's one switch over whether a verse Relay heard being
+  // READ goes up by itself. True is the shipped default and what a fresh install
+  // does, so the placeholder is the truth rather than the reassuring answer.
+  followsReader: true,
 });
 
 // What is currently ON the output screens (last fired content, null = cleared).
@@ -612,6 +625,17 @@ export async function ping() {
 /** Probe the backend, load devices + STT status. Safe to call on mount.
  *  Resilient: as long as the Tauri bridge is present, `available` is true —
  *  a single failing command (or the event listeners) never disables the app. */
+/** Is a `listening` recovery notice up? (RG-291.)
+ *
+ * DECLARED HERE, ABOVE `initAudio`, and that placement is the fix rather than a
+ * tidy-up: `let` is not initialised until its own line runs, and `initAudio`
+ * attaches the recovery listener during module evaluation. Declared beside the
+ * chunk handler that reads it — a thousand lines further down, which is where it
+ * reads best — the listener threw `recoveryNotice is not defined` the first time
+ * a microphone was lost, on the one path an operator needs when a cable goes.
+ */
+let recoveryNotice = false;
+
 export async function initAudio() {
   let call;
   try {
@@ -621,7 +645,7 @@ export async function initAudio() {
     return;
   }
   // Backend is attached. Load status pieces independently.
-  const [devices, stt, gate, detectionOn, storedDevice] = await Promise.all([
+  const [devices, stt, gate, detectionOn, followsReader, storedDevice] = await Promise.all([
     call('list_audio_devices').catch(() => []),
     call('stt_status').catch(() => ({ loaded: false, model: null, language: null })),
     // THE WHOLE READ-OUT, NOT ONLY THE TWO NUMBERS, and it has to be read here
@@ -634,6 +658,12 @@ export async function initAudio() {
     // and `sensitivityKnown` stays false so nothing mistakes it for a reading.
     call('get_thresholds').catch(() => null),
     call('get_detection_enabled').catch(() => true),
+    // FOLLOW THE READER (DECISIONS §118). Read from the ROUTER, which is what
+    // decides, rather than from the row — and defaulted to ON on a failure,
+    // because ON is what the operator asked for and a surface claiming the
+    // feature is off over an engine that is following a reader is the worse of
+    // the two wrong answers.
+    call('get_follow_the_reader').catch(() => true),
     // RG-121. Every launch used to start on the system default, whatever was
     // selected last time, and nothing said so.
     call('get_setting', { key: INPUT_DEVICE_KEY }).catch(() => null),
@@ -667,9 +697,11 @@ export async function initAudio() {
     devices: deviceList,
     stt: sttStatus,
     thresholds: gate ? { auto_fire: gate.auto_fire, suggest: gate.suggest } : s.thresholds,
+    readiness: readinessOf(gate) ?? s.readiness,
     sensitivity: gateRead ? Number(gate.sensitivity) : s.sensitivity,
     sensitivityKnown: s.sensitivityKnown || gateRead,
     gateOnDial: gateRead ? gate.on_dial !== false : s.gateOnDial,
+    followsReader: followsReader !== false,
     detectionOn,
     inputDevice: chosen.device,
     inputDeviceMissing: chosen.missing,
@@ -774,6 +806,8 @@ export async function initAudio() {
           // know it: answering a broken frame with 50 would put a number on screen
           // that is nobody's setting.
           sensitivity: Number.isFinite(sensitivity) ? sensitivity : s.sensitivity,
+          // Rides on the same announcement, for the same reason `on_dial` does.
+          readiness: readinessOf(p) ?? s.readiness,
           sensitivityKnown: s.sensitivityKnown || Number.isFinite(sensitivity),
           // The gate having MOVED is exactly when this can change, so it rides on
           // the announcement that it moved. A missing field leaves the last answer
@@ -786,6 +820,31 @@ export async function initAudio() {
       await listen('audio://error', (e) =>
         capture.update((s) => ({ ...s, audioError: e.payload, capturing: false }))
       );
+      // ── A MICROPHONE THAT WENT AWAY, AND WHAT IS BEING DONE ABOUT IT ────────
+      //
+      // Three states, kept apart because rule 35 is the whole point of the event
+      // (RG-291, DECISIONS §119): `lost` is an attempt in progress, `listening`
+      // is audio actually arriving again, `gave_up` is the end of the bound.
+      //
+      // `lost` DELIBERATELY LEAVES `capturing` ALONE. `audio://error` clears it,
+      // correctly, because an error is the end of an attempt — but this is the
+      // attempt after it, and Relay is still listening for the device. Clearing
+      // it here would put "Start listening" in front of an operator over a
+      // capture that is about to come back by itself, and they would press it.
+      //
+      // Only `gave_up` stops the capture, because only `gave_up` is a stop.
+      await listen('audio://recovery', (e) => {
+        // A MIRROR, not a second source of truth. The chunk handler runs on the
+        // hot path and writes to `meter` and never to `capture` (see the note
+        // there); reading the store per chunk to find out whether a notice is up
+        // would undo that. This flag is written once per recovery event.
+        recoveryNotice = e.payload?.state === 'listening';
+        capture.update((s) => ({
+          ...s,
+          audioRecovery: e.payload,
+          capturing: e.payload?.state === 'gave_up' ? false : s.capturing,
+        }));
+      });
       // A LAN server failed to bind → every networked output (OBS, kiosk
       // screens, the stage monitor) is dead. This used to be swallowed to
       // stderr, so the operator's only symptom was screens that never came up.
@@ -1179,9 +1238,64 @@ export function chooseInputDevice({ stored, devices } = {}) {
  * GROUP 2: the write never throws at the caller. A setting that would not save must
  * not stop an operator changing microphone thirty seconds before a service.
  */
-export function setInputDevice(name) {
-capture.update((s) => ({ ...s, inputDevice: name || '', inputDeviceMissing: null }));
-void persistInputDevice(name || '');
+export async function setInputDevice(name) {
+const chosen = name || '';
+// Read BEFORE the update, so the answer is "was Relay listening when the operator
+// changed microphone" rather than a fact about the store one line later.
+const wasCapturing = get(capture).capturing;
+capture.update((s) => ({ ...s, inputDevice: chosen, inputDeviceMissing: null }));
+void persistInputDevice(chosen);
+// AND IT REACHES THE ENGINE — RG-291.
+//
+// The operator: *"when audio input switch, continue transcript once audio is
+// dected"*. This function used to end one line up, so the choice took effect at
+// the next `start_capture` and not before: Relay went on capturing from the old
+// device, and if the reason for the switch was that the old one had just died,
+// rule 5 had already stopped the loop and nothing restarted it.
+//
+// Both rendered pickers disable themselves while capturing and say why, so this
+// was never reachable from them — `rooms.js` is the door that is not guarded, and
+// the capability is what was asked for. The service lock is deliberately NOT
+// consulted: `servicelock.rs`'s list is irreversible actions and things that take
+// the speech engine away, and changing microphone mid-service — the desk feed
+// died, plug in a handheld — is the ordinary thing this desk is for (§40, "the
+// operator outranks it, always").
+if (wasCapturing) await moveRunningCapture(chosen);
+}
+
+/**
+ * Stop the capture and reopen it on `name`. Never throws — group 2.
+ *
+ * ORDER IS THE WHOLE OF IT. `stop_capture` takes a lock, and an audio thread that
+ * panicked while holding it leaves the mutex poisoned and the engine RUNNING
+ * (`micstop.test.js`). Starting anyway would put a second capture thread on one
+ * device and deliver every event twice, which is the failure `startCapture`
+ * detaches its listeners to avoid. So a stop that did not stop ends this, loudly:
+ * the microphone has not moved and the operator has to be told, because the one
+ * thing worse than a microphone that did not change is believing it did.
+ */
+async function moveRunningCapture(name) {
+try {
+  await stopCapture();
+} catch (e) {
+  capture.update((s) => ({
+    ...s,
+    capturing: false,
+    audioError: `could not close the current microphone, so it has not been changed: ${
+      e?.message ?? e
+    }`,
+  }));
+  return;
+}
+try {
+  await startCapture(name || null);
+} catch (e) {
+  capture.update((s) => ({
+    ...s,
+    capturing: false,
+    audioError: `could not open ${name || 'the system default microphone'}: ${e?.message ?? e}`,
+  }));
+}
 }
 
 async function persistInputDevice(name) {
@@ -1239,6 +1353,15 @@ detachCaptureListeners();
 let lastLang = null;
 // The hot path. Goes to `meter`, never to `capture` — see the note on `meter`.
 unlistenAudio = await listen('audio://chunk', (e) => {
+  // THE NOTICE COMES DOWN WHEN THE AUDIO IS BACK, and audio arriving is the only
+  // thing that proves it (RG-291). One write, guarded by a plain boolean, because
+  // this handler runs several times a second for a whole service — a notice that
+  // stays up after the thing it describes has passed is one an operator learns to
+  // read past, and that costs the next real one its meaning.
+  if (recoveryNotice) {
+    recoveryNotice = false;
+    capture.update((s) => ({ ...s, audioRecovery: null }));
+  }
   const { rms, is_voice, peaks } = e.payload;
   // `peaks` is the chunk's own envelope, sixteen readings across its 400 ms
   // (`audio::CHUNK_PEAKS`). It rides on the event that was already being sent
@@ -1362,7 +1485,7 @@ const call = await invoke();
 // Read the claim BEFORE the round trip — the receipt below needs the method and
 // the words, and by the time it is written the card is gone from the list.
 const claim = get(detections).find((d) => d.reference === reference) ?? null;
-const thresholds = await call('confirm_detection', { reference });
+const gate = await call('confirm_detection', { reference });
 // Accepting an AI suggestion also takes us out of the plan — same reason as
 // manualFire.
 leavePlan();
@@ -1371,7 +1494,62 @@ detections.update((list) => list.filter((d) => d.reference !== reference));
 // that threw is rule 15 in another coat, and this function's own doc comment
 // records that exact bug happening to the card itself.
 if (claim) noteResolved(claim, 'accepted');
-capture.update((s) => ({ ...s, thresholds }));
+noteGate(gate);
+}
+
+/** The readiness pair out of any gate payload, or null.
+ *
+ *  `null` is the absence and must stay the absence: `{auto_fire: 0}` would print
+ *  as a real setting ("never fire") over a payload that carried no figure. */
+function readinessOf(p) {
+  const a = Number(p?.readiness?.auto_fire);
+  const b = Number(p?.readiness?.suggest);
+  return Number.isFinite(a) && Number.isFinite(b) ? { auto_fire: a, suggest: b } : null;
+}
+
+/** Take in a whole `GateReadout` — the shape `get_thresholds`, the event and both
+ *  feedback commands all speak.
+ *
+ *  ── WHY THIS IS ONE FUNCTION AND NOT AN INLINE SPREAD ────────────────────────
+ *
+ *  `confirm_detection` and `dismiss_detection` used to return a bare `Thresholds`
+ *  and this store wrote it straight in — so a confirm updated the two numbers and
+ *  left `gateOnDial` alone. That is the one path that can move the gate OFF the
+ *  dial's curve: `record_feedback` is exactly what §96 says makes the dial position
+ *  stop explaining the gate. A belt-and-braces writer carrying three of the four
+ *  facts is the braces quietly holding up less than the belt. Both commands now
+ *  return the whole readout and this is the one place it lands. */
+function noteGate(g) {
+  const a = Number(g?.auto_fire);
+  const b = Number(g?.suggest);
+  const dial = Number(g?.sensitivity);
+  capture.update((s) => ({
+    ...s,
+    thresholds:
+      Number.isFinite(a) && Number.isFinite(b) ? { auto_fire: a, suggest: b } : s.thresholds,
+    readiness: readinessOf(g) ?? s.readiness,
+    sensitivity: Number.isFinite(dial) ? dial : s.sensitivity,
+    sensitivityKnown: s.sensitivityKnown || Number.isFinite(dial),
+    gateOnDial: typeof g?.on_dial === 'boolean' ? g.on_dial : s.gateOnDial,
+  }));
+}
+
+/** Turn "follow the reader" on or off, and apply it now.
+ *
+ *  Throws (group 1). A switch that stores a preference and leaves the engine
+ *  doing the opposite is the "Screens cleared" lie in another coat (rule 15), so
+ *  the store is only updated from what the backend actually landed on — and a
+ *  failure reaches the caller rather than being swallowed into a switch that
+ *  looks like it moved.
+ *
+ *  Behind the service lock: this decides what may reach a congregation's screen
+ *  with nobody pressing anything.
+ */
+export async function setFollowTheReader(on) {
+  const call = await invoke();
+  const landed = await call('set_follow_the_reader', { on: !!on });
+  capture.update((s) => ({ ...s, followsReader: landed !== false }));
+  return landed !== false;
 }
 
 /** Operator dismisses a suggestion → drop it + tighten the gate. */
@@ -1388,8 +1566,8 @@ try {
   // The reference rides to the backend so the rejection lands in the service
   // record as a rejection OF SOMETHING. It was already in this function's
   // signature and was being dropped on the floor at the one line that mattered.
-  const thresholds = await call('dismiss_detection', { reference });
-  capture.update((s) => ({ ...s, thresholds }));
+  const gate = await call('dismiss_detection', { reference });
+  noteGate(gate);
 } catch {
   /* backend absent */
 }

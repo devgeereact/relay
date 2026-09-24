@@ -488,11 +488,23 @@ fn main() {
             // decoder-bias prompt to STT, calibrated thresholds to the router —
             // so accent calibration is live from the first word, before any UI.
             {
-                let profile = {
+                let (profile, follow) = {
                     let db = app.state::<Db>();
                     let conn = db.0.lock().expect("db lock");
-                    db::active_voice_profile(&conn).ok().flatten()
+                    (
+                        db::active_voice_profile(&conn).ok().flatten(),
+                        db::follow_the_reader(&conn),
+                    )
                 };
+                // THE CHURCH'S SWITCH, BEFORE THE FIRST WORD IS HEARD. It governs
+                // what may reach a wall unattended, so it has to be on the router
+                // by the time anything can be decided — not applied when a settings
+                // page happens to be opened. Same reasoning as the learned gate two
+                // lines down, and the same named exception to rule 35: there is no
+                // webview yet to announce it to.
+                if let Ok(mut r) = app.state::<Routing>().0.lock() {
+                    r.set_follow_the_reader(follow);
+                }
                 if let Some(p) = profile {
                     if let Some(e) = engine.as_ref() {
                         apply_profile_to_stt(e, &p);
@@ -601,6 +613,8 @@ fn main() {
             stt_status,
             confirm_detection,
             dismiss_detection,
+            set_follow_the_reader,
+            get_follow_the_reader,
             get_thresholds,
             get_sensitivity,
             set_sensitivity,
@@ -1224,8 +1238,11 @@ fn rank_for_wall(mut cands: Vec<(String, Cand)>) -> Vec<(String, Cand)> {
     // Ordered explicitly, descending, ties Equal, which is what makes the stable
     // sort keep the order the preacher spoke in.
     cands.sort_by(|(_, a), (_, b)| {
-        (b.method.may_auto_fire(), b.conf)
-            .partial_cmp(&(a.method.may_auto_fire(), a.conf))
+        // THREE TIERS, NOT TWO — see `pipeline::better`, which this must agree
+        // with exactly or the dedup and the sort would disagree about which
+        // evidence is stronger.
+        (b.method.unattended_rank(), b.conf)
+            .partial_cmp(&(a.method.unattended_rank(), a.conf))
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     cands
@@ -1497,7 +1514,14 @@ fn emit_detections<R: tauri::Runtime>(
             candidates.push(Cand::single(
                 h.r,
                 quoted_confidence(h.run),
-                DetectionMethod::Quoted,
+                // IS THIS THE PREACHER READING, OR MERELY QUOTING? The operator's
+                // instruction of 2026-09-23 is that a verse being READ should go
+                // up without being asked for (DECISIONS §118). `for_quotation` is
+                // the one place that is decided and it decides from the evidence
+                // alone — the run length and whether one verse holds it. The
+                // church's switch over it is in `Router::decide`, the door every
+                // candidate passes through, so it cannot be skipped here.
+                DetectionMethod::for_quotation(h.run, h.sole),
                 // THE PHRASE, not a word list. The whole point.
                 Some(h.phrase),
             ));
@@ -5457,6 +5481,10 @@ async fn start_capture(
     let emitter = app.clone();
     let quality_emitter = app.clone();
     let err_emitter = app.clone();
+    // WHAT A LOST MICROPHONE IS DOING ABOUT ITSELF (RG-291, DECISIONS §119).
+    // Separate from `err_emitter` because the two say different things: an error
+    // is the end of an attempt, and this is the attempt after it.
+    let recovery_emitter = app.clone();
     // DISCONNECTED USED TO BE THE ONE SILENT ANSWER ON THIS PATH, and it is the
     // worst of the three. FULL is a backlog and is counted; OK is the normal case;
     // DISCONNECTED means the whisper worker is gone — it failed to create its
@@ -5476,7 +5504,7 @@ async fn start_capture(
     let quality_n = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
     // Non-blocking: returns instantly, so the UI thread never stalls on device
     // init. Stream failures surface as `audio://error`.
-    let engine = AudioEngine::start(
+    let engine = AudioEngine::start_with_recovery(
         device,
         move |chunk| {
             let n = chunk_n.fetch_add(1, Ordering::Relaxed);
@@ -5533,6 +5561,22 @@ async fn start_capture(
         move |err| {
             eprintln!("audio: {err}");
             let _ = err_emitter.emit("audio://error", err);
+        },
+        // ── THE THREE STATES OF A MICROPHONE THAT WENT AWAY ────────────────────
+        //
+        // `lost`, `listening`, `gave_up` — and they must stay apart, because rule
+        // 35 is the whole point of this event: a console that says the same thing
+        // while Relay is retrying, while Relay is listening again, and while Relay
+        // has given up is a console that says nothing. `Recovery` carries the
+        // reason, the attempt number and how long until the next one, so the shell
+        // can say which of the three it is without re-deriving anything.
+        //
+        // The line is printed as well as emitted, for the same reason every other
+        // audio outcome is: on a machine that cannot screenshot the app, stdout is
+        // the record of what happened during a service.
+        move |r: audio::Recovery| {
+            eprintln!("audio: {}", r.describe());
+            let _ = recovery_emitter.emit("audio://recovery", r);
         },
     );
     *slot = Some(engine);
@@ -5758,7 +5802,15 @@ fn confirm_detection<R: tauri::Runtime>(
     reference: String,
     confidence: Option<f32>,
     method: Option<String>,
-) -> error::Result<Thresholds> {
+    // ONE SHAPE FOR THE GATE, EVERYWHERE. This returned a bare `Thresholds`, and
+    // the console wrote that straight into its mirror — so a confirm updated the
+    // two numbers and left `on_dial` alone, on the ONE path that can move the gate
+    // off the dial's curve. `record_feedback` is precisely what §96 says makes the
+    // dial position stop explaining the gate, and the belt-and-braces writer for
+    // it carried three of the four facts. Same struct as `get_thresholds` and the
+    // same fields `detection://thresholds` carries, so no surface can learn a
+    // different thing from a different door.
+) -> error::Result<GateReadout> {
     // The confidence of the SUGGESTION the operator accepted, and how it was
     // found. Both were known to the console and thrown away at the call site.
     //
@@ -5823,7 +5875,11 @@ fn confirm_detection<R: tauri::Runtime>(
         .map(detection::DetectionMethod::from_wire)
         .unwrap_or(detection::DetectionMethod::Direct);
     let confirmed_conf = match confidence {
-        Some(c) if accepted_method.may_auto_fire() => Some(c.clamp(0.0, 1.0)),
+        // `confidence_is_calibrated`, not `may_auto_fire`. The two were one
+        // question while `Direct` answered both; DECISIONS §118 split them. A
+        // `Reading` MAY reach a wall and its number is a word count, so it must
+        // not be handed to a bar that means a parse probability.
+        Some(c) if accepted_method.confidence_is_calibrated() => Some(c.clamp(0.0, 1.0)),
         Some(_) => None,
         // No confidence supplied: fall back to the re-parse, which is what this
         // always did. Not better, but not a lie either.
@@ -5909,7 +5965,7 @@ fn confirm_detection<R: tauri::Runtime>(
         // stale on its own, with the operator touching nothing.
         thresholds_changed(&app, t);
     }
-    Ok(t)
+    Ok(t.into())
 }
 
 /// Operator rejected an auto-fired detection (undo). Tightens the gate,
@@ -5958,7 +6014,8 @@ fn dismiss_detection<R: tauri::Runtime>(
     db: tauri::State<'_, Db>,
     rehearsal: tauri::State<'_, channels::Rehearsal>,
     reference: Option<String>,
-) -> error::Result<Thresholds> {
+    // `GateReadout`, not `Thresholds` — see `confirm_detection`.
+) -> error::Result<GateReadout> {
     if !rehearsal.on() {
         let canonical = reference.as_deref().and_then(|r| {
             detection::detect_direct(r)
@@ -5987,7 +6044,7 @@ fn dismiss_detection<R: tauri::Runtime>(
         // stale on its own, with the operator touching nothing.
         thresholds_changed(&app, t);
     }
-    Ok(t)
+    Ok(t.into())
 }
 
 /// ENDING A REHEARSAL ENDS THE TIMERS IT STARTED, AND THEN TELLS THE TABLET —
@@ -6200,6 +6257,13 @@ fn thresholds_changed<R: tauri::Runtime>(app: &tauri::AppHandle<R>, t: Threshold
         serde_json::json!({
             "auto_fire": t.auto_fire,
             "suggest": t.suggest,
+            // THE TWO FIGURES AS AN OPERATOR READS THEM, derived in Rust beside
+            // the curve they are a question about (DECISIONS §117). The printed
+            // pair used to be `auto_fire`/`suggest` straight off this struct,
+            // which runs the opposite way to the dial they are printed under.
+            // A second copy of `100 - x` in the frontend would be a second
+            // opinion about one gate, which is what §96 deleted a control for.
+            "readiness": t.readiness(),
             "sensitivity": t.to_sensitivity(),
             // ON THE CURVE, OR MERELY NEAREST TO IT. `sensitivity` alone cannot
             // say which, and three of the five doors that move the gate move it to
@@ -6230,25 +6294,34 @@ fn thresholds_changed<R: tauri::Runtime>(app: &tauri::AppHandle<R>, t: Threshold
 /// `hardrules.test.js`). A console that only listened would therefore open with
 /// the learned gate on screen, drawn at whatever dial position is nearest it, and
 /// no caveat anywhere — which is the exact state this work was opened to fix.
-#[derive(Serialize)]
+#[derive(Serialize, Debug, Clone, Copy)]
 struct GateReadout {
     auto_fire: f32,
     suggest: f32,
+    /// The same pair on the 0-100 scale that rises with the dial. See
+    /// `Thresholds::readiness`.
+    readiness: router::GateReadiness,
     sensitivity: u8,
     on_dial: bool,
+}
+
+impl From<Thresholds> for GateReadout {
+    fn from(t: Thresholds) -> Self {
+        GateReadout {
+            auto_fire: t.auto_fire,
+            suggest: t.suggest,
+            readiness: t.readiness(),
+            sensitivity: t.to_sensitivity(),
+            on_dial: t.follows_dial(),
+        }
+    }
 }
 
 /// The live gate: the two thresholds, the dial position they map back to, and
 /// whether that dial position actually explains them.
 #[tauri::command]
 fn get_thresholds(routing: tauri::State<'_, Routing>) -> error::Result<GateReadout> {
-    let t = routing.0.lock()?.thresholds();
-    Ok(GateReadout {
-        auto_fire: t.auto_fire,
-        suggest: t.suggest,
-        sensitivity: t.to_sensitivity(),
-        on_dial: t.follows_dial(),
-    })
+    Ok(routing.0.lock()?.thresholds().into())
 }
 
 // ===== Related scripture & series tracker (Phase A: A3/A4/A6) ===============
@@ -6773,6 +6846,54 @@ fn select_stt_model(app: tauri::AppHandle, filename: Option<String>) -> error::R
         }
     }
     load_stt_model(app)
+}
+
+/// FOLLOW THE READER, or do not. The church's one switch over what a quotation
+/// may do (DECISIONS §118).
+///
+/// ## Why this is a command and not `set_setting`
+///
+/// Writing the row alone would change nothing until the next launch, while the
+/// switch on screen showed the new position — so the operator would be told they
+/// had turned it off and Relay would go on firing readings for the rest of the
+/// service. Choosing and applying are one action or the promise is false, which
+/// is rule 15 and the same reason `select_stt_model` is its own command.
+///
+/// ## Order, and why this one is the way round it is
+///
+/// The ROW is written first and the router second. A write that fails must not
+/// leave the engine following a reader that nothing remembers — the next launch
+/// would silently put it back. Same reasoning as `set_stt_language` (RG-138).
+///
+/// Behind the service lock: this decides what the AI may put on a congregation's
+/// screen unasked, and changing that under a running service is exactly the class
+/// of thing `servicelock.rs` exists for.
+#[tauri::command]
+fn set_follow_the_reader<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    db: tauri::State<'_, Db>,
+    routing: tauri::State<'_, Routing>,
+    on: bool,
+) -> error::Result<bool> {
+    app.state::<servicelock::ServiceLock>()
+        .guard("set_follow_the_reader")?;
+    {
+        let conn = db.0.lock()?;
+        db::set_follow_the_reader(&conn, on)?;
+    }
+    {
+        let mut r = routing.0.lock()?;
+        r.set_follow_the_reader(on);
+    }
+    Ok(on)
+}
+
+/// Is Relay following a reader right now? Read from the ROUTER, not the row — the
+/// router is what decides, and a surface asking the database would be asking a
+/// different question that usually has the same answer.
+#[tauri::command]
+fn get_follow_the_reader(routing: tauri::State<'_, Routing>) -> error::Result<bool> {
+    Ok(routing.0.lock()?.follows_the_reader())
 }
 
 /// Bring speech recognition up after a model has just been installed, without a

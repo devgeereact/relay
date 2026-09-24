@@ -46,6 +46,7 @@
     updateVoiceProfile,
     selectVoiceProfile,
     deleteVoiceProfile,
+    setFollowTheReader,
   } from '../stores/capture.js';
   import {
     listOutputDevices,
@@ -372,6 +373,23 @@
   // The ONE place that decides what this page may say about the gate — shared with
   // every other surface that shows it, so they cannot form separate opinions.
   $: gate = describeGate($capture);
+
+  // FOLLOW THE READER (DECISIONS §118). One throw, one sentence, one store.
+  //
+  // `setFollowTheReader` is a group-1 wrapper — it throws — and the command sits
+  // behind the service lock, so the reachable failure here is an operator trying
+  // to change what may reach a wall while a service is recording. That refusal
+  // has to be READ, not swallowed: a switch that springs back with no sentence is
+  // a control that failed in silence. `errors.js` is the one humaniser.
+  let followErr = '';
+  async function toggleFollowTheReader() {
+    followErr = '';
+    try {
+      await setFollowTheReader(!$capture.followsReader);
+    } catch (e) {
+      followErr = humanError(e);
+    }
+  }
   async function onSensitivity(v) {
     gatePending = v;
     gateErr = '';
@@ -1367,7 +1385,7 @@
               <span class="s-count">backend not attached</span>
             {/if}
           </div>
-          <select class="r-select" value={$capture.inputDevice} on:change={(e) => setInputDevice(e.target.value)} disabled={!$capture.available || $capture.capturing} aria-label="Microphone input device">
+          <select class="r-select" value={$capture.inputDevice} on:change={(e) => setInputDevice(e.target.value)} disabled={!$capture.available} title={$capture.capturing ? 'Change the microphone now — Relay moves the running capture onto it and picks the transcript back up when it hears audio.' : 'Which microphone Relay opens when you start listening.'} aria-label="Microphone input device">
             <option value="">Default input</option>
             {#each $capture.devices as d}
               <option value={d.name}>{d.name}{d.is_default ? ' — default' : ''}</option>
@@ -1559,13 +1577,23 @@
                detection inspector prints the same pair in the same words.
                `dd`, not `input`. Nothing here is draggable, and the label says
                "result" rather than letting the layout imply it. -->
-          <p class="r-lbl s-gatelbl">What that sets right now</p>
+          <p class="r-lbl s-gatelbl">What that sets right now — higher fires more</p>
           <dl class="s-gatedl">
-            <dt>Auto-fire above</dt>
-            <dd class="r-mono">{gate.autoPct ?? '—'}</dd>
-            <dt>Suggest above</dt>
-            <dd class="r-mono">{gate.suggestPct ?? '—'}</dd>
+            <dt>Auto-fire</dt>
+            <dd class="r-mono">{gate.autoPct ?? '—'}<span class="s-gateof"> / 100</span></dd>
+            <dt>Suggest</dt>
+            <dd class="r-mono">{gate.suggestPct ?? '—'}<span class="s-gateof"> / 100</span></dd>
           </dl>
+          <!-- THE SENTENCE THAT SAYS WHICH WAY THESE RUN. Until 2026-09-23 the pair
+               read `Auto-fire above 90%` at the dial's cautious end and `30%` at its
+               eager end — the raw confidence bars, printed directly under a slider
+               they run the opposite way to. The operator read the larger number as
+               the keener setting, which is the only way a figure under a control
+               CAN read. `Thresholds::readiness` turns the gate the right way up and
+               this line names the scale, because a bare number over a changed
+               meaning is how the last one misled. DECISIONS §117. -->
+          <p class="rw-foot s-gatescale">0 is never, 100 is anything. Suggestions run 20 points
+            ahead of auto-fire, so there is always a band Relay offers rather than fires.</p>
           <!-- THE SENTENCE THAT SEPARATES THREE STATES A NUMBER CANNOT (rule 35):
                no engine, an engine nobody has asked yet, and a gate the learning
                has walked off the dial's curve. `describeGate` decides which, once,
@@ -1575,8 +1603,44 @@
           {#if gate.note}
             <p class="rw-foot s-gatenote" role="status">{gate.note}</p>
           {/if}
-          <p class="rw-foot">Only a direct, high-confidence quotation can ever auto-fire. A paraphrase is always a suggestion — a cosine is not a probability.</p>
+          <p class="rw-foot">A paraphrase is always a suggestion — a cosine is not a probability, so no threshold on one means anything.</p>
         </div>
+
+        <!-- FOLLOW THE READER (DECISIONS §118). The operator's instruction of
+             2026-09-23: *"follow the verse whenever a preacher is reading a bible
+             verse, you dont need to wait or suggest it."*
+
+             IT LIVES HERE, UNDER THE DIAL, and not in its own rail entry. It is
+             part of the same question the dial answers — what may reach a
+             congregation with nobody pressing anything — and the sentence above it
+             used to say the answer was "only a direct match". Splitting the two
+             across two screens is how an operator comes to believe they are
+             unrelated, which is the reasoning that put voice profiles in this
+             section as well.
+
+             THE SWITCH DOES NOT SET THE BAR. Eight words, held by one verse and
+             not sitting inside a longer run, is measured rather than chosen (see
+             `READING_RUN_WORDS`), and a dial that could move it would be the
+             demotion-as-a-number mistake rule 10 records, in reverse. So this is
+             one switch and not a second slider — §96's whole finding. -->
+        <div class="rw-nv">
+          <div class="s-nvtext">
+            <div class="rw-nvk">Follow the reader</div>
+            <p class="rw-nvnote">When Relay hears a run of words that is word for word in one verse and no other, it puts that verse up by itself — the preacher reading aloud, with no reference spoken. Turn it off and Relay offers the verse instead and waits for you.</p>
+          </div>
+          <div class="rw-nvctl s-nvpair">
+            <span class="rw-nvv" class:s-armed={$capture.followsReader}>{$capture.followsReader ? 'on' : 'off'}</span>
+            <Switch
+              checked={$capture.followsReader}
+              label="Follow the reader"
+              disabled={!$capture.available}
+              disabledReason={whyDisabled([!$capture.available, ENGINE_OFF])}
+              on:click={() => toggleFollowTheReader()} />
+          </div>
+        </div>
+        {#if followErr}
+          <p class="s-alert" role="alert">{followErr}</p>
+        {/if}
 
         <!-- VOICE PROFILES, and the gate above them, are ONE section — which is
              why the section is named for the preacher rather than for the
@@ -2775,6 +2839,10 @@
      no engine, an engine nobody has asked, and a gate the learning has walked off
      the dial's curve — cannot be told apart by a coloured dot. */
   .s-gatenote{ color:var(--v-dim); }
+  /* "/ 100" is the SCALE, not the reading. Dimmed so the eye lands on the figure
+     and still told, because a bare 70 beside a bare 50 says nothing about range. */
+  .s-gateof{ color:var(--v-faint); font-size:var(--v-fs-b2); }
+  .s-gatescale{ color:var(--v-dim); }
 
   .s-slider-ends{ display:flex; justify-content:space-between; margin-top:8px;
     font-family:var(--f-mono); font-size:var(--v-fs-cap); letter-spacing:.06em; text-transform:uppercase;

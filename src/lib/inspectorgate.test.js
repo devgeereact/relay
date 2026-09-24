@@ -44,6 +44,7 @@ describe('the detection inspector reads the gate through describeGate', () => {
       sensitivity: 40,
       gateOnDial: false,
       thresholds: { auto_fire: 0.83, suggest: 0.7 },
+      readiness: { auto_fire: 17, suggest: 30 },
     });
     expect(g.readable).toBe(true);
     expect(g.drifted).toBe(true);
@@ -57,7 +58,8 @@ describe('the detection inspector reads the gate through describeGate', () => {
       sensitivityKnown: true,
       sensitivity: 50,
       gateOnDial: true,
-      thresholds: { auto_fire: 0.5, suggest: 0.35 },
+      thresholds: { auto_fire: 0.5, suggest: 0.3 },
+      readiness: { auto_fire: 50, suggest: 70 },
     });
     expect(g.readable).toBe(true);
     expect(g.drifted).toBe(false);

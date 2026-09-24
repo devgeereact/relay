@@ -193,13 +193,56 @@ export function railSize(layer) {
   return (base * 100) / width;
 }
 
+/**
+ * WHAT A TIMER NOBODY NAMED IS CALLED (operator, 2026-09-23; RG-287).
+ *
+ * *"Defult timer text should be TIMER not just empty."*
+ *
+ * It is applied HERE and nowhere else, because this function is the one place a
+ * rail's rows are made — the preacher's phone and the stage TV both read it —
+ * and a default written at a render site is a default the other surface does not
+ * have. That has been this repository's recurring bug under four different
+ * names.
+ *
+ * **It reverses a rule that was deliberate, so it says so.** A label-less timer
+ * used to render its digits alone on purpose: an empty label must give up its
+ * room rather than take it, and `timers.test.js` held that. The room is still
+ * given up where it matters — `programmeRoom` stands the whole head down below
+ * `BARE_BELOW_PX`, which is the case that rule was protecting — and what changes
+ * is that a rail with room for a name now prints one instead of leaving a
+ * preacher to work out which clock he is looking at.
+ */
+export const TIMER_LABEL = 'TIMER';
+
+/**
+ * THE WORD FOR A CLOCK THAT HAS RUN OUT (operator, 2026-09-23; RG-286).
+ *
+ * *"when the time is running over, change the text to Time Up to preacher can
+ * see whiles the time run over"*.
+ *
+ * It goes in the STATE slot, beside the label, where `Held` already goes — not
+ * over the label. Two reasons, and the second is the one that decided it:
+ *
+ *  - the rail already has a place for "what this clock is doing", it is drawn at
+ *    full strength while the label sits at 0.62, and a preacher glancing up gets
+ *    the state before the name either way;
+ *  - replacing the name would leave a platform running three clocks unable to
+ *    tell WHICH one had run out, and the figure beside it is already `+13:31` —
+ *    the sign says over, the word says over, and the name still says which.
+ *
+ * It follows `over` exactly, so a HELD clock never says it: a figure somebody
+ * chose to freeze past zero (RG-175) is not an alarm, and the rail must not say
+ * two things about one clock.
+ */
+export const OVER_WORD = 'TIME UP';
+
 export function programmeRows(timers, nowMs) {
   const list = Array.isArray(timers) ? timers : [];
   return list
     .map((t) => ({
       t,
       id: t?.id,
-      label: (t?.label || '').trim(),
+      label: (t?.label || '').trim() || TIMER_LABEL,
       held: countdownIsPaused(t),
       ms: countdownRemainingMs(t, nowMs, { past: true }),
     }))
@@ -222,6 +265,11 @@ export function programmeRows(timers, nowMs) {
       // two minutes over is a figure somebody chose to freeze (RG-175), and an
       // alarm about a deliberate act is an alarm nobody can act on.
       over: !r.held && r.ms <= 0,
+      // THE WORD IN THE STATE SLOT — one field, so neither rail spells its own.
+      // `Stage.svelte` hard-coded `Held` and `TemplateRender` copied it; the
+      // moment there is a second state word that is two rails with an opinion
+      // about the same clock.
+      state: countdownIsPaused(t) ? 'Held' : r.ms <= 0 ? OVER_WORD : '',
     }));
 }
 

@@ -290,3 +290,40 @@ describe('the claim column puts a heard reference first', () => {
     expect(orderClaims([])).toEqual([]);
   });
 });
+
+// ── A VERSE RELAY HEARD BEING READ (DECISIONS §118) ──────────────────────────
+//
+// The operator's instruction of 2026-09-23 lifted the auto-fire cap for one new
+// method and one only. The console has to say which one it is looking at, for
+// exactly the reason §21 exists: the gate is airtight in Rust and invisible in
+// the one place a human can act on it.
+describe('a reading', () => {
+  const reading = { method: 'reading', confidence: 0.86, matched_text: 'in him should not perish but have everlasting life' };
+
+  it('is not dressed as a heard reference', () => {
+    // `heard` means Relay heard the REFERENCE. It did not — it heard the verse.
+    // The two are different claims and the card must not merge them.
+    expect(heard(reading)).toBe(false);
+  });
+
+  // A run length is a COUNT. Printing it as a percentage would be the exact
+  // mistake §21 was written about, arriving through a new door.
+  it('shows no percentage, at any score', () => {
+    expect(showsConfidence(reading)).toBe(false);
+    expect(showsConfidence({ ...reading, confidence: 0.99 })).toBe(false);
+  });
+
+  it('has its own words, not the paraphrase ones', () => {
+    expect(methodKey(reading)).toBe('live.read_aloud');
+    expect(methodBadgeKey(reading)).toBe('live.badge_reading');
+    expect(methodNoteKey(reading)).toBe('live.note_reading');
+    // And it must not fall through to the paraphrase sentence, which promises a
+    // guarantee that no longer holds for this method.
+    expect(methodKey(reading)).not.toBe('live.heard_the_reference');
+    expect(methodNoteKey(reading)).not.toBe('live.not_a_spoken_reference');
+  });
+
+  it('carries a contiguous span of speech, so it may be quoted', () => {
+    expect(evidenceIsASpan(reading)).toBe(true);
+  });
+});

@@ -5685,3 +5685,202 @@ fn a_clean_exit_stops_the_running_stage_clock_and_leaves_the_rest() {
     );
     assert_eq!(wall.count(), 0, "quitting put content on the wall");
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FOLLOWING THE READER · WHAT LEAVES THE MACHINE (DECISIONS §118)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// The operator's instruction of 2026-09-23, twice and in writing: *"when a
+// scripture is quoted make sure to fire it to screen as its confirmed"* and
+// *"follow the verse whenever a preacher is reading a bible verse."*
+//
+// `router.rs` proves the gate decides correctly and `detection.rs` proves the
+// evidence is what it says it is. This file answers the only question a
+// congregation experiences: what came out.
+
+/// A PREACHER READING A VERSE ALOUD PUTS IT ON THE WALL.
+///
+/// The positive control, and the whole of what was asked for. Nobody says a
+/// reference here and nobody presses anything — the words are simply Romans 8:28,
+/// in order, as the KJV has them.
+#[test]
+fn a_verse_read_aloud_goes_to_the_wall_with_nobody_pressing_anything() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    emit_detections(
+        &h,
+        "all things work together for good to them that love God to them who are the called according to his purpose",
+        0,
+        true,
+        None,
+    );
+    settle();
+
+    let shown = wall.last().expect("a verse read aloud reached nobody");
+    assert_eq!(shown["reference"], "Romans 8:28");
+}
+
+/// A PHRASE TWO VERSES HOLD IS OFFERED, NEVER FIRED.
+///
+/// Judges 1:12 and Joshua 15:16 are word-for-word identical in the KJV, and this
+/// is not a curiosity: reading 1,500 real verses back through `PhraseIndex`
+/// produced 42 wrong verses at a run of eight words and **every one of them was a
+/// pair like this**, never a longer run found elsewhere. Relay is not mishearing
+/// here, it is choosing — and choosing between two verses is a guess about which,
+/// which is rule 10 and RG-178 one door along.
+#[test]
+fn a_phrase_two_verses_share_word_for_word_is_offered_never_fired() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    emit_detections(
+        &h,
+        "and Caleb said he that smiteth Kirjathsepher and taketh it to him will I give Achsah my daughter to wife",
+        0,
+        true,
+        None,
+    );
+    settle();
+
+    assert_eq!(
+        wall.count(),
+        0,
+        "Relay chose between two identical verses and put {:?} up unattended",
+        wall.last().map(|v| v["reference"].clone())
+    );
+}
+
+/// A SHORT QUOTATION IS STILL ONLY A SUGGESTION. The cap moved for one new
+/// method, not for the class.
+///
+/// *"was a good man and a just"* is SEVEN words of Luke 23:50 and it is the
+/// module's own example of the noise a shorter floor produced — a sentence about
+/// somebody who died, spoken at a funeral. One word below `READING_RUN_WORDS`, so
+/// it may be offered and can never be fired. Chosen deliberately over a run of
+/// four, which would test `MIN_RUN_WORDS` and tell us nothing about the floor
+/// this test is named for.
+#[test]
+fn a_short_quotation_still_asks_before_it_shows() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    emit_detections(
+        &h,
+        "Now our brother was a good man and a just, and he served this church faithfully for many years",
+        0,
+        true,
+        None,
+    );
+    settle();
+
+    assert_eq!(
+        wall.count(),
+        0,
+        "a seven-word accidental quotation reached a congregation: {:?}",
+        wall.last().map(|v| v["reference"].clone())
+    );
+}
+
+/// AND THE CHURCH MAY TURN IT OFF, all the way out to the screens.
+///
+/// A switch that changes a setting and not the behaviour is the "Screens cleared"
+/// lie in a different coat (rule 15), so the test is on what came out rather than
+/// on what was stored.
+#[test]
+fn a_church_that_turns_it_off_gets_a_suggestion_instead() {
+    let app = app();
+    let h = app.handle().clone();
+
+    set_follow_the_reader(h.clone(), app.state::<Db>(), app.state::<Routing>(), false)
+        .expect("the switch refused");
+
+    let wall = Wall::watch(&h);
+    emit_detections(
+        &h,
+        "all things work together for good to them that love God to them who are the called according to his purpose",
+        0,
+        true,
+        None,
+    );
+    settle();
+    assert_eq!(
+        wall.count(),
+        0,
+        "the switch was off and {:?} still reached a wall",
+        wall.last().map(|v| v["reference"].clone())
+    );
+
+    // Back on, and the same words go up — so the test above is about the switch
+    // and not about the path being broken.
+    set_follow_the_reader(h.clone(), app.state::<Db>(), app.state::<Routing>(), true)
+        .expect("the switch refused");
+    let wall = Wall::watch(&h);
+    emit_detections(
+        &h,
+        "all things work together for good to them that love God to them who are the called according to his purpose",
+        60_000,
+        true,
+        None,
+    );
+    settle();
+    assert_eq!(
+        wall.last().expect("nothing came back with the switch on")["reference"],
+        "Romans 8:28"
+    );
+}
+
+/// THE NAMED REFERENCE WINS WHEN A WINDOW HOLDS BOTH.
+///
+/// One window may put at most ONE verse on a wall (rule 29), and a preacher who
+/// says "Romans 8:28" while reading a different verse aloud has told Relay which
+/// one they mean. Naming it is the words saying, and when the words say, the
+/// words win (rule 40).
+#[test]
+fn a_reference_the_preacher_named_beats_one_they_only_read() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    // TWO THINGS HAD TO BE TRUE BEFORE THIS TEST COULD MEAN ANYTHING, and the
+    // first two attempts had neither.
+    //
+    // (1) The reading must OUTSCORE the reference. Romans 8:38 gives a 21-word
+    // run, which `quoted_confidence` caps at 0.95 against the spoken reference's
+    // 0.88 — so a comparator ranking on "may this fire at all" and then on the
+    // number puts the reading first. A seven-word run never becomes a reading and
+    // the test passed with the comparator broken.
+    //
+    // (2) The reading must be in the SAME BOOK. Rule 40 is applied one step
+    // earlier than this: a book the window names RESTRICTS the phrase index, so a
+    // window saying "Romans" can produce no quotation outside Romans at all. A
+    // cross-book version of this test also passed with the comparator broken, and
+    // it was measuring the anchor rather than the ranking.
+    emit_detections(
+        &h,
+        "our text this morning is Romans chapter eight verse twenty eight but first hear this for I am persuaded that neither death nor life nor angels nor principalities nor powers nor things present nor things to come",
+        0,
+        true,
+        None,
+    );
+    settle();
+
+    assert_eq!(
+        wall.last().expect("nothing reached the wall")["reference"],
+        "Romans 8:28",
+        "the verse the preacher read aloud displaced the one they named"
+    );
+    assert_eq!(wall.count(), 1, "one window put two verses on a wall");
+}
+#[test]
+fn dbg_rank() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+    emit_detections(&h, "our text this morning is Romans chapter eight verse twenty eight but first hear this for I am persuaded that neither death nor life nor angels nor principalities nor powers nor things present nor things to come", 0, true, None);
+    settle();
+    println!("WALL count={} last={:?}", wall.count(), wall.last());
+}

@@ -326,10 +326,32 @@ describe('the microphone is chosen and opened from the card that shows its level
     expect(called('stop_capture')).toHaveLength(1);
   });
 
-  it('will not let the device be changed under a running capture', async () => {
-    // `start_capture` takes the device name as an argument, so a change made
-    // mid-capture would move a label and nothing else. Same rule as Settings.
+  // ── REVERSED, NOT DELETED (RG-294, 2026-09-24) ──────────────────────────────
+  //
+  // This test used to read *"will not let the device be changed under a running
+  // capture"*, and its reasoning was exactly right at the time: *"`start_capture`
+  // takes the device name as an argument, so a change made mid-capture would move
+  // a label and nothing else."* A control that cannot do what it appears to do is
+  // worse than a control that is shut, so it was shut.
+  //
+  // RG-291 built the thing it was waiting for. `setInputDevice` now moves a
+  // running capture — stop, then open the new device, and a stop that did not
+  // stop ends there rather than putting a second capture thread on one device.
+  // So the premise is gone and the control is handed back. The operator's
+  // instruction is the reason: *"when audio input switch, continue transcript
+  // once audio is dected"*, and the case is a desk feed dying mid-sermon with a
+  // handheld already plugged in.
+  it('lets the device be changed under a running capture, now that it can be', async () => {
     cap.capture.update((s) => ({ ...s, devices: [{ name: 'Scarlett 2i2 USB' }], capturing: true }));
+    mount();
+    await settle();
+    expect(host.querySelector('[aria-label="Microphone input device"]').disabled).toBe(false);
+  });
+
+  it('and still refuses when there is no engine to open anything with', async () => {
+    // The half that did NOT change. `available` is the bridge, and with no
+    // backend attached there is nothing for a choice to reach.
+    cap.capture.update((s) => ({ ...s, devices: [{ name: 'Scarlett 2i2 USB' }], capturing: false, available: false }));
     mount();
     await settle();
     expect(host.querySelector('[aria-label="Microphone input device"]').disabled).toBe(true);

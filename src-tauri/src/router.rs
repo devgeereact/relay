@@ -54,23 +54,66 @@ impl Thresholds {
     /// | dial | auto_fire | suggest | behaviour              |
     /// |------|-----------|---------|------------------------|
     /// | 0    | 0.90      | 0.70    | cautious — few, sure   |
-    /// | 50   | 0.50      | 0.35    | **the default**        |
-    /// | 100  | 0.30      | 0.20    | eager — many, noisy    |
+    /// | 50   | 0.50      | 0.30    | **the default**        |
+    /// | 100  | 0.30      | 0.10    | eager — many, noisy    |
+    ///
+    /// `suggest` is not a curve of its own any more: it is `auto_fire` less
+    /// `SUGGEST_BAND`, at every dial position (DECISIONS §117, the operator's
+    /// instruction of 2026-09-23). It used to run 0.70 → 0.35 → 0.20 beside an
+    /// auto bar of 0.90 → 0.50 → 0.30, so the band between "offer it" and "put it
+    /// up" narrowed from 20 points to 10 as the dial went right — narrowest at
+    /// exactly the end where an operator most wants things offered rather than
+    /// fired. The auto-fire curve itself is untouched.
     ///
     /// Note these gate `Direct` detections only — semantic/ambiguous candidates
     /// can never auto-fire at ANY dial position (see `Router::decide`).
     pub fn from_sensitivity(sensitivity: u8) -> Self {
         let s = (sensitivity.min(100) as f32) / 100.0;
-        let (auto_fire, suggest) = if s <= 0.5 {
+        let auto_fire = if s <= 0.5 {
             let t = s * 2.0; // 0..1 across the cautious half
-            (lerp(0.90, 0.50, t), lerp(0.70, 0.35, t))
+            lerp(0.90, 0.50, t)
         } else {
             let t = (s - 0.5) * 2.0; // 0..1 across the eager half
-            (lerp(0.50, 0.30, t), lerp(0.35, 0.20, t))
+            lerp(0.50, 0.30, t)
         };
         Thresholds {
             auto_fire,
-            suggest: suggest.min(auto_fire),
+            suggest: (auto_fire - SUGGEST_BAND).max(0.0),
+        }
+    }
+
+    /// The gate as an operator reads it: how READY Relay is, 0 = never, 100 =
+    /// anything.
+    ///
+    /// ── Why the printed figure is not the threshold ────────────────────────
+    ///
+    /// The operator's instruction, 2026-09-23: *"when the sensor is on Auto fire
+    /// above 100, then it auto fires not when on 0."* The two figures were
+    /// printed as the raw confidence bars, directly under the sensitivity slider
+    /// — and they run the OPPOSITE way to it. The dial's cautious end (0) printed
+    /// `Auto-fire above 90%`; its eager end (100) printed `30%`. Sitting under a
+    /// control, a figure reads as a setting, and that one said the machine was
+    /// keenest where it fires least.
+    ///
+    /// A threshold cannot be made to rise with eagerness — a bar you must clear
+    /// is lower when more gets through, and that is arithmetic, not a choice. So
+    /// the printed quantity changes instead of its direction: this is the same
+    /// gate expressed as readiness, `100 - threshold`, which rises with the dial
+    /// and is the thing the operator is actually setting.
+    ///
+    /// One consequence is worth stating rather than discovering: the operator
+    /// also asked for `Suggest` to sit 20 below `Auto-fire`, and on THIS scale it
+    /// sits 20 ABOVE, because a suggestion is the easier of the two bars and an
+    /// easier bar is a higher readiness. The gap is the 20 they asked for; the
+    /// sign follows the scale they asked for. Both cannot point the same way.
+    ///
+    /// It lives here, beside the mapping, for the reason `follows_dial` does: a
+    /// copy of this arithmetic in the frontend would be a second opinion about
+    /// one gate.
+    pub fn readiness(self) -> GateReadiness {
+        GateReadiness {
+            auto_fire: readiness_of(self.auto_fire),
+            suggest: readiness_of(self.suggest),
         }
     }
 
@@ -135,6 +178,29 @@ impl Thresholds {
 /// thresholds are floats and the dial is an integer, so a gate that came back
 /// from SQLite as an `f64` must still be allowed to say it is the dial's.
 pub const DIAL_READOUT_EPSILON: f32 = 0.005;
+
+/// How far below the auto-fire bar the suggest bar sits, at every dial position.
+///
+/// Twenty points, on the operator's instruction of 2026-09-23. It replaces a
+/// second interpolation curve whose band narrowed from 0.20 at the cautious end
+/// to 0.10 at the eager end — narrowest exactly where a wide band of offers is
+/// most wanted. One number, one relationship, and `from_sensitivity` is the only
+/// place it is applied.
+pub const SUGGEST_BAND: f32 = 0.20;
+
+/// The gate as a pair of 0-100 figures that rise with the dial. See
+/// `Thresholds::readiness`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GateReadiness {
+    pub auto_fire: u8,
+    pub suggest: u8,
+}
+
+/// One threshold as a readiness figure. Whole percentage points, because that is
+/// what is printed; clamped, because a stored gate can be anything.
+fn readiness_of(threshold: f32) -> u8 {
+    (((1.0 - threshold.clamp(0.0, 1.0)) * 100.0).round() as i32).clamp(0, 100) as u8
+}
 
 /// Decide what thresholds a voice-profile save should land on.
 ///
@@ -226,6 +292,15 @@ pub struct Router {
     /// nudge: rejecting a 0.99 fire and rejecting a 0.51 fire would move the gate
     /// by the same amount, which is not what either one means.
     last_fire_conf: Option<f32>,
+    /// May a verse Relay heard being READ go to the screens unattended?
+    ///
+    /// The operator's instruction of 2026-09-23, and the church's switch over it
+    /// (`app_settings['detection.follow_the_reader']`, default ON). It lives on
+    /// the router rather than in `detection` because this is the one door every
+    /// candidate passes through — rule 36. `detection::for_quotation` decides what
+    /// the EVIDENCE is; this decides whether the church wants it acted on, and a
+    /// second construction site for quoted candidates could not get round it.
+    follow_the_reader: bool,
 }
 
 impl Default for Router {
@@ -237,6 +312,9 @@ impl Default for Router {
             fired_at: HashMap::new(),
             sighted_at: HashMap::new(),
             last_fire_conf: None,
+            // ON by default, as instructed. A church that wants the old behaviour
+            // turns it off in Settings → AI & Detection.
+            follow_the_reader: true,
         }
     }
 }
@@ -315,7 +393,15 @@ impl Router {
         // holding a verse that never reached a screen — so the corroborating pass
         // one step later would be swallowed as a repeat. The gate has to decline
         // the fire, not undo it.
-        if !corroborated && method.may_auto_fire() && confidence >= self.thresholds.auto_fire {
+        // The SAME predicate `decide` uses, never a restatement of it. Asking
+        // "is the score over the bar?" here was right while every auto-firing
+        // method was gated on its score — and a `Reading` is not, so that question
+        // answers NO for a reading at a cautious dial, the corroboration wait is
+        // skipped, and `decide` fires it one line later anyway. A safety wait lost
+        // by a predicate drifting out of step with the gate it guards is rule 34,
+        // arriving silently.
+        if !corroborated && self.may_reach_a_wall(method) && self.clears_the_bar(confidence, method)
+        {
             return RouteDecision::Suggest;
         }
         self.decide(key, confidence, method, now_ms)
@@ -340,6 +426,46 @@ impl Router {
         seen_before
     }
 
+    /// May a candidate detected THIS WAY reach a congregation unattended, in
+    /// this install, right now?
+    ///
+    /// Two facts: what the method is (`may_auto_fire`, the hard rule) and whether
+    /// the church has asked Relay to follow a reader (the switch). One place, so
+    /// there is one answer.
+    fn may_reach_a_wall(&self, method: DetectionMethod) -> bool {
+        method.may_auto_fire() && (method != DetectionMethod::Reading || self.follow_the_reader)
+    }
+
+    /// Has this candidate cleared the numeric gate — for the methods that HAVE
+    /// one?
+    ///
+    /// A `Reading` does not. Its qualification is a run of words the speaker said
+    /// verbatim, held by exactly one verse (`detection::for_quotation`), and its
+    /// `confidence` is that run length on a scale of its own. Comparing it with
+    /// `auto_fire`, which is a parse probability, is the incomparable-scales
+    /// mistake this whole module exists to prevent — read in the other direction
+    /// it would mean a church at the cautious end of the dial needs a
+    /// FIFTEEN-word run before Relay follows a reader, for no reason anybody
+    /// could state. The dial governs what Relay does with a number; a reading
+    /// does not bring one.
+    fn clears_the_bar(&self, confidence: f32, method: DetectionMethod) -> bool {
+        match method {
+            DetectionMethod::Reading => true,
+            _ => confidence >= self.thresholds.auto_fire,
+        }
+    }
+
+    /// Is Relay following a reader in this install? See `follow_the_reader`.
+    pub fn follows_the_reader(&self) -> bool {
+        self.follow_the_reader
+    }
+
+    /// The church's switch. Applied at launch from `app_settings` and by
+    /// `set_follow_the_reader` in main.rs; nothing else may move it.
+    pub fn set_follow_the_reader(&mut self, on: bool) {
+        self.follow_the_reader = on;
+    }
+
     pub fn decide(
         &mut self,
         key: &str,
@@ -348,14 +474,14 @@ impl Router {
         now_ms: u64,
     ) -> RouteDecision {
         // Uncalibrated methods can reach the operator, never the screen.
-        if !method.may_auto_fire() {
+        if !self.may_reach_a_wall(method) {
             return if confidence >= self.thresholds.suggest {
                 RouteDecision::Suggest
             } else {
                 RouteDecision::Drop
             };
         }
-        if confidence >= self.thresholds.auto_fire {
+        if self.clears_the_bar(confidence, method) {
             if let Some(t) = self.fired_at.get(key) {
                 if now_ms.saturating_sub(*t) < self.debounce_ms {
                     // Already on screen, and said again within the cooldown —
@@ -403,7 +529,15 @@ impl Router {
             self.note_fired(key, now_ms);
             // Remember WHAT we put on screen, so a later "undo" is a proportional
             // correction rather than a blind nudge.
-            self.last_fire_conf = Some(confidence);
+            //
+            // ONLY WHEN THE NUMBER IS ONE THE GATE CAN LEARN FROM. `record_feedback`
+            // falls back to this when a dismiss arrives with no argument, and a
+            // `Reading`'s score is a word count — pushing the bar that governs
+            // spoken references past it would make Relay deafer to every reference
+            // anybody says because the operator cleared a reading off a wall. The
+            // dismissal still counts; it just carries no number, which
+            // `record_feedback` already handles.
+            self.last_fire_conf = method.confidence_is_calibrated().then_some(confidence);
             RouteDecision::AutoFire
         } else if confidence >= self.thresholds.suggest {
             RouteDecision::Suggest
@@ -666,14 +800,14 @@ mod tests {
         // is a caveat nobody reads.
         assert!(Thresholds {
             auto_fire: 0.5 + 0.001,
-            suggest: 0.35 - 0.001,
+            suggest: 0.30 - 0.001,
         }
         .follows_dial());
     }
 
     #[test]
     fn gates_by_tier() {
-        let mut r = Router::default(); // 0.50 / 0.35 (push above ~50%)
+        let mut r = Router::default(); // 0.50 / 0.30 (push above ~50%)
                                        // Above auto-fire → straight to the screens.
         assert_eq!(
             r.decide("John 3:16", 0.70, DIRECT, 0),
@@ -686,7 +820,7 @@ mod tests {
         );
         // Below suggest → dropped silently.
         assert_eq!(
-            r.decide("Psalms 23:1", 0.30, DIRECT, 200),
+            r.decide("Psalms 23:1", 0.25, DIRECT, 200),
             RouteDecision::Drop
         );
     }
@@ -1150,7 +1284,9 @@ mod tests {
         assert!((mid.suggest - def.suggest).abs() < 1e-6);
         // And it is the documented operator preference: push above ~50%.
         assert!((def.auto_fire - 0.50).abs() < 1e-4, "{}", def.auto_fire);
-        assert!((def.suggest - 0.35).abs() < 1e-4, "{}", def.suggest);
+        // 0.30, not the 0.35 this line pinned until 2026-09-23: `suggest` is
+        // `auto_fire - SUGGEST_BAND` everywhere now (DECISIONS §117).
+        assert!((def.suggest - 0.30).abs() < 1e-4, "{}", def.suggest);
     }
 
     #[test]
@@ -1418,5 +1554,233 @@ mod sensitivity_sweep {
                 println!("          wrong: {names:?}");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod gate_readout_tests {
+    use super::*;
+
+    /// THE OPERATOR'S INSTRUCTION, 2026-09-23: *"Suggest above should be 20 below
+    /// the auto-fire above."*
+    ///
+    /// It used to follow a curve of its own — 0.70 at the cautious end, 0.35 at
+    /// the default, 0.20 at the eager end — so the band between "offer it" and
+    /// "put it up" narrowed from 20 points to 10 as the dial was pushed right.
+    /// That is the wrong way round: the eager end is exactly where an operator
+    /// most wants a wide band of things offered rather than fired.
+    #[test]
+    fn the_suggest_bar_sits_exactly_twenty_below_the_auto_fire_bar() {
+        for s in 0..=100u8 {
+            let t = Thresholds::from_sensitivity(s);
+            assert!(
+                (t.auto_fire - t.suggest - SUGGEST_BAND).abs() < 1e-5,
+                "dial {s}: auto {:.3} suggest {:.3} — band {:.3}, wanted {SUGGEST_BAND}",
+                t.auto_fire,
+                t.suggest,
+                t.auto_fire - t.suggest
+            );
+        }
+    }
+
+    /// THE OPERATOR'S INSTRUCTION, 2026-09-23: *"when the sensor is on Auto fire
+    /// above 100, then it auto fires not when on 0."*
+    ///
+    /// The printed figure was the raw confidence bar, which runs the other way
+    /// from the dial it is printed under: the dial's cautious end (0) showed
+    /// `Auto-fire above 90%` and its eager end (100) showed `30%`. Read as a
+    /// setting — which is how it reads, sitting under a slider — that says the
+    /// machine is keenest at the position where it fires least.
+    ///
+    /// `readiness` is the same gate expressed as how READY Relay is, so the
+    /// figure rises with the dial under it. Higher means more is fired.
+    #[test]
+    fn the_printed_figures_rise_with_the_dial() {
+        let mut prev_auto = -1i16;
+        let mut prev_sug = -1i16;
+        for s in 0..=100u8 {
+            let r = Thresholds::from_sensitivity(s).readiness();
+            assert!(
+                r.auto_fire as i16 >= prev_auto,
+                "dial {s}: auto-fire readiness fell to {}",
+                r.auto_fire
+            );
+            assert!(
+                r.suggest as i16 >= prev_sug,
+                "dial {s}: suggest readiness fell to {}",
+                r.suggest
+            );
+            prev_auto = r.auto_fire as i16;
+            prev_sug = r.suggest as i16;
+        }
+        // The two ends, named, so a change to the curve has to say so out loud.
+        assert_eq!(Thresholds::from_sensitivity(0).readiness().auto_fire, 10);
+        assert_eq!(Thresholds::from_sensitivity(100).readiness().auto_fire, 70);
+        // A SUGGESTION IS ALWAYS THE EASIER OF THE TWO, and on this scale that
+        // reads as the larger number. The operator asked for the band to be 20
+        // and for the figures to rise with the dial; those two together fix the
+        // SIGN of the band, because a bar that is easier to clear is a lower
+        // threshold and therefore a higher readiness. See DECISIONS.
+        for s in 0..=100u8 {
+            let r = Thresholds::from_sensitivity(s).readiness();
+            assert_eq!(
+                r.suggest as i16 - r.auto_fire as i16,
+                20,
+                "dial {s}: the band is not 20 points wide on the printed scale"
+            );
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FOLLOWING THE READER · THE GATE (DECISIONS §118)
+// ═══════════════════════════════════════════════════════════════════════════
+#[cfg(test)]
+mod reading_gate {
+    use super::*;
+
+    const READING: DetectionMethod = DetectionMethod::Reading;
+    const QUOTED: DetectionMethod = DetectionMethod::Quoted;
+
+    /// THE OPERATOR'S INSTRUCTION, 2026-09-23: *"follow the verse whenever a
+    /// preacher is reading a bible verse, you dont need to wait or suggest it."*
+    ///
+    /// And at EVERY dial position, because the thing that qualified it is a run
+    /// of words, not a score — so there is no number for a dial to erase. This
+    /// mirrors `semantic_can_never_auto_fire` deliberately: the same sweep, the
+    /// opposite answer, for the one method where the evidence is what was said.
+    #[test]
+    fn a_reading_reaches_the_wall_at_every_dial_position() {
+        for s in 0..=100u8 {
+            let mut r = Router::default();
+            r.set_thresholds(Thresholds::from_sensitivity(s));
+            assert_eq!(
+                r.decide("John 3:16", 0.69, READING, 0),
+                RouteDecision::AutoFire,
+                "a reading was held back at sensitivity {s}"
+            );
+        }
+    }
+
+    /// AND THE CHURCH MAY TURN IT OFF. Default on, per the operator; off, a
+    /// reading behaves exactly as `Quoted` always has.
+    #[test]
+    fn the_switch_puts_it_back_where_it_was() {
+        assert!(
+            Router::default().follows_the_reader(),
+            "the default must be ON — the operator asked for it"
+        );
+        let mut r = Router::default();
+        r.set_follow_the_reader(false);
+        assert_eq!(
+            r.decide("John 3:16", 0.69, READING, 0),
+            RouteDecision::Suggest
+        );
+        // Still offered, never silently dropped: the operator asked for less
+        // firing, not for less information.
+        r.set_follow_the_reader(true);
+        assert_eq!(
+            r.decide("John 3:16", 0.69, READING, 5_000),
+            RouteDecision::AutoFire
+        );
+    }
+
+    /// EVERYTHING SHORT OF THE BAR IS UNTOUCHED. `Quoted` is still capped at
+    /// `Suggest` at any score and any dial — the cap moved for one new method,
+    /// not for the class.
+    #[test]
+    fn a_quotation_that_is_not_a_reading_still_cannot_fire() {
+        for s in 0..=100u8 {
+            let mut r = Router::default();
+            r.set_thresholds(Thresholds::from_sensitivity(s));
+            for conf in [0.51, 0.75, 0.95, 1.0] {
+                assert_ne!(
+                    r.decide("John 3:16", conf, QUOTED, 0),
+                    RouteDecision::AutoFire,
+                    "Quoted auto-fired at conf={conf} sensitivity={s}"
+                );
+            }
+        }
+    }
+
+    /// RULE 28 STILL APPLIES, and this is the trap it was nearly lost to.
+    ///
+    /// `decide_live` held a reference back for one more decode pass by asking
+    /// "would this fire on its score?" — `confidence >= auto_fire`. A reading is
+    /// NOT gated on its score, so at a cautious dial that question answers no, the
+    /// corroboration wait is skipped, and the thing that skipped it fires anyway
+    /// one line later. Removing a safety wait to make a path faster is rule 34,
+    /// and it would have happened silently.
+    #[test]
+    fn a_reading_from_a_partial_window_still_waits_for_a_second_pass() {
+        let mut r = Router::default();
+        r.set_thresholds(Thresholds::from_sensitivity(0)); // the most cautious dial
+        assert_eq!(
+            r.decide_live("John 3:16", 0.69, READING, 0, false),
+            RouteDecision::Suggest,
+            "a reading read once out of a partial window reached the wall"
+        );
+        assert_eq!(
+            r.decide_live("John 3:16", 0.69, READING, 400, false),
+            RouteDecision::AutoFire,
+            "the corroborating pass did not fire it"
+        );
+        // A closed utterance has no next pass coming, so it fires on first sight —
+        // unchanged.
+        let mut r = Router::default();
+        assert_eq!(
+            r.decide_live("Romans 8:28", 0.69, READING, 0, true),
+            RouteDecision::AutoFire
+        );
+    }
+
+    /// A READING MUST NEVER TEACH THE AUTO-FIRE BAR.
+    ///
+    /// `dismiss_detection` carries no number: the router falls back to the score
+    /// of whatever it last put on screen. If that was a reading, the fallback is
+    /// `quoted_confidence(run)` — a word count — and `record_feedback` would push
+    /// the bar that governs SPOKEN REFERENCES past it. The operator pulled a
+    /// followed reading off the wall and the machine would have got deafer to
+    /// every reference anybody says.
+    #[test]
+    fn dismissing_a_followed_reading_does_not_move_the_reference_gate() {
+        let mut r = Router::default();
+        let before = r.thresholds().auto_fire;
+        assert_eq!(
+            r.decide("John 3:16", 0.95, READING, 0),
+            RouteDecision::AutoFire
+        );
+        r.record_feedback(false, None); // the operator clears it off the wall
+        let after = r.thresholds().auto_fire;
+        assert!(
+            after <= before + 1e-6,
+            "a reading taught the reference gate: {before} → {after}"
+        );
+        // A DIRECT fire in the same position still does teach it — proving the
+        // guard is about the method and not about the feedback path being inert.
+        let mut r = Router::default();
+        let before = r.thresholds().auto_fire;
+        assert_eq!(
+            r.decide("John 3:16", 0.95, DetectionMethod::Direct, 0),
+            RouteDecision::AutoFire
+        );
+        r.record_feedback(false, None);
+        assert!(r.thresholds().auto_fire > before);
+    }
+
+    /// The debounce, the cooldown and the RG-178 two-books rule all still see a
+    /// reading — it goes through the same door as everything else.
+    #[test]
+    fn a_reading_is_debounced_like_anything_else() {
+        let mut r = Router::default();
+        assert_eq!(
+            r.decide("John 3:16", 0.69, READING, 0),
+            RouteDecision::AutoFire
+        );
+        assert_eq!(
+            r.decide("John 3:16", 0.69, READING, 500),
+            RouteDecision::Drop,
+            "the same verse re-transcribed fired twice"
+        );
     }
 }

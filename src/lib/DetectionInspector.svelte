@@ -61,6 +61,15 @@
   // means anything. Everything else is a suggestion, forever.
   $: isDirect = heard(detection);
   $: isAmbiguous = detection?.method === 'ambiguous';
+  // A VERSE RELAY HEARD BEING READ (DECISIONS §118). The one method other than
+  // `direct` that may reach a wall unattended — so the sentence below it cannot
+  // be the paraphrase's, which promises *"will never fire on its own, at any
+  // score"*. That promise is still true of every other method and is exactly the
+  // kind of guarantee that must not be left standing after it stops holding.
+  $: isReading = detection?.method === 'reading';
+  // The church's switch, read from the one store. Not asked again here: the
+  // engine is what decides and `capture.js` holds its answer.
+  $: followsReader = $capture.followsReader !== false;
   $: showPct = showsConfidence(detection);
   $: pct = Math.round((detection?.confidence ?? 0) * 100);
 
@@ -145,6 +154,8 @@
           <h3>
             {#if isDirect}
               Direct match
+            {:else if isReading}
+              Read aloud
             {:else if isAmbiguous}
               Ambiguous reference
             {:else}
@@ -153,8 +164,13 @@
           </h3>
           <p class="ins-p">
             {#if isDirect}
-              Relay read a scripture reference in the transcript. This is the only kind
+              Relay read a scripture reference in the transcript. This is one of two kinds
               of claim allowed to go on a screen by itself.
+            {:else if isReading}
+              Nobody said a reference. Relay heard these words read out, in this order, and
+              only this verse has them — so it followed the reader and put the verse up.
+              Turn that off in Settings → AI &amp; Detection if your church would rather be
+              asked first.
             {:else if isAmbiguous}
               Relay heard a reference that could mean more than one verse. It will never
               fire on its own — you choose which one is meant.
@@ -168,9 +184,14 @@
           {#if !isDirect}
             <!-- The one number that must never appear, explained rather than shown. -->
             <p class="ins-why-no-number">
-              There is no percentage here on purpose. The match is a distance between
-              word patterns, not a probability — a number would look like a chance of
-              being right, and it is not one.
+              {#if isReading}
+                There is no percentage here on purpose. What decided this was how many
+                words ran together — a count, not a chance of being right.
+              {:else}
+                There is no percentage here on purpose. The match is a distance between
+                word patterns, not a probability — a number would look like a chance of
+                being right, and it is not one.
+              {/if}
             </p>
           {/if}
 
@@ -197,13 +218,23 @@
                depend on a socket. -->
           <dl class="ins-dl">
             {#if gate.readable}
-              <dt>Auto-fire above</dt>
-              <dd class="r-mono">{gate.autoPct}%</dd>
-              <dt>Suggest above</dt>
-              <dd class="r-mono">{gate.suggestPct}%</dd>
+              <!-- READINESS, 0-100, rising with the dial — not the confidence
+                   bars, which fall as the dial rises and so read as the opposite
+                   setting to the one being made. DECISIONS §117; the words are
+                   `describeGate`'s and Settings prints the same pair. -->
+              <dt>Auto-fire</dt>
+              <dd class="r-mono">{gate.autoPct} / 100</dd>
+              <dt>Suggest</dt>
+              <dd class="r-mono">{gate.suggestPct} / 100</dd>
             {/if}
             <dt>Paraphrases</dt>
             <dd>Suggestions only — never auto-fire</dd>
+            <!-- AND THE ONE THING THAT CHANGED, beside the thing that did not.
+                 A panel that still says only paraphrases are capped, on the day a
+                 second method started reaching walls, is a guarantee left standing
+                 after it stopped holding. DECISIONS §118. -->
+            <dt>Read aloud</dt>
+            <dd>{followsReader ? 'Followed — goes up by itself' : 'Suggestions only — turned off'}</dd>
           </dl>
           {#if !gate.readable || gate.drifted}
             <p class="ins-gatenote">{gate.note}</p>

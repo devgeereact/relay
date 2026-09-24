@@ -1205,7 +1205,10 @@ describe('the component kit, and what adopting it buys', () => {
     // `.r-switch` with no `title` and no `aria-describedby`, on the one control
     // that decides whether anything leaves this machine.
     const switches = [...MARKUP_ONLY.matchAll(/<Switch\b[\s\S]*?\/>/g)].map((m) => m[0]);
-    expect(switches.length, 'no switches found at all — the scanner narrowed').toBe(3);
+    // FOUR since 2026-09-23: Follow the reader joined safe mode, latency and
+    // crash reports (DECISIONS §118). The count is exact rather than a floor
+    // because its job is catching a scanner that quietly stopped seeing them.
+    expect(switches.length, 'no switches found at all — the scanner narrowed').toBe(4);
     const silent = switches
       .filter((b) => /\bdisabled(?![-\w])/.test(b) && !/disabledReason=/.test(b))
       .map((b) => b.replace(/\s+/g, ' ').slice(0, 80));

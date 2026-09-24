@@ -79,10 +79,19 @@ describe('the gate has one control', () => {
     expect(section).toMatch(/aria-label="Detection sensitivity"/);
     // The figures, as definition data rather than form controls.
     expect(section).toMatch(/<dl[^>]*class="s-gatedl"/);
-    expect(section).toMatch(/Auto-fire above/);
-    expect(section).toMatch(/Suggest above/);
+    expect(section).toMatch(/<dt>Auto-fire<\/dt>/);
+    expect(section).toMatch(/<dt>Suggest<\/dt>/);
     // And the label that was backwards is gone rather than merely moved.
     expect(section).not.toMatch(/HYPER-AWARE/);
+    // THE WORD "ABOVE" IS GONE WITH THE QUANTITY IT DESCRIBED (DECISIONS §117).
+    // These are readiness figures now — 0 never, 100 anything — and they rise
+    // with the dial above them. "Auto-fire above 90" over a dial reading 0 was
+    // the operator's objection of 2026-09-23, and it is the shape of the defect
+    // rather than a wording nit: a figure printed under a control reads as that
+    // control's setting, so one running the other way says the opposite thing.
+    expect(section).not.toMatch(/Auto-fire above|Suggest above/);
+    // The scale is named. A bare 70 beside a bare 50 says nothing about range.
+    expect(section).toMatch(/0 is never, 100 is anything/);
   });
 });
 
