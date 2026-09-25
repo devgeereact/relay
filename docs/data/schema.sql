@@ -287,7 +287,22 @@ CREATE TABLE detections (
     id            INTEGER PRIMARY KEY,
     transcript_id INTEGER NOT NULL REFERENCES transcripts(id),
     verse_id      INTEGER REFERENCES verses(id),
-    method        TEXT NOT NULL CHECK (method IN ('direct', 'semantic')),
+    -- WHICH DETECTOR (RG-309). `DetectionMethod::wire()` is the one mapping and
+    -- this list is its image; `from_wire` is its inverse. It was two values, and
+    -- `db_method` collapsed seven variants into them — so `semantic` meant
+    -- paraphrase OR quotation OR followed reading, and a record of what the AI
+    -- offered could not answer which detector offered it.
+    --
+    -- Rows written before the v6 rung keep 'direct' or 'semantic' and are NOT
+    -- rewritten: which of the three a legacy 'semantic' was cannot be recovered,
+    -- and guessing would be inventing the evidence this column exists to carry.
+    -- ONE LINE, and not for tidiness: `every_column_added_since_the_baseline_has_a
+    -- _migration` parses this file line by line and takes the first word of each
+    -- line inside a CREATE TABLE as a column name. It skips a line beginning CHECK;
+    -- it has no idea about continuation lines, so a wrapped constraint is read as
+    -- two columns called 'direct' and 'ambiguous'. It fails LOUDLY, which is the
+    -- right direction for a scanner to be wrong in, and it is why this is one line.
+    method        TEXT NOT NULL CHECK (method IN ('direct', 'semantic', 'quoted', 'reading', 'ambiguous', 'uncertain_book', 'uncertain_number')),
     confidence    REAL NOT NULL,
     -- What actually happened. 'manual' means a HUMAN put this on screen (override,
     -- confirmed suggestion, or next/back nav) — NOT an AI decision, and must never

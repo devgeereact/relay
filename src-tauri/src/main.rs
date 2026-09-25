@@ -45,6 +45,10 @@ mod search;
 mod servicelock;
 mod songs;
 mod stt;
+/// **How many suggestions a real service produces, measured.** Test-only. The
+/// schema decision in RG-309 rests on it, so it is a module rather than a script.
+#[cfg(test)]
+mod suggestions;
 mod sysprobe;
 mod telemetry;
 mod timers;
@@ -1169,6 +1173,8 @@ fn fire_manual<R: tauri::Runtime>(
             f.confidence,
             f.status.as_str(),
             &f.key,
+            // A manual fire reached a screen — it returned `false` above otherwise.
+            Provenance::Fired,
         );
         f
     }; // locks released BEFORE the emit below — CLAUDE.md rule #2.
@@ -1876,17 +1882,48 @@ fn emit_detections<R: tauri::Runtime>(
                 context.note_passage(&fire.reference, end);
                 // Fill "up next" from the now-staged passage (bounded by its end).
                 attach_next_verse(&conn, &context, &mut fire);
-                persist_fire(
-                    &conn,
-                    handle.state::<Session>(),
-                    fire.verse_id,
-                    fire.method.db_method(),
-                    fire.confidence,
-                    fire.status.as_str(),
-                    text,
-                );
                 broadcasts.push(fire.output());
             }
+            // ── WHAT RELAY OFFERED IS PART OF WHAT HAPPENED (RG-309) ────────────
+            //
+            // This call sat INSIDE the `if` above, and the consequence was structural
+            // rather than a bug anybody could see: rule 10 caps a paraphrase at
+            // `Suggest` at any score, `Fire::may_broadcast` is false for a
+            // suggestion, and so **a paraphrase never reached the database at all.**
+            // Measured on this machine, across every service it has ever recorded:
+            // `SELECT COUNT(*) FROM detections WHERE status='suggested'` → 0.
+            //
+            // Three things followed. The paraphrase detector was unobservable, on
+            // the product whose operator asked for it by name. Every accuracy claim
+            // about it rested on nothing, which `report.js` was honest about and the
+            // register was not. And `record_feedback` learns its bar from a column
+            // that only ever saw what worked.
+            //
+            // Rule 14 is untouched and this is the reason it can be: the status
+            // written is the one the gate reached. `'auto'` is still Relay's own
+            // initiative and `'manual'` is still a human — a suggestion is neither,
+            // and `'suggested'` is the value the CHECK constraint has permitted, and
+            // nothing has ever written, since the schema was first drawn.
+            //
+            // **It is not a new write on the fire path.** It is the same one write,
+            // reached on more windows: inside the connection this loop already holds,
+            // on `relay-detect` behind the bounded queue rule 33 put it behind, and
+            // measured at 6 µs against a 139 ms cadence (`suggestions::the_write_a_
+            // suggestion_costs`).
+            persist_fire(
+                &conn,
+                handle.state::<Session>(),
+                fire.verse_id,
+                fire.method.db_method(),
+                fire.confidence,
+                fire.status.as_str(),
+                text,
+                if fire.may_broadcast() {
+                    Provenance::Fired
+                } else {
+                    Provenance::Offered
+                },
+            );
             events.push(fire.event());
         }
         Some((detected_at, authorised_at))
@@ -2195,6 +2232,31 @@ fn persist_transcript<R: tauri::Runtime>(handle: &tauri::AppHandle<R>, text: &st
 /// all. `transcript_id` said where the service was; it could not say what was
 /// heard. Now `heard_text` does, so a wrong verse on a wall can be explained
 /// after the fact instead of guessed at.
+/// ── RG-309 · WHETHER THIS ROW MAY CREATE A TRANSCRIPT ROW OF ITS OWN ─────────
+///
+/// A fire may. F-2 is the whole argument: a verse that reached a congregation must
+/// hang off a transcript row that really holds the words the detector read, and six
+/// extra rows in a fifty-minute service is what that costs.
+///
+/// **A suggestion may not**, and the difference is not a judgement about
+/// importance. Only FINAL transcripts are persisted, on purpose, and the live path
+/// detects on every PARTIAL — roughly one a second. A suggestion that inserted its
+/// own row would write thousands of rows of mid-word text per service into the one
+/// table every history and replay surface renders, and `transcripts` is already the
+/// largest content table Relay keeps. The window still travels, in `heard_text`,
+/// which is exactly the column F-2 added for it; what a suggestion loses is a
+/// transcript row of its own, not its evidence.
+///
+/// A suggestion with no final yet to hang off is not recorded. That is the first
+/// seconds of a service and it is an absence, not a claim.
+#[derive(Clone, Copy, PartialEq)]
+enum Provenance {
+    /// This reached a screen. It may persist the window as its own transcript row.
+    Fired,
+    /// Relay offered this and nothing went anywhere. It hangs off the last final.
+    Offered,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn persist_fire(
     conn: &Connection,
@@ -2204,6 +2266,7 @@ fn persist_fire(
     confidence: f32,
     status: &str,
     window_text: &str,
+    provenance: Provenance,
 ) {
     let Ok(mut sess) = session.0.lock() else {
         return;
@@ -2236,6 +2299,10 @@ fn persist_fire(
         .is_some_and(|prev| prev == window_text);
     let tid = match st.last_transcript {
         Some(t) if matches_last || window_text.is_empty() => t,
+        // An offer hangs off whatever final is there and never writes one — see
+        // `Provenance`. No final yet means no row, which is honest.
+        Some(t) if provenance == Provenance::Offered => t,
+        None if provenance == Provenance::Offered => return,
         _ => match db::insert_transcript(conn, st.id, ts, window_text, "en", None) {
             Ok(t) => {
                 st.last_transcript = Some(t);

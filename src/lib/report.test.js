@@ -13,6 +13,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
+  splitDetections,
   sundayReport,
   latencySummary,
   replayAt,
@@ -56,21 +57,58 @@ describe('the Sunday report', () => {
     expect(r.suggestionsRejected).toBe(1);
   });
 
-  it('reads the operator decisions from cues, because detections cannot hold them', () => {
-    // The regression this replaced: these two came from `count('suggested')` and
-    // `count('dismissed')` over `detections`, and were ALWAYS 0 in production —
-    // `persist_fire` is the only insert and it runs only for a fire that reaches a
-    // screen, so the column can only ever hold 'auto' or 'manual'. The report was
-    // printing 0 for something nothing recorded, which reads as "Relay never
-    // offered you anything".
+  it('reads the operator decisions from cues, and what was OFFERED from detections', () => {
+    // Two different questions out of two different tables, and the split is the
+    // point. `suggestion_accepted` / `suggestion_dismissed` cues are what the
+    // operator PRESSED; `status = 'suggested'` rows are what Relay OFFERED. Reading
+    // the operator's decisions out of `detections` is the regression this test was
+    // originally written against — those counters were always 0, because
+    // `persist_fire` ran only inside `if fire.may_broadcast()`.
+    //
+    // RG-309 made the offer half real. The operator half still does NOT come from
+    // here: a suggestion row records that Relay offered something, and says nothing
+    // about whether anybody looked.
     const detOnly = sundayReport([
       ev(0, 'service_started'),
       det(10, 'suggested', 'Romans 8:28'),
-      det(20, 'dismissed', 'Psalms 23:1'),
+      det(20, 'suggested', 'Psalms 23:1'),
     ]);
     expect(detOnly.suggestionsAccepted).toBeNull();
     expect(detOnly.suggestionsRejected).toBeNull();
     expect(detOnly.suggestionUptake).toBeNull();
+    // …and the offers ARE counted.
+    expect(detOnly.suggestionsOffered).toBe(2);
+    // Nobody answered either of them, which is a real and reportable 0 out of 2 —
+    // not a null, because the denominator exists.
+    expect(detOnly.suggestionsAnswered).toBe(0);
+  });
+
+  it('a service that recorded no offers reports null, never 0', () => {
+    // Every service before RG-309 is this service. `persist_fire` could not write a
+    // `'suggested'` row, so the column is empty for the whole of Relay's history to
+    // date — and `0 offered` over a 16-hour sermon is the same false claim the cue
+    // move was made to stop, arriving in a new column.
+    const none = sundayReport([ev(0, 'service_started'), det(10, 'auto', 'John 3:16')]);
+    expect(none.suggestionsOffered).toBeNull();
+    expect(none.suggestionsAnswered).toBeNull();
+  });
+
+  it('the share answered is out of everything offered, and uptake is not', () => {
+    // The two figures disagree on purpose. Measured on the author's own service of
+    // 2026-09-25: one acceptance, ~8,000 offers. Uptake reads 100% and is honest
+    // about the one the operator answered; answered reads ~0.0001 and is the number
+    // that says what the AI's suggestion list was actually worth to them.
+    const r2 = sundayReport([
+      ev(0, 'service_started'),
+      cue(10, 'suggestion_accepted', 'John 3:16'),
+      det(11, 'suggested', 'John 3:16'),
+      det(12, 'suggested', 'Romans 8:28'),
+      det(13, 'suggested', 'Psalms 23:1'),
+      det(14, 'suggested', 'Hebrews 13:5'),
+    ]);
+    expect(r2.suggestionUptake).toBe(1);
+    expect(r2.suggestionsOffered).toBe(4);
+    expect(r2.suggestionsAnswered).toBeCloseTo(0.25);
   });
 
   it('uptake is out of the ones the operator ANSWERED, and says so', () => {
@@ -83,7 +121,13 @@ describe('the Sunday report', () => {
     expect(mixed.suggestionUptake).toBeCloseTo(1 / 3);
     // And the denominator's limit is named in the report rather than left for a
     // reader to infer.
-    expect(mixed.notMeasured.join(' ')).toMatch(/never acted on/);
+    // The report used to say a suggestion nobody answered was "recorded nowhere".
+    // RG-309 made that false, so the sentence had to change rather than survive —
+    // a caveat that asserts a defect the code has fixed is the same failure as one
+    // that asserts a feature it never had. What is still unmeasured is whether an
+    // unanswered offer was RIGHT, and that is what it now says.
+    expect(mixed.notMeasured.join(' ')).not.toMatch(/recorded nowhere/);
+    expect(mixed.notMeasured.join(' ')).toMatch(/never answered was RIGHT/);
   });
 
   it('counts the things that had no other home', () => {
@@ -330,5 +374,40 @@ describe('the live Diagnostics screen obeys the same rule', () => {
     expect(view).toMatch(/const msOrDash = \(v\) =>[\s\S]{0,80}'—'/);
     expect(view).not.toMatch(/Math\.round\(m\.p50_ms \?\? 0\)/);
     expect(view).toMatch(/msOrDash\(m\.p99_ms\)/);
+  });
+});
+
+describe('splitDetections — what reached a screen vs what was merely offered', () => {
+  // THE REGRESSION THIS EXISTS TO STOP (RG-309). Before suggestions were recorded,
+  // every `detections` row had reached a screen, so History could render the whole
+  // list under a heading reading "Detected verses (N)" and be right. Persisting
+  // offers made that heading a lie by a factor of twenty: a 16-hour service put 365
+  // verses on a screen and offered roughly 8,000, and the column would have printed
+  // the larger number under the smaller word. Rule 35 — a figure whose meaning
+  // changed silently under a label that did not.
+  it('keeps "detected" meaning what it said', () => {
+    const { fired, offered } = splitDetections([
+      { reference: 'John 3:16', status: 'auto' },
+      { reference: 'Psalms 23:1', status: 'manual' },
+      { reference: 'Hebrews 13:5', status: 'suggested' },
+      { reference: 'Romans 8:28', status: 'suggested' },
+      { reference: 'Isaiah 30:1', status: 'dismissed' },
+    ]);
+    expect(fired.map((d) => d.reference)).toEqual(['John 3:16', 'Psalms 23:1']);
+    expect(offered).toHaveLength(3);
+  });
+
+  it('is total over the list — nothing is silently discarded', () => {
+    // A third status added to the CHECK constraint one day must land in one bucket
+    // or the other, never in neither. A row that falls out of both is a detection
+    // the history stops showing without saying so.
+    const rows = ['auto', 'manual', 'suggested', 'dismissed'].map((status) => ({ status }));
+    const { fired, offered } = splitDetections(rows);
+    expect(fired.length + offered.length).toBe(rows.length);
+  });
+
+  it('survives a missing or malformed list', () => {
+    expect(splitDetections(null)).toEqual({ fired: [], offered: [] });
+    expect(splitDetections(undefined).fired).toEqual([]);
   });
 });
