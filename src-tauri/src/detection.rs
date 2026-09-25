@@ -262,6 +262,27 @@ impl DetectionMethod {
         }
     }
 
+    /// THE NAME THIS METHOD GOES BY EVERYWHERE OUTSIDE RUST — the console's own
+    /// vocabulary, and since RG-309 the database's as well.
+    ///
+    /// It existed only as a `#[serde(rename)]` attribute and a `from_wire` with no
+    /// inverse, which is why `db_method` could collapse three variants into one
+    /// without anything noticing: there was no function to reuse. `from_wire` is
+    /// this function's inverse and `the_wire_name_is_one_mapping_in_two_directions`
+    /// asserts both halves against serde itself over every variant, so the
+    /// attribute, this match and the parser cannot drift apart.
+    pub fn wire(&self) -> &'static str {
+        match self {
+            DetectionMethod::Direct => "direct",
+            DetectionMethod::Semantic => "semantic",
+            DetectionMethod::Quoted => "quoted",
+            DetectionMethod::Ambiguous => "ambiguous",
+            DetectionMethod::UncertainBook => "uncertain_book",
+            DetectionMethod::UncertainNumber => "uncertain_number",
+            DetectionMethod::Reading => "reading",
+        }
+    }
+
     /// Parse the wire name the console sends back when an operator accepts a
     /// suggestion. Anything unrecognised is treated as the most cautious reading —
     /// `Semantic` — because the question this answers is "may this number teach the
@@ -303,31 +324,33 @@ impl DetectionMethod {
     /// guessed — and `heard_text` carries that, which is the column that exists
     /// because a service put forty wrong verses on a wall and the log could not
     /// say what any of them heard.
+    /// The name this method goes by in `detections.method` — **which is now
+    /// `wire()` and nothing else** (RG-309).
+    ///
+    /// ## What this used to do, and why it stopped
+    ///
+    /// It collapsed all seven variants into `'direct'` or `'semantic'`, because the
+    /// column was `CHECK`ed to those two values and widening it meant rebuilding
+    /// the table, which is the migration rule 25 was written about. Its own comment
+    /// filed the cost as a KNOWN GAP: a church auditing a wrong verse could see
+    /// WHAT was heard and could not tell a followed reading from a paraphrase by
+    /// this column alone.
+    ///
+    /// **Recording suggestions turned that gap into a wall.** The record exists to
+    /// answer *what did the paraphrase detector do during a real sermon*, and
+    /// 2,325 of one 16-hour service's 2,790 suggestion episodes are `Semantic`
+    /// while `Quoted` sat in the same word. A count you cannot split is not a
+    /// measurement. So the table was rebuilt (`db::ensure_detection_method_names_
+    /// its_detector`, the v6 rung) and this function became the identity it should
+    /// always have been.
+    ///
+    /// It is kept as a NAMED function rather than replaced by `wire()` at the call
+    /// site, deliberately: "the name this goes by in the database" and "the name
+    /// the console speaks" are two questions that happen to share an answer today,
+    /// and a future column that needs to differ should have one place to differ in.
+    /// `the_database_name_is_the_wire_name` is the test that says they agree now.
     pub fn db_method(&self) -> &'static str {
-        match self {
-            DetectionMethod::Direct
-            | DetectionMethod::Ambiguous
-            | DetectionMethod::UncertainBook
-            | DetectionMethod::UncertainNumber => "direct",
-            // `Quoted` persists as `semantic` for the reason `Ambiguous`
-            // persists as `direct`: the column records HOW it was found, and no
-            // reference was spoken. `detections.method` is constrained to two
-            // values and widening it would need a migration to record a
-            // distinction the router already enforces in the only place it acts.
-            // `Reading` rides with them for the same reason and with the same
-            // cost, stated rather than hidden: `detections.method` is CHECKed to
-            // two values, no reference was spoken, and widening the constraint
-            // means rebuilding the table — which is the migration rule 25 was
-            // written about. So a followed reading is recorded as `semantic` with
-            // `status = 'auto'`, a pair the record could not previously hold, and
-            // `heard_text` carries the run of words that caused it. KNOWN GAP,
-            // filed on the register: a church auditing a wrong verse can see WHAT
-            // was heard but cannot tell a followed reading from a paraphrase by
-            // this column alone.
-            DetectionMethod::Semantic | DetectionMethod::Quoted | DetectionMethod::Reading => {
-                "semantic"
-            }
-        }
+        self.wire()
     }
 }
 

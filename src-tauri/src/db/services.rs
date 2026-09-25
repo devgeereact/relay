@@ -204,7 +204,17 @@ pub fn service_transcripts(
     rows.collect()
 }
 
-/// Fired detections for a service, in order.
+/// **EVERY detection for a service, in order — fires AND offers (RG-309).**
+///
+/// This doc said *"Fired detections"* and was right until `status = 'suggested'`
+/// became reachable. It is now the forensic list: the whole record of what the AI
+/// claimed, each row carrying `heard_text`, which is the only way a paraphrase the
+/// operator never answered can be judged afterwards.
+///
+/// **Its two readers must not treat them alike.** `report.js::splitDetections` is
+/// the one place the two are separated, and `History.svelte` renders the fires under
+/// *Detected verses* with the offers named as a count beside it. A surface that
+/// renders this list whole is claiming ~8,000 verses reached a screen.
 pub fn service_detections(
     conn: &Connection,
     service_id: i64,
@@ -238,8 +248,19 @@ pub fn service_detections(
     rows.collect()
 }
 
-/// How many times a verse has already fired in a service (Phase A6 — the
-/// series/repeat tracker). Counts only detections that actually fired.
+/// How many times a verse has already been ON A SCREEN in a service (Phase A6 —
+/// the series/repeat tracker).
+///
+/// **It asks `status`, and it used to ask `fired_at IS NOT NULL` (RG-309.)** That
+/// was a correct proxy for exactly as long as every row in `detections` was a fire:
+/// `persist_fire` ran only inside `if fire.may_broadcast()`. It now also records
+/// what the AI merely OFFERED, with a real timestamp — because when a suggestion
+/// was made is part of the record — so the proxy started answering a different
+/// question, and this tracker would have told an operator a verse had already been
+/// up four times when the AI had guessed at it four times and nothing had moved.
+///
+/// `status` is the column that says what happened and is the one the router learns
+/// from (rule 14). Asking it directly is what this always meant.
 pub fn count_verse_in_service(
     conn: &Connection,
     service_id: i64,
@@ -249,7 +270,8 @@ pub fn count_verse_in_service(
         "SELECT COUNT(*)
            FROM detections d
            JOIN transcripts t ON t.id = d.transcript_id
-          WHERE t.service_id = ?1 AND d.verse_id = ?2 AND d.fired_at IS NOT NULL",
+          WHERE t.service_id = ?1 AND d.verse_id = ?2
+            AND d.status IN ('auto', 'manual')",
         (service_id, verse_id),
         |r| r.get(0),
     )
@@ -389,15 +411,28 @@ pub fn service_timeline(conn: &Connection, service_id: i64) -> rusqlite::Result<
         out.push(r?);
     }
 
-    // A detection's `status` is the useful kind here — auto, suggested, dismissed
-    // or manual — because "the AI fired this" and "a human fired this" are the two
-    // facts a replay is trying to separate.
+    // A detection's `status` is the useful kind here — because "the AI fired this"
+    // and "a human fired this" are the two facts a replay is trying to separate.
+    //
+    // ── AND ONLY THE ROWS THAT REACHED A SCREEN (RG-309) ────────────────────
+    //
+    // This is the ONE ordered record of what happened, rendered as a list and
+    // indexed into for the replay. Until suggestions were persisted every
+    // `detections` row was a fire, so taking them all was taking what happened.
+    // A 16-hour service offers in the region of 8,000 suggestions against 365
+    // fires, so unfiltered this record would be 95% things that did NOT happen,
+    // and the replay's index would land almost anywhere.
+    //
+    // Nothing is lost by leaving them out. `service_detections` returns every
+    // offer with its evidence — that is what RG-309 built — and the Sunday
+    // report counts them from there rather than from here.
     let mut de = conn.prepare(
         "SELECT COALESCE(d.fired_at, t.timestamp) * 1000.0, d.status, v.book, v.chapter, v.verse
            FROM detections d
            JOIN transcripts t ON t.id = d.transcript_id
            LEFT JOIN verses v ON v.id = d.verse_id
           WHERE t.service_id = ?1
+            AND d.status IN ('auto', 'manual')
           ORDER BY d.id",
     )?;
     for r in de.query_map([service_id], |r| {
