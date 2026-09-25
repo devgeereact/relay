@@ -599,3 +599,167 @@ mod cost {
         println!("  one cadence step is 139 ms (ggml-base) / ~600 ms (turbo) — rule 32\n");
     }
 }
+
+/// **THE THREE READERS THAT MEANT SOMETHING ELSE UNTIL SUGGESTIONS EXISTED.**
+///
+/// Every row in `detections` had reached a screen, so three queries could ask a
+/// cheap proxy question and get the right answer. Recording offers made all three
+/// wrong at once, and none of them is in the file this change is about — which is
+/// the *"enumerate every caller of the thing you fixed"* rule, arriving as the cost
+/// of ignoring it.
+#[cfg(test)]
+mod readers {
+    use super::*;
+
+    /// **THE REPEAT TRACKER.** `count_verse_in_service` asks `fired_at IS NOT NULL`,
+    /// and `persist_fire` stamps a time on every row it writes, offers included. So
+    /// the series/repeat tracker would tell an operator a verse had already been up
+    /// four times when the AI had merely guessed at it four times.
+    #[test]
+    fn the_repeat_tracker_counts_screens_and_not_guesses() {
+        let conn = super::contracts::scratch_db();
+        let tid = db::insert_transcript(&conn, 1, 0.0, "x", "en", None).expect("transcript");
+        let vid: i64 = conn
+            .query_row("SELECT id FROM verses LIMIT 1", [], |r| r.get(0))
+            .expect("a verse");
+        // One that reached a screen…
+        db::insert_detection(
+            &conn,
+            tid,
+            Some(vid),
+            "direct",
+            0.9,
+            "auto",
+            Some(1.0),
+            None,
+        )
+        .expect("auto");
+        // …and three the AI only ever offered, each with a real timestamp, because
+        // WHEN it was offered is part of the record.
+        for at in [2.0, 3.0, 4.0] {
+            db::insert_detection(
+                &conn,
+                tid,
+                Some(vid),
+                "semantic",
+                0.35,
+                "suggested",
+                Some(at),
+                None,
+            )
+            .expect("offer");
+        }
+        assert_eq!(
+            db::count_verse_in_service(&conn, 1, vid).expect("count"),
+            1,
+            "the repeat tracker counted suggestions as times the verse was shown"
+        );
+    }
+
+    /// **THE TIMELINE.** `service_timeline` merged every detection row in as an
+    /// entry, and `History.svelte` renders it as a list and indexes into it for the
+    /// replay. A 16-hour service offers in the region of 8,000 suggestions against
+    /// 365 fires, so the one ordered record of what happened would have been 95%
+    /// things that did not happen — and the report's own counts are derived from
+    /// `detail.detections`, not from here, so nothing needed them in it.
+    #[test]
+    fn the_timeline_holds_what_happened_and_not_what_was_guessed() {
+        let conn = super::contracts::scratch_db();
+        let tid = db::insert_transcript(&conn, 1, 0.0, "x", "en", None).expect("transcript");
+        let vid: i64 = conn
+            .query_row("SELECT id FROM verses LIMIT 1", [], |r| r.get(0))
+            .expect("a verse");
+        db::insert_detection(
+            &conn,
+            tid,
+            Some(vid),
+            "direct",
+            0.9,
+            "auto",
+            Some(1.0),
+            None,
+        )
+        .expect("auto");
+        db::insert_detection(
+            &conn,
+            tid,
+            Some(vid),
+            "direct",
+            0.9,
+            "manual",
+            Some(2.0),
+            None,
+        )
+        .expect("manual");
+        for at in [3.0, 4.0, 5.0] {
+            db::insert_detection(
+                &conn,
+                tid,
+                Some(vid),
+                "semantic",
+                0.35,
+                "suggested",
+                Some(at),
+                None,
+            )
+            .expect("offer");
+        }
+        let rows = db::service_timeline(&conn, 1).expect("timeline");
+        let dets: Vec<&str> = rows
+            .iter()
+            .filter(|r| r.source == "detection")
+            .map(|r| r.kind.as_str())
+            .collect();
+        assert_eq!(
+            dets,
+            vec!["auto", "manual"],
+            "the timeline carried suggestions as things that happened"
+        );
+    }
+
+    /// **AND THE ONE THAT MUST KEEP THEM.** `service_detections` is the forensic
+    /// list — the whole point of RG-309 — so the fix above must not be applied here
+    /// by reflex. If both were filtered, the offers would be written and unreadable,
+    /// which is a worse state than not writing them.
+    #[test]
+    fn the_detections_list_keeps_every_offer() {
+        let conn = super::contracts::scratch_db();
+        let tid = db::insert_transcript(&conn, 1, 0.0, "x", "en", None).expect("transcript");
+        let vid: i64 = conn
+            .query_row("SELECT id FROM verses LIMIT 1", [], |r| r.get(0))
+            .expect("a verse");
+        db::insert_detection(
+            &conn,
+            tid,
+            Some(vid),
+            "direct",
+            0.9,
+            "auto",
+            Some(1.0),
+            None,
+        )
+        .expect("auto");
+        db::insert_detection(
+            &conn,
+            tid,
+            Some(vid),
+            "semantic",
+            0.35,
+            "suggested",
+            Some(2.0),
+            Some("the words that caused it"),
+        )
+        .expect("offer");
+        let rows = db::service_detections(&conn, 1).expect("detections");
+        assert_eq!(rows.len(), 2);
+        let offer = rows
+            .iter()
+            .find(|d| d.status == "suggested")
+            .expect("the offer must still be readable");
+        assert_eq!(offer.method, "semantic");
+        assert_eq!(
+            offer.heard_text.as_deref(),
+            Some("the words that caused it")
+        );
+    }
+}

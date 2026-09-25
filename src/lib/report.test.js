@@ -68,11 +68,13 @@ describe('the Sunday report', () => {
     // RG-309 made the offer half real. The operator half still does NOT come from
     // here: a suggestion row records that Relay offered something, and says nothing
     // about whether anybody looked.
-    const detOnly = sundayReport([
-      ev(0, 'service_started'),
-      det(10, 'suggested', 'Romans 8:28'),
-      det(20, 'suggested', 'Psalms 23:1'),
-    ]);
+    // NOTE THE THIRD ARGUMENT. Offers are counted from `detail.detections`, the
+    // forensic list, and NOT from the timeline — `service_timeline` excludes them on
+    // purpose (RG-309), so a test that put them in a timeline row would be measuring
+    // a shape the backend does not produce.
+    const detOnly = sundayReport([ev(0, 'service_started')], [], {
+      detections: [{ status: 'suggested' }, { status: 'suggested' }],
+    });
     expect(detOnly.suggestionsAccepted).toBeNull();
     expect(detOnly.suggestionsRejected).toBeNull();
     expect(detOnly.suggestionUptake).toBeNull();
@@ -88,7 +90,9 @@ describe('the Sunday report', () => {
     // `'suggested'` row, so the column is empty for the whole of Relay's history to
     // date — and `0 offered` over a 16-hour sermon is the same false claim the cue
     // move was made to stop, arriving in a new column.
-    const none = sundayReport([ev(0, 'service_started'), det(10, 'auto', 'John 3:16')]);
+    const none = sundayReport([ev(0, 'service_started'), det(10, 'auto', 'John 3:16')], [], {
+      detections: [{ status: 'auto' }],
+    });
     expect(none.suggestionsOffered).toBeNull();
     expect(none.suggestionsAnswered).toBeNull();
   });
@@ -98,14 +102,11 @@ describe('the Sunday report', () => {
     // 2026-09-25: one acceptance, ~8,000 offers. Uptake reads 100% and is honest
     // about the one the operator answered; answered reads ~0.0001 and is the number
     // that says what the AI's suggestion list was actually worth to them.
-    const r2 = sundayReport([
-      ev(0, 'service_started'),
-      cue(10, 'suggestion_accepted', 'John 3:16'),
-      det(11, 'suggested', 'John 3:16'),
-      det(12, 'suggested', 'Romans 8:28'),
-      det(13, 'suggested', 'Psalms 23:1'),
-      det(14, 'suggested', 'Hebrews 13:5'),
-    ]);
+    const r2 = sundayReport(
+      [ev(0, 'service_started'), cue(10, 'suggestion_accepted', 'John 3:16')],
+      [],
+      { detections: [1, 2, 3, 4].map(() => ({ status: 'suggested' })) },
+    );
     expect(r2.suggestionUptake).toBe(1);
     expect(r2.suggestionsOffered).toBe(4);
     expect(r2.suggestionsAnswered).toBeCloseTo(0.25);

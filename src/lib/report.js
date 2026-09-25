@@ -85,10 +85,17 @@ export function sundayReport(timeline = [], perf = [], detail = null) {
   // unreachable and this file said 0 for it — which is why these counters were moved
   // to `cues` in the first place. The rows exist now.
   //
+  // **From `detail.detections`, NOT from the timeline.** `service_timeline` is the
+  // one ordered record of what HAPPENED and deliberately excludes offers — a
+  // 16-hour service offers thousands of them against a few hundred fires, and a
+  // timeline that was 95% suggestions would be unreadable and would break the
+  // replay's own index into it. The forensic list is `service_detections`, and this
+  // is the only figure that needs the whole of it.
+  //
   // `null`, not 0, when the service predates the change or recorded none. A service
   // from last month has no suggestion rows and never will, and printing `0 offered`
   // over it is the same false claim in a new column.
-  const offered = dets.filter((r) => r.kind === 'suggested').length;
+  const offered = splitDetections(detail?.detections).offered.length;
   const suggestionsOffered = offered || null;
 
   // What went wrong. These have no other home — before `service_events` existed, a
