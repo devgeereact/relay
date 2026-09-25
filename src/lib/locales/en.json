@@ -55,6 +55,7 @@
   "live.note_quoted": "these words were read aloud, but no reference was spoken",
   "live.read_aloud": "Read aloud — following the reader",
   "live.badge_reading": "Reading",
+  "live.run_words": "{n} words",
   "live.note_reading": "Relay heard these words read out, in this order, and only this verse has them",
   "live.match_percent": "{percent}% match",
   "live.heard": "Heard",

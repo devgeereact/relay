@@ -209,6 +209,34 @@ impl DetectionMethod {
         }
     }
 
+    /// Was this candidate found by finding a VERSE'S OWN WORDS in what was said,
+    /// rather than by hearing a reference?
+    ///
+    /// The line the passage guard is drawn on, and it is drawn here because it is
+    /// the same line rule 40 draws. `Direct`, `Ambiguous`, `UncertainBook` and
+    /// `UncertainNumber` all exist because something reference-shaped came out of
+    /// the speaker's mouth — "Romans eight", "verse thirty-two", a book name the
+    /// parser had to repair. The words said, however badly, so **nothing Relay
+    /// remembers may stand in front of them**. `Semantic`, `Quoted` and `Reading`
+    /// are the other direction entirely: Relay went looking for the verse whose
+    /// text resembles what was said, and nobody asked for anything.
+    pub fn came_from_the_verse_text(&self) -> bool {
+        matches!(
+            self,
+            DetectionMethod::Semantic | DetectionMethod::Quoted | DetectionMethod::Reading
+        )
+    }
+
+    /// Is this a contiguous run of the speaker's own words, verbatim in the verse?
+    ///
+    /// The ONLY evidence that may arm the passage guard. A paraphrase cosine is a
+    /// bag of words in no order (rule 18) and is nowhere near enough to assert
+    /// "the preacher is reading this chapter aloud"; a verbatim run is precisely
+    /// that assertion, which is why `Reading` was allowed to exist at all.
+    pub fn is_a_verbatim_run(&self) -> bool {
+        matches!(self, DetectionMethod::Quoted | DetectionMethod::Reading)
+    }
+
     /// Is this quotation the preacher READING, or merely quoting?
     ///
     /// Pure, and deliberately: the evidence decides and nothing else may. The
@@ -2541,6 +2569,226 @@ pub fn resolve_bare_verse_with_source(
         return None;
     }
     memory.cloned().map(|m| (m, BareVerseSource::Memory))
+}
+
+/// Did this window say a reference of its own?
+///
+/// The disarming condition for the passage guard, and it is rule 40's sentence
+/// verbatim: *when the words say, the words win.* Two ways to say, and the second
+/// is the one FIELD F-8 was about — a window can STATE a chapter without any
+/// reference parsing out of it ("4th Peter chapter 5 verse 10"), and a preacher who
+/// has just announced a chapter is no longer reading the last one whatever Relay
+/// managed to parse. `resolve_bare_verse_with_source` already treats those two
+/// facts as one authority; this is the same pair asked for a different purpose, so
+/// it is named once here rather than restated at the call site.
+///
+/// `anchor` is passed in rather than recomputed: `emit_detections` has already run
+/// `detect_direct` over this window and the guard may not cost a second parse.
+pub fn window_states_a_reference(text: &str, anchor: Option<&VerseRef>) -> bool {
+    anchor.is_some() || chapter_named(text)
+}
+
+/// Why the passage guard held a candidate back. Reaches the operator verbatim
+/// (`main::PassageHold`), because a guard that goes quiet without saying so is
+/// indistinguishable from a detector that has gone deaf (rule 35).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HeldReason {
+    /// **The wall is already showing this verse.** A run of the verse's own words
+    /// while that verse is on the screen puts nothing new there.
+    AlreadyOnScreen,
+    /// **The preacher is reading the passage on screen and this verse is not in
+    /// it.** The words of one verse are the words of several.
+    OutsideTheReading,
+}
+
+/// **THE PASSAGE GUARD.** Which of this window's candidates are held back while
+/// the preacher reads?
+///
+/// One answer per candidate, in order — `None` for everything that gets through,
+/// which is the overwhelmingly common case.
+///
+/// ── The complaint (the operator, 2026-09-25) ──────────────────────────────────
+///
+/// > *"I dont want suggestion to be changing when a bible verse is reading because
+/// > it heard a phrase which is in another bible verse… verses needs to be guarded
+/// > so when a preacher is reading a verse it stays within the verse/chapter until
+/// > the preacher calls another verse… suggesting too many verses whilst the
+/// > preacher is reading a verse will cause confusion"*
+///
+/// A verse read aloud is not only in the verse being read. The synoptic parallels,
+/// the repeated formulae, `Psalms 107:8` and `107:21`, and plain sub-spans — a
+/// twenty-five-word run in John 3:16 carries a ten-word run in John 3:15, because
+/// those ten words are in both (`PhraseHit::sole`).
+///
+/// ── TWO RULES, AND ONLY ONE OF THEM IS ABOUT THE PASSAGE ──────────────────────
+///
+/// **Rule B — the wall already says it.** A candidate found in a verse's own text
+/// (`came_from_the_verse_text`) whose reference is the one Relay last put on a
+/// screen is held. It cannot be new information: the verse is already exactly
+/// where it would have put it.
+///
+/// This is the rule the field evidence is about, and there is a lot of it. The
+/// operator's own services 38, 39 and 40 (2026-09-24 and 2026-09-25) auto-fired
+/// the SAME verse twice from one continuous reading, six times:
+///
+/// | verse | first | second | gap | first fire |
+/// |---|---|---|---|---|
+/// | `Psalms 23:4` | 206 s | 326 s | 120 s | reading |
+/// | `Philippians 1:23` | 1497 s | 1508 s | 11 s | spoken reference |
+/// | `Mark 6:2` | 615 s | 626 s | 11 s | reading |
+/// | `Jeremiah 6:16` | 769 s | 780 s | 11 s | spoken reference |
+/// | `Hebrews 6:12` | 897 s | 908 s | 11 s | spoken reference |
+/// | `Romans 15:4` | 1034 s | 1051 s | 17 s | spoken reference |
+///
+/// Four of the six are *announce the reference, then read it* — the ordinary shape
+/// of a sermon rather than an edge case.
+///
+/// **Nothing that already existed could catch them, and no number can.**
+/// `DEFAULT_DEBOUNCE_MS` is `WINDOW_SECS + 2` — ten seconds — and its own reasoning
+/// is that *"anything re-detected inside it is, definitionally, the same utterance
+/// being heard again"*. That holds for a spoken reference, which is over in two
+/// seconds, and fails for a reading, which keeps producing matching runs for as
+/// long as the reading lasts. The measured gaps are 11, 11, 17 and 120 seconds: a
+/// cooldown of 12 catches two of four and one of 20 starts swallowing genuine
+/// second citations. It is not a timing problem. `pipeline::better` cannot help
+/// either — `Mark 6:2` went 0.69 → 0.90 as more of the verse was heard, so the
+/// duplicate is the STRONGER candidate by every ranking rule there is.
+///
+/// **Rule A — outside the reading.** While a window holds a run of the speaker's
+/// own words verbatim INSIDE the book and chapter on the screen, candidates found
+/// in a verse's own text from outside that chapter are held. Chapter, not book,
+/// because the operator said *verse/chapter* and because Psalms 23 is a different
+/// passage from Psalms 107.
+///
+/// ── WHAT ENDS IT, AND WHY NOTHING HAS TO BE CLEARED ───────────────────────────
+///
+///  * **A window that names a reference disarms rule A entirely** — not the
+///    candidate, the whole window. "Turn to Romans eight" gets through in the same
+///    instant it always did, whatever is on the screen. `window_states_a_reference`
+///    is rule 40's sentence: when the words say, the words win. Checked first
+///    rather than last, because a guard that could swallow a spoken reference would
+///    be strictly worse than the churn it fixes, and rule 10 exists because that
+///    class of mistake has reached a congregation three times.
+///  * **Rule A is armed by EVIDENCE, not by state.** No lock, no flag, no timer,
+///    nothing to clear — so there is nothing that can be left on. It stops biting
+///    in the first window with no in-passage run in it, which is the window the
+///    preacher moved on.
+///  * **Rule B ends when the wall changes.** `on_the_wall` is the router's record
+///    of the last verse it put on a screen. It is replaced by the next verse, and
+///    dropped by `Router::forget_last_fire` (a clear or a blackout) and by
+///    `Router::forget_wall` (anything that is not scripture taking the screen — the
+///    same door rule 38 disarms the passage at). All three are automatic.
+///
+/// ── WHAT IS DELIBERATELY NOT HELD ─────────────────────────────────────────────
+///
+///  * **Anything reference-shaped, ever.** `Direct`, `Ambiguous`, `UncertainBook`
+///    and `UncertainNumber` are never held under either rule, at any dial, in any
+///    window. See `came_from_the_verse_text`.
+///  * **The next verse of the passage being read.** `Philippians 1:23` at 1508 s
+///    and `1:24` at 1517 s is one reading walking forward: rule B holds the first
+///    (already on the wall) and the second fires. Freezing the wall on verse 23
+///    until somebody names another reference would leave a verse the preacher had
+///    finished in front of a congregation for as long as the reading lasted — a
+///    wrong verse chosen on purpose — and it would reverse the instruction of
+///    2026-09-23 that created `Reading` at all. The operator's own words are
+///    *within the verse/chapter*, and the adjacent verse is inside it.
+///
+/// ── WHAT IT COSTS, MEASURED ───────────────────────────────────────────────────
+///
+/// `main::passage_guard_bench::what_the_guard_costs_a_real_service` replays a real
+/// service through `candidates_for_window` and the real `Router` and prints both
+/// columns. Three of the operator's own services, 971 finalized transcript lines:
+///
+/// | service | lines | suggestions | auto-fires | duplicates removed | verses lost |
+/// |---|---|---|---|---|---|
+/// | 35 | 332 | 220 → 197 | 38 → 34 | 4 | **0** |
+/// | 39 | 246 | 111 → 90  | 34 → 33 | 1 | **0** |
+/// | 40 | 393 | 178 → 161 | 37 → 31 | 6 | **0** |
+///
+/// **Eleven duplicate broadcasts removed, no verse lost, and about one suggestion
+/// in eight held.** Every removed broadcast was of the verse the screens were
+/// already showing, which the bench checks rather than assumes.
+///
+/// **The CI scorecard cannot see this change at all, and that is stated rather than
+/// glossed.** `eval::print_scorecard` reports 100% recall, 53/53 and a 0.0%
+/// wrong-verse rate with the guard on and exactly the same with it off, because it
+/// scores one window at a time and has no wall for a verse to be already on. RG-296
+/// records the identical blindness for the promotion that created `Reading`. An
+/// instrument that returns the same answer either way is not evidence.
+///
+/// **What has NOT been measured.** These are FINALS out of the database, and the
+/// live path also runs detection on every partial — roughly one a second — so every
+/// count above is a floor on the churn rather than a measurement of it. Suggestions
+/// are never persisted, so the database can corroborate the fire column and not the
+/// suggestion column. There is no recorded church audio on this machine, so nothing
+/// here is a claim about accuracy in any language.
+///
+/// ── WHAT IT IS NOT ────────────────────────────────────────────────────────────
+///
+/// It is NOT `quoted(text, Some(on_screen_book), k)`. Restricting the index by the
+/// passage in memory was the obvious implementation and it is the wrong one, for
+/// the reason that call site already records: *"a preacher reading Proverbs who
+/// quotes Isaiah is quoting Isaiah"*, and a restriction would hide Isaiah until
+/// something else moved memory — which needs an operator, which is the one thing a
+/// guard may never need. This asks for positive evidence that the preacher is still
+/// in the passage, so a preacher who has moved on is never held even once.
+///
+/// Rule A also holds no candidate it did not itself arm on: the in-passage run that
+/// armed it is never held, so **something always survives to announce the hold**.
+/// A guard whose quiet looks exactly like a detector going deaf is rule 35's own
+/// failure, and neither rule here can reach that state.
+pub fn hold_for_the_passage(
+    on_screen: Option<&VerseRef>,
+    on_the_wall: Option<&str>,
+    window_states_a_reference: bool,
+    cands: &[(&VerseRef, DetectionMethod)],
+) -> Vec<Option<HeldReason>> {
+    // RULE B. Independent of everything else — including a window that names a
+    // reference, because a NAMED reference is not held by this rule at all and a
+    // READ one adds nothing whether or not the name was said in the same breath.
+    let mut out: Vec<Option<HeldReason>> = cands
+        .iter()
+        .map(|(r, m)| {
+            (m.came_from_the_verse_text() && on_the_wall.is_some_and(|w| w == reference_key(r)))
+                .then_some(HeldReason::AlreadyOnScreen)
+        })
+        .collect();
+    // RULE A. The words said; nothing Relay remembers may stand in front of them.
+    if window_states_a_reference {
+        return out;
+    }
+    let Some(passage) = on_screen else {
+        return out;
+    };
+    let inside = |r: &VerseRef| r.book == passage.book && r.chapter == passage.chapter;
+    // Armed by evidence in THIS window, or not at all. A candidate rule B is
+    // already holding still counts as evidence: the preacher IS reading the verse
+    // on the wall, which is the very thing rule A needs to know.
+    if !cands
+        .iter()
+        .any(|(r, m)| m.is_a_verbatim_run() && inside(r))
+    {
+        return out;
+    }
+    for (slot, (r, m)) in out.iter_mut().zip(cands) {
+        if slot.is_none() && m.came_from_the_verse_text() && !inside(r) {
+            *slot = Some(HeldReason::OutsideTheReading);
+        }
+    }
+    out
+}
+
+/// `"Book Chapter:Verse"` — the same key `pipeline::Fire::key_for` builds and the
+/// same one `Router` debounces on.
+///
+/// Stated here because the guard compares a candidate with what the router says is
+/// on the wall, and two spellings of one key is how a guard silently stops
+/// matching. This module is DB- and IO-free on purpose and `pipeline` is not, so
+/// the format lives in one place on each side and `the_two_reference_keys_agree`
+/// holds them to the same answer.
+pub fn reference_key(r: &VerseRef) -> String {
+    format!("{} {}:{}", r.book, r.chapter, r.verse)
 }
 
 pub fn detect_bare_verses(text: &str) -> Vec<i64> {
@@ -7919,5 +8167,423 @@ mod reading_tests {
             serde_json::to_string(&DetectionMethod::Reading).unwrap(),
             "\"reading\""
         );
+    }
+}
+
+/// **THE PASSAGE GUARD** — `hold_for_the_passage`. The decision and the register
+/// row are dated 2026-09-25; they carry no section number here on purpose, because
+/// the two this was drafted against were taken by other work the same day and a
+/// citation that resolves to the WRONG place is worse than one that resolves to
+/// nothing.
+///
+/// Every case here is either the operator's instruction of 2026-09-25 or a row out
+/// of their own database. The three the design deliberately does NOT catch are
+/// tested too, as negatives, because a guard nobody can state the limits of is one
+/// that will be widened by the next person who reads it.
+#[cfg(test)]
+mod passage_guard {
+    use super::*;
+
+    fn vr(book: &str, chapter: i64, verse: i64) -> VerseRef {
+        VerseRef {
+            book: book.into(),
+            chapter,
+            verse,
+        }
+    }
+
+    /// Shorthand: `hold(on_screen, on_the_wall, named_a_reference, candidates)`.
+    fn hold(
+        on_screen: Option<&VerseRef>,
+        wall: Option<&str>,
+        named: bool,
+        cands: &[(&VerseRef, DetectionMethod)],
+    ) -> Vec<Option<HeldReason>> {
+        hold_for_the_passage(on_screen, wall, named, cands)
+    }
+
+    // ── RULE B · THE WALL ALREADY SAYS IT ────────────────────────────────────
+
+    /// **FIELD, service 40, 2026-09-25, 769 s → 780 s.** The preacher said
+    /// *"Jeremiah chapter 6 verse 16"*, Relay fired it `Direct` at 0.95, and eleven
+    /// seconds later the preacher read the verse aloud — *"And see. And ask. For the
+    /// old paths. Where is the good way?"* — and Relay put the SAME verse on the
+    /// wall a second time. The same morning did it again with `Hebrews 6:12` at
+    /// 897 s → 908 s and `Romans 15:4` at 1034 s → 1051 s.
+    ///
+    /// Announce the reference, then read it, is the ordinary shape of a sermon.
+    #[test]
+    fn field_2026_09_25_a_verse_read_while_it_is_on_the_wall_is_held() {
+        let jer = vr("Jeremiah", 6, 16);
+        let out = hold(
+            Some(&jer),
+            Some("Jeremiah 6:16"),
+            false,
+            &[(&jer, DetectionMethod::Reading)],
+        );
+        assert_eq!(out, vec![Some(HeldReason::AlreadyOnScreen)]);
+    }
+
+    /// The same shape with nothing but a reading on either side — **service 40,
+    /// 615 s → 626 s, `Mark 6:2` twice**, eleven seconds apart, the second at a
+    /// HIGHER confidence (0.69 → 0.90) because more of the verse had been heard. So
+    /// the duplicate is the stronger candidate by every rule in `pipeline::better`,
+    /// and ranking could never have chosen against it.
+    #[test]
+    fn field_2026_09_25_mark_6_2_twice_from_one_reading() {
+        let mark = vr("Mark", 6, 2);
+        assert_eq!(
+            hold(
+                Some(&mark),
+                Some("Mark 6:2"),
+                false,
+                &[(&mark, DetectionMethod::Reading)]
+            ),
+            vec![Some(HeldReason::AlreadyOnScreen)]
+        );
+    }
+
+    /// Rule B covers the short quotation and the paraphrase as well, and the reason
+    /// is one sentence: a candidate found in the verse's own text cannot tell the
+    /// operator anything about the verse they are already looking at.
+    #[test]
+    fn every_kind_of_text_match_is_held_by_the_wall_but_no_reference_is() {
+        let r = vr("Psalms", 23, 4);
+        for m in [
+            DetectionMethod::Reading,
+            DetectionMethod::Quoted,
+            DetectionMethod::Semantic,
+        ] {
+            assert_eq!(
+                hold(Some(&r), Some("Psalms 23:4"), false, &[(&r, m)]),
+                vec![Some(HeldReason::AlreadyOnScreen)],
+                "{m:?} of the verse on the wall should be held"
+            );
+        }
+        // …and NOTHING reference-shaped is, at any time, under any rule. This is
+        // constraint 1 and rule 10: only what Relay HEARD may reach a congregation,
+        // and only what Relay heard may reach the OPERATOR unguarded either.
+        for m in [
+            DetectionMethod::Direct,
+            DetectionMethod::Ambiguous,
+            DetectionMethod::UncertainBook,
+            DetectionMethod::UncertainNumber,
+        ] {
+            assert_eq!(
+                hold(Some(&r), Some("Psalms 23:4"), false, &[(&r, m)]),
+                vec![None],
+                "{m:?} was parsed from the words and may never be held"
+            );
+        }
+    }
+
+    /// Nothing on the wall → rule B has nothing to compare with. This is the state
+    /// after a clear or a blackout (`Router::forget_last_fire`) and after a song
+    /// (`Router::forget_wall`), and it is what makes a re-reading of a verse the
+    /// operator cleared come straight back.
+    #[test]
+    fn a_cleared_wall_holds_nothing() {
+        let r = vr("Psalms", 23, 4);
+        assert_eq!(
+            hold(Some(&r), None, false, &[(&r, DetectionMethod::Reading)]),
+            vec![None]
+        );
+    }
+
+    // ── RULE A · OUTSIDE THE READING ─────────────────────────────────────────
+
+    /// The operator's own complaint. `Psalms 107:8` is being read; the same words are
+    /// verbatim in `Psalms 107:21`, and a run also lands in `Ephesians 5:20`, which is
+    /// a different passage entirely. The one inside the chapter survives; the one
+    /// outside it is held.
+    #[test]
+    fn while_a_passage_is_being_read_a_verse_from_elsewhere_is_held() {
+        let on = vr("Psalms", 107, 8);
+        let same_chapter = vr("Psalms", 107, 21);
+        let elsewhere = vr("Ephesians", 5, 20);
+        assert_eq!(
+            hold(
+                Some(&on),
+                Some("Psalms 107:8"),
+                false,
+                &[
+                    (&on, DetectionMethod::Reading),
+                    (&same_chapter, DetectionMethod::Quoted),
+                    (&elsewhere, DetectionMethod::Quoted),
+                ]
+            ),
+            vec![
+                Some(HeldReason::AlreadyOnScreen),
+                None,
+                Some(HeldReason::OutsideTheReading),
+            ]
+        );
+    }
+
+    /// **`PhraseHit::sole`'s own example, and it is a within-chapter one.** A
+    /// preacher reading John 3:16 aloud produces a 25-word run in 3:16 and a 10-word
+    /// run in 3:15, because those ten words are in both. 3:15 stays offered: it is a
+    /// perfectly reasonable thing for the operator to want, it is inside the chapter,
+    /// and the operator asked for suggestions to stay *within the verse/chapter*.
+    #[test]
+    fn a_sub_span_inside_the_same_chapter_is_still_offered() {
+        let on = vr("John", 3, 16);
+        let sub = vr("John", 3, 15);
+        assert_eq!(
+            hold(
+                Some(&on),
+                Some("John 3:16"),
+                false,
+                &[
+                    (&on, DetectionMethod::Reading),
+                    (&sub, DetectionMethod::Quoted),
+                ]
+            ),
+            vec![Some(HeldReason::AlreadyOnScreen), None]
+        );
+    }
+
+    /// **CONSTRAINT 1, AND IT IS THE WHOLE OF RULE 40.** "Turn to Romans eight"
+    /// while Psalms 107 is being read gets through in the same instant it always
+    /// did — and so does everything else in that window, because a window that names
+    /// a reference disarms rule A entirely rather than exempting one candidate.
+    #[test]
+    fn a_window_that_names_a_reference_holds_nothing_at_all() {
+        let on = vr("Psalms", 107, 8);
+        let spoken = vr("Romans", 8, 28);
+        let elsewhere = vr("Ephesians", 5, 20);
+        assert_eq!(
+            hold(
+                Some(&on),
+                Some("Psalms 107:8"),
+                // the words said
+                true,
+                &[
+                    (&on, DetectionMethod::Reading),
+                    (&spoken, DetectionMethod::Direct),
+                    (&elsewhere, DetectionMethod::Quoted),
+                ]
+            ),
+            // Rule B still holds the verse that is literally on the wall — that is
+            // not about the passage and a named reference does not make a re-showing
+            // of the current verse informative. Rule A holds nothing.
+            vec![Some(HeldReason::AlreadyOnScreen), None, None]
+        );
+    }
+
+    /// **WHAT ENDS IT, MEASURED BY ITS ABSENCE.** The preacher has stopped reading
+    /// Psalms 107 and is now quoting Isaiah without naming it. There is no
+    /// in-passage run in this window, so the guard does not arm and Isaiah is
+    /// offered — the first window, not the second, and with nothing to clear.
+    ///
+    /// This is why the guard is not `quoted(text, Some(on_screen_book), k)`. That
+    /// restriction would hide Isaiah until something else moved `ContextMemory`,
+    /// which needs an operator.
+    #[test]
+    fn a_preacher_who_has_moved_on_is_never_held_even_once() {
+        let on = vr("Psalms", 107, 8);
+        let isaiah = vr("Isaiah", 58, 6);
+        assert_eq!(
+            hold(
+                Some(&on),
+                Some("Psalms 107:8"),
+                false,
+                &[(&isaiah, DetectionMethod::Reading)]
+            ),
+            vec![None]
+        );
+    }
+
+    /// A paraphrase inside the passage is NOT evidence that the preacher is reading
+    /// it. A cosine is a bag of words in no order (rule 18); the assertion "this
+    /// chapter is being read aloud" needs words in the speaker's own order, which is
+    /// what a verbatim run is and the only reason `Reading` was allowed to exist.
+    #[test]
+    fn only_a_verbatim_run_may_arm_the_guard() {
+        let on = vr("Psalms", 107, 8);
+        let same_chapter = vr("Psalms", 107, 21);
+        let elsewhere = vr("Ephesians", 5, 20);
+        assert_eq!(
+            hold(
+                Some(&on),
+                None,
+                false,
+                &[
+                    (&same_chapter, DetectionMethod::Semantic),
+                    (&elsewhere, DetectionMethod::Quoted),
+                ]
+            ),
+            vec![None, None],
+            "a paraphrase in the passage must not arm the guard"
+        );
+        // Swap the in-passage evidence for a real run and the same window holds.
+        assert_eq!(
+            hold(
+                Some(&on),
+                None,
+                false,
+                &[
+                    (&same_chapter, DetectionMethod::Quoted),
+                    (&elsewhere, DetectionMethod::Quoted),
+                ]
+            ),
+            vec![None, Some(HeldReason::OutsideTheReading)],
+        );
+    }
+
+    /// Nothing on the screen at all — the first reading of a service — holds
+    /// nothing. A guard that bit before anything had ever been fired would make the
+    /// first verse of every service harder to reach than the rest.
+    #[test]
+    fn nothing_on_screen_holds_nothing() {
+        let a = vr("Psalms", 107, 8);
+        let b = vr("Ephesians", 5, 20);
+        assert_eq!(
+            hold(
+                None,
+                None,
+                false,
+                &[
+                    (&a, DetectionMethod::Reading),
+                    (&b, DetectionMethod::Quoted)
+                ]
+            ),
+            vec![None, None]
+        );
+    }
+
+    /// Chapter, not book. The operator said *verse/chapter*, and Psalms 23 is a
+    /// different passage from Psalms 107 however much the book name agrees.
+    #[test]
+    fn the_scope_is_the_chapter_and_not_the_book() {
+        let on = vr("Psalms", 107, 8);
+        let other_chapter = vr("Psalms", 23, 1);
+        assert_eq!(
+            hold(
+                Some(&on),
+                None,
+                false,
+                &[
+                    (&on, DetectionMethod::Reading),
+                    (&other_chapter, DetectionMethod::Quoted),
+                ]
+            ),
+            vec![None, Some(HeldReason::OutsideTheReading)]
+        );
+    }
+
+    // ── THE THREE THINGS IT DELIBERATELY DOES NOT CATCH ─────────────────────
+
+    /// **FIELD, service 39, 1508 s → 1517 s: `Philippians 1:23` then `1:24`.** One
+    /// reading walking forward. Rule B holds the first (it is on the wall) and the
+    /// second is NOT held, so the wall follows the reader.
+    ///
+    /// Freezing on verse 23 until somebody named another reference would leave a
+    /// verse the preacher had finished in front of a congregation for as long as the
+    /// reading lasted — a wrong verse chosen on purpose — and it would reverse the
+    /// instruction of 2026-09-23 that created `Reading`. **If this assertion is ever
+    /// inverted, it is a product decision and not a bug fix.**
+    #[test]
+    fn field_2026_09_24_the_reader_walking_to_the_next_verse_is_followed() {
+        let on = vr("Philippians", 1, 23);
+        let next = vr("Philippians", 1, 24);
+        assert_eq!(
+            hold(
+                Some(&on),
+                Some("Philippians 1:23"),
+                false,
+                &[
+                    (&on, DetectionMethod::Reading),
+                    (&next, DetectionMethod::Reading),
+                ]
+            ),
+            vec![Some(HeldReason::AlreadyOnScreen), None],
+        );
+    }
+
+    /// **FIELD, service 39, 955 s → 968 s: `Micah 4:1` as a reading, then the SAME
+    /// verse thirteen seconds later as a spoken reference.** A duplicate fire, and
+    /// this guard will not touch it: the second was heard as a reference, and
+    /// constraint 1 says a spoken reference always gets through. Fixing it means
+    /// changing `DEFAULT_DEBOUNCE_MS`, which governs every `Direct` in the product.
+    #[test]
+    fn a_spoken_reference_repeating_a_reading_is_not_this_guards_business() {
+        let micah = vr("Micah", 4, 1);
+        assert_eq!(
+            hold(
+                Some(&micah),
+                Some("Micah 4:1"),
+                true,
+                &[(&micah, DetectionMethod::Direct)]
+            ),
+            vec![None]
+        );
+    }
+
+    /// **THE INVARIANT THAT MAKES THE ANNOUNCEMENT REACHABLE.** Rule A arms only on
+    /// an in-passage verbatim run, and rule A never holds an in-passage candidate —
+    /// so whenever rule A holds anything, something survives to carry the report.
+    ///
+    /// Rule B can hold a window's every candidate, and that is correct and needs no
+    /// escape: the one thing it holds is the verse the screens are already showing,
+    /// so the evidence the operator needs is the wall.
+    #[test]
+    fn rule_a_can_never_hold_a_whole_window() {
+        let on = vr("Psalms", 107, 8);
+        let a = vr("Ephesians", 5, 20);
+        let b = vr("Romans", 12, 2);
+        let out = hold(
+            Some(&on),
+            None,
+            false,
+            &[
+                (&on, DetectionMethod::Reading),
+                (&a, DetectionMethod::Quoted),
+                (&b, DetectionMethod::Semantic),
+            ],
+        );
+        assert!(
+            out.iter().any(Option::is_none),
+            "rule A held every candidate, so nothing could announce it"
+        );
+        assert_eq!(
+            out.iter()
+                .filter(|h| **h == Some(HeldReason::OutsideTheReading))
+                .count(),
+            2
+        );
+    }
+
+    /// The order of the answers is the order of the candidates, because the caller
+    /// zips them. An off-by-one here would hold the wrong verse silently.
+    #[test]
+    fn the_answers_line_up_with_the_candidates() {
+        let on = vr("Psalms", 107, 8);
+        let out_of = vr("Ephesians", 5, 20);
+        let cands = [
+            (&out_of, DetectionMethod::Quoted),
+            (&on, DetectionMethod::Reading),
+        ];
+        let out = hold(Some(&on), None, false, &cands);
+        assert_eq!(out.len(), cands.len());
+        assert_eq!(out[0], Some(HeldReason::OutsideTheReading));
+        assert_eq!(out[1], None);
+    }
+
+    /// `window_states_a_reference` is rule 40's pair, and the second half is the one
+    /// FIELD F-8 was about: a window can STATE a chapter with nothing parsing out of
+    /// it, and a preacher who has just announced a chapter is no longer reading the
+    /// last one.
+    #[test]
+    fn a_stated_chapter_disarms_the_guard_even_when_nothing_parsed() {
+        assert!(!window_states_a_reference("and he said unto them", None));
+        assert!(window_states_a_reference(
+            "is taken from 4th peter chapter 5 verse 10",
+            None
+        ));
+        let anchor = vr("Romans", 8, 28);
+        assert!(window_states_a_reference("romans 8 28", Some(&anchor)));
+        // Swahili, for the same reason `chapter_named` is not an English literal.
+        assert!(window_states_a_reference("yohana sura ya tatu", None));
     }
 }

@@ -5984,3 +5984,142 @@ fn switching_translation_rebuilds_the_indexes_that_read_it() {
         "the quotation detector is still scanning the old translation"
     );
 }
+
+/// **THE PASSAGE GUARD ON THE FIRE PATH** — `detection::hold_for_the_passage`.
+///
+/// Field, service 40 of 2026-09-25, 769 s → 780 s. The preacher announced
+/// *"Jeremiah chapter 6 verse 16"*; Relay auto-fired it `Direct` at 0.95. Eleven
+/// seconds later they read the verse aloud, and **Relay put the same verse on the
+/// congregation's screens a second time.** The same morning did it again with
+/// `Hebrews 6:12` and `Romans 15:4`, and service 39 with `Philippians 1:23` and
+/// `Mark 6:2` — six times across three services, at gaps of 11, 17 and 120 seconds
+/// against a ten-second cooldown.
+///
+/// Driven through the real commands rather than the pure rule, because the rule
+/// depends on a fact only the running app has: what the ROUTER says is on the wall,
+/// which is not `ContextMemory` (that survives a blackout on purpose) and not
+/// `fired_at` (that expires in ten seconds).
+#[test]
+fn a_verse_read_aloud_while_it_is_already_on_the_wall_is_not_fired_again() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+    let held: std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = held.clone();
+    h.listen("detection://held", move |e| {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(e.payload()) {
+            sink.lock().unwrap().push(v);
+        }
+    });
+
+    // 769 s: the reference, spoken.
+    emit_detections(&h, "Jeremiah chapter 6 verse 16.", 769_000, true, None);
+    settle();
+    assert_eq!(
+        wall.references(),
+        vec!["Jeremiah 6:16".to_string()],
+        "the spoken reference must still reach the screens"
+    );
+
+    // 780 s: the same verse, read aloud. Eleven seconds — outside the cooldown.
+    emit_detections(
+        &h,
+        "Stand ye in the ways, and see, and ask for the old paths, where is the good way, \
+         and walk therein, and ye shall find rest for your souls.",
+        780_000,
+        true,
+        None,
+    );
+    settle();
+
+    assert_eq!(
+        wall.references(),
+        vec!["Jeremiah 6:16".to_string()],
+        "the verse already on the screens was broadcast a second time: {:?}",
+        wall.references()
+    );
+    let got = held.lock().unwrap();
+    let report = got
+        .iter()
+        .find(|v| v["held"][0]["reference"] == "Jeremiah 6:16")
+        .unwrap_or_else(|| {
+            panic!("Relay held a candidate and said nothing about it (rule 35): {got:?}")
+        });
+    assert_eq!(
+        report["held"][0]["reason"], "already_on_screen",
+        "the report must say WHICH rule held it"
+    );
+}
+
+/// **AND THE RELEASE, ON THE SAME PATH.** The operator clears the screens, the
+/// preacher carries on reading the verse that was up — it comes straight back.
+///
+/// Without `forget_last_fire` clearing the wall, rule B would go on believing the
+/// verse was on screen and would decline to put it back: a screen held blank by a
+/// guard, which is the defect `forget_last_fire` was written for arriving from a new
+/// direction. Watched to fail with that one line removed.
+#[test]
+fn a_verse_read_on_after_the_operator_cleared_the_screens_comes_back() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    emit_detections(&h, "Jeremiah chapter 6 verse 16.", 1_000, true, None);
+    settle();
+    assert_eq!(wall.references(), vec!["Jeremiah 6:16".to_string()]);
+
+    clear_screens(h.clone()).expect("the panic control must work");
+    settle();
+    assert!(wall.cleared());
+
+    // The preacher is still reading it, 20 s on — past the cooldown, which
+    // `forget_last_fire` has dropped anyway.
+    emit_detections(
+        &h,
+        "Stand ye in the ways, and see, and ask for the old paths, where is the good way, \
+         and walk therein, and ye shall find rest for your souls.",
+        21_000,
+        true,
+        None,
+    );
+    settle();
+    assert_eq!(
+        wall.references(),
+        vec!["Jeremiah 6:16".to_string(), "Jeremiah 6:16".to_string()],
+        "a cleared verse the preacher is still reading must come back"
+    );
+}
+
+/// **AND A SPOKEN REFERENCE STILL CUTS THROUGH A READING** — constraint 1, rule 40.
+///
+/// Psalms 23 is on the screens and being read aloud. The preacher says *"turn to
+/// Romans chapter eight verse twenty-eight"*, and it reaches the congregation in the
+/// same window, with nothing held. A guard that could swallow a spoken reference
+/// would be strictly worse than the churn it fixes.
+#[test]
+fn a_spoken_reference_cuts_through_a_reading() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    emit_detections(&h, "Psalms chapter 23 verse 1.", 1_000, true, None);
+    settle();
+    assert_eq!(wall.references(), vec!["Psalms 23:1".to_string()]);
+
+    emit_detections(
+        &h,
+        "The LORD is my shepherd; I shall not want. Now turn to Romans chapter eight \
+         verse twenty eight.",
+        30_000,
+        true,
+        None,
+    );
+    settle();
+    assert_eq!(
+        wall.references().last().map(String::as_str),
+        Some("Romans 8:28"),
+        "a reference the preacher named must reach the screens whatever is being read: {:?}",
+        wall.references()
+    );
+}

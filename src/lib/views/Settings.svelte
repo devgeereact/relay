@@ -1577,23 +1577,34 @@
                detection inspector prints the same pair in the same words.
                `dd`, not `input`. Nothing here is draggable, and the label says
                "result" rather than letting the layout imply it. -->
-          <p class="r-lbl s-gatelbl">What that sets right now — higher fires more</p>
+          <p class="r-lbl s-gatelbl">What a match needs right now</p>
           <dl class="s-gatedl">
-            <dt>Auto-fire</dt>
+            <dt>Auto-fire needs</dt>
             <dd class="r-mono">{gate.autoPct ?? '—'}<span class="s-gateof"> / 100</span></dd>
-            <dt>Suggest</dt>
+            <dt>Suggest needs</dt>
             <dd class="r-mono">{gate.suggestPct ?? '—'}<span class="s-gateof"> / 100</span></dd>
           </dl>
-          <!-- THE SENTENCE THAT SAYS WHICH WAY THESE RUN. Until 2026-09-23 the pair
-               read `Auto-fire above 90%` at the dial's cautious end and `30%` at its
-               eager end — the raw confidence bars, printed directly under a slider
-               they run the opposite way to. The operator read the larger number as
-               the keener setting, which is the only way a figure under a control
-               CAN read. `Thresholds::readiness` turns the gate the right way up and
-               this line names the scale, because a bare number over a changed
-               meaning is how the last one misled. DECISIONS §117. -->
-          <p class="rw-foot s-gatescale">0 is never, 100 is anything. Suggestions run 20 points
-            ahead of auto-fire, so there is always a band Relay offers rather than fires.</p>
+          <!-- THE SENTENCE THAT SAYS WHICH WAY THESE RUN, and it has been rewritten
+               twice for two different complaints about the same pair.
+
+               §117: the raw bars were printed under a slider they run the opposite
+               way to, so the larger number read as the keener setting. That was
+               answered by inverting them into a readiness.
+
+               §121: on a readiness scale a SUGGESTION is the larger number, because
+               it is the easier bar — and the operator read that as a suggestion
+               outranking an auto-fire. *"suggestions should be lower by 20 if auto
+               fire is on 100 so auto fire has the higher priority."*
+
+               Only one framing answers both, and it is the WORD rather than the
+               arithmetic: say what each bar NEEDS. Auto-fire needs more, always,
+               by exactly one band, because it is the stricter rule. A smaller
+               number under "needs" is plainly the easier bar rather than the
+               keener setting. The figures still fall as the dial rises and nothing
+               can change that; the dial is the control and says so itself. -->
+          <p class="rw-foot s-gatescale">A match is scored 0–100. Auto-fire needs 20 points more
+            than a suggestion, always, so there is a band Relay offers rather than fires — and
+            moving the dial right lowers both, which is what makes it eager.</p>
           <!-- THE SENTENCE THAT SEPARATES THREE STATES A NUMBER CANNOT (rule 35):
                no engine, an engine nobody has asked yet, and a gate the learning
                has walked off the dial's curve. `describeGate` decides which, once,

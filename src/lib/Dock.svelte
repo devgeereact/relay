@@ -218,7 +218,8 @@
     detections,
     resolvedDetections,
   } from './stores/capture.js';
-  import { rememberMarks } from './transcriptmark.js';
+  import { rememberMarks, readAloud } from './transcriptmark.js';
+  import { passageHold } from './stores/capture.js';
   import { methodBadgeKey } from './detect.js';
   import { t } from './i18n.js';
   import { describeMediaClock, mediaIdFromUrl } from './mediaclock.js';
@@ -1098,9 +1099,24 @@
              Relay thinks it heard, and the method's own word is on the chip.
              NO PERCENTAGE, ever: only `direct` has a real parse confidence and a
              number beside a cosine is worse than no number (rule 18). -->
-        <p class="trl" class:mk-heard={m?.kind === 'heard'} class:mk-guess={m?.kind === 'guess'}>
+        <!-- HOW STRONG THE MATCH WAS, where there is an honest answer. The
+             operator, 2026-09-25: *"colour coded with the highest match so its
+             easy to filter through what's closest to what was heard"*. `m.run`
+             is a COUNT OF WORDS the preacher said, and it is `null` for the four
+             methods where no honest measure exists — see `transcriptmark.js`,
+             which has the whole argument and the reason a confidence could not
+             be used for this. `readAloud` is the strong tier and it is the
+             BACKEND'S decision (eight words and sole, `for_quotation`), never a
+             bar re-derived here. Never plural-guarded: `MIN_RUN_WORDS` is 5, so
+             a run of one cannot exist. -->
+        <p
+          class="trl"
+          class:mk-heard={m?.kind === 'heard'}
+          class:mk-guess={m?.kind === 'guess'}
+          class:mk-read={readAloud(m)}
+        >
           <span class="tt r-mono">{l.at}</span><span class="tx">{l.t}</span>
-          {#if m}<span class="tref r-mono">{m.reference}<i class="tkind">{$t(methodBadgeKey(m.claim))}</i></span>{/if}
+          {#if m}<span class="tref r-mono">{m.reference}<i class="tkind">{$t(methodBadgeKey(m.claim))}</i>{#if m.run}<i class="trun">{$t('live.run_words', { n: m.run })}</i>{/if}</span>{/if}
         </p>
       {/each}
       {#if $transcript.partial}
@@ -1114,6 +1130,31 @@
         <p class="trl empty">{$capture.capturing ? 'listening…' : 'not listening'}</p>
       {/if}
     </div>
+    <!-- ══ WHAT RELAY IS HOLDING BACK (RG-306, DECISIONS §122) ══
+         The guard stops offering verses while a preacher reads, which is what
+         was asked for — and from this chair it is indistinguishable from a
+         detector that has gone deaf. That is rule 35 stated exactly, so the
+         hold says so.
+
+         TWO SENTENCES, NOT ONE. "The screens are already showing it" is
+         reassuring and needs no action; "verses from outside this reading" is
+         the operator's to override if they disagree. A line that said the same
+         for both would be the status that cannot detect its own failure.
+
+         OUTSIDE `.dbody`, deliberately: the transcript scrolls and this must
+         not scroll away from somebody who is watching the wall rather than the
+         card. No percentage — a held candidate's confidence is the least
+         trustworthy number in the product, being the score of a claim Relay
+         decided not to act on (rule 18). -->
+    {#if $passageHold?.held?.length}
+      <p class="phold" role="status" aria-live="polite">
+        {#if $passageHold.passage}
+          Holding {$passageHold.held.length} from outside {$passageHold.passage}, while it is being read
+        {:else}
+          Holding {$passageHold.held.length} the screens are already showing
+        {/if}
+      </p>
+    {/if}
   </div>
 
   <div class="dpanel">
@@ -1619,15 +1660,45 @@
      the same instruction. An auto margin absorbs the free space instead, and when
      there is none left it contributes nothing and the pane scrolls normally. */
   .tbody > :first-child { margin-top: auto; }
+  /* ── THE CHIP GETS ITS OWN LINE BEFORE IT STARVES THE WORDS (RG-304) ─────
+     `.tref` is `flex: 0 0 auto` with `white-space: nowrap`, so it takes whatever
+     width it needs and the transcript text gets the remainder. With `min-width:
+     0` on `.tx` — the standard flex fix, and correct for a row with nothing else
+     on it — the remainder is allowed to go to ZERO, and the sentence towers
+     instead. MEASURED in a real layout engine at the card's own widths, rendering
+     `0:03:00 · a verse read aloud · Psalms 23:1 Reading 14 words`:
+
+         card    today          with a floor and a wrap
+         440px   39px row       39px      (chip still inline)
+         383px   56px           62px
+         340px   89px           62px
+         300px   106px, CLIPPED 79px
+         260px   223px, CLIPPED 79px
+
+     The tower is not hypothetical and it is not new: at 260px the shipped card
+     already clips two rows and pushes one line to 223px inside a 152px body. The
+     run count made it worse by widening the chip, which is what found it.
+
+     `flex-wrap` plus a floor on the words, and nothing else. The basis must be
+     `0` rather than `auto`, or the sentence's own content width is the
+     hypothetical size and the chip wraps on every row however wide the card is.
+     The floor REPLACES `min-width: 0` rather than sitting beside it — declared
+     last, it is what the cascade keeps, and my first attempt put it first and
+     silently kept the zero. Below the floor the chip drops to its own line,
+     right-aligned by the `margin-left: auto` it already had, and the words get
+     the full width: a taller row, never a clipped one. */
   .trl {
-    margin: 0; display: flex; gap: 8px; padding: 3px 5px;
+    margin: 0; display: flex; flex-wrap: wrap; gap: 8px; padding: 3px 5px;
     border-radius: var(--v-r-sm); border-left: 2px solid transparent;
   }
   .trl .tt {
     flex: 0 0 auto; padding-top: 1px;
     font-size: var(--v-fs-fig); color: var(--v-faint);
   }
-  .trl .tx { font-size: var(--v-fs-b2); line-height: 1.45; color: var(--v-dim); min-width: 0; }
+  .trl .tx {
+    flex: 1 1 0; font-size: var(--v-fs-b2); line-height: 1.45; color: var(--v-dim);
+    min-width: 11em;
+  }
   /* What is still being said is the SELECTION colour — it is the thing being
      worked on, not a claim about a screen. Never cyan (that means the AI has
      guessed at a verse) and never amber. */
@@ -1661,6 +1732,24 @@
   .trl.mk-heard, .trl.mk-guess { background: var(--v-surf2); }
   .trl.mk-heard .tx, .trl.mk-guess .tx { color: var(--v-txt); }
   .trl.mk-heard { border-left-color: var(--v-500); }
+  /* A HOLD IS A CAUTION (RG-306). It warns, it is not a failure, and it promises
+     nothing about a screen — the textbook case for the ochre rule 18 leaves
+     free. Amber is ON AIR, amethyst is rehearsal, and cyan is spent three rules
+     below on the guess marks in this same card, so a hold in cyan would read as
+     one more guess rather than as Relay declining to make one. */
+  .phold {
+    flex: 0 0 auto;
+    margin: 0;
+    padding: 3px 9px 4px;
+    /* NO FALLBACK HEX. Both tokens are defined in `src/tokens.css` and this
+       component is inside `workspacegrammar.test.js`'s token sweep, which
+       forbids a raw hex here — a fallback is a second source for a colour the
+       palette already owns, which is how a token and its copy drift. */
+    border-top: 1px solid var(--v-caution-line);
+    color: var(--v-caution);
+    font-size: var(--v-fs-cap);
+    line-height: 1.3;
+  }
   .trl.mk-guess { border-left-color: var(--v-cyan-line); }
   .tref {
     flex: 0 0 auto; margin-left: auto; align-self: flex-start;
@@ -1674,6 +1763,39 @@
   .trl.mk-guess .tref {
     color: var(--v-cyan); background: var(--v-cyan-soft); border: 1px solid var(--v-cyan-line);
   }
+
+  /* ── HOW STRONG THE MATCH WAS, IN THE ONE CURRENCY THAT IS HONEST ──────────
+     *"colour coded with the highest match so its easy to filter through what's
+     closest to what was heard"* — the operator, 2026-09-25.
+
+     THERE WAS NO FREE INK FOR A THIRD TIER and that is worth writing down
+     rather than working around. Amber is ON AIR, amethyst is rehearsal, ochre
+     is a caution and a reading is not one, grey is CUED, emerald would claim an
+     outcome, steel is spent two rules above on the line being said RIGHT NOW,
+     and the section hues are a position in the running order. Rule 18 leaves
+     nothing over, so the strong tier is a WEIGHT STEP INSIDE THE CYAN IT
+     ALREADY WEARS: the fuller `--v-cyan` on the edge and on the chip's border
+     where the line cyan carries the weaker one. That is also the honest
+     statement — a reading may reach a wall unattended (DECISIONS §118) and its
+     reference was still never spoken, so it stays in the unheard family and
+     steps up within it rather than crossing into the neutral `direct` wears.
+
+     THE COUNT IS THE RANKING and it is a count, not a score. `.trun` is words
+     the preacher actually said, with the unit printed, and it appears for the
+     two methods whose evidence is a contiguous run of one verse. It is ABSENT
+     for a paraphrase (a cosine has no length), for `ambiguous` (a placeholder)
+     and for `uncertain_book` (a real number about a word nobody said — rule
+     10), and the absence is part of the ranking. `transcriptmark.js` carries the
+     argument; this is only where it is drawn. */
+  .trl.mk-read { border-left-color: var(--v-cyan); }
+  .trl.mk-read .tref { border-color: var(--v-cyan); }
+  /* Tabular figures so two runs one above the other can be compared by eye in a
+     ragged-right chip, which is the whole of "easy to filter through". */
+  .trun {
+    font-style: normal; font-size: var(--v-fs-cap);
+    font-variant-numeric: tabular-nums; opacity: .72;
+  }
+  .trl.mk-read .trun { opacity: 1; font-weight: 600; }
   /* The method's own word, in the vocabulary the claim card already uses
      (`detect.js::methodBadgeKey`) — one concept, one name. Quieter than the
      reference, because WHICH VERSE is what the operator is scanning for. */

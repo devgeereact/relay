@@ -97,15 +97,22 @@ impl Thresholds {
     ///
     /// A threshold cannot be made to rise with eagerness — a bar you must clear
     /// is lower when more gets through, and that is arithmetic, not a choice. So
-    /// the printed quantity changes instead of its direction: this is the same
-    /// gate expressed as readiness, `100 - threshold`, which rises with the dial
-    /// and is the thing the operator is actually setting.
+    /// the printed quantity changes instead of its direction — and then the WORD
+    /// changed too, which is what finally settled it (the passage guard, 2026-09-25).
     ///
-    /// One consequence is worth stating rather than discovering: the operator
-    /// also asked for `Suggest` to sit 20 below `Auto-fire`, and on THIS scale it
-    /// sits 20 ABOVE, because a suggestion is the easier of the two bars and an
-    /// easier bar is a higher readiness. The gap is the 20 they asked for; the
-    /// sign follows the scale they asked for. Both cannot point the same way.
+    /// This is what each bar NEEDS: a match's confidence, 0-100. So `auto_fire`
+    /// is always the LARGER of the two, by exactly `SUGGEST_BAND`, because an
+    /// auto-fire is the harder bar — which is the operator's second instruction,
+    /// *"suggestions should be lower by 20 if auto fire is on 100 so auto fire
+    /// has the higher priority"*, and it is true at every dial position.
+    ///
+    /// **The figures fall as the dial rises, and that is not a bug.** A bar you
+    /// must clear is lower when more gets through; no labelling changes that.
+    /// §117 tried to fix the confusion by inverting the number, which put the
+    /// pair in an order that reads as a ranking — a suggestion outranking an
+    /// auto-fire. The word "needs" fixes it instead: a smaller number under
+    /// "needs" is obviously the easier bar rather than the keener setting, and
+    /// the dial keeps its own direction as the control.
     ///
     /// It lives here, beside the mapping, for the reason `follows_dial` does: a
     /// copy of this arithmetic in the frontend would be a second opinion about
@@ -196,10 +203,10 @@ pub struct GateReadiness {
     pub suggest: u8,
 }
 
-/// One threshold as a readiness figure. Whole percentage points, because that is
+/// One threshold as the confidence it needs. Whole percentage points, because that is
 /// what is printed; clamped, because a stored gate can be anything.
 fn readiness_of(threshold: f32) -> u8 {
-    (((1.0 - threshold.clamp(0.0, 1.0)) * 100.0).round() as i32).clamp(0, 100) as u8
+    ((threshold.clamp(0.0, 1.0) * 100.0).round() as i32).clamp(0, 100) as u8
 }
 
 /// Decide what thresholds a voice-profile save should land on.
@@ -292,6 +299,24 @@ pub struct Router {
     /// nudge: rejecting a 0.99 fire and rejecting a 0.51 fire would move the gate
     /// by the same amount, which is not what either one means.
     last_fire_conf: Option<f32>,
+    /// The last verse the router put on a screen — auto, manual, or a nav step
+    /// (everything goes through `note_fired`).
+    ///
+    /// **Not a second copy of `ContextMemory.current`, and the difference is the
+    /// one `liveCue` already records: position and on-air-ness are separate
+    /// facts.** `ContextMemory` is where `→` resumes and deliberately survives a
+    /// blackout, so a cleared screen still knows which passage it was walking.
+    /// This is what the screens are actually showing, so a clear drops it
+    /// (`forget_last_fire`) and a song replaces it (`forget_wall`). Asking
+    /// `ContextMemory` instead would mean a verse cleared off the wall could never
+    /// be read back onto it, which is the exact hole `forget_last_fire` exists to
+    /// stop.
+    ///
+    /// **Not `fired_at` either**, which is a COOLDOWN and expires after ten
+    /// seconds. The whole finding behind the passage guard is that a reading
+    /// outlives that (11, 17 and 120 seconds measured), so the question "is this
+    /// verse already up?" cannot be answered by anything with a clock in it.
+    last_wall: Option<String>,
     /// May a verse Relay heard being READ go to the screens unattended?
     ///
     /// The operator's instruction of 2026-09-23, and the church's switch over it
@@ -312,6 +337,7 @@ impl Default for Router {
             fired_at: HashMap::new(),
             sighted_at: HashMap::new(),
             last_fire_conf: None,
+            last_wall: None,
             // ON by default, as instructed. A church that wants the old behaviour
             // turns it off in Settings → AI & Detection.
             follow_the_reader: true,
@@ -558,9 +584,16 @@ impl Router {
     /// leaving it set meant a dismiss *after* a clear would tune the gate using the
     /// score of an auto-fire that is no longer on screen — correcting the router
     /// for a decision the operator was not actually reacting to.
+    /// Clears the record of what is ON the wall too, and that half is load-bearing
+    /// for the passage guard: rule B refuses to re-fire a verse the screens are
+    /// already showing, and after a clear they are showing nothing. Without this a
+    /// preacher who re-read the verse the operator had just cleared would find
+    /// Relay silently declining to put it back — the same defect this function was
+    /// written for, in the guard's costume.
     pub fn forget_last_fire(&mut self) {
         self.fired_at.clear();
         self.last_fire_conf = None;
+        self.last_wall = None;
     }
 
     /// Stamp a reference as on-screen, and drop every entry whose cooldown has
@@ -574,6 +607,45 @@ impl Router {
         self.fired_at
             .retain(|_, t| now_ms.saturating_sub(*t) < debounce);
         self.fired_at.insert(key.to_string(), now_ms);
+    }
+
+    /// What the screens are showing, as far as this module has been told. `None`
+    /// when nothing is, or when nobody can say (see `last_wall`).
+    pub fn wall(&self) -> Option<&str> {
+        self.last_wall.as_deref()
+    }
+
+    /// A verse has actually gone out to the screens.
+    ///
+    /// **Called from `broadcast_with_clock` — the ONE door content leaves the
+    /// machine by — and NOT from `note_fired`, which was the first attempt and was
+    /// measurably wrong.** `decide` returns `AutoFire` per candidate, and rule 29
+    /// then lets only rank 0 reach a wall: *"one window may inform the operator
+    /// about several verses; it may put at most ONE on a wall."* So `note_fired`
+    /// records verses that were demoted to suggestions and never shown.
+    ///
+    /// It was not a theoretical objection. Service 40 of 2026-09-25, 769.2 s:
+    /// *"Jeremiah chapter 6 verse 16 verse 17 verse 17"* yields `6:16` at 0.95 AND
+    /// `6:17` at 0.88, both `Direct`, both `AutoFire`. `6:16` went to the screens
+    /// and `6:17` was offered — and with the record kept in `note_fired`, the wall
+    /// read `Jeremiah 6:17`. Eleven seconds later the preacher read verse 16 aloud,
+    /// the guard compared it with `6:17`, found no match and fired the duplicate the
+    /// whole rule exists to stop. Caught by the bench, on real transcripts, not by
+    /// reading the code.
+    pub fn note_wall(&mut self, key: &str) {
+        self.last_wall = Some(key.to_string());
+    }
+
+    /// Something that is NOT scripture has taken the screens — a song, a notice, a
+    /// picture, a countdown — so no verse is on them any more.
+    ///
+    /// Called from the same branch of the same door `ContextMemory::forget` is
+    /// called at (rule 38), and for the same reason: a content kind added next year
+    /// is handled by construction. Deliberately does NOT touch `fired_at`, because
+    /// the repeat cooldown and the RG-178 rule are about what was recently HEARD and
+    /// a song does not change that.
+    pub fn forget_wall(&mut self) {
+        self.last_wall = None;
     }
 
     /// Operator manual override — always fires, bypassing thresholds and
@@ -1592,42 +1664,58 @@ mod gate_readout_tests {
     /// setting — which is how it reads, sitting under a slider — that says the
     /// machine is keenest at the position where it fires least.
     ///
-    /// `readiness` is the same gate expressed as how READY Relay is, so the
-    /// figure rises with the dial under it. Higher means more is fired.
+    /// `readiness` was that, and it put the figures in an order the operator then
+    /// objected to in their turn: *"suggestions should be lower by 20 if auto
+    /// fire is on 100 so auto fire has the higher priority."* On a readiness
+    /// scale a suggestion is the LARGER number, because it is the easier bar.
+    ///
+    /// Both complaints are about the same pair and only one framing satisfies
+    /// both: print what each one NEEDS. Auto-fire needs more confidence than a
+    /// suggestion — always, at every dial position, by exactly `SUGGEST_BAND` —
+    /// so auto-fire is the larger figure and the word "needs" makes a smaller
+    /// number obviously the easier bar rather than the keener setting. The dial
+    /// is the control and keeps its own direction; these are what it produced.
     #[test]
-    fn the_printed_figures_rise_with_the_dial() {
-        let mut prev_auto = -1i16;
-        let mut prev_sug = -1i16;
+    fn auto_fire_always_needs_more_than_a_suggestion_and_by_exactly_the_band() {
         for s in 0..=100u8 {
-            let r = Thresholds::from_sensitivity(s).readiness();
+            let g = Thresholds::from_sensitivity(s).readiness();
             assert!(
-                r.auto_fire as i16 >= prev_auto,
-                "dial {s}: auto-fire readiness fell to {}",
-                r.auto_fire
+                g.auto_fire > g.suggest,
+                "dial {s}: a suggestion needs as much as an auto-fire ({} vs {})",
+                g.suggest,
+                g.auto_fire
             );
-            assert!(
-                r.suggest as i16 >= prev_sug,
-                "dial {s}: suggest readiness fell to {}",
-                r.suggest
-            );
-            prev_auto = r.auto_fire as i16;
-            prev_sug = r.suggest as i16;
-        }
-        // The two ends, named, so a change to the curve has to say so out loud.
-        assert_eq!(Thresholds::from_sensitivity(0).readiness().auto_fire, 10);
-        assert_eq!(Thresholds::from_sensitivity(100).readiness().auto_fire, 70);
-        // A SUGGESTION IS ALWAYS THE EASIER OF THE TWO, and on this scale that
-        // reads as the larger number. The operator asked for the band to be 20
-        // and for the figures to rise with the dial; those two together fix the
-        // SIGN of the band, because a bar that is easier to clear is a lower
-        // threshold and therefore a higher readiness. See DECISIONS.
-        for s in 0..=100u8 {
-            let r = Thresholds::from_sensitivity(s).readiness();
             assert_eq!(
-                r.suggest as i16 - r.auto_fire as i16,
+                g.auto_fire as i16 - g.suggest as i16,
                 20,
                 "dial {s}: the band is not 20 points wide on the printed scale"
             );
+        }
+        // The two ends, named, so a change to the curve has to say so out loud.
+        // The dial's EAGER end needs the least, which is what eager means.
+        assert_eq!(Thresholds::from_sensitivity(0).readiness().auto_fire, 90);
+        assert_eq!(Thresholds::from_sensitivity(100).readiness().auto_fire, 30);
+    }
+
+    /// AND THE FIGURES FALL AS THE DIAL RISES, deliberately.
+    ///
+    /// That is the half §117 was written about and it has NOT been reverted: a
+    /// bar you must clear is lower when more gets through, and no labelling can
+    /// change that. What §117 got wrong was trying to fix it by turning the
+    /// number over, which put the two in an order that read as a ranking. The
+    /// fix is the WORD — "needs" — not the arithmetic, and this test exists so
+    /// nobody re-inverts the figures to make them rise with the slider again.
+    #[test]
+    fn what_each_needs_falls_as_the_dial_rises() {
+        let mut prev_auto = 101i16;
+        for s in 0..=100u8 {
+            let g = Thresholds::from_sensitivity(s).readiness();
+            assert!(
+                g.auto_fire as i16 <= prev_auto,
+                "dial {s}: what an auto-fire needs ROSE to {}",
+                g.auto_fire
+            );
+            prev_auto = g.auto_fire as i16;
         }
     }
 }
@@ -1782,5 +1870,94 @@ mod reading_gate {
             RouteDecision::Drop,
             "the same verse re-transcribed fired twice"
         );
+    }
+}
+
+/// **WHAT IS ON THE WALL** — `last_wall`, the fact the passage guard rests on
+/// (the passage guard, 2026-09-25).
+///
+/// The wall is TOLD, not inferred, and that is the whole design: `broadcast_with_clock`
+/// calls `note_wall` for scripture and `forget_wall` for everything else, so this
+/// module records what actually left the machine rather than what it decided. The
+/// end-to-end half — that every door a verse reaches a screen by really does arrive
+/// here — is in `e2e`, because only the running app has the door.
+#[cfg(test)]
+mod the_wall {
+    use super::*;
+
+    #[test]
+    fn a_fresh_router_says_nothing_is_on_the_wall() {
+        assert_eq!(Router::default().wall(), None);
+    }
+
+    /// **DECIDING IS NOT SHOWING**, and this is the test the first design failed.
+    ///
+    /// `decide` returns `AutoFire` per candidate; rule 29 then lets only rank 0 reach
+    /// a wall. So a gate decision may NEVER by itself claim the screens — service 40
+    /// of 2026-09-25 yielded `Jeremiah 6:16` and `6:17` from one sentence, both
+    /// `AutoFire`, and only 6:16 was shown. See `note_wall`.
+    #[test]
+    fn a_gate_decision_alone_never_claims_the_wall() {
+        let mut r = Router::default();
+        assert_eq!(
+            r.decide("Jeremiah 6:16", 0.95, DetectionMethod::Direct, 1_000),
+            RouteDecision::AutoFire
+        );
+        assert_eq!(
+            r.decide("Jeremiah 6:17", 0.88, DetectionMethod::Direct, 1_000),
+            RouteDecision::AutoFire
+        );
+        assert_eq!(
+            r.wall(),
+            None,
+            "the gate said yes twice and rule 29 shows one; neither is a screen"
+        );
+        // The broadcast is what says so.
+        r.note_wall("Jeremiah 6:16");
+        assert_eq!(r.wall(), Some("Jeremiah 6:16"));
+    }
+
+    /// **THE CLEAR IS THE RELEASE THAT MATTERS.** `forget_last_fire` runs on a clear
+    /// and a blackout, and without this half a preacher who re-read the verse the
+    /// operator had just cleared would find Relay silently declining to put it back —
+    /// the exact defect that function was written for, in the guard's costume.
+    #[test]
+    fn clearing_the_screens_forgets_what_was_on_them() {
+        let mut r = Router::default();
+        r.note_wall("John 3:16");
+        r.forget_last_fire();
+        assert_eq!(r.wall(), None);
+    }
+
+    /// A song, a notice, a picture or a countdown takes the screens, so no verse is
+    /// on them.
+    #[test]
+    fn content_that_is_not_scripture_forgets_the_verse() {
+        let mut r = Router::default();
+        r.decide("John 3:16", 0.95, DetectionMethod::Direct, 1_000);
+        r.note_wall("John 3:16");
+        r.forget_wall();
+        assert_eq!(r.wall(), None);
+        // …and it leaves the repeat cooldown alone, because a song does not change
+        // what was recently HEARD. The same verse inside the cooldown still Drops.
+        assert_eq!(
+            r.decide("John 3:16", 0.95, DetectionMethod::Direct, 2_000),
+            RouteDecision::Drop
+        );
+    }
+
+    /// The wall is NOT the cooldown, and this is the measurement that forced the two
+    /// apart: the field gaps between a reading and the verse already on the wall were
+    /// 11, 17 and 120 seconds, and `DEFAULT_DEBOUNCE_MS` is 10. Anything with a clock
+    /// in it answers "no verse is up" while the verse is plainly up.
+    #[test]
+    fn the_wall_has_no_clock_in_it() {
+        let mut r = Router::default();
+        r.note_wall("Jeremiah 6:16");
+        const { assert!(DEFAULT_DEBOUNCE_MS < 120_000) };
+        // Two minutes on, with the cooldown long expired, the wall still says the
+        // same thing — because it is a fact and not a timer.
+        r.decide("Jeremiah 6:16", 0.95, DetectionMethod::Direct, 121_000);
+        assert_eq!(r.wall(), Some("Jeremiah 6:16"));
     }
 }

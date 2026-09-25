@@ -341,6 +341,45 @@ export const detections = writable([]);
  */
 export const resolvedDetections = writable([]);
 
+/**
+ * WHAT THE PASSAGE GUARD IS HOLDING BACK, RIGHT NOW — `detection://held`.
+ *
+ * Rule 35, and this store is the whole of why the backend emits that event at
+ * all. While a preacher reads a passage aloud, Relay stops offering verses from
+ * outside it and stops re-firing the verse the screens are already showing
+ * (the passage guard, 2026-09-25). **Doing that silently would be indistinguishable from
+ * detection having gone deaf**, which is the one thing an operator watching a
+ * quiet suggestion list cannot tell from the outside.
+ *
+ * `null` = nothing is being held. Otherwise:
+ *
+ *   `{ passage, reading, held: [{ reference, method, matched_text, reason }] }`
+ *
+ *   `passage`  the book and chapter Relay believes is being read ("Psalms 107"),
+ *              or null when only the already-on-screen rule fired — that one
+ *              needs no passage, because the wall itself is the evidence.
+ *   `reading`  the phrase, verbatim in that passage, that says so. The evidence,
+ *              not a number (rule 18).
+ *   `reason`   `'already_on_screen'` or `'outside_the_reading'`. Two rules doing
+ *              very different things, and "3 held" is unactionable without it.
+ *
+ * It is replaced, never accumulated: the question is what is being held NOW, and
+ * a growing log of holds would be a second churning list — which is the thing the
+ * guard exists to stop.
+ */
+export const passageHold = writable(null);
+
+/**
+ * How long a hold stays on screen with nothing refreshing it.
+ *
+ * A hold is a fact about the window Relay just heard, so it expires: a reading
+ * that ended leaves no event behind saying so, and a line reading "holding 3"
+ * over a preacher who stopped reading a minute ago is the stale-status failure in
+ * miniature. Shorter than `SUGGESTION_TTL_MS` because a hold is not actionable
+ * and a suggestion is.
+ */
+export const HOLD_TTL_MS = 20_000;
+
 /** How many receipts are kept. Small: this is the last few, not a history. */
 export const MAX_RESOLVED = 4;
 
@@ -570,6 +609,8 @@ export function pruneStaleSuggestions(list, now) {
 let unlistenAudio = null;
 let unlistenStt = null;
 let unlistenDetect = null;
+let unlistenHeld = null;
+let holdTimer = null;
 let outputListenersUp = false; // always-on output mirror (set once)
 
 /**
@@ -1325,6 +1366,18 @@ function detachCaptureListeners() {
     unlistenDetect();
     unlistenDetect = null;
   }
+  if (unlistenHeld) {
+    unlistenHeld();
+    unlistenHeld = null;
+  }
+  // A hold describes the window Relay last heard. Capture has stopped, so there
+  // is no window and nothing is being held — leaving the line up would say Relay
+  // is guarding a reading over a dead microphone.
+  passageHold.set(null);
+  if (holdTimer) {
+    clearTimeout(holdTimer);
+    holdTimer = null;
+  }
 }
 
 /** Start capture from `device` (name string, or null for the default input). */
@@ -1401,6 +1454,19 @@ unlistenStt = await listen('stt://transcript', (e) => {
   });
 });
 capture.update((s) => ({ ...s, audioError: null }));
+// RELAY IS HOLDING SOMETHING BACK, AND THE OPERATOR CAN SEE THAT IT IS.
+// See `passageHold`. One listener, one store, replaced on every event — and a
+// timer, because a reading that ENDS emits nothing and a stale "holding 3" is the
+// rule-35 failure this store exists to prevent, arriving from the other side.
+unlistenHeld = await listen('detection://held', (e) => {
+  passageHold.set(e.payload ?? null);
+  if (holdTimer) clearTimeout(holdTimer);
+  holdTimer = setTimeout(() => {
+    passageHold.set(null);
+    holdTimer = null;
+  }, HOLD_TTL_MS);
+});
+
 unlistenDetect = await listen('detection://match', (e) => {
   const d = e.payload;
   // THE AI ACTED BY ITSELF. This is the only moment that fact exists on the

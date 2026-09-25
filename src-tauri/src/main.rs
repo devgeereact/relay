@@ -1027,11 +1027,39 @@ fn broadcast_with_clock<R: tauri::Runtime>(
     // over content that renders perfectly well, and `preflight` above refuses only
     // what is broken AND silent (rule 36). Pinned by
     // `e2e::r2_a_payload_that_forgot_its_kind_still_disarms_the_passage`.
+    // …AND WHAT IS ON THE SCREENS IS DECIDED HERE TOO, for the same reason and at
+    // the same door. `Router::last_wall` is what the passage guard compares a
+    // reading against (the passage guard, 2026-09-25), and it must record what
+    // actually LEFT: rule
+    // 29 lets one window auto-fire only its rank-0 candidate, so recording it inside
+    // `Router::decide` — the first attempt — put verses on the record that were
+    // demoted to suggestions and never shown. `Router::note_wall` carries the
+    // measurement that found it.
     if content.kind.as_deref() != Some("scripture") {
         if let Some(ctx) = handle.try_state::<Context>() {
             if let Ok(mut c) = ctx.0.lock() {
                 c.forget();
             }
+        }
+        // AND NO VERSE IS ON THE SCREENS ANY MORE, which is a different fact from
+        // the one above and is why it needs its own line. `ContextMemory` is the
+        // passage `→` resumes from; `Router::last_wall` is what the screens are
+        // showing, and the passage guard refuses to re-fire a verse that is already
+        // up. Leaving it set here would mean a song, then the preacher reading that
+        // same verse again, and Relay declining to put it back — a screen held blank
+        // by the guard, which is the failure `forget_last_fire` was written for.
+        //
+        // A SEPARATE `if let`, after the one above has dropped its guard: two locks
+        // held at once on a path that also emits is how the Start-listening freeze
+        // happened (rule 2, rule 6). Neither lock is needed while the other is.
+        if let Some(routing) = handle.try_state::<Routing>() {
+            if let Ok(mut r) = routing.0.lock() {
+                r.forget_wall();
+            }
+        }
+    } else if let Some(routing) = handle.try_state::<Routing>() {
+        if let Ok(mut r) = routing.0.lock() {
+            r.note_wall(&content.reference);
         }
     }
 
@@ -1343,6 +1371,317 @@ fn named_translation_gap(
     Some(named)
 }
 
+/// What this window found and did NOT offer, because the preacher is reading the
+/// passage already on the screen. Carried to the console so a held candidate is
+/// visible somewhere (rule 35) rather than simply absent.
+#[derive(Serialize, Clone)]
+struct HeldCandidate {
+    reference: String,
+    method: DetectionMethod,
+    /// The words that produced it — the phrase for a quotation, the terms for a
+    /// paraphrase. The same field `DetectionEvent::matched_text` carries, for the
+    /// same reason: a person judges this by the words, not by a number.
+    matched_text: Option<String>,
+    /// WHICH RULE HELD IT. Two rules do very different things and an operator
+    /// reading "3 held" cannot act on it without knowing which — "the verse is
+    /// already up" needs nothing from them, "this one is outside the reading" might.
+    reason: detection::HeldReason,
+}
+
+/// `detection://held` — the whole of what the passage guard did in one window.
+///
+/// Its own event rather than a field on `detection://match`, because the thing it
+/// has to report happens in exactly the windows where a match may not be emitted
+/// at all: the in-passage reading that armed the guard is usually a repeat inside
+/// the router's cooldown and is Dropped, so a field on a `match` would go missing
+/// precisely when the operator needed it. One door, beside the decision.
+#[derive(Serialize, Clone)]
+struct PassageHold {
+    /// The book and chapter Relay believes is being read — "Psalms 107". `None`
+    /// when only rule B fired, which needs no passage: the wall says it itself.
+    passage: Option<String>,
+    /// The phrase in this window, verbatim in that passage, that says the preacher
+    /// is reading it. The evidence, not a number.
+    reading: Option<String>,
+    held: Vec<HeldCandidate>,
+    trace_id: Option<u64>,
+}
+
+/// Everything one window of transcript has to say about scripture.
+///
+/// **Why this is a function and not sixty lines inside `emit_detections`.** The
+/// passage guard below is a decision about a window's WHOLE candidate set — it
+/// cannot live inside any one gatherer, and a set-level rule applied at four
+/// gathering sites is rule 36's four-separate-bugs shape. It also could not be
+/// measured: the assembly sat inside a closure holding three locks in a function
+/// that needs a Tauri window, so no test and no bench could reach it, and the
+/// only way to score a real service was to write a second copy of it. There is
+/// now one copy, `emit_detections` calls it under the locks, and
+/// `passage_guard_bench` scores the same code a congregation gets.
+struct WindowCandidates {
+    /// What reaches the gate.
+    kept: Vec<Cand>,
+    /// What the passage guard held, each with the rule that held it.
+    ///
+    /// The whole `Cand`, not the report shape: the report is built where it is
+    /// reported, and a bench that wants to replay the shipped behaviour has to be
+    /// able to put back exactly what was taken — a reconstruction from a narrower
+    /// struct is a different candidate wearing the same reference.
+    held: Vec<(Cand, detection::HeldReason)>,
+    /// The book and chapter on screen that this window was heard reading, and the
+    /// phrase that said so. `None` when the guard did not apply.
+    reading_in: Option<(String, String)>,
+}
+
+/// Gather, and apply the passage guard.
+///
+/// Pure over its inputs — no database, no clock, no Tauri handle — so the bench
+/// and the live path cannot disagree about what a window produces.
+fn candidates_for_window(
+    text: &str,
+    is_final: bool,
+    sem: &Semantic,
+    phrases: &Phrases,
+    context: &ContextMemory,
+    on_the_wall: Option<&str>,
+) -> WindowCandidates {
+    // Gather candidates. Each one carries the EVIDENCE for itself — the words
+    // that produced it — so the console can show the operator why, and not just
+    // a number (see pipeline::DetectionEvent).
+    let mut candidates: Vec<Cand> = Vec::new();
+
+    let directs = detection::detect_direct(text);
+    let direct_empty = directs.is_empty();
+    for m in directs {
+        // A reading that exists only because the transcript was cut mid-sentence
+        // describes the window boundary, not the sermon. See
+        // `RefMatch::is_provisional`, which owns the rule so this path and the
+        // bench that scores it cannot disagree.
+        if m.is_provisional(is_final) {
+            continue;
+        }
+        candidates.push(Cand {
+            r: m.reference,
+            conf: m.confidence,
+            // `m.method`, NOT a hardcoded `Direct`. This line threw away the
+            // parser's own verdict about how good the evidence was, and it is
+            // the THIRD place in this codebase found doing it on 2026-08-14 —
+            // `eval.rs`'s scorer and `detection.rs`'s harness were the other
+            // two. Between them they meant the `UncertainBook` cap existed,
+            // was unit-tested, passed at the router, and did nothing whatever
+            // in the product: "hymn number three sixteen" still reached the
+            // wall, because by the time the router saw the candidate it had
+            // been relabelled as something Relay heard.
+            //
+            // Caught by `e2e::ordinary_church_announcements_reach_nobody`,
+            // which is the first test in this repo to drive the AI's own path
+            // end to end. A router that is told the answer is not a gate.
+            method: m.method,
+            verse_end: m.verse_end,
+            whole_chapter: m.whole_chapter,
+            matched: Some(m.matched_text),
+        });
+    }
+    // A reference named in THIS window outranks the one in memory. FIELD F-1:
+    // "…going through in Luke 10. If you read from verse 32, 37" put
+    // **Proverbs 3:32** on a congregation's wall, because Proverbs 3:6 had been
+    // fired by hand five minutes earlier and the bare 32 was resolved against
+    // it — with Luke 10 sitting in the same sentence.
+    //
+    // Memory is what Relay has when the words do not say. When the words do
+    // say, the words win.
+    //
+    // FIELD F-8 added the second half of that rule: a window can STATE a
+    // chapter without any reference parsing out of it ("4th Peter chapter 5
+    // verse 10" — there is no 4th Peter), and memory used to win there too.
+    // `resolve_bare_verse_for_window` owns the whole decision so it is one
+    // pure function with a test, rather than an `or_else` chain here that no
+    // test could reach.
+    let anchor = detection::anchor_for_bare_verses(text);
+    for n in detection::detect_bare_verses(text) {
+        let from_memory = context.resolve_bare_verse(n);
+        let resolved = detection::resolve_bare_verse_with_source(
+            text,
+            n,
+            anchor.as_ref(),
+            from_memory.as_ref(),
+        );
+        if let Some((r, source)) = resolved {
+            // "…and verse eighteen", resolved against the passage already on
+            // screen. The operator needs to see that this came from CONTEXT, not
+            // from a book name they never heard the preacher say.
+            //
+            // AND THE LABEL SAYS WHICH (FIELD 2026-09-20, RG-179). This was a
+            // hardcoded `Direct` for both sources, and rule 40 recorded the lie
+            // on purpose while one service was the evidence. The second service
+            // put **Psalms 55:1** on a wall for a preacher quoting Hosea 6:1:
+            // the book was misheard into a word no alias knows, memory answered
+            // with the psalm already up, and `Direct` at 0.88 auto-fired it.
+            // A book Relay assumed is `UncertainBook` — the router offers it and
+            // fires nothing. A book named in this breath is still heard.
+            candidates.push(Cand::single(
+                r,
+                0.88,
+                DetectionMethod::for_bare_verse(source),
+                Some(format!("verse {n}")),
+            ));
+        }
+    }
+    // Paraphrase alternatives. Only ONE was ever offered, which threw away
+    // most of what the index had already found: measured on the paraphrase
+    // corpus, the right passage is in the top 5 for 98% of retellings but is
+    // ranked first for only 81% — and for a retelling in modern words, only
+    // 53%. The operator was never shown the difference.
+    //
+    // Two limits, because a longer list is not free — every row costs a
+    // volunteer attention in a dark booth mid-service:
+    //   * a RELATIVE floor, so the list widens only when Relay is genuinely
+    //     torn between similar scores, and stays at one when a verse wins
+    //     outright,
+    //   * a hard CAP, because a well-quoted verse matches many verses
+    //     strongly and would otherwise pad the list exactly when the first
+    //     answer was already correct.
+    // Both are configuration (§ thresholds are config, not constants).
+    // READ GUARD (RG-300). Readers do not block readers, so the detection path
+    // costs what the bare field cost; the one writer is a translation switch,
+    // which the service lock refuses while a service is recording.
+    //
+    // A POISONED INDEX SUGGESTS NOTHING rather than panicking. The only writer
+    // runs off the live path, so this can practically only follow a panic
+    // elsewhere — and an empty suggestion list is the same answer an empty
+    // corpus gives, on a path that must never bring the service down.
+    let semantic_hits = match sem.0.read() {
+        Ok(idx) => worth_suggesting(idx.top_k_explained(text, SEMANTIC_SUGGESTIONS_MAX)),
+        Err(_) => Vec::new(),
+    };
+    for (r, score, terms) in semantic_hits {
+        candidates.push(Cand::single(
+            r,
+            score.min(0.95),
+            DetectionMethod::Semantic,
+            Some(terms.join(" · ")),
+        ));
+    }
+    // ── QUOTED SCRIPTURE ──────────────────────────────────────────────
+    //
+    // A contiguous run of the preacher's own words that is verbatim in one
+    // verse. This is the operator's instruction of 2026-09-20 — *"it has to
+    // be three words together as in the scripture"* — and it exists because
+    // the paraphrase row above renders `terms.join(" · ")` inside quotation
+    // marks, so a verse justified by `lord` and `shepherd`, in neither order,
+    // reached the run surface dressed as a quotation.
+    //
+    // THE ANCHOR IS RULE 40, AND IT IS APPLIED IN TWO STRENGTHS, because the
+    // two kinds of evidence are not equal:
+    //
+    //   * A BOOK THIS WINDOW NAMED restricts. The words said it, so nothing
+    //     outside it is a candidate.
+    //   * THE PASSAGE ON SCREEN only re-ranks. Memory is what Relay has when
+    //     the words do not say, and a quotation IS the words saying — a
+    //     preacher reading Proverbs who quotes Isaiah is quoting Isaiah.
+    //     Restricting on memory would hide it; preferring merely puts the
+    //     likelier reading first.
+    //
+    // Measured on the service of 2026-09-20: "Verse 7 says, Be not wise in
+    // your own eyes" names no book at all, and that phrase is verbatim in
+    // Romans 12:16 as well as in the Proverbs 3 the preacher was reading.
+    let quoted_in = anchor.as_ref().map(|r| r.book.as_str());
+    let mut quoted = match phrases.0.read() {
+        Ok(g) => g.quoted(text, quoted_in, QUOTED_SUGGESTIONS_MAX),
+        Err(_) => Vec::new(),
+    };
+    if quoted_in.is_none() {
+        if let Some(on_screen) = context.current().map(|r| r.book.clone()) {
+            quoted.sort_by_key(|h| h.r.book != on_screen);
+        }
+    }
+    for h in quoted {
+        candidates.push(Cand::single(
+            h.r,
+            quoted_confidence(h.run),
+            // IS THIS THE PREACHER READING, OR MERELY QUOTING? The operator's
+            // instruction of 2026-09-23 is that a verse being READ should go
+            // up without being asked for (DECISIONS §118). `for_quotation` is
+            // the one place that is decided and it decides from the evidence
+            // alone — the run length and whether one verse holds it. The
+            // church's switch over it is in `Router::decide`, the door every
+            // candidate passes through, so it cannot be skipped here.
+            DetectionMethod::for_quotation(h.run, h.sole),
+            // THE PHRASE, not a word list. The whole point.
+            Some(h.phrase),
+        ));
+    }
+    if direct_empty {
+        for r in detection::detect_ambiguous(text) {
+            candidates.push(Cand::single(r, 0.70, DetectionMethod::Ambiguous, None));
+        }
+    }
+    // ── THE PASSAGE GUARD, 2026-09-25 ─────────────────────────────────────
+    //
+    // The operator, 2026-09-25: *"I dont want suggestion to be changing when a
+    // bible verse is reading because it heard a phrase which is in another bible
+    // verse… verses needs to be guarded so when a preacher is reading a verse it
+    // stays within the verse/chapter until the preacher calls another verse…
+    // suggesting too many verses whilst the preacher is reading a verse will
+    // cause confusion"*.
+    //
+    // `detection::hold_for_the_passage` is the whole rule and it is pure. Applied
+    // HERE, once, over the finished set: it is a decision about the SET (which
+    // verse is the one being read, and which is merely also holding those words),
+    // so no gatherer can hold it, and a set-level rule added at four gathering
+    // sites is the shape rule 36 records four separate bugs for.
+    let on_screen = context.current();
+    let view: Vec<(&VerseRef, DetectionMethod)> =
+        candidates.iter().map(|c| (&c.r, c.method)).collect();
+    let mask = detection::hold_for_the_passage(
+        on_screen,
+        on_the_wall,
+        detection::window_states_a_reference(text, anchor.as_ref()),
+        &view,
+    );
+    if mask.iter().all(Option::is_none) {
+        return WindowCandidates {
+            kept: candidates,
+            held: Vec::new(),
+            reading_in: None,
+        };
+    }
+    // Rule A armed only if an in-passage verbatim run is present, and such a run is
+    // never itself held — which is what makes the announcement reachable. A guard
+    // that could hold EVERYTHING would be indistinguishable from Relay having gone
+    // quiet, which is rule 35 exactly. Rule B needs no passage: it fires on the
+    // verse the screens are already showing, and the screens are the evidence.
+    let reading_in = on_screen
+        .filter(|_| mask.contains(&Some(detection::HeldReason::OutsideTheReading)))
+        .map(|p| {
+            let phrase = candidates
+                .iter()
+                .zip(&mask)
+                .find(|(c, held)| {
+                    held.is_none()
+                        && c.method.is_a_verbatim_run()
+                        && c.r.book == p.book
+                        && c.r.chapter == p.chapter
+                })
+                .and_then(|(c, _)| c.matched.clone())
+                .unwrap_or_default();
+            (format!("{} {}", p.book, p.chapter), phrase)
+        });
+    let mut kept: Vec<Cand> = Vec::with_capacity(candidates.len());
+    let mut held: Vec<(Cand, detection::HeldReason)> = Vec::new();
+    for (c, why) in candidates.into_iter().zip(mask) {
+        match why {
+            Some(reason) => held.push((c, reason)),
+            None => kept.push(c),
+        }
+    }
+    WindowCandidates {
+        kept,
+        held,
+        reading_in,
+    }
+}
+
 fn emit_detections<R: tauri::Runtime>(
     handle: &tauri::AppHandle<R>,
     text: &str,
@@ -1367,189 +1706,53 @@ fn emit_detections<R: tauri::Runtime>(
     // command contending the same lock (this was the freeze on Start listening).
     let mut events: Vec<DetectionEvent> = Vec::new();
     let mut broadcasts: Vec<OutputContent> = Vec::new();
+    // What the passage guard held, and the passage it held it for. Collected here
+    // and announced after the locks go, for the same reason as `events`.
+    // Declared uninitialised deliberately: every path that reaches the emit below
+    // assigns them, and seeding them with an empty vec would let a future early
+    // return announce "nothing was held" when the truth is that nobody looked.
+    let held_by_the_passage: Vec<(Cand, detection::HeldReason)>;
+    let reading_inside: Option<(String, String)>;
     // Latency stamps sampled under the locks and applied after they are released.
     // The block yields them so `detected_at` is INITIALISED by the sample rather
     // than pre-seeded with a value no path ever reads.
-    let (detected_at, authorised_at) = {
+    // A LABELLED BLOCK, and `Option`, because one path through it must skip the gate
+    // and still reach the announcement below. See the empty-candidates arm.
+    let stamps: Option<(u64, Option<u64>)> = 'gate: {
         let (Ok(conn), Ok(mut router), Ok(mut context)) =
             (db.0.lock(), routing.0.lock(), ctx.0.lock())
         else {
             return;
         };
-
-        // Gather candidates. Each one carries the EVIDENCE for itself — the words
-        // that produced it — so the console can show the operator why, and not just
-        // a number (see pipeline::DetectionEvent).
-        let mut candidates: Vec<Cand> = Vec::new();
-
-        let directs = detection::detect_direct(text);
-        let direct_empty = directs.is_empty();
-        for m in directs {
-            // A reading that exists only because the transcript was cut mid-sentence
-            // describes the window boundary, not the sermon. See
-            // `RefMatch::is_provisional`, which owns the rule so this path and the
-            // bench that scores it cannot disagree.
-            if m.is_provisional(is_final) {
-                continue;
-            }
-            candidates.push(Cand {
-                r: m.reference,
-                conf: m.confidence,
-                // `m.method`, NOT a hardcoded `Direct`. This line threw away the
-                // parser's own verdict about how good the evidence was, and it is
-                // the THIRD place in this codebase found doing it on 2026-08-14 —
-                // `eval.rs`'s scorer and `detection.rs`'s harness were the other
-                // two. Between them they meant the `UncertainBook` cap existed,
-                // was unit-tested, passed at the router, and did nothing whatever
-                // in the product: "hymn number three sixteen" still reached the
-                // wall, because by the time the router saw the candidate it had
-                // been relabelled as something Relay heard.
-                //
-                // Caught by `e2e::ordinary_church_announcements_reach_nobody`,
-                // which is the first test in this repo to drive the AI's own path
-                // end to end. A router that is told the answer is not a gate.
-                method: m.method,
-                verse_end: m.verse_end,
-                whole_chapter: m.whole_chapter,
-                matched: Some(m.matched_text),
-            });
-        }
-        // A reference named in THIS window outranks the one in memory. FIELD F-1:
-        // "…going through in Luke 10. If you read from verse 32, 37" put
-        // **Proverbs 3:32** on a congregation's wall, because Proverbs 3:6 had been
-        // fired by hand five minutes earlier and the bare 32 was resolved against
-        // it — with Luke 10 sitting in the same sentence.
+        let WindowCandidates {
+            kept: candidates,
+            held,
+            reading_in,
+        } = candidates_for_window(
+            text,
+            is_final,
+            &sem,
+            &phrases,
+            &context,
+            // What the screens are actually showing, from the one module that knows
+            // — and NOT `context.current()`, which survives a blackout on purpose.
+            router.wall(),
+        );
+        // ASSIGNED BEFORE THE EARLY EXIT, and that order is the whole point.
         //
-        // Memory is what Relay has when the words do not say. When the words do
-        // say, the words win.
-        //
-        // FIELD F-8 added the second half of that rule: a window can STATE a
-        // chapter without any reference parsing out of it ("4th Peter chapter 5
-        // verse 10" — there is no 4th Peter), and memory used to win there too.
-        // `resolve_bare_verse_for_window` owns the whole decision so it is one
-        // pure function with a test, rather than an `or_else` chain here that no
-        // test could reach.
-        let anchor = detection::anchor_for_bare_verses(text);
-        for n in detection::detect_bare_verses(text) {
-            let from_memory = context.resolve_bare_verse(n);
-            let resolved = detection::resolve_bare_verse_with_source(
-                text,
-                n,
-                anchor.as_ref(),
-                from_memory.as_ref(),
-            );
-            if let Some((r, source)) = resolved {
-                // "…and verse eighteen", resolved against the passage already on
-                // screen. The operator needs to see that this came from CONTEXT, not
-                // from a book name they never heard the preacher say.
-                //
-                // AND THE LABEL SAYS WHICH (FIELD 2026-09-20, RG-179). This was a
-                // hardcoded `Direct` for both sources, and rule 40 recorded the lie
-                // on purpose while one service was the evidence. The second service
-                // put **Psalms 55:1** on a wall for a preacher quoting Hosea 6:1:
-                // the book was misheard into a word no alias knows, memory answered
-                // with the psalm already up, and `Direct` at 0.88 auto-fired it.
-                // A book Relay assumed is `UncertainBook` — the router offers it and
-                // fires nothing. A book named in this breath is still heard.
-                candidates.push(Cand::single(
-                    r,
-                    0.88,
-                    DetectionMethod::for_bare_verse(source),
-                    Some(format!("verse {n}")),
-                ));
-            }
-        }
-        // Paraphrase alternatives. Only ONE was ever offered, which threw away
-        // most of what the index had already found: measured on the paraphrase
-        // corpus, the right passage is in the top 5 for 98% of retellings but is
-        // ranked first for only 81% — and for a retelling in modern words, only
-        // 53%. The operator was never shown the difference.
-        //
-        // Two limits, because a longer list is not free — every row costs a
-        // volunteer attention in a dark booth mid-service:
-        //   * a RELATIVE floor, so the list widens only when Relay is genuinely
-        //     torn between similar scores, and stays at one when a verse wins
-        //     outright,
-        //   * a hard CAP, because a well-quoted verse matches many verses
-        //     strongly and would otherwise pad the list exactly when the first
-        //     answer was already correct.
-        // Both are configuration (§ thresholds are config, not constants).
-        // READ GUARD (RG-300). Readers do not block readers, so the detection path
-        // costs what the bare field cost; the one writer is a translation switch,
-        // which the service lock refuses while a service is recording.
-        //
-        // A POISONED INDEX SUGGESTS NOTHING rather than panicking. The only writer
-        // runs off the live path, so this can practically only follow a panic
-        // elsewhere — and an empty suggestion list is the same answer an empty
-        // corpus gives, on a path that must never bring the service down.
-        let semantic_hits = match sem.0.read() {
-            Ok(idx) => worth_suggesting(idx.top_k_explained(text, SEMANTIC_SUGGESTIONS_MAX)),
-            Err(_) => Vec::new(),
-        };
-        for (r, score, terms) in semantic_hits {
-            candidates.push(Cand::single(
-                r,
-                score.min(0.95),
-                DetectionMethod::Semantic,
-                Some(terms.join(" · ")),
-            ));
-        }
-        // ── QUOTED SCRIPTURE ──────────────────────────────────────────────
-        //
-        // A contiguous run of the preacher's own words that is verbatim in one
-        // verse. This is the operator's instruction of 2026-09-20 — *"it has to
-        // be three words together as in the scripture"* — and it exists because
-        // the paraphrase row above renders `terms.join(" · ")` inside quotation
-        // marks, so a verse justified by `lord` and `shepherd`, in neither order,
-        // reached the run surface dressed as a quotation.
-        //
-        // THE ANCHOR IS RULE 40, AND IT IS APPLIED IN TWO STRENGTHS, because the
-        // two kinds of evidence are not equal:
-        //
-        //   * A BOOK THIS WINDOW NAMED restricts. The words said it, so nothing
-        //     outside it is a candidate.
-        //   * THE PASSAGE ON SCREEN only re-ranks. Memory is what Relay has when
-        //     the words do not say, and a quotation IS the words saying — a
-        //     preacher reading Proverbs who quotes Isaiah is quoting Isaiah.
-        //     Restricting on memory would hide it; preferring merely puts the
-        //     likelier reading first.
-        //
-        // Measured on the service of 2026-09-20: "Verse 7 says, Be not wise in
-        // your own eyes" names no book at all, and that phrase is verbatim in
-        // Romans 12:16 as well as in the Proverbs 3 the preacher was reading.
-        let quoted_in = anchor.as_ref().map(|r| r.book.as_str());
-        let mut quoted = match phrases.0.read() {
-            Ok(g) => g.quoted(text, quoted_in, QUOTED_SUGGESTIONS_MAX),
-            Err(_) => Vec::new(),
-        };
-        if quoted_in.is_none() {
-            if let Some(on_screen) = context.current().map(|r| r.book.clone()) {
-                quoted.sort_by_key(|h| h.r.book != on_screen);
-            }
-        }
-        for h in quoted {
-            candidates.push(Cand::single(
-                h.r,
-                quoted_confidence(h.run),
-                // IS THIS THE PREACHER READING, OR MERELY QUOTING? The operator's
-                // instruction of 2026-09-23 is that a verse being READ should go
-                // up without being asked for (DECISIONS §118). `for_quotation` is
-                // the one place that is decided and it decides from the evidence
-                // alone — the run length and whether one verse holds it. The
-                // church's switch over it is in `Router::decide`, the door every
-                // candidate passes through, so it cannot be skipped here.
-                DetectionMethod::for_quotation(h.run, h.sole),
-                // THE PHRASE, not a word list. The whole point.
-                Some(h.phrase),
-            ));
-        }
-        if direct_empty {
-            for r in detection::detect_ambiguous(text) {
-                candidates.push(Cand::single(r, 0.70, DetectionMethod::Ambiguous, None));
-            }
-        }
+        // This read `return` under an assertion that the guard could not have held
+        // anything in a window with nothing left to say. **The assertion was false
+        // and the first e2e test written against the fire path caught it on its
+        // first run.** Rule B holds the verse the screens are already showing, and a
+        // window whose only candidate is that verse — a preacher reading on through
+        // the verse Relay already put up, which is the ordinary case the rule exists
+        // for — leaves the set empty. The `return` then took the report with it, so
+        // Relay held something back and said nothing: rule 35's failure, introduced
+        // by the code that exists to prevent it.
+        held_by_the_passage = held;
+        reading_inside = reading_in;
         if candidates.is_empty() {
-            return;
+            break 'gate None;
         }
         // A reference exists in this transcript. Sampled, not stamped: the locks
         // above are still held, and `latency` takes a mutex of its own. It is a
@@ -1686,10 +1889,13 @@ fn emit_detections<R: tauri::Runtime>(
             }
             events.push(fire.event());
         }
-        (detected_at, authorised_at)
+        Some((detected_at, authorised_at))
     }; // locks released here
 
-    if let Some(id) = trace {
+    // A window that produced no candidate to gate timed no reference, so there is
+    // nothing to stamp — and a stage never reached is an ABSENCE, not a zero
+    // (rule 31).
+    if let (Some(id), Some((detected_at, authorised_at))) = (trace, stamps) {
         crate::latency::stamp_at(id, crate::latency::Stage::ReferenceDetected, detected_at);
         if let Some(at) = authorised_at {
             crate::latency::stamp_at(id, crate::latency::Stage::FireAuthorised, at);
@@ -1706,6 +1912,37 @@ fn emit_detections<R: tauri::Runtime>(
     }
     for ev in events {
         let _ = handle.emit("detection://match", ev);
+    }
+    // ── RELAY IS HOLDING SOMETHING BACK, AND SAYS SO ──────────────────────────
+    //
+    // Rule 35. A guard that quietly stops offering verses is indistinguishable
+    // from a detector that has gone deaf, and the operator would have no way to
+    // tell which. One emit, at the one place the decision is made, carrying the
+    // passage it is following, the phrase that says so, and every candidate it
+    // did not offer — so nothing is discarded silently (RG-178's precedent), it
+    // is simply moved off the list the operator asked to stop churning.
+    if !held_by_the_passage.is_empty() {
+        let (passage, reading) = match reading_inside {
+            Some((p, r)) => (Some(p), Some(r)),
+            None => (None, None),
+        };
+        let _ = handle.emit(
+            "detection://held",
+            PassageHold {
+                passage,
+                reading,
+                held: held_by_the_passage
+                    .into_iter()
+                    .map(|(c, reason)| HeldCandidate {
+                        reference: Fire::key_for(&c.r),
+                        method: c.method,
+                        matched_text: c.matched,
+                        reason,
+                    })
+                    .collect(),
+                trace_id: trace,
+            },
+        );
     }
     // Stamped AFTER the broadcast returns, not before it: the kiosk fan-out and
     // the Tauri emit are on this path and are exactly the kind of cost a
@@ -9411,5 +9648,398 @@ mod named_translation_gap_tests {
             named_translation_gap(&conn, "turn with me to hebrews chapter eleven", &fire),
             None,
         );
+    }
+}
+
+/// **WHAT THE PASSAGE GUARD COSTS AND WHAT IT BUYS, ON REAL PREACHING.**
+///
+/// `RELAY_SERVICE_CORPUS=<file> cargo test --release passage_guard_bench -- --ignored --nocapture`
+///
+/// One line per line of the file: `<seconds>\t<transcript text>`, in service order.
+/// The author's own database produces it, read-only:
+///
+/// ```text
+/// sqlite3 -readonly relay.db -noheader -separator $'\t' \
+///   "select round(timestamp,1), replace(text, char(10),' ')
+///      from transcripts where service_id = 39 and trim(text) <> '' order by timestamp;"
+/// ```
+///
+/// **Why it drives `candidates_for_window` and the real `Router`.** Rule 13: the only
+/// question is which verse Relay would put on a screen or offer, and neither half of
+/// that is answerable by reading a transcript. The timestamps are used as the
+/// router's clock, so the per-reference cooldown behaves as it did on the morning.
+///
+/// **What it cannot tell you.** These lines are FINALS out of the database, and the
+/// live path also runs detection on every partial — roughly one a second — so every
+/// count here is a floor on the churn, not a measurement of it. Suggestions are
+/// never persisted (`persist_fire` is inside `if fire.may_broadcast()`), so the
+/// database cannot corroborate the suggestion half at all; only the fires can be
+/// checked against it. And there is no audio, so nothing here is about accuracy.
+#[cfg(test)]
+mod passage_guard_bench {
+    use super::*;
+    use detection::VerseRef;
+
+    fn kjv_corpus() -> Vec<(VerseRef, String)> {
+        let kjv: serde_json::Value =
+            serde_json::from_str(include_str!("../data/kjv.json").trim_start_matches('\u{feff}'))
+                .expect("kjv");
+        let mut corpus: Vec<(VerseRef, String)> = Vec::new();
+        for (bi, book) in kjv.as_array().expect("books").iter().enumerate() {
+            // CANONICAL names, not the file's `abbrev`: the guard compares a
+            // candidate's book with the book on the screen, and an index built on
+            // abbreviations would make every comparison false and the bench would
+            // measure nothing while printing numbers.
+            let name = detection::CANONICAL_BOOKS[bi].to_string();
+            for (ci, chapter) in book["chapters"].as_array().expect("ch").iter().enumerate() {
+                for (vi, verse) in chapter.as_array().expect("vs").iter().enumerate() {
+                    corpus.push((
+                        VerseRef {
+                            book: name.clone(),
+                            chapter: ci as i64 + 1,
+                            verse: vi as i64 + 1,
+                        },
+                        verse.as_str().unwrap_or("").to_string(),
+                    ));
+                }
+            }
+        }
+        corpus
+    }
+
+    /// One replay of a service. `guard` off reproduces the shipped behaviour of
+    /// 2026-09-24 exactly, which is what makes the two columns comparable.
+    struct Run {
+        offered: usize,
+        fired: Vec<(f32, String, String)>,
+        held: usize,
+        held_refs: Vec<String>,
+        windows_with_a_hold: usize,
+    }
+
+    fn replay(lines: &[(f32, String)], guard: bool) -> Run {
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        let mut context = ContextMemory::default();
+        let mut router = Router::default();
+        let mut out = Run {
+            offered: 0,
+            fired: Vec::new(),
+            held: 0,
+            held_refs: Vec::new(),
+            windows_with_a_hold: 0,
+        };
+        for (at, text) in lines {
+            let now_ms = (at * 1000.0) as u64;
+            let WindowCandidates {
+                kept,
+                held,
+                reading_in: _,
+            } = candidates_for_window(text, true, &sem, &phrases, &context, router.wall());
+            let (candidates, held) = if guard {
+                (kept, held)
+            } else {
+                // The guard OFF: put back exactly what it held — the same `Cand`,
+                // same confidence, same method — so the "before" column IS the
+                // shipped path of 2026-09-24 and not a near miss at it.
+                let mut all = kept;
+                for (c, _) in held {
+                    all.push(c);
+                }
+                (all, Vec::new())
+            };
+            if !held.is_empty() {
+                out.windows_with_a_hold += 1;
+                out.held += held.len();
+                for (c, reason) in &held {
+                    out.held_refs
+                        .push(format!("{:?}  {}", reason, Fire::key_for(&c.r)));
+                }
+            }
+            if candidates.is_empty() {
+                continue;
+            }
+            let mut best: Vec<(String, Cand)> = Vec::new();
+            for c in candidates {
+                let key = Fire::key_for(&c.r);
+                match best.iter_mut().find(|(k, _)| *k == key) {
+                    Some((_, e)) => {
+                        if !pipeline::better(e, &c) {
+                            *e = c;
+                        }
+                    }
+                    None => best.push((key, c)),
+                }
+            }
+            for (rank, (key, c)) in rank_for_wall(best).into_iter().enumerate() {
+                match router.decide_live(&key, c.conf, c.method, now_ms, true) {
+                    RouteDecision::AutoFire if rank == 0 => {
+                        out.fired
+                            .push((*at, key.clone(), text.chars().take(70).collect()));
+                        context.note_passage(&c.r, None);
+                        // What `broadcast_with_clock` does, because rule 29 means only
+                        // this one actually reaches a screen. A bench that told the
+                        // router about rank 1 would measure a product nobody ships —
+                        // and that mistake is exactly what this bench caught in the
+                        // first design of the guard.
+                        router.note_wall(&key);
+                    }
+                    RouteDecision::AutoFire | RouteDecision::Suggest => out.offered += 1,
+                    RouteDecision::Drop => {}
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    #[ignore]
+    fn what_the_guard_costs_a_real_service() {
+        let Ok(path) = std::env::var("RELAY_SERVICE_CORPUS") else {
+            println!("set RELAY_SERVICE_CORPUS to `<seconds>\\t<text>` lines, in order");
+            return;
+        };
+        let body = std::fs::read_to_string(&path).expect("corpus unreadable");
+        let lines: Vec<(f32, String)> = body
+            .lines()
+            .filter_map(|l| l.split_once('\t'))
+            .filter(|(_, t)| !t.trim().is_empty())
+            .map(|(a, t)| (a.trim().parse().unwrap_or(0.0), t.to_string()))
+            .collect();
+        println!("\n{} transcript lines\n", lines.len());
+
+        let before = replay(&lines, false);
+        let after = replay(&lines, true);
+
+        println!(
+            "  suggestions offered   before {:>4}   after {:>4}   ({} fewer)",
+            before.offered,
+            after.offered,
+            before.offered as i64 - after.offered as i64
+        );
+        println!(
+            "  auto-fires            before {:>4}   after {:>4}",
+            before.fired.len(),
+            after.fired.len()
+        );
+        println!(
+            "  held by the guard     {} candidates across {} windows",
+            after.held, after.windows_with_a_hold
+        );
+
+        let b: Vec<&String> = before.fired.iter().map(|(_, k, _)| k).collect();
+        let a: Vec<&String> = after.fired.iter().map(|(_, k, _)| k).collect();
+        // **BROADCASTS REMOVED, AND WHETHER ANY OF THEM WAS A VERSE.** The question
+        // rule 13 asks is which verse a congregation would see, so a removed
+        // broadcast of a verse that was ALREADY on the screens costs nothing and a
+        // removed broadcast of a verse that was not is a real loss. Printing them in
+        // one list without the distinction is how a number gets quoted wrongly.
+        println!("\n  BROADCASTS REMOVED:");
+        let mut duplicates = 0;
+        let mut real_losses = 0;
+        for (at, key, heard) in &before.fired {
+            if after.fired.iter().any(|(t, k, _)| k == key && t == at) {
+                continue;
+            }
+            // What was on the wall, in the AFTER run, at the moment this fired?
+            let on_wall = after
+                .fired
+                .iter()
+                .rev()
+                .find(|(t, _, _)| t <= at)
+                .map(|(_, k, _)| k.clone());
+            if on_wall.as_deref() == Some(key.as_str()) {
+                duplicates += 1;
+                println!("    {at:>7.1}s  DUPLICATE of the wall   {key:<22} “{heard}”");
+            } else {
+                real_losses += 1;
+                println!(
+                    "    {at:>7.1}s  A VERSE IS LOST         {key:<22} (wall held {on_wall:?}) “{heard}”"
+                );
+            }
+        }
+        if duplicates + real_losses == 0 {
+            println!("    none");
+        }
+        println!(
+            "\n  {duplicates} duplicate broadcasts removed · {real_losses} verses actually lost"
+        );
+        println!("\n  FIRES GAINED:");
+        let mut gained = 0;
+        for (at, key, heard) in &after.fired {
+            if !before.fired.iter().any(|(t, k, _)| k == key && t == at) {
+                gained += 1;
+                println!("    {at:>7.1}s  {key:<22} “{heard}”");
+            }
+        }
+        if gained == 0 {
+            println!("    none");
+        }
+        println!("\n  HELD REFERENCES (first 40):");
+        for r in after.held_refs.iter().take(40) {
+            println!("    {r}");
+        }
+        println!(
+            "\n  fire order identical: {}\n",
+            b == a && before.fired.len() == after.fired.len()
+        );
+    }
+
+    /// **HOW FAST A READING MOVES THE WALL** — the churn the operator is counting,
+    /// measured rather than argued. Prints every pair of consecutive auto-fires and
+    /// the gap between them, so a wall change every few seconds is visible as a
+    /// number instead of as a complaint.
+    #[test]
+    #[ignore]
+    fn how_fast_the_wall_moves() {
+        let Ok(path) = std::env::var("RELAY_SERVICE_CORPUS") else {
+            println!("set RELAY_SERVICE_CORPUS");
+            return;
+        };
+        let body = std::fs::read_to_string(&path).expect("corpus unreadable");
+        let lines: Vec<(f32, String)> = body
+            .lines()
+            .filter_map(|l| l.split_once('\t'))
+            .filter(|(_, t)| !t.trim().is_empty())
+            .map(|(a, t)| (a.trim().parse().unwrap_or(0.0), t.to_string()))
+            .collect();
+        let run = replay(&lines, true);
+        println!("\n  {} auto-fires\n", run.fired.len());
+        let mut same_passage_within_30s = 0;
+        for w in run.fired.windows(2) {
+            let (t0, k0, _) = &w[0];
+            let (t1, k1, heard) = &w[1];
+            let gap = t1 - t0;
+            let p = |k: &String| {
+                k.rsplit_once(':')
+                    .map(|(a, _)| a.to_string())
+                    .unwrap_or_default()
+            };
+            let same = p(k0) == p(k1);
+            if same && gap <= 30.0 {
+                same_passage_within_30s += 1;
+            }
+            println!(
+                "    {t1:>7.1}s  +{gap:>6.1}s  {}{k1:<22} “{heard}”",
+                if same {
+                    "SAME PASSAGE "
+                } else {
+                    "             "
+                }
+            );
+        }
+        println!(
+            "\n  consecutive fires inside one passage within 30s: {same_passage_within_30s}\n"
+        );
+    }
+}
+
+/// **THE PASSAGE GUARD, THROUGH THE ASSEMBLY IT IS APPLIED IN**, 2026-09-25.
+///
+/// `detection::passage_guard` holds the rule. These hold the WIRING: that the two
+/// modules spell a reference the same way, that a held candidate is partitioned out
+/// of what reaches the gate, and that the announcement is reachable.
+#[cfg(test)]
+mod passage_guard_wiring {
+    use super::*;
+    use detection::VerseRef;
+
+    fn vr(book: &str, chapter: i64, verse: i64) -> VerseRef {
+        VerseRef {
+            book: book.into(),
+            chapter,
+            verse,
+        }
+    }
+
+    /// **THE JOIN, AND IT IS THE ONE THING THAT CAN SILENTLY UNDO THE WHOLE GUARD.**
+    ///
+    /// Rule B compares a candidate against the string the router says is on the wall.
+    /// The router's string comes from `pipeline::Fire::key_for`; the guard's comes
+    /// from `detection::reference_key`, because `detection` is DB- and IO-free on
+    /// purpose and cannot see `pipeline`. Two spellings of one key would make every
+    /// comparison false, hold nothing, break no test and print no error.
+    #[test]
+    fn the_two_reference_keys_agree() {
+        for r in [
+            vr("John", 3, 16),
+            vr("Psalms", 119, 105),
+            // A numbered book — the space inside the name is exactly where a
+            // hand-rolled split has gone wrong here before (RG-178's `rsplit_once`).
+            vr("1 Corinthians", 13, 4),
+            vr("Song of Solomon", 2, 1),
+            vr("3 John", 1, 4),
+        ] {
+            assert_eq!(
+                detection::reference_key(&r),
+                Fire::key_for(&r),
+                "the guard and the router must spell {r:?} the same way"
+            );
+        }
+    }
+
+    /// A held candidate is REMOVED from what reaches the gate — that is what makes
+    /// the list stop churning — and it is carried out beside it with its reason, so
+    /// nothing is discarded silently.
+    #[test]
+    fn a_held_candidate_leaves_the_gate_and_arrives_in_the_report() {
+        let on = vr("Psalms", 107, 8);
+        let elsewhere = vr("Ephesians", 5, 20);
+        let candidates = [
+            Cand::single(
+                on.clone(),
+                0.80,
+                DetectionMethod::Reading,
+                Some("oh that men would praise the lord".into()),
+            ),
+            Cand::single(
+                elsewhere.clone(),
+                0.65,
+                DetectionMethod::Quoted,
+                Some("giving thanks always for all things".into()),
+            ),
+        ];
+        let view: Vec<(&VerseRef, DetectionMethod)> =
+            candidates.iter().map(|c| (&c.r, c.method)).collect();
+        let mask = detection::hold_for_the_passage(Some(&on), None, false, &view);
+        assert_eq!(
+            mask,
+            vec![None, Some(detection::HeldReason::OutsideTheReading)]
+        );
+        // The partition `candidates_for_window` performs, asserted on the shapes it
+        // produces — `HeldCandidate` carries the reference, the method, the WORDS and
+        // the reason, which is everything the operator needs to act on one.
+        let held = HeldCandidate {
+            reference: Fire::key_for(&elsewhere),
+            method: DetectionMethod::Quoted,
+            matched_text: Some("giving thanks always for all things".into()),
+            reason: detection::HeldReason::OutsideTheReading,
+        };
+        assert_eq!(held.reference, "Ephesians 5:20");
+        let json = serde_json::to_string(&PassageHold {
+            passage: Some("Psalms 107".into()),
+            reading: Some("oh that men would praise the lord".into()),
+            held: vec![held],
+            trace_id: None,
+        })
+        .expect("the report must serialise");
+        // The wire names the console reads. Changing one is changing a contract.
+        assert!(json.contains("\"passage\":\"Psalms 107\""), "{json}");
+        assert!(
+            json.contains("\"reason\":\"outside_the_reading\""),
+            "{json}"
+        );
+        assert!(json.contains("\"method\":\"quoted\""), "{json}");
+    }
+
+    /// `already_on_screen` is the other wire name, and the console tells the two
+    /// apart to decide whether the operator has anything to do about it.
+    #[test]
+    fn the_wall_rule_names_itself_on_the_wire() {
+        let json = serde_json::to_string(&detection::HeldReason::AlreadyOnScreen).unwrap();
+        assert_eq!(json, "\"already_on_screen\"");
     }
 }

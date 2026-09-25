@@ -43,20 +43,30 @@
 /** A readiness figure, 0-100, as a string — or null. `null` is the absence, never
  *  `0`, which is itself a setting ("never fire") and would read as one.
  *
- *  ── WHY THIS IS NOT `Math.round(threshold * 100)` ANY MORE ──────────────────
+ *  ── WHAT THIS FIGURE IS, AND THE TWO COMPLAINTS THAT SHAPED IT ─────────────
  *
- *  It was, and it printed the raw confidence bar: the dial's cautious end (0)
- *  showed `Auto-fire above 90%` and its eager end (100) showed `30%`. A figure
- *  printed under a slider reads as that slider's setting, and that one ran the
- *  opposite way to it — the operator's objection of 2026-09-23, verbatim: *"when
- *  the sensor is on Auto fire above 100, then it auto fires not when on 0."*
+ *  It is the CONFIDENCE each bar needs, 0-100. Auto-fire is always the larger of
+ *  the two, by exactly one band, because an auto-fire is the harder bar.
  *
- *  A threshold cannot be made to rise with eagerness; a bar you must clear is
- *  lower when more gets through. So the printed QUANTITY changed rather than its
- *  direction, and `Thresholds::readiness` in router.rs is where it is worked out
- *  — beside the curve, in the one language that owns the mapping. Nothing here
- *  re-derives it, for the same reason nothing here re-derives the dial position
- *  (DECISIONS §96, §117). */
+ *  Two operator complaints, three days apart, about the same pair. First
+ *  (§117): *"when the sensor is on Auto fire above 100, then it auto fires not
+ *  when on 0"* — a figure under a slider reads as that slider's setting, and
+ *  this one runs the opposite way to it. That was answered by inverting the
+ *  number into a readiness. Then (§121): *"suggestions should be lower by 20 if
+ *  auto fire is on 100 so auto fire has the higher priority"* — on a readiness
+ *  scale a suggestion is the LARGER number, because it is the easier bar, and
+ *  that reads as a suggestion outranking an auto-fire.
+ *
+ *  Only one framing satisfies both, and it is a word rather than arithmetic: say
+ *  what each bar NEEDS. Under "needs", a smaller number is obviously the easier
+ *  bar rather than the keener setting, and auto-fire is the bigger figure
+ *  because it is the stricter rule. The figures still FALL as the dial rises and
+ *  that cannot be helped — a bar you must clear is lower when more gets through.
+ *  The dial is the control and keeps its own direction.
+ *
+ *  Worked out in `Thresholds::readiness` in router.rs, beside the curve, in the
+ *  one language that owns the mapping. Nothing here re-derives it, for the same
+ *  reason nothing here re-derives the dial position (DECISIONS §96, §117, §121). */
 function figure(v) {
   const n = Number(v);
   return Number.isFinite(n) ? `${Math.round(n)}` : null;
@@ -72,7 +82,8 @@ function figure(v) {
  *   `gateOnDial` (does that dial position actually produce that gate).
  * @returns {{readable: boolean, dial: number, autoPct: string|null,
  *            suggestPct: string|null, drifted: boolean, note: string}}
- *   `autoPct`/`suggestPct` are READINESS figures, 0-100, higher = more is fired.
+ *   `autoPct`/`suggestPct` are what each bar NEEDS, 0-100; auto-fire is always
+ *   the larger, by one band.
  *   The names are kept so no caller has to be found and changed; the meaning is
  *   documented on `figure` above and stated on both surfaces that print them.
  */

@@ -79,19 +79,26 @@ describe('the gate has one control', () => {
     expect(section).toMatch(/aria-label="Detection sensitivity"/);
     // The figures, as definition data rather than form controls.
     expect(section).toMatch(/<dl[^>]*class="s-gatedl"/);
-    expect(section).toMatch(/<dt>Auto-fire<\/dt>/);
-    expect(section).toMatch(/<dt>Suggest<\/dt>/);
+    expect(section).toMatch(/<dt>Auto-fire needs<\/dt>/);
+    expect(section).toMatch(/<dt>Suggest needs<\/dt>/);
     // And the label that was backwards is gone rather than merely moved.
     expect(section).not.toMatch(/HYPER-AWARE/);
-    // THE WORD "ABOVE" IS GONE WITH THE QUANTITY IT DESCRIBED (DECISIONS §117).
-    // These are readiness figures now — 0 never, 100 anything — and they rise
-    // with the dial above them. "Auto-fire above 90" over a dial reading 0 was
-    // the operator's objection of 2026-09-23, and it is the shape of the defect
-    // rather than a wording nit: a figure printed under a control reads as that
-    // control's setting, so one running the other way says the opposite thing.
+    // THE WORD "ABOVE" IS GONE WITH THE QUANTITY IT DESCRIBED (DECISIONS §117),
+    // AND "NEEDS" REPLACED IT (§121). Two operator complaints, three days apart,
+    // about the same pair: first that a figure printed under a slider reads as
+    // that slider's setting and this one ran the other way; then, once it had
+    // been inverted into a readiness, that a SUGGESTION was the larger number
+    // and so read as outranking an auto-fire.
+    //
+    // "Needs" answers both, because a smaller number under it is plainly the
+    // easier bar rather than the keener setting — and auto-fire, being the
+    // stricter rule, is the larger figure. The arithmetic did not move; the word
+    // did.
     expect(section).not.toMatch(/Auto-fire above|Suggest above/);
-    // The scale is named. A bare 70 beside a bare 50 says nothing about range.
-    expect(section).toMatch(/0 is never, 100 is anything/);
+    // The scale is named, and so is the RELATIONSHIP. A bare 30 beside a bare 10
+    // says nothing about which is the harder bar.
+    expect(section).toMatch(/scored 0–100/);
+    expect(section).toMatch(/Auto-fire needs 20 points more/);
   });
 });
 

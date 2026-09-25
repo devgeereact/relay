@@ -218,13 +218,15 @@
                depend on a socket. -->
           <dl class="ins-dl">
             {#if gate.readable}
-              <!-- READINESS, 0-100, rising with the dial — not the confidence
-                   bars, which fall as the dial rises and so read as the opposite
-                   setting to the one being made. DECISIONS §117; the words are
-                   `describeGate`'s and Settings prints the same pair. -->
-              <dt>Auto-fire</dt>
+              <!-- WHAT EACH BAR NEEDS, 0-100 (DECISIONS §117, §121). Auto-fire is
+                   always the larger, by exactly one band, because it is the
+                   stricter rule — which is the whole point of printing it this
+                   way round on the panel an operator opens to ask why a verse
+                   did or did not fire. The words are `describeGate`'s and
+                   Settings prints the same pair, so the two cannot disagree. -->
+              <dt>Auto-fire needs</dt>
               <dd class="r-mono">{gate.autoPct} / 100</dd>
-              <dt>Suggest</dt>
+              <dt>Suggest needs</dt>
               <dd class="r-mono">{gate.suggestPct} / 100</dd>
             {/if}
             <dt>Paraphrases</dt>

@@ -6679,3 +6679,153 @@ because RG-268 was filed precisely because the phone had an ink the big screen d
 **What did NOT change.** Amber still means ON AIR and amethyst still means rehearsal, and neither
 may appear on either surface; both are still asserted. The alarm keeps its own field colour. A
 message still never claims anything about what a congregation is looking at.
+
+## 121. The gate is printed as what each bar NEEDS, and auto-fire needs more (2026-09-25)
+
+**Amends §117**, which amended the printing of the same pair three days earlier. Two operator
+complaints about two figures; worth recording together, because the second one only exists because
+of how the first was answered.
+
+**§117's complaint:** *"when the sensor is on Auto fire above 100, then it auto fires not when on
+0."* The raw confidence bars were printed directly under a slider they run the opposite way to, so
+the larger number read as the keener setting. Answered by inverting them into a readiness — `100 −
+threshold` — which rises with the dial.
+
+**This complaint:** *"suggestions should be lower by 20 if auto fire is on 100 so auto fire has the
+higher priority."* On a readiness scale a suggestion is the LARGER number, because it is the easier
+bar. The screenshot shows `Auto-fire 70 / Suggest 90` and reads as a suggestion outranking an
+auto-fire, which is the opposite of how the gate works.
+
+**Both cannot be satisfied by arithmetic, and neither is a wording nit.** A bar you must clear is
+lower when more gets through; that is arithmetic and not a choice. So on any honest scale exactly
+one of the two orderings holds, and the operator has now objected to both — first that the figures
+ran against the dial, then that they ran against each other.
+
+**What settles it is the WORD.** These are what each bar NEEDS. Auto-fire needs more than a
+suggestion — always, at every dial position, by exactly `SUGGEST_BAND` — because it is the stricter
+rule. Under "needs", a smaller number is plainly the easier bar rather than the keener setting, and
+the ranking reads correctly: the harder thing requires more.
+
+The figures still FALL as the dial rises, and that is now explicitly what the dial's own labels
+say: moving it right lowers what both bars need, which is what eager means. The dial is the
+control; these are what it produced.
+
+**Nothing about the gate itself moved.** `from_sensitivity` is untouched, `SUGGEST_BAND` is still
+0.20, and `Thresholds::default() == from_sensitivity(50)` still holds by construction. Only the
+printed quantity changed, and it changed back to the threshold it started as — with a word in front
+of it that the original never had. **`readiness()` keeps its name and its field names** so no caller
+had to be found and changed; `router.rs` carries the meaning at the definition.
+
+Guarded in `router.rs` by `auto_fire_always_needs_more_than_a_suggestion_and_by_exactly_the_band`
+and by `what_each_needs_falls_as_the_dial_rises` — the second exists so nobody re-inverts the
+figures to make them rise with the slider again, which is the fix that has now been tried and has
+produced this second complaint.
+
+## 122. A verse already on a wall is not news, and a reading stays inside the passage it is reading (2026-09-25)
+
+**On the operator's instruction:** *"I dont want suggestion to be changing when a bible verse is reading
+because it heard a phrase which is in another bible verse… verses needs to be guarded so when a preacher
+is reading a verse it stays within the verse/chapter until the preacher calls another verse… suggesting
+too many verses whilst the preacher is reading a verse will cause confusion…"*
+
+### The two things that were wrong, and only one of them was the complaint
+
+§118's promotion lets a long, sole, verbatim run reach a congregation unattended. It works: eight of ten
+such auto-fires across services 38-40 were correct and unremarkable. The two that were not are one
+failure, and the **ordinary shape of a sermon** produces it: announce the reference, Relay fires it
+`Direct`, then read the verse aloud, and Relay fires the same verse again. Eleven seconds, six times
+across three services, in front of congregations.
+
+**No number could have fixed it.** `DEFAULT_DEBOUNCE_MS` is `WINDOW_SECS + 2` — ten seconds — and rests
+on *"anything re-detected inside it is the same utterance being heard again"*. True of a spoken
+reference, which is over in two seconds; false of a reading, which produces matching runs for as long as
+the reading lasts. The measured gaps are 11, 11, 17, 21 and 120 seconds: a cooldown of 12 catches two of
+five, one of 20 begins swallowing genuine second citations. Ranking cannot help either — `Mark 6:2`
+scored 0.69 then 0.90 as more of the verse was heard, so the duplicate is the STRONGER candidate by
+every rule in `pipeline::better`.
+
+The operator's own complaint is the second thing: a verse read aloud is not only in the verse being
+read. Synoptic parallels, repeated formulae, `Psalms 107:8` and `107:21`, and plain sub-spans — a
+twenty-five-word run in John 3:16 carries a ten-word run in John 3:15, because those ten words are in
+both. So the list churns for exactly as long as the reading lasts.
+
+### The decision
+
+`detection::hold_for_the_passage` — pure, DB-free, applied once in `main::candidates_for_window` over a
+window's finished candidate set, because it is a decision about the SET and a set-level rule added at
+four gathering sites is the shape rule 36 records four separate bugs for.
+
+- **The wall already says it.** A candidate found in a verse's own text whose reference is the one Relay
+  last put on a screen is held. It cannot be new information.
+- **Outside the reading.** While this window holds a run of the speaker's own words verbatim inside the
+  book and chapter on the screen, text-derived candidates from outside that chapter are held. Chapter,
+  not book: the operator said *verse/chapter*, and Psalms 23 is not Psalms 107.
+- **Nothing reference-shaped is ever held.** `Direct`, `Ambiguous`, `UncertainBook`, `UncertainNumber` —
+  at any dial, in any window, under either rule. A window that NAMES a reference disarms the passage rule
+  entirely, not one candidate. That is rule 40's sentence and it is checked first, because a guard that
+  could swallow a spoken reference would be strictly worse than the churn it fixes.
+
+**Nothing has to be cleared and nothing can be left on.** The passage rule is armed by evidence in the
+window in front of it, so it stops biting in the first window with no in-passage run — the window the
+preacher moved on. The wall rule is released by the next verse, by `Router::forget_last_fire` (a clear or
+a blackout) and by `Router::forget_wall` (anything that is not scripture taking the screen — the same
+door rule 38 disarms the passage at).
+
+### What is deliberately NOT done, because §118 asked for the opposite
+
+**The wall still follows a reader from verse to verse.** `Philippians 1:23` at 1508 s and `1:24` at
+1517 s is one reading walking forward; the first is held because it is already up and the second fires.
+`Job 22:27` → `22:28` at +25 s is the same shape and is plainly correct. Freezing the wall on the first
+verse of a reading until somebody named another reference would leave a verse the preacher had finished
+in front of a congregation for as long as the reading lasted — a wrong verse chosen on purpose — and it
+would reverse the instruction that created `Reading` at all. The operator's words are *within the
+verse/chapter*, and the adjacent verse is inside it.
+
+**A spoken reference repeating a reading is untouched.** `Micah 4:1` fired as a reading and then,
+thirteen seconds later, as a spoken reference. That is a duplicate and this decision will not stop it,
+because stopping it means demoting something the preacher said out loud.
+
+### Relay says what it is holding
+
+A guard that quietly stops offering verses is indistinguishable from a detector that has gone deaf, which
+is rule 35 exactly. `detection://held` carries the passage, the phrase that proves the reading, and every
+held candidate with the rule that held it and the words that produced it — never a number (rule 18). It
+is emitted once, at the place the decision is made, and `capture.js`'s `passageHold` store expires it,
+because a reading that ENDS emits nothing and a permanent "holding 3" is the same failure from the other
+side.
+
+**Writing it revealed the hole it exists to close**: `emit_detections` returned early when no candidate
+survived the gate, and the wall rule can legitimately hold a whole window — a preacher reading on through
+the verse Relay already put up, the commonest case there is. The report went with the return. Caught by
+the first end-to-end test, on its first run.
+
+### And the record of what is on a wall is kept at the door, not at the gate
+
+`Router::note_wall` is called from `broadcast_with_clock`. Recording it inside `Router::decide` was the
+first attempt and was measurably wrong: `decide` returns `AutoFire` per candidate and rule 29 then shows
+only rank 0, so *"Jeremiah chapter 6 verse 16 verse 17 verse 17"* — which yields `6:16` at 0.95 and
+`6:17` at 0.88, both `AutoFire` — left the record reading `Jeremiah 6:17` while the congregation saw
+`6:16`. Eleven seconds later the guard compared the reading against the wrong verse and fired the
+duplicate it exists to stop. Found by replaying a real service, not by reading the code.
+
+It is also **not** `ContextMemory.current`, and that distinction is `liveCue`'s: position and
+on-air-ness are separate facts. `ContextMemory` is where `→` resumes and survives a blackout on purpose;
+this is what the screens are showing, so a clear drops it. One field for both would mean a verse cleared
+off a wall could never be read back onto it.
+
+### What holds it
+
+`detection::passage_guard` (sixteen), `router::the_wall` (five), `main::passage_guard_wiring` (three,
+including that the guard and the router spell a reference the same way — two spellings would hold
+nothing, break no test and print no error), three `e2e` tests on the real fire path, and
+`passagehold.test.js`. Every rule revert-checked; the `e2e` ones were watched to reproduce
+`["Jeremiah 6:16", "Jeremiah 6:16"]` and a cleared verse that never comes back.
+
+**And one instrument that cannot see this at all, stated rather than glossed.** `eval::print_scorecard`
+reports 100% recall, 53/53 verses and a 0.0% wrong-verse rate with the guard on — and exactly the same
+with it off, because it scores one window at a time and has no wall for a verse to be already on. That is
+RG-296's finding one door along. The number that means something is `main::passage_guard_bench`: 971 real
+transcript lines across three services, **11 duplicate broadcasts removed, no verse lost, suggestions
+549 → 448**. It is a floor, not a measurement — the corpus is finalized lines and the live path also
+detects on every partial — and there is no recorded church audio on this machine, so none of it is a
+claim about accuracy in any language.

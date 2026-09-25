@@ -70,6 +70,107 @@ function evidenceIsInLine(claim, lineWords) {
 }
 
 /**
+ * HOW MUCH OF THE VERSE WAS ACTUALLY SAID — in words, or nothing at all.
+ *
+ * The operator, 2026-09-25: *"let the transcript be colour coded with the highest
+ * match so its easy to filter through what's closest to what was heard"*. A
+ * ranking, then — and the whole difficulty is that "strength" has no single
+ * answer across the six methods, while the number that looks most like one is the
+ * number that put a wrong verse in front of a congregation.
+ *
+ * ── WHY THIS IS A COUNT AND NEVER A SCORE ───────────────────────────────────
+ *
+ * `confidence` is on a DIFFERENT SCALE PER METHOD, and only `direct` calibrates
+ * it (`DetectionMethod::confidence_is_calibrated`). Sorting the six by that field
+ * puts `uncertain_book` near the top, because its confidence is real and is about
+ * a word nobody said — "please turn to hymn number three sixteen" parsed
+ * **Numbers 3:16** at 0.840 against a 0.50 bar (rule 10). A strength badge is a
+ * promotion, and promoting that claim on a scanning operator's eye is the exact
+ * failure the router's cap exists to prevent.
+ *
+ * A RUN IS DIFFERENT AND THAT IS THE WHOLE DESIGN. For `quoted` and `reading`,
+ * `matched_text` is `detection.rs::PhraseHit::phrase` — a contiguous span of the
+ * speaker's own words, held by one verse, in the order they said them
+ * (`detect.js::evidenceIsASpan`). Its length is a COUNT, with a unit, of words a
+ * person said; `PhraseHit::run`'s own doc calls it "the operator-facing measure of
+ * how much of the verse was actually said". A count cannot be misread as a
+ * likelihood the way a bare percentage can, and two counts are comparable to each
+ * other, which is what "filter through what's closest" needs.
+ *
+ * ── AND THIS IS NOT RE-DERIVED, IT IS READ ──────────────────────────────────
+ *
+ * `phrase` is `words[i..i + n].join(" ")` over `phrase_words`, which splits on
+ * anything not ASCII-alphanumeric — so the phrase is exactly `n` bare tokens
+ * joined by single spaces, and `normalise` leaves bare tokens alone. The word
+ * count IS `run`, losslessly. `run` itself is not on the wire (`DetectionEvent`
+ * carries `matched_text`, `method` and `confidence` and no length), and it would
+ * be the better field; until it is there, this reads the field it was joined into
+ * rather than inventing a measure of its own.
+ *
+ * ── THE FOUR METHODS THAT GET NOTHING, AND WHY THAT IS THE HONEST ANSWER ────
+ *
+ *   * `semantic` — a TF-IDF cosine, and its evidence is not even a span: it is
+ *     `terms.join(" · ")`, the words that moved the cosine, in weight order, from
+ *     anywhere in the verse. Counting them counts terms the index liked.
+ *   * `ambiguous` — its confidence is a hardcoded placeholder, not a measurement.
+ *   * `uncertain_book` — rule 10, above.
+ *   * `direct` — its evidence is the REFERENCE, not the verse. "first epistle of
+ *     john chapter four verse eight" is not a better match than "ps 23 1"; it is
+ *     a wordier way of saying one. There is nothing to count, and the reference is
+ *     printed in full already.
+ *
+ * The absence is itself part of the ranking: a claim with no honest measure shows
+ * no measure, and `markFor` sorts it below one that has it.
+ *
+ * @returns a positive integer, or `null` where no honest measure exists.
+ */
+export function runWords(claim) {
+  const method = claim?.method;
+  if (method !== 'quoted' && method !== 'reading') return null;
+  const words = normalise(claim?.matched_text);
+  if (!words) return null;
+  return words.split(' ').length;
+}
+
+/**
+ * Is this mark the STRONG tier of a quotation — the preacher reading the verse?
+ *
+ * The answer is the method's name and nothing else. `for_quotation` promotes a run
+ * to `Reading` on TWO conditions, eight words AND `sole`, and **`sole` is not on
+ * the wire** — so the frontend cannot reproduce that decision and must not
+ * pretend to. Comparing a count here against a local copy of `READING_RUN_WORDS`
+ * would be rule 35's third instance in a new costume: a component keeping its own
+ * copy of a gate that lives in Rust, drifting the moment the bar moves.
+ *
+ * Takes a MARK rather than a claim, because that is what the card holds.
+ */
+export const readAloud = (mark) => mark?.claim?.method === 'reading';
+
+/**
+ * Is `a` a strictly stronger mark than `b`?
+ *
+ * TWO KEYS, IN THIS ORDER, AND THE ORDER IS THE SAFETY PROPERTY.
+ *
+ * 1. A HEARD REFERENCE OUTRANKS EVERY RUN, AT EVERY LENGTH. A 25-word reading is
+ *    strong evidence about WHICH verse and no evidence that anybody said its
+ *    name. If a long enough run could outrank a hearing, the strength scale would
+ *    have quietly become the trust ranking — and the trust ranking is rule 10's,
+ *    decided in `router.rs`, not on this card.
+ * 2. WITHIN ONE KIND, THE LONGER RUN WINS, and no run at all loses to any run.
+ *    That is the operator's *"highest match"*: a preacher reading aloud produces a
+ *    short run in a neighbouring verse and a long one in the verse being read
+ *    (`PhraseHit::sole`, the John 3:15/3:16 case), and before this the mark was
+ *    whichever claim the store happened to hand over first.
+ *
+ * STRICTLY stronger, so an equal claim never displaces an earlier one — the list
+ * order stays the tie-break, as it was.
+ */
+function stronger(a, b) {
+  if (a.kind !== b.kind) return a.kind === 'heard';
+  return (a.run ?? 0) > (b.run ?? 0);
+}
+
+/**
  * What kind of mark does this line carry — nothing, a heard reference, a guess?
  *
  * @param line   `{ t, at }`, one closed transcript line as the card holds it.
@@ -85,9 +186,10 @@ function evidenceIsInLine(claim, lineWords) {
  *
  * A HEARD REFERENCE WINS over a guess on the same line, whatever order they
  * arrive in — a window that both states a reference and quotes the verse is
- * ordinary preaching, and the reference is the stronger fact about it. Within
- * one kind the first match in the list given wins; the store hands them over
- * newest first.
+ * ordinary preaching, and the reference is the stronger fact about it. Within one
+ * kind the STRONGEST MATCH wins and an equal one never displaces an earlier one,
+ * so the list order is still the tie-break; the store hands them over newest
+ * first. See `stronger`.
  */
 export function markFor(line, claims) {
   const list = Array.isArray(claims) ? claims : [];
@@ -100,9 +202,16 @@ export function markFor(line, claims) {
     // mark's whole job is to say WHICH verse.
     if (!claim?.reference) continue;
     if (!evidenceIsInLine(claim, words)) continue;
-    const kind = heard(claim) ? 'heard' : 'guess';
-    if (!best) best = { kind, reference: claim.reference, claim };
-    if (kind === 'heard') return { kind, reference: claim.reference, claim };
+    const mark = {
+      kind: heard(claim) ? 'heard' : 'guess',
+      reference: claim.reference,
+      claim,
+      run: runWords(claim),
+    };
+    // NO EARLY RETURN ON THE FIRST HEARD CLAIM any more. It was equivalent while
+    // the only key was the kind; with a second key it would stop the scan before
+    // the strength comparison had seen the rest of the list.
+    if (!best || stronger(mark, best)) best = mark;
   }
   return best;
 }
@@ -153,10 +262,14 @@ export function rememberMarks(lines, claims, memo) {
     const key = lineKey(line);
     const fresh = markFor(line, claims);
     const held = memo.get(key) ?? null;
-    // A heard reference may replace a remembered guess and never the other way
-    // round. The paraphrase often arrives first — the preacher quotes the verse
-    // and names it a window later — and the line was heard.
-    if (fresh && (!held || (held.kind === 'guess' && fresh.kind === 'heard'))) {
+    // A STRONGER CLAIM MAY REPLACE A REMEMBERED ONE AND A WEAKER MAY NOT, on the
+    // one comparison `markFor` uses within a window (`stronger`). Two cases, both
+    // ordinary preaching: the paraphrase arrives first and the reference a window
+    // later, so a hearing replaces a guess; and the window slides forward while
+    // the preacher is still reading, so the same line is claimed again with more
+    // of the verse in it. Freezing the first would hold the strongest line of the
+    // service at its weakest reading of it.
+    if (fresh && (!held || stronger(fresh, held))) {
       memo.set(key, fresh);
       if (memo.size > MARK_MEMO_CAP) memo.delete(memo.keys().next().value);
       return fresh;
