@@ -6829,3 +6829,91 @@ transcript lines across three services, **11 duplicate broadcasts removed, no ve
 549 → 448**. It is a floor, not a measurement — the corpus is finalized lines and the live path also
 detects on every partial — and there is no recorded church audio on this machine, so none of it is a
 claim about accuracy in any language.
+
+## 123. Two things the preacher said that disagree is evidence, and a third of them can be heard at once (2026-09-25)
+
+**Three services, sixteen hours, twelve wrong verses. Eight are one mechanism**: the decoder loses
+or alters a digit or an ordinal in a spoken reference. *eighty*-seven → 7 · *eigh*-teen → 8 ·
+*Second* Timothy → 1 Timothy · *sixty*-one → 1 · *twelve* → 2 · 34 → 35, and two book names.
+
+**No number could reach this class and that is worth stating plainly.** Every result is a SMALLER,
+VALID, WRONG reference. The parse confidence is genuine — it is a real confidence about a real
+parse of the words the decoder produced. The verse exists. The chapter exists. `Direct` at 0.95 is
+the strongest claim Relay can make and it was correct in every respect except that the preacher had
+said a different number. No threshold, no ambiguity check, no impossible-chapter rule and no
+ranking can see it, because every individual piece of evidence is sound.
+
+### The rule
+
+`detection::doubt_from_a_quotation`, pure and DB-free, applied once in
+`main::candidates_for_window` — the same choke point `hold_for_the_passage` uses, for the same
+reason (rule 36): it is a decision about the SET.
+
+A spoken `Direct` reference and a verbatim run **disagree** only when they differ in exactly ONE
+coordinate and that difference is the measured decode slip:
+
+- **`SpokenChapter`** — same book, the run's verse inside the verse or span that was said, and the
+  chapter is what is left of the run's chapter when the front of the number is lost (`7`⊂`87`,
+  `8`⊂`18`, `1`⊂`61`, `2`⊂`12`), or the two are the same length, **two digits or more**, and one
+  digit apart (`35`/`34`). **The length floor is load-bearing**: at one digit every chapter is one
+  substitution from every other, so `Romans 1` would contradict `Romans 2`, and a preacher reading
+  on is not a decode slip.
+- **`SpokenBook`** — a different book holding the run at the **exact** chapter and verse that was
+  said, never a whole chapter. `Acts 8:12` against a run in `Proverbs 8:12` is the finding; *"turn
+  to Romans 8"* against a run in `John 8` is Tuesday.
+
+**A verse-only difference is never a disagreement, at any distance.** That single line protects the
+two cases from the same day where believing the number was RIGHT: `John 15:15` read then *"John 15,
+14"* cited, a preacher starting a passage; and `Hebrews 13:7` cited while he quoted 13:17 from
+memory — he had interrupted the service an hour earlier to insist on verse 7.
+
+### Both sides are demoted, and the alternative was tempting
+
+The citation drops to `UncertainNumber` or `UncertainBook`, the accusing run to `Quoted`. All three
+are already capped at Suggest by `Router::decide` at any score and any dial, so **a disagreement
+fires nothing at all** and both candidates are offered.
+
+Leaving the accuser alone would have auto-fired the CORRECT `Proverbs 8:12` in place of `Acts 8:12`
+— a better morning when the rule is right, and a brand-new wrong verse when it is not. Rule 10's
+cap is applied to one more case here and relaxed for none. Nothing gained a wall.
+
+### What it costs, measured
+
+**7,741 real transcript lines across three services: 3 fires removed, 0 gained, ZERO correct fires
+lost.** All three removed were wrong verses that reached congregations. Suggestions 3041 → 3046.
+The one extra index lookup runs in 5.3% of windows at 1.6 µs, against a decode of 139-600 ms.
+
+### What it CANNOT reach, and the limit is the evidence rather than the predicate
+
+**Three of nine.** Six carry no admissible evidence in the window that fired: three windows are the
+reference and nothing else, two carry runs of four and three words (under `MIN_RUN_WORDS`), and
+`Jude 1:7`'s run points at a verse the preacher was referring BACK to. In four of those six the
+quotation arrived **6 to 16 seconds later, in a separate window**, and named the right verse after
+the wrong one was already on the wall. Reaching those means taking a verse off a congregation's
+screen, which is a different decision with a different cost, and it is not taken here.
+
+`which_field_instances_this_rule_can_reach` **asserts** the ceiling at 3 rather than describing it,
+so the claim cannot drift into something warmer.
+
+### One carve-out to rule 40's book restriction, with its exact scope
+
+The phrase index is asked a second time unrestricted, and a hit is admitted **only** if it is in
+another book at the exact chapter and verse a spoken reference in that window named. Everything
+else outside the named book stays hidden exactly as before. Without it, `Acts 8:12` was unreachable.
+
+### The third instance of an instrument that cannot see the thing it appears to cover
+
+`eval::print_scorecard` and `phrase_bench::read_the_bible_back_and_count_wrong_verses` report
+**identical figures with this rule on and off**. Neither calls `candidates_for_window`: `eval.rs`
+assembles its own candidate set and is a **third copy of the window assembly**, which is exactly the
+duplication `candidates_for_window` was created to end. RG-296 found this blindness for the
+`Reading` promotion, RG-306 for the passage guard, and this is the third. Recorded in the code, not
+only here.
+
+### Owed
+
+`detection://held` gained a `doubted` array carrying the reference, the method, the WORDS and which
+rule — never a number (rule 18). **Nothing renders it yet.** The structural cap works today; the
+operator-facing sentence is owed, and it belongs with a defect found on the way: `uncertain_number`
+has no frontend case at all, so a candidate whose numbers Relay inferred currently renders as
+*"Heard the reference"* with a confidence bar.

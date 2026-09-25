@@ -1395,6 +1395,26 @@ struct HeldCandidate {
 /// at all: the in-passage reading that armed the guard is usually a repeat inside
 /// the router's cooldown and is Dropped, so a field on a `match` would go missing
 /// precisely when the operator needed it. One door, beside the decision.
+/// One candidate the citation-doubt rule demoted, and why. RG-305.
+///
+/// Rule 35: a demotion an operator cannot see is indistinguishable from a detector
+/// that missed. The reference is still offered and the run beside it is still
+/// offered; what the operator has to be told is that Relay heard TWO things in one
+/// breath that disagree, and which words say so.
+#[derive(Serialize, Clone)]
+struct DoubtedClaim {
+    /// The candidate that was demoted — the spoken reference, or the run that
+    /// contradicted it.
+    reference: String,
+    /// What it is now. `uncertain_number` / `uncertain_book` for a doubted citation,
+    /// `quoted` for the run, and every one of those is capped at Suggest.
+    method: DetectionMethod,
+    /// The words behind it. Never a number (rule 18).
+    matched_text: Option<String>,
+    /// WHICH RULE, and for the run, that it is the accuser rather than the accused.
+    doubt: detection::Doubt,
+}
+
 #[derive(Serialize, Clone)]
 struct PassageHold {
     /// The book and chapter Relay believes is being read — "Psalms 107". `None`
@@ -1404,6 +1424,20 @@ struct PassageHold {
     /// is reading it. The evidence, not a number.
     reading: Option<String>,
     held: Vec<HeldCandidate>,
+    /// **What the citation-doubt rule demoted in this window** (RG-305).
+    ///
+    /// On this event rather than on one of its own, and the reasoning is the same
+    /// reasoning the event already carries: the thing to report happens in a window
+    /// where a `detection://match` may not be emitted at all, and a second event
+    /// name is a second thing to keep listened-for in both directions
+    /// (`ipc.test.js`). It is a window-level decision about a candidate SET, which
+    /// is what this event is for; `held` and `doubted` are the two such decisions
+    /// there are.
+    ///
+    /// Empty in the overwhelmingly common case, and `skip_serializing_if` so an
+    /// ordinary hold's payload is byte-for-byte what it was.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    doubted: Vec<DoubtedClaim>,
     trace_id: Option<u64>,
 }
 
@@ -1431,6 +1465,29 @@ struct WindowCandidates {
     /// The book and chapter on screen that this window was heard reading, and the
     /// phrase that said so. `None` when the guard did not apply.
     reading_in: Option<(String, String)>,
+    /// What the citation-doubt rule demoted, and why (RG-305). These candidates are
+    /// in `kept` — nothing is held by that rule and nothing is dropped; only what
+    /// may reach a wall unattended changed.
+    doubted: Vec<Doubted>,
+}
+
+/// One candidate the citation-doubt rule demoted, as the window reports it.
+struct Doubted {
+    reference: String,
+    /// What it is now — all three outcomes capped at Suggest by `Router::decide`.
+    method: DetectionMethod,
+    /// What it WAS. Carried so a bench can put back exactly the shipped behaviour of
+    /// 2026-09-25 rather than a near miss at it, which is the same reasoning
+    /// `passage_guard_bench` records for a held candidate.
+    ///
+    /// Read by `citation_doubt_bench` alone, so a release build has no reader —
+    /// allowed rather than `#[cfg(test)]`, because a field the SHIPPED path fills and
+    /// a test reads is not the same thing as a test-only field, and hiding it behind
+    /// `cfg` would let the two builds disagree about what a window reported.
+    #[allow(dead_code)]
+    was: DetectionMethod,
+    matched_text: Option<String>,
+    doubt: detection::Doubt,
 }
 
 /// Gather, and apply the passage guard.
@@ -1595,6 +1652,52 @@ fn candidates_for_window(
             quoted.sort_by_key(|h| h.r.book != on_screen);
         }
     }
+    // ── THE ONE CROSS-BOOK EXCEPTION TO THE RESTRICTION ABOVE (RG-305) ────────
+    //
+    // FIELD, service 40, 2026-09-25 at 9831 s: *"Acts 8, 12, I wisdom dwell with
+    // prudence and find out the knowledge of witty inventions."* Those fifteen words
+    // are **Proverbs 8:12**; whisper heard `Proverbs` as `Acts`. Relay fired
+    // **Acts 8:12**. The words that named the right verse were in the same window,
+    // long enough to be unambiguous — and the restriction above had already thrown
+    // them away, because the window "named" Acts.
+    //
+    // **This does not relax the restriction; it carves out the single shape that is
+    // evidence ABOUT the restriction.** A hit is admitted only when it is in another
+    // book at the EXACT chapter and verse a spoken reference in this window named.
+    // Chapter-and-verse pairs collide across sixty-six books, so on its own that is
+    // a coincidence — which is why the hit cannot fire (`doubt_from_a_quotation`
+    // demotes it) and is only ever offered beside the reference it contradicts. Every
+    // other verse outside the named book stays hidden exactly as before, so the
+    // measured reason the restriction exists is untouched.
+    //
+    // It costs one more `quoted` call, in windows that name a book AND a verse.
+    // Measured in `citation_doubt_bench`.
+    let said_pairs: Vec<(i64, i64)> = candidates
+        .iter()
+        .filter(|c| c.method == DetectionMethod::Direct && !c.whole_chapter)
+        .map(|c| (c.r.chapter, c.r.verse))
+        .collect();
+    if let (Some(named), false) = (quoted_in, said_pairs.is_empty()) {
+        if let Ok(g) = phrases.0.read() {
+            quoted.extend(
+                g.quoted(text, None, QUOTED_SUGGESTIONS_MAX)
+                    .into_iter()
+                    .filter(|h| {
+                        !h.r.book.eq_ignore_ascii_case(named)
+                            && said_pairs.contains(&(h.r.chapter, h.r.verse))
+                    }),
+            );
+        }
+    }
+    // Where the quotation candidates start, and the two facts about each run that
+    // `DetectionMethod` cannot carry. `Reading` means *eight words and sole*, but
+    // `Quoted` means *shorter OR shared*, and the citation-doubt rule may only be
+    // armed by a run one verse holds alone. Recorded by INDEX rather than pushed in
+    // lockstep with every `candidates.push` in this function, because a parallel push
+    // is a thing a future gatherer forgets; `the_run_facts_land_on_the_quotation`
+    // holds the mapping.
+    let quoted_at = candidates.len();
+    let run_facts: Vec<(usize, bool)> = quoted.iter().map(|h| (h.run, h.sole)).collect();
     for h in quoted {
         candidates.push(Cand::single(
             h.r,
@@ -1616,6 +1719,74 @@ fn candidates_for_window(
             candidates.push(Cand::single(r, 0.70, DetectionMethod::Ambiguous, None));
         }
     }
+    // ── THE CITATION-DOUBT RULE, 2026-09-25 (RG-305) ──────────────────────
+    //
+    // Eight wrong verses reached congregations in one day, and they are one failure:
+    // the decoder loses or alters a digit or an ordinal in a spoken reference, and
+    // the result is a SMALLER, VALID, WRONG reference. *eighty*-seven → 7 ·
+    // *eigh*-teen → 8 · *sixty*-one → 1 · *twelve* → 2 · `Proverbs` → `Acts`. The
+    // chapter exists, the verse exists, the parse confidence is real, and it fires at
+    // 0.95 `Direct` — so nothing that looks at one piece of evidence can see it.
+    //
+    // `detection::doubt_from_a_quotation` is the whole rule and it is pure. Applied
+    // HERE, once, over the finished set, for the reason the passage guard is
+    // (rule 36): it is a decision about the SET — which of these candidates is the
+    // reference the preacher meant — and a set-level rule added at the gathering
+    // sites is the shape four separate bugs in this repository have.
+    //
+    // **Applied BEFORE the passage guard, and the order does not matter to the
+    // guard**: both `Reading` and `Quoted` are `came_from_the_verse_text` and
+    // `is_a_verbatim_run`, so a demotion between them changes nothing the guard asks.
+    // It is first because evidence should be weighed before anything is withheld.
+    //
+    // **Nothing is held and nothing gains a wall.** A doubted citation drops to
+    // `UncertainNumber`/`UncertainBook` and the run that accused it drops to
+    // `Quoted` — all three already capped at Suggest by `Router::decide` at any
+    // score, so a disagreement fires nothing at all and the operator picks between
+    // two things Relay genuinely heard. Rule 10's cap is applied to one more case and
+    // relaxed for none.
+    let doubts = {
+        let view: Vec<detection::Claim> = candidates
+            .iter()
+            .enumerate()
+            .map(|(i, c)| detection::Claim {
+                r: &c.r,
+                method: c.method,
+                verse_end: c.verse_end,
+                whole_chapter: c.whole_chapter,
+                run: i
+                    .checked_sub(quoted_at)
+                    .and_then(|k| run_facts.get(k).copied()),
+            })
+            .collect();
+        detection::doubt_from_a_quotation(&view)
+    };
+    let mut doubted: Vec<Doubted> = Vec::new();
+    for (c, doubt) in candidates.iter_mut().zip(&doubts) {
+        let Some(doubt) = *doubt else { continue };
+        let was = c.method;
+        c.method = match doubt {
+            // The NUMBER is in doubt and `UncertainNumber` is what that already
+            // means in this codebase — the variant `uncertain_number` stamps on the
+            // five parse sites that infer a number rather than hear one.
+            detection::Doubt::SpokenChapter => DetectionMethod::UncertainNumber,
+            // The BOOK is in doubt: "chapter and verse heard, the book not", which is
+            // `UncertainBook`'s own sentence (DECISIONS §106).
+            detection::Doubt::SpokenBook => DetectionMethod::UncertainBook,
+            // The accuser is demoted too, so a disagreement puts nothing on a wall.
+            // A `Reading` may auto-fire under DECISIONS §118 and this is the one
+            // place that is taken back — never widened.
+            detection::Doubt::TheQuotation => DetectionMethod::Quoted,
+        };
+        doubted.push(Doubted {
+            reference: Fire::key_for(&c.r),
+            method: c.method,
+            was,
+            matched_text: c.matched.clone(),
+            doubt,
+        });
+    }
+
     // ── THE PASSAGE GUARD, 2026-09-25 ─────────────────────────────────────
     //
     // The operator, 2026-09-25: *"I dont want suggestion to be changing when a
@@ -1644,6 +1815,7 @@ fn candidates_for_window(
             kept: candidates,
             held: Vec::new(),
             reading_in: None,
+            doubted,
         };
     }
     // Rule A armed only if an in-passage verbatim run is present, and such a run is
@@ -1679,6 +1851,7 @@ fn candidates_for_window(
         kept,
         held,
         reading_in,
+        doubted,
     }
 }
 
@@ -1713,6 +1886,10 @@ fn emit_detections<R: tauri::Runtime>(
     // return announce "nothing was held" when the truth is that nobody looked.
     let held_by_the_passage: Vec<(Cand, detection::HeldReason)>;
     let reading_inside: Option<(String, String)>;
+    // What the citation-doubt rule demoted (RG-305). Assigned on the same path as
+    // the two above and for the same reason: an early return that left this empty
+    // would say "nothing was doubted" when the truth is that nobody looked.
+    let doubted_citations: Vec<Doubted>;
     // Latency stamps sampled under the locks and applied after they are released.
     // The block yields them so `detected_at` is INITIALISED by the sample rather
     // than pre-seeded with a value no path ever reads.
@@ -1728,6 +1905,7 @@ fn emit_detections<R: tauri::Runtime>(
             kept: candidates,
             held,
             reading_in,
+            doubted,
         } = candidates_for_window(
             text,
             is_final,
@@ -1751,6 +1929,7 @@ fn emit_detections<R: tauri::Runtime>(
         // by the code that exists to prevent it.
         held_by_the_passage = held;
         reading_inside = reading_in;
+        doubted_citations = doubted;
         if candidates.is_empty() {
             break 'gate None;
         }
@@ -1921,7 +2100,7 @@ fn emit_detections<R: tauri::Runtime>(
     // passage it is following, the phrase that says so, and every candidate it
     // did not offer — so nothing is discarded silently (RG-178's precedent), it
     // is simply moved off the list the operator asked to stop churning.
-    if !held_by_the_passage.is_empty() {
+    if !held_by_the_passage.is_empty() || !doubted_citations.is_empty() {
         let (passage, reading) = match reading_inside {
             Some((p, r)) => (Some(p), Some(r)),
             None => (None, None),
@@ -1938,6 +2117,15 @@ fn emit_detections<R: tauri::Runtime>(
                         method: c.method,
                         matched_text: c.matched,
                         reason,
+                    })
+                    .collect(),
+                doubted: doubted_citations
+                    .into_iter()
+                    .map(|d| DoubtedClaim {
+                        reference: d.reference,
+                        method: d.method,
+                        matched_text: d.matched_text,
+                        doubt: d.doubt,
                     })
                     .collect(),
                 trace_id: trace,
@@ -9707,17 +9895,22 @@ mod passage_guard_bench {
         corpus
     }
 
-    /// One replay of a service. `guard` off reproduces the shipped behaviour of
-    /// 2026-09-24 exactly, which is what makes the two columns comparable.
+    /// One replay of a service. With `guard` and `doubt` both off it reproduces the
+    /// shipped behaviour of 2026-09-24 exactly, which is what makes the columns
+    /// comparable. RG-305 added the second switch rather than a second bench: two
+    /// replays of one service that disagreed about the router's clock would be worse
+    /// than no measurement at all.
     struct Run {
         offered: usize,
         fired: Vec<(f32, String, String)>,
         held: usize,
         held_refs: Vec<String>,
         windows_with_a_hold: usize,
+        /// Every citation-doubt demotion, with the window that produced it.
+        doubts: Vec<(f32, String, String)>,
     }
 
-    fn replay(lines: &[(f32, String)], guard: bool) -> Run {
+    fn replay(lines: &[(f32, String)], guard: bool, doubt: bool) -> Run {
         let corpus = kjv_corpus();
         let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
             &corpus,
@@ -9731,14 +9924,44 @@ mod passage_guard_bench {
             held: 0,
             held_refs: Vec::new(),
             windows_with_a_hold: 0,
+            doubts: Vec::new(),
         };
         for (at, text) in lines {
             let now_ms = (at * 1000.0) as u64;
             let WindowCandidates {
-                kept,
+                mut kept,
                 held,
                 reading_in: _,
+                doubted,
             } = candidates_for_window(text, true, &sem, &phrases, &context, router.wall());
+            for d in &doubted {
+                out.doubts.push((
+                    *at,
+                    format!("{:?}  {} → {:?}", d.doubt, d.reference, d.method),
+                    text.chars().take(90).collect(),
+                ));
+            }
+            if !doubt {
+                // The DOUBT RULE OFF: put every demoted method back to what it was,
+                // so the "before" column is the path that ran on 2026-09-25 and not a
+                // near miss at it. `was` is carried on `Doubted` for exactly this.
+                let mut restored = 0;
+                for d in &doubted {
+                    for c in kept.iter_mut() {
+                        if Fire::key_for(&c.r) == d.reference && c.method == d.method {
+                            c.method = d.was;
+                            restored += 1;
+                            break;
+                        }
+                    }
+                }
+                assert_eq!(
+                    restored,
+                    doubted.len(),
+                    "a demotion could not be put back, so the before column would be \
+                     measuring something nobody shipped: {text}"
+                );
+            }
             let (candidates, held) = if guard {
                 (kept, held)
             } else {
@@ -9811,8 +10034,8 @@ mod passage_guard_bench {
             .collect();
         println!("\n{} transcript lines\n", lines.len());
 
-        let before = replay(&lines, false);
-        let after = replay(&lines, true);
+        let before = replay(&lines, false, false);
+        let after = replay(&lines, true, false);
 
         println!(
             "  suggestions offered   before {:>4}   after {:>4}   ({} fewer)",
@@ -9890,6 +10113,211 @@ mod passage_guard_bench {
 
     /// **HOW FAST A READING MOVES THE WALL** — the churn the operator is counting,
     /// measured rather than argued. Prints every pair of consecutive auto-fires and
+    /// **WHAT THE CITATION-DOUBT RULE COSTS A REAL SERVICE** (RG-305).
+    ///
+    /// `RELAY_SERVICE_CORPUS=<file> cargo test --release what_the_citation_doubt_rule_costs
+    /// -- --ignored --nocapture`
+    ///
+    /// The passage guard is ON in both columns, because it is shipped: the question
+    /// is what this rule changes on top of it. Rule 13 — the only question is which
+    /// verse Relay would put on a screen, so the fires are compared and the
+    /// suggestions counted, and neither is answerable by reading a transcript.
+    ///
+    /// **Every fire this rule removes is printed with the window that produced it**,
+    /// because a count of demotions says nothing about whether they were right and
+    /// this rule demotes 0.95 `Direct`, the strongest claim Relay can make. The eight
+    /// field instances and the two correct fires of 2026-09-25 are the reference set;
+    /// anything else in the list has to be read by a person.
+    #[test]
+    #[ignore]
+    fn what_the_citation_doubt_rule_costs() {
+        let Ok(path) = std::env::var("RELAY_SERVICE_CORPUS") else {
+            println!("set RELAY_SERVICE_CORPUS to `<seconds>\t<text>` lines, in order");
+            return;
+        };
+        let body = std::fs::read_to_string(&path).expect("corpus unreadable");
+        let lines: Vec<(f32, String)> = body
+            .lines()
+            .filter_map(|l| l.split_once('\t'))
+            .filter(|(_, t)| !t.trim().is_empty())
+            .map(|(a, t)| (a.trim().parse().unwrap_or(0.0), t.to_string()))
+            .collect();
+        println!("\n{} transcript lines\n", lines.len());
+
+        let before = replay(&lines, true, false);
+        let after = replay(&lines, true, true);
+
+        println!(
+            "  suggestions offered   before {:>4}   after {:>4}",
+            before.offered, after.offered
+        );
+        println!(
+            "  auto-fires            before {:>4}   after {:>4}",
+            before.fired.len(),
+            after.fired.len()
+        );
+        println!("  citations doubted     {}", after.doubts.len());
+        println!("\n  EVERY DEMOTION, IN ORDER:");
+        for (at, what, heard) in &after.doubts {
+            println!("    {at:>8.1}s  {what:<52} “{heard}”");
+        }
+        if after.doubts.is_empty() {
+            println!("    none");
+        }
+        println!("\n  FIRES REMOVED (each one has to be read, not counted):");
+        let mut removed = 0;
+        for (at, key, heard) in &before.fired {
+            if after.fired.iter().any(|(t, k, _)| k == key && t == at) {
+                continue;
+            }
+            removed += 1;
+            println!("    {at:>8.1}s  {key:<22} “{heard}”");
+        }
+        if removed == 0 {
+            println!("    none");
+        }
+        println!("\n  FIRES GAINED (a run that now ranks first — must be zero):");
+        let mut gained = 0;
+        for (at, key, heard) in &after.fired {
+            if before.fired.iter().any(|(t, k, _)| k == key && t == at) {
+                continue;
+            }
+            gained += 1;
+            println!("    {at:>8.1}s  {key:<22} “{heard}”");
+        }
+        if gained == 0 {
+            println!("    none");
+        }
+        println!("\n  {removed} fires removed · {gained} fires gained\n");
+    }
+
+    /// **WHICH OF THE DAY'S WRONG VERSES THIS RULE CAN EVEN REACH** (RG-305).
+    ///
+    /// `cargo test --release which_field_instances_this_rule_can_reach -- --ignored
+    /// --nocapture`
+    ///
+    /// Nine wrong verses reached congregations on 2026-09-25 through a misheard
+    /// number or book — RG-301's `Jude 28` and RG-305's eight. Each window below is
+    /// the `heard_text` off the operator's own database, verbatim, with the
+    /// `detections.id` beside it, run through the real `PhraseIndex` and the real
+    /// rule.
+    ///
+    /// **It reaches three.** The other six carry no verbatim run long enough to be
+    /// evidence in the window that fired: three windows are the reference and nothing
+    /// else, two carry runs of four and three words (below `MIN_RUN_WORDS`, so not
+    /// offerable and not admissible), and one — `Jude 1:7` — carries a run pointing at
+    /// a verse he was referring BACK to rather than at a slip of the reference.
+    ///
+    /// **In four of the six the quotation arrived 6 to 16 seconds LATER**, in a
+    /// separate window, and corrected the record after the wrong verse was already on
+    /// the wall. No window-local rule can reach those, and reversing a fire already on
+    /// a congregation's screen is a different decision with a different cost.
+    ///
+    /// This exists so the claim cannot drift. A later reader who widens the rule
+    /// should see the ceiling first: the limit is the EVIDENCE, not the predicate.
+    #[test]
+    #[ignore]
+    fn which_field_instances_this_rule_can_reach() {
+        // (detections.id, what fired, what it should have been, the heard_text)
+        const FIELD: &[(u32, &str, &str, &str)] = &[
+            (588, "Jude 1:7", "Romans 11:33", "We have tried to look at that from Jude 28 and verse 7 to 28."),
+            (603, "Psalms 7:1", "Psalms 87:7", "This one was born there, the other one was born there, all my springs are in thee. Psalm 7 verse 1 to 7."),
+            (645, "Mark 6:12", "Mark 6:2", "Mark 6, 12. Mark 6, 12."),
+            (668, "Acts 8:12", "Proverbs 8:12", "Acts 8, 12, I wisdom dwell with prudence and find out the knowledge of witty inventions. Now, what"),
+            (786, "Luke 8:8", "Luke 18:8", "And then we shall find faith on the earth. Luke chapter 8, chapter 8, verse 8. So faith is the truth."),
+            (805, "1 Timothy 1:7", "2 Timothy 1:7", "1 Timothy, chapter 1, verse 7. 1 Timothy, chapter 1, verse 7."),
+            (818, "Isaiah 1:3", "Isaiah 61:3", "Verse 5 and verse 7 and 8, the oil of gladness. Now, Isaiah 1 verse 3, it calls it the oil of joy."),
+            (861, "Romans 2:3", "Romans 12:3", "We have common faith, measure of faith, Romans, 2, 3 We have little faith, Matthew, 2"),
+            (930, "Psalms 35:5", "Psalms 34:5", "helped me in the journey. Then life broke out from Psalm 35 verse 5, which I later defined as the law"),
+        ];
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        let context = ContextMemory::default();
+        let mut reached = 0usize;
+        println!();
+        for (id, fired, should_be, text) in FIELD {
+            let w = candidates_for_window(text, true, &sem, &phrases, &context, None);
+            let doubt = w.doubted.iter().find(|d| d.reference == *fired);
+            match doubt {
+                Some(d) => {
+                    reached += 1;
+                    println!(
+                        "  id {id:<4} REACHED   {fired:<15} → {:?} (should be {should_be})",
+                        d.doubt
+                    );
+                }
+                None => println!("  id {id:<4} out of reach  {fired:<15} (should be {should_be})"),
+            }
+        }
+        println!("\n  {reached} of {} reached\n", FIELD.len());
+        assert_eq!(
+            reached, 3,
+            "the reachable set changed — if a rule was widened, say so and measure \
+             what it costs in correct fires before quoting this number"
+        );
+    }
+
+    /// **WHAT THE CROSS-BOOK CARVE-OUT COSTS PER WINDOW** (RG-305).
+    ///
+    /// The doubt rule itself is a double loop over a handful of candidates and is
+    /// free. The one thing that is not free is the extra `PhraseIndex::quoted` call
+    /// the cross-book case needs, in windows that name both a book and a verse — this
+    /// runs on `relay-detect`, once per decode pass, and rule 31's whole lesson is
+    /// that this path is measured rather than reasoned about.
+    #[test]
+    #[ignore]
+    fn what_the_extra_index_lookup_costs() {
+        let Ok(path) = std::env::var("RELAY_SERVICE_CORPUS") else {
+            println!("set RELAY_SERVICE_CORPUS");
+            return;
+        };
+        let body = std::fs::read_to_string(&path).expect("corpus unreadable");
+        let corpus = kjv_corpus();
+        let idx = detection::PhraseIndex::build(&corpus);
+        let mut windows = 0usize;
+        let mut extra = 0usize;
+        let mut restricted = std::time::Duration::ZERO;
+        let mut unrestricted = std::time::Duration::ZERO;
+        for line in body
+            .lines()
+            .filter_map(|l| l.split_once('\t'))
+            .map(|(_, t)| t)
+        {
+            windows += 1;
+            let anchor = detection::anchor_for_bare_verses(line);
+            let named = anchor.as_ref().map(|r| r.book.clone());
+            let says_a_verse = detection::detect_direct(line)
+                .iter()
+                .any(|m| m.method == DetectionMethod::Direct && !m.whole_chapter);
+            let t = std::time::Instant::now();
+            let _ = idx.quoted(line, named.as_deref(), QUOTED_SUGGESTIONS_MAX);
+            restricted += t.elapsed();
+            if named.is_some() && says_a_verse {
+                extra += 1;
+                let t = std::time::Instant::now();
+                let _ = idx.quoted(line, None, QUOTED_SUGGESTIONS_MAX);
+                unrestricted += t.elapsed();
+            }
+        }
+        println!(
+            "\n  {windows} windows · {extra} take the extra lookup ({:.1}%)",
+            100.0 * extra as f32 / windows.max(1) as f32
+        );
+        println!(
+            "  the lookup Relay already did:  {:?} total · {:?}/window",
+            restricted,
+            restricted / windows.max(1) as u32
+        );
+        println!(
+            "  the extra one:                 {:?} total · {:?} per window that takes it\n",
+            unrestricted,
+            unrestricted / extra.max(1) as u32
+        );
+    }
+
     /// the gap between them, so a wall change every few seconds is visible as a
     /// number instead of as a complaint.
     #[test]
@@ -9906,7 +10334,7 @@ mod passage_guard_bench {
             .filter(|(_, t)| !t.trim().is_empty())
             .map(|(a, t)| (a.trim().parse().unwrap_or(0.0), t.to_string()))
             .collect();
-        let run = replay(&lines, true);
+        let run = replay(&lines, true, true);
         println!("\n  {} auto-fires\n", run.fired.len());
         let mut same_passage_within_30s = 0;
         for w in run.fired.windows(2) {
@@ -10023,6 +10451,7 @@ mod passage_guard_wiring {
             passage: Some("Psalms 107".into()),
             reading: Some("oh that men would praise the lord".into()),
             held: vec![held],
+            doubted: Vec::new(),
             trace_id: None,
         })
         .expect("the report must serialise");
@@ -10033,6 +10462,92 @@ mod passage_guard_wiring {
             "{json}"
         );
         assert!(json.contains("\"method\":\"quoted\""), "{json}");
+        // AN ORDINARY HOLD'S PAYLOAD IS BYTE-FOR-BYTE WHAT IT WAS. RG-305 added a
+        // field to this event rather than a second event; a field that serialised
+        // when it was empty would change every hold report the console already reads.
+        assert!(!json.contains("doubted"), "{json}");
+    }
+
+    /// **THE CITATION-DOUBT RULE, THROUGH THE ASSEMBLY** (RG-305).
+    ///
+    /// `detection::citation_doubt` holds the rule. This holds the WIRING: that a run's
+    /// two facts land on the run's own candidate and not on a neighbour, that the
+    /// demotion is the one the router caps, and that the report reaches the wire.
+    #[test]
+    fn the_run_facts_land_on_the_quotation() {
+        // The mapping `candidates_for_window` builds: the quotation candidates start
+        // at `quoted_at` and `run_facts` is indexed from there. Everything before it
+        // has no run. Asserted on the arithmetic rather than on a mounted app, because
+        // an off-by-one here would attribute a fifteen-word sole run to the reference
+        // beside it and every test in the pure module would still pass.
+        let quoted_at = 3usize;
+        let run_facts = [(7usize, true), (5usize, false)];
+        let at = |i: usize| -> Option<(usize, bool)> {
+            i.checked_sub(quoted_at)
+                .and_then(|k| run_facts.get(k).copied())
+        };
+        assert_eq!(at(0), None, "a direct reference has no run");
+        assert_eq!(
+            at(2),
+            None,
+            "the candidate just before the quotations has none"
+        );
+        assert_eq!(at(3), Some((7, true)));
+        assert_eq!(at(4), Some((5, false)));
+        assert_eq!(at(5), None, "past the end of the quotations");
+    }
+
+    /// **THE THREE DEMOTIONS ARE ALL METHODS THE ROUTER CAPS**, which is the whole
+    /// safety claim. A demotion to something that may auto-fire would be a rule that
+    /// looks like a gate and is not one — rule 10's own failure mode, and the reason
+    /// `Router::decide` is the door rather than this assembly.
+    #[test]
+    fn every_doubt_outcome_is_capped_at_suggest() {
+        for m in [
+            DetectionMethod::UncertainNumber,
+            DetectionMethod::UncertainBook,
+            DetectionMethod::Quoted,
+        ] {
+            assert!(
+                !m.may_auto_fire(),
+                "{m:?} was chosen as a doubt outcome and may reach a wall unattended"
+            );
+        }
+    }
+
+    /// The doubt report on the wire, with the names the console reads.
+    #[test]
+    fn the_doubt_report_names_itself_on_the_wire() {
+        let json = serde_json::to_string(&PassageHold {
+            passage: None,
+            reading: None,
+            held: Vec::new(),
+            doubted: vec![
+                DoubtedClaim {
+                    reference: "Acts 8:12".into(),
+                    method: DetectionMethod::UncertainBook,
+                    matched_text: Some("acts 8 12".into()),
+                    doubt: detection::Doubt::SpokenBook,
+                },
+                DoubtedClaim {
+                    reference: "Proverbs 8:12".into(),
+                    method: DetectionMethod::Quoted,
+                    matched_text: Some("i wisdom dwell with prudence and find out".into()),
+                    doubt: detection::Doubt::TheQuotation,
+                },
+            ],
+            trace_id: None,
+        })
+        .expect("the report must serialise");
+        assert!(json.contains("\"doubt\":\"spoken_book\""), "{json}");
+        assert!(json.contains("\"doubt\":\"the_quotation\""), "{json}");
+        assert!(json.contains("\"method\":\"uncertain_book\""), "{json}");
+        // THE WORDS, never a number (rule 18).
+        assert!(
+            json.contains("i wisdom dwell with prudence and find out"),
+            "{json}"
+        );
+        assert!(!json.contains("confidence"), "{json}");
     }
 
     /// `already_on_screen` is the other wire name, and the console tells the two

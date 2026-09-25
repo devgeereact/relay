@@ -1016,10 +1016,21 @@ mod tests {
                 // far more scripture than a congregation is shown, so the run
                 // length says which verse and says nothing whatever about
                 // whether anybody wants it on a wall.
+                //
+                // `UncertainBook` and `UncertainNumber` joined it on 2026-09-25 with
+                // RG-305, and the gap they closed is worth stating: both were capped
+                // here by `may_auto_fire` from the day they were added and NEITHER was
+                // in this list, so the property test that exists to prove the gate is
+                // the method covered three of five. The citation-doubt rule now demotes
+                // a 0.95 `Direct` into one of those two, which makes the cap the whole
+                // of its safety claim — a claim that was resting on a test that did not
+                // check it.
                 for m in [
                     DetectionMethod::Semantic,
                     DetectionMethod::Ambiguous,
                     DetectionMethod::Quoted,
+                    DetectionMethod::UncertainBook,
+                    DetectionMethod::UncertainNumber,
                 ] {
                     assert_ne!(
                         r.decide("John 3:16", conf, m, 0),

@@ -2779,6 +2779,260 @@ pub fn hold_for_the_passage(
     out
 }
 
+/// One of a window's candidates, as the citation-doubt rule needs to see it.
+///
+/// `run` is the only thing `DetectionMethod` cannot carry: `Reading` already means
+/// *eight words and held by one verse*, but `Quoted` means *shorter than eight OR
+/// shared with another verse*, and those are two very different pieces of
+/// evidence. The rule below may only be armed by the second kind's better half, so
+/// it has to be told.
+pub struct Claim<'a> {
+    pub r: &'a VerseRef,
+    pub method: DetectionMethod,
+    /// The last verse of a spoken span — "Psalm 7 verse 1 to 7" — or `None`.
+    pub verse_end: Option<i64>,
+    pub whole_chapter: bool,
+    /// For a verbatim run: how many words, and whether one verse alone holds them.
+    /// `None` for everything that is not a run.
+    pub run: Option<(usize, bool)>,
+}
+
+/// What a verbatim run in the SAME WINDOW says a spoken reference got wrong.
+///
+/// Reaches the operator, because a demotion nobody can see is indistinguishable
+/// from a detector that missed (rule 35).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Doubt {
+    /// **The CHAPTER.** Same book, the verse that was said, and a chapter that is
+    /// the one said with a digit back on the front of it.
+    SpokenChapter,
+    /// **The BOOK.** The same chapter and the same verse, in a different book.
+    SpokenBook,
+    /// **The run that raised the doubt.** Demoted with it, so a disagreement puts
+    /// nothing on a wall at all and the operator chooses between two things Relay
+    /// genuinely heard.
+    TheQuotation,
+}
+
+/// **THE CITATION-DOUBT RULE.** When one window carries both a spoken reference
+/// and a verbatim run of the preacher's own words that point at DIFFERENT verses,
+/// and the difference is the exact shape of a decode slip, that disagreement is
+/// evidence. Neither may reach a wall unattended; both are offered.
+///
+/// One answer per candidate, in order — `None` for everything untouched, which is
+/// very nearly always.
+///
+/// ── THE FINDING (RG-305, the operator's own services of 2026-09-25) ───────────
+///
+/// Eight wrong verses in one day, and one mechanism: **the decoder loses or alters
+/// a digit or an ordinal in the spoken reference.** *eighty*-seven → 7 ·
+/// *eigh*-teen → 8 · *Second* Timothy → 1 Timothy · *sixty*-one → 1 · *twelve* →
+/// 2 · 34 → 35 · and `Proverbs` heard as `Acts` is the same loss one class over.
+///
+/// **Every result is a smaller, VALID, wrong reference.** The chapter exists, the
+/// verse exists, the parse confidence is a real parse confidence — 0.95 `Direct`,
+/// the strongest claim Relay can make. That is why no threshold, no ambiguity
+/// check and no impossible-chapter rule can catch this class, and why the rule has
+/// to be about two pieces of evidence disagreeing rather than about any one of
+/// them looking wrong.
+///
+/// ── WHAT COUNTS AS A DISAGREEMENT, AND WHY IT IS THIS NARROW ──────────────────
+///
+/// A preacher who cites one verse and quotes another is doing the most ordinary
+/// thing in preaching, so "the run says somewhere else" cannot be the test. The
+/// test is whether the run points at *the reference the preacher would have named
+/// had the decoder not dropped a digit*: the two must differ in exactly ONE
+/// coordinate, and that coordinate's difference must be a decode slip.
+///
+///  * **`SpokenChapter`** — same book, `chapter_is_a_decode_slip`, and the run's
+///    verse inside the verse or span that was spoken.
+///  * **`SpokenBook`** — different book, the same chapter AND the same verse, and
+///    the spoken reference named a verse of its own. A whole chapter is excluded
+///    here deliberately: chapter numbers collide across books constantly, and
+///    "turn to Romans 8" beside a run from John 8 is a coincidence, not a slip.
+///
+/// **A verse-only difference is never a disagreement, at any distance**, and that
+/// is the rule's most important line rather than an omission. Two correct fires
+/// were watched on the same day: `John 15:15` read aloud and *"John 15, 14"* cited
+/// one verse later as he started the passage, and `Hebrews 13:7` cited while he
+/// quoted `13:17` from memory — having interrupted the service earlier to insist
+/// on verse 7. Both are one book, one chapter, a different verse, with runs of 15
+/// and 17 words; a rule that demoted either would be worse than the disease. It is
+/// also §122's own scoping — *chapter, not book* — said about the other direction.
+///
+/// ── THE EVIDENCE BAR ON THE RUN ───────────────────────────────────────────────
+///
+/// `sole` and nothing else, because `sole` is the question this rule turns on: a
+/// run two verses share says nothing about WHICH, and this rule's whole business
+/// is which. Length is left at `MIN_RUN_WORDS`, the floor at which a run may be
+/// offered at all — deliberately NOT at `READING_RUN_WORDS`, because a run of that
+/// length may reach a wall by itself and the bar for *casting doubt* must be lower
+/// than the bar for *acting alone*. Measured: the three field instances this rule
+/// reaches carry runs of 7, 8 and 5 words, so a bar of eight would catch one.
+///
+/// ── WHAT THIS DOES NOT WEAKEN ─────────────────────────────────────────────────
+///
+/// Rule 40 is untouched everywhere it has ever been about. A spoken reference
+/// still beats `ContextMemory` (`resolve_bare_verse_with_source`), still beats a
+/// paraphrase, still disarms the passage guard, and still beats a verbatim run
+/// anywhere else in scripture. `Semantic` can never raise a doubt — a cosine is a
+/// bag of words in no order and knows nothing about which verse (rule 18) — and
+/// neither can a run two verses share.
+///
+/// **And nothing gains a wall it did not have.** The run is demoted alongside the
+/// reference, so a `Reading` that would have auto-fired under §118 no longer does
+/// when it is the accuser. A disagreement fires nothing: rule 10's cap is applied
+/// to one more case and relaxed for none.
+///
+/// The alternative was measured and refused: leaving the run alone would have let
+/// `Proverbs 8:12` — the CORRECT verse — auto-fire in place of `Acts 8:12`, which is
+/// a better morning when the rule is right and a brand-new wrong verse when it is
+/// not. A rule this young does not get to choose what a congregation sees.
+///
+/// ── WHAT IT COSTS, MEASURED ───────────────────────────────────────────────────
+///
+/// `main::passage_guard_bench` gained a second switch rather than a bench of its own
+/// — one `replay`, so two columns of one service cannot disagree about the router's
+/// clock. `what_the_citation_doubt_rule_costs` replays the operator's own transcripts
+/// through `candidates_for_window` and the real `Router`, with the passage guard ON
+/// in both columns because it is shipped:
+///
+/// | service | lines | citations doubted | fires removed | fires GAINED | correct fires lost |
+/// |---|---|---|---|---|---|
+/// | 35 | 332 | 0 | 0 | 0 | **0** |
+/// | 39 | 246 | 2 | 0 | 0 | **0** |
+/// | 40 | 7163 | 14 | 3 | 0 | **0** |
+///
+/// **All three removed fires were wrong verses that reached a congregation** — `Acts
+/// 8:12` for Proverbs 8:12 (RG-305), `Micah 2:2` for Micah 4 (RG-301) and `Luke 8:8`
+/// for Luke 18:8 (RG-305). Read them in the bench's output rather than counting
+/// them: this rule demotes the strongest claim Relay can make, so a demotion is
+/// only evidence once a person has looked at the window that produced it.
+///
+/// The extra `PhraseIndex` lookup the cross-book case needs runs in **5.3% of
+/// windows at 1.6 µs each** against a decode of 139–600 ms
+/// (`what_the_extra_index_lookup_costs`). It adds 5 suggestions across 7163 lines.
+///
+/// **THE CEILING IS THE EVIDENCE, NOT THE PREDICATE, AND IT IS THREE OF NINE.**
+/// `which_field_instances_this_rule_can_reach` runs all nine of the day's misheard
+/// references through the real index and asserts the count. Six are out of reach for
+/// a reason no widening of this rule can fix: three windows are the reference and
+/// nothing else, two carry runs of four and three words, and `Jude 1:7`'s run points
+/// at a verse the preacher was referring BACK to. **In four of those six the
+/// quotation arrived 6 to 16 seconds later, in a separate window**, and named the
+/// right verse after the wrong one was already on the wall. Reaching those means
+/// taking a verse off a congregation's screen, which is a different decision with a
+/// different cost, and it is not this one.
+///
+/// **Both CI instruments are blind to this, structurally.**
+/// `eval::print_scorecard` reports 100% recall, 53/53 and 0.0% wrong verses with the
+/// rule on and identically with it off, and `phrase_bench::read_the_bible_back_and
+/// _count_wrong_verses` reads 1556 verses back at 0.0% either way. Neither calls
+/// `candidates_for_window`: `eval.rs` assembles its own candidate set out of
+/// `detect_direct` and `quoted`, which makes it a third copy of an assembly that
+/// exists in one place precisely so this could not happen. RG-296 found the same
+/// blindness for the promotion that created `Reading` and RG-306 for the passage
+/// guard; this is the third time, and it is a property of the harness rather than
+/// bad luck.
+pub fn doubt_from_a_quotation(cands: &[Claim<'_>]) -> Vec<Option<Doubt>> {
+    let mut out: Vec<Option<Doubt>> = vec![None; cands.len()];
+    for (i, said) in cands.iter().enumerate() {
+        // `Direct` alone. The other reference-shaped methods are already capped at
+        // Suggest at any score, so demoting them would move nothing and would only
+        // give this rule more surface to be wrong on.
+        if said.method != DetectionMethod::Direct {
+            continue;
+        }
+        for (j, run) in cands.iter().enumerate() {
+            // A run two verses share is not evidence about WHICH verse, and which
+            // verse is the entire question here. See `PhraseHit::sole`.
+            let Some((words, true)) = run.run else {
+                continue;
+            };
+            if words < MIN_RUN_WORDS {
+                continue;
+            }
+            let Some(doubt) = the_run_contradicts(said, run.r) else {
+                continue;
+            };
+            if out[i].is_none() {
+                out[i] = Some(doubt);
+            }
+            out[j] = Some(Doubt::TheQuotation);
+        }
+    }
+    out
+}
+
+/// Does this run point at the reference the decoder would have produced had it not
+/// slipped? One coordinate apart, and that coordinate a slip.
+fn the_run_contradicts(said: &Claim<'_>, run: &VerseRef) -> Option<Doubt> {
+    // **THE VERSE IS WHAT PROTECTS THE CORRECT FIRES, and this comment exists
+    // because the first draft credited the wrong check.** `John 15:14` cited while
+    // `15:15` is read, and `Hebrews 13:7` cited while `13:17` is quoted, are both
+    // held here: the run's verse is not one the preacher said. The same-chapter
+    // escape below and `chapter_is_a_decode_slip`'s refusal of equality say the
+    // same thing a second and a third time, which is why removing any ONE of the
+    // three left every test green. The revert-check that bites removes all three,
+    // and `john_15_14_cited_while_15_15_is_read_is_not_a_disagreement` records that.
+    if !verse_inside_what_was_said(said, run.verse) {
+        return None;
+    }
+    if said.r.book == run.book {
+        // SAME CHAPTER IS NEVER A DISAGREEMENT — a preacher moving about inside the
+        // chapter he named, which is what a preacher does. Reachable only through a
+        // spoken SPAN or a whole chapter; `chapter_is_a_decode_slip` refuses
+        // equality for the single-verse case.
+        if said.r.chapter == run.chapter {
+            return None;
+        }
+        return chapter_is_a_decode_slip(said.r.chapter, run.chapter)
+            .then_some(Doubt::SpokenChapter);
+    }
+    // ACROSS BOOKS, THE VERSE MUST BE THE ONE HE SAID — exactly, not merely inside
+    // a span he said, and never a whole chapter. Chapter numbers collide across
+    // sixty-six books constantly: "Acts 8, 12" against a run in `Proverbs 8:12` is
+    // the finding, "turn to Romans 8" against a run in `John 8` is Tuesday, and
+    // "Romans 8 verse 1 to 39" against that same John run would be Tuesday wearing
+    // a span. The exact pair is the coincidence that is worth acting on.
+    (!said.whole_chapter && said.r.chapter == run.chapter && said.r.verse == run.verse)
+        .then_some(Doubt::SpokenBook)
+}
+
+/// Is this verse the one that was said, or inside the span that was said?
+fn verse_inside_what_was_said(said: &Claim<'_>, verse: i64) -> bool {
+    if said.whole_chapter {
+        return true;
+    }
+    (said.r.verse..=said.verse_end.unwrap_or(said.r.verse)).contains(&verse)
+}
+
+/// Is `said` what the decoder makes of `run` when it slips?
+///
+/// Two shapes, both measured on the operator's own services rather than imagined:
+///
+///  * **A LOST LEADING DIGIT** — `said` is what is left of `run` when the front of
+///    the number does not survive the decode. *eighty*-seven → 7, *eigh*-teen → 8,
+///    *sixty*-one → 1, *twelve* → 2. Five of the eight instances.
+///  * **A SUBSTITUTED DIGIT, at two digits or more** — 34 heard as 35. The length
+///    floor is not tidiness: at one digit every chapter is one substitution from
+///    every other, so `Romans 1` and `Romans 2` would contradict each other, and a
+///    preacher reading the next chapter along is not a decode slip. There is no
+///    honest way to tell those apart at one digit, so this rule does not try.
+fn chapter_is_a_decode_slip(said: i64, run: i64) -> bool {
+    if said <= 0 || run <= 0 || said == run {
+        return false;
+    }
+    let (s, r) = (said.to_string(), run.to_string());
+    if s.len() < r.len() {
+        return r.ends_with(&s);
+    }
+    s.len() == r.len()
+        && s.len() >= 2
+        && s.bytes().zip(r.bytes()).filter(|(a, b)| a != b).count() == 1
+}
+
 /// `"Book Chapter:Verse"` — the same key `pipeline::Fire::key_for` builds and the
 /// same one `Router` debounces on.
 ///
@@ -8585,5 +8839,490 @@ mod passage_guard {
         assert!(window_states_a_reference("romans 8 28", Some(&anchor)));
         // Swahili, for the same reason `chapter_named` is not an English literal.
         assert!(window_states_a_reference("yohana sura ya tatu", None));
+    }
+}
+
+/// **THE CITATION-DOUBT RULE** — `doubt_from_a_quotation`. RG-305 and the register
+/// row are dated 2026-09-25; no `DECISIONS §` is cited here on purpose, because the
+/// section this was drafted against is not written yet and a citation that resolves
+/// to the WRONG place is worse than one that resolves to nothing.
+///
+/// Every positive here is a row out of the operator's own database, quoted with its
+/// `detections.id`. Every negative is either a fire that was CORRECT on the same
+/// day, or a shape the design refuses on purpose — and there are more negatives
+/// than positives, deliberately: this rule demotes a 0.95 `Direct`, the strongest
+/// claim Relay can make, so the cases it must not touch are the expensive half.
+#[cfg(test)]
+mod citation_doubt {
+    use super::*;
+
+    fn vr(book: &str, chapter: i64, verse: i64) -> VerseRef {
+        VerseRef {
+            book: book.into(),
+            chapter,
+            verse,
+        }
+    }
+
+    /// A spoken reference: one verse, nothing inferred.
+    fn said(r: &VerseRef) -> Claim<'_> {
+        Claim {
+            r,
+            method: DetectionMethod::Direct,
+            verse_end: None,
+            whole_chapter: false,
+            run: None,
+        }
+    }
+
+    /// A verbatim run of `words` words, held by one verse alone.
+    fn run<'a>(r: &'a VerseRef, words: usize) -> Claim<'a> {
+        Claim {
+            r,
+            method: DetectionMethod::for_quotation(words, true),
+            verse_end: None,
+            whole_chapter: false,
+            run: Some((words, true)),
+        }
+    }
+
+    // ── THE FIELD INSTANCES IT CATCHES ───────────────────────────────────────
+
+    /// **FIELD, service 40, 2026-09-25 at 1772 s, `detections.id = 603`.**
+    /// *"This one was born there, the other one was born there, all my springs are
+    /// in thee. Psalm 7 verse 1 to 7."* Those words are `Psalms 87`; the preacher
+    /// said *"Psalm 87"* and the *eighty* was lost. Relay fired **Psalms 7:1** at
+    /// 0.95, unattended, to a congregation.
+    ///
+    /// The run measured through the real index is seven words — *"there all my
+    /// springs are in thee"* — and `sole`.
+    #[test]
+    fn field_603_a_lost_eighty_is_contradicted_by_the_words_in_the_same_breath() {
+        let spoken = vr("Psalms", 7, 1);
+        let quoted = vr("Psalms", 87, 7);
+        let cands = [
+            Claim {
+                verse_end: Some(7),
+                ..said(&spoken)
+            },
+            run(&quoted, 7),
+        ];
+        assert_eq!(
+            doubt_from_a_quotation(&cands),
+            vec![Some(Doubt::SpokenChapter), Some(Doubt::TheQuotation)],
+            "the chapter the words point at is the chapter that was said with its \
+             leading digit back on"
+        );
+    }
+
+    /// **FIELD, service 40 at 26263 s, `detections.id = 786`.** *"And then we shall
+    /// find faith on the earth. Luke chapter 8, chapter 8, verse 8."* Those words
+    /// are `Luke 18:8`; whisper dropped the *eight-* from *eighteen*, twice, so
+    /// there was no fumble to notice. The finalized window parses as a WHOLE
+    /// CHAPTER (`Luke 8`), which is why the verse test has to allow one.
+    ///
+    /// The run is five words — *"find faith on the earth"* — the shortest a
+    /// quotation may be, and the reason the bar is `MIN_RUN_WORDS` and not eight.
+    #[test]
+    fn field_786_a_whole_chapter_is_contradicted_too_and_the_run_is_five_words() {
+        let spoken = vr("Luke", 8, 1);
+        let quoted = vr("Luke", 18, 8);
+        let cands = [
+            Claim {
+                whole_chapter: true,
+                ..said(&spoken)
+            },
+            run(&quoted, 5),
+        ];
+        assert_eq!(
+            doubt_from_a_quotation(&cands),
+            vec![Some(Doubt::SpokenChapter), Some(Doubt::TheQuotation)]
+        );
+    }
+
+    /// **FIELD, service 40 at 9831 s, `detections.id = 668`** — the clearest of the
+    /// set. *"Acts 8, 12, I wisdom dwell with prudence and find out the knowledge of
+    /// witty inventions."* Those words are `Proverbs 8:12`, which this same preacher
+    /// had cited correctly two hours earlier; whisper heard *Proverbs* as *Acts*.
+    /// Relay fired **Acts 8:12**.
+    ///
+    /// Same chapter, same verse, a different book — and the run is eight words and
+    /// sole, so it is a `Reading` and could have reached a wall by itself. It does
+    /// not: it is demoted with the reference it accuses.
+    #[test]
+    fn field_668_a_misheard_book_at_the_same_chapter_and_verse() {
+        let spoken = vr("Acts", 8, 12);
+        let quoted = vr("Proverbs", 8, 12);
+        let cands = [said(&spoken), run(&quoted, 8)];
+        assert_eq!(cands[1].method, DetectionMethod::Reading);
+        assert_eq!(
+            doubt_from_a_quotation(&cands),
+            vec![Some(Doubt::SpokenBook), Some(Doubt::TheQuotation)]
+        );
+    }
+
+    /// The other measured slips, as the rule sees them: a chapter the decoder
+    /// produced by losing the front of the number, with the verse intact. Both of
+    /// these were wrong verses on congregation-facing screens on 2026-09-25, and
+    /// NEITHER carried a long enough run in its own window to be caught in the
+    /// field — see `what_this_rule_could_not_have_caught_in_the_field`. The rule is
+    /// right about the shape and the evidence was not there.
+    #[test]
+    fn the_measured_slips_are_all_one_lost_leading_digit() {
+        for (book, said_ch, run_ch, verse, id) in
+            [("Isaiah", 1, 61, 3, 818), ("Romans", 2, 12, 3, 861)]
+        {
+            let a = vr(book, said_ch, verse);
+            let b = vr(book, run_ch, verse);
+            let cands = [said(&a), run(&b, 6)];
+            assert_eq!(
+                doubt_from_a_quotation(&cands)[0],
+                Some(Doubt::SpokenChapter),
+                "{book} {said_ch}:{verse} against a run in {run_ch} (id {id})"
+            );
+        }
+    }
+
+    /// **THE TWO OTHER MECHANISMS FROM THE SAME DAY, AND THIS RULE REACHES NEITHER.**
+    /// Stated as a test rather than as prose, because the next person to read the
+    /// rule will want to widen it to cover them and should see first that the
+    /// widening was considered.
+    ///
+    ///  * **A digit INVENTED from a stammer** — `detections.id = 863`, *"2
+    ///    Corinthians, 2 Corinthians, 2 Corinthians, 4, and verse 13"* fired
+    ///    `2 Corinthians 2:13` after a correct `4:13`. `2` is not what is left of
+    ///    `4`; it is one of the book's own ordinals read as a chapter. The numbers
+    ///    are not one slip apart in either direction, so nothing here can see it.
+    ///    RG-301.
+    ///  * **A verse-only mishearing** — `detections.id = 645`, *"Mark 6, 12"* fired
+    ///    `Mark 6:12` while the words being read were `Mark 6:2`. One book, one
+    ///    chapter, a different verse: the exact shape of the two CORRECT fires
+    ///    below, and indistinguishable from them. Catching this would cost the
+    ///    John 15 and Hebrews 13 cases, and that trade is refused.
+    #[test]
+    fn the_two_other_mechanisms_of_the_same_day_are_out_of_reach() {
+        let stammer = (vr("2 Corinthians", 2, 13), vr("2 Corinthians", 4, 13));
+        assert_eq!(
+            doubt_from_a_quotation(&[said(&stammer.0), run(&stammer.1, 9)]),
+            vec![None, None],
+            "a chapter invented from a stammered ordinal is not a lost digit"
+        );
+        let verse_only = (vr("Mark", 6, 12), vr("Mark", 6, 2));
+        assert_eq!(
+            doubt_from_a_quotation(&[said(&verse_only.0), run(&verse_only.1, 9)]),
+            vec![None, None],
+            "a verse-only difference is the correct-fire shape and is never a doubt"
+        );
+    }
+
+    /// 34 heard as 35 — `detections.id = 930`, *"from Psalm 35 verse 5"* over words
+    /// that are `Psalms 34:5`. A SUBSTITUTED digit, not a lost one, and the only
+    /// instance of its shape in the day's eight.
+    #[test]
+    fn field_930_a_substituted_digit_at_two_digits_counts() {
+        let a = vr("Psalms", 35, 5);
+        let b = vr("Psalms", 34, 5);
+        assert_eq!(
+            doubt_from_a_quotation(&[said(&a), run(&b, 9)])[0],
+            Some(Doubt::SpokenChapter)
+        );
+    }
+
+    // ── THE CORRECT FIRES IT MUST NOT TOUCH ──────────────────────────────────
+
+    /// **WATCHED LIVE ON THE SAME DAY, AND THE CITATION WAS RIGHT.** `John 15:15`
+    /// was read aloud — a fifteen-word `Reading` — and *"John 15, 14"* was cited one
+    /// verse later, the preacher starting the passage. One book, one chapter, one
+    /// verse apart.
+    ///
+    /// A rule that demoted this would be worse than the disease, which is why a
+    /// verse-only difference is never a disagreement at any distance.
+    ///
+    /// **WATCHED TO FAIL, AND IT TOOK THREE REVERTS TO MAKE IT.** Removing the
+    /// verse check alone leaves this green (the same-chapter escape catches it);
+    /// removing the same-chapter escape alone leaves it green (the verse check
+    /// catches it); removing both leaves it green until
+    /// `chapter_is_a_decode_slip` is also made to accept equality. Three
+    /// independent statements of one rule, each of which makes the test for the
+    /// others unable to fail — the shape this repository records as a theory that
+    /// was never tested. The guarantee is genuinely held three times; the honest
+    /// revert-check is all three at once, and it then fails here, on Hebrews, and
+    /// on `the_two_other_mechanisms_of_the_same_day_are_out_of_reach`.
+    #[test]
+    fn john_15_14_cited_while_15_15_is_read_is_not_a_disagreement() {
+        let spoken = vr("John", 15, 14);
+        let quoted = vr("John", 15, 15);
+        assert_eq!(
+            doubt_from_a_quotation(&[said(&spoken), run(&quoted, 15)]),
+            vec![None, None]
+        );
+    }
+
+    /// **THE SECOND ONE, AND HE INTERRUPTED THE SERVICE TO INSIST ON VERSE 7.**
+    /// `Hebrews 13:7` cited while he quoted `13:17` from memory, seventeen words and
+    /// sole. Ten verses apart, in the chapter he named.
+    #[test]
+    fn hebrews_13_7_cited_while_13_17_is_quoted_is_not_a_disagreement() {
+        let spoken = vr("Hebrews", 13, 7);
+        let quoted = vr("Hebrews", 13, 17);
+        assert_eq!(
+            doubt_from_a_quotation(&[said(&spoken), run(&quoted, 17)]),
+            vec![None, None]
+        );
+    }
+
+    /// **A preacher reading Proverbs who quotes Isaiah is quoting Isaiah**, which
+    /// the quotation call site has recorded since the phrase index was built. A run
+    /// somewhere else in scripture is the most ordinary thing in preaching and says
+    /// nothing whatever about the reference that was named.
+    #[test]
+    fn a_quotation_from_somewhere_else_entirely_is_not_a_disagreement() {
+        let spoken = vr("Romans", 8, 28);
+        for other in [vr("John", 14, 6), vr("Isaiah", 55, 8), vr("Psalms", 23, 1)] {
+            assert_eq!(
+                doubt_from_a_quotation(&[said(&spoken), run(&other, 12)]),
+                vec![None, None],
+                "{other:?} was read as contradicting Romans 8:28"
+            );
+        }
+    }
+
+    /// **RG-301's Jude, and it is a negative on purpose.** At 674 s the window held
+    /// *"…his ways and his paths are past finding out. We have tried to look at that
+    /// from Jude 28 and verse 7 to 28."* — a seven-word sole run in `Romans 11:33`,
+    /// the verse he was referring BACK to, beside a fire of `Jude 1:7`.
+    ///
+    /// This rule does not catch it and must not: the run is a different book, a
+    /// different chapter and a different verse, so it is not a slip of the reference
+    /// — it is a second thing he said. Catching it needs a rule broad enough to
+    /// demote the Isaiah case above, and that trade is not worth making. RG-301.
+    #[test]
+    fn field_588_the_referred_back_quotation_is_deliberately_not_caught() {
+        let spoken = vr("Jude", 1, 7);
+        let quoted = vr("Romans", 11, 33);
+        assert_eq!(
+            doubt_from_a_quotation(&[said(&spoken), run(&quoted, 7)]),
+            vec![None, None]
+        );
+    }
+
+    /// **A chapter number shared with another book is Tuesday.** "Turn to Romans 8"
+    /// while a run from John 8 is in the air: same chapter, different book, and the
+    /// spoken reference named no verse. Excluded, because chapter numbers collide
+    /// across sixty-six books constantly and the verse is what makes `Proverbs 8:12`
+    /// against `Acts 8:12` a coincidence worth acting on.
+    #[test]
+    fn a_whole_chapter_never_disagrees_with_another_book() {
+        let spoken = vr("Romans", 8, 1);
+        let quoted = vr("John", 8, 12);
+        let cands = [
+            Claim {
+                whole_chapter: true,
+                ..said(&spoken)
+            },
+            run(&quoted, 11),
+        ];
+        assert_eq!(doubt_from_a_quotation(&cands), vec![None, None]);
+    }
+
+    /// **A SPAN IS NOT A LICENCE TO DISAGREE ACROSS BOOKS.** "Romans 8 verse 1 to
+    /// 39" while `John 8:12` is quoted verbatim: the chapter numbers match, the
+    /// verse falls inside the span he asked for, and it is still nothing but a
+    /// coincidence. Across books the verse must be the one he said, exactly.
+    ///
+    /// Found by revert-checking, not by reading: the verse test was written as
+    /// *"inside what was said"* for `Psalms 7 verse 1 to 7`, and that reading made
+    /// every wide citation in the Bible a cross-book accusation waiting for a
+    /// chapter number to collide.
+    #[test]
+    fn a_wide_spoken_span_does_not_disagree_across_books() {
+        let spoken = vr("Romans", 8, 1);
+        let quoted = vr("John", 8, 12);
+        let cands = [
+            Claim {
+                verse_end: Some(39),
+                ..said(&spoken)
+            },
+            run(&quoted, 11),
+        ];
+        assert_eq!(doubt_from_a_quotation(&cands), vec![None, None]);
+        // The same span DOES still reach a digit-slip chapter in its own book.
+        let slipped = vr("Romans", 18, 12);
+        let same_book = [
+            Claim {
+                verse_end: Some(39),
+                ..said(&spoken)
+            },
+            run(&slipped, 11),
+        ];
+        assert_eq!(
+            doubt_from_a_quotation(&same_book)[0],
+            Some(Doubt::SpokenChapter)
+        );
+    }
+
+    /// **One digit is not a slip, it is the next chapter along.** `Romans 1:16`
+    /// cited against a sole run in `Romans 2:16` is one substitution — and so is
+    /// every other single-digit chapter, so at that length there is no honest way to
+    /// tell a decode slip from a preacher reading on.
+    #[test]
+    fn a_single_digit_substitution_is_refused() {
+        let spoken = vr("Romans", 1, 16);
+        let quoted = vr("Romans", 2, 16);
+        assert_eq!(
+            doubt_from_a_quotation(&[said(&spoken), run(&quoted, 10)]),
+            vec![None, None]
+        );
+        assert!(!chapter_is_a_decode_slip(1, 2));
+        assert!(!chapter_is_a_decode_slip(8, 9));
+        // Two digits and one substitution IS the measured shape.
+        assert!(chapter_is_a_decode_slip(35, 34));
+        // A lost leading digit, in the direction the decoder loses them.
+        assert!(chapter_is_a_decode_slip(7, 87));
+        assert!(chapter_is_a_decode_slip(8, 18));
+        assert!(
+            !chapter_is_a_decode_slip(87, 7),
+            "the decoder loses digits, it does not add them"
+        );
+        assert!(!chapter_is_a_decode_slip(1, 100), "100 does not end in 1");
+        assert!(!chapter_is_a_decode_slip(3, 3));
+    }
+
+    // ── WHAT MAY RAISE A DOUBT, AND WHAT MAY NOT ─────────────────────────────
+
+    /// **A run two verses share says nothing about WHICH verse**, and which verse is
+    /// this rule's entire business. Not sole, no doubt — at any length.
+    #[test]
+    fn a_run_two_verses_share_may_not_raise_a_doubt() {
+        let spoken = vr("Psalms", 7, 1);
+        let quoted = vr("Psalms", 87, 1);
+        let cands = [
+            said(&spoken),
+            Claim {
+                r: &quoted,
+                method: DetectionMethod::for_quotation(20, false),
+                verse_end: None,
+                whole_chapter: false,
+                run: Some((20, false)),
+            },
+        ];
+        assert_eq!(doubt_from_a_quotation(&cands), vec![None, None]);
+    }
+
+    /// **A paraphrase may never raise a doubt.** A cosine is a bag of words in no
+    /// order (rule 18) and knows nothing about which verse was read; overruling a
+    /// 0.95 heard reference on one would be rule 10 upside down.
+    #[test]
+    fn a_paraphrase_may_never_raise_a_doubt() {
+        let spoken = vr("Psalms", 7, 1);
+        let guess = vr("Psalms", 87, 1);
+        let cands = [
+            said(&spoken),
+            Claim {
+                r: &guess,
+                method: DetectionMethod::Semantic,
+                verse_end: None,
+                whole_chapter: false,
+                run: None,
+            },
+        ];
+        assert_eq!(doubt_from_a_quotation(&cands), vec![None, None]);
+    }
+
+    /// A run of four words is below `MIN_RUN_WORDS` and may not be offered at all,
+    /// so it may not overrule anything either. *"the oil of joy"* — `detections.id
+    /// = 818`'s own evidence — is exactly four, which is why that instance is one
+    /// this rule cannot reach in the field however well it reads on paper.
+    #[test]
+    fn a_run_shorter_than_the_floor_may_not_raise_a_doubt() {
+        let spoken = vr("Isaiah", 1, 3);
+        let quoted = vr("Isaiah", 61, 3);
+        assert_eq!(
+            doubt_from_a_quotation(&[said(&spoken), run(&quoted, MIN_RUN_WORDS - 1)]),
+            vec![None, None]
+        );
+        assert_eq!(
+            doubt_from_a_quotation(&[said(&spoken), run(&quoted, MIN_RUN_WORDS)]),
+            vec![Some(Doubt::SpokenChapter), Some(Doubt::TheQuotation)]
+        );
+    }
+
+    /// **Only a reference Relay HEARD is demoted.** The other reference-shaped
+    /// methods are already capped at Suggest at any score, so there is nothing to
+    /// take from them and every reason not to give this rule more surface.
+    #[test]
+    fn only_a_heard_reference_is_doubted() {
+        let spoken = vr("Psalms", 7, 1);
+        let quoted = vr("Psalms", 87, 1);
+        for m in [
+            DetectionMethod::UncertainBook,
+            DetectionMethod::UncertainNumber,
+            DetectionMethod::Ambiguous,
+            DetectionMethod::Semantic,
+        ] {
+            let cands = [
+                Claim {
+                    method: m,
+                    ..said(&spoken)
+                },
+                run(&quoted, 9),
+            ];
+            assert_eq!(doubt_from_a_quotation(&cands), vec![None, None], "{m:?}");
+        }
+    }
+
+    /// The verse has to be the one that was said, or inside the span that was said.
+    /// `Psalms 7 verse 1 to 7` against `Psalms 87:7` is inside; against `Psalms
+    /// 87:9` it is not, and a run in a psalm eighty chapters away that is not even
+    /// the verse he asked for is not evidence about his reference.
+    #[test]
+    fn the_verse_must_be_one_that_was_said() {
+        let spoken = vr("Psalms", 7, 1);
+        for (v, want) in [
+            (1, Some(Doubt::SpokenChapter)),
+            (7, Some(Doubt::SpokenChapter)),
+            (8, None),
+            (9, None),
+        ] {
+            let quoted = vr("Psalms", 87, v);
+            let cands = [
+                Claim {
+                    verse_end: Some(7),
+                    ..said(&spoken)
+                },
+                run(&quoted, 7),
+            ];
+            assert_eq!(doubt_from_a_quotation(&cands)[0], want, "verse {v}");
+        }
+    }
+
+    /// **Nothing is held and nothing is dropped.** Both sides survive into the
+    /// candidate set — the operator has to be able to pick the right one, and a
+    /// silent discard is a different lie (DECISIONS §106). What changes is only
+    /// what may reach a wall unattended.
+    #[test]
+    fn a_window_with_no_disagreement_is_untouched() {
+        let a = vr("Romans", 8, 28);
+        let b = vr("Romans", 8, 28);
+        let cands = [said(&a), run(&b, 14)];
+        assert!(doubt_from_a_quotation(&cands).iter().all(Option::is_none));
+    }
+
+    /// The wire names both rules, because the console renders them and a rename that
+    /// silently changed a key would leave the operator reading nothing.
+    #[test]
+    fn the_two_rules_name_themselves_on_the_wire() {
+        assert_eq!(
+            serde_json::to_string(&Doubt::SpokenChapter).unwrap(),
+            "\"spoken_chapter\""
+        );
+        assert_eq!(
+            serde_json::to_string(&Doubt::SpokenBook).unwrap(),
+            "\"spoken_book\""
+        );
+        assert_eq!(
+            serde_json::to_string(&Doubt::TheQuotation).unwrap(),
+            "\"the_quotation\""
+        );
     }
 }

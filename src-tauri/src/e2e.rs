@@ -6123,3 +6123,156 @@ fn a_spoken_reference_cuts_through_a_reading() {
         wall.references()
     );
 }
+
+/// **A CITATION THE PREACHER'S OWN WORDS CONTRADICT REACHES NOBODY — RG-305.**
+///
+/// FIELD, service 40, 2026-09-25 at 9831 s. *"Acts 8, 12, I wisdom dwell with
+/// prudence and find out the knowledge of witty inventions."* Those fifteen words
+/// are **Proverbs 8:12**, which this same preacher had cited correctly two hours
+/// earlier; whisper heard `Proverbs` as `Acts`. Relay put **Acts 8:12** on a
+/// congregation's screens at 0.55 `Direct`, unattended.
+///
+/// Nothing about that parse is self-contradictory — Acts 8 exists, verse 12 exists,
+/// the confidence is a real parse confidence — so no threshold and no
+/// impossible-chapter rule could have caught it. The only thing that disagreed was
+/// the quotation, and it was in the same window.
+///
+/// **Three things this asserts, and they are the whole of the decision.** Nothing
+/// reaches a wall: not the misheard citation and not the quotation that accused it,
+/// because a run that overrules a spoken reference must not thereby inherit the
+/// wall (rule 10 is applied to one more case and relaxed for none). Both are
+/// OFFERED, so the operator can pick the verse the preacher actually meant. And the
+/// citation says its book is in doubt rather than claiming it was heard.
+///
+/// Watched to fail: with `doubt_from_a_quotation`'s demotions removed it reproduces
+/// `["Acts 8:12"]` on the wall, which is the morning.
+#[test]
+fn a_citation_its_own_window_contradicts_reaches_nobody() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+    let offered: std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = offered.clone();
+    h.listen("detection://match", move |e| {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(e.payload()) {
+            sink.lock().unwrap().push(v);
+        }
+    });
+    let doubts: std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let dsink = doubts.clone();
+    h.listen("detection://held", move |e| {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(e.payload()) {
+            dsink.lock().unwrap().push(v);
+        }
+    });
+
+    emit_detections(
+        &h,
+        "Acts 8, 12, I wisdom dwell with prudence and find out the knowledge of witty inventions.",
+        0,
+        true,
+        None,
+    );
+    settle();
+
+    assert!(
+        wall.references().is_empty(),
+        "a disagreement put something on a congregation's screens: {:?}",
+        wall.references()
+    );
+
+    let got = offered.lock().unwrap();
+    let acts = got
+        .iter()
+        .find(|v| v["reference"] == "Acts 8:12")
+        .unwrap_or_else(|| panic!("the misheard citation was not even offered: {got:?}"));
+    assert_eq!(
+        acts["method"], "uncertain_book",
+        "the citation still claimed its book had been heard"
+    );
+    assert_eq!(acts["status"], "suggested");
+    let proverbs = got
+        .iter()
+        .find(|v| v["reference"] == "Proverbs 8:12")
+        .unwrap_or_else(|| {
+            panic!("the verse the preacher was actually reading was never offered: {got:?}")
+        });
+    assert_eq!(
+        proverbs["status"], "suggested",
+        "the accusing run inherited the wall it took from the citation"
+    );
+    // **AND ITS METHOD ON THIS CARD IS `semantic`, WHICH IS NOT THIS RULE'S DOING.**
+    // `Proverbs 8:12` is found twice in this window — as an eight-word verbatim run
+    // and as a paraphrase — and `emit_detections` keeps the `pipeline::better` of the
+    // two for one reference. `unattended_rank` puts `Quoted` and `Semantic` in the
+    // same tier, so the tie falls to `confidence`, and a cosine of 0.72 beats
+    // `quoted_confidence(8)`. That is a PRE-EXISTING gap and it costs the operator the
+    // words (rule 18): the card shows `wisdom · prudence · witty` where it could show
+    // the sentence. It is recorded rather than fixed here because the fix is in
+    // `pipeline::better`, reaches every short quotation in the product, and belongs to
+    // whoever measures it. What this rule owes the operator it pays on the report
+    // below, which carries the run's own words whatever survives the dedup.
+    assert!(
+        matches!(
+            proverbs["method"].as_str(),
+            Some("semantic") | Some("quoted")
+        ),
+        "{proverbs}"
+    );
+
+    // ── AND RELAY SAYS WHAT IT DID (rule 35) ──────────────────────────────────
+    let said = doubts.lock().unwrap();
+    let report = said
+        .last()
+        .unwrap_or_else(|| panic!("nothing was announced: {said:?}"));
+    let list = report["doubted"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the report carried no doubts: {report}"));
+    assert_eq!(list.len(), 2, "{report}");
+    assert_eq!(list[0]["reference"], "Acts 8:12");
+    assert_eq!(list[0]["doubt"], "spoken_book");
+    assert_eq!(list[1]["reference"], "Proverbs 8:12");
+    assert_eq!(list[1]["doubt"], "the_quotation");
+    // THE WORDS, so a person can judge it in the second they have (rule 18).
+    assert!(
+        list[1]["matched_text"]
+            .as_str()
+            .is_some_and(|s| s.contains("wisdom dwell with prudence")),
+        "{report}"
+    );
+}
+
+/// **A CORRECT CITATION BESIDE A READING OF THE NEXT VERSE STILL FIRES — RG-305.**
+///
+/// Watched live on the same day as the eight instances above, and the citation was
+/// RIGHT both times: `John 15:15` read aloud while *"John 15, 14"* was cited one
+/// verse later, and `Hebrews 13:7` cited while he quoted `13:17` from memory —
+/// having interrupted the service earlier to insist on verse 7.
+///
+/// The rule that stops the misheard chapter must not touch these, and the cost of
+/// getting that wrong is a preacher's own reference demoted on the strength of what
+/// he happened to read next. Here through the real commands, the real router and the
+/// real wall, because a pure unit test cannot see the wall.
+#[test]
+fn a_reading_of_the_next_verse_does_not_demote_the_citation() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    emit_detections(
+        &h,
+        "Henceforth I call you not servants, for the servant knoweth not what his lord doeth. \
+         John 15, 14.",
+        0,
+        true,
+        None,
+    );
+    settle();
+    assert!(
+        wall.references().contains(&"John 15:14".to_string()),
+        "the preacher's own reference was demoted because he read the next verse: {:?}",
+        wall.references()
+    );
+}

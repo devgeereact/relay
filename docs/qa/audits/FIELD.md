@@ -16,6 +16,8 @@ for the last two.
 - `FIELD-2026-09-06.md` — FIELD-2026-09-06 — two services, two models, four wrong verses
 - `FIELD-2026-09-13.md` — FIELD-2026-09-13 — the first service with no wrong verse
 - `FIELD-2026-09-20.md` — FIELD-2026-09-20 — the fifth service, and two wrong verses ten minutes apart
+- `FIELD-2026-09-25.md` — FIELD-2026-09-25 — **three services, sixteen hours, 365 auto-fires, and the
+  first recorded audio this project has ever had**
 
 ---
 
@@ -1218,3 +1220,118 @@ router made about text, not the model's transcription of it.
 - The unknown build is the stage plan's S13, still open.
 
 ---
+
+
+---
+
+# FIELD-2026-09-25 — three services, sixteen hours, and the first recording
+
+**Watched live, fire by fire, from the session that launched the app.** This is the first field
+audit written while the service was happening rather than reconstructed afterwards, and the first
+with the audio kept.
+
+## 0. What this day produced
+
+| | |
+|---|---|
+| Services | **3**, one sermon preached twice plus a youth service |
+| Capture | **57,700.8 s — 16 h 02 m**, unbroken, no dropout, no audio error |
+| Transcript | **7,070+ lines**, longest gap with no line **24.2 s** |
+| Auto-fires | **365** — 207 from spoken references, 158 from readings |
+| Manual fires | **12** |
+| **Wrong verses** | **12 — a 3.3% wrong-verse rate**, under SPEC's 5% bar |
+| Build | `ad54b6d9b 2026-09-24`, `ggml-large-v3-turbo`, sensitivity 100 |
+| Recording | `~/Documents/relay-recordings/service-2026-09-25.wav`, **9.5 GB** |
+
+**The capture is the headline nobody expected.** Sixteen hours with no gap over 24 seconds, on a
+build where RG-262 had only ever been measured against a 93-minute service. Service 15 spent
+88.4% of its length inside gaps over 30 s; this day spent none.
+
+## 1. The reading path earned its place, and the number says so
+
+Of 158 reading fires, **117 put up a verse nothing else had** — read aloud, never named. No
+operator types fast enough to follow that: Psalm 121 walked 1-2-3-4-5-6-8 in 66 seconds, Isaiah
+30:1-2-3 in twenty, 1 Corinthians 2:7-8-9-10 twice in two different services.
+
+**41 were duplicates of a verse already on the wall.** RG-306's guard, committed the same day,
+holds all 41 and keeps all 117. That is an 11% reduction in wall changes with nothing correct
+lost — measured over the whole day rather than over the 971-line replay the row was built from.
+
+## 2. Twelve wrong verses, four mechanisms
+
+**Eight are one failure: the decoder lost or altered a digit or an ordinal** (RG-305). *eighty*-seven
+→ 7 · *eigh*-teen → 8 · *Second* Timothy → 1 Timothy · *sixty*-one → 1 · *twelve* → 2 · 34 → 35 ·
+and two book names. Every result is a smaller, VALID, wrong reference, so the parse confidence is
+genuine and nothing downstream has grounds to doubt it.
+
+**CORRECTED, 2026-09-25, by measurement.** This audit first said the correct verse's own words were
+in the same window in every one of the eight. Against the real `heard_text` rows that is true of
+**three of the nine** (the eight plus RG-301's Jude). Three windows are the reference and nothing
+else; two carry runs of four and three words, under `MIN_RUN_WORDS`; one points at a verse the
+preacher was referring BACK to. **In four of the six the quotation arrived 6 to 16 seconds later, in
+a SEPARATE window**, and named the right verse after the wrong one was already on the wall — so
+reaching those means taking a verse off a congregation's screen, which is a different decision with
+a different cost. Twice, Relay resolved the identical sentence correctly when no reference was
+spoken at all. The ceiling is asserted, not described:
+`main::passage_guard_bench::which_field_instances_this_rule_can_reach` fails if it moves.
+
+**Two are a self-corrected reference** where Relay kept the discarded half (RG-301): *"Micah
+chapter 2 chapter 4 verse 1"* → Micah 2:2; *"Luke chapter 5, chapter 15, number 7"* → Luke 5:1.
+
+**One is a digit INVENTED from a stammer** (RG-301): *"2 Corinthians, 2 Corinthians, 2 Corinthians,
+4, and verse 13"* fired 4:13 correctly, then three seconds later read a stammered ordinal as a
+chapter and fired **2 Corinthians 2:13** over it. Specific to numbered books; `Daniel, Daniel,
+Daniel, Daniel 6 verse 23` was harmless the same evening.
+
+**Two are a stock liturgical phrase read as a verse being read** (RG-307), and **both were during
+prayer**: *"…in the name of the Lord"* → 1 Samuel 20:42; *"by the word of the Lord"* → 1 Kings
+13:17. The sole-verse rule was satisfied in both — the exact token run IS unique — which is the
+finding: **uniqueness of a token string is not evidence that a verse is being read.**
+
+## 3. What the guard leaves open, and it is not an oversight
+
+**Synoptic parallels** (RG-308). Twice a reading walked off the passage the preacher had NAMED onto
+its parallel: Micah 4:2 → Isaiah 2:3, and Mark 4:11 → Luke 8:10. §122 scopes both rules to the
+chapter on screen; a parallel is by definition a different book. The cost is the RIGHT WORDS under
+the WRONG reference, which is harder to spot than an obvious error.
+
+## 4. The paraphrase path is UNOBSERVABLE, and that is the most important line here
+
+```sql
+SELECT COUNT(*) FROM detections WHERE status='suggested';   -- 0
+SELECT COUNT(*) FROM detections WHERE status='dismissed';   -- 0
+```
+
+Zero, across every service this machine has recorded. `persist_fire` is called inside
+`if fire.may_broadcast()`, and a paraphrase can never broadcast (rule 10). **So a paraphrase never
+reaches the database at all.**
+
+The operator's instruction for this day was *"the preacher paraphrases a lot so I want you to catch
+that"*. Sixteen hours of exactly that produced **no record of the paraphrase detector doing
+anything**, right or wrong. Everything labelled `semantic` in the record is a QUOTATION —
+`db_method` folds five variants into two.
+
+**Every claim this project makes about paraphrase accuracy therefore rests on nothing**, and the
+self-calibrating gate learns from a column that only ever sees successes.
+
+## 5. Operator behaviour, which nothing had measured before
+
+Twelve manual fires against 365 automatic. Eleven were a **verse adjustment inside a passage Relay
+had already found** — stepping back one verse, or ahead of the reading. At 57,224 s the operator
+hand-drove Psalm 112 verse by verse while the reading path tracked the same passage, and the two
+raced: seven wall changes in forty seconds. **The manual path has no debounce** — 112:6 fired twice
+two seconds apart from a double press.
+
+The pulpit also corrected the desk out loud once, at 45,076 s: *"no verse 7 please, verse 7 please"*.
+Relay self-corrected eleven seconds later from the words he then read.
+
+## 6. What this audit does NOT change
+
+The release decision, the model question, and word error rate. **WER is still unmeasured in every
+language** — but for the first time the audio exists to measure it, and the same sermon was preached
+twice, which is as close to a controlled comparison as a church will ever hand anybody.
+
+## 7. Register entries
+
+RG-301 (two mechanisms), RG-305 (eight instances), RG-307 (two), RG-308 (two) — all OPEN. RG-306
+closed the same day and its guard is measured above against the whole day rather than a replay.
