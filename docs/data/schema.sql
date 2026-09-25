@@ -308,7 +308,13 @@ CREATE TABLE detections (
     -- confirmed suggestion, or next/back nav) — NOT an AI decision, and must never
     -- be counted as one: the self-calibrating router learns from this column.
     status        TEXT NOT NULL CHECK (status IN ('auto', 'suggested', 'dismissed', 'manual')),
-    fired_at      REAL,                   -- seconds since service start, null if never fired
+    -- WHEN, in seconds since service start. It said "null if never fired" and that
+    -- was true while `persist_fire` ran only for a fire; since RG-309 an offer is
+    -- recorded too, with a real time, because when the AI made a claim is part of
+    -- the record. `status` is what says whether anything reached a screen, and it is
+    -- what `count_verse_in_service` and `service_timeline` ask. Null on the oldest
+    -- rows and on a row whose time was not known.
+    fired_at      REAL,
     -- THE EVIDENCE: the exact text the detector was reading when this fired.
     --
     -- transcript_id alone cannot answer "why did this verse appear?". Detection
