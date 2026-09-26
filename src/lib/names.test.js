@@ -131,6 +131,9 @@ const REGISTER = [
       'src/lib/stores/capture.js',
       'src/lib/countdownwiring.test.js',
       'src/lib/quicktools.test.js',
+      // RG-258 — the card does one job at a time now, and this holds the picker
+      // that chooses which.
+      'src/lib/docklayout.test.js',
       'src/lib/r6-contracts.test.js',
       'src/lib/stagezones.test.js',
       // Wave 5 Track C — the binding, the receiver that may refuse the frame, the
@@ -140,6 +143,20 @@ const REGISTER = [
       'src/lib/channelroles.test.js',
       'src/lib/stagealertpanic.test.js',
       'src/lib/stagemessage.test.js',
+      'src/lib/stagemessagenative.test.js',
+      // RG-266 — the one place that says the big screen flashes too, and where
+      // to look first when it does not (the channel's role).
+      'src/lib/selectionsafety.test.js',
+      // RG-268 — the caution sweep enumerates both renderings of a Stage Message
+      // by name, because the phone got the ochre ink and the big screen was left
+      // grey for two days. A sweep that could not name the concept it guards
+      // would be guarding a selector rather than a surface.
+      'src/lib/colourlaw.test.js',
+      // RG-285 — the note takes a resting stage screen's room rather than a
+      // strip along its foot, which is `stagemessage.js`'s `large` form on the
+      // surface that only ever had the strip. It names the concept because the
+      // whole case is about which of the two renderings a word gets.
+      'src/lib/stagefill.test.js',
       'src/lib/views/Channels.svelte',
       // Wave 3 — the two files that hold what a PANIC CONTROL does to a Stage
       // Message (DECISIONS §91) and to the console's mirror of it. They were
@@ -152,6 +169,17 @@ const REGISTER = [
       // (DECISIONS §89, and the reversal recorded in `r6-contracts.test.js`).
       'src/lib/stagepageidentity.test.js',
       'src/lib/stageremote.test.js',
+      // RG-226 — the rule that says which of a stage screen's two layers RELAY is
+      // placing itself, and the desk sentence that reports it. Both name the
+      // binding, because the binding is what an operator goes looking for in the
+      // editor when the fallback is not where they wanted it.
+      'src/lib/stagelayers.js',
+      'src/lib/stagelayerhint.test.js',
+      // Requirement 5 — the renderer now paints the alert itself, full-bleed, and
+      // NAMES it: the label is the reduced-motion half of making a still red panel
+      // unmistakable, so this is a real surface a preacher reads, not prose.
+      'src/lib/TemplateRender.svelte',
+      'src/lib/stagealerttemplate.test.js',
     ],
     // Wave 5 Track C adds a `stage_message` text binding labelled with this same
     // string. Registered ahead of it so the merge lands green rather than red on
@@ -167,7 +195,11 @@ const REGISTER = [
       'src/lib/TemplateRender.svelte',
       'src/lib/layers.js',
       'src/lib/stores/capture.js',
-      'src/lib/stagezones.test.js',
+      // RG-241 took the zone picker off the phone, so this file reads a zone's
+      // state off what the page PAINTS rather than off a toggle's label — and
+      // stopped saying the zone's name in the process. `stagelayout.test.js`
+      // still names it, over the operator's path.
+      'src/lib/stagelayout.test.js',
       'src/lib/surface.test.js',
       'src/lib/views/Live.svelte',
       'src/lib/views/ServicePlanner.svelte',
@@ -236,14 +268,22 @@ const REGISTER = [
     // `formatCountdown` and report every lowercase use as a second label.
     concept: 'the countdown a CONGREGATION watches — `countdown` content, every screen',
     name: 'Screen Countdown',
+    // `src/lib/Dock.svelte` LEFT THIS LIST ON 2026-09-20. The control moved out of
+    // Quick tools on the operator's instruction and onto the run surface, so the
+    // dock stopped saying the name and `views/Live.svelte` started. The register
+    // follows the label, which is what the staleness check below is for — a file
+    // left here after the name leaves it is a register describing a product that
+    // no longer exists.
     allowed: [
-      'src/lib/Dock.svelte',
       'src/lib/countdownreach.test.js',
       'src/lib/layers.js',
       'src/lib/layers.test.js',
       'src/lib/quicktools.test.js',
-      'src/lib/stagezones.test.js',
+      'src/lib/screencountdown.test.js',
+      // Same as Stage Note above: RG-241 left this file reading the screen
+      // rather than a picker, so it no longer says the zone's name.
       'src/lib/templateKind.js',
+      'src/lib/views/Live.svelte',
       'src/lib/wayback.test.js',
       'src/lib/stagelayout.js',
     ],
@@ -265,18 +305,45 @@ const REGISTER = [
       'src/lib/liverackfit.test.js',
       'src/lib/programmetimer.test.js',
       'src/lib/progtimerjoin.test.js',
+      // It names the Stage Timer to say what the Screen Countdown band sits
+      // BESIDE, and to assert that the two did not merge — one reaches a
+      // preacher's monitor and one reaches a congregation.
+      'src/lib/screencountdown.test.js',
       'src/lib/stageprogrow.test.js',
       'src/lib/stagelayout.test.js',
       'src/lib/stagetimerhold.test.js',
+      'src/lib/stagetimerplace.test.js',
       'src/lib/stagetimerover.test.js',
       'src/lib/stagetimerreach.test.js',
-      'src/lib/stagezones.test.js',
+      // RG-241: this file reads the rail off `.progrow` now rather than off a
+      // picker's label, so it no longer says the zone's name.
       'src/lib/timers.test.js',
+      // Requirement 6 — Outputs → Preacher's screen names the zone in its mirror
+      // and the rows on the rail beneath it. That is the operator's word for a
+      // switch and for a clock, which is exactly what this register is for.
+      'src/lib/stagemirror.test.js',
       'src/lib/views/Live.svelte',
       'src/lib/views/ServicePlanner.svelte',
-      'src/lib/wayback.test.js',
+      'src/lib/views/Channels.svelte',
       'src/lib/stagelayout.js',
-    ],
+      // Requirement 2b — the `programme` binding an operator picks in the template
+      // editor's binding list, and the layer the three stage starters carry. It is
+      // a label in a dropdown, which is exactly the surface this register is for.
+      'src/lib/layers.js',
+      'src/lib/progtimertemplate.test.js',
+      // RG-244 — the rule that decides who takes the room nobody else is using,
+      // and its test. Both name the clock because the whole question is which
+      // clock wins, and answering it in any other words would be the drift this
+      // register exists to stop.
+      'src/lib/stageresting.js',
+      'src/lib/stageresting.test.js',
+      // RG-285 — the same rule, on the OTHER preacher's screen. `stagefill.js`
+      // is one function over `stageresting.js` and its test asserts the two
+      // agree on every input, so both name the clock for the same reason the
+      // two rows above it do.
+      'src/lib/stagefill.js',
+      'src/lib/stagefill.test.js',
+],
     // `'Congregation timer'` stays permitted: it is accurate prose in `timers.rs`
     // and `main.rs` describing a SCOPE, not a control anybody reads a label on.
     forbidden: ['Programme timer', 'Programme clock', 'Preacher timer', 'Sermon timer'],
@@ -295,6 +362,9 @@ const REGISTER = [
       'src/lib/views/library/LiveOutputRail.svelte',
       'src/lib/views/library/Inspector.svelte',
       'src/lib/libraryinspector.test.js',
+      // The refusal in `fireQueued` names the area it means (RG-185, 2026-09-21);
+      // it used to name "Up Next", which RG-158 retired.
+      'src/lib/views/Library.svelte',
     ],
     forbidden: ['Staging area', 'Stage queue', 'Shortlist'],
   },
@@ -534,7 +604,7 @@ describe('the scanner itself', () => {
     expect(filesWith(files, 'Stage Message')).toContain('src/lib/Dock.svelte');
     expect(filesWith(files, 'Stage Note')).toContain('src/lib/views/ServicePlanner.svelte');
     expect(filesWith(files, 'Up Next')).toContain('src/Stage.svelte');
-    expect(filesWith(files, 'Screen Countdown')).toContain('src/lib/Dock.svelte');
+    expect(filesWith(files, 'Screen Countdown')).toContain('src/lib/views/Live.svelte');
     expect(filesWith(files, 'Stage Timer')).toContain('src/lib/views/Live.svelte');
   });
 

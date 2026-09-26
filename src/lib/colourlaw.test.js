@@ -31,16 +31,65 @@ const PROMISE = {
   '--v-red': 'destructive',
 };
 
+// ── THE INDIRECTION THIS SCANNER USED TO MISS ───────────────────────────────
+//
+// `plan.js` records the gap in the paragraph that refuses a per-kind ramp for the
+// second time: "Its sweep over every `TYPE` entry is a SUBSTRING match on the
+// token text, so `var(--v-col-scripture)` sails through it — the indirection is
+// invisible to the scanner even though it resolves to amber."
+//
+// That was exact, and it was the dangerous kind of gap: `--v-col-scripture` IS
+// `var(--v-amber)` and `--v-col-media` IS `var(--v-amethyst)` (tokens.css), so a
+// taxonomy built out of the `--v-col-*` family would have painted ON AIR on the
+// one cue kind the AI may fire by itself, and every grep for `--v-amber` would
+// have come back clean. The wave-4 proposal asked for exactly that.
+//
+// So the matcher now RESOLVES. It reads both halves of the stylesheet, follows a
+// `var()` chain to its literal, and reports the whole path — `--v-col-scripture
+// → --v-amber (ON AIR)` — because a reader who is told only "amber" will look for
+// an amber that is not in the file. A cycle terminates rather than recursing; a
+// token that is not defined resolves to nothing and is not a false positive.
+const STYLESHEET = ['../tokens.css', '../app.css']
+  .map((f) => readFileSync(resolve(__dirname, f), 'utf8'))
+  .join('\n');
+
+/** The declared value of `--token`, or null. First definition wins, as CSS does not. */
+function declarationOf(token) {
+  const m = STYLESHEET.match(new RegExp(`${token.replace(/[-]/g, '\\-')}\\s*:\\s*([^;}]+)[;}]`));
+  return m ? m[1].trim() : null;
+}
+
+/** Every `--token` a value names directly. */
+function tokensIn(value) {
+  return [...String(value || '').matchAll(/var\(\s*(--[\w-]+)/g)].map((m) => m[1]);
+}
+
 /**
- * Names a promise token, INCLUDING its variants — `--v-amber-soft`, `--v-amber2`,
- * `--v-cyan-line`. A plain substring match is what is wanted: a variant of a
- * promise colour is still that promise, and no non-promise token in `app.css`
- * begins with one of these names.
+ * Names a promise token, following `var()` indirection to any depth.
+ *
+ * The substring half is unchanged and still wanted: a VARIANT of a promise colour
+ * is still that promise (`--v-amber-soft`, `--v-amber2`, `--v-cyan-line`), and no
+ * non-promise token in the stylesheet begins with one of these names.
+ *
+ * The resolving half is the addition. It walks each named token's declaration,
+ * and each token THAT names, until it reaches a literal or runs out — so an alias
+ * of an alias of amber is still amber.
  */
-function promiseIn(value) {
+function promiseIn(value, seen = new Set(), path = []) {
   const v = String(value || '');
   for (const [token, means] of Object.entries(PROMISE)) {
-    if (v.includes(token)) return `${token} (${means})`;
+    if (v.includes(token)) {
+      const via = [...path, token].join(' → ');
+      return `${via} (${means})`;
+    }
+  }
+  for (const token of tokensIn(v)) {
+    if (seen.has(token)) continue; // a cycle is not a promise
+    seen.add(token);
+    const decl = declarationOf(token);
+    if (!decl) continue; // undefined token — nothing to follow, not a hit
+    const hit = promiseIn(decl, seen, [...path, token]);
+    if (hit) return hit;
   }
   return null;
 }
@@ -56,6 +105,42 @@ describe('the colour law — a taxonomy may not paint a promise', () => {
     expect(promiseIn('var(--v-rose)')).toContain('destructive');
     expect(promiseIn('var(--v-faint)')).toBeNull();
     expect(promiseIn('var(--v-sel)')).toBeNull();
+  });
+
+  it('…and it now FOLLOWS an alias, which is the gap plan.js recorded', () => {
+    // THE HOLE THIS CLOSES, named. `plan.js` says of the pre-2026-09-20 version of
+    // this file: "`var(--v-col-scripture)` sails through it — the indirection is
+    // invisible to the scanner even though it resolves to amber". A taxonomy built
+    // out of that family would have painted ON AIR on the one cue kind the AI may
+    // fire by itself, with every grep for `--v-amber` coming back clean.
+    //
+    // Watched to fail against the substring-only matcher: all four of these
+    // returned null, which is how the whole `--v-col-*` proposal would have passed.
+    expect(promiseIn('var(--v-col-scripture)')).toContain('ON AIR');
+    expect(promiseIn('var(--v-col-media)')).toContain('rehearsal');
+    expect(promiseIn('var(--v-col-notice)')).toContain('destructive');
+    // The PATH is reported, not just the verdict: a reader told only "amber" goes
+    // looking for an amber that is not written anywhere in the file.
+    expect(promiseIn('var(--v-col-scripture)')).toContain('--v-col-scripture → --v-amber');
+  });
+
+  it('…without inventing a promise where there is none', () => {
+    // The opposite mistake. A resolver that flagged everything would be as useless
+    // as one that flagged nothing, and the cheapest way to go green on a false
+    // positive is to weaken the scanner.
+    expect(promiseIn('var(--v-col-song)'), '--v-col-song is steel, i.e. selection').toBeNull();
+    expect(promiseIn('var(--v-accent)'), '--v-accent is an alias of --v-sel').toBeNull();
+    expect(promiseIn('var(--v-accent-soft)')).toBeNull();
+    // The section bands, which is what this strengthening was written alongside.
+    // They resolve to hexes of their own — the point of the exercise.
+    expect(promiseIn('var(--v-sec-a)')).toBeNull();
+    expect(promiseIn('var(--v-sec-b)')).toBeNull();
+    expect(promiseIn('var(--v-sec-a-soft)')).toBeNull();
+    // A token nothing defines is not a hit — it is a typo, and a different test's
+    // problem. Claiming it is amber would be a verdict from an absence.
+    expect(promiseIn('var(--v-not-a-real-token)')).toBeNull();
+    // And a cycle terminates rather than recursing for ever.
+    expect(promiseIn('var(--v-faint)', new Set(['--v-faint']))).toBeNull();
   });
 
   it('no cue type paints a promise colour', () => {
@@ -103,11 +188,40 @@ describe('the colour law — a taxonomy may not paint a promise', () => {
   it('slideAccent does not mention a promise colour in its own source', () => {
     // The value test above can only see the tags it thought to try. This sees the
     // function: a new branch returning amber for some tag nobody listed fails here.
+    //
+    // IT USED TO NAME THE SIX TOKENS AND STOP THERE, which is the same substring
+    // gap in a second place — a branch returning `var(--v-col-scripture)` passed
+    // it. It now resolves every token the body names, through `promiseIn`.
     const src = readFileSync(resolve(__dirname, './plan.js'), 'utf8');
     const body = src.slice(src.indexOf('export function slideAccent'));
     const fn = body.slice(0, body.indexOf('\n}') + 2);
-    const offenders = Object.keys(PROMISE).filter((t) => fn.includes(`var(${t}`));
+    const offenders = tokensIn(fn)
+      .map((t) => [t, promiseIn(`var(${t})`)])
+      .filter(([, hit]) => hit)
+      .map(([t, hit]) => `slideAccent returns ${t} → ${hit}`);
     expect(offenders).toEqual([]);
+  });
+
+  it('every colour plan.js hands out at all resolves clear of a promise', () => {
+    // The widest form of the sweep, and the one that does not depend on somebody
+    // remembering to add a new table to this file. `plan.js` is the module whose
+    // two taxonomy tables broke the law; this reads EVERY `var(--…)` in it and
+    // resolves each one, so a third table — or a fourth — is covered on arrival.
+    //
+    // `SECTION_BANDS` is what made this worth writing: it is a third table in this
+    // file, added the same day, and neither of the two existing sweeps would have
+    // looked at it.
+    const src = readFileSync(resolve(__dirname, './plan.js'), 'utf8');
+    // Code only — the file's doc comments QUOTE the promise tokens at length in
+    // order to explain what must not be done with them, and flagging that would
+    // make deleting the explanation the cheapest way to go green.
+    const offenders = tokensIn(codeOnly(src))
+      .map((t) => [t, promiseIn(`var(${t})`)])
+      .filter(([, hit]) => hit)
+      .map(([, hit]) => `plan.js hands out ${hit}`);
+    expect(offenders).toEqual([]);
+    // Guards the guard: the scan must actually be seeing the tokens in the file.
+    expect(tokensIn(codeOnly(src)).length).toBeGreaterThan(3);
   });
 
   it('Live still reserves amber for ON AIR, and a preview is steel — never amber', () => {
@@ -226,24 +340,14 @@ describe('the colour law — amethyst promises that nothing here reaches a congr
       ['src/lib/Splash.svelte', 'the launch sequence'],
       ['src/lib/ui/BrandMark.svelte', 'the launch sequence lockup'],
       ['src/lib/boot/UpdateAvailable.svelte', 'the launch sequence'],
-      // ── THE CAUTION GAP, §93's open question ────────────────────────────────
-      // These three are NOT inside the promise. They are amethyst because this
-      // palette publishes no caution ink and every other colour is already a
-      // promise, and each records that argument independently at its own call
-      // site. They are listed so that paying the gap off is visible and adding to
-      // it is not silent. `.b-check.warn` in `src/app.css` is the fourth.
-      ['src/lib/views/Settings.svelte', 'CAUTION GAP — .s-netwarn, §93'],
-      ['src/lib/views/Help.svelte', 'CAUTION GAP — the callout, §93'],
-      ['src/lib/views/library/LyricsPane.svelte', 'CAUTION GAP — .ly-warn, §93'],
-      // The fifth, and the ONE that arrived by a promise colour being given back
-      // rather than by a new caution being invented. `.ms-caution` (the model that
-      // will fall behind a live sermon on a machine with no acceleration) and
-      // `.ms-locked` (the service lock) were and are cautions; the first was
-      // painted `--v-amber`, which means ON AIR and only that, on a panel that is
-      // never on air. Moving it into the gap is the gap being COUNTED correctly,
-      // which is the opposite of it growing quietly — and it is what the law says
-      // to do when a caution is the honest reading.
-      ['src/lib/ModelSetup.svelte', 'CAUTION GAP — .ms-caution and .ms-locked, §93'],
+      // ── THE CAUTION GAP, §93's open question — PAID on 2026-09-21 ──────────
+      // Five entries used to sit here (Settings' .s-netwarn, Help's callout,
+      // LyricsPane's .ly-warn, ModelSetup's .ms-caution and .ms-locked, and
+      // app.css's .b-check.warn), each amethyst because this palette published
+      // no caution ink. It does now: `--v-caution` (DECISIONS §111, RG-207), and
+      // the caution sweep at the bottom of this file enumerates every surface
+      // that wears it. Nothing in this map is a caution any more, and a caution
+      // arriving here again is the drift the gap was named to make visible.
     ]);
     // WHAT THIS DOES NOT SEE, said so it is not read as more. It matches
     // `var(--v-amethyst…)`, so a component that wears the shared `.r-badge
@@ -264,25 +368,20 @@ describe('the colour law — amethyst promises that nothing here reaches a congr
     expect(stale, 'these no longer paint amethyst — take them out of the list').toEqual([]);
   });
 
-  it('and the cautions are still exactly five — the gap does not grow quietly', () => {
-    // The count is the assertion. `.b-check.warn` in `src/app.css` is one of them
-    // and lives in the stylesheet rather than in a component, so it is named here
-    // rather than in the map above.
-    //
-    // IT WAS FOUR AND IT IS FIVE, and the direction matters. `ModelSetup.svelte`
-    // did not acquire a caution — it always had one, painted in the colour
-    // reserved for ON AIR. Paying an amber violation into the amethyst gap makes
-    // the gap one entry larger and the LAW one violation smaller, which is the
-    // trade §93 describes. A sixth arriving because somebody wanted a warning
-    // colour is the thing this count is watching for.
-    const cautions = [
+  it('and no caution wears amethyst any more — the gap is paid, not grown', () => {
+    // This test used to count the cautions borrowing amethyst: four, then five
+    // when ModelSetup's amber violation was paid into the gap. On 2026-09-21 the
+    // gap was closed the other way — a caution ink exists (§111) — so the count
+    // is zero and the assertion is that it STAYS zero. The five former borrowers
+    // are named so that one of them drifting back is legible as itself.
+    const formerly = [
       'src/lib/views/Settings.svelte',
       'src/lib/views/Help.svelte',
       'src/lib/views/library/LyricsPane.svelte',
       'src/lib/ModelSetup.svelte',
     ];
-    for (const f of cautions) expect(paintsAmethyst(f), `${f}`).toBe(true);
-    expect(read('src/app.css')).toMatch(/\.b-check\.warn \.ico\{ color:var\(--v-amethyst2\); \}/);
+    for (const f of formerly) expect(paintsAmethyst(f), `${f} borrows amethyst for a caution again`).toBe(false);
+    expect(read('src/app.css')).toMatch(/\.b-check\.warn \.ico\{ color:var\(--v-caution2\); \}/);
     // And app.css no longer claims what it cannot support. The sentence that used
     // to sit above the four control buttons said "the rehearsal colour, and
     // nothing else uses it", in a file spending amethyst fourteen other ways.
@@ -408,11 +507,12 @@ describe('the colour law — amber means ON AIR, and every use is named', () => 
       ['src/App.svelte', 'the shell lamp and the on-air stopwatch'],
       ['src/lib/views/library/LiveOutputRail.svelte', 'Go live — the button that puts it there'],
       ['src/lib/views/library/VerseDeck.svelte', 'the On Air badge and its tally'],
-      ['src/lib/views/Channels.svelte', 'a screen that is painting right now'],
       // THE PREACHER'S OWN PAGE — the stage alert, which is on air to one person.
       ['src/Stage.svelte', 'the stage alert and the countdown warning on a live monitor'],
-      // TEMPLATE DATA, not chrome: a swatch showing a colour the operator chose.
-      ['src/lib/views/templates/TemplateEditor.svelte', 'a template author picking a colour'],
+      // Channels and TemplateEditor were listed here until 2026-09-21, and both
+      // entries were amnesties: the only amber either painted was a CAUTION (a
+      // screen taken down, a stage role unset, a font that did not load). They
+      // wear `--v-caution` now and the sweep at the bottom of this file holds them.
       // A LYRIC THAT IS UP. Same promise, said on the pane that put it there.
       ['src/lib/views/library/LyricsPane.svelte', 'the section currently on the screens'],
     ]);
@@ -442,5 +542,256 @@ describe('the colour law — amber means ON AIR, and every use is named', () => 
     // a lost distinction: `primary` is the house accent, which is what a
     // recommended action is.
     expect(ms).toMatch(/variant=\{m\.recommended \? 'primary' : ''\}/);
+  });
+});
+
+// 2026-09-21 · measured in a browser (RG-192). A HEARD claim not on any screen
+// wore `--v-amber` on its border and badge while the Program pane read CLEAR;
+// and `uncertain_book` — the class that put Numbers 3:16 on a wall — was pixel
+// identical to a paraphrase. Amber is the tally light; a claim is a claim.
+describe('the claim card does not wear the tally light, and the three methods look different', () => {
+  const live = readFileSync(resolve(process.cwd(), 'src/lib/views/Live.svelte'), 'utf8');
+  const rule = (sel) => {
+    const i = live.indexOf(sel);
+    expect(i, `${sel} not found`).toBeGreaterThan(-1);
+    return live.slice(i, live.indexOf('}', i));
+  };
+  it('a heard claim is steel until it is on the wall', () => {
+    expect(rule('.clm{')).not.toMatch(/--v-amber/);
+    expect(rule('.cbadge{')).not.toMatch(/--v-amber/);
+    expect(rule('.clm{')).toMatch(/--v-sel/);
+  });
+  it('book-uncertain has its own mark', () => {
+    expect(live).toMatch(/\.clm\.ub\{[^}]*dashed/);
+    expect(live).toMatch(/class:ub=\{d\.method === 'uncertain_book'\}/);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// CAUTION — THE GAP §93 NAMED, PAID (RG-207, DECISIONS §111, 2026-09-21).
+//
+// For four months this palette published no caution ink, so every warning that
+// was not a failure borrowed a promise colour and argued for it at the call site:
+// five surfaces borrowed amethyst ("nothing here reaches a congregation", which
+// is true of a settings page and says nothing about the warning) and three more
+// borrowed amber, the tally light, on a screen an operator had taken DOWN, on a
+// stage screen with no role, and on a template whose font did not load. A
+// volunteer reading amber on the Outputs tab was being told a screen was on air
+// by the box that said it was not.
+//
+// `--v-caution` is a desaturated warm ochre: warm enough to read as a warning,
+// far enough from `#ffa31a` that the two never sit side by side as the same
+// colour. It carries NO promise about a screen — that is the whole point of it.
+describe('the colour law — caution has its own ink, and it is neither promise', () => {
+  const ROOT = resolve(__dirname, '../..');
+  const read = (f) => readFileSync(resolve(ROOT, f), 'utf8');
+  const code = (f) => codeOnly(read(f));
+  /** The CSS block of one selector, comments blanked, or '' if it is gone. */
+  const rule = (f, sel) => {
+    const src = code(f);
+    const esc = sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const m = src.match(new RegExp(`${esc}\\s*\\{([^}]*)\\}`));
+    return m ? m[1] : '';
+  };
+
+  it('the token exists, and it is not amber and not amethyst', () => {
+    const t = read('src/tokens.css');
+    const hex = (name) => (t.match(new RegExp(`${name}:(#[0-9a-f]{6})`, 'i')) || [])[1];
+    expect(hex('--v-caution'), '--v-caution is not defined in tokens.css').toBeTruthy();
+    expect(hex('--v-caution')).not.toBe(hex('--v-amber'));
+    expect(hex('--v-caution')).not.toBe(hex('--v-amethyst'));
+    for (const v of ['--v-caution-soft', '--v-caution-line', '--v-caution2']) {
+      expect(t, `${v} is missing — a component would hand-write an rgba()`).toContain(`${v}:`);
+    }
+  });
+
+  // EVERY CAUTION, ENUMERATED WITH WHAT IT WARNS ABOUT. The eight surfaces the
+  // 2026-09-21 audit and §93 between them named. Each must paint the caution ink
+  // and neither promise colour.
+  const CAUTIONS = [
+    ['src/app.css', '.b-check.warn .ico', 'a boot probe that answered with a warning'],
+    ['src/app.css', '.b-check.warn .note', 'the same probe, its note'],
+    ['src/lib/views/Settings.svelte', '.s-netwarn', 'a service is being recorded / not while the mic is live'],
+    ['src/lib/views/Help.svelte', '.callout', "the help page's callout"],
+    ['src/lib/views/library/LyricsPane.svelte', '.ly-warn', 'the arrangement needs checking'],
+    ['src/lib/ModelSetup.svelte', '.ms-caution', 'a model that will fall behind a live sermon'],
+    ['src/lib/ModelSetup.svelte', '.ms-locked', 'the service lock is holding this back'],
+    ['src/lib/views/Channels.svelte', '.ch-downnow', 'a screen the operator took down'],
+    ['src/lib/views/Channels.svelte', '.ch-stage-warn', 'no screen has the stage role'],
+    ['src/lib/views/templates/TemplateEditor.svelte', '.te-fwarn', "a template's font did not load"],
+    // THE TWO STAGE MESSAGES LEFT THIS LIST ON 2026-09-24 — see the block below.
+  ];
+
+  it.each(CAUTIONS)('%s %s — %s — wears the caution ink and no promise colour', (f, sel) => {
+    const r = rule(f, sel);
+    expect(r, `${sel} is gone from ${f}`).not.toBe('');
+    expect(r, `${sel} does not paint --v-caution`).toMatch(/var\(--v-caution/);
+    expect(r, `${sel} still paints the tally light`).not.toMatch(/var\(--v-amber/);
+    expect(r, `${sel} still paints the rehearsal colour`).not.toMatch(/var\(--v-amethyst/);
+  });
+
+  // ── THE TWO STAGE MESSAGES ARE RED NOW, AND BOTH OR NEITHER (RG-295) ───────
+  //
+  // They were in the caution list above, added with RG-268, and the reasoning was
+  // good: a word from the desk to the preacher warns, promises nothing about a
+  // screen, and is not a failure — the textbook caution.
+  //
+  // The operator overruled it, in the plainest terms available to them and about
+  // the one surface they are the sole judge of: *"when the message is sent make
+  // it flashing red text so it can catch attention of the preacher"*. The person
+  // the message is FOR says it was not catching their eye. That is evidence of a
+  // kind no colour rule outranks.
+  //
+  // WHAT THE LAW STILL REQUIRES, and what this block holds instead:
+  //
+  //   1. **Both surfaces or neither.** One message, two screens the preacher may
+  //      look at in the same second. RG-268 was filed because the phone had an
+  //      ink the big screen did not for two days; the same drift in the other
+  //      direction is the same defect.
+  //   2. **Neither promise colour, still.** Amber is ON AIR and amethyst is
+  //      rehearsal, and a message is neither. Red was never a promise colour —
+  //      rule 18 spends it on destructive and on failure — which is why this
+  //      request was available to grant at all.
+  //   3. **The alarm must still be unmistakably different.** §116's line between
+  //      a note and an alarm now rests on SHAPE alone: a note is a strip or a
+  //      panel beside the screen's own content, an alarm is the whole screen in a
+  //      solid red field. Asserted here, because it is the guarantee that the ink
+  //      used to carry and nothing else was holding.
+  const STAGE_MESSAGES = [
+    ['src/lib/TemplateRender.svelte', '.lmsg', 'an ordinary Stage Message, on a stage screen'],
+    ['src/Stage.svelte', '.bigmsg', 'the same Stage Message, on the preacher’s phone'],
+  ];
+
+  it.each(STAGE_MESSAGES)('%s %s — %s — is red, and no promise colour', (f, sel) => {
+    const r = rule(f, sel);
+    expect(r, `${sel} is gone from ${f}`).not.toBe('');
+    expect(r, `${sel} does not paint the red the operator asked for`).toMatch(/var\(--v-red/);
+    expect(r, `${sel} paints the tally light`).not.toMatch(/var\(--v-amber/);
+    expect(r, `${sel} paints the rehearsal colour`).not.toMatch(/var\(--v-amethyst/);
+  });
+
+  it('and the ALARM is still a different thing from across a room', () => {
+    // The shape test, which is what §116 now rests on. `.lalert` fills the screen
+    // with a solid field; `.lmsg` is a box with a rule down its side. If a future
+    // change made the note a full red field too, the preacher would have no way
+    // to tell "wrap up" from "stop the service", and this is the only instrument
+    // that would notice.
+    const alert = rule('src/lib/TemplateRender.svelte', '.lalert');
+    const note = rule('src/lib/TemplateRender.svelte', '.lmsg');
+    expect(alert, 'the alarm no longer fills the screen').toMatch(/inset:\s*0/);
+    expect(alert, 'the alarm is no longer a solid field').toMatch(/background:\s*#c8121c/);
+    expect(note, 'the note has become a full-bleed panel like the alarm').not.toMatch(/inset:\s*0/);
+    expect(note, 'the note lost the rule that distinguishes it').toMatch(/border-left:/);
+  });
+
+  it('the SLIDE badge on the transport is steel, not the tally light — the wall may be clear', () => {
+    // U15 / RG-207: `.rack-mode.slide` was amber "because the plan rail is amber",
+    // on a caption that is painted whenever a plan is loaded, including over a
+    // wall that says CLEAR. A mode badge is the thing you are working on.
+    const r = rule('src/lib/views/Live.svelte', '.rack-mode.slide');
+    expect(r).not.toBe('');
+    expect(r).not.toMatch(/var\(--v-amber/);
+    expect(r).toMatch(/var\(--v-sel\)/);
+  });
+
+  it('the scanner sees a rule when there is one, and an empty string when there is not', () => {
+    expect(rule('src/app.css', '.b-check.fail .ico')).toMatch(/--v-red/);
+    expect(rule('src/app.css', '.no-such-rule-anywhere')).toBe('');
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// CYAN'S OWN SWEEP — RG-282.
+//
+// Amber has a file sweep over the whole tree. Amethyst has one. Cyan, until
+// today, had neither: it was held only where `plan.js` returned it, so any
+// component anywhere could spend "the AI is guessing" on a surface that is not
+// about a claim, and every instrument in the repository would stay green. That
+// is the gap the amber sweep exists to close, missing on the one promise colour
+// this product's whole gate is built around.
+//
+// **What cyan promises**, and it is narrower than "AI": *Relay is not certain
+// this is what was said.* Rule 18 spends a paragraph on why it may never carry a
+// percentage — a TF-IDF cosine is not a probability — so the colour IS the
+// number. A surface wearing it is claiming the reading behind it might be wrong.
+//
+// WHAT THIS DOES NOT SEE, stated so it is not read as more, exactly as the amber
+// and amethyst sweeps state theirs: a component wearing `app.css`'s shared
+// `.r-badge.cyan` / `.r-chip.cyan` / `.r-stat.cyan` WITHOUT naming the word is
+// outside it by construction. Those rules argue for themselves where they are
+// defined. This is the files that reach for cyan THEMSELVES.
+describe('the colour law — cyan means a guess, and every use is named', () => {
+  const ROOT = resolve(__dirname, '../..');
+  const read = (f) => readFileSync(resolve(ROOT, f), 'utf8');
+  const code = (f) => codeOnly(read(f));
+
+  /** Every .svelte and .js under src/, derived rather than typed. */
+  const sources = (() => {
+    const out = [];
+    const walk = (dir) => {
+      for (const name of readdirSync(join(ROOT, dir))) {
+        const rel = `${dir}/${name}`;
+        if (statSync(join(ROOT, rel)).isDirectory()) walk(rel);
+        else if ((name.endsWith('.svelte') || name.endsWith('.js')) && !name.endsWith('.test.js')) out.push(rel);
+      }
+    };
+    walk('src');
+    return out;
+  })();
+
+  const paintsCyan = (f) => /var\(--v-cyan/.test(code(f));
+
+  it('the scanner sees a real instance and does not read a comment', () => {
+    // Guards the guard. A sweep matching nothing passes every assertion below
+    // vacuously, which is how `ipc.test.js` narrowed twice while looking
+    // exhaustive — this repository's most-repeated instrument fault.
+    expect(sources.length, 'no sources found at all').toBeGreaterThan(60);
+    expect(paintsCyan('src/lib/views/Live.svelte')).toBe(true);
+    // `plan.js` names the cyan tokens ONLY in the doc comment recording which
+    // taxonomy was taken AWAY from them. A scanner counting that would fail on a
+    // correct file, and the cheapest way to go green would be deleting the
+    // explanation of the bug.
+    expect(read('src/lib/plan.js')).toMatch(/--v-cyan/);
+    expect(paintsCyan('src/lib/plan.js')).toBe(false);
+  });
+
+  it('every surface wearing cyan is one where Relay might be wrong', () => {
+    // WHAT EACH ENTRY MUST BE: a claim the AI made that a person has not yet
+    // confirmed, the control that adjudicates one, or the evidence behind it.
+    // "It needed to look technical" is not on the list.
+    const ALLOWED = new Map([
+      // THE CLAIM ITSELF, on the three surfaces that show one.
+      ['src/lib/views/Live.svelte', 'the guess card, its note, the paraphrase badge and Why this match?'],
+      ['src/lib/Dock.svelte', 'the transcript line a claim was parsed from, and its method chip (RG-278)'],
+      ['src/lib/LiveRail.svelte', 'the one-line reason a match is a guess rather than a hearing'],
+      // THE EVIDENCE BEHIND ONE.
+      ['src/lib/DetectionInspector.svelte', 'the inspector — what was heard, what was matched, and how'],
+      // WHAT RELAY DECIDED, AFTER THE FACT.
+      ['src/lib/views/library/History.svelte', 'the badge naming a past fire as a guess rather than a hearing'],
+      // THE TOKEN'S OWN DEFINITION AND THE SHARED CLASSES BUILT ON IT.
+      ['src/tokens.css', 'the definition'],
+      ['src/app.css', 'the shared .r-badge/.r-chip/.r-stat cyan variants'],
+    ]);
+    const offenders = sources.filter((f) => paintsCyan(f) && !ALLOWED.has(f));
+    expect(offenders, 'cyan spent where Relay is not guessing').toEqual([]);
+    // AND THE LIST MAY ONLY SHRINK. An entry for a file that stopped painting
+    // cyan is an amnesty nobody revisits — the same rule the amethyst block
+    // keeps, and the reason that block could be read down rather than counted.
+    const stale = [...ALLOWED.keys()].filter((f) => !paintsCyan(f));
+    expect(stale, 'listed, but no longer paints cyan').toEqual([]);
+  });
+
+  it('and no surface that wears it also prints a percentage beside it', () => {
+    // Rule 18's other half, on the two cards that render a claim. A cosine is not
+    // a probability and a number that lies is worse than no number, so the colour
+    // carries the whole of the uncertainty. This reads the RENDERED markup rather
+    // than the stylesheet: the defect would be a `{…}%` on a line the CSS is
+    // perfectly correct about.
+    for (const f of ['src/lib/Dock.svelte', 'src/lib/LiveRail.svelte']) {
+      const src = code(f);
+      const guessRows = [...src.matchAll(/mk-guess|lr-why\.guess|\.guess\b/g)];
+      expect(guessRows.length, `${f} no longer has a guess surface`).toBeGreaterThan(0);
+      expect(src, `${f} prints a percentage on a guess`).not.toMatch(/guess[^\n]*\{[^}]*%\}/);
+    }
   });
 });

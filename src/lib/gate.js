@@ -40,28 +40,57 @@
 //
 // Pure: no store, no bridge, no clock. Everything it knows is in its argument.
 
-/** Whole percentage points, or null. `null` is the absence — never `NaN%`, which
- *  is a figure on screen that is nobody's setting. */
-function pct(v) {
+/** A readiness figure, 0-100, as a string — or null. `null` is the absence, never
+ *  `0`, which is itself a setting ("never fire") and would read as one.
+ *
+ *  ── WHAT THIS FIGURE IS, AND THE TWO COMPLAINTS THAT SHAPED IT ─────────────
+ *
+ *  It is the CONFIDENCE each bar needs, 0-100. Auto-fire is always the larger of
+ *  the two, by exactly one band, because an auto-fire is the harder bar.
+ *
+ *  Two operator complaints, three days apart, about the same pair. First
+ *  (§117): *"when the sensor is on Auto fire above 100, then it auto fires not
+ *  when on 0"* — a figure under a slider reads as that slider's setting, and
+ *  this one runs the opposite way to it. That was answered by inverting the
+ *  number into a readiness. Then (§121): *"suggestions should be lower by 20 if
+ *  auto fire is on 100 so auto fire has the higher priority"* — on a readiness
+ *  scale a suggestion is the LARGER number, because it is the easier bar, and
+ *  that reads as a suggestion outranking an auto-fire.
+ *
+ *  Only one framing satisfies both, and it is a word rather than arithmetic: say
+ *  what each bar NEEDS. Under "needs", a smaller number is obviously the easier
+ *  bar rather than the keener setting, and auto-fire is the bigger figure
+ *  because it is the stricter rule. The figures still FALL as the dial rises and
+ *  that cannot be helped — a bar you must clear is lower when more gets through.
+ *  The dial is the control and keeps its own direction.
+ *
+ *  Worked out in `Thresholds::readiness` in router.rs, beside the curve, in the
+ *  one language that owns the mapping. Nothing here re-derives it, for the same
+ *  reason nothing here re-derives the dial position (DECISIONS §96, §117, §121). */
+function figure(v) {
   const n = Number(v);
-  return Number.isFinite(n) ? `${Math.round(n * 100)}%` : null;
+  return Number.isFinite(n) ? `${Math.round(n)}` : null;
 }
 
 /**
  * Turn the capture store's gate facts into what a surface may show.
  *
- * @param {object} [state] the four facts, as `capture.js` holds them:
+ * @param {object} [state] the facts, as `capture.js` holds them:
  *   `available` (is the bridge attached), `sensitivityKnown` (has the engine ever
- *   answered), `sensitivity` (the dial position Rust reported), `thresholds`
- *   (`{auto_fire, suggest}`) and `gateOnDial` (does that dial position actually
- *   produce those thresholds).
+ *   answered), `sensitivity` (the dial position Rust reported), `readiness`
+ *   (`{auto_fire, suggest}` on the 0-100 scale that rises with the dial) and
+ *   `gateOnDial` (does that dial position actually produce that gate).
  * @returns {{readable: boolean, dial: number, autoPct: string|null,
  *            suggestPct: string|null, drifted: boolean, note: string}}
+ *   `autoPct`/`suggestPct` are what each bar NEEDS, 0-100; auto-fire is always
+ *   the larger, by one band.
+ *   The names are kept so no caller has to be found and changed; the meaning is
+ *   documented on `figure` above and stated on both surfaces that print them.
  */
 export function describeGate(state) {
   const s = state || {};
-  const autoPct = pct(s.thresholds?.auto_fire);
-  const suggestPct = pct(s.thresholds?.suggest);
+  const autoPct = figure(s.readiness?.auto_fire);
+  const suggestPct = figure(s.readiness?.suggest);
   const dial = Number.isFinite(Number(s.sensitivity)) ? Number(s.sensitivity) : 50;
 
   // A reading needs all three: something to ask, an answer, and numbers in it.

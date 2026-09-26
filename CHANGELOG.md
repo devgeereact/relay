@@ -10,6 +10,208 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+### Only one song slide says Live
+
+A song whose chorus repeats — slides 1, 9 and 17 with the same words — lit **all three** amber and said *Live* on each, so the grid could not tell you which slide you were actually on. Only the one you fired is marked now, so stepping through an arrangement that repeats follows the arrangement.
+
+### A word to the preacher no longer sounds like an emergency
+
+Every Stage Message took the preacher's whole screen with a flashing red panel — so *"wrap up in five"* looked exactly like *"stop, there is a medical incident"*. Quick tools now has two buttons for the same words. **Send to stage** puts them up as an ordinary note, where your stage template places them, without flashing or covering the reading. **Alert** is the flashing full-screen panel, for something that must stop the service. If your stage template has no place for a message, a note appears as a small strip along the foot rather than vanishing. (DECISIONS §116)
+
+### The Stage Timer's Size control now does something
+
+Setting **Size** on the Stage Timers layer in the template editor changed nothing: it was the one layer in Relay whose figures were sized entirely by the box they sat in. The number you type is now the size you get, and the box is only a limit — a clock still shrinks if it genuinely will not fit, so a long time like `1:30:13` can never be cut short into a shorter time that looks correct.
+
+### A sermon clock that has run over now flashes
+
+The preacher's Stage Timer went red when the time ran out and did nothing else. It now **flashes** the moment the time is up and for every second after it, on both the stage monitor and the preacher's phone. The steady red still marks the warning window you set — a clock that flashes for the whole of a five-minute warning is one people stop seeing. If you have asked your device for reduced motion, it glows instead of flashing rather than giving you nothing.
+
+### The Screen Countdown is no longer on the Live workspace
+
+Removed on request. A countdown is still built and fired from the **Planner**, as a cue aimed at the screens you choose. What is gone is the band on Live and its transport, so a countdown already in front of the room can no longer be held, re-aimed, nudged or put back — **Clear screens** and **Blackout** are what take one off a wall now. (DECISIONS §115)
+
+### Relay's own tests stopped going blind in the same way twice
+
+Internal only, nothing an operator sees. Twenty-six of Relay's static checks each stripped code comments with their own hand-written pattern, and that pattern had already blanked seven thousand characters of the preacher's stage page — so the checks read that page with its labels missing and reported it clean. They all use one stripper now, and a new check refuses a hand-written one. (RG-169)
+
+### A word to the preacher reaches a stage screen on HDMI
+
+If your stage screen is a **network screen**, a Stage Message always reached it. If it is a **native output window** — a confidence monitor plugged in by HDMI — it never did, and Relay told you the message had been sent. It reaches both now. Nothing changed about which screens may show one: a screen still has to be given the stage role, and the congregation screens still refuse it. (RG-156, DECISIONS §114)
+
+### A switch that is greyed out now says why
+
+**Send crash reports** — the one control that decides whether anything leaves your computer — sat greyed out and explained nothing when Relay's engine was not answering. Every greyed-out *button* in Settings has explained itself since 2026-09-18; the switches could not, because there was no shared switch for them to go through. There is one now, and all three switches in Settings use it. The reason reaches both a mouse and a screen reader. (RG-168)
+
+### Bring your own Bible
+
+If your church holds a licence for a version Relay does not ship, Settings → Scripture → **Import a Bible** takes it from a JSON file (66 books in order, chapters as lists of verses). Relay checks the whole file first and says exactly what is wrong if it refuses; importing over the same short code replaces it. Delete is two presses, and the bundled KJV and Berean Standard Bible cannot be deleted. Relay does not check the licence: that is yours. (RG-50, DECISIONS §113)
+
+### Relay says which build it is
+
+Settings → This machine now shows the build beside the version, every service records the build that ran it, and the diagnostic file carries it. A version number is shared by every build of a branch, so after a service where something went wrong nobody could say exactly which code was running. Now the row says. (RG-209)
+
+### Your clocks survive a restart
+
+If Relay quits mid-service — a crash, an update, a laptop closed — every timer used to vanish: the preacher's sermon clock and a countdown the room was watching. They now come back on relaunch. The stage screen gets its clock straight away. A countdown that was on the screens is not put back by itself; Live's Screen Countdown band shows it *counting, off the screens* with **Put back on screens**, so nothing reaches a congregation without a hand on it. Clocks from a rehearsal, or older than six hours, are not brought back. (RG-208, DECISIONS §112)
+
+### Warnings have their own colour, and it is not the on-air one
+
+A screen you had taken down, a stage role nobody had set and a template whose font did not load were all shown in **amber**, the colour that means a congregation is looking at something. Five other warnings borrowed the rehearsal purple. Every warning that is not a failure now wears one ochre caution colour that promises nothing about your screens, and the `SLIDE` badge on the transport is steel rather than amber, so it no longer glows over a clear wall. Amber still means on air and only that. (RG-207, DECISIONS §111)
+
+### A verse Relay assumed is now offered, not fired
+
+When the preacher says "verse one" and Relay has to guess the book from the
+passage already on the screen, the verse now appears as a suggestion marked
+**From memory**, and is never put on the screens by itself. On 2026-09-20 that
+guess put Psalms 55:1 in front of a congregation while the preacher was quoting
+Hosea. A verse whose book the preacher actually named in the same breath still
+goes up as before.
+
+### The transport follows the wall, not the plan
+
+If Relay hears a verse and puts it up while a song or a notice from the plan is
+on the screens, the transport now switches to VERSE at once. It used to keep
+saying SLIDE, so the next arrow key fired the next plan slide over the reading.
+
+### Keys stay out of an open panel
+
+With a dialog open on Live, such as "Why this match?", the A, D, arrow and Space
+keys no longer act on the console underneath it. Pressing A with the panel open
+used to accept the first suggestion in the list, whichever one you were reading.
+B still blacks out the screens from anywhere.
+
+### A screen says when its picture did not load
+
+A screen whose picture or clip failed to load, because the file is missing, the
+address is wrong for that screen, or the clip is in a format that screen cannot
+play, now says so. Outputs shows the screen as "Not painting the picture" with
+the address, Live names the screen under the programme pane, and the screen is
+no longer called On Air while it is blank.
+
+### Clips play once until you press Loop
+
+A fired clip no longer repeats by itself. It plays once and holds its last
+frame; press Loop to make it repeat, and the Loop button now shows what the
+screens are doing. Pausing a looping clip no longer switches the loop off.
+
+### Relay warns about clips other screens may not play
+
+When you import a video, Relay checks what format it is in. An iPhone clip is
+usually HEVC (H.265), which plays in Relay's own output window and on a Mac but
+may show nothing in an OBS browser source or on a Windows screen. The Library
+tile and the Planner's cue preview now say so. Relay does not convert the file;
+convert it to H.264 before Sunday if it has to reach one of those screens.
+
+### Staging in the Library fires again
+
+Cueing a verse, a song or a notice from the Library's inspector, or queueing a
+selection, then firing it, threw an error asking you to remove it and add it
+again. Every door into Staging now tags what it queued, and the error no longer
+names "Up Next", a control that was retired.
+
+### The arrow key steps a song you staged
+
+A song staged from the Songs rail with no plan open now reads SLIDE, and the
+arrow keys step through its sections from the one last fired. It used to read
+VERSE and say "No passage on screen yet" over a wall showing the song.
+
+### OBS on this computer gets its pictures
+
+A browser screen loaded from "localhost" was refused Relay's own pictures and
+clips by its security policy, because the picture's address named the LAN
+address instead. The page now asks for pictures from the address it was loaded
+from. The projector window was never affected.
+
+### Turn on will not cover the console
+
+Turning on a screen with no display chosen used to open a fullscreen output over
+this console. With more than one display connected, Relay now asks you to choose
+one first; the option that used to read "Primary display" reads "Choose a
+display…".
+
+### Test on screens takes two presses
+
+In Templates, "Test on screens" now asks for a second press before putting
+sample scripture on the live screens, and is held back while a service is being
+recorded unless Rehearsal is on.
+
+### The readiness screen runs every check
+
+Settings → Before the service ran six of Relay's twenty-three startup checks
+and could say "Ready for a service." with nothing listening for OBS or the
+preacher's phone. It now runs all of them, the same ones Relay runs at launch.
+
+### When the network server is not running, every workspace says so
+
+If another program is holding Relay's ports, OBS, kiosk screens and the
+preacher's phone cannot connect. That used to appear as one line on Live.
+It is now in the status bar's Reduced cell on every workspace, at the top of
+Outputs → Screens, and the line on Live says what to do.
+
+### Suggestions: heard ones first, and coloured as claims
+
+A suggestion Relay heard is now always at the top of the list, so it cannot
+scroll out of reach behind guesses. It is coloured steel (the working colour)
+until it is on the screens; amber is only ever the on-air light. A suggestion
+whose book was uncertain now has a dashed edge so it does not look like a
+paraphrase.
+
+### A frozen browser screen recovers by itself
+
+A screen connected over the network (OBS, a lobby TV, a kiosk) whose connection
+had silently died used to keep its last picture for the rest of the service.
+It now notices within six seconds and reconnects, and Relay hands it what is on
+the screens. It also reconnects the moment the device wakes or its network
+comes back.
+
+### The countdown on every screen keeps Relay's time
+
+A browser screen whose own clock was a minute out showed a countdown a minute
+wrong while the projector beside it was right. Every screen now takes the time
+from Relay, as the preacher's screen already did.
+
+### A screen that falls behind is caught up, and counted
+
+A network screen that could not keep up with Relay used to miss updates in
+silence, including a clear. It is now handed what is on the screens again, and
+Outputs counts how often that happened.
+
+### A second Bible: the Berean Standard Bible
+
+Relay now carries two Bibles: the King James Version and the Berean Standard
+Bible, a modern public-domain text. Choose which the screens read from in
+Settings → Scripture; the readiness screen says which one is chosen. Searches,
+suggestions and readings all come from the chosen one. The NKJV, which was
+asked for, is a copyrighted text and cannot be included.
+
+### The Screen Countdown's controls are back on Live
+
+A countdown already on the screens can again be held, given a minute either
+way, reset, re-aimed at a clock time and put back after a verse replaced it,
+from the band under the Stage Timer on Live. The band was removed the evening
+before; it is back on request.
+
+### Ten smaller things, each a sentence
+
+- Help now says how to turn a screen on (Outputs → Screens → Turn on) and
+  where the rehearsal signal is (the status bar), instead of describing
+  controls that were retired.
+- The advice for a missing microphone sends you to Settings → This room, which
+  exists.
+- In the Planner, Escape closes the arrangement picker, and the Escape and B
+  panic keys work while a cue row or its grip has focus.
+- The arrow keys say "End of the plan" and "Start of the plan" instead of
+  doing nothing.
+- The template editor's autosave error reads as words, not "[object Object]".
+- The Library's import picker no longer offers ProPresenter 6 and 5 files,
+  which Relay cannot read yet.
+- Live says "arrangement needs checking" beside the slides of a song whose
+  arrangement went stale, as the Planner already did.
+- Duplicating a cue keeps its length, its timer and its screens.
+- Deleting a template a screen wears as a look no longer fails with a database
+  error.
+- A stray invisible character in one source file no longer hides it from search.
+
 ### Connecting the preacher's phone
 
 When Relay cannot find a local network address, Sharing now explains the problem
@@ -807,7 +1009,7 @@ first time you can see the delay for yourself.**
 **Read before you change models.** Diagnostics will now tell you plainly that on a
 bigger model the wait is the model itself and not something Relay can fix — a trade
 you were always making and could not previously see. Evidence, and everything these
-numbers do *not* prove: `docs/qa/audits/PERF-2026-08-24.md`.
+numbers do *not* prove: `docs/qa/audits/PERF.md`.
 
 ---
 

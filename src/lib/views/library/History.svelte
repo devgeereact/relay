@@ -4,7 +4,13 @@
   import { whyDisabled, ENGINE_OFF } from '../../ui/whydisabled.js';
   import { onMount } from 'svelte';
   import { showsConfidence } from '../../detect.js';
-  import { sundayReport, replayAt, weekOnWeek, describeTrend } from '../../report.js';
+  import {
+    splitDetections,
+    sundayReport,
+    replayAt,
+    weekOnWeek,
+    describeTrend,
+  } from '../../report.js';
   import Loading from '../../ui/Loading.svelte';
   import ErrorState from '../../ui/ErrorState.svelte';
   import { capture, listServices, serviceDetail, serviceTimeline, servicePerf, perfHistory, exportService, deleteService, readErrors } from '../../stores/capture.js';
@@ -121,6 +127,17 @@
   // so an older service reports exactly what was captured at the time rather than
   // a shape invented later. Every field can be null, and null renders "—".
   $: report = timeline.length || perf.length ? sundayReport(timeline, perf, detail) : null;
+
+  // WHAT REACHED A SCREEN, AND WHAT WAS ONLY EVER OFFERED (RG-309).
+  //
+  // `service_detections` used to return fires and nothing else, because nothing
+  // else was ever written. This column's heading — "Detected verses (N)" — was
+  // true of that list and became false by about twenty to one the moment
+  // `status = 'suggested'` started being recorded. The split is in `report.js`
+  // rather than here, so the next surface that asks cannot answer differently.
+  $: ({ fired: firedDetections, offered: offeredDetections } = splitDetections(
+    detail?.detections,
+  ));
   const pct = (v) => (v === null ? '—' : `${Math.round(v * 100)}%`);
   const num = (v) => (v === null || v === undefined ? '—' : String(v));
 
@@ -350,10 +367,20 @@
         </div>
 
         <div class="lib-detect-col">
-          <div class="r-lbl lib-collabel">Detected verses <span class="lib-collabel-n">({detail.detections.length})</span></div>
-          {#if detail.detections.length}
+          <div class="r-lbl lib-collabel">Detected verses <span class="lib-collabel-n">({firedDetections.length})</span></div>
+          <!-- AND WHAT RELAY OFFERED, WHICH IS NOT THE SAME THING (RG-309).
+               Said as a count and not as a list: these are suggestions nobody
+               answered, thousands of them in a long service, and rendering them
+               beside the verses that went on a wall would bury the ones that did.
+               A separate figure names them without pretending they are those. -->
+          {#if offeredDetections.length}
+            <div class="lib-offered">
+              {offeredDetections.length} more suggested and not shown on any screen
+            </div>
+          {/if}
+          {#if firedDetections.length}
             <div class="lib-detect-list">
-              {#each detail.detections as d}
+              {#each firedDetections as d}
                 <div class="r-tile lib-detect">
                   <div class="lib-detect-top">
                     <div class="lib-detect-ref">{d.reference ?? 'unresolved'}</div>
@@ -684,6 +711,8 @@
      colour — amber is never spent on this screen, because nothing here is on air. */
   .lib-tl{ margin-top:18px; }
   .lib-tl-list{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:2px; }
+  /* A LIST ROW, not a button that looks like one: it is a line of the service
+     timeline, and pressing it opens that moment rather than acting on it. */
   .lib-tl-row{ display:flex; align-items:baseline; gap:10px; padding:5px 8px;
     border-radius:var(--v-r-sm); background:var(--v-surf2); font-size:var(--v-fs-b2); }
   .lib-tl-at{ flex:0 0 52px; color:var(--v-faint); font-size:var(--v-fs-b3); }
@@ -813,6 +842,11 @@
   .lib-detail-grid{ display:grid; grid-template-columns:1fr 340px; gap:16px; align-items:start; }
   .lib-collabel{ margin-bottom:10px; }
   .lib-collabel-n{ color:var(--v-faint); letter-spacing:0; }
+  /* A COUNT, NOT A CAUTION. This is service history — nothing on this screen is on
+     air, and "Relay also guessed at 8,000 verses last Sunday" is a fact about the
+     past, not a warning about now. Faint ink, per the same reasoning as the grey
+     method badge below (rule 18: ochre is a caution and this is not one). */
+  .lib-offered{ color:var(--v-faint); font-size:var(--v-fs-lbl); margin:2px 0 6px; }
 
   .lib-transcript{ padding:14px 16px; max-height:420px; overflow:auto; font-size:var(--v-fs-pr); line-height:1.6; }
   .lib-collabel-row{ display:flex; align-items:baseline; gap:8px; }

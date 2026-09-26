@@ -83,7 +83,6 @@ const TAKES_A_SCREEN = [
   // `adjust_timer` moves one and repaints the wall when that timer is what the
   // wall is already showing, and `stop_timer` takes one away mid-sermon.
   'start_timer',
-  'show_timer',
   'adjust_timer',
   'stop_timer',
 ];
@@ -112,7 +111,6 @@ const FIRE_WRAPPERS = [
   // writes a column and invokes `set_plan_timer`, which takes no screen — that is
   // the whole point of splitting the binding from the clock.
   'startTimer',
-  'showTimer',
   'adjustTimer',
   'stopTimer',
 ];

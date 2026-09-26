@@ -147,6 +147,7 @@ describe('the draft becomes a row only when somebody says so', () => {
     mount();
     await drain();
     await chooseStarter();
+    await templateTab();
     const name = host.querySelector('#te-name');
     expect(name, 'the draft renders the template section like any saved row').toBeTruthy();
     name.value = 'Sunday evening';
@@ -158,6 +159,19 @@ describe('the draft becomes a row only when somebody says so', () => {
   });
 });
 
+/**
+ * Put the Design panel on the TEMPLATE, where its name now lives (RG-217).
+ *
+ * The name and the content-kind filter left the layer's property column: they
+ * are about the template, not about whichever object happens to be selected,
+ * and at the foot of a long scroll they read as more of the same list. Nothing
+ * about the draft rules changed, which is why every assertion is untouched.
+ */
+async function templateTab() {
+  [...host.querySelectorAll('.te-scope button')].find((b) => /template/i.test(b.textContent))?.click();
+  await drain();
+}
+
 describe('leaving a dirty draft asks, in the app', () => {
   it('arms a two-step on Back rather than leaving, and never calls confirm()', async () => {
     const confirmSpy = vi.fn(() => true);
@@ -168,6 +182,7 @@ describe('leaving a dirty draft asks, in the app', () => {
       mount();
       await drain();
       await chooseStarter();
+      await templateTab();
       const name = host.querySelector('#te-name');
       name.value = 'Sunday evening';
       name.dispatchEvent(new Event('input'));
@@ -214,5 +229,18 @@ describe('duplicate and import are unchanged', () => {
     await drain(10);
     expect(saves()).toHaveLength(1);
     expect(saves()[0].name).toMatch(/copy/);
+  });
+});
+
+// 2026-09-21 · T-1 (RG-200). The autosave's catch rendered `'Live update failed: ' + e`
+// and the bridge sends `{kind, message}`, so the workspace's most frequent write
+// failed as "[object Object]". Every other catch in the file humanises.
+describe('the autosave failure is humanised', () => {
+  it('goes through errors.js like every other catch here', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { resolve } = await import('node:path');
+    const src = readFileSync(resolve(process.cwd(), 'src/lib/views/templates/TemplateEditor.svelte'), 'utf8');
+    expect(src).not.toMatch(/'Live update failed: ' \+ e\b/);
+    expect(src).toMatch(/Live update failed: ' \+ humanError\(e\)/);
   });
 });

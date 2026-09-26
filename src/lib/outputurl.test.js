@@ -43,3 +43,27 @@ describe('outputUrl', () => {
     expect(outputUrl('h', 1, 1)).toContain(':8032/output.html');
   });
 });
+
+// 2026-09-21 · M-2 (RG-187). LAN pages are served under `media-src 'self'` while
+// the media URL is built from `local_ip()`. An OBS source on this laptop loads
+// `http://localhost:8032/output.html` and is handed
+// `http://192.168.1.42:8032/media/1`: a different origin, refused by the policy,
+// black picture, nothing in any log. The page rewrites Relay's own media host to
+// the host it was loaded from; anything else is left alone.
+import { sameHostMediaUrl } from './outputurl.js';
+
+describe('sameHostMediaUrl', () => {
+  it('rewrites Relay\'s media host to the page\'s own', () => {
+    expect(sameHostMediaUrl('http://192.168.1.42:8032/media/1', 'localhost')).toBe('http://localhost:8032/media/1');
+    expect(sameHostMediaUrl('http://192.168.1.42:8032/backgrounds/a.png', '10.0.0.7')).toBe('http://10.0.0.7:8032/backgrounds/a.png');
+  });
+  it('leaves a URL alone when the host already matches, is not port 8032, or is not http', () => {
+    expect(sameHostMediaUrl('http://localhost:8032/media/1', 'localhost')).toBe('http://localhost:8032/media/1');
+    expect(sameHostMediaUrl('https://cdn.example/x.mp4', 'localhost')).toBe('https://cdn.example/x.mp4');
+    expect(sameHostMediaUrl('data:image/png;base64,AAAA', 'localhost')).toBe('data:image/png;base64,AAAA');
+  });
+  it('does nothing for a page with no host, such as the native window', () => {
+    expect(sameHostMediaUrl('http://192.168.1.42:8032/media/1', '')).toBe('http://192.168.1.42:8032/media/1');
+    expect(sameHostMediaUrl(null, 'localhost')).toBe(null);
+  });
+});

@@ -29,8 +29,11 @@
 //     which is what SuperSource is (§6);
 //   - a `band` layer is a lower third, whatever it holds (§4);
 //   - a MONITOR-ONLY binding (`next`, `next_reference`, `note`, `elapsed`,
-//     `remaining`) means this screen is for a person on the platform or in the
-//     booth, never a congregation — CLAUDE.md says so of those exact fields;
+//     `remaining`, `programme`) means this screen is for a person on the platform
+//     or in the booth, never a congregation — CLAUDE.md says so of those exact
+//     fields, and `programme` (the Stage Timer rail) is the same claim: the
+//     running order is one person's bookkeeping and the output page refuses to
+//     paint it anywhere but a `stage`-role screen;
 //   - a layer bound to `countdown` is a countdown screen. The rule asks about
 //     the BINDING, not about `type: 'timer'`, because there is no such layer at
 //     runtime: `makeLayer('timer')` normalises to a TEXT layer bound to
@@ -60,7 +63,7 @@
 // style choice an operator may change at any time.
 
 /** The bindings that only ever appear on a screen a congregation does not see. */
-const MONITOR_BINDS = new Set(['next', 'next_reference', 'note', 'elapsed', 'remaining']);
+const MONITOR_BINDS = new Set(['next', 'next_reference', 'note', 'elapsed', 'remaining', 'programme']);
 
 const visible = (L) => L && L.visible !== false;
 

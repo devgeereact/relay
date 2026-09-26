@@ -72,6 +72,14 @@ pub(crate) fn bare_app() -> tauri::App<tauri::test::MockRuntime> {
         .manage(Db(Mutex::new(conn)))
         .manage(Routing::default())
         .manage(Detecting(AtomicBool::new(true)))
+        // AND THE CHURCH'S PARAPHRASE BAR, OFF — which is what a fresh install is
+        // (`db::paraphrase_needs_a_run` on a seeded database, DECISIONS §125). A
+        // fixture without it is not a first launch but a panic: `emit_detections`
+        // takes `state::<ParaphraseRun>()` on every window, and an unmanaged state
+        // aborts rather than failing a test with a readable message. Same argument
+        // and same shape of failure as `Phrases` below, which the fixture learned the
+        // hard way.
+        .manage(ParaphraseRun(AtomicBool::new(false)))
         .manage(channels::Rehearsal::default())
         // What the congregation can actually see. `/api/live` reads it, so a test
         // that drives the remote needs it managed or the remote answers "clear".
@@ -94,9 +102,28 @@ pub(crate) fn bare_app() -> tauri::App<tauri::test::MockRuntime> {
         // as the two above and the same shape of failure: a fresh install manages
         // it, so a fixture without it is an app in a state no church could be in,
         // and `clear_screen` would refuse on a machine where it must work.
+        // WHAT THE CLIP ON THE SCREENS IS DOING. A fresh install has no clip and
+        // no transport, and a fixture missing this is not a fresh install — it is
+        // an app in a state no church could be in, where the one content door
+        // panics instead of firing.
+        .manage(channels::MediaTransport::default())
         .manage(channels::ScreensDown::default())
         .manage(servicelock::ServiceLock::default())
-        .manage(Semantic(SemanticIndex::build(&corpus)))
+        // AND THE PHRASE INDEX. A fresh install builds both from the same
+        // corpus in `setup`, so a fixture with one and not the other is an app in
+        // a state no church could be in — and `emit_detections` takes
+        // `state::<Phrases>()` on every window, which PANICS rather than failing
+        // with a readable message. Ten e2e tests found that within a minute of
+        // the index landing, which is the fixture doing its job.
+        // BEHIND AN `RwLock`, exactly as the real app manages them (RG-300): a
+        // translation switch rebuilds both, and a fixture that held bare indexes
+        // could not exercise that at all.
+        .manage(Phrases(std::sync::RwLock::new(
+            detection::PhraseIndex::build(&corpus),
+        )))
+        .manage(Semantic(std::sync::RwLock::new(SemanticIndex::build(
+            &corpus,
+        ))))
         .manage(Context(Mutex::new(ContextMemory::default())))
         // mock_context, NOT generate_context!(): the real macro embeds Info.plist as a
         // link symbol, and expanding it a second time fails with
@@ -590,8 +617,13 @@ mod cold_start {
             .expect("create_voice_profile");
 
         // --- app_settings: Settings → Bible translations (and every other pref)
-        set_active_translation(h.state::<Db>(), h.state::<servicelock::ServiceLock>(), 1)
-            .expect("set_active_translation");
+        set_active_translation(
+            h.clone(),
+            h.state::<Db>(),
+            h.state::<servicelock::ServiceLock>(),
+            1,
+        )
+        .expect("set_active_translation");
 
         // --- services: starting to listen starts recording (capture.js
         //     `startCapture` calls `start_service` before `start_capture`).
@@ -710,7 +742,7 @@ mod cold_start {
     ///
     /// When the translation half fails, an importer shipped: move the matrix row.
     #[test]
-    fn a_fresh_install_still_cannot_be_given_a_second_translation() {
+    fn a_fresh_install_ships_two_translations_and_reads_from_one() {
         let app = bare_app();
         let h = app.handle().clone();
         let db = h.state::<Db>();
@@ -721,17 +753,26 @@ mod cold_start {
             0,
             "a fresh install seeds no arrangements"
         );
+        // KJV and BSB since 2026-09-21 (RG-50, DECISIONS §110). This test used to
+        // say "still cannot be given a second translation"; the operator asked for
+        // one and a public-domain one was bundled. The wall reads from ONE.
         assert_eq!(
             count(&conn, "translations"),
-            1,
-            "a fresh install ships exactly one translation (KJV)"
+            2,
+            "a fresh install ships the KJV and the BSB"
+        );
+        assert_eq!(
+            db::verse_count(&conn).unwrap(),
+            31_102,
+            "one Bible's count, the active one"
         );
 
         // The TABLE was never the problem, for either of them. For arrangements the
         // break used to be one level up — a wrapper no component imported — and
-        // that is closed. For translations the break is at the command layer: there
-        // is no `add_translation` at all, and behind it the verse corpus for a
-        // second version does not exist to import.
+        // that is closed. For translations the break WAS at the command layer:
+        // there was no importer at all, and behind it no second corpus. Both are
+        // closed (RG-50, DECISIONS §110 and §113), and the assertion below flipped
+        // with them: the importer must exist AND be reached from a rendered control.
         drop(conn);
         let conn = db.0.lock().unwrap();
         conn.execute_batch(
@@ -744,11 +785,18 @@ mod cold_start {
 
         let translation_commands = std::fs::read_to_string("src/main.rs").unwrap();
         assert!(
-            !translation_commands.contains("fn add_translation")
-                && !translation_commands.contains("fn import_translation"),
-            "a translation importer now exists — the Settings note 'Additional \
-             versions need their verse data added to the corpus' is no longer the \
-             end of the road, so update the matrix"
+            translation_commands.contains("fn import_translation"),
+            "the Bible importer is gone — RG-50 option two reopened"
+        );
+        let settings = std::fs::read_to_string("../src/lib/views/Settings.svelte").unwrap();
+        assert!(
+            settings.contains("importTranslation(") && settings.contains("Import a Bible"),
+            "the importer exists and no rendered control reaches it — the create-path \
+             gap `qa-inventory` polices, on the one table it used to name"
+        );
+        assert!(
+            !settings.contains("Additional versions need their verse data added to the corpus"),
+            "the Settings note still says the corpus is the end of the road"
         );
     }
 
@@ -1026,8 +1074,8 @@ mod cold_start {
             assert!(db::verse_count(&conn).unwrap() > 31_000);
             assert_eq!(
                 count(&conn, "translations"),
-                1,
-                "the reopen re-seeded translations — a duplicate KJV"
+                2,
+                "the reopen re-seeded translations — a duplicate KJV or BSB"
             );
             assert!(!db::list_templates(&conn).unwrap().is_empty());
             assert_eq!(count(&conn, "output_channels"), 4);
@@ -1043,7 +1091,7 @@ mod cold_start {
             conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
             db::migrate(&conn, false).expect("third launch");
             assert_eq!(count(&conn, "output_channels"), 4);
-            assert_eq!(count(&conn, "translations"), 1);
+            assert_eq!(count(&conn, "translations"), 2);
             assert_eq!(db::list_plans(&conn).unwrap().len(), starter_plans + 1);
         }
 
@@ -1454,7 +1502,7 @@ mod cold_start {
             // (DECISIONS §90); this test is about the one it imports.
             let shipped = count(&conn, "media_assets");
             (
-                db::insert_media(&conn, "image", "backdrop.png", "2026-08-16").unwrap(),
+                db::insert_media(&conn, "image", "backdrop.png", "2026-08-16", None).unwrap(),
                 shipped,
             )
         };
@@ -1531,7 +1579,7 @@ mod cold_start {
         // Counted against the pictures a fresh install already ships
         // (DECISIONS §90); what this test is about is the one row it adds.
         let shipped = db::list_media(&conn).unwrap().len();
-        let id = db::insert_media(&conn, "image", "backdrop.png", "2026-08-16").unwrap();
+        let id = db::insert_media(&conn, "image", "backdrop.png", "2026-08-16", None).unwrap();
         assert_eq!(db::list_media(&conn).unwrap().len(), shipped + 1);
 
         // The write fails the way a full disk fails. The row must not survive it.
@@ -1693,8 +1741,8 @@ mod cold_start {
         );
         assert_eq!(
             count(&conn, "translations"),
-            1,
-            "a duplicate KJV translation"
+            2,
+            "a duplicate translation: KJV and BSB ship, and a second boot adds neither"
         );
     }
 
@@ -1804,12 +1852,18 @@ mod cold_start {
         let db = h.state::<Db>();
         let conn = db.0.lock().unwrap();
 
-        assert_eq!(db::verse_count(&conn).unwrap(), 31_102, "the bundled KJV");
-        assert_eq!(count(&conn, "translations"), 1);
+        assert_eq!(
+            db::verse_count(&conn).unwrap(),
+            31_102,
+            "the bundled KJV, active"
+        );
+        // KJV and BSB, since 2026-09-21 (RG-50). The FTS mirror covers both and
+        // every search is scoped to the active one.
+        assert_eq!(count(&conn, "translations"), 2);
         assert_eq!(
             count(&conn, "verses_fts"),
-            31_102,
-            "the FTS mirror is built"
+            2 * 31_102,
+            "the FTS mirror is built over both bundled translations"
         );
         // THE SHELF. The exact total is asserted in
         // `db::mod::seeds_the_builtin_templates` against the code's own count; here

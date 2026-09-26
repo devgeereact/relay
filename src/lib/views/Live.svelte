@@ -134,9 +134,42 @@
   import { whyDisabled, ENGINE_OFF, BUSY } from '../ui/whydisabled.js';
   import IconButton from '../ui/IconButton.svelte';
   import { describeScreen } from '../outputHealth.js';
+  import { transportMode, fallsThroughToPlan } from '../transportmode.js';
+  import { describeMediaClock, mediaIdFromUrl } from '../mediaclock.js';
+  import { mediaTransport, setMediaTransport, sendStageMedia, stageMedia } from '../stores/capture.js';
+
+  /**
+   * WHAT THE PROGRAMME PANE RENDERS — the live content, with the scrub's own
+   * baseline on it (RG-260).
+   *
+   * `TemplateRender`'s corrector pulls a player back to where Relay's clock says
+   * the clip should be, measured from `content.media_started_at`. A scrub MOVES
+   * that instant — Rust sets `started_at = now - seek_ms` for exactly this
+   * reason — and every output page restates it (`Output.svelte`, the
+   * `media_transport` branch).
+   *
+   * This pane did not, so after a scrub it kept the baseline the FIRE implied,
+   * the corrector found it adrift and pulled the picture back, and the surface
+   * an operator watches to decide what the room is seeing was the one surface
+   * disagreeing with the room. Taken from the transport store, which since
+   * RG-260 IS the frame the screens were sent — so the console and a projector
+   * correct against the same instant by construction rather than by two copies
+   * happening to agree.
+   */
+  $: progBaseline = baselineFor($liveContent?.media_started_at, $mediaTransport?.startedAt);
+  $: progContent =
+    $liveContent && progBaseline != null
+      ? { ...$liveContent, media_started_at: progBaseline }
+      : $liveContent;
   import { programmeScreen, describeStageReach, describeCountdownReach } from '../channelroles.js';
   import TemplateRender from '../TemplateRender.svelte';
-  import { resolveOutputTemplate, isKeyedTemplate, formatCountdown } from '../layers.js';
+  import ClipBar from '../ClipBar.svelte';
+  import { baselineFor } from '../clipbaseline.js';
+  import {
+    resolveOutputTemplate,
+    isKeyedTemplate,
+    formatCountdown,
+  } from '../layers.js';
   import ModelSetup from '../ModelSetup.svelte';
   import { registerContext } from '../shortcuts.js';
   import { t } from '../i18n.js';
@@ -144,10 +177,10 @@
   import EmptyState from '../ui/EmptyState.svelte';
   import ErrorState from '../ui/ErrorState.svelte';
   import Loading from '../ui/Loading.svelte';
-  import { heard, methodBadgeKey, methodNoteKey, inLibrary } from '../detect.js';
+  import { heard, methodBadgeKey, methodNoteKey, inLibrary, evidenceIsASpan, orderClaims } from '../detect.js';
   import DetectionInspector from '../DetectionInspector.svelte';
   import { humanError as humanErrorBase } from '../errors.js';
-  import { typeOf, payloadOf, slidesOf, slideAccent, cueSub, nextOf, stepFrom } from '../plan.js';
+  import { typeOf, payloadOf, slidesOf, slideAccent, cueSub, nextOf, stepFrom, staleNote } from '../plan.js';
   import { gridSource, pressArbiter } from '../slidegrid.js';
   import { reflow } from '../reflow.js';
   import LiveRail from '../LiveRail.svelte';
@@ -184,6 +217,12 @@
     listOutputChannels,
     channelHealth,
     channelWaiting,
+    // THE ONE CALLER LEFT (2026-09-21, DECISIONS §115). The Screen Countdown's
+    // band is gone from this surface; what remains is the PLAN CUE, which fires a
+    // countdown like every other cue. The rest of the transport went with the
+    // band — `adjustCountdown` and `showTimer` were deleted outright rather than
+    // left imported and uncalled, which is the state F13 filed after the first
+    // removal and the one this file must not return to.
     startCountdown,
     setLiveTransition,
     startCapture,
@@ -198,6 +237,8 @@
     setStageNext,
     startTimer,
     listTimers,
+    listMedia,
+    localIp,
     stopTimer,
     adjustTimer,
     resetTimer,
@@ -213,7 +254,18 @@
   // long is left on one. `timerRemainingMs` ENDS in `countdownRemainingMs`, which
   // stays the only countdown arithmetic on this side of the bridge.
   import { stageTimers, timerRemainingMs, timerIsHeld } from '../timers.js';
+  import { mediaUrl } from '../bundledbackgrounds.js';
+  import { previewOfCell } from '../previewcell.js';
   import { planChannelsOf } from '../plan.js';
+  // THE ONE DECISION LAYER FOR THE SCREEN COUNTDOWN. It moved out of Quick tools
+  // on 2026-09-20 and its decisions did not move with it — they were already
+  // here, pure and tested, and this view performs them. A second copy of any of
+  // this is how the dock and the wall came to disagree about the same number
+  // once already (docs/REBRAND.md §7).
+  // ONE THING, AND IT IS NOT THE COUNTDOWN'S. `atClockTime` turns "10:30" into an
+  // instant where local time is actually known, and the STAGE TIMER uses it for an
+  // appointment (§102). The ten other helpers this view imported were the Screen
+  // Countdown band's and went with it on 2026-09-21 (§115).
   import { atClockTime } from '../countdown.js';
 
   // ── the plan being RUN (not edited) ──────────────────────────────────────
@@ -240,7 +292,17 @@
   $: planOnAir = $liveCue.onAir;
   // ONE resolution, read by the render AND by the branch that decides whether
   // there is anything to render with — two calls could disagree.
-  $: progTpl = resolveOutputTemplate(previewTpl, $liveTemplateOverride, $liveTemplatePinned);
+  // The KIND rides too (RG-219): the house style reaches scripture and song on
+  // the wall, and the console's program pane is a picture of the wall. A pane
+  // that resolved without it would be the one surface showing the old look.
+  $: progTpl = resolveOutputTemplate(
+    previewTpl,
+    $liveTemplateOverride,
+    $liveTemplatePinned,
+    $templates.find((t) => t.id === $defaultTemplateId) || null,
+    null,
+    $liveContent?.kind,
+  );
   const setLive = (cueId, slide) => liveCue.set({ cueId, slide, onAir: true });
 
   $: if (openPlan) setSession({ planId: openPlan.id, liveCueId, liveSlide, liveOnAir: planOnAir });
@@ -266,7 +328,19 @@
   //
   // Now it matches the sentence above it: verse mode means something that did not
   // come from the plan is genuinely IN FRONT OF PEOPLE.
-  $: mode = openPlan && items.length && !($live && !$screenBlack && !planOnAir) ? 'slide' : 'verse';
+  //
+  // THE RULE ITSELF IS `transportmode.js`, not this line. It governs the key an
+  // operator presses more than any other, and inside a view it could only be
+  // tested by mounting the whole run surface. Both of the defects it records
+  // were reported by an operator rather than caught by an instrument.
+  $: mode = transportMode({
+    live: $live,
+    screenBlack: $screenBlack,
+    planOnAir,
+    planLength: openPlan ? items.length : 0,
+    // A staged song deck (RG-186): the grid holds the song, so the key steps it.
+    deckLength: grid?.source === 'song' ? grid.cells.length : 0,
+  });
 
   // Named so the plan picker's error state has something to retry with (RG-95).
   async function loadPlans() {
@@ -339,6 +413,67 @@
   // this expression on purpose — a helper that closed over the health map would not be
   // tracked by Svelte's reactivity and the pane would freeze on its first reading,
   // which is the same class of bug as the badge it replaces.
+  // HOW LONG IS LEFT OF THE CLIP, from the screens rather than from this pane.
+  //
+  // The programme monitor below renders through the same component as the wall, so
+  // it holds its own `<video>` of the same file. Timing the clip off THAT one would
+  // keep counting while the wall was frozen, which is rule 35 on the one readout
+  // an operator times the next cue against. `describeMediaClock` is given the
+  // screens' own reports and has no way to ask this pane's player.
+  //
+  // Named inputs, not a helper closing over the map, for the reason the block
+  // below already records: a closure is not tracked by Svelte's reactivity and the
+  // readout would freeze on its first reading.
+  $: mediaClock = describeMediaClock(
+    channels.map((c) => ({ ...($channelHealth[c.id] ?? {}), id: c.id, name: c.name })),
+  );
+  // Only while a clip is what is on the screens. A remaining-time readout beside a
+  // verse answers a question nobody asked, and it would be the last thing the
+  // previous clip said rather than a fact about now.
+  $: mediaLive = !!$live?.media_url && !$screenBlack;
+  let clipErr = '';
+  /**
+   * THE CLIP ON THE WALL, AS AN ID — or `null` for one Relay ships.
+   *
+   * Requirement 10's Live half. The Library is where an operator picks a slide for
+   * the preacher deliberately; this is the other case they asked for: the thing
+   * already on the wall, put on the preacher's screen too, without leaving the run
+   * surface mid-service.
+   *
+   * A bundled picture has no row under `/media/<id>` (DECISIONS §90), so there is
+   * no id to send and the control says so instead of guessing at one.
+   */
+  $: liveMediaId = mediaIdFromUrl($live?.media_url);
+  $: onStage = $stageMedia != null && $stageMedia === liveMediaId;
+  async function toStage() {
+    clipErr = '';
+    try {
+      await sendStageMedia(onStage ? null : liveMediaId);
+    } catch (e) {
+      clipErr = humanError(e);
+    }
+  }
+  /**
+   * One door for all three transport controls.
+   *
+   * GROUP 1 throws, so the failure is caught HERE and shown rather than swallowed:
+   * a Pause that failed silently leaves a clip running under an operator who
+   * believes they stopped it, and the next cue goes out over the top of it.
+   *
+   * The button state is never set from this. The buttons read `$mediaTransport`,
+   * which the store writes only after the call resolves, and the REMAINING TIME
+   * reads the screens' own beat — so what the operator sees is what happened
+   * rather than what was asked for.
+   */
+  async function clip(change) {
+    clipErr = '';
+    try {
+      await setMediaTransport(change);
+    } catch (e) {
+      clipErr = humanError(e);
+    }
+  }
+
   $: outs = channels.map((c) => ({
     c,
     // THE RAW ROW RIDES ALONG, and it is not a second authority. `describeScreen`
@@ -530,9 +665,20 @@
   let ptBusy = false;
   let ptNow = Date.now();
 
+  // ONE READ, ONE PROJECTION (2026-09-21). The registry holds both scopes and
+  // `list_timers` hands back all of them; `stageTimers` is the Stage band's
+  // filter and this surface now wants nothing else from the call.
+  //
+  // It fed the Screen Countdown band the unfiltered list as well until §115 took
+  // that band off this surface for the second time. Its two variables went with
+  // it, and the FIRST removal is why that sentence is here: `cdTimers` and
+  // `cdTimersErr` were still being ASSIGNED after the block that declared them
+  // was deleted, which is a `ReferenceError` on the one path that reports a
+  // failed read, so the Stage band said nothing at all instead of saying why.
   async function loadProgrammeTimers() {
     try {
-      const rows = stageTimers(await listTimers());
+      const all = await listTimers();
+      const rows = stageTimers(all);
       if (dead) return;
       ptTimers = rows;
       ptErr = '';
@@ -707,6 +853,14 @@
     };
   });
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // THE SCREEN COUNTDOWN IS BACK ON THIS SURFACE (operator instruction, 2026-09-21)
+  // ══════════════════════════════════════════════════════════════════════════
+  //
+  //
+  //
+
+
   // HAS THIS VIEW ALREADY GONE AWAY? `onMount` is async and Svelte does not wait
   // for it: `onDestroy` runs the instant the operator switches workspace, which
   // can be in the middle of the awaits below. Every step after an await has to
@@ -825,6 +979,33 @@
     // the restore depends on the timer list, and a round trip in front of the
     // plan restore would delay the one thing this mount exists to get right.
     if (!dead) await loadProgrammeTimers();
+
+    // AND WHAT A MEDIA CUE LOOKS LIKE (RG-225). Last, unawaited by anything, for
+    // the same reason the timers are: no part of the restore depends on it, and
+    // a deck that paints its pictures a moment late is a deck, where a restore
+    // that waits for a media list is a delay on the one thing this mount exists
+    // to get right. A failure leaves `deckMedia` empty and the cells fall back to
+    // the slide they drew before — never a broken picture.
+    if (!dead) {
+      try {
+        const [rows, ip] = await Promise.all([listMedia(), localIp()]);
+        if (!dead) {
+          deckMedia = Array.isArray(rows) ? rows : [];
+          if (ip) deckHost = ip;
+        }
+      } catch {
+        /* the deck keeps its words; a thumbnail is not worth a banner. */
+      }
+      // AND IT SAYS SO WHEN IT CAME BACK EMPTY (RG-275). The catch above is
+      // right that a thumbnail is not worth a banner, and it made the one
+      // failure an operator reported invisible: *"the snapshot of the media
+      // still not showing"*, with nothing anywhere to say whether the list had
+      // failed, the asset was gone, or the cue carried no id at all. The grid
+      // renders a picture correctly when it is given one — that is now pinned
+      // by a mounted test — so the remaining question is always about the data,
+      // and this is the only place that knows the answer.
+      if (!dead) deckMediaEmpty = deckMedia.length === 0;
+    }
   });
 
   // ── LOAD WHOLE PLAN, FROM QUICK TOOLS ──────────────────────────────────────
@@ -871,18 +1052,44 @@
   // error, no toast and no log. On the key they press more than any other, in the
   // middle of a sermon. It now always says what happened.
   async function step(dir) {
-    if (mode === 'slide') return stepLive(dir);
-    try {
-      const notice = navNotice(await navVerse(dir > 0 ? 'next' : 'back'));
-      if (notice) flash(notice);
-    } catch (e) {
-      flash(humanError(e));
+    if (mode === 'slide') {
+      return grid?.source === 'song' && !(openPlan && planOnAir) ? stepDeck(dir) : stepLive(dir);
     }
+    let outcome;
+    try {
+      outcome = await navVerse(dir > 0 ? 'next' : 'back');
+    } catch (e) {
+      return flash(humanError(e));
+    }
+    // WHEN THERE WAS NO PASSAGE AFTER ALL, STEP THE PLAN. The whole rule,
+    // including why the END of a passage deliberately does not, is in
+    // `transportmode.js::fallsThroughToPlan`.
+    if (fallsThroughToPlan(outcome, openPlan ? items.length : 0)) return stepLive(dir);
+    const notice = navNotice(outcome);
+    if (notice) flash(notice);
   }
 
+  /** The song cell last put on the wall from a staged deck, or -1 (RG-186). */
+  let deckIdx = -1;
+  /** A STAGED DECK WITH NO PLAN ON AIR (RG-186). The grid is the song; walk its
+   *  cells the way the plan's are walked, from the cell last fired, never
+   *  wrapping. A keystroke is a person pressing something, so it may call
+   *  `fireCell` — the fourth caller `slidegridwiring.test.js` enumerates. */
+  async function stepDeck(dir) {
+    const cells = grid?.cells ?? [];
+    const next = deckIdx < 0 ? 0 : deckIdx + dir;
+    if (next < 0 || next >= cells.length) return; // ends are hard stops
+    return fireCell(cells[next]);
+  }
   async function stepLive(dir) {
     const to = stepFrom(items, liveCueId, liveSlide, dir);
-    if (!to) return; // ends of the plan are hard stops — never wrap
+    if (!to) {
+      // Ends of the plan are hard stops — never wrap. AND THEY SAY SO (RG-199):
+      // the VERSE half of this key names all four of its outcomes, and this half
+      // returned in silence, which is the original `nav` defect on its twin door.
+      flash(dir > 0 ? 'End of the plan — nothing after this cue.' : 'Start of the plan.');
+      return;
+    }
     await fireSlide(to.item, to.slide);
   }
 
@@ -920,7 +1127,7 @@
           flash('Media asset missing — re-add it from the Library.');
           return;
         }
-        await fireMedia(p.media_id, tpl, true); // keepPlan — this IS the plan's slide
+        await fireMedia(p.media_id, tpl, true, cueChannels); // keepPlan — this IS the plan's slide
       } else if (item.cue_type === 'countdown') {
         // THE CUE'S OWN WORDS, AND NO OTHERS. These two arguments used to fall
         // back to 'Service begins in' and 'Welcome' — the fourth copy of a pair of
@@ -937,6 +1144,9 @@
           p.done ?? '',
           tpl,
           true, // keepPlan — this IS the plan's slide
+          null, // warnMs — the cue chooses none; the configured default applies
+          null, // untilMs — a plan cue is a LENGTH, never an appointment
+          cueChannels,
         );
       } else if (item.cue_type === 'song') {
         // Lyrics carry NO title/section on the live screen — and `fire_content`
@@ -1039,7 +1249,7 @@
         // for one and no control that writes one. Relay composing a sentence here
         // would be Relay's words presented as somebody's choice, and it would cost
         // something measured: a finished row's message renders at 30px against the
-        // digits' 64px (`docs/qa/audits/2026-09-17-WAVE4-STAGE-PLANNER.md` §1.3), so
+        // digits' 64px (`docs/qa/audits/DESIGN.md` §1.3), so
         // every bound cue on every install would end less legible than `0:00`, with
         // nobody having asked for it. That half of RG-162 is left open against the
         // timer surface that owns message text — wave 3 Track E.
@@ -1174,7 +1384,9 @@
    * one already made, which is the wrong way round at the one moment it matters.
    */
   $: claimCards = [
-    ...dets.map((d) => ({ d, outcome: null, key: `p:${d.reference}` })),
+    // HEARD FIRST (RG-192): the one class that may auto-fire is never the one
+    // that falls below the fold. `orderClaims` is pure and tested in detect.js.
+    ...orderClaims(dets).map((d) => ({ d, outcome: null, key: `p:${d.reference}` })),
     ...$resolvedDetections.slice(0, Math.max(0, MAX_RESOLVED - dets.length)).map((d) => ({
       d,
       outcome: outcomeLabel(d),
@@ -1469,18 +1681,17 @@
   // it is still in the detection panel, where accepting it is one press. The
   // override is transient: taking it clears it, and the preview goes back to the
   // ordinary order.
+  // A MEDIA CUE PREVIEWS AS THE MEDIA (RG-236). `previewOfCell` is the rule;
+  // both cell-shaped branches go through it, so the pane cannot describe a
+  // picture one way when it is cued and another when it is next.
   $: previewContent = gridPreview
-    ? { reference: gridPreview.label, text: gridPreview.text || gridPreview.label, translation: null }
+    ? previewOfCell(gridPreview, cellMedia(gridPreview, deckMedia, deckHost)?.url ?? null)
     : dets[0]
       ? { reference: dets[0].reference, text: dets[0].text ?? '', translation: null }
       : previewSlide
         ? { reference: previewCue.item.label, text: previewSlide.text || previewSlide.label, translation: null }
         : gridNextCell
-          ? {
-              reference: gridNextCell.reference ?? gridNextCell.label,
-              text: gridNextCell.text || gridNextCell.label,
-              translation: null,
-            }
+          ? previewOfCell(gridNextCell, cellMedia(gridNextCell, deckMedia, deckHost)?.url ?? null)
           : null;
   $: previewLabel = gridPreview
     ? gridPreview.label
@@ -1627,6 +1838,10 @@
     grid.source === 'plan' && !dateStatedIn(grid.title, openPlan?.plan_date)
       ? shortDate(openPlan?.plan_date)
       : '';
+  // A STALE ARRANGEMENT, SAID ON THE SURFACE THE SERVICE RUNS FROM (RG-203).
+  // The Planner showed it; Live, where the slides are about to be stepped, did
+  // not. Read off the live cue when there is one, else the selected cue.
+  $: staleWarning = staleNote(items.find((i) => i.id === (liveCueId ?? selId)) ?? null);
 
   /**
    * What a cell's kind chip says — the content kind, in the word `plan.js`'s one
@@ -1666,6 +1881,7 @@
       if (!cell.text.trim()) return;
       try {
         await fireContent(cell.label, cell.text, 'song');
+        deckIdx = cell.slideIdx ?? deckIdx; // where → resumes from (RG-186)
         flash(`${cell.label} is on the screens`);
       } catch (e) {
         flash(humanError(e));
@@ -1734,11 +1950,50 @@
    * be showing the operator something no congregation will ever see. That is the
    * whole value of a rendered thumbnail and the one way to throw it away.
    */
-  $: cellContent = (c) => ({
-    reference: c.ctype === 'song' ? null : c.label,
-    text: c.text || '',
-    translation: null,
-  });
+  // ── WHAT A MEDIA CUE LOOKS LIKE, ON THE SURFACE IT IS RUN FROM (RG-225) ────
+  //
+  // `list_media` once at mount and the host's own address, both already loaded
+  // by the Planner for the same job. A media cell carries its asset id
+  // (`slidegrid.js::mediaOf`) and this is the only place that turns one into a
+  // URL — through the SHARED builder, which is also what the wall, the Library
+  // and the Planner use, `bundled:` case included (DECISIONS §90).
+  //
+  // A DELETED ASSET PAINTS NOTHING. The three-way answer the Planner's inspector
+  // already makes: no id, a row that has gone, and a resolved one are different,
+  // and only the third has a picture. Guessing a URL from the id would paint a
+  // broken image, which is a worse claim than no claim.
+  let deckMedia = [];
+  let deckHost = 'localhost';
+  /**
+   * THE MEDIA LIST CAME BACK WITH NOTHING IN IT — RG-275.
+   *
+   * Not an error and not a claim that anything is broken: a church with no
+   * imported media is the ordinary first-Sunday case. It is the one fact that
+   * separates *"this cue's asset was deleted"* from *"Relay could not read the
+   * library at all"*, and without it a media cell that draws no picture gives
+   * an operator nothing to act on.
+   */
+  let deckMediaEmpty = false;
+  const cellMedia = (c, rows, host) => {
+    if (c?.mediaId == null) return null;
+    const row = rows.find((m) => m.id === c.mediaId);
+    if (!row || row.kind === 'document') return null;
+    return { url: mediaUrl(host, row), kind: c.mediaKind === 'video' ? 'video' : 'image' };
+  };
+
+  $: cellContent = (c) => {
+    const m = cellMedia(c, deckMedia, deckHost);
+    return {
+      reference: c.ctype === 'song' ? null : c.label,
+      text: c.text || '',
+      translation: null,
+      // The two fields `TemplateRender` paints a picture from. Absent rather than
+      // null for a cue with no asset, so nothing downstream has to tell an empty
+      // string from a missing one.
+      media_url: m?.url,
+      media_kind: m?.kind,
+    };
+  };
 
   /** Is this cell what is on the congregation's screen right now?
    *
@@ -1768,7 +2023,25 @@
           !!$liveContent &&
           (c.text.trim() ? $liveContent.text === c.text : true)
       : c.kind === 'song'
-        ? !!c.text.trim() && !$screenBlack && $liveContent?.text === c.text
+        ? /* ONE SLIDE, EVEN WHEN THREE CARRY THE SAME WORDS (operator, 2026-09-21).
+             A song whose chorus is slides 1, 9 and 17 lit ALL THREE amber and said
+             `Live` on each, because this compared the WORDS and identical words are
+             identical. On the surface an operator steps through, in an arrangement
+             that repeats — which is what an arrangement is for — the marker could
+             not say which slide they were on.
+
+             The words cannot answer it, so the POSITION does. `deckIdx` is where
+             `→` resumes from and is already set from the fired cell (RG-186), so
+             the deck knew all along; this asks it.
+
+             THE WORDS STAY, as a guard rather than as the answer. An index held
+             over from a previous song would otherwise paint a cell amber over a
+             wall showing something else, and amber is never allowed to lie
+             (rule 18). Both must agree. */
+          !!c.text.trim() &&
+          !$screenBlack &&
+          c.slideIdx === deckIdx &&
+          $liveContent?.text === c.text
         : !!c.reference && !$screenBlack && $liveContent?.reference === c.reference;
 
   // How many times the previewed verse has ALREADY gone out this service.
@@ -1871,6 +2144,22 @@
   // compensate: that would shrink Preview and Program for every operator to pay
   // for a setting one of them used to choose, and it is a design change nobody
   // asked for. Measured in the T2 review note.
+  /**
+   * PUT THE RUNNING ORDER BACK IN THE GRID — RG-261, moved from Quick tools.
+   *
+   * The plan the PLANNER handed over, not the one currently open: Close plan
+   * clears `session.planId`, and a button that died the moment an operator
+   * closed a plan would be useless in exactly the case it exists for — putting
+   * the running order back after the preacher went off it.
+   */
+  let lastPlanId = null;
+  $: if ($session.planId != null) lastPlanId = $session.planId;
+  $: planChosen = lastPlanId != null;
+  const loadWholePlan = () => {
+    if (lastPlanId == null) return;
+    setSession({ activeTab: 'live', planId: lastPlanId });
+  };
+
   $: fullscreen = !!$session.liveFullscreen;
   const setFullscreen = (v) => setSession({ liveFullscreen: v });
 
@@ -1956,7 +2245,7 @@
 </script>
 
 
-<!-- LIVE — laid out to docs/design/relay-console-screen.png.
+<!-- LIVE. The layout came from a rendered console reference, deleted 2026-09-21.
      Row A: PREVIEW · take rack · PROGRAM · OUTPUT STATUS
      Row B: 1 Live Transcript · 2 AI Detection · 3 Service Plan · 4 Quick Controls
      Everything below is a re-dressing of the controls that were already here — no
@@ -2056,7 +2345,19 @@
       </header>
       <div class="screen">
         {#if previewTpl && previewContent}
-          <TemplateRender template={previewTpl} content={previewContent} />
+          <!-- STILL, and for the same reason the deck is (RG-235): this pane is
+               a picture of what is COMING, and a clip playing here beside the
+               one that is on air is two moving pictures competing for the
+               operator's eye. -->
+          <TemplateRender template={previewTpl} content={previewContent} still />
+          {#if previewContent.media_kind === 'video' && mediaClock.known}
+            <!-- HOW LONG IS LEFT OF THE ONE ON AIR, over the one that is next
+                 (RG-236). It is the figure an operator is actually timing the
+                 next cue against, which is why it belongs on the pane that
+                 answers "what is next" rather than over the programme.
+                 NOT amber: amber means ON AIR and this is a fact about a clip. -->
+            <span class="mon-nextclock r-mono" aria-live="polite">{mediaClock.text}</span>
+          {/if}
         {:else}
           <div class="screen-empty">
             {previewTpl ? 'Nothing cued' : 'No active template — activate one in Templates'}
@@ -2240,17 +2541,67 @@
           </span>
         {/if}
       </header>
+      <!-- HOW LONG IS LEFT, AND WHICH SCREEN SAID SO.
+           Requirement 11: "the countdown for the media so as to help know when
+           media is almost done or time remaining for preparation of the next
+           plan".
+
+           NOT amber. Amber means ON AIR and this is a fact about a clip, not a
+           claim that a congregation is looking at one — the tag above already
+           makes that claim and is the only thing entitled to.
+
+           It says `No screen is reporting a clip` in words rather than a dash or
+           a zero, and that sentence is the useful half: a dash reads as "this clip
+           has no clock", a zero reads as "it has finished", and an operator told
+           that no screen is answering goes and looks at one. -->
+      <!-- THE CLIP'S CONTROLS ARE IN THE SHELL NOW (RG-237). They were here, on
+           a workspace, and a clip plays on every screen in the building whatever
+           tab the operator is on — so they belong beside Clear screens, Blackout
+           and Rehearse in the dock, which is mounted once and survives a crashed
+           view. Two sets over one clip would be the twin door this repository
+           keeps deleting, so this one is gone rather than hidden.
+
+           What is left on this pane about the clip is on the PREVIEW beside it:
+           how long is left of the one on air, over the frame of the one that is
+           next (RG-236). -->
       <div class="screen">
+        <!-- ══ THE CLIP'S CONTROLS, ON THE CLIP (RG-259) ══
+             The approved drawing's home for them, and it is the right one: a
+             scrub bar means something on the frame it refers to and almost
+             nothing on a strip across the shell. They shipped in the shell
+             first because `mediacontrols.test.js` asserts this file carries no
+             transport ROW — and it still does, because this is the one shared
+             component mounted rather than a second set of markup. RG-237's
+             guarantee was ever "one set of controls", and one component mounted
+             in one place is the strictest form of that.
+
+             It renders nothing at all while no clip is on the screens, so the
+             pane is untouched for most of a service. -->
+        <ClipBar over />
         {#if $live && progTpl}
           <!-- THE STANDING BACKGROUND RIDES WITH THE CONTENT, because the wall
                paints both and this pane must not disagree with the wall. It is a
                prop and not a field on the content on purpose: a verse replaces
                `$liveContent` and leaves `$background` exactly where it is, which
                is the whole of the feature. -->
+          <!-- THE SAME FACTS THE WALL IS HANDED — and no more (RG-222, RG-234).
+               `mediaTransport` belongs here: Pause holds every screen in the
+               building and this pane went on playing, so the control that HAD
+               worked read as though it had not.
+
+               `programme` does NOT. RG-222 handed it over so a stage template
+               would preview with its clocks, and the operator saw the cost the
+               same day: this pane is a picture of the MAIN screen, which never
+               shows the running order — the rail is role-gated at the output
+               page for exactly that reason — so RG-224's fallback drew a clock
+               over a clip that was on air. A congregation's preview showing
+               "Sermon · 4:12 left" makes the same claim the screen itself would.
+               The programme belongs to the stage, and the stage previews it. -->
           <TemplateRender
             template={progTpl}
-            content={$liveContent}
+            content={progContent}
             backdrop={$background}
+            mediaTransport={$mediaTransport}
             onFit={noteFit}
           />
         {:else if $background && progTpl}
@@ -2415,6 +2766,8 @@
     {/if}
   </div>
 
+
+
   <!-- ══════ THE SLIDE GRID — full width, directly under the monitors ══════
        It was one fifth-width card in a row of five, which made every cell too
        small to read and forced a click just to identify a slide. It is the thing
@@ -2440,6 +2793,7 @@
              already says which empty it is, in a sentence. -->
         {#if grid.title}<span class="sg-cap">· {grid.title}</span>{/if}
         {#if gridSubtitle}<span class="sg-cap">· {gridSubtitle}</span>{/if}
+        {#if staleWarning}<span class="sg-cap sg-stale" role="status" title={staleWarning}>· {staleWarning}</span>{/if}
         <span class="spring"></span>
         <!-- ONE LINE, WITH THE COUNT LEADING IT (L2). The count and the sentence
              were two spans in two faces, so the right of this head read as two
@@ -2458,6 +2812,27 @@
           <Button variant="ghost" size="sm" class="mini" on:click={leave}
             title="Stop running {openPlan.title}">Close plan</Button>
         {/if}
+        <!-- LOAD WHOLE PLAN CAME UP HERE (RG-261), out of the Quick tools head.
+             The operator asked for the room: that card does one job at a time
+             now (RG-258) and the picker needs the slot this button had. It
+             belongs beside the slides it stages in any case — it is the one
+             control in the product whose whole effect is on this grid.
+
+             WHAT IT COSTS, stated rather than found later: the dock is in the
+             shell and this header is not, so the button is Live's now. It does
+             survive full screen, because only the dock is unmounted there. Its
+             `activeTab: 'live'` is left in place and is a no-op from here.
+
+             NOT inside `.view-ctl`: `livedesk.test.js` asserts that container's
+             exact button set, and it is the sizer plus full screen — a control that
+             only stages does not belong in it. -->
+        <button
+          class="sg-load"
+          on:click={loadWholePlan}
+          disabled={!planChosen}
+          title={planChosen
+            ? 'Put the running order back in the slide grid'
+            : 'No plan chosen yet — open Planner and press Run in Live'}>Load whole plan</button>
         <!-- THE VIEW CONTROL LIVES HERE NOW (L2), not in the browsing rail.
              It changes how the console LOOKS and never what reaches a screen,
              and in the rail it was among the loudest things in a column whose
@@ -2517,6 +2892,18 @@
                   {#if c.empty}
                     <span class="sg-void">Nothing to show</span>
                   {:else}
+                    <!-- WHY THIS CUE HAS NO PICTURE (RG-275). A media cue whose
+                         asset cannot be found draws its words, which is right,
+                         and said nothing about WHY — so a deleted file, a cue
+                         saved without an id and a library Relay could not read
+                         were one silent outcome. Each of the three is a
+                         different thing for an operator to do next. -->
+                    {#if c.mediaId != null && !cellMedia(c, deckMedia, deckHost)}
+                      <span class="sg-nomedia r-mono"
+                        >{deckMediaEmpty ? 'no media library' : 'file missing'}</span>
+                    {:else if c.ctype === 'media' && c.mediaId == null}
+                      <span class="sg-nomedia r-mono">no file chosen</span>
+                    {/if}
                     <!-- A KEYED template is a band over a camera Relay never
                          takes, so previewed against nothing it is an empty dark
                          rectangle — right on the wall, useless on a cell. The
@@ -2535,7 +2922,10 @@
                          wall that has no look at all. The plate needs a template
                          that EXISTS and keys; the absence gets nothing. -->
                     {#if cellTemplate(c) && isKeyedTemplate(cellTemplate(c))}<CameraPlate />{/if}
-                    <TemplateRender template={cellTemplate(c) ?? {}} content={cellContent(c)} />
+                    <!-- STILL (RG-235). A deck cell is a thumbnail of a cue, and
+                         four video cues meant four clips playing at once under
+                         the one that is actually on air. -->
+                    <TemplateRender template={cellTemplate(c) ?? {}} content={cellContent(c)} still />
                   {/if}
                   <!-- THE KIND, TOP-LEFT, IN WHOLE WORDS — as the prototype
                        draws it: `NOTICE`, `SCRIPTURE`, `SONG`, `MEDIA`.
@@ -2600,8 +2990,13 @@
         <span class="sr-only" role="status" aria-live="polite" aria-atomic="true">{liveMsg}</span>
         {#if liveMsg}
           <span class="flash" aria-hidden="true"><i class="fd"></i>{liveMsg}</span>
-        {:else}
-          <span class="flash idle" aria-hidden="true">{openPlan ? openPlan.title : 'No plan loaded'}</span>
+        {:else if !openPlan}
+          <!-- THE PLAN'S NAME IS IN THE HEAD (RG-261), four inches above this
+               and on screen at the same moment — the duplication the operator
+               photographed. What is left is the one state the head does NOT
+               say: that no plan is loaded at all, which is a fact about this
+               pane rather than a title repeated. -->
+          <span class="flash idle" aria-hidden="true">No plan loaded</span>
         {/if}
       </footer>
     </section>
@@ -2720,7 +3115,7 @@
                  (router.rs forbids it from ever auto-firing at ANY score). So the
                  guess gets cyan, and gets no number at all: a number that lies is
                  worse than no number. Cyan, NOT amethyst, which means rehearsal. -->
-            <article class="clm" class:guess={!heard(d)} class:done={!!card.outcome}>
+            <article class="clm" class:guess={!heard(d)} class:ub={d.method === 'uncertain_book'} class:done={!!card.outcome}>
               <div class="clm-top">
                 <span class="clm-ref">{d.reference}</span>
                 <!-- THE CHIP NAMES THE METHOD, not merely heard-vs-guessed.
@@ -2752,8 +3147,21 @@
               {/if}
 
               {#if d.matched_text}
-                <!-- THE EVIDENCE — the words that actually triggered the match. -->
-                <p class="mt-q">“{d.matched_text}”</p>
+                <!-- THE EVIDENCE, AND IT MUST NOT LIE ABOUT WHAT KIND IT IS.
+                     A `direct` or `quoted` match carries a contiguous span of
+                     what was said, so it goes in quotation marks. A `semantic`
+                     match carries `terms.join(" · ")` — the words that
+                     contributed most to a TF-IDF cosine, in weight order, from
+                     anywhere in the verse. In quotation marks that rendered as
+                     “lord · shepherd”, a quotation of something nobody said,
+                     which is what the operator called scattered on 2026-09-20.
+                     Same rule as `showsConfidence`: where the thing is not what
+                     the presentation claims, change the presentation. -->
+                {#if evidenceIsASpan(d)}
+                  <p class="mt-q">“{d.matched_text}”</p>
+                {:else}
+                  <p class="mt-t">{$t('live.matched_on')}: {d.matched_text.split('·').map((w) => w.trim()).filter(Boolean).join(', ')}</p>
+                {/if}
               {/if}
 
               <!-- RG-135 · THE TRANSLATION THE PREACHER NAMED, WHICH RELAY DOES
@@ -2851,7 +3259,7 @@
   {#if $capture.audioError}
     <div class="audioerr" role="alert">The microphone stopped — {humanError($capture.audioError)} Check the cable, then press the microphone in Live audio.</div>
   {/if}
-  {#if $capture.outputError}<div class="audioerr">Output: {$capture.outputError}</div>{/if}
+  {#if $capture.outputError}<div class="audioerr" role="alert">The network output server is not running — {humanError($capture.outputError)} OBS, kiosk screens and the preacher's phone cannot connect; the projector window is unaffected.</div>{/if}
 
   <!-- ══ WHAT THE LAMPS CANNOT SAY ══
        The Output Status pane left this column: a screen's state is one lamp per
@@ -2874,6 +3282,14 @@
     </div>
   {/if}
   {#if fitWarning}<div class="out-warn" role="status"><b>Small on the wall.</b> {fitWarning}</div>{/if}
+  <!-- A SCREEN THAT SAYS ITS PICTURE DID NOT LOAD (O-4, 2026-09-21). The beat
+       carries it, `describeScreen` refuses to call the screen On Air, and this
+       line names the screen and the URL so the operator can tell a wrong address
+       from a dead codec from a missing file. Reported, never enforced: Relay is
+       still sending, and the other screens may be painting it fine. -->
+  {#each outs.filter((o) => typeof o.st?.media_error === 'string' && o.st.media_error) as o (o.c.id)}
+    <div class="out-warn" role="status"><b>{o.c.name} is not painting the picture.</b> {o.st.media_error}</div>
+  {/each}
   <!-- Announced once, on the transition, through the same polite region the AI's
        suggestions use. A live region that repeats is one an operator learns to
        tune out. -->
@@ -2924,8 +3340,7 @@
 </div>
 
 <style>
-  /* LIVE — laid out to docs/design/relay-console-screen.png, styled entirely
-     from the --v-* design tokens in app.css. No raw hex, no arbitrary px: every
+  /* LIVE — styled entirely from the --v-* design tokens in app.css. No raw hex, no arbitrary px: every
      colour is a token and every gap comes off the 8pt scale. */
   .inspect-link{ align-self:flex-start; margin-top:9px; background:none; border:0; padding:0;
     font-family:var(--f-body); font-size:var(--v-fs-b1); color:var(--v-cyan); cursor:pointer;
@@ -2942,6 +3357,16 @@
      weight — `.seg` was declared here and matched nothing else: `LiveRail`'s
      collection switch is `.lr-seg`, its own class with its own rules, because
      Svelte scopes a component's styles and this `.seg` never reached it. */
+  /* LOAD WHOLE PLAN (RG-261), pushed to the right with the view control rather
+     than sitting against the slides count — it is an action on this grid, and
+     the head reads left to right as what is staged, then how many, then what
+     you can do about it. */
+  .sg-load{ flex:0 0 auto; height:24px; padding:0 9px; cursor:pointer;
+    border:1px solid var(--v-500); border-radius:var(--v-r-sm);
+    background:var(--v-surf2); color:var(--v-txt);
+    font-family:var(--f-body); font-size:var(--v-fs-lbl); font-weight:600; }
+  .sg-load:disabled{ opacity:var(--s-off,.45); cursor:default; }
+  .sg-load:focus-visible{ outline:2px solid var(--v-sel); outline-offset:2px; }
   .view-ctl{ flex:0 0 auto; display:flex; align-items:center; gap:5px; }
   /* 22px, not the shared 26px: this row is 22px tall and has clipped a label
      before. The readout is one or two mono characters on a fixed width, so the
@@ -2990,6 +3415,10 @@
 
   .reh-dot{width:8px; height:8px; border-radius:50%; flex:0 0 auto; background:var(--v-amethyst);
     box-shadow:0 0 9px var(--v-amethyst); animation:pulse 1.7s ease-in-out infinite}
+  /* A BUTTON, and amethyst on purpose: it is the one control that ends a
+     rehearsal, and amethyst is what rehearsal means everywhere else (rule 18).
+     Unnamed since it was written — the scanner read every other rule and this
+     one fell in the half nobody looked at (RG-261). */
   .reh-end{flex:0 0 auto; padding:7px 14px; border-radius:var(--v-r-md); cursor:pointer;
     font-family:var(--f-body); font-size:var(--v-fs-cap); font-weight:700; letter-spacing:.06em;
     text-transform:uppercase; background:var(--v-amethyst); border:0; color:var(--v-void)}
@@ -3124,6 +3553,16 @@
     white-space:nowrap; font-size:var(--v-fs-cap); color:var(--v-faint)}
   .pt-note.warn{color:var(--v-dim)}
 
+    /* ── THE SCREEN COUNTDOWN'S STYLES WENT WITH THE BAND (2026-09-20) ──────
+     About 80 lines: `.sc-band`, the `.cdf` figure fields and their separators,
+     `.cdfmt`, `.tfig` and its three states, `.cdstatev`, `.cdset`, `.cdtrans`,
+     the `.sc-ch` screen picker, `.cdreach` and the `.cdback` way back. The
+     `@keyframes cdwarn` blink and its rule in the motion block went too.
+
+     Removing them with the markup rather than leaving them is the point: an
+     unused selector is a surface somebody will rebuild half of by accident. */
+
+
   /* THE GRID TAKES WHAT IS LEFT. It shared the stage with a SERVICE PLAN pane
      and the two split the remaining height 1.15 : 1; the plan pane has gone —
      the plan IS the grid (docs/REBRAND.md §2) — so there is nothing to share
@@ -3211,6 +3650,20 @@
   /* HARD RIGHT, MONO, UPPERCASE. The reference is the one figure on this head an
      operator reads from across a booth, and in the body face it sat at a
      different weight and rhythm from everything beside it. */
+  /* Rose, which already means a fault on this surface. Not amber: amber is ON AIR
+     and a screen falling behind is not a claim about what a congregation sees. */
+  /* The clip's own rules went with the transport (RG-237); what is left here is
+     the next-up clock, which is this pane's own. */
+  /* The clip's remaining time, over the corner of the NEXT-UP frame. Ochre would
+     be a caution and this is not one; neutral over a scrim, because it sits on
+     whatever picture the cue happens to be. */
+  .mon-nextclock{ position:absolute; left:8px; bottom:8px; z-index:3;
+    padding:2px 7px; border-radius:var(--v-r-sm);
+    background:color-mix(in srgb, var(--v-void) 72%, transparent);
+    border:1px solid var(--v-line2); color:var(--v-txt);
+    font-size:var(--v-fs-lbl); font-variant-numeric:tabular-nums; }
+  /* Steel, which already means "this is the state you chose" on this surface. Not
+     amber, which is ON AIR and belongs to the tag above the pane. */
   .mon-name{min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
     font-size:var(--v-fs-cap); letter-spacing:.09em; text-transform:uppercase;
     color:var(--v-faint)}
@@ -3338,10 +3791,11 @@
     text-transform:uppercase; color:var(--v-faint)}
   .rack-mode{display:block; margin-top:3px;
     font-size:var(--v-fs-cap); font-weight:700; letter-spacing:.1em; color:var(--v-cyan)}
-  /* Amber here is NOT "on air": it is the plan's own colour on the plan rail
-     beside it, and SLIDE mode means the arrows walk the plan. It sits on a
-     caption, not on a claim about a screen. */
-  .rack-mode.slide{color:var(--v-amber)}
+  /* STEEL, not amber (RG-207, 2026-09-21). This badge read amber "because it is
+     the plan's own colour", on a caption painted whenever a plan is loaded —
+     including over a wall that says CLEAR. A mode badge is the thing you are
+     working on, and that is what steel is for. */
+  .rack-mode.slide{color:var(--v-sel)}
 
   /* ── THE TRANSITION BAND (L4 · docs/REBRAND.md §8 · DECISIONS §84) ────────
      These rules came out of `app.css`'s X1 block when the control left the
@@ -3383,6 +3837,8 @@
      this grid has always had, so a console with no stored choice is unchanged. */
   .sgrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(var(--sg-min,158px),1fr));
     gap:var(--v-sp-sm)}
+  /* A GRID CELL. The slide itself, pressed to send it — the shape IS the
+     slide, which is why it carries a thumbnail rather than a label. */
   .sg-cell{display:flex; flex-direction:column; gap:5px; padding:0; text-align:left;
     background:none; border:0; cursor:pointer; min-width:0; font-family:var(--f-body)}
   .sg-cell:disabled{opacity:.45; cursor:not-allowed}
@@ -3412,6 +3868,13 @@
   /* A cue the grid could not expand. It is DRAWN rather than dropped (see
      `planCells`) so the count under the grid agrees with the plan, and it is
      disabled rather than firing nothing. */
+  /* A CAPTION, not a control (RG-275): it says why a media cue has no picture,
+     in the corner of the cell, over whatever the words drew. Ochre, because it
+     is a caution about this cue and never a claim about a screen. */
+  .sg-nomedia{position:absolute; left:4px; bottom:4px; z-index:3; padding:1px 5px;
+    border-radius:var(--v-r-sm); background:rgba(0,0,0,.66);
+    font-size:var(--v-fs-kind); letter-spacing:.06em; text-transform:uppercase;
+    color:var(--v-caution)}
   .sg-void{position:absolute; inset:0; display:grid; place-items:center; padding:8px;
     text-align:center; font-size:var(--v-fs-b3); letter-spacing:.05em; color:var(--v-faint)}
   .sg-cell:hover .sg-thumb{border-color:var(--v-sel-line)}
@@ -3504,6 +3967,7 @@
     color:var(--v-faint)}
   .det-meta.on{color:var(--v-emerald)}
 
+
   /* ── A CLAIM CARD ─────────────────────────────────────────────────────────
      One card per claim, in a column, because a decode window can name several
      references and an operator choosing between them needs to see them
@@ -3511,7 +3975,11 @@
      down a column: amber for a reference Relay HEARD, cyan for a guess, grey
      once the claim has been decided and nothing is owed. */
   .clm{background:var(--v-surf2); border:1px solid var(--v-line);
-    border-left:3px solid var(--v-amber);
+    /* STEEL, NOT AMBER (RG-192, 2026-09-21). A heard claim is the thing the
+       operator is working on, and it is NOT on the wall until they press A —
+       amber is the tally light and this card wore it over a Program pane
+       reading CLEAR. The Program pane says on air; a card says claim. */
+    border-left:3px solid var(--v-sel);
     border-radius:var(--v-r-md); padding:11px 12px;
     display:flex; flex-direction:column; gap:8px}
   /* A GUESS MUST LOOK LIKE A GUESS. Amber reads as "Relay is confident" and a
@@ -3521,6 +3989,11 @@
      cannot also mean "this guess is shaky", or on the day both are true the
      operator reads the wrong one. */
   .clm.guess{border-left-color:var(--v-cyan)}
+  /* BOOK UNCERTAIN HAS ITS OWN MARK (RG-192). It was pixel-identical to a
+     paraphrase, and it is the class that put Numbers 3:16 on a wall: chapter
+     and verse heard, the book repaired or assumed. Dashed, so it reads as "a
+     reference with a hole in it" rather than "a guess about the meaning". */
+  .clm.ub{border-left-style:dashed}
   /* DECIDED. Grey, and quieter — it is a receipt, and nothing on it is
      actionable. It must never look like a claim still waiting for a press. */
   .clm.done{opacity:.62; border-left-color:var(--v-line2); background:var(--v-surf)}
@@ -3530,16 +4003,21 @@
     font-weight:700; letter-spacing:var(--v-tr-tight); color:var(--v-txt)}
   .cbadge{flex:0 0 auto; padding:2px 6px; border-radius:2px; font-family:var(--f-mono);
     font-size:var(--v-fs-kind); font-weight:600; letter-spacing:.08em; text-transform:uppercase;
-    background:var(--v-amber-soft); color:var(--v-amber)}
+    background:var(--v-sel-soft, rgba(91,156,248,.15)); color:var(--v-sel)}
   .cbadge.p{background:var(--v-cyan-soft); color:var(--v-cyan)}
   /* Confidence as a BAR — "0.92" means nothing to a volunteer. Only ever drawn
      for a heard reference, the only one whose number means what it appears to
      mean. A paraphrase gets the sentence below instead, and no number at all. */
   .conf{height:3px; border-radius:2px; background:var(--v-surf3); margin:0; overflow:hidden}
-  .conf i{display:block; height:100%; background:var(--v-amber); border-radius:2px}
+  /* STEEL (RG-192): a confidence bar is about a claim, not about the wall. */
+  .conf i{display:block; height:100%; background:var(--v-sel); border-radius:2px}
   .guess-note{margin:0; font-size:var(--v-fs-cap); line-height:1.45; color:var(--v-cyan)}
   /* THE EVIDENCE — the words that actually triggered the match. */
   .mt-q{margin:0; font-size:var(--v-fs-cap); line-height:1.5; color:var(--v-dim)}
+  /* The paraphrase evidence: a labelled list, deliberately NOT styled as a
+     quotation. Fainter than `.mt-q` because it is weaker evidence, and that is
+     the honest ranking of the two. */
+  .mt-t{margin:0; font-size:var(--v-fs-cap); line-height:1.5; color:var(--v-faint)}
   /* The verse, in the serif face the wall uses. Clamped: the whole thing is
      already rendered in its real template in the Preview pane, so a second full
      copy buys nothing and runs to ten lines on a psalm. */

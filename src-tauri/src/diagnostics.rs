@@ -39,6 +39,14 @@ use crate::db;
 ///
 /// Applied to the WHOLE document at the end, not per field. A per-field version is
 /// one forgotten call away from a leak, and this costs one pass over a few kilobytes.
+/// WHICH BUILD THIS IS: `<short sha>[+dirty] <build date>`, stamped by `build.rs`
+/// from git at compile time, or `unknown` where there was no git to ask. A
+/// version is shared by every build of a branch and cannot answer "which commit
+/// ran Sunday's service" — the 2026-09-20 field audit could not (S13). This can,
+/// and it is printed at boot, written on every `services` row, shown on
+/// Settings → This machine and carried in the diagnostic bundle.
+pub const BUILD: &str = env!("RELAY_BUILD_MARKER");
+
 pub fn scrub_paths(text: &str, home: Option<&str>) -> String {
     let mut out = text.to_string();
     if let Some(h) = home.filter(|h| h.len() > 3) {
@@ -147,6 +155,32 @@ mod tests {
         assert_eq!(scrub_paths(text, None), text);
         assert_eq!(scrub_paths(text, Some("/")), text);
         assert_eq!(scrub_paths(text, Some("")), text);
+    }
+
+    /// THE BUILD IS A FACT, NOT A GUESS (S13). The 2026-09-20 field audit could
+    /// not say which commit ran the service: `Relay.app` was rebuilt after it and
+    /// the app records only a version, which every build of a branch shares. The
+    /// marker is `<short sha>[+dirty] <build date>` from `build.rs`, or `unknown`
+    /// when there is no git to ask — never empty, so a bundle never shows a blank.
+    #[test]
+    fn the_build_marker_has_a_shape_a_reader_can_check() {
+        if BUILD != "unknown" {
+            let (rev, date) = BUILD.split_once(' ').expect("`<rev> <date>`");
+            let sha = rev.trim_end_matches("+dirty");
+            assert!(
+                sha.len() >= 7 && sha.chars().all(|c| c.is_ascii_hexdigit()),
+                "build marker {BUILD:?}: the revision is not a short sha"
+            );
+            assert!(
+                date.len() == 10 && date.as_bytes()[4] == b'-' && date.as_bytes()[7] == b'-',
+                "build marker {BUILD:?}: the date is not YYYY-MM-DD"
+            );
+        }
+        // This tree IS a git checkout, so the marker must be the real one.
+        assert_ne!(
+            BUILD, "unknown",
+            "build.rs could not read git in a git checkout"
+        );
     }
 
     #[test]

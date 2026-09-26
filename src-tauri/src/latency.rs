@@ -1262,6 +1262,69 @@ mod tests {
         assert_eq!(c.samples, 2, "the metric must resume when speech does");
     }
 
+    /// AND A PAUSE RELAY IS DELIBERATELY HOLDING OPEN IS SEVERAL OF THEM — RG-284.
+    ///
+    /// The test above fires ONE step across a pause. `stt::finalize_after` now holds
+    /// a window open for up to `DANGLING_SILENCE_FINALIZE` hops when the words so far
+    /// end on a book name with no numbers after it, so a preacher who says "turn with
+    /// me to Psalms" and then finds the page produces a RUN of steps that each decode
+    /// a window nobody spoke into — `is_final` false throughout, by design, because
+    /// the utterance has not ended.
+    ///
+    /// Every one of them is silence. A held window that started reporting three
+    /// seconds of cadence would put RG-118's 43-second sample back in the tail, with
+    /// Relay's own feature as the cause, and `worst` and `p99` are what Settings →
+    /// Diagnostics shows a church.
+    ///
+    /// Put the defect back by dropping `spoke_during_gap` from `transcript_emitted`
+    /// and this fails on the first held step.
+    #[test]
+    fn a_window_held_open_across_a_pause_reports_no_cadence_at_all() {
+        let _l = guard();
+        // One pass while the preacher is speaking, to arm `last_partial_us`.
+        let id = begin_pass(0, None);
+        transcript_emitted(id, 1_000, 3_000, 1, false, 5);
+        close(id);
+
+        // THE HOLD. Four more steps, none of them final, the voiced count frozen
+        // at 5 the whole way through — which is exactly what the worker reports
+        // while it is waiting for the chapter and verse to arrive.
+        for _ in 0..4 {
+            std::thread::sleep(std::time::Duration::from_millis(120));
+            let id = begin_pass(0, None);
+            transcript_emitted(id, 1_000, 5_000, 1, false, 5);
+            close(id);
+        }
+
+        let cadence = |r: &Report| -> (u64, f64) {
+            let c = r
+                .metrics
+                .iter()
+                .find(|m| m.metric == "transcript_cadence")
+                .expect("metric");
+            (c.samples, c.worst_ms.unwrap_or(0.0))
+        };
+        let (samples, worst) = cadence(&report(8));
+        assert_eq!(
+            samples, 0,
+            "a window Relay is holding open on purpose was timed as if it were latency"
+        );
+        assert_eq!(worst, 0.0, "the held pause leaked into the tail");
+
+        // And the words arriving end the hold: the voiced count climbs, and that
+        // gap IS cadence. A guard that could not tell the two apart would hide the
+        // stall it exists to find.
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let id = begin_pass(0, None);
+        transcript_emitted(id, 1_000, 6_000, 1, false, 6);
+        close(id);
+        assert_eq!(
+            cadence(&report(8)).0,
+            1,
+            "the metric must resume the moment the preacher does"
+        );
+    }
+
     #[test]
     fn a_frontend_clock_from_the_future_falls_back_to_arrival() {
         let _l = guard();

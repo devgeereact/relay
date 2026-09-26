@@ -30,6 +30,7 @@ import {
   isOverride,
   liveTransition,
 } from './transitions.js';
+import { codeOnly } from './codeonly.js';
 
 const src = resolve(__dirname, '..');
 const OUTPUT = readFileSync(resolve(src, 'Output.svelte'), 'utf8');
@@ -196,7 +197,7 @@ describe('L4 · the picker is in the take rack, and the take is never below it',
     // and the paragraph three lines above this one contains the call verbatim —
     // so commenting the real call out left the assertion passing over a shell
     // that no longer read the override at all. Only the code is the claim.
-    const code = APP.replace(/\/\/.*$/gm, '').replace(/<!--[\s\S]*?-->/g, '');
+    const code = codeOnly(APP);
     expect(code).toMatch(/loadLiveTransition\(\)/);
   });
 
@@ -235,7 +236,7 @@ describe('L4 · the picker is in the take rack, and the take is never below it',
     const END = '  :global(.ibtn){';
     expect(style.indexOf(END), 'the end boundary of the band has moved').toBeGreaterThan(0);
     const band = style.slice(style.indexOf('  .rk-x .xcap{'), style.indexOf(END));
-    const rules = band.replace(/\/\*[\s\S]*?\*\//g, '');
+    const rules = codeOnly(band);
     expect(rules).not.toMatch(/--v-amber|--v-amethyst|--v-cyan/);
     expect(rules).toMatch(/\.rk-x\.on \.xpick\{border-color:var\(--v-accent-line\)/);
   });

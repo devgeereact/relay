@@ -35,10 +35,47 @@
 //!
 //! > **False auto-fire rate** — how often Relay shows a verse nobody asked for.
 
-use crate::detection::{self, DetectionMethod};
+use crate::detection::{self, DetectionMethod, PhraseIndex, VerseRef};
 use crate::router::{RouteDecision, Router};
 use serde::Deserialize;
 use std::collections::BTreeMap;
+use std::sync::OnceLock;
+
+/// The phrase index, over the bundled KJV, built once for the whole run.
+///
+/// ── Why this had to be added before anything could be measured ─────────────
+///
+/// Until 2026-09-23 this harness ran `detect_direct` and `detect_ambiguous` and
+/// nothing else, so the QUOTED path — which since DECISIONS §118 can put a verse
+/// on a wall unattended — was outside the one instrument that reports a
+/// wrong-verse rate. The scorecard would have gone on printing 0.0% whatever that
+/// path did. A benchmark that cannot see a path is not evidence about it, and the
+/// number it prints is worse than no number because it looks like one.
+///
+/// Built from the same corpus the app builds it from, through `db::init_fresh` on
+/// an in-memory database — the real seed, not a fixture of one.
+fn phrases() -> &'static PhraseIndex {
+    static IDX: OnceLock<PhraseIndex> = OnceLock::new();
+    IDX.get_or_init(|| {
+        let conn = rusqlite::Connection::open_in_memory().expect("in-memory db");
+        crate::db::init_fresh(&conn).expect("seed the KJV");
+        let corpus: Vec<(VerseRef, String)> = crate::db::all_verses(&conn)
+            .expect("corpus")
+            .into_iter()
+            .map(|v| {
+                (
+                    VerseRef {
+                        book: v.book,
+                        chapter: v.chapter,
+                        verse: v.verse,
+                    },
+                    v.text,
+                )
+            })
+            .collect();
+        PhraseIndex::build(&corpus)
+    })
+}
 
 #[derive(Debug, Deserialize)]
 struct Corpus {
@@ -82,6 +119,30 @@ fn run(case: &Case) -> Outcome {
         // existed, and would have kept reporting the P0's phrasings as auto-fires.
         // A gate that assumes the answer is not a gate.
         match router.decide(&key, m.confidence, m.method, 0) {
+            RouteDecision::AutoFire => auto_fired.push(key),
+            RouteDecision::Suggest => suggested.push(key),
+            RouteDecision::Drop => {}
+        }
+    }
+    // ── THE QUOTED PATH, WHICH CAN NOW REACH A WALL ────────────────────────
+    //
+    // `for_quotation` decides from the evidence exactly as `emit_detections`
+    // does, and the same `Router` gates it, so a `Reading` here is a verse that
+    // would have gone in front of a congregation with nobody pressing anything.
+    //
+    // TWO DELIBERATE DIFFERENCES from the live path, both stated rather than
+    // discovered. There is no ANCHOR (the live path narrows to a book the window
+    // named, and to the passage on screen) — so this is the harder case, not the
+    // easier one. And rule 29's one-verse-per-window rule is not modelled here,
+    // for the same reason it is not modelled for `detect_direct` above: this
+    // harness scores candidates, and the live path additionally keeps only the
+    // strongest. So a wrong verse counted here may in the live path have been
+    // displaced by a right one — again the harder case.
+    for h in phrases().quoted(&case.text, None, 3) {
+        let key = format!("{} {}:{}", h.r.book, h.r.chapter, h.r.verse);
+        let method = DetectionMethod::for_quotation(h.run, h.sole);
+        let conf = (0.60 + 0.03 * h.run.saturating_sub(detection::MIN_RUN_WORDS) as f32).min(0.95);
+        match router.decide(&key, conf, method, 0) {
             RouteDecision::AutoFire => auto_fired.push(key),
             RouteDecision::Suggest => suggested.push(key),
             RouteDecision::Drop => {}
@@ -304,6 +365,88 @@ mod tests {
         );
     }
 
+    /// ── A `must_not_fire` CASE HAS TO ACTUALLY BE A PARAPHRASE ────────────
+    ///
+    /// `no_paraphrase_ever_auto_fires` is this module's load-bearing test, and it
+    /// is only as good as the label. `para-john-316` carried that label for a year
+    /// while containing NINE words of John 3:16 verbatim — *"in him should not
+    /// perish but have everlasting life"* — held by no other verse. Nothing could
+    /// see it, because the harness ran no quoted path at all until DECISIONS §118,
+    /// so the test passed and proved something narrower than it claimed.
+    ///
+    /// A test whose subject can silently stop being its subject is the same defect
+    /// as a status badge that cannot detect its own failure. So the label is now
+    /// checked: a case that says a paraphrase must never fire must not hold a run
+    /// long enough to be a reading — unless it says WHY, which `read-tied-caleb`
+    /// does (twenty words, and two verses hold them word for word).
+    #[test]
+    fn a_case_claiming_to_be_a_paraphrase_holds_no_readable_quotation() {
+        const RAW: &str = include_str!("../data/eval_corpus.json");
+        let corpus: Corpus = serde_json::from_str(RAW).unwrap();
+        for case in corpus.cases.iter().filter(|c| c.must_not_fire) {
+            for h in phrases().quoted(&case.text, None, 5) {
+                assert_ne!(
+                    DetectionMethod::for_quotation(h.run, h.sole),
+                    DetectionMethod::Reading,
+                    "[{}] is labelled a paraphrase and holds {} words of {} {}:{} verbatim: {:?}",
+                    case.id,
+                    h.run,
+                    h.r.book,
+                    h.r.chapter,
+                    h.r.verse,
+                    h.phrase
+                );
+            }
+        }
+    }
+
+    /// THE HARNESS CAN SEE THE PATH IT IS BEING ASKED ABOUT.
+    ///
+    /// Until 2026-09-23 `run` called `detect_direct` and `detect_ambiguous` and
+    /// nothing else, so the scorecard's wrong-verse rate was silent about the
+    /// quoted path — and would have gone on printing 0.0% whatever that path did
+    /// once it could reach a wall. A benchmark blind to a path is worse than no
+    /// benchmark, because its number looks like evidence.
+    ///
+    /// The corpus must therefore hold at least one case the quoted path alone can
+    /// answer: no reference spoken, and the verse still found.
+    #[test]
+    fn the_corpus_exercises_the_path_that_can_now_reach_a_wall() {
+        const RAW: &str = include_str!("../data/eval_corpus.json");
+        let corpus: Corpus = serde_json::from_str(RAW).unwrap();
+        let read_only: Vec<&Case> = corpus
+            .cases
+            .iter()
+            .filter(|c| {
+                !c.expect.is_empty()
+                    && detection::detect_direct(&c.text).is_empty()
+                    && phrases().quoted(&c.text, None, 5).iter().any(|h| {
+                        DetectionMethod::for_quotation(h.run, h.sole) == DetectionMethod::Reading
+                    })
+            })
+            .collect();
+        assert!(
+            read_only.len() >= 3,
+            "only {} case(s) reach a wall through the quoted path alone",
+            read_only.len()
+        );
+        // And each of them must actually auto-fire the verse it names, or the
+        // operator's instruction is not being kept.
+        for case in read_only {
+            let out = run(case);
+            for want in &case.expect {
+                assert!(
+                    out.auto_fired.contains(want),
+                    "[{}] {:?} — a verse read aloud was not followed: auto={:?} suggested={:?}",
+                    case.id,
+                    case.text,
+                    out.auto_fired,
+                    out.suggested
+                );
+            }
+        }
+    }
+
     /// The tier-1 languages must actually be covered by the benchmark, or the
     /// moat goes back to being unmeasured the moment someone deletes a case.
     #[test]
@@ -344,7 +487,7 @@ mod tests {
 ///
 /// Raising the evidence floor to 3 (see `MIN_EVIDENCE_TERMS`) took it to **75%**
 /// and removed both. Merging in the gloss expansion and the rare-single-word
-/// exception (DECISIONS.md §25/§33) moved the honest baseline again — see
+/// exception (DECISIONS.md §33) moved the honest baseline again — see
 /// `paraphrase_recall_does_not_regress` for the current measured numbers and why.
 ///
 /// ## What it does NOT claim
@@ -497,6 +640,19 @@ mod paraphrase {
             n,
             100.0 * at5 as f32 / n as f32
         );
+        // @3 as well as @1 and @5, because THREE is what an operator sees:
+        // `SEMANTIC_SUGGESTIONS_MAX` is 3, so recall@5 measures two rows that
+        // never reach a console.
+        let at3 = rows
+            .iter()
+            .filter(|(_, _, r)| r.map(|x| x < 3).unwrap_or(false))
+            .count();
+        println!(
+            "  recall@3 {}/{} ({:.0}%)  <- what the console can show",
+            at3,
+            n,
+            100.0 * at3 as f32 / n as f32
+        );
         println!("  TF-IDF is lexical. The ceiling is vocabulary, not tuning.\n");
     }
 
@@ -504,7 +660,7 @@ mod paraphrase {
     /// below what was measured when the evidence floor was raised to 3.
     ///
     /// RE-MEASURED after merging in the gloss expansion and the rare-single-word
-    /// evidence exception (DECISIONS.md §25/§33): `expand_with_gloss` now runs on
+    /// evidence exception (DECISIONS.md §33): `expand_with_gloss` now runs on
     /// every query, which shifts scores enough that "god loved the world so much
     /// that he gave his only son" now ranks 1 John 4:9 fractionally above John
     /// 3:16 (0.477 vs 0.465 — the two verses are genuinely near-duplicate in
@@ -512,7 +668,26 @@ mod paraphrase {
     /// because the gloss expansion also newly resolves a previously-missed case.
     /// Net honest baseline, not a regression papered over.
     ///
-    /// Deliberately a floor and not an equality: an embedder landing behind this
+    /// ── RE-MEASURED AGAIN, 2026-09-20, AND THE @5 FLOOR CAME DOWN ───────────
+    ///
+    /// §33 was reversed: a single rare word is no longer evidence on its own and
+    /// a short query no longer bends the bar to two. That moved this benchmark
+    ///
+    ///     recall@1  11/16 → 12/16      recall@3  13/16 → 13/16 (unchanged)
+    ///     recall@5  14/16 → 13/16
+    ///
+    /// and the reason it is ACCEPTED rather than reverted is `@3`: the console
+    /// offers at most `SEMANTIC_SUGGESTIONS_MAX` = 3 paraphrase rows, so ranks 4
+    /// and 5 are not a surface anybody has. Every rank an operator can actually
+    /// see either held or improved, while the offers made across a real
+    /// 93-minute service fell from 638 to 186 and the 287 backed by a single
+    /// word became none. See `detection::MIN_EVIDENCE_TERMS` for the full table.
+    ///
+    /// SO @3 IS ASSERTED HERE TOO, and it is the floor that matters. Lowering the
+    /// @5 floor without adding @3 would have turned a ratchet into a ratchet with
+    /// a hole in it.
+    ///
+    /// Deliberately floors and not equalities: an embedder landing behind this
     /// seam should make the test pass by a mile, not have to be edited.
     #[test]
     fn paraphrase_recall_does_not_regress() {
@@ -525,12 +700,21 @@ mod paraphrase {
             .filter(|(_, _, r)| r.map(|x| x < 5).unwrap_or(false))
             .count();
         assert!(
-            at1 * 100 / n >= 68,
-            "paraphrase recall@1 fell to {at1}/{n} — was 11/16 (69%)"
+            at1 * 100 / n >= 75,
+            "paraphrase recall@1 fell to {at1}/{n} — was 12/16 (75%)"
+        );
+        let at3 = rows
+            .iter()
+            .filter(|(_, _, r)| r.map(|x| x < 3).unwrap_or(false))
+            .count();
+        assert!(
+            at3 * 100 / n >= 81,
+            "paraphrase recall@3 fell to {at3}/{n} — was 13/16 (81%). This is the \
+             LAST RANK THE CONSOLE SHOWS; see this test's note."
         );
         assert!(
-            at5 * 100 / n >= 87,
-            "paraphrase recall@5 fell to {at5}/{n} — was 14/16 (88%)"
+            at5 * 100 / n >= 81,
+            "paraphrase recall@5 fell to {at5}/{n} — was 13/16 (81%)"
         );
     }
 

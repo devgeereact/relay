@@ -6,16 +6,33 @@
     setCountdownWarnDefault,
   } from './lib/layers.js';
   import { countdownRemainingMs, countdownIsPaused, countdownTotalMs } from './lib/countdown.js';
+  import { sameHostMediaUrl } from './lib/outputurl.js';
+  import { clipRemainingMs, CLIP_WARN_MS } from './lib/mediaclock.js';
+  import { applyMediaTransport } from './lib/mediatransport.js';
+  import { syncSeek } from './lib/mediasync.js';
+  import { messagePlacement } from './lib/stagemessage.js';
+  import { restingLayout } from './lib/stageresting.js';
   // Mobile stage-display remote — the preacher opens this on a phone/iPad (via
   // QR or the LAN URL) to see the live verse + reference in real time. No Tauri
   // runtime: it connects to the kiosk WebSocket hub (:8031) for content, exactly
   // like an OBS/kiosk output, but rendered as a readable mobile confidence view.
   import { onMount, onDestroy } from 'svelte';
   import { acceptsStageMessage, roleOf } from './lib/channelroles.js';
+  // THE PROGRAMME RAIL'S ARITHMETIC, shared with the template path. One rule for
+  // which rows there are, how wide the column is, how many fit and what the rail
+  // says about the ones it could not show — see `timers.js` for why it is not two.
+  import { programmeRows, programmeCh, programmeCapacity, programmeCells } from './lib/timers.js';
   import { startBeat, paintState, BEAT_INTERVAL_MS } from './lib/outputHealth.js';
   // ONE LIST OF ZONES, shared with the desk that assigns them. A second copy
   // here would be a desk offering a zone this page does not draw.
-  import { STAGE_ZONES as ZONES, DEFAULT_STAGE_ZONES, readStageZones } from './lib/stagelayout.js';
+  import {
+    STAGE_ZONES as ZONES,
+    DEFAULT_STAGE_ZONES,
+    readStageZones,
+    readStageFigures,
+    readTimerSize,
+    timerScale,
+  } from './lib/stagelayout.js';
 
   // ── WHICH SCREEN THIS IS ────────────────────────────────────────────────────
   //
@@ -49,6 +66,15 @@
   let note = ''; // the live cue's Stage Note, for this monitor only
   // The Stage Message. Takes the whole screen until the operator clears it.
   let alert = '';
+  /** Note or alarm (DECISIONS §116). False is the safe default. */
+  let alertUrgent = false;
+  // SOMETHING FOR THIS PERSON TO LOOK AT — `{ url, kind }`, or `null`.
+  //
+  // An announcement slide or the preacher's own deck, put on this screen by the
+  // operator. Unlike the alert, it IS retained by the hub and replayed on hello,
+  // because it is a state of the screen rather than an instruction for a moment:
+  // a tablet whose wifi dropped mid-sermon must not come back without it.
+  let stageMedia = null;
   // WHAT EVERY SCREEN IS FOR, as the backend publishes it: `{"2":"stage"}`. Sent
   // on every hello and again whenever it changes, so `{}` is an answer rather
   // than a silence — it is how this page learns it is NOT a stage.
@@ -308,9 +334,16 @@
   let deviceZones = { ...DEFAULT_STAGE_ZONES };
   let assignedZones = null;
   $: zones = assignedZones ?? deviceZones;
-  $: operatorSet = assignedZones !== null;
-  let figures = 'bottom'; // 'bottom' | 'beside'
-  let showZones = false;
+  // WHERE THE FIGURES SIT, and WHO SAID SO. `deviceFigures` is what this device
+  // had stored; `assignedFigures` is the operator's, and it wins — the same
+  // shape as the zones beside it (RG-241).
+  let deviceFigures = 'bottom'; // 'bottom' | 'beside'
+  let assignedFigures = null;
+  $: figures = assignedFigures ?? deviceFigures;
+  // HOW BIG THE CLOCK IS (RG-240). Always a size: a figure has to be drawn at
+  // something, so this has no null the way the two above do.
+  let timerSize = 'normal';
+  $: timerMul = timerScale(timerSize);
 
   function loadZones() {
     try {
@@ -322,31 +355,15 @@
       // its own default rather than absent, and a corrupt value cannot delete one.
       for (const z of ZONES)
         if (typeof saved[z.key] === 'boolean') deviceZones[z.key] = saved[z.key];
-      if (saved.figures === 'beside' || saved.figures === 'bottom') figures = saved.figures;
+      if (saved.figures === 'beside' || saved.figures === 'bottom') deviceFigures = saved.figures;
     } catch {
       /* defaults stand */
     }
   }
-  function saveZones() {
-    try {
-      localStorage.setItem(ZONE_KEY, JSON.stringify({ ...deviceZones, figures }));
-    } catch {
-      /* the layout still applies to this session */
-    }
-  }
-  function toggleZone(key) {
-    // An operator's layout is not editable from the device it is displayed on:
-    // two people changing one screen from two places is how a stage ends up
-    // showing something nobody chose. The panel says so rather than silently
-    // ignoring the tap.
-    if (operatorSet) return;
-    deviceZones = { ...deviceZones, [key]: !deviceZones[key] };
-    saveZones();
-  }
-  function setFigures(v) {
-    figures = v;
-    saveZones();
-  }
+  // `toggleZone`, `setFigures` and `saveZones` went with the panel (RG-241).
+  // Nothing on this page writes the arrangement any more — a stored one is READ
+  // (`loadZones`), so a tablet configured by hand keeps what it had, and every
+  // new choice is the operator's.
 
   // Countdown mirror — ticked by the same 1s timer as the wall clock.
   let cdTo = null;
@@ -527,21 +544,16 @@
   // digits on a CONGREGATION countdown and on the mirror above this row, and this
   // rail answers the only question a preacher asks it past zero, which is how far
   // over. `+4:37` escalates as the minutes pass. `WRAP UP` does not.
-  $: programme = stageTimers
-    .map((t) => ({
-      t,
-      id: t?.id,
-      label: (t?.label || '').trim(),
-      held: countdownIsPaused(t),
-      ms: countdownRemainingMs(t, nowMs, { past: true }),
-    }))
-    .filter((r) => r.ms != null)
-    .map(({ t, ...r }) => ({
-      ...r,
-      v: r.ms <= 0 ? `+${formatCountdown(-r.ms)}` : formatCountdown(r.ms),
-      warn:
-        !r.held && (r.ms <= 0 || countdownWarning(r.ms, countdownTotalMs(t), t?.warn_ms)),
-    }));
+  //
+  // ── AND IT IS NO LONGER THIS PAGE'S RULE ALONE (requirement 2b) ───────────
+  //
+  // The derivation moved to `lib/timers.js::programmeRows` unchanged, because a
+  // second surface now draws this rail: `output.html` on a `stage`-role channel,
+  // through a `programme` layer in its template (DECISIONS §89). Everything above
+  // is the reasoning behind that function and stays here beside the rail it
+  // describes; what left is the arithmetic, so the two surfaces cannot come to
+  // different conclusions about the same clock in the same room.
+  $: programme = programmeRows(stageTimers, nowMs);
   // THE ROW IS SIZED FROM THE TEXT IT IS ACTUALLY PAINTING.
   //
   // `.tval` budgeted a flat SIX characters and `formatCountdown` emits seven once a
@@ -561,7 +573,7 @@
   // three days ago. A budget derived from the remaining milliseconds would be a
   // character short of every one of them; this one is handed the sign because the
   // sign is part of the value.
-  $: progCh = programme.reduce((n, r) => Math.max(n, r.v.length), 4);
+  $: progCh = programmeCh(programme);
 
   // ── THE RAIL'S FLOOR ───────────────────────────────────────────────────────
   //
@@ -588,7 +600,7 @@
   // was cut off the bottom of the passage — on a page that is `overflow: hidden` by
   // design, so there was nothing to scroll and nothing saying the verse was
   // incomplete. With the Programme zone switched off the same two panels left the
-  // verse whole (RG-164, `docs/qa/audits/2026-09-17-WAVE4-STAGE-PLANNER.md` §2.3).
+  // verse whole (RG-164, `docs/qa/audits/DESIGN.md` §2.3).
   //
   // So the rail stands down while a panel is open. The order of precedence is the
   // only one that can be right here: the rail is bookkeeping and the verse is the
@@ -600,22 +612,15 @@
   //
   // This is NOT the `programme` zone. A zone is a choice a device keeps; this is a
   // moment, and `relay.stage.zones` is untouched by it.
-  $: panelOpen = showZones || showCtl;
+  $: panelOpen = showCtl;
 
-  const MIN_TIMER_PX = 132;
   let frameW = 1024;
-  $: capacity = Math.max(1, Math.floor((Number(frameW) || 1024) / MIN_TIMER_PX));
+  $: capacity = programmeCapacity(frameW);
   // The last slot is spent on the count when there is one, so the count cannot
   // itself be the thing that gets pushed off the end. At least one clock always
   // survives — a rail that says "6 more" and shows nothing is a rail that has told
   // the preacher he cannot have the thing he is looking at.
-  $: progCells =
-    programme.length <= capacity
-      ? programme
-      : (() => {
-          const keep = Math.max(1, capacity - 1);
-          return [...programme.slice(0, keep), { more: programme.length - keep }];
-        })();
+  $: progCells = programmeCells(programme, capacity);
 
   // SERVICE ELAPSED — counts up from the epoch the fired content carries. There is
   // no epoch when no service is recording, and an absence is shown as an absence:
@@ -629,6 +634,82 @@
   // verse. So the rail's stacked pairs — the thing §5 actually asks for — could
   // not be reached from any state Relay can be in. A zone nothing can render is a
   // zone nobody is looking at.
+  // ── HOW LONG IS LEFT OF THE CLIP IN FRONT OF THE PREACHER (RG-213) ─────────
+  //
+  // Read off THIS page's own player, on its own `timeupdate`, because this page
+  // has no channel health to ask and the clip it would be asking about is the
+  // one already painting in front of the person who needs the answer.
+  // `clipRemainingMs` carries the reasoning and the limit.
+  //
+  // `null` until the player knows, and `null` again the moment the slide goes —
+  // a figure about a clip that is no longer on the screen is the same lie as a
+  // countdown that keeps running after the cue it belonged to.
+  let clipEl = null;
+  let clipLeft = null;
+  const readClip = () => {
+    // AND PULL IT BACK TO WHERE THE CLIP SHOULD BE (RG-220). The preacher's copy
+    // is corrected against the same instant as every congregation screen — which
+    // is what makes the figure beside it (RG-213) a fact about the moment
+    // everybody else is watching rather than about this browser's own luck.
+    // `syncSeek` owns every refusal, the held clip included.
+    if (clipEl && clipStart != null) {
+      const want = syncSeek({
+        startedAt: clipStart,
+        now: Date.now() + hostOffsetMs,
+        duration: clipEl.duration,
+        position: clipEl.currentTime,
+        paused: !!xport?.paused,
+        looping: !!clipEl.loop,
+      });
+      if (want != null) {
+        try {
+          clipEl.currentTime = want;
+        } catch {
+          /* no metadata yet; the next event will. */
+        }
+      }
+    }
+    clipLeft = clipRemainingMs(clipEl);
+  };
+  // ── AND IT DOES WHAT EVERY OTHER SCREEN IS DOING (RG-214) ──────────────────
+  //
+  // The hub sends `media_transport` to every client. This page ignored it and
+  // hard-coded `loop` on its own slide, so Pause, Play and Loop moved the whole
+  // building except the screen in front of the preacher — and a clip held on the
+  // wall ran on here for the rest of the cue, which puts the countdown beside it
+  // (RG-213) on a different moment from the one everybody else is watching.
+  //
+  // `applyMediaTransport` is the same rule `TemplateRender` uses, in one place
+  // rather than typed twice.
+  let xport = null;
+  let actedTransport = null;
+  // A TRANSPORT BELONGS TO THE CLIP IT WAS PRESSED FOR, and "the clip" means
+  // THIS clip and not "a clip". Keyed on the url rather than on there being one:
+  // the hub drops its retained transport on a content frame, and nothing drops
+  // it when one slide replaces another, so a held clip handed its Pause to the
+  // next one and the following slide arrived frozen with nothing to say why.
+  let clipUrl = null;
+  /** When Relay sent this clip, on Relay's clock. Null until a slide arrives. */
+  let clipStart = null;
+  $: clipNow = stageMedia?.kind === 'video' ? stageMedia.url : null;
+  $: if (clipNow !== clipUrl) {
+    clipUrl = clipNow;
+    clipStart = stageMedia?.startedAt ?? null;
+    xport = null;
+    actedTransport = null;
+    clipLeft = null;
+    if (!clipNow) clipEl = null;
+  }
+  $: if (clipEl && xport) {
+    actedTransport = applyMediaTransport(clipEl, xport, actedTransport);
+    readClip();
+  }
+  $: clipWarn = clipLeft != null && clipLeft <= CLIP_WARN_MS;
+  // THE CLIP LEFT THIS LIST (RG-256). It is painted on the picture now, and the
+  // same number in two places is two places that can disagree the first time
+  // either one moves. The rail keeps the facts that are about the SERVICE — the
+  // countdown, the time of day, the elapsed — and the clip's own clock belongs
+  // to the clip.
   $: figureList = [
     ...(zones.countdown && cdRemain != null ? ['countdown'] : []),
     ...(zones.clock ? ['clock'] : []),
@@ -656,18 +737,35 @@
   // The pairs are labelled from the END, so a formatter that ever returned MM:SS
   // rather than H:MM:SS still labels the minutes as minutes.
   const PAIR_KEYS = ['Hrs', 'Min', 'Sec'];
-  $: railList = figureList.flatMap((f) => {
-    if (f === 'countdown') {
-      return cdFinished
-        ? [{ k: 'Countdown', v: cdDone || '0:00', done: true }]
-        : cdPairs.map((p, i) => ({
-            k: PAIR_KEYS[PAIR_KEYS.length - cdPairs.length + i] ?? '',
-            v: p,
-            warn: cdWarn,
-          }));
-    }
-    if (f === 'clock') return [{ k: 'Time', v: clock }];
-    return [{ k: 'Elapsed', v: elapsedText }];
+  // ── ONE LIST, THREE READERS ────────────────────────────────────────────────
+  //
+  // The rail, the row across the bottom and the character count that sizes them
+  // each carried their OWN ladder over the figure kinds — three copies of
+  // "countdown means this, clock means that". They were already inconsistent
+  // when the clip figure was added: the rail labelled it and the row fell
+  // through to `Elapsed` and painted an empty value under the wrong word, on the
+  // preacher's screen. That is the twin-door shape this repository keeps
+  // finding, in three doors rather than two.
+  //
+  // So every figure says its own label and value once, here. The rail still
+  // expands a running countdown into its stacked pairs — that is a LAYOUT
+  // difference and the reason `railList` survives — but it takes every other
+  // figure from this list rather than re-deciding it.
+  $: figCells = figureList.map((f) =>
+    f === 'countdown'
+        ? { k: 'Countdown', v: cdFinished ? cdDone || '0:00' : cdText, warn: cdWarn, done: cdFinished }
+        : f === 'clock'
+          ? { k: 'Time', v: clock }
+          : { k: 'Elapsed', v: elapsedText },
+  );
+  $: railList = figureList.flatMap((f, i) => {
+    if (f === 'countdown' && !cdFinished)
+      return cdPairs.map((p, j) => ({
+        k: PAIR_KEYS[PAIR_KEYS.length - cdPairs.length + j] ?? '',
+        v: p,
+        warn: cdWarn,
+      }));
+    return [figCells[i]];
   });
   // How many ROWS the beside-rail holds: a running countdown is three of them, a
   // finished one is a single line of words. It is the list's own length now, so a
@@ -679,6 +777,13 @@
   // thing that page is being looked at for — so the figures take the room the
   // reading is not using. Still a flex BASIS, still clipped.
   $: readingHasBody = !!(visible && content?.text);
+  // ── WHICH SHAPE A STAGE MESSAGE TAKES (RG-239) ──────────────────────
+  //
+  // `stagemessage.js` owns the rule and this is its one caller. `down` is a
+  // panic control having taken this screen, and a message goes down with the
+  // screen (DECISIONS §91) — so it is asked here rather than inside the rule,
+  // which is about what is on the screen and not about whether there is one.
+  $: msgPlace = down ? 'none' : messagePlacement({ message: alert, urgent: alertUrgent });
   // …AND "THE READING HAS NO BODY" IS NOT THE SAME CLAIM AS "A COUNTDOWN IS
   // RUNNING", WHICH IS THE ONE THE EXCEPTION WAS WRITTEN FOR.
   //
@@ -695,7 +800,21 @@
   // all: a countdown BESIDE a bodiless reading left 74% of the screen black and
   // squeezed the figures into a quarter. One flag, both layouts — the twin door
   // this repository keeps finding a guarantee missing from.
-  $: figuresTakeTheRoom = !readingHasBody && figureList.includes('countdown');
+  // ── WHO TAKES THE ROOM NOBODY ELSE IS USING (RG-244) ──────────────────────
+  //
+  // `stageresting.js` owns the rule. The countdown case is the one this page
+  // already had; what it was missing is the Stage Timer — the clock a preacher
+  // is actually working to — which left a large empty region above a small
+  // figure for the whole of a sermon.
+  $: resting = restingLayout({
+    reading: readingHasBody,
+    slide: !!(zones.media && stageMedia),
+    countdown: figureList.includes('countdown'),
+    // `programme` is this page's own name for the rail's rows — see line 565.
+    programme: zones.programme && programme.length > 0,
+  });
+  $: figuresTakeTheRoom = resting === 'figures';
+  $: railTakesTheRoom = resting === 'programme';
   // ACROSS THE BOTTOM, EVERY FIGURE IS ONE SIZE.
   //
   // `--ch` was per-figure, so each one filled its own cell — and side by side on
@@ -709,9 +828,15 @@
   // difference reads as emphasis rather than as raggedness, and §5 asks for the
   // countdown's pairs to FILL the rail — which sizing them for an eight-character
   // clock two rows down would quietly undo.
-  $: figCh = figureList
-    .map((f) => (f === 'countdown' ? (cdFinished ? cdDone || '0:00' : cdText) : f === 'clock' ? clock : elapsedText))
-    .reduce((n, v) => Math.max(n, v.length || 5), 5);
+  $: figCh = figCells.reduce((n, c) => Math.max(n, (c.v || '').length || 5), 5);
+  /* THE WALL CLOCK IS NOT A SERVICE FIGURE (RG-249). The row is a flat 15% of the
+     screen whatever is in it, and most of a sermon the only thing in it is what
+     o'clock it is — a fact that makes no claim about this service, given the same
+     room as a countdown, an elapsed time and a clip. The operator, reading the
+     built page: *"the current time card is too big... the main focus should be
+     the timer"*. The row is marked here rather than sized here, because how much
+     room a row gets is the stylesheet's decision and this is the fact it needs. */
+  $: clockOnly = figCells.length > 0 && figCells.every((c) => c.k === 'Time');
 
   // HOW MANY CHARACTERS THE READING HAS, handed to the stylesheet so the verse can
   // be sized to the room instead of to a fixed ceiling. docs/REBRAND.md §3.4 —
@@ -879,6 +1004,11 @@
       // figure nobody chose for it.
       cdWarnMs = null;
       next = null;
+      // AND SO DOES THE SLIDE. `Clear screens` means everything, and a picture
+      // the operator has just taken off every other screen has no business
+      // surviving here. The hub empties its retained slot at the same door, so a
+      // screen that reconnects after a panic control is not sent it back.
+      stageMedia = null;
       // A STAGE MESSAGE COMES DOWN WITH THE SCREENS — DECISIONS §91.
       //
       // This line is the answer to a question that used to be left unasked. The
@@ -937,6 +1067,42 @@
       // and a panic control takes it down with everything else it says (§91).
       if (!acceptsStageMessage(myRole)) return;
       alert = (m.text || '').trim();
+      alertUrgent = !!m.urgent;
+    } else if (m.kind === 'media_transport') {
+      // NOT ROLE-GATED, for the reason `Output.svelte` records at the same
+      // branch: this changes what a screen is ALREADY showing rather than
+      // putting something new in front of anybody, and a page with no clip up
+      // has nothing to apply it to.
+      xport = {
+        paused: !!m.paused,
+        loop: !!m.loop,
+        replayEpoch: Number.isFinite(m.replay_epoch) ? m.replay_epoch : null,
+        seekEpoch: Number.isFinite(m.seek_epoch) ? m.seek_epoch : null,
+        seekMs: Number.isFinite(m.seek_ms) ? m.seek_ms : null,
+        volume: Number.isFinite(m.volume) ? m.volume : null,
+      };
+      // The scrub's new baseline, so the corrector does not undo the drag
+      // (RG-220) and the countdown beside it stays about the right moment.
+      if (Number.isFinite(m.started_at) && clipStart != null) clipStart = m.started_at;
+    } else if (m.kind === 'stage_media') {
+      // ONLY A STAGE, on exactly `stage_alert`'s argument one branch up: the hub
+      // publishes to every client because it cannot address one (DECISIONS §35),
+      // so the refusal belongs at the receiver, and a page that does not know
+      // which screen it is must not be handed the preacher's own material.
+      //
+      // `media_url: null` takes it down, which is the one door for both
+      // directions and the same shape `background` uses.
+      if (!acceptsStageMessage(myRole)) return;
+      stageMedia = m.media_url
+        ? {
+            url: sameHostMediaUrl(m.media_url, location.hostname),
+            kind: m.media_kind || 'image',
+            // WHEN RELAY SENT IT (RG-220) — the instant this page corrects its
+            // own copy against. `null` from an older engine, and `syncSeek`
+            // corrects nothing without it.
+            startedAt: Number.isFinite(m.started_at) ? m.started_at : null,
+          }
+        : null;
     } else if (m.kind === 'stage_zones') {
       // A LIVE CHANGE. The initial read is over HTTP on connect (see
       // `loadStageZones`) because this page is the only consumer of this map
@@ -1060,13 +1226,22 @@
   function applyStageZones(map) {
     if (!map || typeof map !== 'object' || !channelId) {
       assignedZones = null;
+      assignedFigures = null;
+      timerSize = 'normal';
       return;
     }
     const mine = map[String(channelId)];
     if (!mine || typeof mine !== 'object') {
       assignedZones = null;
+      assignedFigures = null;
+      timerSize = 'normal';
       return;
     }
+    // THE OTHER TWO THINGS A LAYOUT CARRIES (RG-240, RG-241). They ride in the
+    // same blob rather than on a second frame, so a screen can never be holding
+    // one operator's zones and another's sizes.
+    assignedFigures = readStageFigures(mine);
+    timerSize = readTimerSize(mine);
     // Key by key off the DEFAULTS, exactly as `loadZones` does: a zone added in
     // a later version arrives on its own default rather than absent, and a
     // corrupt value cannot delete one.
@@ -1264,12 +1439,9 @@
   <header>
     <span class="brand">Relay · Stage</span>
     <span class="status" class:on={connected && !stale}><i></i>{reach}</span>
-    <button class="ctl-toggle" class:active={showZones} on:click={() => (showZones = !showZones)} aria-label="Choose what this screen shows">
-      Zones
-    </button>
-    <button class="ctl-toggle" class:active={showCtl} on:click={() => (showCtl = !showCtl)} aria-label="Control panel">
-      {showCtl ? 'Done' : 'Control'}
-    </button>
+    <!-- The control's own button left this header (RG-246). The transport is a
+         bar along the foot now and the search is on it, so there is nothing here
+         to open and nothing to guard. -->
   </header>
 
   {#if unidentified}
@@ -1286,11 +1458,41 @@
     </p>
   {/if}
 
-  {#if alert && !down}
-    <!-- THE WHOLE SCREEN. A preacher reads this from a platform, mid-sentence,
-         without looking for it. Outside the zone layout on purpose: an
-         instruction that a switched-off zone could hide is not an instruction. -->
+  {#if msgPlace === 'alert'}
+    <!-- THE WHOLE SCREEN, AND ONLY WHEN IT WAS ASKED FOR (DECISIONS §116). A
+         preacher reads this from a platform, mid-sentence, without looking for
+         it. Outside the zone layout on purpose: an instruction that a
+         switched-off zone could hide is not an instruction.
+
+         It used to render for ANY message, so "wrap up in five" took the whole
+         screen exactly as an emergency would, and an alarm spent on ordinary
+         business stops being an alarm. -->
     <div class="alert {alertSize}" role="status" aria-live="assertive">{alert}</div>
+  {/if}
+  {#if msgPlace === 'large'}
+    <!-- OVER EVERYTHING BUT THE CLOCK (RG-245). It shipped as a strip beside a
+         reading and the operator overruled that on a phone: a Stage Message is
+         the desk speaking to one person mid-sermon, it is never ambient, and the
+         reading in their hand is the thing it is most often about.
+
+         The CLOCK is the exception, and it is this page's job rather than the
+         rule's: `.progrow` and `.figrow` are painted after this block and sit
+         above it, so the preacher still knows how long is left while they
+         read. -->
+    <!-- NOTHING ELSE ON SCREEN, SO THE MESSAGE TAKES THE ROOM (RG-239).
+         It was this same strip whether the screen was full of verse or entirely
+         empty — one line of small type on a dark phone, read from a platform by
+         somebody mid-sentence.
+
+         WHAT SEPARATES THIS FROM AN ALERT, and the separation is deliberate:
+         this takes the READING's box and an alert takes the whole screen; this
+         is ochre on the page's own ground and an alert is rose, full-bleed; this
+         pulses its text and an alert flashes its panel. A reader who cannot see
+         one of those still has the other two. -->
+    <div class="bigmsg" role="status" aria-live="polite">
+      <span class="bigmsg-k">From the desk</span>
+      <span class="bigmsg-v pulse">{alert}</span>
+    </div>
   {/if}
 
   <!-- ══ ZONES ══ NOTHING MAY LEAVE THE SCREEN (docs/REBRAND.md §5).
@@ -1305,12 +1507,69 @@
        and a stage monitor showing only a clock gave half of itself to a region
        with nothing in it. Rendered at 1920×1080 with Reading off: 480px of black
        above the figures. -->
-  {#if zones.reading}
+  <!-- THE MESSAGE TOOK THIS ROOM (RG-247). The reading is not rendered beneath
+       one: two things in the same box, with a stacking rule deciding which the
+       preacher reads, is the arrangement that put the words 140px low. -->
+  <!-- AND THE RAIL TOOK IT AT REST (RG-253). `railTakesTheRoom` grew the timer
+       and left an empty reading area above it printing "— standby —", which cost
+       268px of a 844px phone. `stageresting.js` answers `programme` only when
+       there is no reading, no slide and no countdown, so there is never anything
+       in that region to yield — and the moment anything is fired it is back. -->
+  {#if zones.reading && msgPlace !== 'large' && !panelOpen && !railTakesTheRoom}
   <main class="stage" class:beside>
     <section class="reading" aria-label="Reading">
       {#if shown && content}
         {#if content.reference}<div class="ref">{content.reference}{content.translation ? ' · ' + content.translation : ''}</div>{/if}
         {#if content.text}<div class="verse" style="--vn:{verseChars}; --vcpl:{verseCpl}">{#if content.reference}“{content.text}”{:else}{content.text}{/if}</div>{/if}
+      {:else if zones.media && stageMedia}
+        <!-- THE SLIDE, AND ONLY WHILE NOTHING IS BEING READ.
+             This is the precedence rule requirement 10 asks for, and it lives
+             here rather than in the engine: scripture OVERRIDES the slide, it
+             does not destroy it. The branch above wins whenever there is a
+             reading, and the moment the reading is cleared this one paints again
+             with no second push from the operator. Taking the slide down when a
+             verse arrived would have meant pushing it again after every reading,
+             which is not what "overrides" means.
+
+             A panic control is the one thing that does remove it, in `apply` and
+             at the hub's retention door, so `Clear screens` really does mean
+             everything. -->
+        {#if stageMedia.kind === 'video'}
+          <!-- The clip, and the only place on this page that knows how long is
+               left of it. Every event a player can change its mind on, because a
+               figure that updates on `timeupdate` alone freezes where a clip was
+               paused rather than where it is. -->
+          <!-- KEYED ON THE URL. A `<video>` reused for the next clip keeps the
+               properties the transport set on it — `loop`, and a position — so
+               the element is rebuilt rather than re-pointed. A new clip starts
+               from the top in any case, which is what a re-mount does. -->
+          {#key stageMedia.url}
+          <video class="slide" src={stageMedia.url} bind:this={clipEl}
+            on:loadedmetadata={readClip} on:timeupdate={readClip} on:play={readClip}
+            on:pause={readClip} on:seeked={readClip} on:ended={readClip}
+            autoplay muted playsinline></video>
+          {/key}
+          {#if clipLeft != null}
+            <!-- HOW LONG IS LEFT, ON THE CLIP (RG-256). The operator asked for
+                 it *"on the stage display with a blur as earlier"*, and the
+                 blur being remembered is `.lprog.overmedia` on the OTHER page
+                 (RG-212) — this page has never had one. The figure itself has
+                 been here since RG-213, in the rail beside the picture; what
+                 changes is that it is now on the picture, where somebody
+                 glancing up finds it without reading the rail.
+
+                 It is frosted rather than filled for the reason RG-212 gave
+                 about the other rail: the clip is what the room is watching,
+                 and an opaque bar punched through it is a worse answer than a
+                 clock nobody can read. -->
+            <div class="clipplate" class:warn={clipWarn} role="status" aria-live="off">
+              <span class="clipk">Clip</span>
+              <span class="clipv">{formatCountdown(clipLeft)}</span>
+            </div>
+          {/if}
+        {:else}
+          <img class="slide" src={stageMedia.url} alt="" />
+        {/if}
       {:else}
         <div class="idle">— standby —</div>
       {/if}
@@ -1334,20 +1593,6 @@
   </main>
   {/if}
 
-  {#if !beside && figureList.length}
-    <!-- ACROSS THE BOTTOM. Also its own container, for the same reason. -->
-    <div class="figrow" class:tall={figuresTakeTheRoom} class:only={!zones.reading}
-      style="--figs:{figureList.length}; --ch:{figCh}" aria-label="Figures">
-      {#each figureList as f (f)}
-        {@const v = f === 'countdown' ? (cdFinished ? cdDone || '0:00' : cdText) : f === 'clock' ? clock : elapsedText}
-        <div class="fig" class:warn={f === 'countdown' && cdWarn}>
-          <span class="figk">{f === 'countdown' ? 'Countdown' : f === 'clock' ? 'Time' : 'Elapsed'}</span>
-          <span class="figv">{v}</span>
-        </div>
-      {/each}
-    </div>
-  {/if}
-
   <!-- ══ THE STAGE TIMERS ══ One row per Stage Timer, and no row at all when there are
        none — the same rule as the Stage Note row and the Up Next above it: nothing sent,
        nothing rendered, no room taken (docs/REBRAND.md §5).
@@ -1367,7 +1612,8 @@
   {#if zones.programme && progCells.length && !panelOpen}
     <div
       class="progrow"
-      style="--tmrs:{progCells.length}; --tch:{progCh}"
+      class:owns={railTakesTheRoom}
+      style="--tmrs:{progCells.length}; --tch:{progCh}; --tmul:{timerMul}"
       aria-label="Programme">
       {#each progCells as t, i (i)}
         {#if t.more}
@@ -1377,11 +1623,16 @@
             <span class="tval msg">+{t.more} more</span>
           </div>
         {:else}
-          <div class="tmr" class:warn={t.warn} class:held={t.held} data-timer-id={t.id}>
-            {#if t.label || t.held}
+          <div class="tmr" class:warn={t.warn} class:over={t.over} class:held={t.held} data-timer-id={t.id}>
+            <!-- `Held`, or `TIME UP` past zero (RG-286, operator). ONE FIELD,
+                 from `timers.js::programmeRows`, because the big screen's rail
+                 renders the same rows — a word spelled here and again there is
+                 two rails with an opinion about the same clock, which is this
+                 repository's oldest shape of bug. -->
+            {#if t.label || t.state}
               <span class="thead">
                 {#if t.label}<span class="tlabel">{t.label}</span>{/if}
-                {#if t.held}<span class="tstate">Held</span>{/if}
+                {#if t.state}<span class="tstate">{t.state}</span>{/if}
               </span>
             {/if}
             <!-- ALWAYS A FIGURE, NEVER PROSE. `--tch` budgets this column from the
@@ -1400,49 +1651,22 @@
     <div class="noterow"><span class="note-lbl">Stage Note</span><span class="notetxt">{note}</span></div>
   {/if}
 
-  {#if showZones}
-    <section class="zonepanel" aria-label="Zones">
-      <!-- A DISABLED CONTROL THAT SAYS NOTHING IS A BROKEN CONTROL. When an
-           operator has assigned a layout to this screen, these toggles are not
-           this device's to change — two people editing one screen from two
-           places is how a stage ends up showing something nobody chose. So they
-           are disabled AND the reason is written here, rather than the taps
-           being silently ignored. -->
-      {#if operatorSet}
-        <p class="zonenote" role="status">
-          The desk has given this screen a layout, so these are set from there.
-        </p>
-      {/if}
-      <div class="zonegrid">
-        {#each ZONES as z (z.key)}
-          <button
-            class="zonebtn"
-            class:on={zones[z.key]}
-            aria-pressed={zones[z.key]}
-            disabled={operatorSet}
-            title={operatorSet ? 'Set by the desk for this screen' : null}
-            on:click={() => toggleZone(z.key)}>
-            {z.label}
-          </button>
-        {/each}
-      </div>
-      <div class="zonegrid">
-        <button class="zonebtn" class:on={figures === 'bottom'} aria-pressed={figures === 'bottom'} on:click={() => setFigures('bottom')}>
-          Figures across the bottom
-        </button>
-        <button class="zonebtn" class:on={figures === 'beside'} aria-pressed={figures === 'beside'} on:click={() => setFigures('beside')}>
-          Figures beside the reading
-        </button>
-      </div>
-      <p class="zonefoot">Kept on this device only. Nothing here changes any other screen.</p>
-    </section>
-  {/if}
+  <!-- THE ZONE PICKER IS GONE FROM THIS PAGE (RG-241). It was one tap from the
+       screen a preacher is reading mid-sermon, and on a screen with no assigned
+       layout it wrote `localStorage` — so the person the screen exists for could
+       switch off the clock they were relying on and nobody at the desk would
+       know. The operator chooses, from Outputs, over the layout path that
+       already exists.
+
+       A device's STORED arrangement is still read (`loadZones`), so a tablet
+       somebody configured by hand last month keeps exactly what it had. What it
+       loses is the ability to change it from the tablet. -->
   {#if showCtl}
     <section class="ctl">
-      <div class="nav-row">
-        <button class="nav-btn" on:click={() => nav('prev')} disabled={busy}>‹ Prev</button>
-        <button class="nav-btn" on:click={() => nav('next')} disabled={busy}>Next ›</button>
-      </div>
+      <!-- The nav pair left this panel for the bar along the foot (RG-246),
+           which is on the screen whether the search is open or not. Two Prev
+           buttons on one page would be the twin door this repository keeps
+           deleting. -->
       <form class="search" on:submit|preventDefault={doSearch}>
         <input
           type="search"
@@ -1474,6 +1698,25 @@
       {/if}
     </section>
   {/if}
+  {#if !beside && figureList.length}
+    <!-- ACROSS THE BOTTOM. Also its own container, for the same reason. -->
+    <div class="figrow" class:tall={figuresTakeTheRoom} class:only={!zones.reading}
+      class:clockonly={clockOnly}
+      style="--figs:{figureList.length}; --ch:{figCh}" aria-label="Figures">
+      {#each figCells as c (c.k)}
+        <!-- THE CLOCK IS SECONDARY (RG-243). A row where the time of day is
+             exactly as large as the time remaining has not decided what the
+             screen is for — and `--ch` made them the same size by
+             construction. The clock keeps its switch; what changes is its
+             weight. -->
+        <div class="fig" class:warn={c.warn} class:done={c.done} class:secondary={c.k === 'Time'}>
+          <span class="figk">{c.k}</span>
+          <span class="figv">{c.v}</span>
+        </div>
+      {/each}
+    </div>
+  {/if}
+
   {#if zones.next && next && !down}
     <footer class="next">
       <span class="next-lbl">Up Next</span>
@@ -1483,6 +1726,32 @@
       </div>
     </footer>
   {/if}
+
+  <!-- ══ THE TRANSPORT ══ ALWAYS ON THE SCREEN (RG-246).
+       It was behind a button in the header, and then behind a 550ms hold on that
+       button (RG-242). Both were answers to the wrong shape: a preacher's own
+       controls are not a thing to go looking for mid-sentence, and a bar that is
+       always there cannot be opened by accident because there is nothing to
+       open.
+
+       Three targets at 52px on a bar of their own is a harder thing to hit by
+       accident than a 26px control in a header ever was, which is what retires
+       the guard rather than merely removing it.
+
+       `aria-label` on the search button and nowhere else: the two nav buttons
+       say what they do in words already. -->
+  <nav class="sctl" aria-label="Put a verse on the screens">
+    <button class="sctl-btn" on:click={() => nav('prev')} disabled={busy}>‹ Previous</button>
+    <button class="sctl-btn" on:click={() => nav('next')} disabled={busy}>Next ›</button>
+    <button
+      class="sctl-btn sctl-find"
+      class:on={showCtl}
+      aria-label="Search for a verse"
+      aria-pressed={showCtl}
+      on:click={() => (showCtl = !showCtl)}>
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4.3-4.3"/></svg>
+    </button>
+  </nav>
 </div>
 
 <style>
@@ -1503,8 +1772,52 @@
     height: 100dvh; display: flex; flex-direction: column; color: var(--v-txt);
     font-family: var(--f-body);
     padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+
+    /* THIS PAGE'S OWN GREYS, DECLARED ONCE.
+       Sixteen `rgba(255,255,255,...)` declarations over ELEVEN alphas were spread
+       through the rules beneath this one, and the spread was not a hierarchy: .02,
+       .03 and .035 were one region wash written three ways, and .1, .14, .16 and
+       .18 were one control edge written four ways. Nobody can see the difference
+       between two of them side by side and nobody can hold eleven of them in step
+       by hand - `tokens.css` records five rules that drifted off a shared colour
+       in exactly that way, which is why the four promise colours publish a soft
+       and a line of their own.
+       TWO OF THE ELEVEN WERE NEAR-MISSES OF A SHARED TOKEN, so those alias it
+       rather than restating it: `--v-line` is rgba(255,255,255,.075) and this
+       sheet wrote .08 four times; `--v-line2` is rgba(255,255,255,.13) and this
+       sheet wrote .14 twice. No promise colour is involved anywhere in this block
+       and nothing here moves by more than .05 of alpha. */
+    --s-wash: rgba(255,255,255,.03);       /* a region's own fill: the rail, the figure row, Up Next, the programme rail, both panels */
+    --s-fill: rgba(255,255,255,.05);       /* a control at rest - one step brighter than the panel it sits on, which a search result was not */
+    --s-fill-press: rgba(255,255,255,.1);  /* the same control under a thumb */
+    --s-seam: var(--v-line);               /* the boundary BETWEEN two regions */
+    --s-seam-soft: rgba(255,255,255,.06);  /* between two cells of ONE region - quieter than the boundary around them, deliberately */
+    --s-edge: var(--v-line2);              /* a control's own edge */
+
+    /* Two corners, and they stay OFF the console's ladder on purpose:
+       `buttonshapes.test.js` already records why - every control here is a 44px+
+       touch target on a phone held at arm's length, which is a different ladder
+       from the console's 26/22 one. Naming a value is not moving it; both of
+       these are what shipped. */
+    --s-r-sm: 8px;                         /* a header toggle, a zone switch */
+    --s-r: 12px;                           /* a field, a thumb-sized button, a result row */
+
+    --s-gap: 12px;                         /* between the parts of one panel */
+    --s-gap-tight: 10px;                   /* between two controls on one row */
+    --s-off: .5;                           /* a control that cannot be used */
+    --s-tr-caps: .12em;                    /* this page's uppercase mono tracking, at any size */
+    --s-lh-prose: 1.4;                     /* a sentence with nothing clipping it */
+    --s-lh-bound: 1.3;                     /* a line inside a box whose height is already decided */
+    --s-ease: 140ms ease;                  /* see the motion note at the foot of this sheet */
   }
-  header { display: flex; align-items: center; gap: 12px; padding: 14px 18px; border-bottom: 1px solid rgba(255,255,255,.08); flex: 0 0 auto; }
+  header { display: flex; align-items: center; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--s-seam); flex: 0 0 auto; }
+  /* 16px HERE, AND 18px ON Prev/Next BELOW, ARE THE TWO HAND-TYPED SIZES LEFT ON
+     THIS PAGE, AND BOTH STAY. `tokens.css` has already made this judgement in
+     writing: 16, 18 and 22 "are genuinely one-control decisions rather than a
+     missing step ... left visible rather than rounded into a neighbouring step to
+     make a scanner quiet". This page is off the console's type ladder for the same
+     reason it is off its button ladder, so rounding the lockup into a card-heading
+     step would be a restyle of the lockup and not a tidy. */
   .brand { font-family: var(--f-head); font-weight: 700; font-size: 16px; color: var(--v-amber); }
   /* CONTRAST. This page is read on a phone, at arm's length, in a lit auditorium —
      by the preacher, mid-sermon. It is the least forgiving reading condition in the
@@ -1515,7 +1828,14 @@
      documents as REMOVED for failing AA; the console was fixed and the phone was
      left behind, because it hardcodes hexes instead of using the --v-* tokens.
 
-     #88888d is --v-faint: 5.61:1 here. Still quiet, and actually readable. */
+     --v-faint is #8c94a1: 6.02:1 here. Still quiet, and actually readable.
+
+     THIS LINE SAID `#88888d ... 5.61:1` AND NAMED A COLOUR THIS PAGE DOES NOT
+     PAINT. `tokens.css` lifted --v-faint to #8c94a1 with the measured matrix
+     beside it (--v-faint on void 6.02) and this comment was left behind. A note
+     naming a retired value is the same class of error as a stale count: it reads
+     as evidence, so the next person checking this page's contrast would have
+     checked the wrong number and found it correct. */
   .status { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-family: var(--f-mono); font-size:var(--v-fs-mono); color: var(--v-faint); }
   .status.on { color: var(--v-emerald); }
   .status i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
@@ -1534,7 +1854,7 @@
     border-bottom: 1px solid color-mix(in srgb, var(--v-amber) 34%, transparent);
     color: var(--v-amber);
     font-size: var(--v-fs-mono);
-    line-height: 1.4;
+    line-height: var(--s-lh-prose);
   }
   /* NOTHING LEAVES THE SCREEN (docs/REBRAND.md §5). The reading takes what is
      left and scrolls INSIDE itself, so the header — the connection state — and
@@ -1557,6 +1877,10 @@
   .reading { flex: 1 1 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
     text-align: center; padding: 24px; gap: 18px; min-height: 0; min-width: 0;
     container-type: size;
+    /* `relative` is what lets the clip's own clock sit ON the clip (RG-256)
+       rather than beside it. `container-type` already establishes a containing
+       block for sizes; this is the one for POSITION. */
+    position: relative;
     overflow: auto; overscroll-behavior: contain; }
   /* THE RAIL IS ITS OWN CONTAINER. `size`, not `inline-size`, so the stack can be
      a share of the rail's HEIGHT as well — which is what stops three stacked
@@ -1564,7 +1888,7 @@
      basis is a share of the frame and is a BASIS, never a height. */
   .rail { flex: 0 0 26%; max-width: 26%; min-width: 0; min-height: 0; overflow: hidden;
     container-type: size; display: flex; flex-direction: column;
-    border-left: 1px solid rgba(255,255,255,.08); background: rgba(255,255,255,.02); }
+    border-left: 1px solid var(--s-seam); background: var(--s-wash); }
   /* THE SAME EXCEPTION `.figrow.tall` MAKES, FACING SIDEWAYS. A countdown with no
      verse beneath it left three quarters of a platform monitor black and put the
      figures the room is actually watching into a quarter of the width. Still a
@@ -1609,7 +1933,7 @@
       calc(88cqw / (var(--ch, 2) * 0.62)),
       calc(58cqh / var(--rows, 3))
     ); }
-  .railrow + .railrow { border-top: 1px solid rgba(255,255,255,.06); }
+  .railrow + .railrow { border-top: 1px solid var(--s-seam-soft); }
   .railrow.warn { color: var(--v-red); }
   /* A finished countdown is the operator's own words, not a figure — prose, at a
      size that still fits the rail it is a share of. */
@@ -1627,11 +1951,24 @@
      was what o'clock it was.
      15% gives the reading 54px back at 1080 and leaves the clock at a size no
      platform has ever struggled with (the figure is bounded below). */
+  /* ABOVE THE MESSAGE (RG-245). A Stage Message covers the reading now, and the
+     clock is the one thing it may not take — the preacher still has to know how
+     long is left while they read it. `position: relative` is what lets a row in
+     normal flow carry a z-index at all, and the opaque background is what stops
+     the message showing through it. */
   .figrow { flex: 0 0 15%; min-height: 0; overflow: hidden; container-type: size;
-    display: flex; border-top: 1px solid rgba(255,255,255,.08); background: rgba(255,255,255,.02); }
+    display: flex; border-top: 1px solid var(--s-seam); background: var(--s-wash); }
   /* A pre-service countdown is the whole reason anyone is looking at this page, and
      a countdown cue has a label and no body. The figures take the room the reading
      is not using — a different BASIS, never a height, and still clipped. */
+  /* THE CLOCK ALONE GETS A LINE, NOT A PANEL (RG-249). A share of the screen is
+     right for a row of service figures and wrong for the wall clock on its own:
+     the figure is bounded below by its own type size, so the extra room was
+     empty space between a reading and the timer under it. `.tall` and `.only`
+     still win where they apply — a countdown or a screen with no reading on it
+     are both cases where the figures ARE what the screen is for. */
+  .figrow.clockonly { flex-basis: 8%; }
+  .figrow.clockonly .figv { font-size: min(calc(46cqw / var(--ch, 5) / 0.62), 62cqh); }
   .figrow.tall { flex-basis: 58%; }
   .figrow.only { flex: 1 1 0; }
   /* A GRID, NOT A CENTRED COLUMN. Each figure used to be sized to its OWN
@@ -1643,7 +1980,7 @@
   .fig { flex: 1 1 0; min-width: 0; min-height: 0; overflow: hidden;
     display: grid; grid-template-rows: auto auto; align-content: center;
     justify-items: center; gap: 2px; }
-  .fig + .fig { border-left: 1px solid rgba(255,255,255,.06); }
+  .fig + .fig { border-left: 1px solid var(--s-seam-soft); }
   /* ── ONE LABEL, EVERY REGION ────────────────────────────────────────────────
      ProPresenter's stage display is a set of labelled regions, and what makes it
      read as ONE instrument rather than five widgets is that every label is the
@@ -1673,14 +2010,36 @@
        divided by the characters it actually has.
        Height share 58% → 52%: the row is shorter now (see `.figrow`) and it
        carries a label that has to fit above the figure rather than beside it. */
-    font-size: min(
+    /* STATED ONCE, so the secondary figure below can be a SHARE of it rather
+       than a second number that has to be kept in step (RG-243). `em` would not
+       do: it resolves against the PARENT's size, not the size this rule just
+       computed, so `0.42em` would be a share of the row's inherited type and
+       not of the figure at all. */
+    --figsz: min(
       calc(92cqw / var(--figs, 1) / (var(--ch, 5) * 0.62)),
       52cqh
-    ); }
+    );
+    font-size: var(--figsz); }
+  /* DERIVED from the figure's own size rather than stated again: a second
+     literal would be a second number to keep in step, and the two would drift —
+     which is exactly RG-223, where a literal ceiling quietly beat the size
+     somebody had chosen. `0.42em` is a share of the size `.fig .figv` computed,
+     whatever that turned out to be. */
+  .fig.secondary .figv { font-size: calc(var(--figsz) * 0.42); color: var(--v-dim); }
   .fig.warn .figv { color: var(--v-red); }
   @media (prefers-reduced-motion: no-preference) {
     .fig.warn .figv, .railrow.warn { animation: cdwarn 2s ease-in-out infinite; }
-    .tmr.warn .tval { animation: cdwarn 2s ease-in-out infinite; }
+    /* ── ON `over`, NOT ON `warn` (operator, 2026-09-21) ────────────────────
+       This flashed for the whole warning window, which an operator sets and
+       which is routinely five minutes. A clock flashing for five minutes is one
+       somebody stops seeing, and then it says nothing at the moment it is for.
+       The steady red below keeps the window; this marks the boundary — time up,
+       and every second after it.
+
+       The two rows above are the congregation COUNTDOWN mirrored on this page
+       and keep the countdown's own rule (§7), because what they mirror is what a
+       room is looking at. This row is the preacher's own clock. */
+    .tmr.over .tval { animation: cdwarn 2s ease-in-out infinite; }
   }
   /* `inline-size`, not `size`: the row's WIDTH is definite (it is the frame) and
      its height is what its content asks for under a ceiling. `container-type: size`
@@ -1697,7 +2056,7 @@
     /* The operator's own words to the preacher. `2.6vw` capped at 20px is a phone
        size on a platform monitor, on the row whose whole purpose is that somebody
        standing ten feet away reads it. */
-    font-family: var(--f-body); font-size: clamp(14px, 2.2cqw, 34px); line-height: 1.3; }
+    font-family: var(--f-body); font-size: clamp(14px, 2.2cqw, 34px); line-height: var(--s-lh-bound); }
   .notetxt { min-width: 0; overflow: hidden; }
   /* THE PROGRAMME ROW. `flex: 0 0 auto` with `flex-basis: auto`, like `.noterow`:
      it takes what its content needs and never competes with the reading, which is
@@ -1726,14 +2085,36 @@
      tied to the ceiling it is a share of. On a mobile browser with a collapsing
      toolbar it tracks the frame the row is in rather than the smallest viewport
      that frame might become. */
-  .progrow { flex: 0 0 auto; flex-basis: auto; --progmax: 20dvh; max-height: var(--progmax);
+  /* `--tmul` is the operator's size (RG-240): 1 for Normal, and more for a
+     platform monitor across a room. It multiplies the row's CEILING, so the
+     digits grow with the room they are given rather than overflowing a box that
+     stayed the same — `.tval` is capped against `--progmax` and would otherwise
+     ignore the setting entirely, which is RG-223 in a second place. */
+  /* AT REST THE RAIL TAKES THE ROOM (RG-244). It is a `flex-basis`, never a
+     height — a height is a floor a long label pushes past, which is how a clock
+     leaves the top of a monitor nobody is standing next to. The moment anything
+     is fired it goes back to its own size, because a reading is what this screen
+     is for. */
+  .progrow.owns { flex: 1 1 auto; --progmax: none; max-height: none; }
+  .progrow.owns .tval { font-size: min(calc(76cqw / var(--tmrs, 1) / (var(--tch, 6) * 0.62)), 46dvh); }
+  .progrow { flex: 0 0 auto; flex-basis: auto; --progmax: calc(20dvh * var(--tmul, 1)); max-height: var(--progmax);
     overflow: hidden;
     container-type: inline-size;
-    display: flex; gap: 10px; padding: 8px 18px;
-    border-top: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.035); }
+    /* CENTRED, BOTH WAYS (RG-248). A single Stage Timer — the normal case — used
+       to print its digits hard against the left edge of a row that spans the
+       frame, because `.tmr` is `flex: 1 1 0` and text is left-aligned by
+       default. Two or more still divide the row evenly; `center` only decides
+       where the set sits when it does not fill it. */
+    display: flex; justify-content: center; gap: 10px; padding: 8px 18px;
+    border-top: 1px solid var(--s-seam); background: var(--s-wash); }
   /* `min-width: 0` on the item, or a long label refuses to shrink and pushes the
      last timer off the end of a screen nobody is standing next to. */
-  .tmr { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 2px; overflow: hidden; }
+  .tmr { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column;
+    /* And the digits sit in the MIDDLE of whatever room the timer has, which
+       is the whole page while `.progrow.owns` is on it. Left and top was an
+       accident of the defaults rather than a decision. */
+    align-items: center; justify-content: center; text-align: center;
+    gap: 2px; overflow: hidden; }
   /* A LABEL-LESS TIMER IS DIGITS ALONE. The label element is not rendered at all
      rather than rendered empty, so the row closes up instead of leaving a gap the
      height of a word — wave 5 Track G makes label-less the dock's default and this
@@ -1791,6 +2172,19 @@
      programme is a rail nobody can tell from a complete one. */
   .tmore { flex: 0 1 auto; justify-content: center; }
   .tmore .tval.msg { color: var(--v-faint); }
+  /* HELD, IN THE FIGURE AS WELL AS IN THE WORD. `class:held` has been applied to
+     this row since wave 4 and styled NOWHERE, so a paused clock and a running one
+     were the same white digits and the whole difference was a small word beside
+     them - which is the thing a preacher mid-sentence is least likely to read.
+     It cannot be a hue: amber is ON AIR, cyan is a guess, amethyst is rehearsal,
+     and the red one rule below is this row's own running-out. So it is one step of
+     INK, and the direction is the argument: the bright `Held` above stays the
+     loudest thing in the cell and the frozen figure recedes behind it. --v-dim is
+     8.43:1 on this background, so nothing becomes hard to read, and dimming the
+     FIGURE is not the "quieter" this page already rejected for the WORD.
+     STATED BEFORE THE WARNING BELOW so that red still wins if a held timer is ever
+     allowed to warn as well. Today it cannot: `warn` is computed `!r.held && ...`. */
+  .tmr.held .tval { color: var(--v-dim); }
   /* THE LAST MINUTE, ON THE PREACHER'S OWN PROGRAMME. Same red and same rule as
      the congregation figure beneath the reading — `.fig.warn .figv` is the
      precedent and this reuses it rather than inventing a second warning.
@@ -1798,15 +2192,19 @@
      viewer who asked for no motion must still learn that the clock is running out. */
   .tmr.warn .tval { color: var(--v-red); }
   /* The zone panel — one instrument, no native dialog (rule 41). */
-  .zonepanel { flex: 0 0 auto; max-height: 46dvh; overflow-y: auto; padding: 14px 18px;
-    display: flex; flex-direction: column; gap: 10px;
-    border-top: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.03); }
-  .zonenote{ margin:0 0 10px; font-size:var(--v-fs-pr); line-height:1.4; color:var(--v-dim); }
-  .zonegrid { display: flex; flex-wrap: wrap; gap: 8px; }
+  .zonepanel { flex: 0 0 auto; max-height: 46dvh; overflow-y: auto; padding: 16px 18px;
+    display: flex; flex-direction: column; gap: var(--s-gap);
+    border-top: 1px solid var(--s-seam); background: var(--s-wash); }
+  /* The panel has a gap of its own, so this bottom margin was a second helping of
+     the same space, left from before the panel was a flex column. Both panels on
+     this page now open on the same padding and separate on the same gap; they were
+     14/10 and 16/12, which reads as two panels built by two people. */
+  .zonenote{ margin:0; font-size:var(--v-fs-pr); line-height:var(--s-lh-prose); color:var(--v-dim); }
+  .zonegrid { display: flex; flex-wrap: wrap; gap: var(--s-gap-tight); }
   .zonebtn { flex: 1 1 auto; min-height: 44px; padding: 0 14px; cursor: pointer;
     font-family: var(--f-mono); font-size:var(--v-fs-b1); font-weight: 700; letter-spacing: .08em;
-    color: var(--v-dim); background: rgba(255,255,255,.04);
-    border: 1px solid rgba(255,255,255,.14); border-radius: 8px; }
+    color: var(--v-dim); background: var(--s-fill);
+    border: 1px solid var(--s-edge); border-radius: var(--s-r-sm); }
   /* STEEL, NOT AMBER, and this is a colour-law fix rather than a taste one.
      DESIGN_SYSTEM §1 is explicit: "amber is never used for selected, active,
      primary or success. It is the tally light. A colour that is always lit cannot
@@ -1818,11 +2216,32 @@
      which is what a selected zone button is. The literals were the RETIRED amber
      (#ffb000) as well, so each of these declarations was already two oranges. */
   .zonebtn.on { color: var(--v-sel); border-color: var(--v-sel-line); background: var(--v-sel-soft); }
+  /* A DISABLED CONTROL THAT LOOKS IDENTICAL TO A LIVE ONE IS A BROKEN CONTROL, and
+     the markup above already says so in prose about the NOTE it renders. The
+     switches themselves had no disabled rule at all, so when the desk owns this
+     screen's layout the only thing separating "somebody else chose this" from
+     "this page has stopped responding to me" was a sentence the person holding the
+     phone had to stop and read. `cursor: default`, not `not-allowed`: nothing has
+     failed here, it is simply not this device's decision to make. */
+  .zonebtn:disabled { opacity: var(--s-off); cursor: default; }
   .zonefoot { margin: 0; font-family: var(--f-mono); font-size:var(--v-fs-mono); color: var(--v-faint); }
   /* A SHARE OF THE READING, not of the viewport. `3.5vw` capped at 20px put the
      reference of the passage a preacher is reading aloud at twenty pixels on a
      fifty-inch platform monitor, which is the size it is on a phone. */
-  .ref { font-family: var(--f-mono); font-size: clamp(13px, 2.6cqw, 40px); letter-spacing: .18em; text-transform: uppercase; color: var(--v-amber); }
+  /* ONE TRACKING FOR THIS PAGE'S CAPS. There were three uppercase mono lines here
+     in three different trackings - .18em on this reference, .12em on the header
+     toggles, .08em on a search result's citation - and the widest was on the
+     LARGEST type, which is backwards: caps need less tracking as they grow, not
+     more. .12em is what the toggles already used, it is still visibly tracked at
+     40px, and on this rule it can only ever make the line narrower, which is the
+     safe direction inside a box that scrolls.
+     `.next-ref` keeps its own .06em and is deliberately NOT folded in: that line is
+     `nowrap` with an ellipsis, so widening its tracking would spend characters of
+     the citation a preacher is being shown next. */
+  /* BOLD, LIKE EVERYTHING ELSE ON THIS PAGE (RG-251). The figures were 700 and
+     the prose was not, so the numbers were built for the room and the words for
+     a desk. This is read across a platform by somebody mid-sentence. */
+  .ref { font-family: var(--f-mono); font-weight: 700; font-size: clamp(13px, 2.6cqw, 40px); letter-spacing: var(--s-tr-caps); text-transform: uppercase; color: var(--v-amber); }
   /* THE READING FILLS THE ROOM IT HAS.
      `clamp(26px, 7vw, 64px)` is a ceiling, and on the screen this page exists for
      it was the binding one: a 1920×1080 platform monitor gave a verse 64px of type
@@ -1848,7 +2267,7 @@
      takes over: the reading SCROLLS rather than clipping, because a preacher
      reading aloud must not lose the end of a passage. That is unchanged behaviour
      for long passages; what changed is every short one. */
-  .verse { --vcpl: 16; font-family: var(--f-serif); line-height: 1.28; color: var(--v-txt);
+  .verse { --vcpl: 16; font-family: var(--f-serif); font-weight: 700; line-height: 1.28; color: var(--v-txt);
     max-width: calc(var(--vcpl) * 1ch);
     font-size: max(26px, min(
       calc(94cqw / var(--vcpl) / 0.49),
@@ -1857,6 +2276,65 @@
   /* The DEFAULT resting state of the preacher's phone — the thing on screen before
      anything is fired, and therefore the text most likely to be looked at. It was
      2.25:1: the worst contrast in the product, in its least forgiving location. */
+  /* THE SLIDE FILLS THE READING'S AREA AND KEEPS ITS SHAPE.
+     `contain`, never `cover`: an announcement slide cropped to fill is an
+     announcement with its edges cut off, and the one person reading it cannot
+     tell that anything is missing. The reading area is already the region that
+     takes what is left, so this needs no size of its own. */
+  .slide {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    object-position: center;
+  }
+  /* ── HOW LONG IS LEFT OF THE CLIP (RG-256) ─────────────────────────────────
+     Frosted, not filled. It sits over a moving picture, so an opaque bar would
+     punch a hole through the thing the room is watching — the same trade
+     RG-212 made for the programme rail on `output.html`, which is the blur the
+     operator was remembering.
+
+     `backdrop-filter` is a PROGRESSIVE ENHANCEMENT and the wash under it is not
+     decoration: where the filter is unsupported the wash alone is what keeps a
+     white figure off a white frame.
+
+     `cqw`, like everything else on this page, so it is the same share of the
+     screen on a phone on a lectern and on a monitor across a platform.
+
+     NOT AMBER, which means a congregation is looking at something, and not
+     cyan, which means the AI is guessing. The warning colour is the countdown's
+     own red — a claim about TIME, which is what this is. */
+  .clipplate {
+    position: absolute;
+    left: 50%;
+    bottom: 4cqh;
+    transform: translateX(-50%);
+    z-index: 2;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 2.2cqw;
+    padding: 1.6cqh 3cqw;
+    border-radius: 1.6cqw;
+    background: rgba(8, 10, 14, .42);
+    border: 1px solid rgba(255, 255, 255, .14);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+  }
+  .clipk {
+    font-family: var(--f-mono); font-weight: 700; letter-spacing: .16em;
+    text-transform: uppercase; line-height: 1.1;
+    font-size: clamp(var(--v-fs-fig), 1.9vmin, 24px);
+    color: rgba(242, 244, 248, .66);
+  }
+  .clipv {
+    font-family: var(--f-mono); font-variant-numeric: tabular-nums; font-weight: 700;
+    line-height: 1; color: #fff;
+    font-size: min(9cqw, 9cqh);
+  }
+  /* THIRTY SECONDS, and the figure is `CLIP_WARN_MS` rather than a number typed
+     here — the same threshold the desk uses. */
+  .clipplate.warn { border-color: var(--v-red-line, rgba(244, 81, 91, .5)); }
+  .clipplate.warn .clipv { color: var(--v-red); }
   .idle { font-family: var(--f-mono); color: var(--v-faint); letter-spacing: .1em;
     /* The scale step is the FLOOR on a phone, not the size on a platform monitor —
        a stage screen resting at "— standby —" in 14px type reads as a screen that
@@ -1866,12 +2344,86 @@
      gets a glow instead of a pulse; the colour is the same either way. */
   @media (prefers-reduced-motion: reduce) {
     .fig.warn .figv, .railrow.warn { text-shadow: 0 0 .25em rgba(244, 81, 91, .85); }
-    .tmr.warn .tval { text-shadow: 0 0 .25em rgba(244, 81, 91, .85); }
+    .tmr.over .tval { text-shadow: 0 0 .25em rgba(244, 81, 91, .85); }
   }
   @keyframes cdwarn { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
   /* The Stage Note — confidence-monitor only, never on the main output. */
   /* The Stage Message — docs/REBRAND.md §5. The pulse is the point: a
      platform is a bright place and a flat red panel reads as part of the set. */
+  /* THE QUIET STRIP (DECISIONS §116). Not an alarm and not nothing: it sits at
+     the foot, inside the safe area, and takes no more room than it needs. No
+     animation — the alarm is the other thing, and two things that move are two
+     alarms. */
+  /* ── A MESSAGE THAT IS NOTICED (RG-239) ────────────────────────────────────
+     The operator asked for every message to catch an eye, not only an alert.
+     OCHRE, because rule 18 leaves it the only free ink: amber means ON AIR,
+     cyan means the AI guessed, amethyst means a rehearsal, and rose is what the
+     alert already uses — spending any of those here would make this message say
+     something it does not mean.
+
+     REDUCED MOTION GETS AN EQUIVALENT, NOT A QUIETER STATE: the text rests at
+     the caution ink rather than pulsing to it, so a viewer who has asked for no
+     animation still sees a coloured message rather than a plain one. */
+  @media (prefers-reduced-motion: no-preference) {
+    .pulse { animation: stagepulse 2s ease-in-out infinite; }
+    @keyframes stagepulse {
+      0%, 100% { color: #fff; }
+      50% { color: var(--v-red, #f4515b); }
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pulse { color: var(--v-red, #f4515b); }
+  }
+  /* THE LARGE FORM. It sits in the reading's own box and is capped by it, so it
+     can never take more room than a reading would have had — and `overflow:
+     hidden` means a message too long to fit is CLIPPED rather than pushing the
+     clock off a phone. `11cqw` is the share of the frame the drawing settles on;
+     the two clamps are the floor a phone needs and the ceiling a platform
+     monitor should not pass. */
+  .bigmsg {
+    /* IN THE COLUMN, NOT OVER IT (RG-247). This was `position: absolute; inset:
+       0` while the comment above it said "it sits in the reading's own box" —
+       the sentence described the intent and the rule described the page, and the
+       rule is what painted. Measured at 390×844 with a reading up: the message
+       spanned all 844px and centred its text at y=420, under 281px of clock rows
+       that paint over it, so the words were 140px below the middle of the room
+       they actually had and cleared the clock by 63px.
+       As a flex item it TAKES the reading's room — the reading is not rendered
+       beneath it — the rows follow it, and the browser does the arithmetic. No
+       stacking rule decides which of two things a preacher reads, because there
+       is only ever one. */
+    flex: 1 1 0;
+    min-height: 0;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 1.6vh;
+    padding: 2.4vh 4vw;
+    /* RED, with the big screen, on the operator's instruction (RG-295). The two
+       surfaces are one message and may never differ. */
+    border-left: 0.9vw solid var(--v-red, #f4515b);
+    background: var(--s-bg, #05070a);
+    overflow: hidden;
+  }
+  .bigmsg-k {
+    flex: 0 0 auto;
+    font-family: var(--f-mono);
+    font-size: clamp(10px, 2.6vw, 20px);
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--v-red, #f4515b);
+  }
+  .bigmsg-v {
+    font-family: var(--f-body);
+    font-weight: 700;
+    font-size: clamp(4vh, 11cqw, 13vh);
+    line-height: 1.12;
+    color: #fff;
+    overflow: hidden;
+  }
+  /* `.quietmsg` went with the strip (RG-245). A Stage Message has one shape
+     now: the reading's room, over whatever is in it. */
   .alert {
     /* FIXED, and above everything. This is read by somebody mid-sentence in front
        of a congregation; it does not share the screen with a clock. */
@@ -1883,8 +2435,11 @@
     padding: 4cqw;
     text-align: center;
     font-family: var(--f-body);
-    font-weight: 700;
-    line-height: 1.15;
+    /* 800, and it is the only thing on the page at 800 — this panel's whole job
+       is to stop a service, so it outweighs the clocks rather than matching
+       them. */
+    font-weight: 800;
+    line-height: 1.1;
     color: #fff;
     text-shadow: 0 0.02em 0.06em rgba(0, 0, 0, 0.75);
     background: #c8121c;
@@ -1901,9 +2456,14 @@
      A rule no state can reach is a rule that looks like it works. Deleted rather
      than kept for a cap that might move — `ALERT_STEPS` above holds the two figures
      together, so if the cap does move the steps move with it. */
-  .alert.xl { font-size: 8.5cqw; }
-  .alert.lg { font-size: 6cqw; }
-  .alert.md { font-size: 4.2cqw; }
+  /* THE FIGURES THE DRAWING ASKS FOR (RG-251), and the headroom that makes them
+     safe: measured at 390x844 against the real face, the longest message the
+     backend will deliver (`ALERT_MAX` = 140 characters) wraps to seven lines at
+     9cqw and uses 282px of an 813px box. `6cqw` — 23px on a phone — was the
+     previous middle step, on a panel read from a platform mid-sentence. */
+  .alert.xl { font-size: 15cqw; }
+  .alert.lg { font-size: 11cqw; }
+  .alert.md { font-size: 9cqw; }
   @media (prefers-reduced-motion: no-preference) {
     .alert { animation: stagealert 1.4s ease-in-out infinite; }
   }
@@ -1926,7 +2486,7 @@
   .next { flex: 0 0 auto; max-height: 20%; overflow: hidden;
     container-type: inline-size;
     display: flex; align-items: baseline; gap: 14px; padding: 14px 20px;
-    border-top: 1px solid rgba(255,255,255,.08); background: rgba(255,255,255,.02); }
+    border-top: 1px solid var(--s-seam); background: var(--s-wash); }
   .next-lbl { color: var(--v-faint); flex: 0 0 auto; }
   .next-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   /* "The next item in smaller type beneath the reading" — SMALLER THAN THE READING,
@@ -1934,7 +2494,7 @@
      and both were a twelfth of the verse on a platform monitor. */
   .next-ref { font-family: var(--f-mono); font-size: clamp(12px, 1.4cqw, 22px); letter-spacing: .06em; color: var(--v-amber);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .next-text { font-family: var(--f-head); font-size: clamp(16px, 1.9cqw, 30px); color: var(--v-dim); line-height: 1.3;
+  .next-text { font-family: var(--f-head); font-weight: 600; font-size: clamp(16px, 1.9cqw, 30px); color: var(--v-dim); line-height: var(--s-lh-bound);
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   /* Landscape — a platform monitor, a lobby TV, a phone turned sideways — gets a
      wider measure, and the fit above re-reads it: more characters per line is
@@ -1950,26 +2510,90 @@
   @media (prefers-reduced-motion: reduce) { .status.on i { animation: none; } }
 
   /* Preacher control panel — a phone that DRIVES the wall. Touch-sized targets
-     (44px+), high contrast, and it never touches the mirror above it. */
+     (44px+), high contrast, and it never touches the mirror above it.
+
+     THE TWO HEADER TOGGLES WERE THE ONES THAT WERE NOT, and this comment has
+     claimed 44px+ over them since it was written. An 11px mono line with 7px of
+     padding and no floor is about 29px, on the one page in the product a preacher
+     operates alone, mid-sermon, one-handed. A floor is the fix; the padding stays
+     because it is the horizontal measure.
+     IT COSTS ROOM, AND THE ROOM COMES OFF THE READING. Every fixed row on this
+     page is taken from the reading zone. Measured in a real engine on the built
+     `stage.html`, the header goes 59.5px -> 73.0px: 13.5 PIXELS OF SCRIPTURE.
+     (It costs nothing at 390px WHILE the page is offline, because the reach line
+     wraps to three lines and is already the tallest thing in the row at 47.8px -
+     which is a measurement of that state, not a discount.) That is the right
+     trade, because a control a thumb misses is a control that is not there, but
+     it is a trade and not a free tidy, and it is the one change in this pass that
+     moves the layout. */
   .ctl-toggle { flex: 0 0 auto; font-family: var(--f-mono); font-size:var(--v-fs-mono); font-weight: 700;
-    letter-spacing: .12em; text-transform: uppercase; color: var(--v-dim); cursor: pointer;
-    background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.14);
-    border-radius: 8px; padding: 7px 12px; }
+    letter-spacing: var(--s-tr-caps); text-transform: uppercase; color: var(--v-dim); cursor: pointer;
+    background: var(--s-fill); border: 1px solid var(--s-edge);
+    border-radius: var(--s-r-sm); padding: 7px 12px; min-height: 44px;
+    display: inline-flex; align-items: center; justify-content: center; }
   /* Steel — see `.zonebtn.on`. A toggle that is switched on is not on air. */
   .ctl-toggle.active { color: var(--v-sel); border-color: var(--v-sel-line); background: var(--v-sel-soft); }
-  .ctl { flex: 0 0 auto; display: flex; flex-direction: column; gap: 12px; padding: 16px 18px;
-    border-top: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.02);
-    max-height: 60dvh; overflow-y: auto; }
-  .nav-row { display: flex; gap: 12px; }
+  /* ── THE TRANSPORT ALONG THE FOOT (RG-246) ────────────────────────────────
+     A row in the column like the clocks, so a Stage Message cannot take it: the
+     message is a flex item beside it now rather than a sheet over it (RG-247),
+     and the ALERT is still the one thing entitled to the whole screen.
+
+     `env(safe-area-inset-bottom)` so the home indicator does not sit on the
+     buttons. 52px targets: 44 is the floor, and a transport somebody has to aim
+     at is a transport they will not use mid-sermon. */
+  .sctl {
+    flex: 0 0 auto;
+    box-sizing: border-box;
+    display: grid;
+    grid-template-columns: 1fr 1fr 58px;
+    gap: 8px;
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--s-seam);
+    background: var(--s-wash);
+  }
+  .sctl-btn {
+    min-height: 52px;
+    display: grid;
+    place-items: center;
+    padding: 0 10px;
+    cursor: pointer;
+    border-radius: var(--s-r-md);
+    background: var(--v-surf2);
+    border: 1px solid var(--v-500);
+    color: var(--v-txt);
+    font-family: var(--f-body);
+    font-size: clamp(14px, 3.6vw, 19px);
+    font-weight: 600;
+  }
+  .sctl-btn:disabled { opacity: .45; }
+  /* STEEL, never amber. This reaches a screen, but it is not a claim that one is
+     on air — rule 18, and the colour guard the operator asked to keep. */
+  .sctl-btn.on { background: var(--v-sel-soft); border-color: var(--v-sel-line); color: var(--v-sel); }
+  /* IT TAKES THE READING'S ROOM (RG-252), so it grows into it: with `flex: 0 0
+     auto` and no reading rendered, nothing in the column grew and 130px of black
+     sat below the transport bar. `max-height: 60dvh` went with the same change —
+     it was a ceiling for a panel SHARING the screen with a verse, and there is no
+     verse under it now. */
+  .ctl { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; gap: var(--s-gap);
+    padding: 16px 18px;
+    border-top: 1px solid var(--s-seam); background: var(--s-wash);
+    overflow-y: auto; }
+  .nav-row { display: flex; gap: var(--s-gap); }
+  /* 18px IS A THUMB SIZE AND IT STAYS - see the note beside `.brand`. This is the
+     label on a 52px target a preacher presses without looking at it, which is a
+     judgement about one control and not a step the ladder forgot to publish. */
   .nav-btn { flex: 1; min-height: 52px; font-family: var(--f-head); font-weight: 700; font-size: 18px;
-    color: var(--v-txt); background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.16);
-    border-radius: 12px; cursor: pointer; }
-  .nav-btn:active { background: rgba(255,255,255,.1); }
-  .nav-btn:disabled { opacity: .4; }
-  .search { display: flex; gap: 10px; }
+    color: var(--v-txt); background: var(--s-fill); border: 1px solid var(--s-edge);
+    border-radius: var(--s-r); cursor: pointer; }
+  .nav-btn:active { background: var(--s-fill-press); }
+  /* ONE DISABLED WEIGHT, THREE CONTROLS. Prev/Next faded to .4 and Go and a result
+     row to .5 - near-misses of each other inside one panel, and the .4 was the
+     least legible of the three on the surface read at arm's length. */
+  .nav-btn:disabled { opacity: var(--s-off); }
+  .search { display: flex; gap: var(--s-gap-tight); }
   .search input { flex: 1; min-height: 48px; padding: 0 16px; font-family: var(--f-body); font-size:var(--v-fs-h1);
-    color: var(--v-txt); background: var(--v-void); border: 1px solid rgba(255,255,255,.18);
-    border-radius: 12px; -webkit-appearance: none; }
+    color: var(--v-txt); background: var(--v-void); border: 1px solid var(--s-edge);
+    border-radius: var(--s-r); -webkit-appearance: none; }
   .search input::placeholder { color: var(--v-faint); }
   /* A FOCUS RING IS NEVER AMBER, and it may not be `outline:none` with a border
      standing in for it either (DESIGN_SYSTEM §5: never remove an outline without
@@ -1977,20 +2601,72 @@
      one surface in this product a preacher operates alone. */
   .search input:focus { outline: 2px solid var(--v-sel); outline-offset: 2px; border-color: var(--v-sel-line); }
   .go { flex: 0 0 auto; min-width: 56px; min-height: 48px; font-family: var(--f-mono); font-weight: 700;
-    font-size:var(--v-fs-h2); color: var(--v-void); background: var(--v-amber); border: none; border-radius: 12px; cursor: pointer; }
-  .go:disabled { opacity: .5; }
+    font-size:var(--v-fs-h2); color: var(--v-void); background: var(--v-amber); border: none; border-radius: var(--s-r); cursor: pointer; }
+  .go:disabled { opacity: var(--s-off); }
   .ctl-err { font-family: var(--f-mono); font-size:var(--v-fs-b1); color: var(--v-amber2); }
-  .results { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+  .results { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s-gap-tight); }
+  /* A RESULT ROW WAS THE SAME GREY AS THE PANEL BEHIND IT (both .03), so a list of
+     taps read as one washed block with hairlines ruled across it. It takes the
+     control fill now, like every other control in this panel - the one place in
+     this pass where a value moves for a reason you can see rather than for order. */
   .result { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; width: 100%; text-align: left;
-    padding: 12px 14px; background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.1);
-    border-radius: 12px; cursor: pointer; }
+    padding: 12px 14px; background: var(--s-fill); border: 1px solid var(--s-edge);
+    border-radius: var(--s-r); cursor: pointer; }
   /* Steel — see `.zonebtn.on`. A finger on a result has not put it on a wall;
      that is what `.go` and the fire path do, and `.go` keeps its amber fill
      because it IS the control that puts scripture in front of a congregation. */
   .result:active { background: var(--v-sel-soft); border-color: var(--v-sel-line); }
-  .result:disabled { opacity: .5; }
-  .r-ref { font-family: var(--f-mono); font-size:var(--v-fs-b1); letter-spacing: .08em; text-transform: uppercase; color: var(--v-amber); }
-  .r-text { font-family: var(--f-serif); font-size: var(--v-fs-ttl); color: var(--v-dim); line-height: 1.35;
+  .result:disabled { opacity: var(--s-off); }
+  .r-ref { font-family: var(--f-mono); font-weight: 700; font-size:var(--v-fs-b1); letter-spacing: var(--s-tr-caps); text-transform: uppercase; color: var(--v-amber); }
+  .r-text { font-family: var(--f-serif); font-weight: 600; font-size: var(--v-fs-ttl); color: var(--v-dim); line-height: var(--s-lh-bound);
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .no-results { font-family: var(--f-mono); font-size:var(--v-fs-b1); color: var(--v-faint); }
+
+  /* THE SAME RING, ON EVERY CONTROL THIS PAGE HAS.
+     `.search input:focus` above was the ONLY focus rule in this file. Everything
+     else a person can reach - the two header toggles, the zone switches, Prev,
+     Next, Go and every search result - had nothing at all marking where the focus
+     was, so this page could be tabbed through blind from a Bluetooth keyboard or a
+     switch, on the one surface in the product operated by somebody with no
+     operator beside them.
+     `:focus-visible`, NOT `:focus`: a thumb leaves no ring, which is what makes
+     this safe to add to a touch surface rather than putting a box round every tap.
+     It follows the input's own answer exactly - steel, a real outline, offset -
+     rather than inventing a second focus treatment (DESIGN_SYSTEM §5: never remove
+     an outline without replacing it with an equally visible one; the corollary is
+     that there should be only one).
+     LAST IN THE SHEET, deliberately: `.result:active` and this rule have the same
+     specificity, so a focused control that is also being pressed keeps its ring
+     only because order decides. */
+  .ctl-toggle:focus-visible,
+  .zonebtn:focus-visible,
+  .nav-btn:focus-visible,
+  .go:focus-visible,
+  .result:focus-visible {
+    outline: 2px solid var(--v-sel); outline-offset: 2px; border-color: var(--v-sel-line);
+  }
+
+  /* MOTION, AND ONLY ON THINGS A FINGER TOUCHES.
+     This sheet had no `transition` in it at all, so every control changed state in
+     a single frame, which reads as a redraw rather than as a response.
+     NOTHING ON THE MIRROR. Not the verse, not the reference, not a clock, not a
+     figure, not the message panel: a fade means that for the length of the fade
+     this page is showing something Relay was not asked to show, and this is the
+     screen somebody reads aloud from in front of a congregation.
+     NO LAYOUT PROPERTY IS LISTED HERE AND NONE MAY BE ADDED. Colour, fill, edge,
+     and opacity are the whole set - each is a repaint, none can move a box, and
+     none can change what a fit measured.
+     `outline-color` IS DELIBERATELY NOT IN THE LIST, and it was until it was
+     measured: a ring whose colour transitions starts at whatever colour it
+     inherited - the UA's own focus blue - and settles into --v-sel over 140ms.
+     Read 80ms into that, the ring computed rgb(102,162,247) against the token's
+     rgb(91,156,248). A focus ring that is briefly a colour this palette does not
+     publish is the same defect as a status line that is briefly wrong, on a
+     smaller scale. The ring now appears in one frame, in the right blue. */
+  @media (prefers-reduced-motion: no-preference) {
+    .ctl-toggle, .zonebtn, .nav-btn, .go, .result, .search input {
+      transition: background-color var(--s-ease), border-color var(--s-ease),
+                  color var(--s-ease), opacity var(--s-ease);
+    }
+  }
 </style>

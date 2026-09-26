@@ -60,6 +60,20 @@ export const BINDINGS = [
   // (DECISIONS §35) — and `boundValue` therefore returns nothing for it, the same
   // answer it gives the ticking binds below.
   { key: 'stage_message', label: 'Stage Message' },
+  // THE PROGRAMME RAIL — the Stage Timers, as a SET rather than as a figure.
+  //
+  // This is what separates it from `countdown`, which is one congregation clock
+  // riding on the fired content: a programme layer draws however many Stage
+  // Timers are running, each with its label, and says so when the box is too
+  // narrow to show them all. Like `stage_message` above it the value does NOT
+  // ride on the content — it is its own hub frame (`timer`), held by the page,
+  // and `boundValue` returns nothing for it.
+  //
+  // The page decides whether this screen may be shown one, on the same fact and
+  // for the same reason: only a channel whose role is `stage`. "Sermon · 4:12
+  // left" behind a preacher is the running order in front of the whole building,
+  // which is why the refusal on a congregation screen is the half worth testing.
+  { key: 'programme', label: 'Stage Timers (monitors only)' },
   { key: 'elapsed', label: 'Service timer (elapsed)' },
   { key: 'remaining', label: 'Service timer (remaining)' },
   { key: 'static', label: 'Fixed text' },
@@ -509,6 +523,20 @@ export function resolveOutputTemplate(
   pinned = false,
   fallback = null,
   kindLook = null,
+  kind = null,
+  /**
+   * WHAT THIS SCREEN IS FOR — RG-272. `'stage'`, or anything else.
+   *
+   * The preacher's monitor is an instrument rather than a canvas: zones, a
+   * clock, a message and a reading, laid out for one person reading from a
+   * platform. A plan cue that pins a scripture template picked for the
+   * PROJECTOR took it over, so loading a plan redesigned the stage display
+   * mid-service by a decision that was never about it.
+   *
+   * Defaults to no role, which is not a stage — a lobby TV and a stream feed
+   * both arrive with none, and a filter whose default is yes is not a filter.
+   */
+  role = null,
 ) {
   // RUNGS 3 AND 4, IN ONE LINE: what this screen wears for this kind, else what it
   // wears for everything. Everything below asks about THIS, never about the two
@@ -519,7 +547,7 @@ export function resolveOutputTemplate(
   // `isKeyedTemplate(null)` is true — a template with no background layer is keyed,
   // and an absent template has no layers at all — so a following screen would have
   // "kept its keyed template", which is nothing, and painted an empty frame.
-  if (!screenLook) return override ?? fallback ?? null;
+  if (!screenLook) return inheritHouseStyle(override ?? fallback ?? null, fallback, kind);
   if (!override) return screenLook;
   // TRANSPARENCY LAW: a keyed (lower-third) screen never goes opaque for an opaque
   // override — the camera it keys over must not be covered. Wins over everything.
@@ -530,8 +558,57 @@ export function resolveOutputTemplate(
   // sees exactly the template they assigned to each screen. (This reverses the old
   // "content look overrides every screen" — operators found it silently replaced
   // the per-screen templates they had deliberately set. See DECISIONS §29.)
+  // A PINNED CUE DOES NOT REDESIGN THE PREACHER'S SCREEN (RG-272). Narrow on
+  // purpose: it applies only when this screen is a stage AND has a template of
+  // its own to keep. A stage screen that was never given one has nothing to
+  // protect, and showing the verse beats showing nothing.
+  if (pinned && role === 'stage' && screenLook) return screenLook;
   if (pinned) return override;
   return screenLook;
+}
+
+/**
+ * THE KINDS THAT FOLLOW THE HOUSE LOOK — the words, and only the words.
+ *
+ * The operator's ruling (RG-219): *"the default theme selected should be what
+ * activates for every section... both song lyrics and bible slide... Media,
+ * announcements and Planner items carry the templates set for them
+ * originally"*. Scripture and song are the two kinds where a church is looking
+ * at TEXT and expects one look; a picture, a notice and a countdown are their
+ * own designs and are left alone.
+ */
+const HOUSE_STYLE_KINDS = ['scripture', 'song'];
+
+/**
+ * The look a following screen wears, wearing the house STYLE but its own LAYOUT.
+ *
+ * ## Why style and not the whole template
+ *
+ * The lyrics look is a seeded row on purpose: every other built-in is
+ * scripture-shaped, so a lyric rendered through one puts the song TITLE on the
+ * wall where the reference goes. The layout has to stay a lyric layout, and what
+ * a church actually means by "our look" is the palette, the typeface and the
+ * background — which is exactly what a THEME was before themes were folded into
+ * templates (DECISIONS §87), and those are still the same flat `style` keys.
+ *
+ * ## What it refuses, and why each refusal is in the operator's own sentence
+ *
+ * A screen with a template OF ITS OWN never reaches here: DECISIONS §29 makes
+ * the per-screen template authoritative and an operator who assigned one must
+ * keep seeing exactly it. A PINNED cue is a deliberate choice for that item and
+ * is returned untouched further down. A kind nobody named inherits nothing,
+ * because silence is not consent — a kind added next year gets the old
+ * behaviour until somebody decides otherwise.
+ *
+ * It never mutates either row. Two screens resolving in the same tick must not
+ * be able to see each other's answer.
+ */
+function inheritHouseStyle(look, fallback, kind) {
+  if (!look || !fallback || look === fallback) return look;
+  if (!HOUSE_STYLE_KINDS.includes(kind)) return look;
+  const house = fallback.style;
+  if (!house || typeof house !== 'object' || !Object.keys(house).length) return look;
+  return { ...look, style: { ...(look.style ?? {}), ...house } };
 }
 
 /** Format an elapsed duration (ms) as a service timer: `M:SS`, or `H:MM:SS` once
@@ -566,6 +643,46 @@ export function formatCountdown(ms, mode = 'auto') {
   if (mode === 'hms') return `${h}:${pad(m)}:${pad(sec)}`;
   if (mode === 'ms') return `${Math.floor(total / 60)}:${pad(sec)}`;
   return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`;
+}
+
+/**
+ * THE FORMATTED FIGURE, CUT INTO THE GROUPS A PERSON READS IT IN.
+ *
+ * A SPLITTER of `formatCountdown`'s answer, not a second formatter. It never
+ * looks at a duration, never pads and never decides a shape — hand it whatever
+ * `formatCountdown` produced and it hands back the same characters, grouped.
+ * `parts.map(p => p.t).join('')` is the input, exactly, which is what keeps
+ * `.countdown`'s `textContent` equal to the figure the transport reads back.
+ *
+ * It exists for two things the renderer cannot do to a single text node:
+ *
+ *   · THE SEPARATOR. A colon at 110-192px carries the visual mass of a pair of
+ *     digit stems and sits dead in the middle of the figure. Making it its own
+ *     element is what lets the stylesheet set it back, so the minutes and the
+ *     seconds read as two groups rather than one block. It is a separator and
+ *     not information — the figure reads the same without it — so reducing its
+ *     prominence costs nothing a congregation needs.
+ *   · THE KEY. `k` carries the group's own value, so in a keyed `{#each}` a group
+ *     whose digits changed is a NEW element and one whose digits did not is the
+ *     SAME element. That is the whole mechanism behind a per-second settle: a
+ *     fresh element restarts a CSS animation with no JS timing loop, and — this
+ *     is the load-bearing half — without a `{#key}` anywhere near the element the
+ *     fitter has imperatively sized (rule 37, rule 42, RG-139).
+ *
+ * @param {string} text what `formatCountdown` returned
+ * @returns {{t: string, sep: boolean, k: string}[]}
+ */
+export function countdownParts(text) {
+  const s = String(text ?? '');
+  if (!s) return [];
+  const out = [];
+  // The index is part of the key because `1:04:09`'s two separators are the same
+  // character and a keyed each needs them told apart.
+  s.split(/(:)/).forEach((piece, i) => {
+    if (piece === '') return;
+    out.push({ t: piece, sep: piece === ':', k: `${i}\u0000${piece}` });
+  });
+  return out;
 }
 
 /** How long is left is a countdown's business; WHEN TO WORRY is this.
@@ -660,6 +777,12 @@ export function boundValue(layer, content) {
     case 'elapsed':
     case 'remaining':
       return ''; // computed live in the renderer (ticks), not from content
+    case 'programme':
+      // A SET, NOT A STRING, and not from content either. The rows arrive on the
+      // `timer` hub frame and the renderer draws them itself; a text value here
+      // would be a rail flattened into one line, and putting them on `content`
+      // would broadcast the running order to every screen in the building.
+      return '';
     case 'stage_message':
       // NOT FROM CONTENT, AND THAT IS THE GUARANTEE. Reading it off `content`
       // here is exactly how a private message would reach a congregation screen:
@@ -949,7 +1072,12 @@ function stageDisplay() {
         makeLayer('text', { name: 'Reference', bind: 'reference', x: 6, y: 63, w: 88, h: 7, size: 2.4, color: 'theme:reference', font: 'theme:font', align: 'left', valign: 'middle', transform: 'uppercase', letterSpacing: 0.06 }),
         makeLayer('text', { name: 'Up Next label', bind: 'static', text: 'Up Next', x: 6, y: 74, w: 40, h: 5, size: 1.5, color: 'theme:accent', font: 'theme:font', align: 'left', valign: 'middle', transform: 'uppercase', letterSpacing: 0.14 }),
         makeLayer('text', { name: 'Up Next (reference)', bind: 'next_reference', x: 6, y: 79, w: 88, h: 5, size: 1.8, color: 'theme:reference', font: 'theme:font', align: 'left', valign: 'middle' }),
-        makeLayer('text', { name: 'Up Next (verse)', bind: 'next', x: 6, y: 84, w: 88, h: 13, size: 2.2, color: 'theme:verse', font: 'theme:font', align: 'left', valign: 'top', opacity: 0.8 }),
+        makeLayer('text', { name: 'Up Next (verse)', bind: 'next', x: 6, y: 84, w: 88, h: 9, size: 2.2, color: 'theme:verse', font: 'theme:font', align: 'left', valign: 'top', opacity: 0.8 }),
+        // THE PROGRAMME, across the foot of the screen — the same place the
+        // preacher's phone puts it, so an operator who has seen one recognises
+        // the other. It paints nothing at all while no Stage Timer is running,
+        // so a church that never starts one loses no room to it.
+        makeLayer('text', { name: 'Programme', bind: 'programme', x: 0, y: 93, w: 100, h: 7, size: 2.2, color: 'theme:verse', font: 'theme:font' }),
       ],
       align: 'left',
     },
@@ -969,7 +1097,8 @@ function confidenceMonitor() {
         makeLayer('text', { name: 'Clock', bind: 'clock', x: 66, y: 4, w: 30, h: 8, size: 2.2, color: 'theme:accent', font: 'theme:font', align: 'right', valign: 'middle' }),
         makeLayer('text', { name: 'Verse', bind: 'verse', x: 8, y: 20, w: 84, h: 48, size: 5.2, color: 'theme:verse', font: 'theme:font', align: 'center', valign: 'middle' }),
         makeLayer('text', { name: 'Reference', bind: 'reference', x: 8, y: 69, w: 84, h: 7, size: 2.6, color: 'theme:reference', font: 'theme:font', align: 'center', valign: 'middle' }),
-        makeLayer('text', { name: 'Stage Note', bind: 'note', x: 8, y: 88, w: 84, h: 9, size: 2, color: 'theme:accent', font: 'theme:font', align: 'center', valign: 'middle', italic: true }),
+        makeLayer('text', { name: 'Stage Note', bind: 'note', x: 8, y: 80, w: 84, h: 9, size: 2, color: 'theme:accent', font: 'theme:font', align: 'center', valign: 'middle', italic: true }),
+        makeLayer('text', { name: 'Programme', bind: 'programme', x: 0, y: 91, w: 100, h: 8, size: 2.2, color: 'theme:verse', font: 'theme:font' }),
       ],
       align: 'center',
     },
@@ -993,7 +1122,8 @@ function preacherView() {
         makeLayer('text', { name: 'Reference', bind: 'reference', x: 6, y: 61, w: 88, h: 7, size: 2.8, color: 'theme:reference', font: 'theme:font', align: 'center', valign: 'middle', transform: 'uppercase', letterSpacing: 0.05 }),
         makeLayer('text', { name: 'Up Next label', bind: 'static', text: 'Up Next', x: 6, y: 72, w: 88, h: 5, size: 1.5, color: 'theme:accent', font: 'theme:font', align: 'center', valign: 'middle', transform: 'uppercase', letterSpacing: 0.14 }),
         makeLayer('text', { name: 'Up Next (verse)', bind: 'next', x: 6, y: 77, w: 88, h: 12, size: 2.4, color: 'theme:verse', font: 'theme:font', align: 'center', valign: 'top', opacity: 0.8 }),
-        makeLayer('text', { name: 'Stage Note', bind: 'note', x: 6, y: 90, w: 88, h: 8, size: 2, color: 'theme:accent', font: 'theme:font', align: 'center', valign: 'middle', italic: true }),
+        makeLayer('text', { name: 'Stage Note', bind: 'note', x: 6, y: 89, w: 88, h: 6, size: 2, color: 'theme:accent', font: 'theme:font', align: 'center', valign: 'middle', italic: true }),
+        makeLayer('text', { name: 'Programme', bind: 'programme', x: 0, y: 94, w: 100, h: 6, size: 2.2, color: 'theme:verse', font: 'theme:font' }),
       ],
       align: 'center',
     },

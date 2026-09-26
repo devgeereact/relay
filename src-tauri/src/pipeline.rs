@@ -439,7 +439,12 @@ impl Cand {
 /// and, because paraphrases may never auto-fire, silently demote a real spoken
 /// reference into a mere suggestion.
 pub fn better(a: &Cand, b: &Cand) -> bool {
-    (a.method.may_auto_fire(), a.conf) >= (b.method.may_auto_fire(), b.conf)
+    // `unattended_rank`, not `may_auto_fire`: since DECISIONS §118 there are
+    // THREE tiers, not two — a heard reference, a verse Relay heard being read,
+    // and everything that may only be offered — and a bool cannot express three.
+    // The order decides what a congregation sees when a preacher names one verse
+    // and reads another in the same breath (rule 29: one window, one wall).
+    (a.method.unattended_rank(), a.conf) >= (b.method.unattended_rank(), b.conf)
 }
 
 #[cfg(test)]
@@ -766,6 +771,7 @@ mod tests {
             until_ms: None,
             plan_item_id: None,
             started_in_rehearsal: false,
+            channels: None,
         });
         let c = OutputContent {
             kind: Some("countdown".into()),
@@ -816,6 +822,7 @@ mod tests {
             until_ms: None,
             plan_item_id: None,
             started_in_rehearsal: false,
+            channels: None,
         });
         let c = OutputContent {
             kind: Some("countdown".into()),

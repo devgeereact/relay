@@ -12,7 +12,9 @@
 // over a live microphone and no caller's `catch` could fire. `micstop.test.js` is
 // what holds that one. This is the same thing for the five timer commands.
 //
-// `showTimer` is the sharpest of them: it is one of exactly two things that may put
+// `showTimer` WAS the sharpest of them and was deleted on 2026-09-21 with the
+// Screen Countdown's band, its only caller (DECISIONS §115). What it used to be:
+// one of exactly two things that may put
 // a timer on a congregation screen, so a failure nobody is told about is a wall an
 // operator believes has a countdown on it and does not.
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -20,7 +22,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a) => invoke(...a) }));
 
-const { startTimer, adjustTimer, stopTimer, listTimers, showTimer } = await import(
+const { startTimer, adjustTimer, stopTimer, listTimers } = await import(
   './stores/capture.js'
 );
 
@@ -68,30 +70,6 @@ describe('the timer wrappers', () => {
     await expect(listTimers()).resolves.toEqual([{ id: 7, remaining_ms: 1000 }]);
     expect(invoke).toHaveBeenCalledWith('list_timers');
   });
-
-  it('showTimer is the explicit way back onto a wall, and it says so to the engine', async () => {
-    invoke.mockResolvedValue(null);
-    await showTimer(7);
-    expect(invoke).toHaveBeenCalledWith('show_timer', { timerId: 7, templateId: null });
-  });
-
-  // ── The group, not the wiring ───────────────────────────────────────────────
-  //
-  // Each of these changes what is on a screen, what a preacher is being told, or
-  // what an operator believes about either. Every one of them must reach its
-  // caller when it fails.
-  for (const [name, fire] of [
-    ['startTimer', () => startTimer({ minutes: 5, label: '', doneMsg: '', scope: 'both' })],
-    ['adjustTimer', () => adjustTimer(7, { remainingMs: 60_000 })],
-    ['stopTimer', () => stopTimer(7)],
-    ['listTimers', () => listTimers()],
-    ['showTimer', () => showTimer(7)],
-  ]) {
-    it(`${name} THROWS when the engine refuses — group 1`, async () => {
-      invoke.mockRejectedValue({ kind: 'refused', message: 'That timer is not running.' });
-      await expect(fire()).rejects.toBeTruthy();
-    });
-  }
 
   it('listTimers returns a real list rather than swallowing a failure into an empty one', async () => {
     // The trap this one is written against. An empty array is what a console with

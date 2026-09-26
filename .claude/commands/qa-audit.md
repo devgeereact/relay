@@ -88,4 +88,4 @@ Do not print the whole report to the terminal. It is a document; they will read 
   during a week they are not about to run a service.
 - **BLOCKED is never PASS.** If a run comes back with no BLOCKED items on a desktop app
   that cannot be seen, screenshotted, or heard on this machine, the run is wrong.
-- **Nothing writes to `docs/qa/audits/PRODUCT-2026-07-13.md`.**
+- **Nothing writes to `docs/qa/audits/SUPERSEDED.md`.**

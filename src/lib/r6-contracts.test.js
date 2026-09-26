@@ -91,12 +91,24 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       // so correcting it means threading an offset into the shared renderer —
       // its own change, with its own tests, on the surface that paints the
       // wall. Filed as S14; this row is what stops it being forgotten.
-      beat_ack: false,
-      // NO ZONES ON A CONGREGATION SCREEN. `stage_zones` says which layout a
-      // STAGE screen wears, and a layout is a set of `Stage.svelte` zones — a
-      // page that draws none of them has nothing to apply. This is `false`
-      // because there is nothing for it to do, not because it is withheld.
-      stage_zones: false,
+      // CLOSED 2026-09-21 (RG-194): the offset is threaded into `TemplateRender` as
+      // `hostOffsetMs`, the page keeps a median of the last five acks, and the same
+      // ack is what tells it the socket is alive (RG-193).
+      beat_ack: true,
+      // ZONES REACH THIS PAGE TOO NOW — RG-265, and the verdict is reversed
+      // rather than edited away.
+      //
+      // It read `false` on the argument that a layout is a set of
+      // `Stage.svelte` zones and this page draws none of them. That was true of
+      // the ZONES and false of the frame: the same frame carries `timer_size`,
+      // the Normal / Large / Huge the operator sets per screen in Outputs, and
+      // a stage-role screen served by `output.html` was the one surface it
+      // never reached. So an operator set Huge for the platform monitor, the
+      // phone grew, and the projector did not — a control reporting success
+      // over the screen it was set for.
+      //
+      // This page still applies no ZONE. It reads one field off the frame.
+      stage_zones: true,
       content: true,
       clear: true,
       black: true, // a panic control
@@ -121,6 +133,25 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       // rest, by driving the real page and asserting on what it PAINTS — which is
       // the claim, and is a thing a source scan cannot reach.
       stage_alert: true,
+      // THE PREACHER'S OWN SLIDE — `false`, and refused by having no branch at
+      // all rather than by a gate that could be got past.
+      //
+      // The programme rail is handled here because a stage-role screen can be
+      // served by `output.html` and needs its clocks (DECISIONS §104). A slide is
+      // different in kind: it is an announcement the preacher is reading from, or
+      // their own deck, and it is FULL-FRAME. A rail is bookkeeping in a strip at
+      // the foot; a slide would replace the whole picture, so a role map arriving
+      // a frame late would not mean a small mistake, it would mean one person's
+      // material across a congregation's wall.
+      //
+      // The stage page owns it, and that page cannot be anything else.
+      stage_media: false,
+      // WHAT THE CLIP IS DOING — handled, and by every screen rather than by a
+      // chosen one. It changes what is already showing rather than putting
+      // something new in front of anybody, so there is nothing here a congregation
+      // screen should be spared; a screen with no clip up has no video to apply it
+      // to and ignores it by construction.
+      media_transport: true,
       // WHAT EACH SCREEN IS FOR — the fact the filter above is taken on. Sent on
       // every hello and whenever the operator changes a role, so this page can
       // answer "am I the stage?" and stop being one the moment it is not.
@@ -155,14 +186,38 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       // A congregation screen with no template of its own and no content look either
       // must still end its chain somewhere other than the bundled Classic Serif.
       default_template: true,
-      // THE STAGE TIMERS — `false`, and this is the same guarantee as
-      // `stage_next` and `stage_alert` above rather than a new one. A programme
-      // timer is the operator's bookkeeping for one person on a platform: "Sermon ·
-      // 4:12 left" behind a preacher is the running order in front of the whole
-      // building. The congregation's own countdown is a different thing entirely
-      // and reaches this page as ordinary `content` with the four `countdown_*`
-      // fields on it, which is why nothing is lost by refusing this one.
-      timer: false,
+      // THE STAGE TIMERS — `true` AS OF REQUIREMENT 2b, AND THE OLD REASON IS
+      // KEPT BECAUSE IT IS STILL TRUE.
+      //
+      // What this row used to say, in the one name `names.test.js` now enforces
+      // for it: *a Stage Timer is the operator's bookkeeping for one person on a
+      // platform: "Sermon · 4:12 left" behind a preacher is the running order in
+      // front of the whole building.* Every word of that survives — it is a
+      // statement about a CONGREGATION screen, and nothing about this reversal
+      // makes a congregation screen show one.
+      //
+      // What changed is that this page stopped being only a congregation screen.
+      // `output.html?channel=N` on a channel holding the `stage` role is the other
+      // supported route to a preacher's screen (DECISIONS §89), and it is the
+      // route `Outputs → Screens → Copy URL` hands out — so a church that wired
+      // its confidence monitor from the obvious link watched a Stage Timer count
+      // down on the console and send it to nobody, while `stage.html` beside it
+      // showed the rail. One frame, two clients, opposite answers, decided by
+      // which link somebody copied.
+      //
+      // So the refusal moved from an ABSENCE to a DECISION the page takes out
+      // loud, exactly as `stage_alert` two rows down did before it and for the
+      // same reason: an omission is a fine guarantee right up until somebody has a
+      // reason to end it. The page holds the set and hands it to `TemplateRender`
+      // only when its own channel's role is `stage`; the renderer draws it only
+      // where the template carries a `programme` layer.
+      //
+      // `true` here now means "has a branch", which on its own is weaker than what
+      // the `false` used to mean. `src/lib/progtimertemplate.test.js` holds the
+      // rest by driving the real page — including the case that matters more than
+      // the feature, which is that a `main`-role screen wearing the very same
+      // stage template paints no rail at all.
+      timer: true,
       // THE STANDING BACKGROUND — the church's own picture, behind everything.
       // This is a congregation screen and the backdrop is congregation furniture,
       // so of course it is handled here. What the branch does on `clear` and
@@ -196,6 +251,22 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       black: true, // WAS false, and that was the finding — see the note above
       stage_next: true,
       stage_alert: true, // the whole point of the message
+      // THE SLIDE. Retained by the hub and replayed on hello, unlike the alert,
+      // because it is a state of the screen rather than an instruction for a
+      // moment — a tablet whose wifi dropped mid-sermon must not come back
+      // without it (rule 43). Scripture is painted OVER it and does not remove
+      // it, so the slide returns when the reading is cleared.
+      stage_media: true,
+      // THE STAGE PLAYS A CLIP OF ITS OWN, which is the case the previous version
+      // of this row named in advance: it read `false` with the note *"if the stage
+      // ever plays a clip of its own, this is the row that says the decision was
+      // taken"*. `stage_media` puts a video on this page, so there IS an element
+      // to act on, and until RG-214 the frame arrived and was ignored — Pause,
+      // Play and Loop moved every screen in the building except the one in front
+      // of the preacher, and a clip held on the wall ran on here for the rest of
+      // the cue. Not role-gated, for the same reason as on `output.html`: it
+      // changes what a screen is already showing.
+      media_transport: true,
       channel_template: false, // the stage page has one fixed look
       template: false,
       // Same reason as template/channel_template above: the stage page does not

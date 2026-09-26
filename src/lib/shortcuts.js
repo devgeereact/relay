@@ -20,6 +20,18 @@
 import { writable, derived, get } from 'svelte/store';
 
 /** Are we inside a text field? Typing must never trigger a live action. */
+/**
+ * Is a modal or a transient overlay mounted? Read from the DOM rather than a
+ * registry of open overlays: a registry is a list somebody has to remember to add
+ * the next dialog to, and the whole point is that this must not depend on anybody
+ * remembering. `alertdialog` is a dialog; `menu`/`listbox` are transient overlays.
+ * If you add an overlay kind, add it here — `panic.test.js` will tell you if not.
+ */
+const OVERLAY_ROLES = '[role="dialog"],[role="alertdialog"],[role="menu"],[role="listbox"]';
+function overlayOpen() {
+  return !!document.querySelector(OVERLAY_ROLES);
+}
+
 function isTyping(e) {
   const el = e.target;
   if (!el) return false;
@@ -200,7 +212,7 @@ export function installShortcuts({ clearScreens, blackScreen }) {
       // `alertdialog` is a dialog and `menu`/`listbox` are transient overlays; in
       // every case Escape belongs to the thing on top. If you add an overlay kind,
       // add it here — and `panic.test.js` will tell you if you don't.
-      if (document.querySelector('[role="dialog"],[role="alertdialog"],[role="menu"],[role="listbox"]')) {
+      if (overlayOpen()) {
         return;
       }
 
@@ -230,6 +242,15 @@ export function installShortcuts({ clearScreens, blackScreen }) {
     }
 
     // ---- CONTEXT. Only if the mounted view offers the action.
+    //
+    // …AND ONLY IF NOTHING IS OPEN ON TOP OF THE VIEW (2026-09-21, Live D1). The
+    // overlay probe above lived inside the Escape branch alone, so `A`, `D`, the
+    // arrows and Space kept acting on the surface UNDER an open dialog. Opening
+    // "Why this match?" on the third claim and pressing `A` accepted the first —
+    // the keyboard half of the bug `Live.svelte` had already fixed for the
+    // buttons — and `→` stepped the plan while the operator was reading a panel.
+    // `B` stays above this line: it is a panic key (rule 15), not a context key.
+    if (overlayOpen()) return;
     switch (e.key) {
       case 'a':
       case 'A':

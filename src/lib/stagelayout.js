@@ -14,6 +14,16 @@
 /** Every zone a stage screen can show, in the order the panel lists them. */
 export const STAGE_ZONES = [
   { key: 'reading', label: 'Reading' },
+  // SOMETHING THE OPERATOR PUT THERE FOR THIS PERSON — an announcement to read
+  // out, or the preacher's own deck. It shares the reading's area and LOSES it:
+  // scripture overrides the slide, and the slide comes back when the reading is
+  // cleared rather than having to be pushed again.
+  //
+  // A layout saved before this key existed has no opinion about it, and an absent
+  // key reads as OFF rather than as the default's ON. That is the conservative
+  // direction: a screen the operator configured last month does not start
+  // carrying something new without being asked.
+  { key: 'media', label: 'Slide' },
   { key: 'next', label: 'Next' },
   { key: 'note', label: 'Stage Note' },
   { key: 'countdown', label: 'Screen Countdown' },
@@ -60,4 +70,65 @@ export function readStageZones(raw) {
     }
   }
   return said > 0 ? out : null;
+}
+
+/**
+ * HOW BIG THE PREACHER'S CLOCK IS (RG-240).
+ *
+ * A platform monitor across a room and a phone on a lectern want different
+ * figures, and until this existed the page sized itself from its own box with
+ * nobody able to say otherwise.
+ *
+ * The OPERATOR chooses, because RG-241 takes the zone picker off the phone and
+ * the same argument applies here: a preacher who taps something mid-sermon must
+ * not be able to lose, or shrink, the one figure they are relying on.
+ *
+ * It travels in the zone blob rather than in a second column or a second frame.
+ * `readStageZones` reads only the keys it knows and ignores the rest, so an
+ * extra key is already safe on that wire, and one delivery path cannot disagree
+ * with itself about which screen it is describing.
+ */
+export const TIMER_SIZES = [
+  { key: 'normal', label: 'Normal' },
+  { key: 'large', label: 'Large' },
+  { key: 'huge', label: 'Huge' },
+];
+
+/** The multiplier each size applies to the figure the page would otherwise draw. */
+const TIMER_SCALE = { normal: 1, large: 1.35, huge: 1.8 };
+
+/**
+ * The size a layout asked for.
+ *
+ * Always answers a size, unlike `readStageZones` — a figure has to be drawn at
+ * something, and "no opinion" and "shows nothing" are not different states for a
+ * scale the way they are for a zone. A layout saved before this existed, or a
+ * value nobody recognises, is `normal`: the size the page drew before anybody
+ * could choose.
+ */
+export function readTimerSize(raw) {
+  const v = raw && typeof raw === 'object' ? raw.timer_size : null;
+  return TIMER_SIZES.some((s) => s.key === v) ? v : 'normal';
+}
+
+/** The multiplier for a size, or 1 for anything unrecognised. */
+export function timerScale(key) {
+  return TIMER_SCALE[key] ?? 1;
+}
+
+/**
+ * WHERE THE FIGURES SIT — across the foot, or beside the reading.
+ *
+ * It was a device setting inside the Zones panel, and it went where the panel
+ * went (RG-241): it is a layout choice like every other, and the person
+ * responsible for the screen is the person who should make it.
+ *
+ * `null` when the layout says nothing, so a caller can fall back to the device's
+ * stored preference rather than being handed a default that would overwrite an
+ * arrangement a church already has. That is the same distinction
+ * `readStageZones` draws, and for the same reason.
+ */
+export function readStageFigures(raw) {
+  const v = raw && typeof raw === 'object' ? raw.figures : null;
+  return v === 'beside' || v === 'bottom' ? v : null;
 }

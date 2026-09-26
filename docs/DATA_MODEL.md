@@ -60,10 +60,18 @@ Relay may compare a signal to a stored level ([DECISIONS.md](DECISIONS.md) §19,
 ## 2. Reference data
 
 ### Translation — `db/verses.rs` `Translation`
+Two ship bundled (KJV, BSB; `BUNDLED_ABBREVIATIONS`), and an operator may import more from a
+JSON file in the KJV's shape (`import_translation`, replacing by abbreviation) or delete an
+imported one (`delete_translation`, never the bundled two or the active one). DECISIONS §113.
 The Bible translation a verse belongs to. Bundled corpus today is **KJV only** (66 books,
 31,102 verses, committed at `src-tauri/data/kjv.json`, glosses **and subscriptions** stripped at import — no cleaned verse carries `{`, `}`, `«` or `»`, swept over the whole corpus by `db::verses::corpus_tests`). Fields:
 `id, name, abbreviation, language` (ISO code), `license_type`. There is deliberately no import
 path for a second translation — which is also why there is no licensing exposure.
+
+Two rows on every install since 2026-09-21: **KJV** and **BSB** (Berean Standard Bible,
+public domain), both 31,102 verses in the same layout (DECISIONS §110). Every read is scoped to
+the active translation (`app_settings.active_translation`, default the lowest id); the corpus
+repair reads and rewrites the KJV by its own id.
 
 ### Verse — `db/verses.rs` `VerseRow`
 A single verse: `translation_id, book` (canonical name), `chapter, verse, text`, and
@@ -143,6 +151,14 @@ into the right (possibly repeated) slots. "Standard" is implicit and never persi
   `/media/<id>` with digit-prefix-id path-traversal defence (DECISIONS, LAN-bind decision).
 
 ---
+- **MediaAsset** (`media_assets`, `db/library.rs`) — a **pointer**, not a blob: `kind` (`image` |
+  `video` | `document`, decided from the extension in the webview), `filename`, `path` (a file at
+  `<app-data>/media/{id}_{name}`, or `bundled:…` for a picture Relay ships), `created_at`, and
+  since 2026-09-21 **`codec`** — the codec family the container named at import (`hevc` |
+  `h264` | `vp9` | `av1`), `NULL` for a picture, a document, a clip imported before the probe, or
+  a container that named nothing. `NULL` means *not probed*, never *fine* (`mediaprobe.rs`,
+  RG-184). Deleting an asset deletes every `media` plan cue that named it.
+
 
 ## 5. Live service
 
@@ -166,6 +182,16 @@ One row per run (`date, title`). Parent of the two live logs:
   the *operator-action* log for a running service (`manual_override`, `clear_screens`,
   `template_change`) — distinct from a `PlanItem` build-time cue. Same word, two lifecycles;
   the model keeps them apart.
+
+### Timer — `timers.rs` `Timer`, persisted by `db/timers.rs`
+A clock: `scope` (`Both` reaches every screen through the content frame; `Stage` reaches the
+preacher's tablet only), `target_ms`/`from_ms` (instants, so a running timer is correct after
+any gap), `paused_ms` (a held figure, signed), `warn_ms`, `configured_ms` (what Reset restores),
+`until_ms` (an appointment), `plan_item_id`, `started_in_rehearsal`, `channels`. Lives in
+`timers::TimerRegistry` and, since 2026-09-21, in the `timers` table: every mutation writes the
+whole registry (one row per timer, JSON body; `next_id` in `app_settings`), and a launch restores
+what `db::restorable` allows — nothing from a rehearsal, nothing older than six hours — into the
+registry and never onto a wall (DECISIONS §112).
 
 ### SessionState / Session — `main.rs` `SessionState`, `Session`
 The ephemeral "right now": which service is live, current passage, position. Held as

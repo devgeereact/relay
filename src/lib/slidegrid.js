@@ -68,11 +68,45 @@ export const PRESS_MS = 190;
  * @param {Array} items plan items, as `Live` already holds them
  * @param {(item:any)=>Array<{label?:string,text?:string,tag?:string}>} slidesOf
  */
+/**
+ * THE ASSET A MEDIA CUE PUTS ON A SCREEN, or `null` (RG-225).
+ *
+ * A cell is what a thumbnail is painted from, and for the one cue type whose
+ * whole content IS a picture the cell said nothing about it — so Live's deck
+ * rendered a media cue as an empty slide, which on a dark template cannot be
+ * told from a cue with nothing in it.
+ *
+ * `null` for three different situations, all of which must NOT paint: a cue that
+ * is not media, a media cue with no asset (an older or hand-edited payload), and
+ * a payload that cannot be read. Guessing an id would paint a broken picture,
+ * which is a worse answer than no picture — a thumbnail is a claim about what
+ * the cue will put on a wall.
+ *
+ * The KIND is carried beside it because a still and a clip are painted by
+ * different elements, and a video rendered as an `<img>` is a broken picture
+ * with a filename under it.
+ */
+function mediaOf(item) {
+  if (item?.cue_type !== 'media') return { mediaId: null, mediaKind: null };
+  let payload = {};
+  try {
+    payload = JSON.parse(item.payload_json || '{}') || {};
+  } catch {
+    return { mediaId: null, mediaKind: null };
+  }
+  const id = Number(payload.media_id);
+  if (!Number.isSafeInteger(id) || id <= 0) return { mediaId: null, mediaKind: null };
+  return { mediaId: id, mediaKind: payload.kind === 'video' ? 'video' : 'image' };
+}
+
 export function planCells(items, slidesOf) {
   const cells = [];
   for (const item of items ?? []) {
     const slides = slidesOf(item) ?? [];
     const ctype = item.cue_type || 'unknown';
+    // EVERY cell of this cue carries it, empty included, so a reader never has
+    // to ask which shape it got.
+    const media = mediaOf(item);
     if (!slides.length) {
       cells.push({
         key: `p:${item.id}:empty`,
@@ -86,6 +120,7 @@ export function planCells(items, slidesOf) {
         cueId: item.id,
         slideIdx: 0,
         reference: null,
+        ...media,
       });
       continue;
     }
@@ -102,6 +137,7 @@ export function planCells(items, slidesOf) {
         cueId: item.id,
         slideIdx: i,
         reference: null,
+        ...media,
       });
     });
   }

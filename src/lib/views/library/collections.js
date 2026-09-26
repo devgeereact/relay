@@ -132,5 +132,9 @@ const MEDIA_KIND_WORD = { image: 'Image', video: 'Video', document: 'Document' }
 export function mediaSub(asset) {
   const kind = MEDIA_KIND_WORD[asset?.kind] ?? 'File';
   const date = typeof asset?.created_at === 'string' ? asset.created_at.trim() : '';
-  return date ? `${kind} \u00b7 added ${date}` : kind;
+  const base = date ? `${kind} \u00b7 added ${date}` : kind;
+  // THE CODEC WARNING (F5, 2026-09-21), on the tile the clip is chosen from. An
+  // iPhone's HEVC plays in Relay's own window and may paint nothing in OBS or on
+  // Windows; the probe at import says which, and `null` is "not probed", not "fine".
+  return asset?.codec === 'hevc' ? `${base} \u00b7 HEVC \u2014 may not play in OBS or on Windows` : base;
 }

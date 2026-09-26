@@ -65,12 +65,46 @@
   // template scales identically whether the container is a full screen or a
   // small preview box.
   import { afterUpdate, onMount, onDestroy } from 'svelte';
-  import { isLayered, isKeyedTemplate, boundValue, templateShows, formatElapsed, formatRemaining, formatCountdown, countdownWarning, topLevelLayers, drawBoxes } from './layers.js';
+  import { isLayered, isKeyedTemplate, boundValue, templateShows, formatElapsed, formatRemaining, formatCountdown, countdownParts, countdownWarning, topLevelLayers, drawBoxes } from './layers.js';
   // ONE timer, ONE formatter (docs/REBRAND.md §7). `layers.js` owns the formatter;
   // `countdown.js` owns the arithmetic in front of it — including the one exception,
   // a countdown that is being HELD.
   import { countdownRemainingMs, countdownIsPaused, countdownTotalMs } from './countdown.js';
   import { applySink, getAudioOutput, onAudioOutputChange } from './audioOutput.js';
+  // THE PROGRAMME RAIL AND THE ALERT'S SIZING — both shared, neither re-derived.
+  // `timers.js` is the one place the Stage Timer set becomes rows, so this
+  // renderer and the preacher's phone cannot disagree about the same clock;
+  // `stagealert.js` is the one table that says how big a Stage Message is.
+  import {
+    programmeRows,
+    railSize,
+    programmeCh,
+    programmeCapacity,
+    programmeCells,
+    programmeRoom,
+  } from './timers.js';
+  import { alertStep } from './stagealert.js';
+  // A STILL ASKS FOR ITS FRAME (RG-279): `preload="metadata"` sizes the element
+  // and paints nothing. NEVER on a playing clip — the fragment is a seek, and it
+  // would drag the wall back to 0.1s on every re-render.
+  import { posterUrl } from './posterframe.js';
+  // ONE threshold and one formatter, shared with the phone (RG-280): two
+  // surfaces showing the same figure from two constants is a figure that will
+  // one day differ between the stage and the desk.
+  import { clipRemainingMs, CLIP_WARN_MS } from './mediaclock.js';
+  import { RAIL_BASE_PCT } from './bigstagetimer.js';
+  // WHO TAKES A STAGE SCREEN NOBODY HAS FIRED TO (RG-285). One function over
+  // `stageresting.js`, which is the preacher's phone's own rule — imported and
+  // never restated, so the two surfaces in one room cannot hold two opinions
+  // about when a clock may take a screen.
+  import {
+    stageFill,
+    fillGeometry,
+    clipCoversTimer,
+    FILL_SIZE_CQW,
+  } from './stagefill.js';
+  import { applyMediaTransport } from './mediatransport.js';
+  import { syncSeek } from './mediasync.js';
 
   export let template = {};
   export let content = null; // { reference, text, translation }
@@ -97,6 +131,70 @@
    * would put it on the one surface an operator shows people.
    */
   export let stageMessage = '';
+  /**
+   * IS THIS A NOTE OR AN ALARM (operator, 2026-09-21; DECISIONS §116).
+   *
+   * There was one rendering — the full-bleed flashing panel — so every word sent
+   * to a preacher arrived as an emergency. `false` is the safe default for the
+   * same reason it is on the command: a caller that did not ask for an alarm must
+   * not get one.
+   */
+  export let stageUrgent = false;
+  /**
+   * THE STAGE TIMERS — supplied by the page, never by the content, exactly like
+   * `stageMessage` above and for the same reason.
+   *
+   * Rows as the `timer` hub frame carries them. The page has already decided
+   * whether this screen may be shown them: only a channel whose role is `stage`.
+   * A field on `OutputContent` would be broadcast to every screen in the
+   * building, and "Sermon · 4:12 left" behind a preacher is the running order in
+   * front of the whole congregation — which is the reason `r6-contracts.test.js`
+   * recorded `timer: false` for this page in the first place, and the reason the
+   * reversal is gated on the role rather than on the frame.
+   *
+   * It renders a SET, which is what distinguishes it from a `countdown` layer:
+   * that is one congregation clock riding on the fired content, this is however
+   * many Stage Timers are running, each with its own label and its own warning.
+   *
+   * Empty on the console previews and in the Templates editor, deliberately —
+   * neither is a stage screen.
+   */
+  export let programme = [];
+  /**
+   * HOW MUCH ROOM THE FALLBACK PROGRAMME RAIL TAKES — RG-265.
+   *
+   * A MULTIPLIER, never a setting. `bigstagetimer.js::railScale` is the one
+   * place that turns Normal / Large / Huge into a number, and it re-exports the
+   * phone's own steps — a renderer that knew what `huge` meant would be a second
+   * opinion about a control the operator set once, and this component is shared
+   * with the console's panes and the Templates editor besides.
+   *
+   * 1 for every caller that does not pass one, which is all of them but
+   * `Output.svelte`: a designed rail states its own box and is untouched by
+   * this.
+   */
+  export let timerScale = 1;
+  /**
+   * IS THIS SCREEN A STAGE? — RG-280.
+   *
+   * Decides one thing: whether the clip playing here is given a countdown. A
+   * congregation must not be shown one — it is the preacher's cue to get ready
+   * and not theirs — so this defaults to false and `Output.svelte` passes its
+   * own role.
+   *
+   * RG-256 put this clock on `stage.html`, the phone. This page had none of any
+   * kind, which is why the operator asked three times about a screen they had
+   * labelled STAGE MONITOR.
+   */
+  export let stageClip = false;
+  /** How long is left of the clip on this screen, or `null` (RG-280). */
+  let clipLeft = null;
+  // A CLOCK MAY NOT OUTLIVE THE CLIP IT COUNTS (RG-280). `videoEl` is
+  // `bind:this`, so Svelte nulls it the moment the clip unmounts - a verse
+  // fired over a video would otherwise leave the last reading frozen on the
+  // platform monitor, which is rule 35 in a smaller costume.
+  $: if (!videoEl || still) clipLeft = null;
+  $: clipWarn = clipLeft != null && clipLeft <= CLIP_WARN_MS;
   /**
    * How deep this render is inside a composite. 0 is the screen itself.
    *
@@ -158,6 +256,20 @@
   // reads is the defect the 2026-09-10 pass closed seven Settings controls of.
   $: hasBackdropLayer = layered && layers.some((L) => L.type === 'backdrop' && L.visible !== false);
   $: backdropUp = !!backdrop?.media_url && hasBackdropLayer;
+  // ── IS THERE A PICTURE BEHIND THE CLOCK RIGHT NOW? (RG-212) ────────────────
+  //
+  // The programme rail is digits with no backing, which is right over a
+  // template's own background and unreadable over a clip — and a clip's
+  // brightness changes frame by frame, so no designer can pre-solve it in the
+  // template. The rail earns a plate while a picture is painting and loses it
+  // when the picture goes; a permanent one would be a box sitting over every
+  // template that never shows a picture at all.
+  //
+  // Both kinds count. A fired clip or slide (`content.media_url`, gated on
+  // `allowMedia` because a screen told not to show fired media has no picture on
+  // it) and the standing backdrop, which is behind everything for the whole
+  // service and is the likelier of the two to be bright.
+  $: pictureBehind = (!!content?.media_url && allowMedia) || backdropUp;
   // DELIBERATELY NOT GATED ON `allowMedia`. That answers "does this SCREEN show
   // fired media" — a lower third keeping a camera clean while a picture fills the
   // main wall — and a backdrop is not fired media. Having the layer at all is the
@@ -180,6 +292,25 @@
   // full-frame clock straight over the camera on every layer-model lower third.
   $: showDefaultCountdown =
     layered && content?.countdown_to != null && !hasTimerLayer && countdownAllowed;
+  // ── THE SAME FALLBACK, FOR THE PREACHER'S CLOCKS (RG-224) ──────────────────
+  //
+  // A stage screen wearing a CONGREGATION template has no programme layer — and
+  // it should not: the running order has no business on a template designed for
+  // a wall. So the clocks arrived, found nowhere to paint, and the preacher had
+  // no clock at all, which is what the operator reported.
+  //
+  // Exactly the shape of `showDefaultCountdown` one line above, and the same
+  // trade: a designed layer is better, is what the template editor is for, and
+  // is NOT required for the thing to work. `programmeLayers` wins when there is
+  // one, so this can never be a second rail.
+  //
+  // **The gate is the ROLE and the role alone**, because `progSet` is already
+  // empty on any screen that is not a stage (`Output.svelte::shownProgramme`).
+  // That is the whole safety argument: a default keyed on the template rather
+  // than the role would put "Sermon · 4:12 left" in front of the building on
+  // every screen wearing an ordinary look, which is every screen a church owns.
+  $: hasProgrammeLayer = layered && layers.some((L) => L.bind === 'programme' && L.visible !== false);
+  $: showDefaultProgramme = layered && progRows.length > 0 && !hasProgrammeLayer;
   // ── THE TEMPLATE'S OWN DEFAULTS, WHICH ARE NOT THE APP'S ──────────────────
   // This component renders BOTH the console's preview and the congregation's
   // wall, so every fallback it reaches for is a fallback a church sees. Two of
@@ -324,6 +455,85 @@
   const MIN_LEGIBLE_SCALE = 0.45;
   /** Called with `{ scale, legible }` when a fit has been forced below the floor. */
   export let onFit = null;
+  /**
+   * WHERE THE CLIP IS, reported by the element that is actually playing it.
+   *
+   * Called with `{ pos_ms, dur_ms, paused }` while a video is on this screen, and
+   * with `null` the moment one is not. `null` matters as much as the numbers: a
+   * last-known position left behind after the clip came off would have the console
+   * counting down a clip nobody is watching.
+   *
+   * The consumer is the beat (`outputHealth.js`), so the figure an operator reads
+   * comes from the screen that is painting rather than from the console's own
+   * preview of the same file. See `channels::MediaBeat` for why that distinction
+   * is the whole design.
+   */
+  export let onMedia = null;
+  /**
+   * WHAT THE OPERATOR HAS ASKED THE CLIP TO DO.
+   *
+   * `{ paused, loop, replayEpoch }`, or `null` for the default a clip is fired
+   * with: playing, not looping.
+   *
+   * **Applied to the element, never by re-mounting it.** `{#key slideKey}` rebuilds
+   * the video whenever the content changes, and rebuilding it to pause it would
+   * restart the clip from zero — the opposite of what Pause means. So these are
+   * read in a reactive block that touches the existing element and nothing else.
+   */
+  export let mediaTransport = null;
+  /**
+   * PAINT THE FIRST FRAME AND STOP THERE (RG-235).
+   *
+   * A deck cell is a thumbnail of a cue, and four video cues in a plan meant
+   * four clips playing at once under the one that is actually on air — on the
+   * surface an operator works from for a whole service.
+   *
+   * It is a property of the RENDER and not of the content, because the same clip
+   * is live on a wall and a thumbnail in a deck at the same instant and only one
+   * of them is playing. Default `false`, so every surface that paints a
+   * congregation screen is unchanged by construction: a surface has to ask.
+   *
+   * A still is not a paused clip. `preload="metadata"` fetches enough for a
+   * frame and never the file, so twenty cues are twenty small requests rather
+   * than twenty downloads over a church's network. It reports nothing through
+   * `onMedia` either — a thumbnail answering "where is the clip" would put a
+   * deck cell's position into the readout an operator times the next cue
+   * against.
+   */
+  export let still = false;
+  /**
+   * A PICTURE OR CLIP THAT DID NOT LOAD, or `null` once one has (2026-09-21, O-4).
+   *
+   * Six media elements and not one `on:error`: a 404, a codec the webview cannot
+   * decode and a CSP refusal were the same observable event — nothing — while the
+   * beat still said `content` and the desk printed On Air in amber over a blank
+   * frame. Every fired-media element now reports through this one callback, and
+   * reports the failure healed on `load`/`loadeddata`, so the page can carry it on
+   * the beat and the desk can stop calling the screen On Air.
+   */
+  export let onMediaError = null;
+  /**
+   * RELAY'S CLOCK MINUS THIS SCREEN'S, in ms (RG-194, 2026-09-21). `countdown_to`
+   * is an absolute epoch produced on the Relay machine; a browser screen with a
+   * clock a minute out showed a minute of error to the room while the projector
+   * beside it was right. The page measures the offset from `beat_ack` and hands
+   * it here; the console and the native window pass nothing and get zero.
+   */
+  export let hostOffsetMs = 0;
+  $: if (cdTimer && Number.isFinite(hostOffsetMs)) now = Date.now() + hostOffsetMs;
+  let mediaFailedUrl = null;
+  const mediaFailed = (kind, url) => {
+    mediaFailedUrl = url;
+    onMediaError?.({ kind, url });
+  };
+  const mediaLoaded = () => {
+    if (mediaFailedUrl === null) return;
+    mediaFailedUrl = null;
+    onMediaError?.(null);
+  };
+  // A new clip or picture is a new question; the last one's failure must not
+  // stand for it. Fires on the URL, so a re-render of the same content is silent.
+  $: if (content?.media_url !== mediaFailedUrl && mediaFailedUrl !== null) mediaLoaded();
 
   function fitOne(box, container) {
     const verse = box.querySelector('.verse');
@@ -970,6 +1180,12 @@
       // asks for that to be re-taken. See `recheck`.
       ro = new ResizeObserver(() => {
         recheck = true;
+        // THE RAIL IS RE-MEASURED TOO. A resize moves the box a programme layer
+        // sits in, and nothing else on this path would notice: `afterUpdate`
+        // only runs when Svelte has something to update, and a window that got
+        // narrower is not a state change. Without this the rail keeps the
+        // capacity it was born with for the life of the page.
+        measureProgramme();
         scheduleFit();
       });
       ro.observe(stageEl);
@@ -1027,6 +1243,91 @@
   // Layer mode, full-frame media and the legacy band are mutually exclusive
   // branches, so at most one <video> is ever mounted — one binding covers all.
   let videoEl;
+  /**
+   * ONE REPORTER FOR ALL THREE `<video>` BRANCHES.
+   *
+   * Layer, legacy band and legacy region each mount their own element and each
+   * binds the same `videoEl`, so the handlers go on all three or the report is
+   * silently missing from two thirds of the templates in the product — the twin
+   * -door failure this repository has recorded four times.
+   */
+  /**
+   * THE REPLAY THIS ELEMENT HAS ALREADY ACTED ON.
+   *
+   * Replay is an event, not a state, and the wire carries it as a counter for that
+   * reason. This remembers the last number acted on so a re-render, a re-connect,
+   * or a retained frame replayed on hello cannot start the clip again — a screen
+   * that rejoined mid-clip would otherwise jump to the beginning because the frame
+   * it was handed still names a replay from ten minutes ago.
+   */
+  /** The replay and scrub epochs this element has already acted on (RG-221). */
+  let actedTransport = null;
+  // THE BACKDROP IS NOT THE CLIP, and its `loop` is deliberately left alone above.
+  // A standing background is room furniture that plays behind whatever is fired
+  // over it; the transport belongs to the video the operator put up, and a Pause
+  // that stopped the church's backdrop would be a control reaching past what it
+  // says it does.
+  // Ask, then report. The asking is `applyMediaTransport`, which is shared with
+  // the preacher's own page — see RG-214, where the two surfaces disagreed about
+  // what Pause means. The reporting stays here, because the BEAT is what says
+  // whether the clip is actually moving and only this page sends one.
+  $: if (videoEl && mediaTransport) {
+    actedTransport = applyMediaTransport(videoEl, mediaTransport, actedTransport);
+    reportMedia();
+  }
+
+  /**
+   * PULL THIS PLAYER BACK TO WHERE THE CLIP SHOULD BE (RG-220).
+   *
+   * Called on the events the player already fires, so there is no timer of its
+   * own: the clip reports its position several times a second while it plays and
+   * that is exactly when the question is worth asking.
+   *
+   * The baseline is Relay's clock (`content.media_started_at` against
+   * `Date.now() + hostOffsetMs`), never a leader screen — a leader would make
+   * the whole wall follow whichever browser buffered worst. `syncSeek` owns
+   * every refusal, including the held clip and the one past its end.
+   */
+  const syncMedia = () => {
+    const el = videoEl;
+    if (!el) return;
+    const want = syncSeek({
+      startedAt: content?.media_started_at,
+      now: Date.now() + (hostOffsetMs || 0),
+      duration: el.duration,
+      position: el.currentTime,
+      paused: !!mediaTransport?.paused,
+      looping: !!el.loop,
+    });
+    if (want == null) return;
+    try {
+      el.currentTime = want;
+    } catch {
+      /* a video with no metadata cannot be seeked; the next event will. */
+    }
+  };
+
+  const reportMedia = () => {
+    if (still) return;
+    // HOW LONG IS LEFT (RG-280), read on the events the player already fires so
+    // there is no timer of its own. `clipRemainingMs` answers null for every
+    // pre-knowledge state — a zero reads as "it has finished" about a clip that
+    // has not started.
+    clipLeft = stageClip ? clipRemainingMs(videoEl) : null;
+    syncMedia();
+    if (!onMedia) return;
+    const el = videoEl;
+    const dur = el ? el.duration * 1000 : NaN;
+    if (!el || !Number.isFinite(dur) || dur <= 0) {
+      onMedia(null);
+      return;
+    }
+    onMedia({
+      pos_ms: Math.max(0, Math.round(el.currentTime * 1000)),
+      dur_ms: Math.round(dur),
+      paused: !!el.paused,
+    });
+  };
   let sink = getAudioOutput();
   let unsubSink;
   onMount(() => {
@@ -1365,12 +1666,20 @@
   $: countdownHeld = countdownIsPaused(content);
   let now = 0;
   let cdTimer = null;
-  $: if (countdownTo && !countdownHeld) startClock();
+  // A RUNNING STAGE TIMER TICKS THIS CLOCK TOO — and a HELD one does not.
+  //
+  // The rail exists with no content on screen, so the countdown's own condition
+  // could not reach it. The exclusion of held rows is the same discipline the
+  // line above keeps: a timer firing four times a second to recompute a number
+  // that cannot change is the wrong thing on a machine that is also decoding
+  // speech.
+  $: programmeTicking = progSet.some((t) => !countdownIsPaused(t));
+  $: if ((countdownTo && !countdownHeld) || programmeTicking) startClock();
   else stopClock();
   function startClock() {
     if (cdTimer) return;
-    now = typeof Date !== 'undefined' ? Date.now() : 0;
-    cdTimer = setInterval(() => (now = Date.now()), 250);
+    now = typeof Date !== 'undefined' ? Date.now() + (hostOffsetMs || 0) : 0;
+    cdTimer = setInterval(() => (now = Date.now() + (hostOffsetMs || 0)), 250);
   }
   function stopClock() {
     if (cdTimer) {
@@ -1384,7 +1693,253 @@
   // not survivable now that it has an exception: a copy that has never heard of
   // `countdown_paused_ms` goes on counting down while the other two hold, and this
   // copy is the congregation's.
-  $: remainingMs = countdownRemainingMs(content, now);
+  // ── THE PROGRAMME RAIL ──────────────────────────────────────────────────────
+  //
+  // `now` is the same 250ms clock the countdown ticks on, so the two figures on
+  // one screen can never be a quarter-second apart from each other. Before the
+  // clock has started it is 0, and a rail dated to the epoch would read as every
+  // timer having run out decades ago — hence the fallback.
+  // THE ALERT, trimmed once. A message of spaces is not a message, and both
+  // surfaces that can hand one over already trim - this is the renderer refusing
+  // to paint a full-bleed red panel over a string nobody typed.
+  $: stageAlert = (stageMessage || '').trim();
+  // Clamped, because a rail that took half a projector would be a clock
+  // standing in front of the words it is there to time.
+  $: railPct = Math.min(30, RAIL_BASE_PCT * (Number(timerScale) || 1));
+  /**
+   * DOES THIS TEMPLATE DECLARE ANYWHERE FOR A QUIET WORD TO GO?
+   *
+   * Found by reading the operator's own template rather than by reasoning:
+   * `Stage · Reading` has Background, Reading, Reference, Clock and Elapsed, and
+   * no `stage_message` layer. A quiet send that painted only into that layer
+   * would be swallowed on the one screen this was asked for — the silence RG-156
+   * was about, arriving by a different door. So the strip below renders exactly
+   * when there is nowhere declared, and a template that DOES declare a place
+   * keeps its designer's placement.
+   */
+  $: hasMessageLayer = stackLayers.some(
+    ({ L }) => L?.bind === 'stage_message' && L?.visible !== false,
+  );
+  $: progSet = Array.isArray(programme) ? programme : [];
+  $: progNow = now || (typeof Date !== 'undefined' ? Date.now() : 0);
+  $: progRows = programmeRows(progSet, progNow);
+  $: progCh = programmeCh(progRows);
+  // ── THE CLIP STANDS IN FOR THE CLOCK (RG-288) ──────────────────────────────
+  //
+  // *"When a Media is Playing I want you to Cover the Stage timer with the clip
+  // countdown... and return the timer back when the media is cleared or done."*
+  //
+  // `clipCoversTimer` owns the rule and says at the line why it asks for time
+  // REMAINING rather than for a figure: `clipRemainingMs` answers 0 for a clip
+  // that has finished and is still mounted, and a cover keyed on "is there a
+  // figure" would hold the rail off a preacher's screen for the rest of the
+  // service behind a dead 0:00.
+  $: clipCovers = clipCoversTimer({ stage: stageClip, still, remainingMs: clipLeft });
+  // ── AND WHO TAKES THE SCREEN WHEN NOTHING HAS BEEN FIRED TO IT (RG-285) ────
+  //
+  // The three content facts go straight to `stageresting.js` through
+  // `stageFill`, so a `timer` verdict here is exactly the phone's `programme`
+  // verdict. `progRows` is empty on any screen that is not a stage
+  // (`Output.svelte::shownProgramme`), and `stageMessage` is refused by any
+  // channel whose role is not `stage` — so the gate is the ROLE, as it already
+  // was for the rail itself, and no new surface can be enlarged by this.
+  $: fillWhat = stageFill({
+    reading: !!(content?.text || content?.reference),
+    slide: !!content?.media_url,
+    countdown: content?.countdown_to != null,
+    timers: progRows.length,
+    // A note only. An ALERT is already the whole screen and flashes
+    // (DECISIONS §116); giving it a share of a layout would make it smaller.
+    message: !!stageAlert && !stageUrgent && !hasMessageLayer,
+    clipCovers,
+  });
+  $: fillGeo = fillGeometry(fillWhat);
+  // ONE rail fills, never all of them. A template with two `programme` layers
+  // draws two rails, and two rails each told to take the whole frame is one rail
+  // painted over another — so the first VISIBLE one takes it and the rest are
+  // not drawn while it does.
+  $: fillRailId = fillGeo.timer
+    ? (programmeLayers.find(({ L }) => L.visible !== false)?.L?.id ?? null)
+    : null;
+  /** The box a filling part is given, in the same percent `boxStyle` draws in. */
+  const fillStyle = (box) =>
+    `left:0%; top:${box.top}%; width:100%; height:${box.height}%;`;
+  // ── AND THE OVERFLOW RULE MEASURES THE BOX, NOT THE WINDOW ──────────────────
+  //
+  // `Stage.svelte` reads `innerWidth` and says at the line why it is allowed to:
+  // its rail spans the frame, and measuring the box there would mean a forced
+  // layout on the one page whose job is to be still. Neither half of that holds
+  // here. A template renders inside a REGION and a region is not the viewport —
+  // the same rail may be 1600px across on a wall-sized stage display and 300px
+  // across in a corner of a composite, and a window measurement would give both
+  // the same fourteen cells. So each rail is measured, once per update, in
+  // `afterUpdate` (never in a reactive block — rule 1).
+  //
+  // A width of 0 is what an element reports before it has been laid out, and
+  // `programmeCapacity` reads that as unmeasured rather than as a box one cell
+  // wide. That is the honest reading of an absence and it is stated there, once.
+  //
+  // AND ITS HEIGHT, for a reason that cost a sliced clock to find. `.lprog` is
+  // `container-type: inline-size`, which contains the INLINE axis and nothing
+  // else — so a `cqh` inside it does not measure the rail, it measures the small
+  // viewport. The cap that was meant to stop a figure growing taller than the box
+  // it sits in resolved to 670px on a 76px rail and did nothing at all, and the
+  // digits took the clamp ceiling and were cut off along the bottom by the
+  // `overflow: hidden` that was supposed to be the last resort.
+  //
+  // `Stage.svelte` does not have this bug and the difference is instructive: its
+  // rail caps against `--progmax`, a `dvh` figure it sets itself, precisely
+  // because its own container is `inline-size` too (`:1719-1722`). A measured
+  // pixel height is the same answer without a second unit to reason about.
+  //
+  // An unmeasured height is 0 and reads as UNMEASURED, never as a rail of no
+  // height — the same honest reading of an absence that `programmeCapacity`
+  // gives a width of 0, stated there once and followed here.
+  let progEls = [];
+  let progW = [];
+  let progH = [];
+  let progHeadH = [];
+  // The default rail's own three (RG-224). Separate rather than an extra slot in
+  // the arrays above, because those are indexed by LAYER and this rail has no
+  // layer — an index into a list of layers for a thing that is not one is how a
+  // measurement ends up describing the wrong box.
+  let defaultProgEl = null;
+  let defaultProgW = 0;
+  let defaultProgH = 0;
+  /**
+   * A rail's CONTENT height — what a cell inside it actually has to work with.
+   *
+   * `clientHeight` is the padding box, and `programmeRoom` is asked about the
+   * content box. The two were the same number for as long as no rail had any
+   * padding, which is exactly how this kind of thing hides.
+   */
+  const innerHeightOf = (el) => {
+    if (!el) return 0;
+    const cs = typeof getComputedStyle === 'function' ? getComputedStyle(el) : null;
+    const pad = cs ? (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0) : 0;
+    return Math.max(0, (el.clientHeight | 0) - Math.round(pad));
+  };
+  /** The row gap a cell puts between its head and its figure, in px. */
+  const gapUnder = (cell) => {
+    if (!cell || typeof getComputedStyle !== 'function') return 0;
+    const g = parseFloat(getComputedStyle(cell).rowGap);
+    return Number.isFinite(g) ? Math.ceil(g) : 0;
+  };
+  function measureProgramme() {
+    let moved = false;
+    for (let i = 0; i < progEls.length; i += 1) {
+      const w = progEls[i] ? progEls[i].clientWidth | 0 : 0;
+      // THE ROOM A CELL HAS, WHICH IS NOT THE RAIL'S `clientHeight` (RG-285).
+      // `clientHeight` includes PADDING, and a filling rail has 2cqw of it —
+      // 77px on a 1080p screen. Handing that to `programmeRoom` as the rail's
+      // height is the same arithmetic error the comment below records, made one
+      // box further out: the figure was capped at 462px inside a 409px cell and
+      // `2:25` was cut through the middle along the bottom of a projector,
+      // measured in a real engine at 1920x1080. An unpadded rail is unchanged,
+      // because its padding is zero.
+      const h = progEls[i] ? innerHeightOf(progEls[i]) : 0;
+      // AND WHAT THE LABEL ABOVE THE FIGURE IS ACTUALLY TAKING. `--lp-h` alone
+      // was not enough: capping the figure at a SHARE of the rail reserves
+      // nothing for the head, and the two only fit at 16:9 by arithmetic
+      // accident. `.lp-lbl` is `clamp(9px, …)`, so below a certain rail the
+      // label stops shrinking while the figure keeps going, their sum passes
+      // the rail height, and `overflow: hidden` cuts the digits through the
+      // middle. Measured at 900x300: head 9.90 + gap 3.60 + figure 13.02 into
+      // a 21.00 rail, and 42% of every digit gone.
+      // AND THE GAP UNDER IT GOES WITH IT. `.lp-cell` puts `0.4cqw` between the
+      // head and the figure, so the head's own share of the cell is the word
+      // plus that gap — 8px at 1920, which is what tipped the filling rail over
+      // its box. The comment above already names the gap in its measurement
+      // (`head 9.90 + gap 3.60 + figure 13.02`) and then did not subtract it.
+      const head = progEls[i] ? progEls[i].querySelector('.lp-head') : null;
+      const hh = head
+        ? Math.ceil(head.getBoundingClientRect().height) + gapUnder(head.parentElement)
+        : 0;
+      if (progW[i] !== w) {
+        progW[i] = w;
+        moved = true;
+      }
+      if (progH[i] !== h) {
+        progH[i] = h;
+        moved = true;
+      }
+      if (progHeadH[i] !== hh) {
+        progHeadH[i] = hh;
+        moved = true;
+      }
+    }
+    // THE DEFAULT RAIL MEASURES ITSELF THE SAME WAY. It has no layer, so it is
+    // not in the loop above; leaving it unmeasured would give it the `100px`
+    // fallback for ever and size its digits against a box it is not in.
+    if (defaultProgEl) {
+      const w = defaultProgEl.clientWidth | 0;
+      const h = innerHeightOf(defaultProgEl);
+      if (defaultProgW !== w) {
+        defaultProgW = w;
+        moved = true;
+      }
+      if (defaultProgH !== h) {
+        defaultProgH = h;
+        moved = true;
+      }
+    }
+    if (moved) {
+      progW = progW;
+      progH = progH;
+      progHeadH = progHeadH;
+    }
+  }
+  afterUpdate(measureProgramme);
+  /**
+   * The measured rail height, as a CSS declaration, or NOTHING when it has not
+   * been measured yet.
+   *
+   * Nothing, and not `0px`, and the difference is the whole point. A custom
+   * property set to zero IS set, so `var(--lp-h, 100px)` would never reach its
+   * fallback and `min(clamp(12px, …), calc(0px * 0.62))` is `0px` — the figure
+   * would be invisible on the first paint, before `afterUpdate` has run, and
+   * appear a frame later. Measured in a real engine: setting `--lp-h: 0px` on a
+   * painted rail takes the digits from 47.12px to 0px.
+   *
+   * Omitting the declaration lets the fallback do its job, which is the same
+   * honest reading of an absence that `programmeCapacity` gives a width of 0.
+   */
+  const railHeightVar = (px) => (Number(px) > 0 ? `--lp-h:${Math.round(px)}px;` : '');
+  /**
+   * WHAT IS LEFT FOR THE FIGURE once the label above it has taken its share, and
+   * whether the label may have a share at all.
+   *
+   * The cap used to be a fraction of the rail, and a fraction reserves nothing.
+   * It happened to hold at 16:9 because the label was still scaling there; it
+   * stopped holding the moment `.lp-lbl`'s `clamp(9px, …)` floor bit, which is
+   * every rail shorter than about 36px — a small composite region, or any output
+   * below 1024x576. The digits were then cut through the middle by the
+   * `overflow: hidden` that is supposed to be the last resort, and what is left
+   * of a sliced clock still reads as a valid time (RG-147).
+   *
+   * **Below the floor the LABEL stands down, not the figure**, and that follows
+   * the rail's own law one rule up: the label takes what it can and ellipses,
+   * the figure is never the thing that gets cut. A name with an unreadable clock
+   * under it tells a preacher nothing; a clock with no name still tells him how
+   * long is left, and the rail is only ever showing what the operator put on it.
+   *
+   * `MIN_FIGURE_PX` is the reading floor, not a taste: `.lp-val`'s own clamp
+   * bottoms out at 12px, and a figure that has been squeezed under it has
+   * already stopped being an instrument.
+   */
+  /**
+   * The rail's own height, and what is left for the figure once the label above
+   * it has taken its share. `programmeRoom` owns the arithmetic — it is a
+   * decision, and decisions live in the pure module where they can be tested
+   * against numbers rather than against a regex.
+   */
+  const railRoomVars = (railPx, headPx) => {
+    const room = programmeRoom(railPx, headPx);
+    if (!room) return '';
+    return room.bare
+      ? `--lp-h:${room.rail}px; --lp-bare:1;`
+      : `--lp-h:${room.rail}px; --lp-room:${room.figure}px;`;
+  }; $: remainingMs = countdownRemainingMs(content, now);
   // Only ever true when it genuinely ran out. A countdown held at 0:00 cannot exist
   // (`adjust_countdown` refuses a target under a second), but saying so here keeps
   // the done message off a screen that is merely paused.
@@ -1540,7 +2095,25 @@
   // shape left standing with no words in it is furniture on a congregation's
   // screen. A backdrop earns its place there because a church puts one up
   // deliberately and minutes before the first fire; an empty band does not.
-  $: stackLayers = content ? layerViews : layerViews.filter(({ L }) => L.type === 'backdrop');
+  // ── THE PROGRAMME LAYERS COME OUT OF THE STACK ──────────────────────────────
+  //
+  // Two reasons, and the second is the one that matters.
+  //
+  // They are not TEXT: `layerText` answers '' for this bind (deliberately —
+  // `layers.js::boundValue` says why), so left in the stack a programme layer
+  // would draw an empty `.ltext` box and enter the fit loop measuring nothing.
+  //
+  // And they must draw when there is NO CONTENT. The gate above this stack
+  // states a rule about a cleared wall — furniture on a congregation's screen
+  // with nothing to say — and a Stage Timer is the case that rule is not about:
+  // it runs during the notices, before the first verse of the service exists,
+  // and it survives a panic control because `Stage.svelte` survives one
+  // (DECISIONS §91: a panic control takes back every sentence anybody put on a
+  // screen, and stops none of the clocks). The two stage surfaces have to agree
+  // about that or a church with one of each gets two answers.
+  $: programmeLayers = layerViews.filter(({ L }) => L.bind === 'programme');
+  $: stackLayers = (content ? layerViews : layerViews.filter(({ L }) => L.type === 'backdrop'))
+    .filter(({ L }) => L.bind !== 'programme');
 
   // Per-text-layer auto-fit. Each layer's text is sized to BEST FIT its own box —
   // it scales DOWN when there is a lot of text and UP when there is little, and it
@@ -1787,9 +2360,9 @@
             <div class="lmediabox" style="{boxStyle(L)} border-radius:{L.radius || 0}cqw; opacity:{L.opacity == null ? 1 : L.opacity};">
               {#if content.media_kind === 'video'}
                 <!-- svelte-ignore a11y-media-has-caption -->
-                <video class="lmediafill" src={content.media_url} style="object-fit:{L.fit === 'contain' ? 'contain' : 'cover'};" bind:this={videoEl} autoplay loop muted={!audio} playsinline on:loadedmetadata={routeAudio}></video>
+                <video class="lmediafill" src={still ? posterUrl(content.media_url) : content.media_url} style="object-fit:{L.fit === 'contain' ? 'contain' : 'cover'};" bind:this={videoEl} on:error={() => mediaFailed('video', content.media_url)} on:loadeddata={mediaLoaded} autoplay={!still} loop={!still && !!mediaTransport?.loop} preload={still ? "metadata" : "auto"} muted={!audio} playsinline on:loadedmetadata={() => { routeAudio(); reportMedia(); }} on:timeupdate={reportMedia} on:pause={reportMedia} on:play={reportMedia} on:ended={reportMedia}></video>
               {:else}
-                <img class="lmediafill" src={content.media_url} style="object-fit:{L.fit === 'contain' ? 'contain' : 'cover'};" alt="" />
+                <img class="lmediafill" src={content.media_url} style="object-fit:{L.fit === 'contain' ? 'contain' : 'cover'};" alt="" on:error={() => mediaFailed('image', content.media_url)} on:load={mediaLoaded} />
               {/if}
             </div>
           {/if}
@@ -1884,9 +2457,9 @@
            layer to the template to position it instead. -->
       {#if content.media_kind === 'video'}
         <!-- svelte-ignore a11y-media-has-caption -->
-        <video class="media" src={content.media_url} bind:this={videoEl} autoplay loop muted={!audio} playsinline on:loadedmetadata={routeAudio}></video>
+        <video class="media" src={still ? posterUrl(content.media_url) : content.media_url} bind:this={videoEl} on:error={() => mediaFailed('video', content.media_url)} on:loadeddata={mediaLoaded} autoplay={!still} loop={!still && !!mediaTransport?.loop} preload={still ? "metadata" : "auto"} muted={!audio} playsinline on:loadedmetadata={() => { routeAudio(); reportMedia(); }} on:timeupdate={reportMedia} on:pause={reportMedia} on:play={reportMedia} on:ended={reportMedia}></video>
       {:else}
-        <img class="media" src={content.media_url} alt="" />
+        <img class="media" src={content.media_url} alt="" on:error={() => mediaFailed('image', content.media_url)} on:load={mediaLoaded} />
       {/if}
     {/if}
     {#if showDefaultCountdown}
@@ -1915,10 +2488,17 @@
                `white-space: nowrap` for the ticking digits, and what
                `.countdown.warn` needs below to paint the last-minute red pulse.
                None of that is restated inline. -->
+          <!-- THE DIGITS ARE GROUPED, AND THE MARKUP IS ONE LINE ON PURPOSE.
+               `countdownParts` splits the figure so the separator can be set back
+               and each group can settle on its own (see `layers.js`). Svelte
+               keeps the whitespace between sibling elements, so a newline in
+               here would land INSIDE `.countdown` and survive the `.trim()` the
+               transport's own test does on `textContent` — a control broken by a
+               styling change. Hence one line, and a test that reads the text
+               back. -->
           <div class="lfit countdown" data-base={verseSize * 2} data-fit="shrink" class:warn={countdownWarn}
-            style="font-size:{verseSize * 2}cqw; margin-top:{refGap}cqw; color:{countdownWarn ? CD_WARN : verseColor}; text-align:center; text-shadow:{verseShadowCss};">
-            {countdownDone ? (content.countdown_done || '0:00') : countdownText}
-          </div>
+            style="font-size:{verseSize * 2}cqw; margin-top:{refGap}cqw; color:{countdownWarn ? CD_WARN : verseColor}; text-align:center; text-shadow:{verseShadowCss};"
+          >{#if countdownDone}{content.countdown_done || '0:00'}{:else}{#each countdownParts(countdownText) as p (p.k)}<span class:cd-sep={p.sep} class:cd-num={!p.sep}>{p.t}</span>{/each}{/if}</div>
         </div>
       </div>
     {/if}
@@ -1928,9 +2508,9 @@
          sensible behaviour and keeps old templates working. -->
     {#if content.media_kind === 'video'}
       <!-- svelte-ignore a11y-media-has-caption -->
-      <video class="media" src={content.media_url} bind:this={videoEl} autoplay loop muted={!audio} playsinline on:loadedmetadata={routeAudio}></video>
+      <video class="media" src={still ? posterUrl(content.media_url) : content.media_url} bind:this={videoEl} on:error={() => mediaFailed('video', content.media_url)} on:loadeddata={mediaLoaded} autoplay={!still} loop={!still && !!mediaTransport?.loop} preload={still ? "metadata" : "auto"} muted={!audio} playsinline on:loadedmetadata={() => { routeAudio(); reportMedia(); }} on:timeupdate={reportMedia} on:pause={reportMedia} on:play={reportMedia} on:ended={reportMedia}></video>
     {:else}
-      <img class="media" src={content.media_url} alt="" />
+      <img class="media" src={content.media_url} alt="" on:error={() => mediaFailed('image', content.media_url)} on:load={mediaLoaded} />
     {/if}
   {:else}
   <!-- Background is its OWN layer so its opacity can be dimmed (for readability
@@ -1982,9 +2562,10 @@
               {#if content.reference && !countdownDone}
                 <div class="reference" style="font-size:{refSize}cqw; {refStyle}">{content.reference}</div>
               {/if}
-              <div class="verse countdown" class:warn={countdownWarn} style="font-size:{verseSize * 2}cqw; color:{countdownWarn ? CD_WARN : verseColor}; text-align:{verseAlign}; text-shadow:{verseShadowCss};">
-                {countdownDone ? (content.countdown_done || '0:00') : countdownText}
-              </div>
+              <!-- Grouped digits + a separable separator, one line of markup, for
+                   the reasons written at the default-overlay branch above. -->
+              <div class="verse countdown" class:warn={countdownWarn} style="font-size:{verseSize * 2}cqw; color:{countdownWarn ? CD_WARN : verseColor}; text-align:{verseAlign}; text-shadow:{verseShadowCss};"
+              >{#if countdownDone}{content.countdown_done || '0:00'}{:else}{#each countdownParts(countdownText) as p (p.k)}<span class:cd-sep={p.sep} class:cd-num={!p.sep}>{p.t}</span>{/each}{/if}</div>
             {:else if refFirst}
               {#if show('reference') && content.reference}
                 <div class="reference" style="font-size:{refSize}cqw; {refStyle}">{content.reference}</div>
@@ -2007,9 +2588,175 @@
   {/if}
   {/if}
   {/if}
+
+  <!-- == THE PROGRAMME RAIL == OUTSIDE THE CONTENT GATE, ON PURPOSE.
+       A Stage Timer runs during the notices and survives a panic control
+       (DECISIONS §91), so it cannot live inside a block whose rule is "a cleared
+       wall shows NOTHING". It draws only where a template asks for it and only
+       where the PAGE has handed rows over, which it does for a `stage`-role
+       screen and for nothing else. -->
+  <!-- AND THE CLIP MAY TAKE ITS PLACE (RG-288). Only ever on a stage screen,
+       only for a VIDEO, and only while that video has time left to run — the
+       rule and the reason are in `stagefill.js::clipCoversTimer`. -->
+  {#if progRows.length && !clipCovers}
+    {#each programmeLayers as { L }, i (L.id)}
+      {#if L.visible !== false && (!fillGeo.timer || L.id === fillRailId)}
+        {@const fills = fillGeo.timer && L.id === fillRailId}
+        {@const cells = programmeCells(progRows, programmeCapacity(progW[i]))}
+        <div
+          class="lprog"
+          class:overmedia={pictureBehind}
+          class:fills
+          bind:this={progEls[i]}
+          style="{fills ? fillStyle(fillGeo.timer) : boxStyle(L)} --tmrs:{cells.length}; --tch:{progCh}; --lp-sz:{fills ? FILL_SIZE_CQW : railSize(L)}; {railRoomVars(progH[i], progHeadH[i])} color:{L.color || '#fff'}; font-family:{fontFamOf(L.font)}; opacity:{L.opacity == null ? 1 : L.opacity};"
+          aria-label="Programme">
+          {#each cells as t, j (j)}
+            {#if t.more}
+              <!-- THE RAIL SAYING WHAT IT COULD NOT SHOW. Not a timer, so it
+                   carries no `data-timer-id` and nothing counts it as one. -->
+              <div class="lp-cell lp-more"><span class="lp-val lp-msg">+{t.more} more</span></div>
+            {:else}
+              <div class="lp-cell" class:warn={t.warn} class:over={t.over} class:held={t.held} data-timer-id={t.id}>
+                {#if t.label || t.state}
+                  <span class="lp-head">
+                    {#if t.label}<span class="lp-lbl">{t.label}</span>{/if}
+                    <!-- `Held`, or `TIME UP` past zero (RG-286). One field, from
+                         `timers.js::programmeRows`, so this rail and the phone's
+                         cannot spell the same clock's state two ways. -->
+                    {#if t.state}<span class="lp-state">{t.state}</span>{/if}
+                  </span>
+                {/if}
+                <!-- ALWAYS A FIGURE, NEVER PROSE - `--tch` budgets this column
+                     from the widest rendered string on the rail, so an
+                     operator's done message here would size every column to its
+                     own length. Those words land on the congregation countdown
+                     instead. -->
+                <span class="lp-val">{t.v}</span>
+              </div>
+            {/if}
+          {/each}
+        </div>
+      {/if}
+    {/each}
+  {/if}
+
+  {#if showDefaultProgramme && !clipCovers}
+    <!-- NO PROGRAMME LAYER, BUT CLOCKS ARE RUNNING (RG-224). A rail along the
+         foot, in the same shape a designed one takes, so an operator who adds
+         the layer later gets the same thing in a place they chose. Add a
+         Programme layer to the template to place it instead.
+
+         The box is written out rather than taken from a layer, because there is
+         no layer: full width, the bottom 8%, which is where every seeded stage
+         template puts it. `--lp-room` is deliberately absent — nothing measured
+         this rail — so `.lp-val` falls back to its `--lp-h` share, exactly as it
+         does for a designed rail before the first measurement lands. -->
+    {@const cells = programmeCells(progRows, programmeCapacity(defaultProgW))}
+    <!-- ITS HEIGHT IS THE OPERATOR'S (RG-265). `RAIL_BASE_PCT` was a flat 8,
+         which is 86 pixels on a 1080p projector read from ten metres — and the
+         Normal / Large / Huge control the operator set for this screen reached
+         the phone and stopped there. -->
+    <!-- AND WITH NOTHING FIRED IT TAKES THE WHOLE SCREEN (RG-285), which is what
+         `stage.html` has done since RG-244. `--lp-sz` is lifted with it: the
+         Size field is a share of a DESIGNED box, and there is no designed box
+         while the rail IS the screen. -->
+    <div
+      class="lprog lprog-default"
+      class:overmedia={pictureBehind}
+      class:fills={!!fillGeo.timer}
+      bind:this={defaultProgEl}
+      style="{fillGeo.timer ? `${fillStyle(fillGeo.timer)} --lp-sz:${FILL_SIZE_CQW};` : `left:0%; top:${100 - railPct}%; width:100%; height:${railPct}%;`} --tmrs:{cells.length}; --tch:{progCh}; {railHeightVar(defaultProgH)}"
+      aria-label="Programme">
+      {#each cells as t, j (j)}
+        {#if t.more}
+          <div class="lp-cell lp-more"><span class="lp-val lp-msg">+{t.more} more</span></div>
+        {:else}
+          <div class="lp-cell" class:warn={t.warn} class:over={t.over} class:held={t.held} data-timer-id={t.id}>
+            {#if t.label || t.state}
+              <span class="lp-head">
+                {#if t.label}<span class="lp-lbl">{t.label}</span>{/if}
+                {#if t.state}<span class="lp-state">{t.state}</span>{/if}
+              </span>
+            {/if}
+            <span class="lp-val r-mono">{t.v}</span>
+          </div>
+        {/if}
+      {/each}
+    </div>
+  {/if}
+
+  <!-- == THE STAGE MESSAGE == THE WHOLE SCREEN, NOT A LAYER.
+       Requirement 5: *an unmistakable flashing state: full-bleed or near-full-
+       bleed, high contrast, sustained for the alert duration, visible to someone
+       glancing up from a distance in bright light. A subtle tint or a small badge
+       is not acceptable.*
+
+       Rendered here rather than through a `stage_message` layer because a
+       template designed before Stage Messages existed is exactly the screen this
+       has to reach - an alert the designer had to opt into is an alert that is
+       missing from the one screen nobody remembered to update. A template MAY
+       still carry the layer; the panel covers it, which is the right order.
+
+       It is outside the content gate for the same reason the rail is: a Stage
+       Message over a cleared screen is still a Stage Message. It comes down when
+       the page stops handing one over, which `Output.svelte` does on a role
+       change and on both panic controls (DECISIONS §91). -->
+  <!-- ══ HOW LONG IS LEFT OF THE CLIP (RG-280) ══ on a stage screen only.
+       Frosted rather than filled, for the reason RG-212 and RG-256 both
+       recorded: the clip is what the room is watching, and an opaque bar
+       punched through it is a worse answer than a clock nobody can read. -->
+  {#if stageClip && clipLeft != null}
+    <div class="lclip" class:warn={clipWarn} role="status" aria-live="off">
+      <span class="lclip-k">Clip</span>
+      <span class="lclip-v">{formatCountdown(clipLeft)}</span>
+    </div>
+  {/if}
+  {#if stageAlert && stageUrgent}
+    <div class="lalert {alertStep(stageAlert)}" role="status" aria-live="assertive">
+      <!-- SHOWN ONLY UNDER REDUCED MOTION (see the stylesheet). With the pulse
+           running, the panel identifies itself by behaving like nothing else on a
+           platform; without it, the label and the frame are what stop a flat red
+           rectangle reading as part of the set. -->
+      <span class="lalert-lbl">Stage Message</span>
+      <span class="lalert-txt">{stageAlert}</span>
+    </div>
+  {/if}
+
+  <!-- == A QUIET WORD WITH NOWHERE DECLARED TO GO ==
+       Not an alarm and not nothing. A template that declares a `stage_message`
+       layer paints the words where its designer put them; one that does not gets
+       this strip, because a send that reports success and shows nothing is the
+       failure RG-156 filed. It does not flash, does not fill the screen and does
+       not cover the reading — that is the whole distinction the operator asked
+       for (DECISIONS §116). -->
+  <!-- AND WITH NOTHING ON THE SCREEN IT TAKES THE ROOM (RG-285), which is the
+       phone's own answer: `stagemessage.js::messagePlacement` gives a note the
+       reading's whole box, because *"a Stage Message is the desk speaking to ONE
+       person in the middle of a sermon — it is never ambient"* (RG-239/RG-245).
+       §116's line is untouched and is what the `reading`/`slide` half of
+       `stageFill` keeps: over a reading this is still the modest foot strip,
+       because a NOTE MAY NOT COVER THE READING. -->
+  {#if stageAlert && !stageUrgent && !hasMessageLayer}
+    <div
+      class="lmsg"
+      class:fills={!!fillGeo.message}
+      style={fillGeo.message ? fillStyle(fillGeo.message) : ''}
+      role="status"
+      aria-live="polite">
+      <!-- THE WORDS IN AN ELEMENT OF THEIR OWN (RG-268). A bare text node cannot
+           be coloured or animated apart from the plate it sits on, and the
+           distinction this whole path rests on is that a MESSAGE pulses its text
+           while an ALARM flashes its panel. `Stage.svelte`'s `.bigmsg-v pulse`,
+           on the surface that never had it. -->
+      <span class="lmsg-v pulse">{stageAlert}</span>
+    </div>
+  {/if}
 </div>
 
 <style>
+  /* The quiet strip's rules live beside the alarm's, under THE STAGE MESSAGE
+     below, because the two are one decision (DECISIONS §116) and reading either
+     of them alone is how they came to disagree. */
   .stage {
     position: absolute;
     inset: 0;
@@ -2043,6 +2790,497 @@
     position: absolute;
     box-sizing: border-box;
   }
+  /* == THE PROGRAMME RAIL ==================================================
+     The Stage Timer set, inside whatever box the template's programme layer
+     names. The rules are `Stage.svelte`'s `.progrow` family, restated for a box
+     that is NOT the frame - which is the one real difference between the two
+     surfaces and the reason the sizing reads `cqw` against this element rather
+     than against the page.
+
+     ITS OWN CONTAINER, so `cqw` below is a share of THE RAIL and not of the
+     screen. A rail in a 300px corner of a composite and a rail across a
+     wall-sized stage display then set their digits from their own width, which
+     is the whole of requirement 2b's "measure the container, not the window". */
+  .lprog {
+    position: absolute;
+    box-sizing: border-box;
+    container-type: inline-size;
+    display: flex;
+    gap: 1cqw;
+    align-items: stretch;
+    /* CENTRED, the way the phone's `.progrow` has been since RG-248. The cells
+       are `flex: 1 1 0` so they fill the rail and this decides nothing for them
+       — it decides where the set sits when it does NOT fill, which is every rail
+       carrying a `+N more` cell (`flex: 0 1 auto`). Left was the default's
+       answer rather than anybody's. */
+    justify-content: center;
+    overflow: hidden;
+    z-index: 3;
+  }
+  /* ══ THE RAIL OWNS THE SCREEN (RG-285) ══
+     Only ever on a stage-role screen with nothing fired to it — the rule is
+     `stagefill.js`, which is `stageresting.js` with two extra facts, so this and
+     the preacher's phone answer the same question the same way.
+     It is only the BOX that changes: the cells, the caps, the warning colour and
+     the TIME UP flash are the rail's own and are untouched, which is what keeps
+     a filled rail and a corner rail the same instrument at two sizes. */
+  .lprog.fills {
+    /* The gap is a share of the container, and the container is now the screen —
+       1cqw of 1920 is 19px between two clocks, which reads as a seam. */
+    gap: 3cqw;
+    padding: 2cqw;
+  }
+  /* THE PLATE THE RAIL EARNS OVER A PICTURE (RG-212).
+     A wash and a blur rather than a solid block: the clip is the thing the
+     congregation is watching, and a rail that punches an opaque bar through it
+     is a worse answer than a clock nobody can read. `backdrop-filter` is a
+     progressive enhancement - where it is not supported the wash alone still
+     lifts the digits off the picture, which is why the colour carries most of
+     the contrast rather than the blur.
+     NO COLOUR CHANGE: the digits keep the template's own ink, and a warning or
+     an over-run keeps its own (rule 18). This adds a surface, never a meaning. */
+  /* THE FALLBACK RAIL (RG-224). It borrows every rule `.lprog` has — it IS a
+     `.lprog` — and adds only the two things a designed layer carries on itself:
+     an ink, and enough of a backing that white digits are readable over whatever
+     the template happens to paint at its foot. A designed layer states its own
+     colour; this one has no designer to ask. */
+  .lprog-default {
+    color: #fff;
+    background: color-mix(in srgb, #000 55%, transparent);
+  }
+  .lprog.overmedia {
+    background: color-mix(in srgb, #000 62%, transparent);
+    backdrop-filter: blur(6px);
+    border-radius: 0.8cqw;
+  }
+  /* `min-width: 0` on the item, or a long label refuses to shrink and pushes the
+     last timer off the end of a screen nobody is standing next to. */
+  /* AND THE DIGITS SIT IN THE MIDDLE OF WHATEVER ROOM THE TIMER HAS (RG-289).
+     The operator: *"aligh the text on the stage timer properly so it dosent just
+     stay to one side"*. A column flex box leaves `align-items: stretch` and text
+     at its default alignment, so a single timer printed its figure hard against
+     the left edge of a cell that spans the rail — measured at 1920x1080 with the
+     seeded Programme layer: the digits started 12px from the left of a 1896px
+     cell and ended 1631px short of its right edge.
+     `Stage.svelte`'s `.tmr` says the same thing at the same line and has since
+     RG-248: *"left and top was an accident of the defaults rather than a
+     decision"*. This is the other rail, two days behind. */
+  .lp-cell {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    gap: 0.4cqw;
+    overflow: hidden;
+  }
+  /* A LABEL-LESS TIMER IS DIGITS ALONE - the head is not rendered at all rather
+     than rendered empty, so the cell closes up instead of leaving a gap the
+     height of a word. The label takes what it can and ellipses; the state word is
+     never the thing that gets cut. */
+  .lp-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.6cqw;
+    min-width: 0;
+  }
+  .lp-lbl,
+  .lp-state {
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    line-height: 1.1;
+    font-size: clamp(9px, calc(30cqw / var(--tmrs) / 10), 22px);
+  }
+  .lp-lbl {
+    opacity: 0.62;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+  /* HELD IS A REAL THIRD STATE AND IT READS AS ONE. It is not a colour from the
+     law: amber means ON AIR, cyan means a guess, amethyst means rehearsal, and a
+     clock somebody paused is none of those. It is the layer's own ink at full
+     strength - the operator did this deliberately, and the preacher is entitled
+     to know a clock has stopped rather than broken. */
+  .lp-state {
+    flex: 0 0 auto;
+    opacity: 1;
+  }
+  /* THE RAIL IS TOO SHORT FOR BOTH, SO THE NAME GOES AND THE CLOCK STAYS.
+     Set from `railRoomVars` once the measured head would leave the figure under
+     its reading floor. `display: none` and not `visibility: hidden`, because the
+     point is to give the height back. */
+  .lprog[style*='--lp-bare'] .lp-head {
+    display: none;
+  }
+  .lp-val {
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    line-height: 1;
+    /* The width a figure may take is its share of the rail divided by the
+       characters IT ACTUALLY HAS. `--tch` is the row's own longest rendered
+       figure (`programmeCh`), which is why `1:30:13` cannot be sliced into a
+       shorter time that still reads as a valid one (RG-147), and `0.62` is the
+       mono advance. Capped against the rail's own height so one timer on a wide
+       box does not become taller than the box it is in.
+
+       AND IT ELLIPSISES RATHER THAN SLICING. A fit that cannot report is rule
+       37's defect; a sliced clock is a lie the one person reading it cannot
+       detect, and an ellipsis says the figure did not fit instead of showing a
+       shorter one that looks correct. */
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    /* WHAT THE DESIGNER ASKED FOR, CAPPED BY WHAT FITS (operator, 2026-09-21).
+       `--lp-sz` is `L.size` converted into this container by `timers.js::railSize`
+       — the Size field in the editor, which reached this layer and nothing else
+       in the product until now.
+
+       It is a `min()`, so the two caps that were the whole value before are still
+       caps: the per-column budget (`--tch`, which is what stops `1:30:13` being
+       sliced into a shorter time that still reads as valid — RG-147) and the
+       rail's own height. A figure may SHRINK to fit its box; it may not grow past
+       what was asked for. The 12px floor stays: below it nothing is readable from
+       a platform anyway, and a figure that small is a box that is too small.
+
+       THE 64px CEILING IS GONE, and it is why the operator reported the Size
+       control as dead (RG-223). It was a literal, not a fit: on a 1920×1080
+       screen with the seeded Programme layer and one timer, the per-column budget
+       is 294px and the rail's room is 72px, so `64px` was the smallest of the
+       three from about 3.3cqw upward — the dial moved for a turn and a half and
+       then nothing happened, however far it went. `max()` keeps the floor and
+       drops the ceiling; past that the rail's own HEIGHT binds, which is honest
+       and visible, because the box is drawn in the editor. */
+    font-size: min(
+      calc(var(--lp-sz, 2.2) * 1cqw),
+      max(12px, calc(92cqw / var(--tmrs) / var(--tch, 6) / 0.62)),
+      var(--lp-room, calc(var(--lp-h, 100px) * 0.62))
+    );
+  }
+  /* THE ONE PROSE CELL ON THIS RAIL, and it is the rail talking about itself.
+     Digits sized for `MM:SS` would set `+3 more` at the size of a clock and clip
+     it. Quiet, because it is bookkeeping about bookkeeping - but present,
+     because a rail that silently drops half the programme is a rail nobody can
+     tell from a complete one. */
+  .lp-more {
+    flex: 0 1 auto;
+    justify-content: center;
+  }
+  .lp-msg {
+    font-variant-numeric: normal;
+    letter-spacing: 0;
+    line-height: 1.15;
+    opacity: 0.62;
+    font-size: min(clamp(10px, calc(92cqw / var(--tmrs) / 11 / 0.5), 30px), var(--lp-room, calc(var(--lp-h, 100px) * 0.4)));
+  }
+  /* THE LAST MINUTE, ON THE PREACHER'S OWN PROGRAMME. The same red and the same
+     rule as the stage page (`.tmr.warn .tval`), stated UNCONDITIONALLY and
+     outside every motion query: a viewer who asked for no motion must still
+     learn that the clock is running out. It is a claim about TIME and none of
+     the three law colours - amber is ON AIR, cyan is a guess, amethyst is
+     rehearsal. A timer that has run OUT wears the same red and counts upward;
+     being over is the far end of the same claim, not a second colour. A HELD row
+     wears neither: it is not running out, it is where the operator left it. */
+  .lp-cell.warn .lp-val {
+    color: #f4515b;
+  }
+  /* ── TIME UP, AND IT ASKS FOR ATTENTION (operator, 2026-09-21) ─────────────
+     The congregation countdown has flashed on its warning since §7
+     (`.countdown.warn`), and the preacher's own rail — the one clock a person is
+     meant to ACT on — only ever changed colour. A red figure among red figures,
+     on a dark stage screen at arm's length under stage lighting, was the weakest
+     signal in the product pointed at the person with the least attention spare.
+
+     THE SAME 2s CADENCE as `cdwarn`, deliberately: two clocks flashing at two
+     rhythms in one room is two alarms, and an operator glancing between a wall
+     and a monitor should not have to tell them apart by tempo.
+
+     It marks `over`, not `warn` — see `timers.js::programmeRows` for why a flash
+     that runs for the whole warning window is a flash nobody sees. */
+  .lp-cell.over .lp-val {
+    animation: lpover 2s ease-in-out infinite;
+  }
+  @keyframes lpover {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.45;
+    }
+  }
+
+  /* == THE STAGE MESSAGE ===================================================
+     Requirement 5. The presentation `Stage.svelte` gives the preacher's phone,
+     on the template path, so a stage TV and a stage tablet in the same room say
+     the same thing in the same way.
+
+     NEAR-FULL-BLEED AND ABOVE EVERYTHING. `absolute` rather than the phone's
+     `fixed`, because this renderer also draws the Templates editor preview and a
+     console pane: `fixed` would escape the box and paint over the operator's
+     own chrome. `.stage` is `position: absolute; inset: 0` on an output page, so
+     on the screen this IS the screen. */
+  /* ══ THE CLIP CLOCK ON A BIG STAGE SCREEN (RG-280) ══
+     Same plate, same ink and the same warning threshold as the phone's
+     `.clipplate` in `Stage.svelte`: a preacher who checks the tablet and then
+     looks up at the platform monitor must not be told two different things.
+     FROSTED, not filled - the clip is what the room is watching, and a solid
+     bar punched through it is a worse answer than a clock nobody reads.
+     Sized in cqw so it holds its proportion on a 24-inch monitor and a wall. */
+  .lclip {
+    position: absolute;
+    left: 50%;
+    bottom: 4cqh;
+    transform: translateX(-50%);
+    z-index: 55;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 2.2cqw;
+    padding: 1.4cqh 2.6cqw;
+    border-radius: 1.4cqw;
+    background: rgba(8, 10, 14, 0.42);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    pointer-events: none;
+  }
+  .lclip-k {
+    /* LITERALS, NOT CONSOLE TOKENS. `seal.test.js` holds the rule and it is the
+       right one: this component also paints a congregation screen, where the
+       operator's stylesheet does not exist and a `var(--f-mono)` resolves to
+       nothing. The phone may name tokens because it is only ever the phone. */
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    line-height: 1.1;
+    font-size: min(1.6cqw, 2.4cqh);
+    color: rgba(242, 244, 248, 0.66);
+  }
+  .lclip-v {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    font-size: min(4.4cqw, 7cqh);
+    color: #f2f4f8;
+  }
+  /* The last 30 seconds. Red, and the same red the phone and the wall use -
+     this is the only figure on a stage screen that is about to run out. */
+  .lclip.warn { border-color: rgba(244, 81, 91, 0.5); }
+  .lclip.warn .lclip-v { color: #f4515b; }
+  .lalert {
+    position: absolute;
+    inset: 0;
+    z-index: 60;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2cqh;
+    padding: 4cqw;
+    text-align: center;
+    font-weight: 700;
+    line-height: 1.15;
+    color: #fff;
+    text-shadow: 0 0.02em 0.06em rgba(0, 0, 0, 0.75);
+    background: #c8121c;
+    overflow: hidden;
+  }
+  /* THREE STEPS, AND THE FIRST IS docs/REBRAND.md §5's FIGURE UNCHANGED. A
+     message an operator types in a hurry is longer than a phrase, and at 8.5cqw
+     a three-sentence one runs off the bottom of a box that clips. The table is
+     `stagealert.js`; there is no step here that it cannot answer, and
+     `stagealerttemplate.test.js` holds both halves of that. */
+  .lalert.xl .lalert-txt { font-size: 8.5cqw; }
+  .lalert.lg .lalert-txt { font-size: 6cqw; }
+  .lalert.md .lalert-txt { font-size: 4.2cqw; }
+  .lalert-txt {
+    max-width: 100%;
+    overflow: hidden;
+  }
+  /* THE LABEL IS THE REDUCED-MOTION ANSWER'S FIRST HALF, so it is hidden while
+     the pulse is running - the panel then looks exactly like the phone's, which
+     is the point of building the same presentation twice. */
+  .lalert-lbl {
+    display: none;
+    font-size: min(2.2cqw, 3cqh);
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    opacity: 0.9;
+  }
+  /* THE PULSE IS THE POINT: a platform is a bright place and a flat red panel
+     reads as part of the set. Same colours and same cycle as the phone. */
+  @media (prefers-reduced-motion: no-preference) {
+    .lalert {
+      animation: stagealert 1.4s ease-in-out infinite;
+    }
+  }
+  @keyframes stagealert {
+    0%, 100% { background: #c8121c; }
+    50% { background: #7a0a11; }
+  }
+  /* == AND REDUCED MOTION GETS AN ANSWER, NOT THE PULSE'S ABSENCE ==========
+     The phone has a `no-preference` branch and NO `reduce` counterpart, so under
+     reduced motion its alert is a flat red panel - the exact thing its own
+     stylesheet says the pulse exists to avoid. Falling silent is not a decision,
+     it is the absence of one.
+
+     So this branch answers with the two things a still image can carry that a
+     red rectangle cannot: a hard-edged high-contrast hazard frame, which no
+     stage set has, and the panel NAMING ITSELF. Sustained for as long as the
+     message is up, unmistakable from across a platform, and not a brightness
+     pulse under another word - nothing here animates, filters or fades. */
+  @media (prefers-reduced-motion: reduce) {
+    .lalert {
+      border: 2.4cqh solid transparent;
+      border-image: repeating-linear-gradient(
+          135deg,
+          #fff 0,
+          #fff 2.2cqw,
+          #1a0205 2.2cqw,
+          #1a0205 4.4cqw
+        )
+        24;
+    }
+    .lalert-lbl {
+      display: block;
+    }
+  }
+
+  /* == THE QUIET STRIP — A WORD THAT IS SEEN, NOT SHOUTED (DECISIONS §116) ===
+     The other half of the Stage Message, and it sits here rather than at the top
+     of the stylesheet so that nobody can change one of the two renderings while
+     reading only the other. That is how this one came to be the thing it is.
+
+     RG-268, the operator with a screenshot of a stage TV: *"Stage message sent
+     still not flashing catching attention ... its just showing a gray/white text
+     which can easily be missed."* It was white on a black plate behind a
+     hairline white border, which is the presentation of a caption, and a caption
+     is the one thing a message from the desk must not read as.
+
+     `Stage.svelte` had already answered this for the phone (RG-239): the caution
+     ink, a rule down the edge, and a gentle pulse of the TEXT. This is that
+     answer, on the surface that never got it — so the tablet and the TV in one
+     room now say the same thing in the same way, which is the whole point of
+     building the presentation twice.
+
+     WHAT IT IS STILL NOT. It does not flash its PANEL and it does not take the
+     screen; `.lalert` above does both, and that distinction is the operator's
+     own (§116). A message pulses its text; an alarm flashes its panel.
+
+     OCHRE, because rule 18 leaves it the only free ink: amber means ON AIR, cyan
+     means the AI guessed, amethyst means a rehearsal, and red is the alarm's.
+     None of those promises is true of a quiet word to a preacher.
+     `colourlaw.test.js` carries `.lmsg` in its caution sweep. */
+  .lmsg {
+    position: absolute;
+    left: 4cqw;
+    right: 4cqw;
+    bottom: 3cqh;
+    z-index: 3;
+    padding: 0.9cqh 1.4cqw;
+    border-radius: 0.6cqw;
+    background: rgba(0, 0, 0, 0.62);
+    /* A RULE, NOT A HAIRLINE. Sized in `cqw` like everything else here, so it is
+       the same share of the screen on a 24" monitor and on a projector. */
+    /* RED, ON THE OPERATOR'S INSTRUCTION OF 2026-09-23 (RG-295, DECISIONS §116
+       amended). See the note above `.lmsg-v` for what that cost and what now
+       carries the note/alarm line instead. */
+    border-left: 0.9cqw solid var(--v-red, #f4515b);
+    box-shadow: 0 0 0 0.12cqw var(--v-red-line, rgba(244, 81, 91, 0.42));
+    font-size: 3.2cqw;
+    line-height: 1.25;
+    text-align: center;
+    overflow: hidden;
+  }
+  /* THE RESTING COLOUR, and the answer when neither media query applies. A
+     browser that reports no motion preference at all gets the coloured message
+     rather than the grey one, which is the failure direction that matters. */
+  .lmsg-v {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    font-weight: 700;
+    color: var(--v-red, #f4515b);
+  }
+  /* THE PULSE, and the phone's cycle unchanged. Gentle on purpose: it has to be
+     unmistakably alive from a platform without competing with the alarm, which
+     is twice as fast and moves a whole red panel. */
+  @media (prefers-reduced-motion: no-preference) {
+    .lmsg-v.pulse {
+      animation: stagemsg 2s ease-in-out infinite;
+    }
+  }
+  @keyframes stagemsg {
+    0%, 100% { color: #fff; }
+    50% { color: var(--v-red, #f4515b); }
+  }
+  /* AND REDUCED MOTION GETS AN EQUIVALENT, NOT A QUIETER STATE: the words rest
+     AT the caution ink rather than pulsing to it, so a viewer who asked for no
+     animation still reads a coloured message rather than a plain one. Nothing
+     here animates, filters or fades — a brightness pulse under another word
+     would be the setting ignored. */
+  @media (prefers-reduced-motion: reduce) {
+    .lmsg-v {
+      color: var(--v-red, #f4515b);
+    }
+  }
+  /* ══ AND WITH NOTHING ON THE SCREEN, THE WORDS TAKE IT (RG-285) ══
+     The phone's `large` form (`stagemessage.js`), on the surface that only ever
+     had the strip. The box comes from `stagefill.js::fillGeometry` as an inline
+     style, in the same percent every other box on this page is drawn in, so
+     `right` and `bottom` are released here rather than left to the browser's
+     over-constraint rule.
+
+     THE INK IS RED, ON THE OPERATOR'S EXPLICIT INSTRUCTION (RG-295): *"when the
+     message is sent make it flashing red text so it can catch attention of the
+     preacher"*. It was `--v-caution`, which is what rule 18 leaves a message
+     that warns and promises nothing about a screen, and that was the right
+     reading of §116 until the person the message is FOR said it was not
+     catching their eye.
+
+     WHAT THIS COSTS, said here rather than discovered: §116 drew the line
+     between a note and an alarm, and the ink was half of how that line was
+     drawn. It now rests entirely on SHAPE — a note is a strip or a panel with
+     the screen's own content beside it, an alarm (`.lalert`) takes the whole
+     screen in a solid red field and pulses the panel rather than the text.
+     Those are still unmistakably different from the back of a room, which is
+     the test that matters. §116 is amended to say so; it is not overruled by
+     this comment. */
+  .lmsg.fills {
+    right: auto;
+    bottom: auto;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 1.6cqh;
+    padding: 3cqh 5cqw;
+    border-radius: 0;
+    /* A rule down the whole side rather than beside a line of text: at this size
+       the strip's 0.9cqw edge reads as a border on a panel, which is furniture. */
+    border-left: 1.4cqw solid var(--v-red, #f4515b);
+    box-shadow: none;
+    background: rgba(0, 0, 0, 0.72);
+    /* 8cqw against the strip's 3.2. The strip shares the foot with a reading and
+       is capped by it; this has the screen. */
+    font-size: 8cqw;
+  }
+  /* FOUR LINES, NOT TWO. The clamp is what stops a long message pushing a clock
+     off the screen, and with the room to spare it may have more of them — the
+     cap on what can arrive is `stagealert.js::ALERT_MAX`, which is 140
+     characters, so four lines at this size cannot be reached by a message the
+     backend will deliver and nothing is silently cut. */
+  .lmsg.fills .lmsg-v {
+    -webkit-line-clamp: 4;
+  }
+
   /* THE REGION IS ITS OWN CONTAINER — the whole point of a composite. `cqw`
      inside this box is a share of the BOX's width, so the template rendered in
      it scales to the region exactly as it would to a screen of that width. */
@@ -2160,6 +3398,13 @@
   }
   @media (prefers-reduced-motion: reduce) {
     .countdown.warn { text-shadow: 0 0 0.25em rgba(244, 81, 91, 0.85); }
+    /* A GLOW RATHER THAN NOTHING. Somebody who has asked for no animation has not
+       asked to be left out of the one clock they are meant to act on — the same
+       trade the countdown above makes, on the screen where it matters more. */
+    .lp-cell.over .lp-val {
+      animation: none;
+      text-shadow: 0 0 0.3em rgba(244, 81, 91, 0.9);
+    }
   }
   @keyframes cdwarn {
     0%, 100% { opacity: 1; }
@@ -2263,10 +3508,57 @@
     font-variant-numeric: tabular-nums;
     font-weight: 700;
     line-height: 1.05;
-    letter-spacing: 0.01em;
+    /* NO TRACKING ON A TABULAR FIGURE, and the zero is stated rather than left
+       out so the reasoning has somewhere to live. This was 0.01em, a prose-scale
+       value, on text that is never prose: `tabular-nums` already gives every
+       figure the same advance, sized to the widest digit, so tracking on top of
+       it is spacing applied twice. It also costs CENTRING — CSS adds the track
+       after the LAST glyph as well, so a centred figure sits half a track left
+       of centre, which at 192px on an otherwise empty screen is a visible
+       offset. And on a `nowrap` line that is fitted in BOTH dimensions, every
+       pixel of width is paid back by the fitter as a smaller figure. */
+    letter-spacing: 0;
     /* The digits are one unbreakable line; keep them on one line so the fitter
        scales them down instead of letting them wrap mid-number. */
     white-space: nowrap;
+  }
+  /* THE SEPARATOR IS SET BACK, THE DIGITS ARE NOT.
+     At 110-192px a colon is two solid dots carrying the mass of a pair of digit
+     stems, parked in the middle of the figure; at full weight it reads as a
+     third glyph and the four digits read as one block. Setting it back groups
+     the figure into minutes and seconds, which is the reading somebody makes at
+     a glance from the back of a room. It is safe to reduce in a way a digit
+     never would be: the separator carries no information — `4 59` reads as
+     4:59 — so the contrast that matters is untouched. */
+  .countdown .cd-sep {
+    opacity: 0.7;
+    font-weight: 600;
+  }
+  /* A CHANGED GROUP SETTLES RATHER THAN SNAPPING.
+     The keyed `{#each}` in the markup rebuilds only the group whose digits moved
+     (`layers.js::countdownParts`), and a fresh element restarts this animation —
+     no JS timing loop, and no `{#key}` around the element the fitter has sized.
+
+     OPACITY ONLY, and that is the guarantee rather than a preference. Rule 37 and
+     RG-141 both rest on `fitOne` stopping on `scrollHeight`/`scrollWidth`, and a
+     TRANSFORM on a descendant contributes to a parent's scrollable overflow — so
+     even a purely decorative scale could push a fitted countdown into another
+     shrink round, four times a second, on the page that is on the wall. Opacity
+     cannot move a box, cannot change a measured dimension, and is composited off
+     the main thread. The fit gating (`fitSig`'s `countdownTo ? 1 : 0`) is
+     untouched: this animates an element the fitter never measures. */
+  @media (prefers-reduced-motion: no-preference) {
+    .countdown .cd-num {
+      animation: cdsettle 200ms ease-out;
+    }
+  }
+  @keyframes cdsettle {
+    from {
+      opacity: 0.3;
+    }
+    to {
+      opacity: 1;
+    }
   }
   .reference {
     font-weight: 600;

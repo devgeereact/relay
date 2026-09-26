@@ -31,6 +31,18 @@ export const heard = (d) => d?.method === 'direct';
  */
 export function methodKey(d) {
   if (d?.method === 'semantic') return 'live.paraphrase_a_guess';
+  // `quoted` — a contiguous run of the preacher's own words, verbatim in this
+  // verse. Strong evidence about WHICH verse and none at all that anybody wants
+  // it on a wall, so it is not `direct` and never will be: a preacher quotes far
+  // more scripture than a congregation is shown. See detection.rs::PhraseIndex.
+  if (d?.method === 'quoted') return 'live.quoted_scripture';
+  // `reading` — a run of the preacher's own words long enough, and held by one
+  // verse alone, that Relay is treating it as the verse being READ (DECISIONS
+  // §118, the operator's instruction of 2026-09-23). It is the ONE method other
+  // than `direct` that may reach a wall unattended, and the card must say so
+  // rather than letting it wear the paraphrase's sentence — which promises a
+  // guarantee that no longer holds here. See detection.rs::Reading.
+  if (d?.method === 'reading') return 'live.read_aloud';
   if (d?.method === 'ambiguous') return 'live.ambiguous_reference';
   // `uncertain_book` — the chapter and verse were heard, the BOOK was not. Either
   // an edit-distance repair of a misheard word, or an everyday word that happens
@@ -39,9 +51,21 @@ export function methodKey(d) {
   // "heard the reference" — that sentence would be a lie with a real parse
   // confidence standing behind it, which is how "hymn number three sixteen" put
   // Numbers 3:16 in front of a congregation. See detection.rs.
-  if (d?.method === 'uncertain_book') return 'live.book_name_uncertain';
+  if (d?.method === 'uncertain_book') {
+    return bookFromMemory(d) ? 'live.book_from_memory' : 'live.book_name_uncertain';
+  }
   return 'live.heard_the_reference';
 }
+
+/**
+ * A bare "verse N" that Relay answered from the passage on the screen. It arrives
+ * as `uncertain_book` — the book was not heard — with the evidence `"verse N"`,
+ * because that is all the preacher said. Distinct from a misheard book word: here
+ * nobody said ANY book, Relay assumed the one on the wall. FIELD 2026-09-20 put
+ * Psalms 55:1 up for Hosea 6:1 this way, labelled as heard.
+ */
+export const bookFromMemory = (d) =>
+  d?.method === 'uncertain_book' && /^verse \d+$/.test(String(d?.matched_text ?? ''));
 
 /**
  * The SHORT form of `methodKey`, for the claim card's chip.
@@ -60,8 +84,12 @@ export function methodKey(d) {
  */
 export function methodBadgeKey(d) {
   if (d?.method === 'semantic') return 'live.badge_paraphrase';
+  if (d?.method === 'quoted') return 'live.badge_quoted';
+  if (d?.method === 'reading') return 'live.badge_reading';
   if (d?.method === 'ambiguous') return 'live.badge_ambiguous';
-  if (d?.method === 'uncertain_book') return 'live.badge_book_uncertain';
+  if (d?.method === 'uncertain_book') {
+    return bookFromMemory(d) ? 'live.badge_from_memory' : 'live.badge_book_uncertain';
+  }
   return 'live.badge_heard';
 }
 
@@ -78,8 +106,12 @@ export function methodBadgeKey(d) {
  */
 export function methodNoteKey(d) {
   if (d?.method === 'semantic') return 'live.not_a_spoken_reference';
+  if (d?.method === 'quoted') return 'live.note_quoted';
+  if (d?.method === 'reading') return 'live.note_reading';
   if (d?.method === 'ambiguous') return 'live.note_ambiguous';
-  if (d?.method === 'uncertain_book') return 'live.note_book_uncertain';
+  if (d?.method === 'uncertain_book') {
+    return bookFromMemory(d) ? 'live.note_from_memory' : 'live.note_book_uncertain';
+  }
   return null;
 }
 
@@ -89,8 +121,29 @@ export function methodNoteKey(d) {
  * ONLY for a heard reference. Printing "61%" beside a cosine invites the operator
  * to read it as "61% likely to be right", which is exactly what it is not — and
  * a number that lies is worse than no number, because it looks like information.
+ *
+ * `reading` may AUTO-FIRE since DECISIONS §118 and still shows no number, which
+ * is the point worth keeping separate: whether a claim may reach a wall and
+ * whether its number means anything are two questions, and they only looked like
+ * one while `direct` was the answer to both. A reading's confidence is derived
+ * from how many words ran together — a count, on a scale of its own — so it is
+ * exactly the kind of figure this function exists to keep off the screen.
  */
 export const showsConfidence = (d) => heard(d);
+
+/**
+ * The order the claim column shows pending claims in (RG-192, 2026-09-21).
+ *
+ * Measured at 1440×900 with three claims pending: the third card's Accept & fire
+ * was below the fold of its own column, and newest-first meant the one that fell
+ * off was the oldest — the HEARD one, the only class that may auto-fire and the
+ * one an operator most needs a hand on. A heard reference comes first, whatever
+ * arrived last; within each group the arrival order is kept.
+ */
+export function orderClaims(list) {
+  const arr = Array.isArray(list) ? list : [];
+  return [...arr.filter((d) => heard(d)), ...arr.filter((d) => !heard(d))];
+}
 
 /**
  * Is there actually a verse behind this reference?
@@ -113,3 +166,85 @@ export const showsConfidence = (d) => heard(d);
  * a guess. This can only ever add a warning where the backend explicitly said so.
  */
 export const inLibrary = (d) => d?.in_library !== false;
+
+/**
+ * Is this detection's evidence a CONTIGUOUS SPAN of what was said?
+ *
+ * `direct` carries the words the reference was parsed from ("proverbs chapter
+ * six verse sixteen") and `quoted` carries a run of scripture read aloud. Both
+ * are things a person said, in the order they said them, so both may be shown
+ * inside quotation marks.
+ *
+ * `semantic` may not. Its evidence is `terms.join(" · ")` — the words that
+ * contributed most to a TF-IDF cosine, in weight order, from anywhere in the
+ * verse. Rendered inside quotation marks it read as
+ *
+ *     “lord · shepherd”
+ *
+ * which is a quotation of something nobody said. The operator's instruction of
+ * 2026-09-20 was that the evidence has to be the words together as they are in
+ * the scripture; where it genuinely is not, it must stop dressing as though it
+ * were. Same principle as `showsConfidence`: a presentation that lies about what
+ * kind of thing it is showing is worse than showing nothing.
+ */
+export const evidenceIsASpan = (d) =>
+  d?.method === 'direct' || d?.method === 'quoted' || d?.method === 'reading';
+
+/**
+ * **WHAT RELAY IS HOLDING BACK RIGHT NOW, IN ONE LINE** — `detection://held`, the
+ * `passageHold` store, rendered by `Dock.svelte`.
+ *
+ * Rule 35: a detector that stops offering things without saying so is
+ * indistinguishable from one that has gone deaf, and this is the sentence that
+ * distinguishes them. It lives here rather than inline in the markup for the reason
+ * everything else in this module does — it is a decision about how a claim is
+ * PRESENTED and it has to be testable.
+ *
+ * ## Why it is not a ternary any more
+ *
+ * It was. The markup asked whether `passage` was present and picked one of two
+ * sentences from the answer, which held while the two reasons were the passage
+ * guard's own — `outside_the_reading` always carries a passage and
+ * `already_on_screen` never does. `no_shared_run` (the church's paraphrase bar,
+ * DECISIONS §125) carries no passage either, so on that branch the old ternary read
+ * *"the screens are already showing"* over verses no screen has ever shown. A status
+ * line that reports the wrong reason is worse than one that reports none, because it
+ * looks like information.
+ *
+ * So the sentence is built from the reasons that are actually present, one clause
+ * each. One reason reads exactly as it read before; several are listed with their
+ * own counts rather than one of them standing in for the others.
+ *
+ * `null` when nothing is held — there is no sentence for "everything got through",
+ * and printing one would be the permanent "holding 0" this store's TTL exists to
+ * prevent.
+ */
+export function describeHold(hold) {
+  const held = Array.isArray(hold?.held) ? hold.held : [];
+  if (!held.length) return null;
+  const passage = typeof hold?.passage === 'string' && hold.passage ? hold.passage : null;
+  // Ordered, and not by frequency: the operator reads this left to right and the
+  // reassuring fact ("it is already up") belongs before the two that might want a
+  // decision. Frequency ordering would make the line move about between windows.
+  const clauses = [
+    ['already_on_screen', 'the screens are already showing'],
+    [
+      'outside_the_reading',
+      passage ? `from outside ${passage}, while it is being read` : 'from outside the reading',
+    ],
+    // The one reason that is a SETTING rather than a rule, so the words say so: an
+    // operator who did not expect this can find the switch from the sentence.
+    ['no_shared_run', 'that echo none of the verse’s own words'],
+  ]
+    .map(([reason, words]) => [held.filter((h) => h?.reason === reason).length, words])
+    .filter(([n]) => n > 0);
+  // A reason nobody here knows about must not vanish from the count. An older or
+  // newer backend naming a fourth rule is still holding something, and "Holding 2"
+  // over three held candidates is the same lie in miniature.
+  const named = clauses.reduce((a, [n]) => a + n, 0);
+  if (!clauses.length || named < held.length) {
+    return `Holding ${held.length}`;
+  }
+  if (clauses.length === 1) return `Holding ${held.length} ${clauses[0][1]}`;
+  return `Holding ${held.length} — ${clauses.map(([n, w]) => `${n} ${w}`).join(' · ')}`;
+}

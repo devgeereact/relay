@@ -54,21 +54,19 @@ These do not move without a human explicitly reopening them. Full reasoning in
 
 **The directory says which is which.** `docs/` is the specification. `docs/qa/` is how Relay is
 checked and what checking found. `docs/qa/audits/` is frozen evidence — dated, and never edited
-after the fact. **`docs/superpowers/` is the wave work: `specs/` the design a wave was built to
-and `plans/` the work orders it was built from.** It is neither specification nor evidence — it
-is what was intended at the time, which is why a ruling that lives only there has not been made
-yet and belongs in `DECISIONS.md` (§92, §93, §94 and §95 all landed on 2026-09-17, and three of the four had to be renumbered: four branches wrote a §92 at the same insertion point on the same day). `CHANGELOG.md` stays at the
+after the fact. **`docs/superpowers/plans/` holds the ONE live plan** (`2026-09-19-stage-timers-mobile.md`, with its own inline status); **`docs/archive/` holds every wave design and work order whose work has landed**, merged on 2026-09-21 into two files each headed with where its rulings and findings now live. Neither is specification nor evidence — a ruling that lives only in a design has not been made yet and belongs in `DECISIONS.md` (§92, §93, §94 and §95 all landed on 2026-09-17, and three of the four had to be renumbered: four branches wrote a §92 at the same insertion point on the same day). `CHANGELOG.md` stays at the
 repository root, where the convention and GitHub both expect it.
 
-**Two rows below sit under the `docs/qa/` heading and are not in `docs/qa/`** — `REBRAND.md` and
-`RELAY_V1_AUDIT.md` are top-level. The links are right; the filing is not, and the paragraph
-above says the directory is the classifier.
+**One row below sits under the `docs/qa/` heading and is not in `docs/qa/`** — `REBRAND.md` is
+top-level. The link is right; the filing is not, and the paragraph above says the directory is the
+classifier. (`RELAY_V1_AUDIT.md` was the other until 2026-09-21; it and `LAUNCH_CHECKLIST.md` are
+folded into `RELAY_GAP.md` and `QA_HARNESS.md` and archived.)
 
 | Volume | Owns the question | Document(s) | Status |
 |---|---|---|---|
 | **1 · Product** | *What is Relay, for whom, and what must it do?* | [SPEC.md](SPEC.md) | Complete |
 | **2 · Domain model** | *What is Relay made of — the entities, their lifecycle, the invariants, the events?* | [DATA_MODEL.md](DATA_MODEL.md) | **NEW** |
-| **3 · UX & design system** | *How does it look and behave — tokens, type, colour meaning, components?* | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) · [design/](design/) references | Complete |
+| **3 · UX & design system** | *How does it look and behave — tokens, type, colour meaning, components?* | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | Complete |
 | **4 · System architecture** | *How is it built — process model, pipeline, rendering, data layer, invariants?* | [ARCHITECTURE.md](ARCHITECTURE.md) | Complete |
 | **5 · AI specification** | *What does the AI decide, what will it never do, where is it honestly weak?* | [AI_DISCLOSURE.md](AI_DISCLOSURE.md) · [LANGUAGES.md](LANGUAGES.md) | Complete |
 | **6 · Engineering handbook** | *How do we work — conventions, the rules learned the hard way, contribution bar?* | [../CLAUDE.md](../CLAUDE.md) · [CONTRIBUTING.md](CONTRIBUTING.md) | Complete |
@@ -88,15 +86,14 @@ above says the directory is the classifier.
 
 | Document | Owns |
 |---|---|
-| [qa/QA_HARNESS.md](qa/QA_HARNESS.md) | The QA apparatus, and **§0 is the register of counts for the whole repository** — every row beside the command that produces it |
-| [qa/RELAY_GAP.md](qa/RELAY_GAP.md) | The `RG-` gap register. Meant to be updated, unlike the audits |
-| [qa/LAUNCH_CHECKLIST.md](qa/LAUNCH_CHECKLIST.md) | One release gate list. Every box names its command or says it has never been checked |
+| [qa/QA_HARNESS.md](qa/QA_HARNESS.md) | The QA apparatus, **§0 the register of counts for the whole repository** — every row beside the command that produces it — and Parts 5 and 6 the three scorecards and the brief disposition, frozen at 2026-09-05 |
+| [qa/RELAY_GAP.md](qa/RELAY_GAP.md) | The `RG-` gap register (§23), the release decision and its reasoning (§24), and the one launch gate list (§27). Meant to be updated, unlike the audits |
 | [REBRAND.md](REBRAND.md) | The active build specification for Relay Studio — the brand, the workspace grammar, the template engine, and the twelve phases with their status. `AGENTS.md` step 2 sends readers here to find it |
-| [RELAY_V1_AUDIT.md](RELAY_V1_AUDIT.md) | The V1 production audit: the decision, three scorecards, the fix process, and every phase of both briefs dispositioned |
-| [qa/audits/](qa/audits/) | **Frozen.** **Eleven** dated audits (`ls qa/audits | wc -l`): three field services, two performance runs, one six-agent QA sweep, **four browser-driven passes** (waves 2, 3 and 5 on 2026-09-16, wave 4 on 2026-09-17) and the retired product audit. Closures go in a fix log at the top, never into the findings |
+| [archive/](archive/) | **Two** files, merged from thirteen on 2026-09-21 and otherwise untouched: [WAVE-DESIGNS.md](archive/WAVE-DESIGNS.md) (the eleven designs that were built to) and [RETIRED-AUDIT-DOCS.md](archive/RETIRED-AUDIT-DOCS.md) (the V1 production audit and the launch checklist, whose contents were folded into the register and the harness the same day). A record, never a specification |
+| [qa/audits/](qa/audits/) | **Frozen.** **Four** files (`ls qa/audits \| wc -l`), merged on 2026-09-21 from twelve dated audits and otherwise untouched: [FIELD.md](qa/audits/FIELD.md) (four real services), [DESIGN.md](qa/audits/DESIGN.md) (**four browser-driven passes** — waves 2, 3 and 5 on 2026-09-16, wave 4 on 2026-09-17), [PERF.md](qa/audits/PERF.md) (two runs) and [SUPERSEDED.md](qa/audits/SUPERSEDED.md) (the retired product audit and the six-agent QA sweep). Closures go in a fix log at the top, never into the findings |
 
 **On ADRs:** [DECISIONS.md](DECISIONS.md) *is* the architecture-decision record — a single
-narrative log with reasoning and explicit non-goals, **78** numbered decisions (§18–§95) deep — `grep -cE '^## [0-9]+\. ' DECISIONS.md` —
+narrative log with reasoning and explicit non-goals, numbered decisions from §18 upward (run `grep -cE '^## [0-9]+\. ' DECISIONS.md` for the count; this line said 78 and §95 while the command answered 88 and §105, which is why it no longer carries a number) —
 plus 28 earlier ones carried as table rows (`sed -n '1,59p' DECISIONS.md | grep -cE '^\|'`,
 less the three header-and-separator pairs). **This line said 46 and §18–§63**, which had been
 wrong for twenty-nine decisions, in a paragraph four screens below this page's own rule that
@@ -133,14 +130,13 @@ contradicts it, the code is wrong — flag it, don't silently "fix" the decision
 
 **A designer / UI contributor**
 1. [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) — tokens, type, the load-bearing colour meanings.
-2. [design/](design/) — thirteen rendered screen references (PNG, ~19 MB). A record of
-   intent, not a spec: where a reference and `src/app.css` disagree, the stylesheet is
-   what shipped. Six are cited by name from source comments and seven are not; **the whole
-   set is kept deliberately**, because a half-set described as "the rendered screen
-   references" is more misleading than a complete one that costs disk. **The directory is
-   `design/`** — sixteen comments once cited a `relaydesign/` that has never existed here
-   (RG-70), and `crossrefs.test.js` now fails on a citation to any `docs/…` file that is
-   not there.
+2. `src/app.css` — the stylesheet IS the design reference. The thirteen rendered screen
+   references that used to sit in `docs/design/` were deleted on 2026-09-21: they were a
+   record of intent rather than a spec, this repository already said the stylesheet won
+   wherever the two disagreed, and the product had moved past them. The twelve source
+   comments that cited one now state what it gave instead of pointing at it.
+   `crossrefs.test.js` still fails on a citation to any `docs/…` file that is not there —
+   which is how the deletion was made to be complete rather than approximate.
 
 **An AI coding agent**
 - [../CLAUDE.md](../CLAUDE.md) first, every session. Then this index, then the volume you need.
@@ -175,63 +171,37 @@ drive the running app over `:8032`). The cheap half runs on every edit:
 
 Three documents, at three altitudes, and they are meant to disagree on scope rather than on fact:
 
-- **[RELAY_V1_AUDIT.md](RELAY_V1_AUDIT.md)** — the V1 production audit, last run 2026-09-03. It
-  owns the **decision**, the **three scorecards**, the **fix process** (ten defects, each with
-  the test that would fail if it came back), and the disposition of every phase of both briefs —
-  a 42-phase PWA brief and a live-service brief numbered §00–§105. Where a phase could not be reached
-  from this machine it says **UNVERIFIED** and names the instrument that would answer it; where
-  a phase assumes a kind of program Relay is not, it says **N/A** and says why.
-- **[qa/RELAY_GAP.md](qa/RELAY_GAP.md)** — the `RG-` register, and unlike the audits it is meant
-  to be updated. §19b holds the decisions the report needs and cannot make; one is open —
-  whether Relay ships a second Bible translation, an import path for one, or neither.
-- **[qa/audits/](qa/audits/)** — dated machine audits, **each frozen**. They never rewrite their
-  own findings; closures go in the fix log at the top, because an audit that edits its own
-  history stops being evidence. **Eleven of them** (`ls qa/audits | wc -l`); this sentence said
-  *Five* and then listed six, which is the shortest possible demonstration of why a count does
-  not belong in prose beside the list it counts. The ones a reader reaches for:
-  [QA-2026-08-14.md](qa/audits/QA-2026-08-14.md) (six-agent full scope; §16 is the human test
-  script), [PERF-2026-08-24.md](qa/audits/PERF-2026-08-24.md) (real-time latency, and §6 is what
-  its numbers do **not** establish),
-  **[FIELD-2026-08-30.md](qa/audits/FIELD-2026-08-30.md)** — *the first real service*: 49.5
-  minutes on a packaged build, no drift, five of six auto-fires correct, **one wrong verse on a
-  real wall** — **[FIELD-2026-09-06.md](qa/audits/FIELD-2026-09-06.md)** — *two services, two
-  models, four wrong verses*: the day the model choice turned out to be an accuracy decision
-  (**3 of 3 on `turbo`, 5 of 9 on `ggml-base`**), and the day the sensitivity dial was shown by
-  measurement not to be the lever — [PERF-MODELS-2026-08-30.md](qa/audits/PERF-MODELS-2026-08-30.md), what each
-  speech model costs in transcript updates per second, and
-  **[FIELD-2026-09-13.md](qa/audits/FIELD-2026-09-13.md)** — *the first service with no wrong
-  verse*: eight of eight over 110.5 minutes, on `ggml-large-v3-turbo` pinned by hand before the
-  microphone was opened, which is one sample and does not close RG-116 —
-  [PRODUCT-2026-07-13.md](qa/audits/PRODUCT-2026-07-13.md), the product audit retired into
-  evidence on 2026-09-02 with a header recording where each of its parts went, and the **four
-  browser-driven passes** — [DESIGN-2026-09-16-WAVE2](qa/audits/DESIGN-2026-09-16-WAVE2.md),
-  [WAVE3](qa/audits/DESIGN-2026-09-16-WAVE3.md), [WAVE5](qa/audits/DESIGN-2026-09-16-WAVE5.md)
-  and [2026-09-17-WAVE4-STAGE-PLANNER](qa/audits/2026-09-17-WAVE4-STAGE-PLANNER.md) — which are
+- **[qa/RELAY_GAP.md](qa/RELAY_GAP.md) §24 owns the release decision and its reasoning**; nothing else restates it
+  (this page, `README.md` and `CLAUDE.md` all did, and the copies disagreed). The V1 production audit that
+  took it (2026-09-03, revised 2026-09-05) is archived at [archive/RETIRED-AUDIT-DOCS.md](archive/RETIRED-AUDIT-DOCS.md);
+  its **three scorecards** and the disposition of every phase of both briefs — a 42-phase PWA brief
+  and a live-service brief numbered §00–§105 — are [qa/QA_HARNESS.md](qa/QA_HARNESS.md) Parts 5 and 6,
+  frozen at that date. Where a phase could not be reached from this machine it says **UNVERIFIED**
+  and names the instrument that would answer it.
+- **[qa/audits/](qa/audits/)** — frozen evidence. Four of the twelve are
   the audits done by DRIVING the app rather than reading it, and are therefore the only ones
   that have ever caught a congregation-facing rendering fault. **Read each one's header note
   before trusting an id in it**: the wave 4 and wave 5 passes were renumbered differently
   (`qa/RELAY_GAP.md` §23a), and one rewrote its body while the other did not.
-- **[qa/LAUNCH_CHECKLIST.md](qa/LAUNCH_CHECKLIST.md)** — the gate list. Every box names the
+- **[qa/RELAY_GAP.md](qa/RELAY_GAP.md) §27** — the gate list. Every box names the
   command that ticks it or says it has never been checked.
 
-**Relay has never shipped. As of 2026-09-05: NOT READY for general release · READY WITH
-CONDITIONS for a supervised pilot** — two churches, named operators, every service watched by
-somebody who can take the wall back by hand. The register's size is a number with one home:
+**Relay has never shipped. NOT READY for general release · READY WITH CONDITIONS for a
+supervised pilot** — two churches, named operators, every service watched by somebody who can take
+the wall back by hand. The register's size is a number with one home:
 [qa/RELAY_GAP.md](qa/RELAY_GAP.md), where `relaygap.test.js` asserts it against the table. This
-sentence used to carry its own copy, and the copy was stale by fourteen entries. **Five things
-block a general release, and by the count in [RELAY_V1_AUDIT.md](RELAY_V1_AUDIT.md) §1 none of
-the five is closed by a commit alone — two are not commits at all** (a certificate is a
-purchase, a published release is an action):** a wrong verse
-reached a real congregation on 2026-08-30; word error rate has never been measured in any
-language; neither platform has a code-signing certificate (RG-73); nobody but the author has
-ever run a service; and **the auto-updater points at a URL that returns 404** (RG-83, found
-2026-09-02, still true on 2026-09-05). The conditions are [qa/RELAY_GAP.md](qa/RELAY_GAP.md) §24 and the reasoning is
-[RELAY_V1_AUDIT.md](RELAY_V1_AUDIT.md) §1.
+sentence used to carry its own copy, and the copy was stale by fourteen entries. **Four things
+block a general release, and none is closed by a commit alone — two are not commits at all** (a
+certificate is a purchase, an operator is a person): a wrong verse has reached a real congregation
+(2026-08-30, 2026-09-06 and twice on 2026-09-20, each root-caused); word error rate has never been
+measured in any language; neither platform has a code-signing certificate (RG-73); and nobody but
+the author has ever run a service. The fifth, the auto-updater's dead endpoint, closed on 2026-09-05
+(RG-83, RG-114). The conditions and the reasoning are both [qa/RELAY_GAP.md](qa/RELAY_GAP.md) §24.
 
 The packaged build **has** been reached by an instrument — one live sermon
-([FIELD-2026-08-30.md](qa/audits/FIELD-2026-08-30.md)). Pixels out, hardware, and a second
-operator still have not: [QA-2026-08-14.md](qa/audits/QA-2026-08-14.md) §16 is the human test
-script and it has not been run.
+(the 2026-08-30 service, in [FIELD.md](qa/audits/FIELD.md)). Pixels out, hardware, and a
+second operator still have not: the 2026-08-14 QA sweep, in
+[SUPERSEDED.md](qa/audits/SUPERSEDED.md), §16 is the human test script and it has not been run.
 
 What remains open is captured, with reasoning, in [KNOWN_ISSUES.md](KNOWN_ISSUES.md) — and most
 of it is blocked on the world (a certificate, a native speaker, thirty minutes of a real sermon

@@ -1,12 +1,14 @@
 <script>
   // The Relay waveform mark — the ONE copy.
   //
-  // Traced from the BRAND block of docs/design/relay-designsystem.png, and
-  // geometrically identical to the app icon (src-tauri/icons/relay-mark.svg):
-  // SEVEN bars, centre tallest, rounded caps, the outer pair set back.
+  // Geometrically identical to the app icon (src-tauri/icons/relay-mark.svg
+  // — see below), which is now the only reference: SEVEN bars, centre tallest,
+  // rounded caps, the outer pair set back. It was traced from a brand sheet that
+  // was deleted on 2026-09-21, so the geometry is written out here and the icon
+  // is the thing to diff against.
   //
   // It exists because the mark was hand-inlined in two places with FIVE bars
-  // each, which is not the mark on the design sheet — and a brand drawn slightly
+  // each, which is not this mark — and a brand drawn slightly
   // differently everywhere it appears is not a brand. Anything that needs the
   // mark imports this; nothing redraws it.
   //

@@ -60,6 +60,7 @@ operator during a live service is the same class of failure as a control that li
 | 🔵 **Cyan** `#4cc9f0` | `--v-cyan` | **A guess.** A paraphrase / semantic match. Never a heard reference. |
 | ⚫ **Grey** `#8a929e` | `--v-grey` | **CUED** — this is where `→` resumes, and it is **not** on screen. |
 | 🔷 **Steel** `#5b9cf8` | `--v-sel` | **The thing you are working on.** Selection, focus, tabs, keys. Carries no promise about a screen. |
+| 🟡 **Caution** `#c9a24a` | `--v-caution` | **A warning that is not a failure**, and carries **no promise about a screen**: a screen taken down, a role unset, a font that did not load, a service lock holding something back. Never for emphasis (that is steel) and never for a failure (that is rose). DECISIONS §111. |
 
 The four promises are unchanged. The rebrand retuned their hexes and gave
 interactive chrome a colour of its own; it did not move a meaning.
@@ -76,10 +77,11 @@ The rules that follow from that:
   amethyst on fourteen other surfaces. DECISIONS §93 settles it by reading those fourteen: safe
   mode ("outputs disabled") and the launch sequence (no console, no output window, nothing on any
   wall) are the same fact said where "rehearsal" does not fit, and a boot ladder and a rehearsal
-  badge can never be on screen together. **What is deliberately NOT settled is caution.** Four
-  surfaces spend amethyst on a warning because this palette publishes no caution ink and every
-  other colour is already a promise. That gap is filed, not improvised; `colourlaw.test.js`
-  enumerates all of it and a human may overrule the ruling.
+  badge can never be on screen together. **Caution was the one question §93 left open**, and
+  it was paid on 2026-09-21 (DECISIONS §111): the palette now publishes `--v-caution`, the five
+  surfaces that borrowed amethyst for a warning and the three that borrowed amber wear it, and
+  `colourlaw.test.js` enumerates every caution surface with what it warns about.
+- **A claim card is steel, not amber, until the wall says otherwise** (RG-192, 2026-09-21). A heard suggestion wore the tally light while the Program pane read CLEAR; a heard claim is *the thing you are working on* and gets `--v-sel` on its rule, its chip and its confidence bar. `uncertain_book` gets a dashed rule so it never reads as a paraphrase.
 - **A paraphrase is cyan and shows no percentage at all.** A TF-IDF cosine is not a probability,
   and a number that lies is worse than no number (DECISIONS §21). It is never amethyst, because
   amethyst already promises "rehearsal — this cannot reach the congregation", and a colour
@@ -512,8 +514,14 @@ to a volunteer — Channels did, in monospace, five times.
 
 ## 9. Reference material
 
-Rendered screen references live in [`design/`](design/) as PNGs — the console, the live
-production interface, Templates and its editor, Channels, Planner, Library, Settings, Stage
-display and its editor, Help, the splash, and a design-system sheet. They are a **record of
-intent**, not a spec: where a PNG and `app.css` disagree, the stylesheet shipped and the PNG did
-not.
+**There is none, and that is the current state rather than an omission.** Thirteen rendered
+screen references lived in `docs/design/` as PNGs — the console, the live production interface,
+Templates and its editor, Channels, Planner, Library, Settings, Stage display and its editor,
+Help, the splash and a design-system sheet. They were **deleted on 2026-09-21**, on the
+operator's instruction, because the product no longer works from that design.
+
+They were only ever a **record of intent**, never a spec: this document and `src/app.css` always
+outranked them, and the twelve source comments that cited one by name have each been rewritten
+to state what the reference gave rather than to point at it. Nothing about the shipped look
+changed when they went. **This document and the stylesheet are the reference now**, which is
+what they were in practice already.

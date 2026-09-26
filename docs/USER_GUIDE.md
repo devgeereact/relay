@@ -52,6 +52,11 @@ Relay treats every output as a *screen* — the main projector, a stage monitor,
 
 For a projector plugged into your laptop: pick the display, press **Open**. A fullscreen window appears on it.
 
+> **Turn on asks for a display first.** With more than one display connected, a screen with no
+> display chosen will not open, because the only place it could go is over this console. Pick
+> the projector in the screen's card, then press Turn on. With one display, Turn on opens on it.
+
+
 ### 4. Choose the microphone
 
 **Settings → This room.** Pick the input. **A bar should move when someone speaks.**
@@ -140,6 +145,8 @@ right in an empty hall is wrong once it fills with people.
 - **"Heard the reference"** (gold) — the preacher *said* "John three sixteen". Relay shows you the words it heard and how confident it is.
 - **"Paraphrase — a guess"** (blue) — nobody said a reference. Relay matched the *meaning* against a verse, and it shows you which words made it think so. **There is no confidence number**, because the number would not mean anything. Read it, and decide.
 
+- **"From memory"** (blue) — the preacher said *"verse one"* and nothing else, so Relay took the book and chapter from the passage already on the screen. It is offered, never put up on its own, because the book was assumed, not heard. If the preacher has moved to another book, dismiss it.
+
 A paraphrase **never** goes on screen by itself. Ever. Only a reference Relay actually *heard* can do that, and only if you have left auto-fire on.
 
 **A half-reference waits for you.** If the preacher says *"turn to Psalm twenty-three"* — a book and a number, with no "chapter" or "verse" — Relay **offers** it rather than putting it up on its own. That is deliberate. Preachers say book names and numbers constantly without meaning a reference: *"Matthew, one of the twelve"*, *"number one… number two…"* — and "Numbers" is a book of the Bible. Say **"Psalm chapter twenty-three"** or **"Psalm twenty-three verse one"** and it goes straight up, because now you have said you mean it.
@@ -166,6 +173,23 @@ Live software fails live. These are the things that actually happen.
 | **`→` says it did nothing** | End of the passage, or nothing is on screen yet. Relay says which. | Fire a verse first, or step back. |
 | **Relay crashed mid-service** | The console crashed. **The output screens are separate — the congregation still sees the verse.** | Press **Recover console**. It puts you back where you were. (**Dismiss and keep working** leaves the console as it is.) |
 
+**Which Bible.** Relay carries the King James Version and the Berean Standard Bible (a modern
+public-domain text). Pick one in **Settings → Scripture** before the service; the readiness
+screen names the one in use. If the preacher reads from a version Relay does not have, the
+words on the wall will differ from the words being read, and the suggestion card says so.
+If your church holds a licence for another version and has it as a file, **Settings → Scripture →
+Import a Bible** takes a JSON file in the same shape as the bundled two (66 books in order, each
+with its chapters as lists of verses); Relay checks every book is there and no verse is empty
+before it writes anything, and tells you exactly what is wrong if not. Delete takes two presses,
+and the two bundled Bibles and the one in use cannot be deleted. Neither is possible while a
+service is being recorded.
+
+**A screen says "Not painting the picture".** The picture or clip you fired did not load on that
+screen: the file has gone, that screen cannot reach the address, or the clip is in a format that
+screen cannot play (an iPhone clip is usually HEVC, which OBS and Windows may not decode). The
+other screens may be fine. Fire the next thing, or convert the clip to H.264 before the service.
+Relay keeps sending; it never refuses a fire on a screen's behalf.
+
 ### The panic keys
 
 **`Esc` clears everything. `B` blacks everything out. They work on every tab, always** — even if the screen you are on has broken.
@@ -175,6 +199,10 @@ Live software fails live. These are the things that actually happen.
 ---
 
 ## The other tabs
+
+**Templates → Test on screens takes two presses**, and is held back while a service is being
+recorded unless Rehearsal is on. The first press asks; the second puts John 3:16 on the live
+screens with that template. `Esc` clears it.
 
 You will not need these during a service.
 
@@ -243,7 +271,7 @@ that was working. If you see it, that passage is longer than the template was de
 
 **If something went wrong, send the diagnostic file** (Settings → This machine → export) rather
 than a photograph of the screen. It is built by naming every field that may be in it, so it
-cannot leak a transcript, a verse, a lyric, an announcement or your service titles.
+cannot leak a transcript, a verse, a lyric, an announcement or your service titles. It names the **build** that is running (also shown beside the version on This machine, and recorded on every service in History), so whoever reads it knows exactly which Relay you had.
 
 ---
 
@@ -300,6 +328,12 @@ from the band on the Live desk. (This paragraph used to say the opposite — tha
 key was "deliberately total, monitor timers included". It has not been true since sermon
 clocks got a lifetime of their own, and `e2e::a_clear_takes_the_congregation_timer_and_leaves_the_programme_timer`
 is what holds it.)
+
+**Timers survive a restart.** If Relay quits during a service, the sermon clock is back on the
+stage screen the moment it relaunches, and a Screen Countdown that was on the wall waits on the
+Live desk as *counting, off the screens* until you press **Put back on screens**. Nothing goes
+back in front of a congregation on its own. Clocks from a rehearsal, or older than six hours,
+are not brought back.
 
 A Stage Message also comes down with a panic key, and does not come back when a screen
 reconnects.

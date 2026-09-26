@@ -53,6 +53,50 @@ pub struct DeviceInfo {
 // --- chunking parameters (see docs/SPEC.md §4 step 1: 200-500ms overlapping) ---
 pub const CHUNK_MS: u32 = 400;
 pub const HOP_MS: u32 = 200; // 50% overlap
+
+/// How many peak readings one chunk is described by, for the console's waveform.
+///
+/// ── WHY THERE IS AN ENVELOPE AT ALL ────────────────────────────────────────
+///
+/// The console drew ONE rms number per delivered chunk, and `start_capture`
+/// delivered every third one, so the "waveform" was a reading every ~600 ms
+/// joined up with straight lines. At a normal speaking rate that is about one
+/// point per word. It is a level history, and it was drawn and labelled as a
+/// waveform, which is the operator's complaint of 2026-09-20: *"this is not
+/// giving an original live audio wave"*. They were right, and the fault was
+/// never in the drawing.
+///
+/// SIXTEEN over 400 ms is 25 ms a reading, which is inside a syllable, and it
+/// costs sixteen floats on an event that already carries a struct. The event
+/// RATE is what freezes a webview, and that is governed separately (see
+/// `main.rs::start_capture`, which now sends every SECOND chunk so the readings
+/// cover the timeline exactly once at 50% overlap, rather than every third,
+/// which left two thirds of the audio undrawn).
+pub const CHUNK_PEAKS: usize = 16;
+
+/// The loudest sample in each of `n` equal slices of `samples`.
+///
+/// PEAK, not rms. An rms over 25 ms is already a smoothing, and smoothing twice
+/// is what produced a picture with no transients in it: a consonant, a plosive
+/// and a tap on the microphone all read as a gentle rise. The peak is the
+/// measurement a meter is expected to show, and it is the one that makes
+/// clipping visible at all.
+///
+/// Absolute value, so the envelope is drawn symmetrically about the centre line
+/// the way every audio tool draws one. A slice with no samples in it reads 0.0,
+/// which is a real answer: there was nothing there.
+pub fn envelope(samples: &[f32], n: usize) -> Vec<f32> {
+    if n == 0 {
+        return Vec::new();
+    }
+    (0..n)
+        .map(|i| {
+            let a = samples.len() * i / n;
+            let b = samples.len() * (i + 1) / n;
+            samples[a..b].iter().fold(0.0f32, |m, v| m.max(v.abs()))
+        })
+        .collect()
+}
 /// ABSOLUTE floor for the voice gate, on f32 samples in [-1, 1]. This is NOT the
 /// speech threshold — the real threshold is learned from the room's noise floor (see
 /// `Vad`). This only stops a dead or unplugged microphone from having its own dither
@@ -362,6 +406,151 @@ pub(crate) fn chunks_as_captured(cleaned: &[f32], sample_rate: u32) -> Vec<Audio
     out
 }
 
+/// **THE RUN OF CHANCES A LOST DEVICE GETS — RG-291.**
+///
+/// One wait per re-open attempt, in order. It backs off because a device that is
+/// mid-teardown is made worse by being reopened at once, and it ENDS because an
+/// unbounded retry is a microphone that never admits it is gone — the operator
+/// would watch "Reconnecting" for the rest of the service with no banner and no
+/// way to tell it from a working one (rule 35).
+///
+/// The total is 15.5 s, and that number is the one a person takes to notice a
+/// cable, push it back in and let the OS re-enumerate the device. Shorter and a
+/// re-plug arrives after Relay has already given up; much longer and the banner
+/// that says the microphone is gone arrives after the operator has worked it out
+/// for themselves, which is the same as not having one.
+const REOPEN_BACKOFF_MS: &[u64] = &[500, 1_000, 2_000, 4_000, 8_000];
+
+/// How long to wait before re-opening, for the `attempt`-th chance (0-based), or
+/// `None` when the bound is spent. The bound is `REOPEN_BACKOFF_MS.len()`.
+fn reopen_backoff_ms(attempt: usize) -> Option<u64> {
+    REOPEN_BACKOFF_MS.get(attempt).copied()
+}
+
+/// **THE THREE FACTS AN OPERATOR HAS TO BE ABLE TO TELL APART — rule 35, RG-291.**
+///
+/// "The microphone stopped and I am trying again", "audio is arriving again, from
+/// this input" and "I could not get it back" are three different situations, and a
+/// single line that reads the same in all three is not a status line. They ride
+/// their own channel for that reason; `audio://error` keeps meaning exactly what
+/// it means today, which is the last of the three.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum Recovery {
+    /// The device stopped and Relay is going to try again. Rule 5's guarantees are
+    /// already kept by the time this is sent: the loop has exited, the reason is
+    /// this `reason`, and the debug recording for that segment is on disk.
+    Lost {
+        reason: String,
+        /// 1-based, for reading aloud: "attempt 2 of 5".
+        attempt: usize,
+        of: usize,
+        retry_in_ms: u64,
+    },
+    /// Audio is arriving again. Built ONLY by `Resumption::audio_arrived`, so it
+    /// cannot be said about a device that merely opened.
+    Listening {
+        input: String,
+        /// RG-121: a silent fallback to the laptop microphone once put Relay at the
+        /// back of a booth with a desk feed plugged in. "It came back" and "it came
+        /// back on a microphone nobody chose" are two different facts.
+        was_default: bool,
+        /// How long the transcript was down, measured from the loss.
+        missed_ms: u64,
+    },
+    /// The bound is spent. This is the one that reaches `on_error`, carrying the
+    /// FIRST reason rather than the last — same rule as `note_stream_error`.
+    GaveUp {
+        reason: String,
+        attempts: usize,
+        after_ms: u64,
+    },
+}
+
+/// **AN OPEN IS NOT A RESUMPTION — RG-291.**
+///
+/// A device can be resolved, report every config it supports, accept `play()` and
+/// deliver no frames at all; that is what `DEAD_INPUT_MS` exists for. So the claim
+/// "Listening again" is made by a buffer arriving and by nothing else, and this
+/// type is the only thing in the crate that can make it. One announcement per
+/// attempt: a status that repeats on every buffer is a status nobody reads.
+#[derive(Debug, Default)]
+struct Resumption {
+    announced: bool,
+}
+
+impl Recovery {
+    /// One line, in the words an operator would use. Shared by the stderr sink and
+    /// by anything that puts this in front of a person, so the two cannot come to
+    /// describe the same event differently.
+    pub fn describe(&self) -> String {
+        match self {
+            Recovery::Lost {
+                reason,
+                attempt,
+                of,
+                retry_in_ms,
+            } => format!(
+                "microphone lost ({reason}) — reconnecting, attempt {attempt} of {of}, \
+                 in {retry_in_ms}ms"
+            ),
+            Recovery::Listening {
+                input,
+                was_default,
+                missed_ms,
+            } => format!(
+                "listening again on {:?}{} after {missed_ms}ms",
+                input,
+                if *was_default {
+                    " (system default — NOT the input that was chosen)"
+                } else {
+                    ""
+                }
+            ),
+            Recovery::GaveUp {
+                reason,
+                attempts,
+                after_ms,
+            } => format!(
+                "could not get the microphone back after {attempts} attempts over \
+                 {after_ms}ms — {reason}"
+            ),
+        }
+    }
+}
+
+/// Wait, but never past an operator's Stop.
+///
+/// `AudioEngine::stop()` joins this thread, so a plain `sleep` in the backoff is a
+/// Stop button that hangs for as long as the longest wait. Returns false when the
+/// wait was cut short, which is the caller's signal to stop rather than re-open.
+fn sleep_unless_stopped(stop: &AtomicBool, ms: u64) -> bool {
+    let end = std::time::Instant::now() + std::time::Duration::from_millis(ms);
+    loop {
+        if stop.load(Ordering::Relaxed) {
+            return false;
+        }
+        let left = end.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() {
+            return true;
+        }
+        std::thread::sleep(left.min(std::time::Duration::from_millis(50)));
+    }
+}
+
+impl Resumption {
+    fn audio_arrived(&mut self, input: &Input, missed_ms: u64) -> Option<Recovery> {
+        if std::mem::replace(&mut self.announced, true) {
+            return None;
+        }
+        Some(Recovery::Listening {
+            input: input.name.clone(),
+            was_default: input.was_default,
+            missed_ms,
+        })
+    }
+}
+
 /// Owns the running capture + processing thread. Drop or call `stop()` to end.
 pub struct AudioEngine {
     stop: Arc<AtomicBool>,
@@ -383,6 +572,7 @@ impl AudioEngine {
     /// `on_quality` receives an audio-quality snapshot per processed block
     /// (denoise/gain/SNR/warnings) — additive, and the caller may throttle or
     /// ignore it.
+    #[cfg(test)]
     pub fn start<F, Q, E>(
         device_name: Option<String>,
         on_chunk: F,
@@ -394,12 +584,122 @@ impl AudioEngine {
         Q: Fn(&dsp::AudioQuality) + Send + 'static,
         E: Fn(String) + Send + 'static,
     {
+        Self::start_with_recovery(device_name, on_chunk, on_quality, on_error, |r| {
+            eprintln!("audio: {}", r.describe());
+        })
+    }
+
+    /// As `start`, plus the running commentary an operator needs while a
+    /// microphone is being picked back up (RG-291).
+    ///
+    /// `on_recovery` is called off the capture thread with each of the three facts
+    /// rule 35 requires be distinguishable: `Lost` (and trying again), `Listening`
+    /// (audio really is arriving, from this input) and `GaveUp`. `on_error` still
+    /// fires exactly once, at the end, with the FIRST reason — so everything that
+    /// reads `audio://error` today keeps meaning what it means today.
+    ///
+    /// `start` routes the commentary to stderr, which is where it went before this
+    /// existed. Wire a real emitter to put it in front of the operator.
+    pub fn start_with_recovery<F, Q, E, R>(
+        device_name: Option<String>,
+        on_chunk: F,
+        on_quality: Q,
+        on_error: E,
+        on_recovery: R,
+    ) -> Self
+    where
+        F: Fn(&AudioChunk) + Send + 'static,
+        Q: Fn(&dsp::AudioQuality) + Send + 'static,
+        E: Fn(String) + Send + 'static,
+        R: Fn(Recovery) + Send + 'static,
+    {
         let stop = Arc::new(AtomicBool::new(false));
         let stop_thread = stop.clone();
 
         let handle = std::thread::spawn(move || {
-            if let Err(e) = build_and_run(device_name, stop_thread, on_chunk, on_quality) {
-                on_error(e);
+            // Attempts since the last time audio was actually flowing. RESET on a
+            // resume, deliberately: a glitch in the first minute must not spend the
+            // budget for a different glitch an hour later. The bound is per loss,
+            // not per service.
+            let mut attempt = 0usize;
+            let mut first_reason: Option<String> = None;
+            let mut lost_at: Option<std::time::Instant> = None;
+
+            loop {
+                let dead = Arc::new(AtomicBool::new(false));
+                let resumed = Arc::new(AtomicBool::new(false));
+                let mut resume = Resumption::default();
+                let (seen, since) = (resumed.clone(), lost_at);
+                let outcome = {
+                    let mut on_live = |input: &Input| {
+                        seen.store(true, Ordering::Relaxed);
+                        // Nothing is announced on a FIRST start: there was no loss
+                        // to recover from, and a "Listening again" over an ordinary
+                        // Start is a status that cried wolf.
+                        let Some(t) = since else { return };
+                        if let Some(r) = resume.audio_arrived(input, t.elapsed().as_millis() as u64)
+                        {
+                            on_recovery(r);
+                        }
+                    };
+                    build_and_run(
+                        device_name.clone(),
+                        stop_thread.clone(),
+                        dead,
+                        &on_chunk,
+                        &on_quality,
+                        &mut on_live,
+                    )
+                };
+
+                // Audio flowed at some point in that attempt, so the run of chances
+                // starts again from here.
+                if resumed.load(Ordering::Relaxed) {
+                    attempt = 0;
+                    first_reason = None;
+                    lost_at = None;
+                }
+
+                // Ok means the loop ended without a device error — an operator's
+                // Stop, or a sender that went away. Neither is something to retry.
+                let Err(reason) = outcome else { break };
+                if stop_thread.load(Ordering::Relaxed) {
+                    break;
+                }
+
+                // Rule 5 is already kept by the time we are here: the loop exited,
+                // the debug recording for that segment is on disk (and on its own
+                // `-2`, `-3` … path, so a resume can never truncate the one before
+                // it), and this is the reason it stored.
+                let started = *lost_at.get_or_insert_with(std::time::Instant::now);
+                let first = first_reason.get_or_insert(reason.clone()).clone();
+
+                match reopen_backoff_ms(attempt) {
+                    Some(wait_ms) => {
+                        on_recovery(Recovery::Lost {
+                            reason,
+                            attempt: attempt + 1,
+                            of: REOPEN_BACKOFF_MS.len(),
+                            retry_in_ms: wait_ms,
+                        });
+                        if !sleep_unless_stopped(&stop_thread, wait_ms) {
+                            break;
+                        }
+                        attempt += 1;
+                    }
+                    None => {
+                        // The bound is spent. This is the banner, and it is the
+                        // same one rule 5 has always produced — the FIRST reason,
+                        // because cpal's later messages are consequences.
+                        on_recovery(Recovery::GaveUp {
+                            reason: first.clone(),
+                            attempts: attempt,
+                            after_ms: started.elapsed().as_millis() as u64,
+                        });
+                        on_error(first);
+                        break;
+                    }
+                }
             }
         });
 
@@ -504,8 +804,17 @@ fn free_recording_path(requested: &std::path::Path) -> std::path::PathBuf {
 fn build_and_run<F, Q>(
     device_name: Option<String>,
     stop: Arc<AtomicBool>,
-    on_chunk: F,
-    on_quality: Q,
+    // RG-291. TWO flags, and they used to be one. An operator pressing Stop and a
+    // microphone dying are different events with different consequences: the first
+    // ends the capture for good, the second is a reason to try again. Conflated,
+    // there is no way for the retry loop above to tell "the device went" from
+    // "somebody asked me to stop", so it would either hammer a stopped engine or
+    // never resume a lost one. `stop` belongs to `AudioEngine` and is never reset;
+    // `dead` is this attempt's, and `note_stream_error` sets it.
+    dead: Arc<AtomicBool>,
+    on_chunk: &F,
+    on_quality: &Q,
+    on_live: &mut dyn FnMut(&Input),
 ) -> Result<(), String>
 where
     F: Fn(&AudioChunk) + Send + 'static,
@@ -537,12 +846,12 @@ where
     // Where a runtime stream failure leaves its reason. Set by the stream's error
     // callback, read once the loop has exited and the recording is safely written.
     let runtime_err: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
-    let (stream, used) = match build_stream(&device, &preferred, &tx, &stop, &runtime_err) {
+    let (stream, used) = match build_stream(&device, &preferred, &tx, &dead, &runtime_err) {
         Ok(s) => (s, preferred),
         Err(e1) => {
             eprintln!("audio: preferred 48 kHz config failed ({e1}); using device default");
             let def = device.default_input_config().map_err(|e| e.to_string())?;
-            let s = build_stream(&device, &def, &tx, &stop, &runtime_err)?;
+            let s = build_stream(&device, &def, &tx, &dead, &runtime_err)?;
             (s, def)
         }
     };
@@ -607,9 +916,25 @@ where
         describe_input(&opened)
     );
 
-    while !stop.load(Ordering::Relaxed) {
+    // WHEN DID AUDIO LAST ARRIVE? See `DEAD_INPUT_MS`. Started here rather than at
+    // `play()` so that the device's own start-up latency is inside the grace period.
+    let mut last_data = std::time::Instant::now();
+
+    // RG-291. `dead` is checked beside `stop` so the attempt ends on either, and
+    // the caller can tell which happened by whether an error comes back.
+    let mut live_announced = false;
+    while !stop.load(Ordering::Relaxed) && !dead.load(Ordering::Relaxed) {
         match rx.recv_timeout(std::time::Duration::from_millis(100)) {
             Ok(samples) => {
+                last_data = std::time::Instant::now();
+                // AUDIO IS THE EVIDENCE, NOT THE OPEN (RG-291). A device can be
+                // found, accept every config, start, and deliver nothing — that is
+                // what `DEAD_INPUT_MS` below exists for. So the resume is announced
+                // from here, on a buffer, and once.
+                if !live_announced {
+                    live_announced = true;
+                    on_live(&opened);
+                }
                 let cleaned = frontend.process(&samples);
                 if let Some((_, buf)) = rec.as_mut() {
                     buf.extend_from_slice(&cleaned.samples);
@@ -660,7 +985,36 @@ where
                     on_chunk(&ac);
                 }
             }
-            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                // A SILENT DEATH IS STILL A DEATH, AND UNTIL NOW NOTHING NOTICED.
+                //
+                // RG-117 taught the loop to exit when cpal REPORTS an error. On
+                // macOS an input that is unplugged, re-plugged or taken by another
+                // application frequently reports nothing at all: the stream object
+                // stays alive, its callback simply stops being called. The loop then
+                // times out for ever, every instrument reads normal, and the console
+                // goes on saying "Listening" over a microphone that is gone. That is
+                // rule 35 exactly — a status that reads the same when the thing
+                // behind it is broken.
+                //
+                // Reported through `note_stream_error`, so it takes the ONE path a
+                // dead input already had: the recording is written first, then
+                // `audio://error` reaches the operator, and the frontend clears
+                // `capturing` so the microphone control offers Start again.
+                if last_data.elapsed().as_millis() as u64 >= DEAD_INPUT_MS {
+                    note_stream_error(
+                        &dead,
+                        &runtime_err,
+                        format!(
+                            "no audio from {} for {} seconds — it may have been \
+                             unplugged or taken by another application",
+                            describe_input(&opened),
+                            DEAD_INPUT_MS / 1_000
+                        ),
+                    );
+                }
+                continue;
+            }
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
     }
@@ -729,6 +1083,17 @@ fn write_wav_f32(path: &std::path::Path, samples: &[f32], rate: u32) -> std::io:
 /// A full queue DROPS, and drops are counted (`latency::note_dropped_audio`). It is
 /// never allowed to block: blocking here would stall the audio device's own
 /// callback, which is how a capture stream is killed outright.
+/// How long the loop will wait for ANY audio before calling the input dead.
+///
+/// A device callback is driven by the device's own clock, not by the signal, so a
+/// healthy input delivers buffers of digital silence while nobody is talking. No
+/// buffer at all for this long is not a quiet room; it is a device that has gone.
+///
+/// Four seconds because the wrong answer here is expensive in both directions: too
+/// short and a device that stutters once loses the microphone mid-sermon, too long
+/// and the operator preaches to an instrument that stopped listening.
+const DEAD_INPUT_MS: u64 = 4_000;
+
 const CAPTURE_QUEUE: usize = 512;
 
 /// Build a cpal input stream for `supported`, downmixing to mono and forwarding
@@ -903,6 +1268,165 @@ mod tests {
         );
     }
 
+    /// **HAVING STOPPED CLEANLY, RELAY PICKS THE AUDIO BACK UP — RG-291.**
+    ///
+    /// The operator: *"make sure live transcript dosent stop. as long as there is
+    /// audio coming in… when audio input switch, continue transcript once audio is
+    /// dected…"*
+    ///
+    /// Rule 5 stops the loop on a dead device, stores the reason, writes the
+    /// recording and tells the operator. All of that is right and none of it moves.
+    /// What it never had is the step after: a USB mic that glitches, an input taken
+    /// for a moment by another application, a desk feed re-plugged — each one ended
+    /// the transcript for the rest of the service, and the only way back was an
+    /// operator noticing and pressing Start.
+    ///
+    /// **Bounded, because an unbounded retry is a microphone that never admits it
+    /// is gone.** The schedule backs off so a device tearing down is not hammered,
+    /// and it ends — at which point `Recovery::GaveUp` carries the original reason
+    /// to `on_error` exactly as today.
+    #[test]
+    fn a_lost_device_is_given_a_bounded_run_of_chances() {
+        // It ends. Nothing here may return Some for ever.
+        assert!(reopen_backoff_ms(REOPEN_BACKOFF_MS.len()).is_none());
+        assert!(reopen_backoff_ms(usize::MAX).is_none());
+
+        // It backs off rather than spinning: a device that is mid-teardown is made
+        // worse by being reopened immediately, and a tight loop is a busy thread.
+        let mut prev = 0;
+        for a in 0..REOPEN_BACKOFF_MS.len() {
+            let ms = reopen_backoff_ms(a).expect("attempt within the bound");
+            assert!(
+                ms > prev,
+                "attempt {a} does not back off: {ms} after {prev}"
+            );
+            prev = ms;
+        }
+
+        // And the whole of it fits inside the time a person takes to re-plug a
+        // cable, which is what this is for. Longer and the banner arrives after
+        // the operator has already worked out that something is wrong.
+        let total: u64 = REOPEN_BACKOFF_MS.iter().sum();
+        assert!(
+            (5_000..=30_000).contains(&total),
+            "the whole run of chances is {total}ms"
+        );
+    }
+
+    /// **AN OPEN IS NOT A RESUMPTION — and this is the half that would have been
+    /// got wrong.**
+    ///
+    /// A device can be found, report every config it supports, accept `play()` and
+    /// then deliver no frames at all. That is not a hypothetical: it is the exact
+    /// failure `DEAD_INPUT_MS` exists for, on macOS, on an input another
+    /// application has taken. So "Listening again" is said by AUDIO ARRIVING and by
+    /// nothing else — and it is said ONCE per attempt, not on every buffer.
+    #[test]
+    fn a_resume_is_announced_by_audio_and_never_by_an_open() {
+        let input = Input {
+            name: "Blackmagic Web Presenter 4K".into(),
+            was_default: false,
+        };
+        let mut r = Resumption::default();
+        // Buffer one: this is the evidence, and it names the input it resumed ON —
+        // "it came back" and "it came back on a different microphone" are two
+        // different facts (RG-121).
+        let announced = r
+            .audio_arrived(&input, 2_400)
+            .expect("the first buffer must announce the resume");
+        if let Recovery::Listening {
+            input: n,
+            was_default,
+            missed_ms,
+        } = &announced
+        {
+            assert_eq!(n, "Blackmagic Web Presenter 4K");
+            assert!(!was_default);
+            assert_eq!(*missed_ms, 2_400);
+        } else {
+            panic!("wrong fact reported: {announced:?}");
+        }
+        // Every buffer after it is silent. A status that repeats is a status nobody
+        // reads.
+        assert!(r.audio_arrived(&input, 2_400).is_none());
+        assert!(r.audio_arrived(&input, 9_999).is_none());
+    }
+
+    /// **AND THE ONE PLACE IT IS SAID.** Rule 36's shape: the guarantee goes on the
+    /// door, not at the call sites. `Recovery::Listening` is built by `Resumption`
+    /// and by nothing else, so a future caller cannot announce a resume it has no
+    /// evidence for — which is the whole of the test above, defeated by one extra
+    /// construction site.
+    ///
+    /// The scanner asserts what it found before asserting anything about it: one
+    /// that quietly matched nothing would pass whatever the file said.
+    #[test]
+    fn only_the_evidence_may_build_a_resume() {
+        let src = include_str!("audio.rs");
+        // Split, so the scanner cannot match its own filter.
+        let needle = concat!("Some(Recovery::", "Listening {");
+        let sites: Vec<&str> = src
+            .lines()
+            .map(str::trim)
+            .filter(|l| l.contains(needle) && !l.starts_with("///"))
+            .collect();
+        assert_eq!(
+            sites.len(),
+            1,
+            "a resume may be built in one place and only by the evidence, found {sites:?}"
+        );
+
+        // AND IT MUST BE CALLED FROM THE ARM THAT RECEIVED AUDIO. The test above
+        // holds where a `Listening` is BUILT; this holds where the liveness hook is
+        // FIRED, which is the half a mutation got past: moving `on_live` up beside
+        // `play()` compiled, ran, and announced a resume on a device that had
+        // delivered nothing.
+        let lines: Vec<&str> = src.lines().map(str::trim).collect();
+        let call = concat!("on_live", "(&opened)");
+        let at: Vec<usize> = lines
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| l.starts_with(call))
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(at.len(), 1, "one liveness hook, found {at:?}");
+        let arm = lines[..at[0]]
+            .iter()
+            .rposition(|l| l.contains("=> {"))
+            .expect("the hook must sit inside a match arm");
+        assert!(
+            lines[arm].starts_with("Ok(samples)"),
+            "the resume is announced from {:?}, not from the arm that received audio",
+            lines[arm]
+        );
+    }
+
+    /// **AND STOP MUST NOT WAIT OUT THE BACKOFF.**
+    ///
+    /// `AudioEngine::stop()` JOINS this thread. A plain `sleep(8000)` in the retry
+    /// schedule is therefore a Stop button that hangs for eight seconds, on the one
+    /// control an operator reaches for when something has already gone wrong.
+    #[test]
+    fn an_operator_stop_cuts_the_backoff_short() {
+        let stop = AtomicBool::new(true);
+        let t = std::time::Instant::now();
+        assert!(
+            !sleep_unless_stopped(&stop, 8_000),
+            "a stopped engine must not re-open"
+        );
+        assert!(
+            t.elapsed().as_millis() < 200,
+            "Stop waited {:?} out",
+            t.elapsed()
+        );
+
+        // And an untouched wait really does wait.
+        let running = AtomicBool::new(false);
+        let t = std::time::Instant::now();
+        assert!(sleep_unless_stopped(&running, 120));
+        assert!(t.elapsed().as_millis() >= 100);
+    }
+
     /// THE FIRST ERROR IS THE CAUSE; THE REST ARE CONSEQUENCES.
     ///
     /// cpal can fire the error callback repeatedly while a device tears down, and
@@ -953,7 +1477,7 @@ mod tests {
     ///
     /// RG-122. `audio: capture @ 48000 Hz · denoise on (RNNoise)` was the whole
     /// startup record, and both candidate inputs on 2026-09-06 ran at 48 kHz, so
-    /// `FIELD-2026-09-06.md` had to state its input on the operator's word alone.
+    /// `FIELD.md` (was `FIELD-2026-09-06.md`) had to state its input on the operator's word alone.
     /// The default-ness is the half RG-121 needs: a launch that silently fell back
     /// to the system default reads identically to one an operator set up, and only
     /// this phrase distinguishes them.
@@ -1389,5 +1913,78 @@ mod gate {
             levels.len(),
             voiced as f32 / levels.len() as f32 * 100.0
         );
+    }
+}
+
+#[cfg(test)]
+mod envelope_tests {
+    use super::*;
+
+    /// A PEAK IS NOT AN AVERAGE, and this is the difference the operator saw.
+    ///
+    /// One loud sample inside an otherwise quiet 25 ms slice is a transient: a
+    /// consonant, a plosive, a knock on the stand. An rms over the same slice
+    /// hides it almost completely, which is how a level history came to be drawn
+    /// and labelled as a waveform.
+    #[test]
+    fn a_single_loud_sample_survives_its_slice() {
+        let mut buf = vec![0.02f32; 1600];
+        buf[800] = 0.9;
+        let env = envelope(&buf, CHUNK_PEAKS);
+        assert_eq!(env.len(), CHUNK_PEAKS);
+        let loud = env.iter().filter(|v| **v > 0.5).count();
+        assert_eq!(loud, 1, "the transient should land in exactly one slice");
+        // And the same buffer's rms cannot see it at all.
+        assert!(rms(&buf) < 0.05, "rms was {}", rms(&buf));
+    }
+
+    /// Symmetric about zero: an envelope is drawn both sides of the centre line,
+    /// so the sign of the loudest sample must not change the picture.
+    #[test]
+    fn the_envelope_is_the_absolute_value() {
+        let up = envelope(&[0.0, 0.7, 0.0, 0.1], 2);
+        let down = envelope(&[0.0, -0.7, 0.0, -0.1], 2);
+        assert_eq!(up, down);
+        assert_eq!(up, vec![0.7, 0.1]);
+    }
+
+    /// Silence reads as silence, not as an absence. A slice with nothing in it is
+    /// a real measurement of a room nobody was talking in.
+    #[test]
+    fn silence_reads_zero_and_the_shape_is_still_the_full_width() {
+        assert_eq!(envelope(&[0.0; 800], CHUNK_PEAKS), vec![0.0; CHUNK_PEAKS]);
+    }
+
+    /// Every sample is inside exactly one slice, so nothing the microphone heard
+    /// is dropped on the way to the picture and nothing is counted twice.
+    #[test]
+    fn the_slices_cover_the_whole_buffer_exactly_once() {
+        // 1000 samples into 16 slices does not divide evenly, which is the case
+        // that loses or repeats samples when the arithmetic is done with a stride.
+        let buf: Vec<f32> = (0..1000).map(|i| (i as f32) / 1000.0).collect();
+        let env = envelope(&buf, CHUNK_PEAKS);
+        assert_eq!(env.len(), CHUNK_PEAKS);
+        // The last slice holds the largest sample, the first the smallest.
+        assert_eq!(*env.last().unwrap(), buf[999]);
+        assert!(
+            env[0] < env[1] && env[1] < env[2],
+            "slices are not in order"
+        );
+        // Monotone input means each slice's peak is its own last sample.
+        for (i, v) in env.iter().enumerate() {
+            let b = buf.len() * (i + 1) / CHUNK_PEAKS;
+            assert_eq!(
+                *v,
+                buf[b - 1],
+                "slice {i} did not end where the next begins"
+            );
+        }
+    }
+
+    /// Asked for nothing, answers nothing, rather than dividing by zero.
+    #[test]
+    fn an_envelope_of_no_slices_is_empty() {
+        assert!(envelope(&[0.5, 0.5], 0).is_empty());
+        assert_eq!(envelope(&[], 4), vec![0.0; 4]);
     }
 }

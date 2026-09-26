@@ -36,6 +36,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { codeOnly } from '../codeonly.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const read = (f) => readFileSync(resolve(__dirname, '../../..', f), 'utf8');
@@ -129,15 +130,17 @@ const styleOf = (src) => {
 };
 const markupOf = (src) => {
   const i = src.indexOf('<style');
-  return (i === -1 ? src : src.slice(0, i))
+  // AND HTML COMMENTS, through the ONE stripper (RG-169). Four `<button>`s in
+  // this repository live inside a comment EXPLAINING why a menu needs no keydown
+  // handler, and counting one would report an anonymous button in a paragraph of
+  // prose. It was three regexes here, which is the shape that let a comment
+  // carrying `:8032/api/*` open a block comment and blank 7 KB of `Stage.svelte`.
+  return codeOnly((i === -1 ? src : src.slice(0, i))
     // The `<script>` block is not markup. VerseDeck's JSDoc on the row handler
     // says *"the GRID card is a native `<button>`"* — a scanner that counted
     // that would report an anonymous button in a paragraph of prose, and the
     // fix for it would be to delete the explanation.
-    .replace(/<script[\s\S]*?<\/script>/g, '')
-    // Same for HTML comments. Four `<button>`s in this repository live inside a
-    // comment EXPLAINING why a menu needs no keydown handler.
-    .replace(/<!--[\s\S]*?-->/g, '');
+    .replace(/<script[\s\S]*?<\/script>/g, ''));
 };
 
 /** Every `<button>` tag in a component's markup, with its class attribute. */
@@ -303,7 +306,7 @@ describe('B2 · a button in a row of buttons uses the shared control', () => {
     const offenders = [];
     for (const f of FILES) {
       const src = read(f);
-      const style = styleOf(src).replace(/\/\*[\s\S]*?\*\//g, '');
+      const style = codeOnly(styleOf(src));
       // Classes that ride alongside a shared instrument in this file.
       const riders = new Set();
       for (const b of buttons(src)) {
@@ -340,7 +343,7 @@ describe('B2 · a button in a row of buttons uses the shared control', () => {
     //
     // The vocabulary is READ OUT of app.css rather than restated here, so this
     // cannot drift from the thing it is about.
-    const css = read('src/app.css').replace(/\/\*[\s\S]*?\*\//g, '');
+    const css = codeOnly(read('src/app.css'));
     const known = new Set();
     for (const m of css.matchAll(/\.r-btn((?:\.[a-zA-Z0-9_-]+)+)[\s,{:]/g)) {
       for (const v of m[1].split('.').filter(Boolean)) known.add(v);
@@ -362,7 +365,7 @@ describe('B2 · a button in a row of buttons uses the shared control', () => {
       // caught is a variant name that DOES NOTHING, wherever it should have been
       // declared.
       const own = new Set();
-      for (const m of styleOf(src).replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/\.([a-zA-Z0-9_-]+)(?=[\s,{:.>+~[])/g)) {
+      for (const m of codeOnly(styleOf(src)).matchAll(/\.([a-zA-Z0-9_-]+)(?=[\s,{:.>+~[])/g)) {
         own.add(m[1]);
       }
       for (const b of buttons(src)) {
@@ -447,12 +450,24 @@ describe('B2 · and everything that is NOT a button is named, and says what it i
       // Walk the rules WITH their preceding text, so a comment above one is
       // visible. Matching `([^{}]*)\{` captures everything since the last brace,
       // comments included, which is exactly the span a reader would see.
-      for (const m of style.matchAll(/\}([^{}]*)\{([^{}]*)\}/g)) {
+      //
+      // **IT USED TO READ EVERY OTHER RULE AND NOBODY NOTICED (RG-261).**
+      // `\}([^{}]*)\{([^{}]*)\}` consumes a closing brace, a rule, AND its
+      // closing brace, and `matchAll` does not overlap — so the next match had
+      // to start from the rule AFTER the one just read. Which half of a
+      // stylesheet got looked at was therefore a function of how many rules
+      // preceded it, and adding three rules to `Live.svelte` moved `.reh-end`
+      // from the unexamined half to the examined one, where it turned out to
+      // have been an unnamed shape since it was written.
+      //
+      // A scanner that quietly narrows passes everything, which this file's own
+      // header says in the other direction. The lookahead reads every rule.
+      for (const m of style.matchAll(/\}([^{}]*)\{(?=([^{}]*)\})/g)) {
         const lead = m[1];
-        const sel = lead.replace(/\/\*[\s\S]*?\*\//g, '').trim();
+        const sel = codeOnly(lead).trim();
         const bare = sel.match(/^\.([a-zA-Z0-9_-]+)$/);
         if (!bare || !own.has(bare[1])) continue;
-        if (!SHAPE.test(m[2].replace(/\/\*[\s\S]*?\*\//g, ''))) continue;
+        if (!SHAPE.test(codeOnly(m[2]))) continue;
         if (/\/\*/.test(lead)) continue; // it explains itself
         offenders.push(`${f}: .${bare[1]} draws a shape and does not say what it is`);
       }

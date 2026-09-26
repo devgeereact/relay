@@ -64,16 +64,36 @@
  * the colour mean something else on the surface an operator reads on a Sunday,
  * and the Planner's rows are rendered beside Live's in the same session.
  *
- * `colourlaw.test.js` holds the floor, and it is worth knowing exactly how much
- * of it, because the wave-4 plan overstated this and the overstatement is the
- * dangerous direction. Its sweep over every `TYPE` entry (`:60-66`) is a
- * SUBSTRING match on the token text, so `var(--v-col-scripture)` sails through
- * it — the indirection is invisible to the scanner even though it resolves to
- * amber. What actually catches a ramp is the identity assertion at `:98`, and
- * that covers `song` and `slideAccent('C')` and nothing else. So a ramp built
- * from `--v-col-*` and left off `song` would pass the whole file while painting
- * ON AIR amber on an auto-detect cue. **The test is not the reason to refuse
- * this; the meaning of the colour is.** Nothing in this wave amends that file.
+ * `colourlaw.test.js` holds the floor, and the paragraph that used to sit here
+ * described a hole in it that has since been closed — the description is kept
+ * because the hole is worth understanding. Its sweep over every `TYPE` entry was
+ * a SUBSTRING match on the token text, so `var(--v-col-scripture)` sailed
+ * through: the indirection was invisible to the scanner even though it resolves
+ * to amber. What actually caught a ramp was the identity assertion, and that
+ * covered `song` and `slideAccent('C')` and nothing else. A ramp built from
+ * `--v-col-*` and left off `song` would have passed the whole file while painting
+ * ON AIR amber on an auto-detect cue.
+ *
+ * **It does not sail through any more.** On 2026-09-20 `promiseIn` was made to
+ * RESOLVE: it reads `tokens.css` and `app.css`, follows a `var()` chain to its
+ * literal, and reports the whole path — `--v-col-scripture → --v-amber (ON AIR)`.
+ * A third sweep reads every `var(--…)` in the CODE of this file, so a table added
+ * later is covered on arrival rather than when somebody remembers to list it.
+ * Both were watched to fail by pointing `TYPE.media` at `--v-col-media`.
+ *
+ * **The test is still not the reason to refuse a per-kind ramp; the meaning of
+ * the colour is.** What the closed gap changes is only that reaching for one is
+ * now loud instead of silent.
+ *
+ * ── 2026-09-20: SECTIONS, which is a different question ──────────────────────
+ *
+ * The operator asked for the running order to be colour coded "section by
+ * section". That is not the refusal above wearing a new coat: a section is a
+ * POSITION in the plan, not a kind of content and not a state, so a band on it
+ * claims nothing about what a cue is or what a screen is doing. It is answered
+ * with the two free hues this paragraph names — see `sectionBands` below for the
+ * system, what happens when a plan has more sections than hues, and why colour is
+ * never the only signal there.
  */
 export const TAXONOMY_INK = 'var(--v-faint)';
 
@@ -166,8 +186,20 @@ export function slidesOf(item) {
       ];
     case 'announce':
       return [{ tag: 'NOTE', label: item.label, text: p.body || p.text || '' }];
+    // A media slide has no words and never will — but it does have an ASSET, and
+    // dropping the id here is what left every surface downstream with nothing but
+    // a filename to show. `media_id`/`media_kind` ride along so a caller can look
+    // the row up; `text` stays empty because there is still nothing to typeset.
     case 'media':
-      return [{ tag: 'BG', label: item.label, text: '' }];
+      return [
+        {
+          tag: 'BG',
+          label: item.label,
+          text: '',
+          media_id: p.media_id ?? null,
+          media_kind: p.kind || 'image',
+        },
+      ];
     case 'countdown': {
       const m = Number(p.minutes) || 5;
       return [{ tag: '⏱', label: p.label || item.label, text: `${m}:00` }];
@@ -297,6 +329,93 @@ export function sectionsOf(items) {
     else sec.timed = false;
   }
   return out;
+}
+
+/**
+ * SECTION BANDING — the running order, coloured section by section.
+ *
+ * ── WHAT THE COLOURS MEAN, AND WHAT THEY DELIBERATELY DO NOT ────────────────
+ *
+ * There are TWO, they alternate, and that is the whole system:
+ *
+ *   section 1 · magenta   `--v-sec-a`   (hue 314°)
+ *   section 2 · lime      `--v-sec-b`   (hue  81°)
+ *   section 3 · magenta … and so on, repeating every two.
+ *
+ * A band says ONE thing: **this is a different section from the one above it.**
+ * It is not a kind of content, not a state, not urgency, not whether a cue is
+ * timed. Nothing in this running order changes colour because of what happens to
+ * it — the colours a running service needs are spoken for, and a build surface
+ * borrowing one is the defect the top of this file refuses twice.
+ *
+ * ── WHY TWO, AND WHAT HAPPENS AT SECTION SEVEN ──────────────────────────────
+ *
+ * Two is not a first instalment. The law has taken orange (ON AIR), red
+ * (destructive), sky (a guess), violet (rehearsal), steel (selection), green
+ * (healthy) and neutral grey (CUED); magenta near 310° and lime near 80° are
+ * what is left on the wheel, and the paragraph at the top of this file says so
+ * with the measurements. A third hue does not exist to be found.
+ *
+ * So the palette REPEATS. Section 7 wears magenta, exactly as sections 1, 3 and
+ * 5 do. That is a deliberate answer rather than a limit worked around: banding
+ * two colours down a list is how a reader sees where one group ends and the next
+ * begins, and it makes no claim that section 7 and section 1 are related. What
+ * makes a section ITSELF is its ordinal and its name, both of which are printed.
+ * Inventing a seventh hue would mean either a colour the law has spoken for, or
+ * a hue sitting 20° from one — a magenta that is nearly rose, a lime that is
+ * nearly amber — which is worse than repeating, because a near-miss reads AS the
+ * promise colour at a glance and under a projector's light.
+ *
+ * ── COLOUR IS NEVER THE ONLY SIGNAL ─────────────────────────────────────────
+ *
+ * Same reason a paraphrase shows no percentage (rule 18): a channel that can be
+ * absent may not be the only channel. `ordinal` is printed in the heading, the
+ * heading prints the section's name, and a cue row's left edge is a SHAPE whose
+ * presence — not its hue — says the row is inside a numbered section. Read in
+ * greyscale, or by an operator who cannot separate magenta from lime, the
+ * running order loses the banding and nothing else.
+ *
+ * ── AN UNTITLED GROUP IS NOT A SECTION ──────────────────────────────────────
+ *
+ * `sectionsOf` opens an untitled leading group for the cues before the first
+ * heading, so that they are not dropped on the floor. Those get `null` here: no
+ * number, no ink, no edge. Numbering a group the operator never named would be
+ * inventing a section and then colouring the invention, which is a claim from an
+ * absence — the same mistake as an empty `built_shape` being called stale.
+ *
+ * Returns an array PARALLEL to `sections`: `null`, or
+ * `{ ordinal, ink, soft, line }`. Parallel rather than folded into `sectionsOf`
+ * because grouping is a fact about the plan and banding is a fact about how it
+ * is drawn, and the Planner is not the only surface that groups a plan.
+ */
+export const SECTION_BANDS = [
+  { ink: 'var(--v-sec-a)', soft: 'var(--v-sec-a-soft)', line: 'var(--v-sec-a-line)' },
+  { ink: 'var(--v-sec-b)', soft: 'var(--v-sec-b-soft)', line: 'var(--v-sec-b-line)' },
+];
+
+export function sectionBands(sections) {
+  let ordinal = 0;
+  return (sections ?? []).map((sec) => {
+    if (!sec || !String(sec.title || '').trim()) return null;
+    ordinal += 1;
+    return bandForOrdinal(ordinal);
+  });
+}
+
+/**
+ * The band a single section wears, by its ordinal among the TITLED sections.
+ *
+ * The one door onto the cycle (`SECTION_BANDS`), so a caller cannot index the
+ * array itself and get the modulo wrong at the wrap. A non-positive or
+ * unreadable ordinal is not a section and answers `null` rather than silently
+ * taking the first colour — an off-by-one that painted every section magenta
+ * would look exactly like a working feature.
+ */
+export function bandForOrdinal(ordinal) {
+  const n = Number(ordinal);
+  if (!Number.isFinite(n) || n < 1) return null;
+  const i = (Math.trunc(n) - 1) % SECTION_BANDS.length;
+  return { ordinal: Math.trunc(n), ...SECTION_BANDS[i] };
 }
 
 /**
@@ -443,15 +562,73 @@ export function fmtDuration(seconds, long = false) {
  * KEYED template visible (see `.sp-preview`) — it is a statement about a rendered
  * slide, so a cue with no slide to render gets words instead of an empty plate.
  *
+ * A MEDIA CUE IS A FIFTH SITUATION, and it is why `media` was added rather than
+ * an `{#if}` in the view. "The slide is the picture" was true and useless: the
+ * picture can be SHOWN, because `TemplateRender` already paints `media_url` +
+ * `media_kind`, and nothing upstream ever handed it either field for a plan cue.
+ * Once the caller looks the asset up, two answers are possible and they are not
+ * the same news — the row is there and the thumbnail IS the preview, or the row
+ * has been deleted out from under a cue that still points at it, which is the
+ * third situation above wearing a different coat. Naming the file is the whole
+ * value of the second: "a picture is missing" tells an operator nothing they can
+ * act on, and the cue's own label is often just `Background`.
+ *
+ * `media` is what the caller found: `{ found, filename }`, or nothing at all when
+ * no lookup was made. Absent, the four verdicts above are exactly as they were —
+ * the argument is additive on purpose, because this function's existing answers
+ * are themselves pinned.
+ *
+ * `plate` is whether the chequered ground is drawn. The chequer exists to make a
+ * KEYED template visible (see `.sp-preview`) — it is a statement about a rendered
+ * slide, so a cue with no slide to render gets words instead of an empty plate.
+ *
  * Pure, and here rather than in the component, because this is a rule about what
  * may be claimed and rules of that shape in this file are the ones that get tested.
  */
-export function previewState(item, hasText) {
+/**
+ * What the run surface says beside a song cue whose arrangement went stale
+ * (RG-203, 2026-09-21). Rule 39: an arrangement built against a shape the song
+ * no longer has is "shown as needing checking" — and it was, on the Planner,
+ * which is a Tuesday surface. This is the sentence for Sunday's. Empty when
+ * there is nothing to say, so the header prints nothing rather than a dash.
+ */
+export function staleNote(item) {
+  if (!item || item.cue_type !== 'song') return '';
+  let stale = false;
+  try {
+    stale = !!JSON.parse(item.payload_json || '{}')?.arrangement_stale;
+  } catch {
+    stale = false;
+  }
+  return stale ? 'arrangement needs checking — the song changed since it was built' : '';
+}
+
+export function previewState(item, hasText, media) {
   if (!item) return { state: 'none', plate: false, message: '' };
   if (hasText) return { state: 'render', plate: true, message: '' };
   const known = TYPE[item.cue_type];
   if (item.cue_type === 'media') {
-    return { state: 'self', plate: false, message: 'The slide is the picture — media plays full-frame.' };
+    // Nothing was looked up — the caller cannot say, so neither may this.
+    if (!media) {
+      return { state: 'self', plate: false, message: 'The slide is the picture — media plays full-frame.' };
+    }
+    if (media.found) {
+      // THE CODEC WARNING (F5, 2026-09-21). The projector's own window decodes an
+      // iPhone's HEVC; an OBS browser source or a Windows screen may paint
+      // nothing, and until the beat carried a media failure nothing said so. The
+      // cue still renders here — the warning is read where the cue is built.
+      const warning =
+        media.codec === 'hevc'
+          ? `“${media.filename ?? 'this clip'}” is HEVC (H.265). It plays in Relay's own output window and on a Mac; an OBS browser source or a Windows screen may show nothing. Convert it to H.264 to be safe.`
+          : '';
+      return { state: 'render', plate: true, message: '', warning };
+    }
+    const named = media.filename ? `“${media.filename}”` : 'the file it was built from';
+    return {
+      state: 'empty',
+      plate: false,
+      message: `This media cue points at ${named}, which is no longer in the media library, so firing it would put nothing on the screen.`,
+    };
   }
   if (item.cue_type === 'countdown') {
     return { state: 'self', plate: false, message: 'The clock is drawn when this cue fires, so there is nothing to show yet.' };

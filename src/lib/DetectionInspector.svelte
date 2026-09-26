@@ -38,7 +38,7 @@
   // `methodKey` and — the important one — `showsConfidence`, which encodes the
   // rule that ONLY a heard reference may display a percentage. This screen must
   // not re-derive that rule; a second copy is a second thing to get wrong.
-  import { heard, methodKey, showsConfidence } from './detect.js';
+  import { heard, methodKey, showsConfidence, evidenceIsASpan } from './detect.js';
   import { capture, transcript } from './stores/capture.js';
   import { describeGate } from './gate.js';
 
@@ -61,14 +61,32 @@
   // means anything. Everything else is a suggestion, forever.
   $: isDirect = heard(detection);
   $: isAmbiguous = detection?.method === 'ambiguous';
+  // A VERSE RELAY HEARD BEING READ (DECISIONS §118). The one method other than
+  // `direct` that may reach a wall unattended — so the sentence below it cannot
+  // be the paraphrase's, which promises *"will never fire on its own, at any
+  // score"*. That promise is still true of every other method and is exactly the
+  // kind of guarantee that must not be left standing after it stops holding.
+  $: isReading = detection?.method === 'reading';
+  // The church's switch, read from the one store. Not asked again here: the
+  // engine is what decides and `capture.js` holds its answer.
+  $: followsReader = $capture.followsReader !== false;
+  // AND THE CHURCH'S PARAPHRASE BAR (DECISIONS §125), from the same store for the
+  // same reason. It belongs on this panel because this panel exists to answer *why
+  // did Relay say that, or not say it* — and with the bar on, the answer for a whole
+  // class of paraphrase is "because you asked me not to".
+  $: paraphraseNeedsRun = $capture.paraphraseNeedsRun === true;
   $: showPct = showsConfidence(detection);
   $: pct = Math.round((detection?.confidence ?? 0) * 100);
 
   // The paraphrase evidence arrives as "word · word · word" (main.rs joins the
   // terms `top_k_explained` returned). Split it back out so each one can be a
   // chip the operator can actually scan.
+  // A QUOTED match carries a contiguous phrase, not a term list, so it is shown
+  // the way `direct` is: as words somebody actually said, in order. Splitting it
+  // on `·` would find nothing and silently fall through to an empty chip list.
+  $: isSpan = evidenceIsASpan(detection);
   $: terms =
-    !isDirect && detection?.matched_text
+    !isSpan && detection?.matched_text
       ? detection.matched_text.split('·').map((s) => s.trim()).filter(Boolean)
       : [];
 
@@ -141,6 +159,8 @@
           <h3>
             {#if isDirect}
               Direct match
+            {:else if isReading}
+              Read aloud
             {:else if isAmbiguous}
               Ambiguous reference
             {:else}
@@ -149,8 +169,13 @@
           </h3>
           <p class="ins-p">
             {#if isDirect}
-              Relay read a scripture reference in the transcript. This is the only kind
+              Relay read a scripture reference in the transcript. This is one of two kinds
               of claim allowed to go on a screen by itself.
+            {:else if isReading}
+              Nobody said a reference. Relay heard these words read out, in this order, and
+              only this verse has them — so it followed the reader and put the verse up.
+              Turn that off in Settings → AI &amp; Detection if your church would rather be
+              asked first.
             {:else if isAmbiguous}
               Relay heard a reference that could mean more than one verse. It will never
               fire on its own — you choose which one is meant.
@@ -164,9 +189,14 @@
           {#if !isDirect}
             <!-- The one number that must never appear, explained rather than shown. -->
             <p class="ins-why-no-number">
-              There is no percentage here on purpose. The match is a distance between
-              word patterns, not a probability — a number would look like a chance of
-              being right, and it is not one.
+              {#if isReading}
+                There is no percentage here on purpose. What decided this was how many
+                words ran together — a count, not a chance of being right.
+              {:else}
+                There is no percentage here on purpose. The match is a distance between
+                word patterns, not a probability — a number would look like a chance of
+                being right, and it is not one.
+              {/if}
             </p>
           {/if}
 
@@ -193,13 +223,33 @@
                depend on a socket. -->
           <dl class="ins-dl">
             {#if gate.readable}
-              <dt>Auto-fire above</dt>
-              <dd class="r-mono">{gate.autoPct}%</dd>
-              <dt>Suggest above</dt>
-              <dd class="r-mono">{gate.suggestPct}%</dd>
+              <!-- WHAT EACH BAR NEEDS, 0-100 (DECISIONS §117, §121). Auto-fire is
+                   always the larger, by exactly one band, because it is the
+                   stricter rule — which is the whole point of printing it this
+                   way round on the panel an operator opens to ask why a verse
+                   did or did not fire. The words are `describeGate`'s and
+                   Settings prints the same pair, so the two cannot disagree. -->
+              <dt>Auto-fire needs</dt>
+              <dd class="r-mono">{gate.autoPct} / 100</dd>
+              <dt>Suggest needs</dt>
+              <dd class="r-mono">{gate.suggestPct} / 100</dd>
             {/if}
             <dt>Paraphrases</dt>
             <dd>Suggestions only — never auto-fire</dd>
+            <!-- WHAT IS BEING WITHHELD, not only what is capped. With the bar on,
+                 about three quarters of the paraphrase list is never offered — and an
+                 operator asking why the list went quiet has to be able to find that
+                 out from the panel they opened to ask. Rule 35 on a settings
+                 read-out: the row reads differently in the two states or it is not
+                 telling them anything. -->
+            <dt>Paraphrase evidence</dt>
+            <dd>{paraphraseNeedsRun ? 'Must echo the verse’s words in order' : 'Any strong word match'}</dd>
+            <!-- AND THE ONE THING THAT CHANGED, beside the thing that did not.
+                 A panel that still says only paraphrases are capped, on the day a
+                 second method started reaching walls, is a guarantee left standing
+                 after it stopped holding. DECISIONS §118. -->
+            <dt>Read aloud</dt>
+            <dd>{followsReader ? 'Followed — goes up by itself' : 'Suggestions only — turned off'}</dd>
           </dl>
           {#if !gate.readable || gate.drifted}
             <p class="ins-gatenote">{gate.note}</p>
@@ -238,6 +288,12 @@
             {#if isDirect && detection.matched_text}
               <p class="ins-p">
                 Relay read this reference in what was said:
+              </p>
+              <p class="ins-quote">“{detection.matched_text}”</p>
+            {:else if isSpan && detection.matched_text}
+              <p class="ins-p">
+                These words were read aloud, in this order, and they are in this verse
+                word for word. No reference was spoken:
               </p>
               <p class="ins-quote">“{detection.matched_text}”</p>
             {:else if terms.length}

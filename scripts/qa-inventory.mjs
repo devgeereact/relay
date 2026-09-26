@@ -23,6 +23,11 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+// THE ONE STRIPPER (RG-169, RG-283). This script is not a test, but it reads the
+// same tree the scanners read and it had the same private regex — which is the
+// under-removal half CodeQL flags: a nested `<!--` leaves a dangling marker, so
+// text that IS a comment survives and is reported as a control.
+import { codeOnly } from '../src/lib/codeonly.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p) => readFileSync(resolve(ROOT, p), 'utf8');
@@ -252,7 +257,10 @@ function labelFor(attrs, inner, ctx = {}) {
  * correct, which is what makes the reported `file:line` worth clicking.
  */
 function stripComments(src) {
-  return src.replace(/<!--[\s\S]*?-->/g, (m) => m.replace(/[^\n]/g, ' '));
+  // `codeOnly` blanks rather than deletes, which is exactly what this wanted and
+  // had written for itself — and it also knows that a quoted run cannot open a
+  // comment, which this did not.
+  return codeOnly(src);
 }
 
 /**

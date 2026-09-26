@@ -30,6 +30,20 @@ pub enum DetectionMethod {
     /// a distance in an arbitrary vector space, NOT a probability. May never
     /// auto-fire; see `router.rs`.
     Semantic,
+    /// A CONTIGUOUS RUN OF WORDS the speaker said that is verbatim in one verse.
+    ///
+    /// Its "confidence" is derived from the run LENGTH, which is a count and not
+    /// a probability either — so, like `Semantic`, no threshold on it means
+    /// anything and it may never auto-fire. What separates it from `Semantic` is
+    /// what it can show: a phrase an operator can read and agree with in the
+    /// second they have, rather than a list of words that appear in the verse
+    /// somewhere. See `PhraseIndex`.
+    ///
+    /// It is NOT `Direct` and the distinction is the whole of rule 10. Relay
+    /// heard scripture being READ; it did not hear a reference. Quoting a verse
+    /// is not asking for it to go on a wall, and a preacher quotes far more
+    /// verses than a congregation is shown.
+    Quoted,
     /// A reference that parsed but is genuinely ambiguous ("Revelation 22"
     /// → 22:1 or 2:2). Confidence is a hardcoded placeholder, not measured.
     /// May never auto-fire.
@@ -107,6 +121,38 @@ pub enum DetectionMethod {
     /// doubt.
     #[serde(rename = "uncertain_number")]
     UncertainNumber,
+
+    /// THE PREACHER IS READING THIS VERSE ALOUD, and Relay heard enough of it to
+    /// say which verse without choosing between two.
+    ///
+    /// ── Why this reverses the cap `Quoted` carries (DECISIONS §118) ─────────
+    ///
+    /// `Quoted`'s doc comment argues the other way — *"quoting a verse is not
+    /// asking for it to go on a wall, and a preacher quotes far more verses than
+    /// a congregation is shown"* — and that argument was accepted until the
+    /// operator overruled it on 2026-09-23, twice and in writing: *"when a
+    /// scripture is quoted make sure to fire it to screen as its confirmed"*,
+    /// and *"follow the verse whenever a preacher is reading a bible verse, you
+    /// dont need to wait or suggest it if the reader is reading the verse."*
+    /// That is theirs to decide. What is not theirs to decide is how much
+    /// evidence counts as hearing, and that is what this variant is.
+    ///
+    /// **It is not rule 10 in a new costume, and the difference is the whole
+    /// point.** Rule 10 is about a claim concerning words NOBODY SAID —
+    /// `fuzzy_book` repairing `hymn` into `Numbers`, a bare verse hung on a
+    /// remembered book. Its confidences were real parse confidences about a word
+    /// that was never spoken, which is why no threshold could have saved them. A
+    /// verbatim run is the opposite case: every word of it came out of the
+    /// speaker's mouth, in that order, and the only question left is which verse
+    /// holds them. `Semantic`, `Ambiguous`, `UncertainBook` and `UncertainNumber`
+    /// are untouched, and so is `Quoted` for everything short of this bar.
+    ///
+    /// ── WHAT "ENOUGH" MEANS, MEASURED ──────────────────────────────────────
+    ///
+    /// Two conditions, both in `for_quotation`, both evidence and neither a
+    /// score. See `READING_RUN_WORDS` for the run length and the measurements
+    /// behind it, and `PhraseHit::sole` for why a tie is refused.
+    Reading,
 }
 
 impl DetectionMethod {
@@ -122,7 +168,119 @@ impl DetectionMethod {
     /// about the parse and says nothing about whether the word being parsed was
     /// the word that was spoken. See the variant's doc comment.
     pub fn may_auto_fire(&self) -> bool {
+        matches!(self, DetectionMethod::Direct | DetectionMethod::Reading)
+    }
+
+    /// Is this method's `confidence` a parse probability — something the
+    /// self-calibrating gate may learn an auto-fire bar from?
+    ///
+    /// ── Why this is NOT `may_auto_fire` ────────────────────────────────────
+    ///
+    /// It was, and the two questions only looked like one while `Direct` was the
+    /// single answer to both. `Reading` splits them: it may reach a wall, and its
+    /// number is `quoted_confidence(run)` — a word count on a scale of its own
+    /// invention. `record_feedback` moves `Thresholds::auto_fire` toward the
+    /// score the operator agreed or disagreed with, so letting a run length in
+    /// there would drag the gate that governs SPOKEN REFERENCES using a figure
+    /// that is not about them. That is rule 10's category error, arriving from
+    /// the direction nobody was watching.
+    ///
+    /// Confirming or dismissing a reading is still a confirmation or a dismissal.
+    /// It simply carries no number, which `record_feedback` already handles.
+    pub fn confidence_is_calibrated(&self) -> bool {
         matches!(self, DetectionMethod::Direct)
+    }
+
+    /// How strong a claim on the ONE wall slot this window may fill (rule 29).
+    ///
+    /// A heard reference beats a reading, and both beat everything that may only
+    /// be offered. It decides what a congregation sees when a preacher names one
+    /// verse and reads a different one in the same breath — and the answer is the
+    /// one they NAMED, because naming it is the words saying, which is rule 40's
+    /// principle rather than a new one.
+    ///
+    /// `pipeline::better` and `rank_for_wall` both ask this. They used to ask
+    /// `may_auto_fire`, a bool, which cannot express three tiers.
+    pub fn unattended_rank(&self) -> u8 {
+        match self {
+            DetectionMethod::Direct => 2,
+            DetectionMethod::Reading => 1,
+            _ => 0,
+        }
+    }
+
+    /// Was this candidate found by finding a VERSE'S OWN WORDS in what was said,
+    /// rather than by hearing a reference?
+    ///
+    /// The line the passage guard is drawn on, and it is drawn here because it is
+    /// the same line rule 40 draws. `Direct`, `Ambiguous`, `UncertainBook` and
+    /// `UncertainNumber` all exist because something reference-shaped came out of
+    /// the speaker's mouth — "Romans eight", "verse thirty-two", a book name the
+    /// parser had to repair. The words said, however badly, so **nothing Relay
+    /// remembers may stand in front of them**. `Semantic`, `Quoted` and `Reading`
+    /// are the other direction entirely: Relay went looking for the verse whose
+    /// text resembles what was said, and nobody asked for anything.
+    pub fn came_from_the_verse_text(&self) -> bool {
+        matches!(
+            self,
+            DetectionMethod::Semantic | DetectionMethod::Quoted | DetectionMethod::Reading
+        )
+    }
+
+    /// Is this a contiguous run of the speaker's own words, verbatim in the verse?
+    ///
+    /// The ONLY evidence that may arm the passage guard. A paraphrase cosine is a
+    /// bag of words in no order (rule 18) and is nowhere near enough to assert
+    /// "the preacher is reading this chapter aloud"; a verbatim run is precisely
+    /// that assertion, which is why `Reading` was allowed to exist at all.
+    pub fn is_a_verbatim_run(&self) -> bool {
+        matches!(self, DetectionMethod::Quoted | DetectionMethod::Reading)
+    }
+
+    /// Is this quotation the preacher READING, or merely quoting?
+    ///
+    /// Pure, and deliberately: the evidence decides and nothing else may. The
+    /// church's switch is applied in `Router::decide`, the one gate every
+    /// candidate passes through, rather than here — so a second construction site
+    /// for quoted candidates could not slip past it (rule 36).
+    pub fn for_quotation(run: usize, sole: bool) -> Self {
+        if run >= READING_RUN_WORDS && sole {
+            DetectionMethod::Reading
+        } else {
+            DetectionMethod::Quoted
+        }
+    }
+
+    /// The honest label for a bare "verse N". A book named in this window was
+    /// heard; a book taken from the passage on screen was assumed, which is what
+    /// `UncertainBook` already means ("chapter and verse heard, the book not"),
+    /// and the router caps it at Suggest at any score. FIELD 2026-09-20.
+    pub fn for_bare_verse(source: BareVerseSource) -> Self {
+        match source {
+            BareVerseSource::Anchor => DetectionMethod::Direct,
+            BareVerseSource::Memory => DetectionMethod::UncertainBook,
+        }
+    }
+
+    /// THE NAME THIS METHOD GOES BY EVERYWHERE OUTSIDE RUST — the console's own
+    /// vocabulary, and since RG-309 the database's as well.
+    ///
+    /// It existed only as a `#[serde(rename)]` attribute and a `from_wire` with no
+    /// inverse, which is why `db_method` could collapse three variants into one
+    /// without anything noticing: there was no function to reuse. `from_wire` is
+    /// this function's inverse and `the_wire_name_is_one_mapping_in_two_directions`
+    /// asserts both halves against serde itself over every variant, so the
+    /// attribute, this match and the parser cannot drift apart.
+    pub fn wire(&self) -> &'static str {
+        match self {
+            DetectionMethod::Direct => "direct",
+            DetectionMethod::Semantic => "semantic",
+            DetectionMethod::Quoted => "quoted",
+            DetectionMethod::Ambiguous => "ambiguous",
+            DetectionMethod::UncertainBook => "uncertain_book",
+            DetectionMethod::UncertainNumber => "uncertain_number",
+            DetectionMethod::Reading => "reading",
+        }
     }
 
     /// Parse the wire name the console sends back when an operator accepts a
@@ -135,6 +293,8 @@ impl DetectionMethod {
             "ambiguous" => DetectionMethod::Ambiguous,
             "uncertain_book" => DetectionMethod::UncertainBook,
             "uncertain_number" => DetectionMethod::UncertainNumber,
+            "quoted" => DetectionMethod::Quoted,
+            "reading" => DetectionMethod::Reading,
             _ => DetectionMethod::Semantic,
         }
     }
@@ -164,14 +324,33 @@ impl DetectionMethod {
     /// guessed — and `heard_text` carries that, which is the column that exists
     /// because a service put forty wrong verses on a wall and the log could not
     /// say what any of them heard.
+    /// The name this method goes by in `detections.method` — **which is now
+    /// `wire()` and nothing else** (RG-309).
+    ///
+    /// ## What this used to do, and why it stopped
+    ///
+    /// It collapsed all seven variants into `'direct'` or `'semantic'`, because the
+    /// column was `CHECK`ed to those two values and widening it meant rebuilding
+    /// the table, which is the migration rule 25 was written about. Its own comment
+    /// filed the cost as a KNOWN GAP: a church auditing a wrong verse could see
+    /// WHAT was heard and could not tell a followed reading from a paraphrase by
+    /// this column alone.
+    ///
+    /// **Recording suggestions turned that gap into a wall.** The record exists to
+    /// answer *what did the paraphrase detector do during a real sermon*, and
+    /// 2,325 of one 16-hour service's 2,790 suggestion episodes are `Semantic`
+    /// while `Quoted` sat in the same word. A count you cannot split is not a
+    /// measurement. So the table was rebuilt (`db::ensure_detection_method_names_
+    /// its_detector`, the v6 rung) and this function became the identity it should
+    /// always have been.
+    ///
+    /// It is kept as a NAMED function rather than replaced by `wire()` at the call
+    /// site, deliberately: "the name this goes by in the database" and "the name
+    /// the console speaks" are two questions that happen to share an answer today,
+    /// and a future column that needs to differ should have one place to differ in.
+    /// `the_database_name_is_the_wire_name` is the test that says they agree now.
     pub fn db_method(&self) -> &'static str {
-        match self {
-            DetectionMethod::Direct
-            | DetectionMethod::Ambiguous
-            | DetectionMethod::UncertainBook
-            | DetectionMethod::UncertainNumber => "direct",
-            DetectionMethod::Semantic => "semantic",
-        }
+        self.wire()
     }
 }
 
@@ -2373,23 +2552,638 @@ pub fn chapter_named(text: &str) -> bool {
 ///
 /// Pure, so the rule can be tested without an app: the defect above lived in the
 /// candidate assembly inside `emit_detections`, where no test could reach it.
-pub fn resolve_bare_verse_for_window(
+/// Where a bare verse's BOOK came from. The label on the wire follows it
+/// (`DetectionMethod::for_bare_verse`), because "heard" and "assumed" are
+/// different claims and rule 10 says only the first may reach a wall unattended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BareVerseSource {
+    /// A reference named in this window: "Luke 10 … verse 32". The book was said.
+    Anchor,
+    /// The passage already on the screen: "and verse eighteen". The book was not
+    /// said in this breath; Relay assumed it.
+    Memory,
+}
+
+/// `resolve_bare_verse_for_window`, and which of its three rules answered.
+///
+/// FIELD 2026-09-20 (service 24, 23.5 min): Psalms 55 on the wall, the preacher
+/// quoting Hosea 6:1 with the book misheard as a word no alias knows. Memory
+/// answered, correctly by rule 3 — and the candidate was then labelled `Direct`
+/// at 0.88 and auto-fired. Rule 40 kept that label on purpose while one service
+/// was the only evidence. This was the second. The resolution is unchanged; the
+/// SOURCE now travels with it so the label can stop lying.
+pub fn resolve_bare_verse_with_source(
     text: &str,
     n: i64,
     anchor: Option<&VerseRef>,
     memory: Option<&VerseRef>,
-) -> Option<VerseRef> {
+) -> Option<(VerseRef, BareVerseSource)> {
     if let Some(a) = anchor {
-        return Some(VerseRef {
-            book: a.book.clone(),
-            chapter: a.chapter,
-            verse: n,
-        });
+        return Some((
+            VerseRef {
+                book: a.book.clone(),
+                chapter: a.chapter,
+                verse: n,
+            },
+            BareVerseSource::Anchor,
+        ));
     }
     if chapter_named(text) {
         return None;
     }
-    memory.cloned()
+    memory.cloned().map(|m| (m, BareVerseSource::Memory))
+}
+
+/// Did this window say a reference of its own?
+///
+/// The disarming condition for the passage guard, and it is rule 40's sentence
+/// verbatim: *when the words say, the words win.* Two ways to say, and the second
+/// is the one FIELD F-8 was about — a window can STATE a chapter without any
+/// reference parsing out of it ("4th Peter chapter 5 verse 10"), and a preacher who
+/// has just announced a chapter is no longer reading the last one whatever Relay
+/// managed to parse. `resolve_bare_verse_with_source` already treats those two
+/// facts as one authority; this is the same pair asked for a different purpose, so
+/// it is named once here rather than restated at the call site.
+///
+/// `anchor` is passed in rather than recomputed: `emit_detections` has already run
+/// `detect_direct` over this window and the guard may not cost a second parse.
+pub fn window_states_a_reference(text: &str, anchor: Option<&VerseRef>) -> bool {
+    anchor.is_some() || chapter_named(text)
+}
+
+/// Why a candidate this window produced was held back. Reaches the operator
+/// verbatim (`main::PassageHold`), because a detector that goes quiet without
+/// saying so is indistinguishable from one that has gone deaf (rule 35).
+///
+/// **Two of the three are the passage guard's and the third is the church's own
+/// switch.** They share this enum and the one event because they are the same kind
+/// of fact — *Relay found this and decided not to offer it, and here is why* — and
+/// a second event name would be a second thing to keep listened-for in both
+/// directions (`ipc.test.js`). They do NOT share a rule: `hold_for_the_passage`
+/// owns the first two and `main::candidates_for_window` applies the third from a
+/// setting, so nothing about one can quietly change the other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HeldReason {
+    /// **The wall is already showing this verse.** A run of the verse's own words
+    /// while that verse is on the screen puts nothing new there.
+    AlreadyOnScreen,
+    /// **The preacher is reading the passage on screen and this verse is not in
+    /// it.** The words of one verse are the words of several.
+    OutsideTheReading,
+    /// **The church asked for paraphrases to echo the verse, and this one does
+    /// not.** A cosine over a bag of words with none of them said in the verse's
+    /// own order — `PARAPHRASE_RUN_WORDS`, off unless an operator turned it on.
+    ///
+    /// The only reason here that is a SETTING rather than a rule, which is why it
+    /// is worth telling apart from the other two: the answer to "why is Relay
+    /// holding these back" is a switch in Settings, and the operator can undo it.
+    NoSharedRun,
+}
+
+/// **THE PASSAGE GUARD.** Which of this window's candidates are held back while
+/// the preacher reads?
+///
+/// One answer per candidate, in order — `None` for everything that gets through,
+/// which is the overwhelmingly common case.
+///
+/// ── The complaint (the operator, 2026-09-25) ──────────────────────────────────
+///
+/// > *"I dont want suggestion to be changing when a bible verse is reading because
+/// > it heard a phrase which is in another bible verse… verses needs to be guarded
+/// > so when a preacher is reading a verse it stays within the verse/chapter until
+/// > the preacher calls another verse… suggesting too many verses whilst the
+/// > preacher is reading a verse will cause confusion"*
+///
+/// A verse read aloud is not only in the verse being read. The synoptic parallels,
+/// the repeated formulae, `Psalms 107:8` and `107:21`, and plain sub-spans — a
+/// twenty-five-word run in John 3:16 carries a ten-word run in John 3:15, because
+/// those ten words are in both (`PhraseHit::sole`).
+///
+/// ── TWO RULES, AND ONLY ONE OF THEM IS ABOUT THE PASSAGE ──────────────────────
+///
+/// **Rule B — the wall already says it.** A candidate found in a verse's own text
+/// (`came_from_the_verse_text`) whose reference is the one Relay last put on a
+/// screen is held. It cannot be new information: the verse is already exactly
+/// where it would have put it.
+///
+/// This is the rule the field evidence is about, and there is a lot of it. The
+/// operator's own services 38, 39 and 40 (2026-09-24 and 2026-09-25) auto-fired
+/// the SAME verse twice from one continuous reading, six times:
+///
+/// | verse | first | second | gap | first fire |
+/// |---|---|---|---|---|
+/// | `Psalms 23:4` | 206 s | 326 s | 120 s | reading |
+/// | `Philippians 1:23` | 1497 s | 1508 s | 11 s | spoken reference |
+/// | `Mark 6:2` | 615 s | 626 s | 11 s | reading |
+/// | `Jeremiah 6:16` | 769 s | 780 s | 11 s | spoken reference |
+/// | `Hebrews 6:12` | 897 s | 908 s | 11 s | spoken reference |
+/// | `Romans 15:4` | 1034 s | 1051 s | 17 s | spoken reference |
+///
+/// Four of the six are *announce the reference, then read it* — the ordinary shape
+/// of a sermon rather than an edge case.
+///
+/// **Nothing that already existed could catch them, and no number can.**
+/// `DEFAULT_DEBOUNCE_MS` is `WINDOW_SECS + 2` — ten seconds — and its own reasoning
+/// is that *"anything re-detected inside it is, definitionally, the same utterance
+/// being heard again"*. That holds for a spoken reference, which is over in two
+/// seconds, and fails for a reading, which keeps producing matching runs for as
+/// long as the reading lasts. The measured gaps are 11, 11, 17 and 120 seconds: a
+/// cooldown of 12 catches two of four and one of 20 starts swallowing genuine
+/// second citations. It is not a timing problem. `pipeline::better` cannot help
+/// either — `Mark 6:2` went 0.69 → 0.90 as more of the verse was heard, so the
+/// duplicate is the STRONGER candidate by every ranking rule there is.
+///
+/// **Rule A — outside the reading.** While a window holds a run of the speaker's
+/// own words verbatim INSIDE the book and chapter on the screen, candidates found
+/// in a verse's own text from outside that chapter are held. Chapter, not book,
+/// because the operator said *verse/chapter* and because Psalms 23 is a different
+/// passage from Psalms 107.
+///
+/// ── WHAT ENDS IT, AND WHY NOTHING HAS TO BE CLEARED ───────────────────────────
+///
+///  * **A window that names a reference disarms rule A entirely** — not the
+///    candidate, the whole window. "Turn to Romans eight" gets through in the same
+///    instant it always did, whatever is on the screen. `window_states_a_reference`
+///    is rule 40's sentence: when the words say, the words win. Checked first
+///    rather than last, because a guard that could swallow a spoken reference would
+///    be strictly worse than the churn it fixes, and rule 10 exists because that
+///    class of mistake has reached a congregation three times.
+///  * **Rule A is armed by EVIDENCE, not by state.** No lock, no flag, no timer,
+///    nothing to clear — so there is nothing that can be left on. It stops biting
+///    in the first window with no in-passage run in it, which is the window the
+///    preacher moved on.
+///  * **Rule B ends when the wall changes.** `on_the_wall` is the router's record
+///    of the last verse it put on a screen. It is replaced by the next verse, and
+///    dropped by `Router::forget_last_fire` (a clear or a blackout) and by
+///    `Router::forget_wall` (anything that is not scripture taking the screen — the
+///    same door rule 38 disarms the passage at). All three are automatic.
+///
+/// ── WHAT IS DELIBERATELY NOT HELD ─────────────────────────────────────────────
+///
+///  * **Anything reference-shaped, ever.** `Direct`, `Ambiguous`, `UncertainBook`
+///    and `UncertainNumber` are never held under either rule, at any dial, in any
+///    window. See `came_from_the_verse_text`.
+///  * **The next verse of the passage being read.** `Philippians 1:23` at 1508 s
+///    and `1:24` at 1517 s is one reading walking forward: rule B holds the first
+///    (already on the wall) and the second fires. Freezing the wall on verse 23
+///    until somebody names another reference would leave a verse the preacher had
+///    finished in front of a congregation for as long as the reading lasted — a
+///    wrong verse chosen on purpose — and it would reverse the instruction of
+///    2026-09-23 that created `Reading` at all. The operator's own words are
+///    *within the verse/chapter*, and the adjacent verse is inside it.
+///
+/// ── WHAT IT COSTS, MEASURED ───────────────────────────────────────────────────
+///
+/// `main::passage_guard_bench::what_the_guard_costs_a_real_service` replays a real
+/// service through `candidates_for_window` and the real `Router` and prints both
+/// columns. Three of the operator's own services, 971 finalized transcript lines:
+///
+/// | service | lines | suggestions | auto-fires | duplicates removed | verses lost |
+/// |---|---|---|---|---|---|
+/// | 35 | 332 | 220 → 197 | 38 → 34 | 4 | **0** |
+/// | 39 | 246 | 111 → 90  | 34 → 33 | 1 | **0** |
+/// | 40 | 393 | 178 → 161 | 37 → 31 | 6 | **0** |
+///
+/// **Eleven duplicate broadcasts removed, no verse lost, and about one suggestion
+/// in eight held.** Every removed broadcast was of the verse the screens were
+/// already showing, which the bench checks rather than assumes.
+///
+/// **The CI scorecard cannot see this change at all, and that is stated rather than
+/// glossed.** `eval::print_scorecard` reports 100% recall, 53/53 and a 0.0%
+/// wrong-verse rate with the guard on and exactly the same with it off, because it
+/// scores one window at a time and has no wall for a verse to be already on. RG-296
+/// records the identical blindness for the promotion that created `Reading`. An
+/// instrument that returns the same answer either way is not evidence.
+///
+/// **What has NOT been measured.** These are FINALS out of the database, and the
+/// live path also runs detection on every partial — roughly one a second — so every
+/// count above is a floor on the churn rather than a measurement of it. Suggestions
+/// are never persisted, so the database can corroborate the fire column and not the
+/// suggestion column. There is no recorded church audio on this machine, so nothing
+/// here is a claim about accuracy in any language.
+///
+/// ── WHAT IT IS NOT ────────────────────────────────────────────────────────────
+///
+/// It is NOT `quoted(text, Some(on_screen_book), k)`. Restricting the index by the
+/// passage in memory was the obvious implementation and it is the wrong one, for
+/// the reason that call site already records: *"a preacher reading Proverbs who
+/// quotes Isaiah is quoting Isaiah"*, and a restriction would hide Isaiah until
+/// something else moved memory — which needs an operator, which is the one thing a
+/// guard may never need. This asks for positive evidence that the preacher is still
+/// in the passage, so a preacher who has moved on is never held even once.
+///
+/// Rule A also holds no candidate it did not itself arm on: the in-passage run that
+/// armed it is never held, so **something always survives to announce the hold**.
+/// A guard whose quiet looks exactly like a detector going deaf is rule 35's own
+/// failure, and neither rule here can reach that state.
+pub fn hold_for_the_passage(
+    on_screen: Option<&VerseRef>,
+    on_the_wall: Option<&str>,
+    window_states_a_reference: bool,
+    cands: &[(&VerseRef, DetectionMethod)],
+) -> Vec<Option<HeldReason>> {
+    // RULE B. Independent of everything else — including a window that names a
+    // reference, because a NAMED reference is not held by this rule at all and a
+    // READ one adds nothing whether or not the name was said in the same breath.
+    let mut out: Vec<Option<HeldReason>> = cands
+        .iter()
+        .map(|(r, m)| {
+            (m.came_from_the_verse_text() && on_the_wall.is_some_and(|w| w == reference_key(r)))
+                .then_some(HeldReason::AlreadyOnScreen)
+        })
+        .collect();
+    // RULE A. The words said; nothing Relay remembers may stand in front of them.
+    if window_states_a_reference {
+        return out;
+    }
+    let Some(passage) = on_screen else {
+        return out;
+    };
+    let inside = |r: &VerseRef| r.book == passage.book && r.chapter == passage.chapter;
+    // Armed by evidence in THIS window, or not at all. A candidate rule B is
+    // already holding still counts as evidence: the preacher IS reading the verse
+    // on the wall, which is the very thing rule A needs to know.
+    if !cands
+        .iter()
+        .any(|(r, m)| m.is_a_verbatim_run() && inside(r))
+    {
+        return out;
+    }
+    for (slot, (r, m)) in out.iter_mut().zip(cands) {
+        if slot.is_none() && m.came_from_the_verse_text() && !inside(r) {
+            *slot = Some(HeldReason::OutsideTheReading);
+        }
+    }
+    out
+}
+
+/// One of a window's candidates, as the citation-doubt rule needs to see it.
+///
+/// `run` is the only thing `DetectionMethod` cannot carry: `Reading` already means
+/// *eight words and held by one verse*, but `Quoted` means *shorter than eight OR
+/// shared with another verse*, and those are two very different pieces of
+/// evidence. The rule below may only be armed by the second kind's better half, so
+/// it has to be told.
+pub struct Claim<'a> {
+    pub r: &'a VerseRef,
+    pub method: DetectionMethod,
+    /// The last verse of a spoken span — "Psalm 7 verse 1 to 7" — or `None`.
+    pub verse_end: Option<i64>,
+    pub whole_chapter: bool,
+    /// For a verbatim run: how many words, and whether one verse alone holds them.
+    /// `None` for everything that is not a run.
+    pub run: Option<(usize, bool)>,
+}
+
+/// What a verbatim run in the SAME WINDOW says a spoken reference got wrong.
+///
+/// Reaches the operator, because a demotion nobody can see is indistinguishable
+/// from a detector that missed (rule 35).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Doubt {
+    /// **The CHAPTER.** Same book, the verse that was said, and a chapter that is
+    /// the one said with a digit back on the front of it.
+    SpokenChapter,
+    /// **The BOOK.** The same chapter and the same verse, in a different book.
+    SpokenBook,
+    /// **The run that raised the doubt.** Demoted with it, so a disagreement puts
+    /// nothing on a wall at all and the operator chooses between two things Relay
+    /// genuinely heard.
+    TheQuotation,
+}
+
+/// **THE CITATION-DOUBT RULE.** When one window carries both a spoken reference
+/// and a verbatim run of the preacher's own words that point at DIFFERENT verses,
+/// and the difference is the exact shape of a decode slip, that disagreement is
+/// evidence. Neither may reach a wall unattended; both are offered.
+///
+/// One answer per candidate, in order — `None` for everything untouched, which is
+/// very nearly always.
+///
+/// ── THE FINDING (RG-305, the operator's own services of 2026-09-25) ───────────
+///
+/// Eight wrong verses in one day, and one mechanism: **the decoder loses or alters
+/// a digit or an ordinal in the spoken reference.** *eighty*-seven → 7 ·
+/// *eigh*-teen → 8 · *Second* Timothy → 1 Timothy · *sixty*-one → 1 · *twelve* →
+/// 2 · 34 → 35 · and `Proverbs` heard as `Acts` is the same loss one class over.
+///
+/// **Every result is a smaller, VALID, wrong reference.** The chapter exists, the
+/// verse exists, the parse confidence is a real parse confidence — 0.95 `Direct`,
+/// the strongest claim Relay can make. That is why no threshold, no ambiguity
+/// check and no impossible-chapter rule can catch this class, and why the rule has
+/// to be about two pieces of evidence disagreeing rather than about any one of
+/// them looking wrong.
+///
+/// ── WHAT COUNTS AS A DISAGREEMENT, AND WHY IT IS THIS NARROW ──────────────────
+///
+/// A preacher who cites one verse and quotes another is doing the most ordinary
+/// thing in preaching, so "the run says somewhere else" cannot be the test. The
+/// test is whether the run points at *the reference the preacher would have named
+/// had the decoder not dropped a digit*: the two must differ in exactly ONE
+/// coordinate, and that coordinate's difference must be a decode slip.
+///
+///  * **`SpokenChapter`** — same book, `chapter_is_a_decode_slip`, and the run's
+///    verse inside the verse or span that was spoken.
+///  * **`SpokenBook`** — different book, the same chapter AND the same verse, and
+///    the spoken reference named a verse of its own. A whole chapter is excluded
+///    here deliberately: chapter numbers collide across books constantly, and
+///    "turn to Romans 8" beside a run from John 8 is a coincidence, not a slip.
+///
+/// **A verse-only difference is never a disagreement, at any distance**, and that
+/// is the rule's most important line rather than an omission. Two correct fires
+/// were watched on the same day: `John 15:15` read aloud and *"John 15, 14"* cited
+/// one verse later as he started the passage, and `Hebrews 13:7` cited while he
+/// quoted `13:17` from memory — having interrupted the service earlier to insist
+/// on verse 7. Both are one book, one chapter, a different verse, with runs of 15
+/// and 17 words; a rule that demoted either would be worse than the disease. It is
+/// also §122's own scoping — *chapter, not book* — said about the other direction.
+///
+/// ── THE EVIDENCE BAR ON THE RUN ───────────────────────────────────────────────
+///
+/// `sole` and nothing else, because `sole` is the question this rule turns on: a
+/// run two verses share says nothing about WHICH, and this rule's whole business
+/// is which. Length is left at `MIN_RUN_WORDS`, the floor at which a run may be
+/// offered at all — deliberately NOT at `READING_RUN_WORDS`, because a run of that
+/// length may reach a wall by itself and the bar for *casting doubt* must be lower
+/// than the bar for *acting alone*. Measured: the three field instances this rule
+/// reaches carry runs of 7, 8 and 5 words, so a bar of eight would catch one.
+///
+/// ── WHAT THIS DOES NOT WEAKEN ─────────────────────────────────────────────────
+///
+/// Rule 40 is untouched everywhere it has ever been about. A spoken reference
+/// still beats `ContextMemory` (`resolve_bare_verse_with_source`), still beats a
+/// paraphrase, still disarms the passage guard, and still beats a verbatim run
+/// anywhere else in scripture. `Semantic` can never raise a doubt — a cosine is a
+/// bag of words in no order and knows nothing about which verse (rule 18) — and
+/// neither can a run two verses share.
+///
+/// **And nothing gains a wall it did not have.** The run is demoted alongside the
+/// reference, so a `Reading` that would have auto-fired under §118 no longer does
+/// when it is the accuser. A disagreement fires nothing: rule 10's cap is applied
+/// to one more case and relaxed for none.
+///
+/// The alternative was measured and refused: leaving the run alone would have let
+/// `Proverbs 8:12` — the CORRECT verse — auto-fire in place of `Acts 8:12`, which is
+/// a better morning when the rule is right and a brand-new wrong verse when it is
+/// not. A rule this young does not get to choose what a congregation sees.
+///
+/// ── WHAT IT COSTS, MEASURED ───────────────────────────────────────────────────
+///
+/// `main::passage_guard_bench` gained a second switch rather than a bench of its own
+/// — one `replay`, so two columns of one service cannot disagree about the router's
+/// clock. `what_the_citation_doubt_rule_costs` replays the operator's own transcripts
+/// through `candidates_for_window` and the real `Router`, with the passage guard ON
+/// in both columns because it is shipped:
+///
+/// | service | lines | citations doubted | fires removed | fires GAINED | correct fires lost |
+/// |---|---|---|---|---|---|
+/// | 35 | 332 | 0 | 0 | 0 | **0** |
+/// | 39 | 246 | 2 | 0 | 0 | **0** |
+/// | 40 | 7163 | 14 | 3 | 0 | **0** |
+///
+/// **All three removed fires were wrong verses that reached a congregation** — `Acts
+/// 8:12` for Proverbs 8:12 (RG-305), `Micah 2:2` for Micah 4 (RG-301) and `Luke 8:8`
+/// for Luke 18:8 (RG-305). Read them in the bench's output rather than counting
+/// them: this rule demotes the strongest claim Relay can make, so a demotion is
+/// only evidence once a person has looked at the window that produced it.
+///
+/// The extra `PhraseIndex` lookup the cross-book case needs runs in **5.3% of
+/// windows at 1.6 µs each** against a decode of 139–600 ms
+/// (`what_the_extra_index_lookup_costs`). It adds 5 suggestions across 7163 lines.
+///
+/// **THE CEILING IS THE EVIDENCE, NOT THE PREDICATE, AND IT IS THREE OF NINE.**
+/// `which_field_instances_this_rule_can_reach` runs all nine of the day's misheard
+/// references through the real index and asserts the count. Six are out of reach for
+/// a reason no widening of this rule can fix: three windows are the reference and
+/// nothing else, two carry runs of four and three words, and `Jude 1:7`'s run points
+/// at a verse the preacher was referring BACK to. **In four of those six the
+/// quotation arrived 6 to 16 seconds later, in a separate window**, and named the
+/// right verse after the wrong one was already on the wall. Reaching those means
+/// taking a verse off a congregation's screen, which is a different decision with a
+/// different cost, and it is not this one.
+///
+/// **Both CI instruments are blind to this, structurally.**
+/// `eval::print_scorecard` reports 100% recall, 53/53 and 0.0% wrong verses with the
+/// rule on and identically with it off, and `phrase_bench::read_the_bible_back_and
+/// _count_wrong_verses` reads 1556 verses back at 0.0% either way. Neither calls
+/// `candidates_for_window`: `eval.rs` assembles its own candidate set out of
+/// `detect_direct` and `quoted`, which makes it a third copy of an assembly that
+/// exists in one place precisely so this could not happen. RG-296 found the same
+/// blindness for the promotion that created `Reading` and RG-306 for the passage
+/// guard; this is the third time, and it is a property of the harness rather than
+/// bad luck.
+pub fn doubt_from_a_quotation(cands: &[Claim<'_>]) -> Vec<Option<Doubt>> {
+    let mut out: Vec<Option<Doubt>> = vec![None; cands.len()];
+    for (i, said) in cands.iter().enumerate() {
+        // `Direct` alone. The other reference-shaped methods are already capped at
+        // Suggest at any score, so demoting them would move nothing and would only
+        // give this rule more surface to be wrong on.
+        if said.method != DetectionMethod::Direct {
+            continue;
+        }
+        for (j, run) in cands.iter().enumerate() {
+            // A run two verses share is not evidence about WHICH verse, and which
+            // verse is the entire question here. See `PhraseHit::sole`.
+            let Some((words, true)) = run.run else {
+                continue;
+            };
+            if words < MIN_RUN_WORDS {
+                continue;
+            }
+            let Some(doubt) = the_run_contradicts(said, run.r) else {
+                continue;
+            };
+            if out[i].is_none() {
+                out[i] = Some(doubt);
+            }
+            out[j] = Some(Doubt::TheQuotation);
+        }
+    }
+    out
+}
+
+/// **THE SHORT RUN A NAMED CHAPTER MAKES ADMISSIBLE — RG-313.**
+///
+/// `doubt_from_a_quotation` sources its accusing run from `PhraseIndex::quoted`,
+/// which needs `MIN_RUN_WORDS` (5) because it answers *which verse do these words
+/// belong to* and below five that question has too many answers. Two of the six
+/// wrong references §123 could not reach fail on exactly that floor and nothing
+/// else — measured on the operator's own windows:
+///
+///   * id 818 — *"…the oil of gladness. Now, Isaiah 1 verse 3, it calls it the oil
+///     of joy."* fired `Isaiah 1:3`. The run shared with **`Isaiah 61:3`** is
+///     **4 words**.
+///   * id 861 — *"We have common faith, measure of faith, Romans, 2, 3…"* fired
+///     `Romans 2:3`. The run shared with **`Romans 12:3`** is **3 words**.
+///
+/// **The preacher already named the book and the chapter**, so the question left
+/// is not which verse — it is *did these words touch the verse that is one digit
+/// away from the one he said*. That is answerable from a much shorter run against
+/// ONE named verse, which is what `PhraseIndex::shared_run_with` measures and what
+/// `PARAPHRASE_RUN_WORDS` (3) is the floor for: three words CORROBORATE a
+/// reference that already exists, where five are needed to OFFER a quotation
+/// standing alone.
+///
+/// **This is a probe, not a scan.** The set is the inverse of
+/// `chapter_is_a_decode_slip` — for a one-digit chapter, the nine chapters it
+/// could be a lost leading digit of; for a two-digit one, the substitutions one
+/// digit away. Bounded by the slip test and never by the corpus.
+///
+/// **The bar is relative, not absolute** — see the comment at the comparison. A
+/// three-word floor alone doubted four correct references and cost two auto-fires
+/// over the operator's own services.
+///
+/// Returns the chapter the words point at, or `None`.
+pub fn chapter_the_words_point_at(
+    said: &Claim<'_>,
+    max_chapter: i64,
+    mut shared_run: impl FnMut(&VerseRef) -> usize,
+) -> Option<i64> {
+    // `Direct` alone, exactly as `doubt_from_a_quotation` — the other
+    // reference-shaped methods are already capped and demoting them moves nothing.
+    if said.method != DetectionMethod::Direct {
+        return None;
+    }
+    // A WHOLE CHAPTER NAMES NO VERSE TO PROBE. "Turn to Romans 8" gives this rule
+    // nothing to compare, and guessing a verse would be inventing the evidence.
+    if said.whole_chapter {
+        return None;
+    }
+    // **A SPAN NAMES NO ONE VERSE EITHER, and this cost a correct fire before it was
+    // written.** *"Seek water and there is none and their tongue felleth for thirst.
+    // Isaiah 32 verse 15 to 17"* — the reference is right, the quotation in front of
+    // it belongs to the passage he had just left, and the probe compared three words
+    // of it against verse 15 alone, which is one third of what he asked for. So the
+    // bar it measured was a bar for the wrong verse.
+    //
+    // `doubt_from_a_quotation` refuses a span across books for the same reason and in
+    // the same words: *the verse must be the one he said, exactly, not merely inside a
+    // span he said*. Neither field case is a span, so this costs nothing they need.
+    if said.verse_end.is_some_and(|e| e > said.r.verse) {
+        return None;
+    }
+    // **THE PROBE MUST BEAT THE CLAIM, and this line is the whole rule.**
+    //
+    // Measured over 7,741 real transcript lines, a bare floor of three words made
+    // this rule doubt four references the preacher said CORRECTLY and cost two
+    // auto-fires: *"Proverbs 24 verse 5 A wise man is strong, yea, a man of
+    // knowledge"*, *"Isaiah, chapter 44, and verse 3. I will pour water upon him
+    // that is thirsty"*, `Isaiah 41:15` and `Isaiah 32:15`. Each is right, and each
+    // was accused because three words of the verse he was reading — *behold I
+    // will*, *I will pour* — also appear in a chapter one digit away. Scripture is
+    // full of three-word runs.
+    //
+    // `doubt_from_a_quotation` is safe at three words only because it is
+    // CORROBORATING a reference somebody said out loud; here the run is ACCUSING
+    // one, on behalf of a verse nobody named, and the floor that serves the first
+    // job cannot serve the second. `PhraseIndex::quoted`'s `sole` test is what the
+    // stronger rule has instead, and this rule has no access to it.
+    //
+    // So the bar is RELATIVE: the words must point at the probed verse MORE than at
+    // the verse that was said. That is the question a person would ask — of these
+    // two chapters, which one do the words in this window belong to — and it is the
+    // one the absolute floor never asked. `Isaiah 61:3` (4 words against 0) and
+    // `Romans 12:3` (3 against 0) pass it; every one of the four correct references
+    // fails it, because a man reading a verse aloud shares more with the verse he
+    // named than with any neighbour of it.
+    let own = shared_run(said.r);
+    let bar = PARAPHRASE_RUN_WORDS.max(own + 1);
+    for chapter in 1..=max_chapter {
+        if !chapter_is_a_decode_slip(said.r.chapter, chapter) {
+            continue;
+        }
+        let probe = VerseRef {
+            book: said.r.book.clone(),
+            chapter,
+            verse: said.r.verse,
+        };
+        if shared_run(&probe) >= bar {
+            return Some(chapter);
+        }
+    }
+    None
+}
+
+/// Does this run point at the reference the decoder would have produced had it not
+/// slipped? One coordinate apart, and that coordinate a slip.
+fn the_run_contradicts(said: &Claim<'_>, run: &VerseRef) -> Option<Doubt> {
+    // **THE VERSE IS WHAT PROTECTS THE CORRECT FIRES, and this comment exists
+    // because the first draft credited the wrong check.** `John 15:14` cited while
+    // `15:15` is read, and `Hebrews 13:7` cited while `13:17` is quoted, are both
+    // held here: the run's verse is not one the preacher said. The same-chapter
+    // escape below and `chapter_is_a_decode_slip`'s refusal of equality say the
+    // same thing a second and a third time, which is why removing any ONE of the
+    // three left every test green. The revert-check that bites removes all three,
+    // and `john_15_14_cited_while_15_15_is_read_is_not_a_disagreement` records that.
+    if !verse_inside_what_was_said(said, run.verse) {
+        return None;
+    }
+    if said.r.book == run.book {
+        // SAME CHAPTER IS NEVER A DISAGREEMENT — a preacher moving about inside the
+        // chapter he named, which is what a preacher does. Reachable only through a
+        // spoken SPAN or a whole chapter; `chapter_is_a_decode_slip` refuses
+        // equality for the single-verse case.
+        if said.r.chapter == run.chapter {
+            return None;
+        }
+        return chapter_is_a_decode_slip(said.r.chapter, run.chapter)
+            .then_some(Doubt::SpokenChapter);
+    }
+    // ACROSS BOOKS, THE VERSE MUST BE THE ONE HE SAID — exactly, not merely inside
+    // a span he said, and never a whole chapter. Chapter numbers collide across
+    // sixty-six books constantly: "Acts 8, 12" against a run in `Proverbs 8:12` is
+    // the finding, "turn to Romans 8" against a run in `John 8` is Tuesday, and
+    // "Romans 8 verse 1 to 39" against that same John run would be Tuesday wearing
+    // a span. The exact pair is the coincidence that is worth acting on.
+    (!said.whole_chapter && said.r.chapter == run.chapter && said.r.verse == run.verse)
+        .then_some(Doubt::SpokenBook)
+}
+
+/// Is this verse the one that was said, or inside the span that was said?
+fn verse_inside_what_was_said(said: &Claim<'_>, verse: i64) -> bool {
+    if said.whole_chapter {
+        return true;
+    }
+    (said.r.verse..=said.verse_end.unwrap_or(said.r.verse)).contains(&verse)
+}
+
+/// Is `said` what the decoder makes of `run` when it slips?
+///
+/// Two shapes, both measured on the operator's own services rather than imagined:
+///
+///  * **A LOST LEADING DIGIT** — `said` is what is left of `run` when the front of
+///    the number does not survive the decode. *eighty*-seven → 7, *eigh*-teen → 8,
+///    *sixty*-one → 1, *twelve* → 2. Five of the eight instances.
+///  * **A SUBSTITUTED DIGIT, at two digits or more** — 34 heard as 35. The length
+///    floor is not tidiness: at one digit every chapter is one substitution from
+///    every other, so `Romans 1` and `Romans 2` would contradict each other, and a
+///    preacher reading the next chapter along is not a decode slip. There is no
+///    honest way to tell those apart at one digit, so this rule does not try.
+fn chapter_is_a_decode_slip(said: i64, run: i64) -> bool {
+    if said <= 0 || run <= 0 || said == run {
+        return false;
+    }
+    let (s, r) = (said.to_string(), run.to_string());
+    if s.len() < r.len() {
+        return r.ends_with(&s);
+    }
+    s.len() == r.len()
+        && s.len() >= 2
+        && s.bytes().zip(r.bytes()).filter(|(a, b)| a != b).count() == 1
+}
+
+/// `"Book Chapter:Verse"` — the same key `pipeline::Fire::key_for` builds and the
+/// same one `Router` debounces on.
+///
+/// Stated here because the guard compares a candidate with what the router says is
+/// on the wall, and two spellings of one key is how a guard silently stops
+/// matching. This module is DB- and IO-free on purpose and `pipeline` is not, so
+/// the format lives in one place on each side and `the_two_reference_keys_agree`
+/// holds them to the same answer.
+pub fn reference_key(r: &VerseRef) -> String {
+    format!("{} {}:{}", r.book, r.chapter, r.verse)
 }
 
 pub fn detect_bare_verses(text: &str) -> Vec<i64> {
@@ -2561,12 +3355,13 @@ pub struct SemanticIndex {
     /// Built from the SAME stemmed tokens as `docs`, so a story and its verses
     /// live in one vocabulary. See `PASSAGE_LEN` and `top_k_explained`.
     passages: Vec<(usize, usize, HashMap<String, f32>)>,
-    /// Stems rare enough to stand as evidence ALONE — see `RARE_DF_FRACTION`
-    /// and DECISIONS.md §25. Held as a set, computed once at build time from
-    /// document frequency, because the query path must not re-derive `df` from
-    /// a float `idf`.
-    rare_terms: std::collections::HashSet<String>,
 }
+
+// THE `rare_terms` SET IS GONE (2026-09-20). It held the stems rare enough to
+// stand as evidence ON THEIR OWN, and nothing needs that question answered any
+// more — see `MIN_EVIDENCE_TERMS`. Deleted rather than left computed and unread:
+// a set built at startup for a rule that no longer exists is how a reader comes
+// to believe the rule is still there.
 
 /// Modern English → KJV vocabulary, baked in (`include_str!`) so it stays
 /// offline. See `data/kjv_gloss.json` for why this exists and what it is not.
@@ -2699,15 +3494,6 @@ impl SemanticIndex {
                 }
             }
         }
-        // Rarity is decided HERE, from the raw document frequencies, while they
-        // still exist — `idf` is a float and recovering `df` back out of it is
-        // not something the query path should be doing.
-        let rare_cutoff = (n * RARE_DF_FRACTION).max(1.0);
-        let rare_terms: std::collections::HashSet<String> = df
-            .iter()
-            .filter(|(_, d)| **d <= rare_cutoff)
-            .map(|(t, _)| t.clone())
-            .collect();
         let idf: HashMap<String, f32> = df
             .into_iter()
             .map(|(t, d)| (t, (n / d).ln() + 1.0))
@@ -2756,7 +3542,6 @@ impl SemanticIndex {
             docs,
             surface,
             passages,
-            rare_terms,
         }
     }
 
@@ -2919,7 +3704,11 @@ impl SemanticIndex {
         // bends to it — but never below TWO, whatever was said. A single shared
         // word is a coincidence with a good score at any query length, and
         // `evidence_floor` exists to forbid exactly that.
-        let required = MIN_EVIDENCE_TERMS.min(qvec.len()).max(2);
+        // THREE SHARED WORDS, FLAT. No bend for a short query, no exception for
+        // a rare one. See `MIN_EVIDENCE_TERMS` for the measurement that removed
+        // both on 2026-09-20; between them they were 71% of everything this
+        // matcher offered across a real service.
+        let required = MIN_EVIDENCE_TERMS;
         scored
             .into_iter()
             .filter_map(|(i, s)| {
@@ -2928,12 +3717,11 @@ impl SemanticIndex {
                 // a fact about the index's vocabulary, and `surface` deliberately
                 // maps several stems onto one word.
                 let stems = top_terms(&qvec, dvec, EXPLAIN_TERMS);
-                // NARROW TO WHAT CAN BE JUSTIFIED. `required` is the bar — see
-                // above — so a candidate is corroborated rather than merely
-                // confident. A SINGLE word clears it only when that word is rare
-                // enough to be evidence by itself ("swine", "ossifrage") — never
-                // a common one ("lord"). DECISIONS.md §25.
-                if stems.len() < required && !stems.iter().any(|t| self.rare_terms.contains(t)) {
+                // NARROW TO WHAT CAN BE JUSTIFIED. `required` is the bar, and
+                // NOTHING is exempt from it any more: a candidate is offered
+                // because several independent words back it, or it is not
+                // offered at all. DECISIONS.md §33, reversed 2026-09-20.
+                if stems.len() < required {
                     return None;
                 }
                 let why: Vec<String> = stems
@@ -3047,20 +3835,42 @@ const EXPLAIN_TERMS: usize = 6;
 /// was said is defensible on its face; one sharing two is a coincidence with a
 /// good score, and no operator can weigh it in the second they have.
 ///
-/// ONE EXCEPTION, and it is `RARE_DF_FRACTION`: a single word that is rare
-/// enough IS corroboration, because there is nothing else in the corpus it
-/// could have come from. See DECISIONS.md §25.
-const MIN_EVIDENCE_TERMS: usize = 3;
-
-/// How rare a stem must be to stand as evidence ON ITS OWN: it may appear in at
-/// most this fraction of the corpus (floored at one document, so the rule still
-/// means something on the tiny corpora the tests build).
+/// ── NO EXCEPTIONS, AS OF 2026-09-20 (DECISIONS.md §33, reversed) ──────────
 ///
-/// 0.1% of the full KJV is ~31 of 31,102 verses. "swine" (~30 verses) and
-/// "ossifrage" (2) clear it; "lord" (~7,800) is nowhere near. That is exactly
-/// the line this is meant to draw — a word that names one story, versus a word
-/// that names half the Bible.
-const RARE_DF_FRACTION: f32 = 0.001;
+/// There used to be two ways past this bar, and together they were most of what
+/// this matcher offered. `RARE_DF_FRACTION` let a SINGLE rare word through, on
+/// the argument that there was nowhere else in the corpus it could have come
+/// from; and `required` bent down to 2 for a short query, on the argument that a
+/// short query cannot corroborate itself three ways.
+///
+/// Both arguments are reasonable and both were wrong, and the operator found it
+/// before any instrument here did: *"it is still suggesting just one word ...
+/// we will have too much going on the preview and miss the right verse."*
+///
+/// MEASURED over all 816 transcript windows of the service of 2026-09-20 and
+/// over both benchmarks. `@3` is listed because `SEMANTIC_SUGGESTIONS_MAX` is 3,
+/// so it is the last rank an operator can ever see:
+///
+///                            offers  1-word   @1    @3    @5   story@1  modern@1
+///   3 terms, or one rare        638     287   69%   81%   88%     84%       59%
+///   3 terms, no rare word       302       0   75%    —    81%      —         —
+///   3 terms, neither            186       0   75%   81%   81%     88%       71%
+///   4 terms, neither            175       0   62%    —    69%      —         —
+///
+/// Seven offers a minute became two, every survivor is corroborated, and NOTHING
+/// AN OPERATOR CAN SEE GOT WORSE: recall@3 is 13/16 either way and recall@1 went
+/// UP. The @5 column is the whole cost, and it is two ranks no console renders.
+///
+/// The rare-word rule was not buying the recall it was defended with: a one-word
+/// match was taking rank 1 in front of a properly corroborated verse, which is
+/// the same failure the evidence filter was moved before `truncate(k)` to fix.
+///
+/// The old note claimed the KJV gloss "cannot work at all" without the single
+/// rare word, because a modern retelling reaches its verse through one rare KJV
+/// noun ("pigs" → "swine"). That is the `modern` column, and it is the biggest
+/// single improvement in the table: 59% → 71%. A real retelling is a sentence,
+/// and a sentence corroborates itself.
+const MIN_EVIDENCE_TERMS: usize = 3;
 
 /// The shared terms that contributed most to a cosine — the "why" of a paraphrase.
 ///
@@ -4201,10 +5011,17 @@ mod tests {
         assert!(hits[0].1 > 0.2, "similarity too low: {}", hits[0].1);
     }
 
+    /// A WHOLE SENTENCE, not two words. Since 2026-09-20 this matcher requires
+    /// three shared words with no exception, so "the lord is my shepherd" —
+    /// which is `lord` and `shepherd` once the stopwords are gone — is no longer
+    /// its job. It is `PhraseIndex`'s, which finds it as a five-word quotation
+    /// and can quote it back. The division is deliberate: one index answers
+    /// "which verse did he READ", this one answers "which verse does he MEAN",
+    /// and a two-word probe was only ever testing the first through the second.
     #[test]
     fn semantic_picks_shepherd_for_shepherd_query() {
         let idx = seed_index();
-        let hits = idx.top_k("the lord is my shepherd", 1);
+        let hits = idx.top_k("the lord is my shepherd and i shall not want", 1);
         assert_eq!(hits[0].0.reference_book_chapter_verse(), "Psalms 23:1");
     }
 
@@ -4234,7 +5051,14 @@ mod tests {
             ),
         ];
         let idx = SemanticIndex::build(&corpus);
-        let hits = idx.top_k("he ended up feeding pigs", 1);
+        // A RETELLING, not a probe. "pigs" is still the word that does it — it
+        // appears nowhere in the KJV and only the gloss turns it into "swine" —
+        // but three shared words are required with no exception since
+        // 2026-09-20, and a preacher telling this story says a sentence.
+        let hits = idx.top_k(
+            "he was so hungry he would have filled his belly with what the pigs were eating",
+            1,
+        );
         assert_eq!(hits.len(), 1, "modern wording found nothing");
         assert_eq!(hits[0].0.reference_book_chapter_verse(), "Luke 15:16");
     }
@@ -4269,8 +5093,12 @@ mod tests {
             idx.top_k("ship", 1).is_empty(),
             "the index was glossed — document frequencies are now wrong"
         );
-        // ...while the modern query still finds the modern text unaided.
-        assert!(!idx.top_k("boat", 1).is_empty());
+        // ...while the modern query still finds the modern text unaided. A whole
+        // clause rather than the bare word, because three shared words are now
+        // required with no exception — which does not weaken what this test
+        // claims: `boat` is still the word doing the work, and `ship` still
+        // reaches nothing.
+        assert!(!idx.top_k("the waves beat into the boat", 1).is_empty());
     }
 
     /// Identical input must produce a bit-identical score, every time.
@@ -4312,7 +5140,8 @@ mod tests {
     #[test]
     fn a_paraphrase_can_explain_itself_in_words() {
         let idx = seed_index();
-        let hits = idx.top_k_explained("the lord is my shepherd", 1);
+        const SAID: &str = "the lord is my shepherd and i shall not want";
+        let hits = idx.top_k_explained(SAID, 1);
         let (r, _score, terms) = &hits[0];
         assert_eq!(r.reference_book_chapter_verse(), "Psalms 23:1");
         assert!(
@@ -4322,10 +5151,7 @@ mod tests {
         // Only words the query and the verse actually SHARE — an "explanation"
         // listing words that were not in the sermon would be a fabricated one.
         for t in terms {
-            assert!(
-                "the lord is my shepherd".contains(t.as_str()),
-                "{t:?} was never spoken"
-            );
+            assert!(SAID.contains(t.as_str()), "{t:?} was never spoken");
         }
     }
 
@@ -4374,7 +5200,7 @@ mod tests {
             ),
         ];
         let idx = SemanticIndex::build(&corpus);
-        let hits = idx.top_k_explained("lord shepherd", 1);
+        let hits = idx.top_k_explained("the lord is my shepherd i shall not want", 1);
         assert_eq!(hits[0].0.reference_book_chapter_verse(), "Psalms 23:1");
         assert_eq!(
             hits[0].2.first().map(String::as_str),
@@ -4437,6 +5263,22 @@ mod perf {
     /// that claim can be re-checked rather than believed.
     ///
     /// (If the corpus ever grows well beyond one translation, re-run this first.)
+    ///
+    /// ── TWO THINGS THIS CORPUS CANNOT SEE, AND THE FIGURES IT GETS WRONG ─────
+    ///
+    /// The corpus below is 31,100 copies of ONE sentence with a serial number in
+    /// it, which is the right size and the wrong shape. Measured against the real
+    /// KJV by `measure_query_repair_on_the_real_corpus`, the same two numbers are
+    /// **build ≈ 305 ms** and **top_k ≈ 4.6 ms** — not 112 and 2.6. The conclusion
+    /// does not move (4.6 ms once a second is still under half a percent of a
+    /// core, and the scan still stays), but the figures quoted above and in
+    /// `CLAUDE.md` describe a synthetic corpus rather than the one that ships.
+    ///
+    /// And every word of the query below is in vocabulary, so `repair_query`
+    /// returns at its first line for every token and is never exercised here at
+    /// all — on the branch built for tier-1 languages, where unknown words are the
+    /// normal case rather than the corner. That is measured in the other test too:
+    /// **0.33 ms per unknown word**, which is why it is left alone.
     #[test]
     #[ignore = "measurement, not a test — run with --ignored --nocapture"]
     fn measure_semantic_top_k() {
@@ -4474,6 +5316,106 @@ mod perf {
         println!("\n  SemanticIndex over {} verses:", corpus.len());
         println!("    build:     {build_ms:.0} ms (once, at startup)");
         println!("    top_k:     {per_query_ms:.2} ms per query (~1 query/sec live)");
+        println!();
+    }
+
+    /// THE SAME QUESTION, ASKED OF THE REAL CORPUS AND A REAL MISHEARING.
+    ///
+    /// `measure_semantic_top_k` above is the measurement every "the scan stays a
+    /// linear scan" decision rests on, and it has one blind spot that matters more
+    /// than the scan does: its corpus is 31,100 copies of ONE sentence and its
+    /// query is entirely in-vocabulary, so `repair_query` returns at its first
+    /// line (`self.idf.contains_key(t)`) for every token and is never measured at
+    /// all.
+    ///
+    /// `repair_query` is the branch that cannot be reasoned about from the code.
+    /// For every query token of four characters or more that the corpus has never
+    /// seen, it walks **the whole vocabulary** and runs `edit_distance_within`
+    /// against each candidate. There is a length pre-filter and no index. The
+    /// tier-1 case is exactly the one that produces unknown tokens by the
+    /// handful — whisper on Yorùbá, Swahili or code-switched preaching — so the
+    /// worst case is not a corner, it is the target market.
+    ///
+    /// Why it is worth a number rather than an argument: this runs inside
+    /// `emit_detections`, which holds `Db`, `Routing` and `Context` **together**
+    /// for its whole body (`main.rs`), and ~120 of Relay's 167 Tauri commands open
+    /// with `db.0.lock()`. Tauri runs a command that is not `async fn` on the MAIN
+    /// THREAD, which on macOS is the UI run loop. So every millisecond spent here,
+    /// once per transcript partial, is a millisecond in which an operator's click
+    /// can be waiting — and "the console drags during a sermon" is what that looks
+    /// like from the other side of the screen.
+    ///
+    /// Run: `cargo test --release perf::measure_query_repair -- --ignored --nocapture`
+    #[test]
+    #[ignore = "measurement, not a test — run with --ignored --nocapture"]
+    fn measure_query_repair_on_the_real_corpus() {
+        #[derive(serde::Deserialize)]
+        struct KjvBook {
+            chapters: Vec<Vec<String>>,
+        }
+        const RAW: &str = include_str!("../data/kjv.json");
+        let books: Vec<KjvBook> =
+            serde_json::from_str(RAW.trim_start_matches('\u{feff}')).expect("kjv.json parses");
+        let mut corpus: Vec<(VerseRef, String)> = Vec::new();
+        for (bi, b) in books.iter().enumerate() {
+            for (ci, ch) in b.chapters.iter().enumerate() {
+                for (vi, t) in ch.iter().enumerate() {
+                    corpus.push((
+                        VerseRef {
+                            book: format!("Book{bi}"),
+                            chapter: ci as i64 + 1,
+                            verse: vi as i64 + 1,
+                        },
+                        t.clone(),
+                    ));
+                }
+            }
+        }
+
+        let t0 = Instant::now();
+        let idx = SemanticIndex::build(&corpus);
+        let build_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
+        // IN VOCABULARY — what the existing benchmark measures.
+        let known = "for god so loved the world that he gave his only begotten son                      that whosoever believeth in him should not perish";
+        // OUT OF VOCABULARY — the same sentence as whisper hears it through an
+        // accent. Every one of these is a word the Bible does not contain, and
+        // every one is four characters or more, so every one walks the vocabulary.
+        let misheard = "for godd soo lovedd the worlde thatt hee gavv hiss onlie begoten sunne                         thatt whoseover beleiveth inn himm shuld nott perishe";
+
+        let bench = |q: &str| {
+            let _ = idx.top_k(q, 1);
+            let t = Instant::now();
+            const N: usize = 20;
+            for _ in 0..N {
+                let _ = idx.top_k(q, 1);
+            }
+            t.elapsed().as_secs_f64() * 1000.0 / N as f64
+        };
+        // AND THE ORDINARY CASE, which is the one that decides whether any of this
+        // matters: an English sentence with a couple of words whisper got wrong.
+        // A worst case nobody meets is not a budget.
+        let typical = "for god soo loved the world that he gave his only begoten son \
+                       that whosoever believeth in him should not perish";
+        let known_ms = bench(known);
+        let typical_ms = bench(typical);
+        let misheard_ms = bench(misheard);
+
+        println!(
+            "\n  REAL KJV corpus — {} verses, {} vocabulary terms",
+            corpus.len(),
+            idx.idf.len()
+        );
+        println!("    build:                    {build_ms:.0} ms (once, at startup)");
+        println!("    top_k, every word known:  {known_ms:.2} ms per query");
+        println!(
+            "    top_k, 2 words misheard:  {typical_ms:.2} ms per query  <-- the ordinary case"
+        );
+        println!("    top_k, 20 words misheard: {misheard_ms:.2} ms per query <-- repair_query walks the vocabulary");
+        println!(
+            "    cost of one unknown word: {:.2} ms",
+            (misheard_ms - known_ms) / 20.0
+        );
         println!();
     }
 }
@@ -5020,7 +5962,10 @@ mod query_repair {
     #[test]
     fn a_misheard_word_now_finds_its_verse() {
         let i = idx();
-        let hits = i.top_k("the goden calf", 2);
+        // "goden" is the misheard word and is still what this test is about; the
+        // sentence around it is there because three shared words are required
+        // with no exception since 2026-09-20.
+        let hits = i.top_k("and they made it a goden calf", 2);
         assert_eq!(hits[0].0.book, "Exodus");
     }
 
@@ -5110,7 +6055,7 @@ mod evidence_floor {
 
     /// A single COMMON word is still a coincidence with a good score, and is
     /// still refused. This is the half of the old one-word rule that survives
-    /// DECISIONS.md §25.
+    /// DECISIONS.md §33.
     ///
     /// A LITERAL 2, not `MIN_EVIDENCE_TERMS`. Asserting against the constant
     /// under test is tautological — it passes at any value, including the old
@@ -5129,18 +6074,36 @@ mod evidence_floor {
         );
     }
 
-    /// The other half of §25: a word rare enough IS corroboration, because
-    /// there is nowhere else in the corpus it could have come from. Without
-    /// this the KJV gloss cannot work at all — a modern retelling reaches its
-    /// verse through exactly one rare KJV noun ("pigs" → "swine").
+    /// THE OTHER HALF OF §33 IS REVERSED, AND THIS IS THE TEST THAT SAYS SO.
+    ///
+    /// A rare word used to be corroboration on its own, because there was
+    /// nowhere else in the corpus it could have come from. It was measured out
+    /// on 2026-09-20: see `MIN_EVIDENCE_TERMS`. "Ossifrage" is still in exactly
+    /// one verse and that is still true; what changed is that being the only
+    /// place a word appears is a fact about the BIBLE, not evidence that the
+    /// preacher was talking about that verse. A one-word offer is not something
+    /// an operator can agree or disagree with in the second they have.
+    ///
+    /// Written as the inverse of the test it replaces, so the two cannot both
+    /// be in the file.
     #[test]
-    fn a_rare_single_shared_word_is_evidence_enough() {
-        // "ossifrage" appears in exactly ONE verse in the corpus.
-        let hits = idx().top_k_explained("ossifrage", 5);
-        assert_eq!(hits.len(), 1, "a rare one-word match was dropped");
-        assert_eq!(hits[0].0.book, "Leviticus");
-        // And the operator is shown the word that did it, not a bare score.
-        assert_eq!(hits[0].2, vec!["ossifrage".to_string()]);
+    fn a_rare_single_shared_word_is_no_longer_evidence_enough() {
+        assert!(
+            idx().top_k_explained("ossifrage", 5).is_empty(),
+            "a one-word match was offered"
+        );
+        // The SAME rare word in a sentence that corroborates it three ways IS
+        // offered, so what was removed is the exception and not the word.
+        let hits = idx().top_k_explained("the ossifrage and the eagle and the osprey", 5);
+        assert_eq!(
+            hits.first().map(|h| h.0.book.clone()),
+            Some("Leviticus".into())
+        );
+        assert!(
+            hits[0].2.len() >= 3,
+            "offered on thin evidence: {:?}",
+            hits[0].2
+        );
     }
 
     #[test]
@@ -5217,7 +6180,7 @@ mod r4_audit {
     // Six references, transcribed by `ggml-large-v3-turbo` from a live sermon and
     // taken VERBATIM from `detections.heard_text` — the column that exists because
     // a service once put wrong verses on a wall and the log could not say what it
-    // had heard. Full write-up: `docs/qa/audits/FIELD-2026-08-30.md`.
+    // had heard. Full write-up: `docs/qa/audits/FIELD.md`.
     //
     // These are not invented sentences. Every earlier case in this file was written
     // by someone imagining how a preacher talks; these are how one actually did,
@@ -5376,7 +6339,7 @@ mod r4_audit {
             verse: 10,
         };
         assert_eq!(
-            resolve_bare_verse_for_window(heard, 10, None, Some(&memory)),
+            resolve_bare_verse_with_source(heard, 10, None, Some(&memory)),
             None,
             "FIELD F-8 reproduced: a verse was resolved against a chapter the \
              preacher did not say, while naming a different one out loud"
@@ -5398,8 +6361,8 @@ mod r4_audit {
             verse: 18,
         };
         assert_eq!(
-            resolve_bare_verse_for_window(heard, 18, None, Some(&memory)).as_ref(),
-            Some(&memory),
+            resolve_bare_verse_with_source(heard, 18, None, Some(&memory)),
+            Some((memory.clone(), BareVerseSource::Memory)),
             "mid-passage 'verse eighteen' must still resolve against the passage on screen"
         );
     }
@@ -5416,7 +6379,8 @@ mod r4_audit {
             chapter: 92,
             verse: 10,
         };
-        let got = resolve_bare_verse_for_window(heard, 10, Some(&anchor), Some(&memory))
+        let got = resolve_bare_verse_with_source(heard, 10, Some(&anchor), Some(&memory))
+            .map(|(r, _)| r)
             .expect("the window names a book, so it resolves");
         assert_eq!(got.reference_book_chapter_verse(), "1 Peter 5:10");
     }
@@ -6297,5 +7261,2858 @@ mod language_report_tests {
                 l.code
             );
         }
+    }
+}
+
+// ── READING ON: the preacher has moved to the next verse without saying so ──
+//
+// An operator puts a passage up and the preacher reads through it. Today the only
+// way the screen follows is the operator pressing Next, or the preacher SAYING
+// "verse two" (`detect_passage_nav`, which already works). This is the third case,
+// and the common one: they simply read on.
+//
+// ## Why this is not rule 10 being bent
+//
+// Rule 10 caps `Semantic` at Suggest because a TF-IDF cosine over 31,000 verses is
+// not a probability. This asks a much smaller question: of the two verses that
+// come NEXT in a passage an operator has already approved and put on a wall, do
+// the words just spoken belong to one of them? It cannot start a passage, cannot
+// leave one, and cannot go backwards. It is not the AI choosing what to show; it
+// is the AI keeping up with a reading somebody already chose.
+//
+// ## What the numbers actually said
+//
+// Tuned against the two real readings in service 24 (2026-09-20) and the bundled
+// KJV, not guessed:
+//
+// ```text
+//   case                 6 words   12     20    all    first advance
+//   Romans 8:28->29        +0.00  +0.43  +1.00  +1.00   after 12 words
+//   Romans 8:29->30        -0.38  +0.00  +0.40  +0.60   after 20 words
+//   Numbers 10:29->30      -1.00  -1.00  +0.00  +0.25   only at the end
+//   Numbers 10:30->31      -0.60  -0.14  +0.50  +1.00   after 20 words
+//   Numbers 10:31->32      -1.00  -0.50  +0.00  +0.14   never
+// ```
+//
+// **Three things follow, and all three are in the design rather than in a hope.**
+//
+// It NEVER advances while the current verse is still being read: every such case
+// scored -1.00. The failure mode is silence, and silence is the only failure mode
+// worth having here — the operator presses Next exactly as they do today.
+//
+// It advances LATE, twelve to twenty words in, three to six seconds behind. That
+// is structural: an eight-second window holds all of the verse being left and only
+// the opening of the one being entered. Nothing about the threshold changes it;
+// whole-sentence input would.
+//
+// And one case in five never advances at all. Numbers 10:32 is "goodness" and
+// "lord" once stopwords are gone. There is nothing there to match, so no number
+// reaches it. Narrative verses do this; Romans does not.
+//
+// ## The first attempt, and why it is not this one
+//
+// Scoring the WHOLE window against each candidate fails: the current verse is
+// entirely present and the next one barely, so the next verse loses three times in
+// five even when the preacher has plainly moved on. Only the NEWEST words
+// discriminate, which is why `RECENCY` exists.
+
+/// Words too common in the KJV to distinguish one verse from another.
+///
+/// Not a general stopword list — a list for THIS corpus. "shall", "thou", "thee",
+/// "unto" and "hath" are on it because they appear in thousands of verses and
+/// carry no evidence about which one is being read.
+// ── READ-ON IS BUILT AND TESTED AND IS NOT WIRED TO ANYTHING YET ───────────
+//
+// `read_on` answers "has the preacher stopped reading the verse on the screen
+// and started reading the next one", and it does it well enough to ship: see
+// `read_on_tests`, and the tuning table in the module note. What it does NOT yet
+// have is a caller. Advancing a passage by itself touches the fire path, needs a
+// hold so the operator's own Next is never undone a moment later, and needs an
+// `e2e.rs` case driving the real commands — none of which is written.
+//
+// `allow(dead_code)` RATHER THAN DELETING IT, and rather than wiring it in a
+// hurry to make clippy quiet. The measurement it encodes came off two real
+// readings in a real service and is the expensive part; the wiring is an
+// afternoon. This comment is here so the next person finds a stated absence
+// instead of guessing whether the feature is live — which, on the fire path, is
+// the difference between reading the code and trusting it.
+#[allow(dead_code)]
+const READ_ON_STOPWORDS: &[&str] = &[
+    "the", "and", "of", "to", "in", "that", "is", "was", "he", "for", "it", "with", "as", "his",
+    "on", "be", "at", "by", "this", "had", "not", "are", "but", "from", "or", "have", "an", "they",
+    "which", "one", "you", "were", "all", "her", "she", "there", "would", "their", "we", "him",
+    "been", "has", "when", "who", "will", "no", "more", "if", "out", "so", "up", "said", "what",
+    "its", "about", "into", "them", "then", "unto", "shall", "thou", "thee", "thy", "ye", "hath",
+    "also", "her", "my", "me", "us", "our", "your",
+];
+
+/// How many of the newest content words decide it.
+///
+/// The measurement above is what sets this. Scoring the whole window lets the
+/// verse being LEFT win on sheer presence, because all of it is in the window and
+/// only the opening of the next one is.
+#[allow(dead_code)]
+const RECENCY: usize = 8;
+
+/// How far ahead the next verse must be before the screen moves.
+///
+/// Zero would advance on a tie, and a tie is exactly what the middle of a verse
+/// looks like. 0.15 is the smallest figure that cleared every still-reading case
+/// in the measurement above, all of which scored -1.00 — so this is not a fence
+/// sitting next to the data, it is a fence a long way from it.
+#[allow(dead_code)]
+const READ_ON_MARGIN: f32 = 0.15;
+
+/// The content words of a line, in order, for read-on scoring.
+#[allow(dead_code)]
+fn read_on_tokens(text: &str) -> Vec<String> {
+    normalize(text)
+        .split_whitespace()
+        .filter(|t| t.chars().count() >= 3 && !READ_ON_STOPWORDS.contains(t))
+        .map(|t| t.to_string())
+        .collect()
+}
+
+/// Of the words just spoken, how many belong to this verse?
+///
+/// The denominator is what was HEARD, not the verse. Asking "how much of this
+/// verse has been said" rewards a verse already finished; asking "how much of what
+/// was just said is this verse" is the question an advance actually turns on.
+#[allow(dead_code)]
+fn read_on_score(candidate: &str, recent: &[String]) -> f32 {
+    if recent.is_empty() {
+        return 0.0;
+    }
+    let cand: std::collections::HashSet<String> = read_on_tokens(candidate).into_iter().collect();
+    if cand.is_empty() {
+        return 0.0;
+    }
+    let hits = recent.iter().filter(|t| cand.contains(*t)).count();
+    hits as f32 / recent.len() as f32
+}
+
+/// Has the preacher moved on? Returns the verse to advance TO.
+///
+/// `candidates` are the verses that may be moved to, in order, with their text —
+/// the caller supplies at most the next two, and never anything outside the
+/// passage. This function cannot reach further than it is given, which is what
+/// keeps the bound a property of the code rather than of a comment.
+#[allow(dead_code)]
+pub fn read_on(
+    heard: &str,
+    current_text: &str,
+    candidates: &[(VerseRef, String)],
+) -> Option<VerseRef> {
+    let all = read_on_tokens(heard);
+    if all.is_empty() {
+        return None;
+    }
+    let recent: Vec<String> = all.iter().rev().take(RECENCY).rev().cloned().collect();
+    let here = read_on_score(current_text, &recent);
+    let (best, score) = candidates
+        .iter()
+        .map(|(r, t)| (r, read_on_score(t, &recent)))
+        .max_by(|a, b| a.1.total_cmp(&b.1))?;
+    (score > 0.0 && score - here >= READ_ON_MARGIN).then(|| best.clone())
+}
+
+#[cfg(test)]
+mod read_on_tests {
+    use super::*;
+
+    const R28: &str = "And we know that all things work together for good to them that love God, to them who are the called according to {his} purpose.";
+    const R29: &str = "For whom he did foreknow, he also did predestinate {to be} conformed to the image of his Son, that he might be the firstborn among many brethren.";
+    const R30: &str = "Moreover whom he did predestinate, them he also called: and whom he called, them he also justified: and whom he justified, them he also glorified.";
+    const N32: &str = "And it shall be, if thou go with us, yea, it shall be, that what goodness the LORD shall do unto us, the same will we do unto thee.";
+
+    fn vr(book: &str, chapter: i64, verse: i64) -> VerseRef {
+        VerseRef {
+            book: book.into(),
+            chapter,
+            verse,
+        }
+    }
+    fn cands(list: &[(i64, &str)]) -> Vec<(VerseRef, String)> {
+        list.iter()
+            .map(|(v, t)| (vr("Romans", 8, *v), (*t).to_string()))
+            .collect()
+    }
+
+    /// What the decoder's window actually holds part-way through a hand-over: the
+    /// last eight words of the verse still on the screen, then `words` words of the
+    /// one being read now.
+    fn window_after(current: &str, next: &str, words: usize) -> String {
+        let tail: Vec<&str> = current.split_whitespace().collect();
+        let tail = tail[tail.len().saturating_sub(8)..].join(" ");
+        let head = next
+            .split_whitespace()
+            .take(words)
+            .collect::<Vec<_>>()
+            .join(" ");
+        format!("{tail} {head}")
+    }
+
+    /// THE ONE THAT MATTERS MOST, and it is a refusal.
+    ///
+    /// While the preacher is still reading the verse on the screen, nothing moves.
+    /// Every still-reading case in the tuning scored -1.00, and this is that
+    /// measurement turned into a test: the failure mode of this whole feature must
+    /// be silence, because the operator's Next already works and a wrong verse
+    /// does not undo itself.
+    #[test]
+    fn nothing_moves_while_the_current_verse_is_still_being_read() {
+        let c = cands(&[(29, R29), (30, R30)]);
+        assert_eq!(read_on(R28, R28, &c), None);
+        // Even most of the way through it.
+        let half = R28
+            .split_whitespace()
+            .take(14)
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert_eq!(read_on(&half, R28, &c), None);
+    }
+
+    /// AND THE ADVANCE ITSELF, at the point the measurement said it happens.
+    #[test]
+    fn it_advances_once_enough_of_the_next_verse_has_been_heard() {
+        let c = cands(&[(29, R29), (30, R30)]);
+        // Twelve words in — the figure the tuning recorded for this reading.
+        let heard = window_after(R28, R29, 12);
+        assert_eq!(read_on(&heard, R28, &c).map(|r| r.verse), Some(29));
+    }
+
+    /// IT CANNOT REACH PAST WHAT IT WAS GIVEN.
+    ///
+    /// The bound is a property of the call, not of a comment: the caller hands it
+    /// the verses that may be moved to, so a passage's end and "never backwards"
+    /// are enforced by there being nothing else in the list.
+    #[test]
+    fn it_can_only_move_to_a_verse_it_was_offered() {
+        // The words of verse 30 are ringing, but only 29 is on offer.
+        let only_29 = cands(&[(29, R29)]);
+        let heard = R30;
+        let got = read_on(heard, R28, &only_29);
+        assert!(
+            got.is_none() || got.unwrap().verse == 29,
+            "it reached a verse that was not a candidate"
+        );
+        // And with nothing on offer it does nothing at all — the end of a passage.
+        assert_eq!(read_on(R29, R28, &[]), None);
+    }
+
+    /// A VERSE MADE OF STOPWORDS CANNOT BE HEARD, AND THAT IS RECORDED.
+    ///
+    /// Numbers 10:32 is "goodness" and "lord" once the common words are gone. The
+    /// tuning said it never advances and this pins that, so the next person reads a
+    /// known limit rather than finding it in a service. It is not a bug to be
+    /// fixed by lowering the margin: lowering it far enough to catch this would
+    /// advance on a tie, and the middle of a verse looks exactly like a tie.
+    #[test]
+    fn a_verse_that_is_almost_all_common_words_is_a_known_miss() {
+        let c = vec![(vr("Numbers", 10, 32), N32.to_string())];
+        const N31: &str = "And he said, Leave us not, I pray thee; forasmuch as thou knowest \
+                           how we are to encamp in the wilderness, and thou mayest be to us \
+                           instead of eyes.";
+        // Built the way a real window is: the tail of the verse being read, then
+        // the first words of the next one. Scored against N32's own words alone it
+        // WOULD advance, and that difference is the point — the current verse's
+        // tail is part of the evidence, not noise to be stripped out before asking.
+        let heard = window_after(N31, N32, 14);
+        assert_eq!(read_on(&heard, N31, &c), None);
+    }
+
+    /// Sermon prose about a verse is not the verse being read.
+    #[test]
+    fn expounding_a_verse_is_not_reading_the_next_one() {
+        let c = cands(&[(29, R29), (30, R30)]);
+        let heard = "so what Paul is telling us this morning is that God is working, \
+                     he is working right now in your situation, whatever it looks like";
+        assert_eq!(read_on(heard, R28, &c), None);
+    }
+
+    /// Silence, or a window with nothing in it, moves nothing.
+    #[test]
+    fn an_empty_window_moves_nothing() {
+        let c = cands(&[(29, R29)]);
+        assert_eq!(read_on("", R28, &c), None);
+        assert_eq!(read_on("the and of to", R28, &c), None);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// QUOTED SCRIPTURE · A CONTIGUOUS PHRASE, NOT A BAG OF WORDS
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// `SemanticIndex` answers "which verse MEANS this", and it answers it with a
+// TF-IDF cosine, which discards word order by construction. That is the right
+// instrument for a preacher RETELLING a story ("he ended up feeding pigs"), and
+// the wrong one for a preacher QUOTING. Its evidence reaches the console as
+// `terms.join(" · ")` and is rendered inside quotation marks, so a verse whose
+// whole justification was the words `lord` and `shepherd`, in neither order and
+// nowhere near each other, appeared on the run surface as
+//
+//     “lord · shepherd”
+//
+// dressed as a quotation. The operator's instruction, 2026-09-20: *"it has to be
+// three words together as in the scripture"*. This module is that sentence.
+//
+// ── WHY IT IS A SEPARATE INDEX AND NOT A TIGHTER SEMANTIC ─────────────────
+//
+// Because the two questions want opposite tokenizers. `tokenize` drops stopwords
+// and two-letter words, which is correct for a cosine and fatal for a quotation:
+// "the lord is my shepherd" reduces to `[lord, shepherd]` and "seek ye first"
+// to `[seek, first]`. The very phrases the operator named are the ones a
+// content-word index cannot see. So a phrase index keeps EVERY word.
+//
+// ── MEASURED, on the full KJV and on one real 93-minute service ────────────
+//
+// Uniqueness of an n-gram over all words (31,102 verses):
+//
+//     3 words   418,590 distinct   78.1% unique to a single verse
+//     4 words   573,762 distinct   88.1%
+//     5 words   625,020 distinct   92.9%
+//
+// Run over all 816 transcript windows of the service of 2026-09-20, taking the
+// longest contiguous run each window shares with any verse:
+//
+//     run >= 3    300 fires   unusable
+//     run >= 4     67 fires   one every 1.4 min, heavy noise ("was a good man")
+//     run >= 5     24 fires   ~16 correct
+//     run >= 5 and rarity      13 fires   11 correct
+//
+// ONE SERVICE IS ONE SAMPLE. These constants are configuration shaped by a
+// measurement, not laws, and the honest statement of their status is that they
+// have been fitted to a single morning of one preacher in one language.
+//
+// ── WHAT IT MAY DO ─────────────────────────────────────────────────────────
+//
+// Suggest. Never fire. A quoted phrase is strong evidence about WHICH VERSE and
+// no evidence at all that the operator wants it on a wall, and rule 10 is not
+// about how good the evidence is: only what Relay HEARD AS A REFERENCE may reach
+// a congregation unattended. `DetectionMethod::Quoted` is capped in `router.rs`
+// beside `Semantic`.
+
+/// How many words make the index's unit. Short enough that a three-word
+/// quotation is findable at all, which is the whole requirement.
+const PHRASE_GRAM: usize = 3;
+
+/// A gram this common is a phrase of the language, not a phrase of a verse, and
+/// looking it up would cost more than it could ever return. "and it came to"
+/// is in hundreds of verses.
+const MAX_GRAM_VERSES: usize = 8;
+
+/// The shortest run of words that may be offered as a quotation.
+///
+/// FIVE, measured (see the module note): at four the service produced a
+/// suggestion every 1.4 minutes, most of them ordinary English that happens to
+/// appear somewhere in a 790,000-word book. The cost of the wrong value here is
+/// paid by a volunteer in a dark booth, so it is set where the list is short
+/// enough to read.
+pub const MIN_RUN_WORDS: usize = 5;
+
+/// A run this long is its own corroboration and needs no rarity check.
+/// "moreover it is required in stewards that a man be found" is twelve words and
+/// nobody says that by accident.
+const SELF_EVIDENT_RUN: usize = 7;
+
+/// Below `SELF_EVIDENT_RUN`, the run must contain at least one word this rare —
+/// present in at most this fraction of verses. 0.5% of the KJV is ~155 verses.
+///
+/// This is the same idea as `RARE_DF_FRACTION` one door along, at a different
+/// value because it is doing a different job: there a single rare word stands in
+/// for missing corroboration, here it separates a five-word quotation from five
+/// words of ordinary speech. Measured: it removes "the poor out of the",
+/// "for the fruit of the" and "is it in the world" while keeping
+/// "wisdom is the principal thing" and "a solitary place and there".
+const PHRASE_RARE_FRACTION: f32 = 0.005;
+
+/// The shortest run that may be treated as the preacher READING the verse, and
+/// so put on a wall without anybody pressing anything.
+///
+/// EIGHT, and here is what was measured for it (2026-09-23, against the bundled
+/// KJV — `src-tauri/data/kjv.json`, 31,102 verses, 835,656 words, the same
+/// tokenizer `phrase_words` uses):
+///
+/// **How often a run of N words belongs to exactly one verse**
+///
+/// | words | distinct runs | unique to ONE verse |
+/// |-------|---------------|---------------------|
+/// | 5     | 625,020       | 93.0%               |
+/// | 7     | 617,197       | 96.6%               |
+/// | **8** | **596,170**   | **97.4%**           |
+/// | 10    | 544,918       | 98.3%               |
+/// | 12    | 489,445       | 98.8%               |
+///
+/// **What the other 2.6% actually are.** 1,500 randomly chosen verses were read
+/// back N+2 words at a time and put through `quoted` with no book named. At a
+/// run of 8, forty-two of them named a different verse — and **every single one
+/// was an exact tie**: the same words, verbatim, in two places (Judges 1:12 and
+/// Joshua 15:16; Psalms 107:8 and 107:21; the synoptic parallels). Not one was a
+/// case of a LONGER run being found somewhere else. Refusing a tie removed all
+/// forty-two, and at every floor from 5 to 12 the wrong-verse count in that
+/// simulation went to **zero**. That is why the rule has two halves and why the
+/// second half is not optional.
+///
+/// **The other direction.** 38,887 windows of twenty-five words of ordinary
+/// modern English (this repository's own prose) produced a quoted hit at all in
+/// 62 of them; the 28 at a run of seven or more were, on inspection, the docs
+/// literally quoting scripture. And on the 43-case paraphrase corpus, every case
+/// whose longest run reached seven named the labelled passage — the single miss
+/// was at a run of five.
+///
+/// **Why eight and not seven.** `SELF_EVIDENT_RUN` is 7: the length at which a
+/// run needs no rare word to stand as a SUGGESTION. Reaching an operator and
+/// reaching a congregation are not the same bar, so the floor for a wall is set
+/// strictly above it. 1.2% of verses (376) are shorter than eight words and can
+/// therefore never be followed; they are still offered, exactly as before.
+///
+/// **What has NOT been measured.** None of this is speech. There is no
+/// word-error-rate figure in any language, and the one real-service figure that
+/// exists for this module — 13 suggestions in 93 minutes at a run of five plus a
+/// rare word, 11 of them correct — was taken before the transcript was kept, so
+/// nobody can say how many of those thirteen would clear eight words and a sole
+/// verse. See `docs/LANGUAGES.md`; this is configuration shaped by measurements
+/// over TEXT, not a law.
+pub const READING_RUN_WORDS: usize = 8;
+
+/// **THE SHORTEST RUN THAT CORROBORATES A PARAPHRASE**, when the church has asked
+/// for one (`main::ParaphraseRun`, `detection.paraphrase_needs_a_run`).
+///
+/// THREE — and the number is far below `MIN_RUN_WORDS` on purpose, because it is
+/// doing a different job. A run of five is what it takes to OFFER a quotation on
+/// the strength of the run alone; three is what it takes to CORROBORATE a cosine
+/// that has already scored above `main::SEMANTIC_FLOOR` against a verse the index
+/// already chose. The evidence is additive here and standalone there, so the two
+/// floors are not comparable and must not be unified.
+///
+/// ── WHAT IT BUYS AND WHAT IT COSTS, MEASURED ──────────────────────────────────
+///
+/// Twelve of the author's own services, 14,478 final transcript lines over 38.7
+/// hours, replayed through the real `main::candidates_for_window` and the real
+/// `Router` (`suggestions::bar::paraphrase_bar`). 85.6% of those windows name
+/// nothing reference-shaped and hold no verbatim run, and 85.9% of all 4,905
+/// paraphrase offers come from them. 150 of that population were read by hand:
+/// 28 answer what was said, 11 are arguable, **111 are noise**.
+///
+/// | policy                     | offers | removed | ALL recall | MODERN recall |
+/// |---|---|---|---|---|
+/// | shipped (this bar OFF)     | 4905   |   0.0%  |    77%     |      41%      |
+/// | `SEMANTIC_FLOOR` 0.40      | 1424   |  71.0%  |    58%     |       6%      |
+/// | `SEMANTIC_FLOOR` 0.45      |  744   |  84.8%  |    51%     |       0%      |
+/// | evidence terms >= 4        | 1133   |  76.9%  |    72%     |      29%      |
+/// | **a run of 3 (this bar)**  | 1293   |  73.6%  |    70%     |      24%      |
+///
+/// It dominates every value of every threshold on all four columns at once, and
+/// DECISIONS §125 records why no value of `SEMANTIC_FLOOR` can substitute for it:
+/// the two populations have the same cosine distribution and the ordering is
+/// inverted at the tails, so a floor high enough to silence *"Hallelujah.
+/// Hallelujah. Praise the Lord."* (`Psalms 146:1`, 0.557) silences *"ten times
+/// better than their colleagues"* (`Daniel 1:20`, 0.327) first.
+///
+/// **AND IT IS A SETTING RATHER THAN A CONSTANT BECAUSE OF WHAT IT COSTS.** It
+/// silences **three** of the 43 labelled retellings in `data/paraphrase_corpus.json`
+/// — `roof-paralytic-modern`, `paul-silas-modern`, `jonah-modern` — and every one is
+/// `vocab: modern`, the narrative case the product's claim rests on.
+/// `suggestions::what_the_bar_silences` names them and ASSERTS the count, so the
+/// price cannot drift into something warmer. That is an operator's trade to make,
+/// not this file's: the switch defaults OFF and a church that never opens Settings
+/// runs exactly the recall it ran yesterday.
+///
+/// **Three, not the five DECISIONS §125 and RG-311 name.** Two of those five —
+/// the prodigal son and Zacchaeus, and the fiery furnace is a third — do not reach
+/// the right passage with this bar OFF either: the paraphrase path already cannot
+/// answer them, so a rule that only removes answers cannot be what lost them. The
+/// same test prints that comparison. Correcting it makes the bar look WORSE-priced
+/// than the register did, not better, which is the direction an honest correction
+/// usually runs.
+///
+/// **And the one operator ACCEPTANCE it costs is not a vocabulary problem at all.**
+/// Service 39 of 2026-09-25: `John 15:2`, accepted by hand, removed here because the
+/// decoder heard *"every branch a man that bearer not fruit"* for *"Every branch in
+/// me that beareth not fruit"* — the words were right and two of them were misheard,
+/// so the run is two. A run test over a transcript is a run test over what the
+/// decoder heard, and word error rate has never been measured in any language
+/// (`docs/LANGUAGES.md`).
+///
+/// Raising it to four costs 18 more points of MODERN recall (24% → 6%) for 13 more
+/// points of volume; lowering it to two is not a run of words at all. Re-run the
+/// sweep before moving it.
+pub const PARAPHRASE_RUN_WORDS: usize = 3;
+
+/// One verse whose words the speaker said, in order.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PhraseHit {
+    /// The verse those words are in.
+    pub r: VerseRef,
+    /// How many words ran together. The ranking key, and the operator-facing
+    /// measure of how much of the verse was actually said.
+    pub run: usize,
+    /// THE WORDS THEMSELVES, as the window had them, in order.
+    ///
+    /// This is what reaches `matched_text`, and it is the point of the whole
+    /// module: the field means "the span this was parsed from" everywhere else in
+    /// this file, and for a paraphrase it was being filled with a word list.
+    pub phrase: String,
+    /// Does any OTHER verse hold a run this long from the same window?
+    ///
+    /// ── The measurement that made this a field (2026-09-23) ────────────────
+    ///
+    /// Reading 1,500 real verses back through `quoted` produced a wrong verse 42
+    /// times at a run of eight words, and **all 42 were exact ties** — the words
+    /// really are in two places, and the deterministic tie-break picked the other
+    /// one. Not one was a longer run found elsewhere. So the residual error of
+    /// this module is not "Relay misread the quotation"; it is "Relay chose".
+    ///
+    /// Choosing between two verses that both hold the words is a guess about
+    /// WHICH, and rule 10 is exactly the rule that a guess may reach the operator
+    /// and never a wall. It is also RG-178's shape one door along: `Numbers 10:29`
+    /// and `Genesis 10:29` from one sentence, offered rather than fired.
+    ///
+    /// Computed BEFORE the list is truncated, so a third verse falling off the
+    /// end of `k` cannot make a tied hit look sole. Computed AFTER the book
+    /// filter, so a book the window named settles the tie — the words said which,
+    /// and when the words say, the words win (rule 40).
+    ///
+    /// ── AND A SUB-SPAN OF A LONGER RUN IS NOT A SECOND HEARING ─────────────
+    ///
+    /// Found by the scorecard the day the promotion landed. A preacher reading
+    /// John 3:16 aloud produces a 25-word run in John 3:16 **and** a 10-word run
+    /// in John 3:15, because those ten words are in both verses — and the ten sit
+    /// wholly inside the twenty-five. Two verses, one span of speech. That is
+    /// rule 29's own finding in a new shape ("a chapter-only reading rides along
+    /// with the verse — it is the first half of that reference, not a second
+    /// one"), so a hit whose span is contained in a longer hit's is not sole. It
+    /// is still OFFERED: John 3:15 is a perfectly reasonable thing for the
+    /// operator to want, and a silent discard is a different lie.
+    pub sole: bool,
+}
+
+/// Every contiguous word-run the KJV shares with a sentence, found by a sorted
+/// gram table rather than by scanning 31,102 verses.
+///
+/// Built once at startup beside `SemanticIndex` and never mutated.
+pub struct PhraseIndex {
+    /// (gram hash, verse index), sorted by hash. A `Vec` and a binary search
+    /// rather than a `HashMap`: iteration order has bitten this file twice
+    /// (see `cosine`), the table is built once, and 730,000 pairs cost ~9 MB
+    /// here against tens of megabytes as a map of string tuples.
+    grams: Vec<(u64, u32)>,
+    /// Word ids for every verse, concatenated. Comparing ids rather than
+    /// `String`s is what makes extending a run free.
+    flat: Vec<u32>,
+    /// Where each verse starts in `flat`; has one extra entry so the last
+    /// verse's end needs no special case.
+    starts: Vec<u32>,
+    refs: Vec<VerseRef>,
+    /// word → id, and how many verses that word appears in.
+    ids: HashMap<String, u32>,
+    df: Vec<u32>,
+}
+
+/// Every word, lowercased, in order. NOT `tokenize`: stopwords and two-letter
+/// words are exactly what makes a quotation a quotation.
+fn phrase_words(text: &str) -> Vec<String> {
+    text.split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(|w| w.to_ascii_lowercase())
+        .collect()
+}
+
+/// FNV-1a over three word ids. Deterministic across processes and builds, unlike
+/// anything seeded from `RandomState`.
+fn gram_hash(a: u32, b: u32, c: u32) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for id in [a, b, c] {
+        for byte in id.to_le_bytes() {
+            h ^= byte as u64;
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    h
+}
+
+impl PhraseIndex {
+    /// Build from the same `(reference, text)` corpus `SemanticIndex` takes.
+    pub fn build(corpus: &[(VerseRef, String)]) -> Self {
+        let mut ids: HashMap<String, u32> = HashMap::new();
+        let mut df: Vec<u32> = Vec::new();
+        let mut flat: Vec<u32> = Vec::new();
+        let mut starts: Vec<u32> = Vec::with_capacity(corpus.len() + 1);
+        let mut refs: Vec<VerseRef> = Vec::with_capacity(corpus.len());
+        let mut grams: Vec<(u64, u32)> = Vec::new();
+
+        for (vi, (r, text)) in corpus.iter().enumerate() {
+            starts.push(flat.len() as u32);
+            refs.push(r.clone());
+            let words = phrase_words(text);
+            let mut seen: std::collections::HashSet<u32> = std::collections::HashSet::new();
+            let first = flat.len();
+            for w in words {
+                let next = ids.len() as u32;
+                let id = *ids.entry(w).or_insert(next);
+                if id as usize >= df.len() {
+                    df.push(0);
+                }
+                if seen.insert(id) {
+                    df[id as usize] += 1;
+                }
+                flat.push(id);
+            }
+            let n = flat.len() - first;
+            for i in 0..n.saturating_sub(PHRASE_GRAM - 1) {
+                let s = first + i;
+                grams.push((gram_hash(flat[s], flat[s + 1], flat[s + 2]), vi as u32));
+            }
+        }
+        starts.push(flat.len() as u32);
+        grams.sort_unstable();
+        PhraseIndex {
+            grams,
+            flat,
+            starts,
+            refs,
+            ids,
+            df,
+        }
+    }
+
+    fn verse_words(&self, vi: usize) -> &[u32] {
+        let a = self.starts[vi] as usize;
+        let b = self.starts[vi + 1] as usize;
+        &self.flat[a..b]
+    }
+
+    /// Verses holding this gram. Empty when it is too common to be evidence.
+    fn verses_with(&self, h: u64) -> &[(u64, u32)] {
+        let lo = self.grams.partition_point(|(g, _)| *g < h);
+        let hi = self.grams.partition_point(|(g, _)| *g <= h);
+        let slice = &self.grams[lo..hi];
+        if slice.len() > MAX_GRAM_VERSES {
+            &[]
+        } else {
+            slice
+        }
+    }
+
+    /// Is any word of this run rare enough to stand as evidence on its own?
+    fn has_a_rare_word(&self, run: &[u32]) -> bool {
+        let cap = ((self.refs.len() as f32 * PHRASE_RARE_FRACTION) as u32).max(1);
+        run.iter().any(|id| {
+            self.df
+                .get(*id as usize)
+                .copied()
+                .is_some_and(|d| d > 0 && d <= cap)
+        })
+    }
+
+    /// The longest runs `heard` shares with any verse, longest first.
+    ///
+    /// `book` narrows the answer to one book when the words or the context have
+    /// named one. THAT IS RULE 40 IN THIS MODULE: the preacher who said
+    /// "Verse 7 says, Be not wise in your own eyes" while reading Proverbs 3 was
+    /// quoting a phrase that is verbatim in Romans 12:16 as well, and the longest
+    /// run alone answers Romans. When the words say, the words win.
+    pub fn quoted(&self, heard: &str, book: Option<&str>, k: usize) -> Vec<PhraseHit> {
+        let words = phrase_words(heard);
+        if words.len() < MIN_RUN_WORDS {
+            return Vec::new();
+        }
+        let q: Vec<u32> = words
+            .iter()
+            .map(|w| self.ids.get(w).copied().unwrap_or(u32::MAX))
+            .collect();
+
+        // verse index → (run length, where it started in the window)
+        let mut best: HashMap<u32, (usize, usize)> = HashMap::new();
+        for i in 0..q.len().saturating_sub(PHRASE_GRAM - 1) {
+            if q[i] == u32::MAX || q[i + 1] == u32::MAX || q[i + 2] == u32::MAX {
+                continue;
+            }
+            let h = gram_hash(q[i], q[i + 1], q[i + 2]);
+            for (_, vi) in self.verses_with(h) {
+                if let Some(b) = book {
+                    if !self.refs[*vi as usize].book.eq_ignore_ascii_case(b) {
+                        continue;
+                    }
+                }
+                let vw = self.verse_words(*vi as usize);
+                for j in 0..vw.len().saturating_sub(PHRASE_GRAM - 1) {
+                    if vw[j..j + PHRASE_GRAM] != q[i..i + PHRASE_GRAM] {
+                        continue;
+                    }
+                    let mut n = PHRASE_GRAM;
+                    while i + n < q.len() && j + n < vw.len() && q[i + n] == vw[j + n] {
+                        n += 1;
+                    }
+                    let e = best.entry(*vi).or_insert((0, 0));
+                    if n > e.0 {
+                        *e = (n, i);
+                    }
+                }
+            }
+        }
+
+        // (hit, where its run started in the window). The start is kept beside the
+        // hit rather than on it: `sole` below is the only thing that needs it, and
+        // a public field is a promise to keep it meaningful for ever.
+        let mut hits: Vec<(PhraseHit, usize)> = best
+            .into_iter()
+            .filter(|(_, (n, i))| {
+                *n >= MIN_RUN_WORDS
+                    && (*n >= SELF_EVIDENT_RUN || self.has_a_rare_word(&q[*i..*i + *n]))
+            })
+            .map(|(vi, (n, i))| {
+                (
+                    PhraseHit {
+                        r: self.refs[vi as usize].clone(),
+                        run: n,
+                        phrase: words[i..i + n].join(" "),
+                        // Filled in below, once the whole set is known.
+                        sole: false,
+                    },
+                    i,
+                )
+            })
+            .collect();
+        // IS THIS HIT THE ONLY VERSE THIS EVIDENCE POINTS AT — asked over the
+        // WHOLE set and before the truncation, because a rival that falls off the
+        // end of `k` would otherwise leave the survivor looking like the only
+        // answer. Two ways to fail it, and `PhraseHit::sole` has the reasoning
+        // and the measurement for both:
+        //   * another verse holds a run of the SAME length (they are identical
+        //     verses, or share the phrase word for word), or
+        //   * a LONGER run from this same window contains this one's span (the
+        //     same speech, attributed to a second verse).
+        let spans: Vec<(usize, usize)> = hits.iter().map(|(h, i)| (h.run, *i)).collect();
+        for (h, start) in hits.iter_mut() {
+            let ties = spans.iter().filter(|(n, _)| *n == h.run).count() > 1;
+            let inside = spans
+                .iter()
+                .any(|(n, s)| *n > h.run && *s <= *start && *s + *n >= *start + h.run);
+            h.sole = !ties && !inside;
+        }
+        // Longest run first. Ties broken by the reference so two runs of equal
+        // length cannot swap places between calls — the same determinism rule
+        // `cosine` learned the hard way.
+        hits.sort_by(|(a, _), (b, _)| {
+            b.run.cmp(&a.run).then_with(|| {
+                (&a.r.book, a.r.chapter, a.r.verse).cmp(&(&b.r.book, b.r.chapter, b.r.verse))
+            })
+        });
+        hits.truncate(k);
+        hits.into_iter().map(|(h, _)| h).collect()
+    }
+
+    /// Where a reference sits in this index, or `None` if the corpus has no such
+    /// verse.
+    ///
+    /// A LINEAR SCAN, deliberately. `refs` is in corpus order, which is canonical
+    /// Bible order and not sortable by book NAME, so a binary search is not
+    /// available and the alternative is a second 31,102-entry table carried for the
+    /// life of the process. The chapter and verse are compared first — two integers
+    /// — so the book string is touched only on a numeric match, and the measured
+    /// cost is in `suggestions::what_the_bar_silences::run_lookup_cost`: **6.4 µs for
+    /// a hit in Proverbs, 11.1 µs for the last verse of Revelation and 11.1 µs for a
+    /// reference the corpus does not hold** (the whole-table cases), on a real
+    /// eight-second window. Nothing on the live path calls this more than
+    /// `SEMANTIC_SUGGESTIONS_MAX` times per window, so the worst case is about 33 µs
+    /// against a decode of 139-600 ms — and it is not called at all unless the church
+    /// turned the bar on.
+    fn verse_index(&self, r: &VerseRef) -> Option<usize> {
+        self.refs.iter().position(|x| {
+            x.chapter == r.chapter && x.verse == r.verse && x.book.eq_ignore_ascii_case(&r.book)
+        })
+    }
+
+    /// **HOW MANY OF THIS VERSE'S OWN WORDS DID THE SPEAKER SAY, IN A ROW?**
+    ///
+    /// The other question about the evidence a cosine is built from. `top_k_explained`
+    /// returns the terms that produced a score and they are a bag of words in no
+    /// order (rule 18) — `lord · shepherd` scores whether the preacher said "the
+    /// LORD is my shepherd" or "the shepherd spoke and the lord was there". This asks
+    /// whether any of them came out in the verse's own order, which is what separates
+    /// a citation from a coincidence and cannot be read off the score at all.
+    ///
+    /// Pure, and DB- and IO-free like everything else in this file: it reads the
+    /// index built at startup from the bundled corpus and nothing else. `0` for a
+    /// verse this index does not hold, which is the same answer as "shares nothing"
+    /// and is the safe one — a reference the corpus cannot confirm is not a
+    /// reference the corpus corroborates.
+    ///
+    /// Not `quoted`, and the difference is the whole reason this exists as its own
+    /// method: `quoted` asks *which verse did the speaker quote* and answers through
+    /// a gram table that deliberately discards any three-word run appearing in more
+    /// than `MAX_GRAM_VERSES` verses, because a gram that common is a phrase of the
+    /// language rather than of a verse. Here the verse is already chosen and the
+    /// question is only whether these particular words touched it, so a common run
+    /// counts: "whom the Lord loveth" is ordinary English and is still three of
+    /// Hebrews 12:6's own words in Hebrews 12:6's own order.
+    pub fn shared_run_with(&self, heard: &str, r: &VerseRef) -> usize {
+        let Some(vi) = self.verse_index(r) else {
+            return 0;
+        };
+        let q: Vec<u32> = phrase_words(heard)
+            .iter()
+            .map(|w| self.ids.get(w).copied().unwrap_or(u32::MAX))
+            .collect();
+        let vw = self.verse_words(vi);
+        let mut best = 0usize;
+        for i in 0..q.len() {
+            // A word this corpus has never seen cannot start a run. `u32::MAX` can
+            // never equal a real id, so this is a fast path rather than a rule.
+            if q[i] == u32::MAX {
+                continue;
+            }
+            // A run already long enough to reach the end of the window cannot be
+            // beaten, and the common case is a long window against a short verse.
+            if q.len() - i <= best {
+                break;
+            }
+            for j in 0..vw.len() {
+                if vw[j] != q[i] {
+                    continue;
+                }
+                let mut n = 0usize;
+                while i + n < q.len() && j + n < vw.len() && q[i + n] == vw[j + n] {
+                    n += 1;
+                }
+                if n > best {
+                    best = n;
+                }
+            }
+        }
+        best
+    }
+}
+
+#[cfg(test)]
+mod phrase_tests {
+    use super::*;
+
+    fn vr(book: &str, chapter: i64, verse: i64) -> VerseRef {
+        VerseRef {
+            book: book.into(),
+            chapter,
+            verse,
+        }
+    }
+
+    /// Real KJV text, braces and all — the `{is}` of Psalms 23:1 is a supplied
+    /// word the translators italicised, and the preacher says it out loud.
+    fn corpus() -> Vec<(VerseRef, String)> {
+        vec![
+            (vr("Psalms", 23, 1), "[A Psalm of David.] The LORD {is} my shepherd; I shall not want.".into()),
+            (vr("Matthew", 6, 33), "But seek ye first the kingdom of God, and his righteousness; and all these things shall be added unto you.".into()),
+            (vr("Proverbs", 3, 7), "Be not wise in thine own eyes: fear the LORD, and depart from evil.".into()),
+            (vr("Romans", 12, 16), "Be of the same mind one toward another. Mind not high things, but condescend to men of low estate. Be not wise in your own conceits.".into()),
+            (vr("1 Corinthians", 4, 2), "Moreover it is required in stewards, that a man be found faithful.".into()),
+            (vr("Hebrews", 10, 25), "Not forsaking the assembling of ourselves together, as the manner of some {is}; but exhorting {one another}: and so much the more, as ye see the day approaching.".into()),
+            (vr("Genesis", 1, 1), "In the beginning God created the heaven and the earth.".into()),
+        ]
+    }
+
+    /// THE OPERATOR'S OWN EXAMPLE, 2026-09-20.
+    #[test]
+    fn the_lord_is_my_shepherd_is_found_as_one_phrase() {
+        let idx = PhraseIndex::build(&corpus());
+        let hits = idx.quoted(
+            "and david said the lord is my shepherd i shall not want",
+            None,
+            3,
+        );
+        assert_eq!(hits.first().map(|h| h.r.clone()), Some(vr("Psalms", 23, 1)));
+        // AND THE EVIDENCE IS THE WORDS, IN ORDER. This is the half the console
+        // was getting wrong: `lord · shepherd` rendered inside quotation marks.
+        assert_eq!(hits[0].phrase, "the lord is my shepherd i shall not want");
+    }
+
+    /// The operator's second example. Three words together, not `seek · first`.
+    #[test]
+    fn seek_ye_first_is_found_although_every_word_but_two_is_a_stopword() {
+        let idx = PhraseIndex::build(&corpus());
+        let hits = idx.quoted(
+            "he told us to seek ye first the kingdom of god this morning",
+            None,
+            3,
+        );
+        assert_eq!(
+            hits.first().map(|h| h.r.clone()),
+            Some(vr("Matthew", 6, 33))
+        );
+        assert!(
+            hits[0]
+                .phrase
+                .starts_with("seek ye first the kingdom of god"),
+            "phrase was {:?}",
+            hits[0].phrase
+        );
+    }
+
+    /// THE DEFECT ITSELF, stated as a test. The same words in the wrong order are
+    /// not a quotation, and the TF-IDF path cannot tell the difference.
+    #[test]
+    fn the_same_words_scattered_are_not_a_quotation() {
+        let idx = PhraseIndex::build(&corpus());
+        assert!(idx
+            .quoted("shepherd my is lord the want not shall i", None, 3)
+            .is_empty());
+        assert!(idx
+            .quoted("the shepherd spoke and the lord was there", None, 3)
+            .is_empty());
+    }
+
+    /// RULE 40 IN THIS MODULE. "Be not wise in your own eyes" is verbatim in
+    /// Romans 12:16, and the preacher reading Proverbs 3 meant Proverbs 3:7.
+    /// Verified by removing the book filter and watching Romans win.
+    #[test]
+    fn a_book_the_words_named_beats_a_longer_run_somewhere_else() {
+        let idx = PhraseIndex::build(&corpus());
+        let heard = "verse seven says be not wise in your own eyes fear the lord";
+        let loose = idx.quoted(heard, None, 3);
+        assert_eq!(
+            loose.first().map(|h| h.r.clone()),
+            Some(vr("Romans", 12, 16)),
+            "without the anchor the longest run is Romans — that is the trap"
+        );
+        let anchored = idx.quoted(heard, Some("Proverbs"), 3);
+        assert_eq!(
+            anchored.first().map(|h| h.r.clone()),
+            Some(vr("Proverbs", 3, 7))
+        );
+        assert!(
+            anchored.iter().all(|h| h.r.book == "Proverbs"),
+            "the anchor must exclude, not merely re-rank"
+        );
+    }
+
+    /// Ordinary speech does not become scripture by sharing four words with it.
+    #[test]
+    fn a_run_shorter_than_the_floor_is_not_offered() {
+        let idx = PhraseIndex::build(&corpus());
+        // "in the beginning god" is four words of Genesis 1:1 and stops there.
+        assert!(idx
+            .quoted(
+                "right in the beginning god was moving in this church",
+                None,
+                3
+            )
+            .is_empty());
+    }
+
+    /// Longest run first, and the ranking is stable.
+    #[test]
+    fn the_longest_run_is_offered_first_and_the_order_never_moves() {
+        let idx = PhraseIndex::build(&corpus());
+        let heard = "moreover it is required in stewards that a man be found faithful \
+                     and not forsaking the assembling of ourselves together";
+        let first = idx.quoted(heard, None, 5);
+        assert!(first.len() >= 2, "expected both verses, got {first:?}");
+        assert!(first[0].run >= first[1].run);
+        for _ in 0..5 {
+            assert_eq!(idx.quoted(heard, None, 5), first);
+        }
+    }
+
+    /// Silence, and a window with no verse in it at all.
+    #[test]
+    fn nothing_heard_offers_nothing() {
+        let idx = PhraseIndex::build(&corpus());
+        assert!(idx.quoted("", None, 3).is_empty());
+        assert!(idx
+            .quoted(
+                "good morning everybody welcome to the service today",
+                None,
+                3
+            )
+            .is_empty());
+    }
+}
+
+/// **THE RUN BAR ON A PARAPHRASE** — `PARAPHRASE_RUN_WORDS` and the question it
+/// asks (`PhraseIndex::shared_run_with`).
+///
+/// Pure and DB-free: every case here is built from a seven-verse corpus in this
+/// file, so it reproduces on any machine with no database and no service recording.
+#[cfg(test)]
+mod paraphrase_run_bar {
+    use super::*;
+
+    fn vr(book: &str, chapter: i64, verse: i64) -> VerseRef {
+        VerseRef {
+            book: book.into(),
+            chapter,
+            verse,
+        }
+    }
+
+    fn corpus() -> Vec<(VerseRef, String)> {
+        vec![
+            (
+                vr("Psalms", 23, 1),
+                "[A Psalm of David.] The LORD {is} my shepherd; I shall not want.".into(),
+            ),
+            (
+                vr("Matthew", 6, 33),
+                "But seek ye first the kingdom of God, and his righteousness; and all \
+                 these things shall be added unto you."
+                    .into(),
+            ),
+            (
+                vr("Hebrews", 12, 6),
+                "For whom the Lord loveth he chasteneth, and scourgeth every son whom he \
+                 receiveth."
+                    .into(),
+            ),
+        ]
+    }
+
+    /// **THE DEFECT THE BAR EXISTS FOR, AS A TEST.** The same words in a different
+    /// order score the same cosine and are not a citation. This is the one fact
+    /// `top_k_explained` computes nothing about (rule 18: a cosine is a bag of words
+    /// in no order) and the reason a run is a different instrument from a threshold.
+    #[test]
+    fn the_same_words_out_of_order_share_no_run() {
+        let idx = PhraseIndex::build(&corpus());
+        let r = vr("Psalms", 23, 1);
+        assert!(
+            idx.shared_run_with("the shepherd spoke and the lord was there", &r)
+                < PARAPHRASE_RUN_WORDS,
+            "scattered words must not corroborate a paraphrase"
+        );
+        assert!(
+            idx.shared_run_with("and david said the lord is my shepherd", &r)
+                >= PARAPHRASE_RUN_WORDS,
+            "the verse's own words in the verse's own order must corroborate it"
+        );
+    }
+
+    /// The run is measured in the SPEAKER'S order against the VERSE'S order, and it
+    /// is the longest such run rather than any run — so a window that touches three
+    /// words in one place and two in another answers three.
+    #[test]
+    fn it_answers_the_longest_run_and_counts_words_not_characters() {
+        let idx = PhraseIndex::build(&corpus());
+        assert_eq!(
+            idx.shared_run_with(
+                "he told us to seek ye first the kingdom of god this morning",
+                &vr("Matthew", 6, 33)
+            ),
+            7
+        );
+        // Two words is two words, whatever else is in the sentence.
+        assert_eq!(
+            idx.shared_run_with("seek ye today and all these", &vr("Matthew", 6, 33)),
+            3
+        );
+    }
+
+    /// **A COMMON THREE-WORD RUN STILL COUNTS**, and that is the difference between
+    /// this question and `quoted`'s. `quoted` throws away any gram appearing in more
+    /// than `MAX_GRAM_VERSES` verses because it is asking WHICH verse; here the verse
+    /// is already chosen and the question is only whether these words touched it.
+    ///
+    /// "whom the lord" is ordinary English. It is also three of Hebrews 12:6's own
+    /// words in Hebrews 12:6's own order, and a preacher retelling that verse says
+    /// them.
+    #[test]
+    fn an_ordinary_english_run_still_corroborates_the_verse_that_holds_it() {
+        let idx = PhraseIndex::build(&corpus());
+        assert!(
+            idx.shared_run_with(
+                "god disciplines the ones he loves for whom the lord loveth he chasteneth",
+                &vr("Hebrews", 12, 6)
+            ) >= PARAPHRASE_RUN_WORDS
+        );
+    }
+
+    /// A verse this index does not hold answers ZERO rather than panicking or
+    /// guessing. The safe direction: a reference the corpus cannot confirm is not a
+    /// reference the corpus corroborates.
+    #[test]
+    fn a_verse_the_corpus_does_not_hold_shares_nothing() {
+        let idx = PhraseIndex::build(&corpus());
+        assert_eq!(
+            idx.shared_run_with("the lord is my shepherd", &vr("Psalms", 23, 99)),
+            0
+        );
+        assert_eq!(idx.shared_run_with("", &vr("Psalms", 23, 1)), 0);
+    }
+
+    /// Case and punctuation are not evidence. The index lower-cases and splits on
+    /// non-alphanumerics (`phrase_words`), and the operator's own transcript arrives
+    /// in whatever case whisper produced.
+    #[test]
+    fn case_and_punctuation_do_not_change_the_answer() {
+        let idx = PhraseIndex::build(&corpus());
+        let r = vr("Psalms", 23, 1);
+        assert_eq!(
+            idx.shared_run_with("THE LORD IS MY SHEPHERD!", &r),
+            idx.shared_run_with("the lord, is my shepherd", &r)
+        );
+    }
+
+    /// The book name is matched the way every other reference comparison in this
+    /// file matches it — case-insensitively — so a candidate spelled by one path and
+    /// a corpus entry spelled by another cannot silently share nothing.
+    #[test]
+    fn the_book_is_matched_without_regard_to_case() {
+        let idx = PhraseIndex::build(&corpus());
+        assert_eq!(
+            idx.shared_run_with("the lord is my shepherd", &vr("psalms", 23, 1)),
+            // FIVE, not four: the KJV's `{is}` is a supplied word the translators
+            // italicised and `phrase_words` keeps it, because the preacher says it
+            // out loud. The same reasoning `phrase_tests::corpus` records.
+            5
+        );
+    }
+}
+
+#[cfg(test)]
+mod phrase_bench {
+    use super::*;
+
+    /// WHAT THE SHIPPED CODE FINDS IN A REAL SERVICE.
+    ///
+    /// The constants in this module were tuned against a model of this algorithm
+    /// written in another language, which is a measurement of the model and not
+    /// of the product. This runs the REAL index over a real transcript and prints
+    /// what an operator would have been offered.
+    ///
+    ///     RELAY_PHRASE_WAV=/path/to/transcript.txt \
+    ///       cargo test phrase_bench -- --ignored --nocapture
+    ///
+    /// One line per transcript window. Needs the bundled KJV, so it builds the
+    /// whole 31,102-verse index; that is the point, because `MAX_GRAM_VERSES` and
+    /// `PHRASE_RARE_FRACTION` mean nothing on a seven-verse fixture.
+    /// **READ THE BIBLE BACK AND COUNT THE WRONG VERSES — the measurement that
+    /// says whether a quoted verse may reach a wall.**
+    ///
+    /// `READING_RUN_WORDS`' own doc records this simulation and its result (42
+    /// wrong verses at a run of eight, every one an exact tie, all 42 removed by
+    /// the sole rule). It records them in PROSE. This repository's rule is that a
+    /// contract stated in a comment is not a contract, and that gap cost it the
+    /// `stopCapture` throw-vs-swallow bug for as long as the comment existed.
+    ///
+    /// **The CI scorecard cannot see this change at all** — measured, not
+    /// assumed: `eval::print_scorecard` reports 0.0% with the promotion on and
+    /// 0.0% with `for_quotation` forced back to `Quoted`, because its 82 cases
+    /// are spoken references and not a preacher reading a verse aloud. An
+    /// instrument that returns the same number either way is not evidence about
+    /// this gate, and quoting it as though it were would be the worst kind of
+    /// reassurance. So the number lives here, beside the rule it is about.
+    ///
+    /// `cargo test read_the_bible_back -- --ignored --nocapture`. Ignored because
+    /// it builds a phrase index over 31,102 verses and reads a sample of them
+    /// back; it is a benchmark, not a gate.
+    #[test]
+    #[ignore]
+    fn read_the_bible_back_and_count_wrong_verses() {
+        let kjv: serde_json::Value =
+            serde_json::from_str(include_str!("../data/kjv.json").trim_start_matches('\u{feff}'))
+                .expect("kjv");
+        let mut corpus: Vec<(VerseRef, String)> = Vec::new();
+        for book in kjv.as_array().expect("books") {
+            let abbrev = book["abbrev"].as_str().unwrap_or("?").to_string();
+            for (ci, chapter) in book["chapters"]
+                .as_array()
+                .expect("chapters")
+                .iter()
+                .enumerate()
+            {
+                for (vi, verse) in chapter.as_array().expect("verses").iter().enumerate() {
+                    corpus.push((
+                        VerseRef {
+                            book: abbrev.clone(),
+                            chapter: ci as i64 + 1,
+                            verse: vi as i64 + 1,
+                        },
+                        verse.as_str().unwrap_or("").to_string(),
+                    ));
+                }
+            }
+        }
+        let idx = PhraseIndex::build(&corpus);
+        println!("index over {} verses", corpus.len());
+
+        // A DETERMINISTIC SAMPLE, so the figure is the same on every machine and
+        // in every run. A random one would make a regression look like luck.
+        let step = corpus.len() / 1500;
+        let sample: Vec<&(VerseRef, String)> = corpus.iter().step_by(step.max(1)).collect();
+
+        // NO BOOK NAMED, which is the case this rule is about: the preacher is
+        // READING, not announcing. A book in the window settles a tie by itself
+        // (rule 40), so including one would measure the easy half.
+        let mut would_fire_wrong = 0usize;
+        let mut would_fire_right = 0usize;
+        let mut ties_refused = 0usize;
+        for (r, text) in &sample {
+            if text.split_whitespace().count() < READING_RUN_WORDS {
+                continue;
+            }
+            for h in idx.quoted(text, None, 3) {
+                let method = DetectionMethod::for_quotation(h.run, h.sole);
+                if method != DetectionMethod::Reading {
+                    if h.run >= READING_RUN_WORDS && &h.r != r {
+                        ties_refused += 1;
+                    }
+                    continue;
+                }
+                if &h.r == r {
+                    would_fire_right += 1;
+                } else {
+                    would_fire_wrong += 1;
+                    println!(
+                        "  WRONG: read {} {}:{} → would fire {} {}:{} (run {})",
+                        r.book, r.chapter, r.verse, h.r.book, h.r.chapter, h.r.verse, h.run
+                    );
+                }
+            }
+        }
+        let total = would_fire_right + would_fire_wrong;
+        let rate = if total == 0 {
+            0.0
+        } else {
+            would_fire_wrong as f64 * 100.0 / total as f64
+        };
+        println!(
+            "read back {} verses · {would_fire_right} correct · {would_fire_wrong} wrong \
+             · {rate:.1}% wrong-verse rate (SPEC target: <5%) · {ties_refused} shared runs \
+             refused a wall by the sole rule",
+            sample.len()
+        );
+        // The claim `READING_RUN_WORDS` makes, asserted rather than described.
+        assert_eq!(
+            would_fire_wrong, 0,
+            "a verse read aloud would have put a DIFFERENT verse on a wall"
+        );
+        assert!(
+            would_fire_right > 100,
+            "the simulation fired almost nothing, so its zero means nothing"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn what_a_real_service_would_have_been_offered() {
+        let path =
+            std::env::var("RELAY_PHRASE_WAV").unwrap_or_else(|_| "/tmp/service24.txt".to_string());
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            println!("no transcript at {path}; set RELAY_PHRASE_WAV");
+            return;
+        };
+        let kjv: serde_json::Value =
+            // `trim_start_matches` the BOM: the bundled KJV carries one, and
+            // serde_json rejects it as "expected value" at line 1 column 1.
+            serde_json::from_str(include_str!("../data/kjv.json").trim_start_matches('\u{feff}'))
+                .expect("kjv");
+        let mut corpus: Vec<(VerseRef, String)> = Vec::new();
+        for book in kjv.as_array().expect("books") {
+            let abbrev = book["abbrev"].as_str().unwrap_or("?").to_string();
+            for (ci, chapter) in book["chapters"]
+                .as_array()
+                .expect("chapters")
+                .iter()
+                .enumerate()
+            {
+                for (vi, verse) in chapter.as_array().expect("verses").iter().enumerate() {
+                    corpus.push((
+                        VerseRef {
+                            book: abbrev.clone(),
+                            chapter: ci as i64 + 1,
+                            verse: vi as i64 + 1,
+                        },
+                        verse.as_str().unwrap_or("").to_string(),
+                    ));
+                }
+            }
+        }
+        println!("index over {} verses", corpus.len());
+        let built = std::time::Instant::now();
+        let idx = PhraseIndex::build(&corpus);
+        println!("built in {:?}", built.elapsed());
+
+        let mut fires = 0usize;
+        let t0 = std::time::Instant::now();
+        let mut windows = 0usize;
+        for line in text.lines() {
+            windows += 1;
+            for h in idx.quoted(line, None, 3) {
+                fires += 1;
+                println!(
+                    "  [{}] {} {}:{}  “{}”",
+                    h.run, h.r.book, h.r.chapter, h.r.verse, h.phrase
+                );
+            }
+        }
+        println!(
+            "{fires} offers over {windows} windows · {:?} total · {:?}/window",
+            t0.elapsed(),
+            t0.elapsed() / windows.max(1) as u32
+        );
+    }
+}
+
+/// FIELD 2026-09-20, service 24, 23.5 minutes in. The bare-verse path's second
+/// wrong verse on a real wall, and the one rule 40 said one service could not
+/// justify closing.
+///
+/// Psalms 55 had been on the wall since 19.4 minutes. The preacher then said
+/// *"Out of a prophet called Osir. In verse 1 he says, Come and let us return unto
+/// the Lord."* — Hosea 6:1, with the book misheard as a word no alias knows. Nothing
+/// parsed, no chapter was stated, so memory answered: **Psalms 55:1 at 0.88, labelled
+/// `Direct`, auto-fired.** The label was the lie: Relay did not hear "Psalms", it
+/// assumed it. Rule 10 says `Direct` means HEARD, and `UncertainBook` already exists
+/// for "chapter and verse heard, the book not" — which is exactly what a bare verse
+/// answered from memory is. It is capped at Suggest by the router at any score, so
+/// the operator gets the offer and the click, and the wall gets nothing unattended.
+#[cfg(test)]
+mod field_2026_09_20 {
+    use super::*;
+
+    const HEARD: &str = "Out of a prophet called Osir. In verse 1 he says, Come and let us \
+                         return unto the Lord.";
+
+    fn on_the_wall() -> VerseRef {
+        VerseRef {
+            book: "Psalms".into(),
+            chapter: 55,
+            verse: 22,
+        }
+    }
+
+    #[test]
+    fn a_verse_answered_from_memory_says_so() {
+        assert!(
+            anchor_for_bare_verses(HEARD).is_none(),
+            "precondition: 'Osir' parses to nothing"
+        );
+        assert!(!chapter_named(HEARD), "precondition: no chapter is stated");
+        assert!(
+            detect_bare_verses(HEARD).contains(&1),
+            "precondition: 'verse 1' is seen"
+        );
+        // `emit_detections` hands this function the passage on the wall with the
+        // bare number already substituted (`ContextMemory::resolve_bare_verse`), so
+        // "memory" here is Psalms 55 *verse 1*, not the verse that is up.
+        let memory = VerseRef {
+            verse: 1,
+            ..on_the_wall()
+        };
+        let got = resolve_bare_verse_with_source(HEARD, 1, None, Some(&memory));
+        assert_eq!(
+            got,
+            Some((
+                VerseRef {
+                    book: "Psalms".into(),
+                    chapter: 55,
+                    verse: 1,
+                },
+                BareVerseSource::Memory
+            )),
+            "memory still answers, and it must say that it did"
+        );
+    }
+
+    #[test]
+    fn a_verse_hung_on_a_book_named_in_this_breath_is_heard() {
+        let heard = "going through in Luke 10. If you read from verse 32";
+        let anchor = anchor_for_bare_verses(heard).expect("Luke 10 parses");
+        let got = resolve_bare_verse_with_source(heard, 32, Some(&anchor), Some(&on_the_wall()));
+        assert_eq!(got.map(|(_, s)| s), Some(BareVerseSource::Anchor));
+    }
+
+    /// The label follows the source. Memory is not hearing.
+    #[test]
+    fn memory_is_not_a_heard_book_and_an_anchor_is() {
+        assert_eq!(
+            DetectionMethod::for_bare_verse(BareVerseSource::Memory),
+            DetectionMethod::UncertainBook
+        );
+        assert_eq!(
+            DetectionMethod::for_bare_verse(BareVerseSource::Anchor),
+            DetectionMethod::Direct
+        );
+        assert!(
+            !DetectionMethod::for_bare_verse(BareVerseSource::Memory).may_auto_fire(),
+            "a verse whose book nobody said may never reach a wall unattended"
+        );
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FOLLOWING THE READER · WHEN A QUOTATION IS THE PREACHER READING
+// ═══════════════════════════════════════════════════════════════════════════
+#[cfg(test)]
+mod reading_tests {
+    use super::*;
+
+    fn vr(book: &str, chapter: i64, verse: i64) -> VerseRef {
+        VerseRef {
+            book: book.into(),
+            chapter,
+            verse,
+        }
+    }
+
+    /// Two verses that share a long phrase verbatim, and two that do not.
+    /// Judges 1:12 and Joshua 15:16 are a real KJV pair — the measurement below
+    /// found that EVERY wrong verse at a run of eight words or more is a pair
+    /// like this one, never a longer run somewhere else.
+    fn corpus() -> Vec<(VerseRef, String)> {
+        vec![
+            (vr("Romans", 8, 28), "And we know that all things work together for good to them that love God, to them who are the called according to his purpose.".into()),
+            (vr("Judges", 1, 12), "And Caleb said, He that smiteth Kirjathsepher, and taketh it, to him will I give Achsah my daughter to wife.".into()),
+            (vr("Joshua", 15, 16), "And Caleb said, He that smiteth Kirjathsepher, and taketh it, to him will I give Achsah my daughter to wife.".into()),
+            (vr("Psalms", 23, 1), "The LORD is my shepherd; I shall not want.".into()),
+        ]
+    }
+
+    /// A run held by ONE verse is sole. A run two verses share is not, and that
+    /// is the whole of the second half of the rule.
+    #[test]
+    fn a_run_two_verses_share_is_not_sole() {
+        let idx = PhraseIndex::build(&corpus());
+        let hits = idx.quoted(
+            "and Caleb said he that smiteth Kirjathsepher and taketh it to him will I give",
+            None,
+            5,
+        );
+        assert!(hits.len() >= 2, "expected the shared pair, got {hits:?}");
+        assert!(
+            hits.iter().all(|h| !h.sole),
+            "a phrase two verses hold verbatim reported itself as sole: {hits:?}"
+        );
+
+        let alone = idx.quoted(
+            "all things work together for good to them that love God",
+            None,
+            5,
+        );
+        assert_eq!(alone.len(), 1);
+        assert!(alone[0].sole, "a run only one verse holds is not sole");
+    }
+
+    /// A NAMED BOOK SETTLES A TIE, because the words said which. Rule 40 in this
+    /// module, and it is why the flag is computed after the book filter rather
+    /// than over the whole Bible.
+    #[test]
+    fn a_book_named_in_the_window_makes_a_shared_run_sole_again() {
+        let idx = PhraseIndex::build(&corpus());
+        let hits = idx.quoted(
+            "and Caleb said he that smiteth Kirjathsepher and taketh it to him will I give",
+            Some("Joshua"),
+            5,
+        );
+        assert_eq!(hits.len(), 1);
+        assert!(hits[0].sole);
+    }
+
+    /// THE PROMOTION, AS A PURE FUNCTION. The evidence decides, and nothing else
+    /// does: no score, no dial, no threshold. A demotion expressed as a number is
+    /// one a dial can erase (see `UncertainNumber`), and a promotion expressed as
+    /// a number would be erasable in exactly the same way.
+    #[test]
+    fn only_a_long_sole_run_is_a_reading() {
+        // Long enough and held by one verse → Relay heard the verse being read.
+        assert_eq!(
+            DetectionMethod::for_quotation(READING_RUN_WORDS, true),
+            DetectionMethod::Reading
+        );
+        assert_eq!(
+            DetectionMethod::for_quotation(30, true),
+            DetectionMethod::Reading
+        );
+        // One word short of the floor → still a quotation, still capped.
+        assert_eq!(
+            DetectionMethod::for_quotation(READING_RUN_WORDS - 1, true),
+            DetectionMethod::Quoted
+        );
+        // Long, but two verses hold the same words → Relay would be choosing
+        // between them, which is a guess about which and not a hearing.
+        assert_eq!(
+            DetectionMethod::for_quotation(30, false),
+            DetectionMethod::Quoted
+        );
+        // And the floor is above the length at which a run stands on its own as a
+        // SUGGESTION, deliberately. Reaching an operator and reaching a
+        // congregation are not the same bar.
+        //
+        // AS A COMPILE-TIME CHECK, not a runtime one. These are all `const`, so a
+        // runtime `assert!` over them is a test that cannot fail at test time —
+        // it fails at BUILD time or never, and clippy says so. Written this way
+        // the relationship is enforced for every build, including one where
+        // nobody runs the tests.
+        const _: () = assert!(READING_RUN_WORDS > SELF_EVIDENT_RUN);
+        const _: () = assert!(READING_RUN_WORDS > MIN_RUN_WORDS);
+    }
+
+    /// A reading is the only thing this widens. Every other cap stands.
+    #[test]
+    fn nothing_else_gained_the_right_to_fire() {
+        for m in [
+            DetectionMethod::Semantic,
+            DetectionMethod::Quoted,
+            DetectionMethod::Ambiguous,
+            DetectionMethod::UncertainBook,
+            DetectionMethod::UncertainNumber,
+        ] {
+            assert!(!m.may_auto_fire(), "{m:?} may now auto-fire");
+        }
+        assert!(DetectionMethod::Direct.may_auto_fire());
+        assert!(DetectionMethod::Reading.may_auto_fire());
+    }
+
+    /// ── WHOSE NUMBER MAY TEACH THE GATE ────────────────────────────────────
+    ///
+    /// `may_auto_fire` used to answer three different questions at once, and
+    /// letting a reading through it would have answered the wrong one. A
+    /// reading's "confidence" is derived from a WORD COUNT; the auto-fire bar is
+    /// a parse probability. Feeding one to the other is the category error rule
+    /// 10 is about, arriving from the opposite direction.
+    #[test]
+    fn only_a_parse_confidence_may_teach_the_gate() {
+        assert!(DetectionMethod::Direct.confidence_is_calibrated());
+        assert!(!DetectionMethod::Reading.confidence_is_calibrated());
+        assert!(!DetectionMethod::Semantic.confidence_is_calibrated());
+        assert!(!DetectionMethod::Quoted.confidence_is_calibrated());
+    }
+
+    /// A HEARD REFERENCE OUTRANKS A READING, and both outrank the rest. One
+    /// window may put at most one verse on a wall (rule 29), so this decides
+    /// what a congregation sees when a preacher names one verse and reads
+    /// another in the same breath. The words naming a reference are the words
+    /// saying, which is rule 40's own principle.
+    #[test]
+    fn a_named_reference_outranks_a_reading() {
+        assert!(
+            DetectionMethod::Direct.unattended_rank() > DetectionMethod::Reading.unattended_rank()
+        );
+        assert!(
+            DetectionMethod::Reading.unattended_rank()
+                > DetectionMethod::Semantic.unattended_rank()
+        );
+        assert_eq!(
+            DetectionMethod::Quoted.unattended_rank(),
+            DetectionMethod::Semantic.unattended_rank()
+        );
+    }
+
+    /// ONE SPAN OF SPEECH IS ONE HEARING, however many verses hold part of it.
+    ///
+    /// Found by the scorecard on the day the promotion landed, which is the point
+    /// of having one. A preacher reading John 3:16 aloud makes a 25-word run in
+    /// John 3:16 and a 10-word run in John 3:15 — those ten words are in both
+    /// verses, and they sit wholly inside the twenty-five. Both were sole at
+    /// their own lengths, so both were readings, so both fired. Rule 29's own
+    /// finding in a new shape.
+    #[test]
+    fn a_shorter_run_inside_a_longer_one_is_not_a_second_reading() {
+        let idx = PhraseIndex::build(&[
+            (vr("John", 3, 15), "That whosoever believeth in him should not perish, but have eternal life.".into()),
+            (vr("John", 3, 16), "For God so loved the world, that he gave his only begotten Son, that whosoever believeth in him should not perish, but have everlasting life.".into()),
+        ]);
+        let hits = idx.quoted(
+            "For God so loved the world that he gave his only begotten Son that whosoever believeth in him should not perish but have everlasting life",
+            None,
+            5,
+        );
+        let sixteen = hits.iter().find(|h| h.r.verse == 16).expect("John 3:16");
+        assert!(sixteen.sole, "the verse actually read was not sole");
+        assert_eq!(
+            DetectionMethod::for_quotation(sixteen.run, sixteen.sole),
+            DetectionMethod::Reading
+        );
+        if let Some(fifteen) = hits.iter().find(|h| h.r.verse == 15) {
+            assert!(
+                !fifteen.sole,
+                "the same span of speech was counted as a second hearing, in John 3:15"
+            );
+            // Still OFFERED. A silent discard is a different lie, and the operator
+            // may genuinely want the neighbouring verse.
+            assert_eq!(
+                DetectionMethod::for_quotation(fifteen.run, fifteen.sole),
+                DetectionMethod::Quoted
+            );
+        }
+    }
+
+    #[test]
+    fn a_reading_survives_the_round_trip_the_console_sends_back() {
+        assert_eq!(
+            DetectionMethod::from_wire("reading"),
+            DetectionMethod::Reading
+        );
+        assert_eq!(
+            serde_json::to_string(&DetectionMethod::Reading).unwrap(),
+            "\"reading\""
+        );
+    }
+}
+
+/// **THE PASSAGE GUARD** — `hold_for_the_passage`. The decision and the register
+/// row are dated 2026-09-25; they carry no section number here on purpose, because
+/// the two this was drafted against were taken by other work the same day and a
+/// citation that resolves to the WRONG place is worse than one that resolves to
+/// nothing.
+///
+/// Every case here is either the operator's instruction of 2026-09-25 or a row out
+/// of their own database. The three the design deliberately does NOT catch are
+/// tested too, as negatives, because a guard nobody can state the limits of is one
+/// that will be widened by the next person who reads it.
+#[cfg(test)]
+mod passage_guard {
+    use super::*;
+
+    fn vr(book: &str, chapter: i64, verse: i64) -> VerseRef {
+        VerseRef {
+            book: book.into(),
+            chapter,
+            verse,
+        }
+    }
+
+    /// Shorthand: `hold(on_screen, on_the_wall, named_a_reference, candidates)`.
+    fn hold(
+        on_screen: Option<&VerseRef>,
+        wall: Option<&str>,
+        named: bool,
+        cands: &[(&VerseRef, DetectionMethod)],
+    ) -> Vec<Option<HeldReason>> {
+        hold_for_the_passage(on_screen, wall, named, cands)
+    }
+
+    // ── RULE B · THE WALL ALREADY SAYS IT ────────────────────────────────────
+
+    /// **FIELD, service 40, 2026-09-25, 769 s → 780 s.** The preacher said
+    /// *"Jeremiah chapter 6 verse 16"*, Relay fired it `Direct` at 0.95, and eleven
+    /// seconds later the preacher read the verse aloud — *"And see. And ask. For the
+    /// old paths. Where is the good way?"* — and Relay put the SAME verse on the
+    /// wall a second time. The same morning did it again with `Hebrews 6:12` at
+    /// 897 s → 908 s and `Romans 15:4` at 1034 s → 1051 s.
+    ///
+    /// Announce the reference, then read it, is the ordinary shape of a sermon.
+    #[test]
+    fn field_2026_09_25_a_verse_read_while_it_is_on_the_wall_is_held() {
+        let jer = vr("Jeremiah", 6, 16);
+        let out = hold(
+            Some(&jer),
+            Some("Jeremiah 6:16"),
+            false,
+            &[(&jer, DetectionMethod::Reading)],
+        );
+        assert_eq!(out, vec![Some(HeldReason::AlreadyOnScreen)]);
+    }
+
+    /// The same shape with nothing but a reading on either side — **service 40,
+    /// 615 s → 626 s, `Mark 6:2` twice**, eleven seconds apart, the second at a
+    /// HIGHER confidence (0.69 → 0.90) because more of the verse had been heard. So
+    /// the duplicate is the stronger candidate by every rule in `pipeline::better`,
+    /// and ranking could never have chosen against it.
+    #[test]
+    fn field_2026_09_25_mark_6_2_twice_from_one_reading() {
+        let mark = vr("Mark", 6, 2);
+        assert_eq!(
+            hold(
+                Some(&mark),
+                Some("Mark 6:2"),
+                false,
+                &[(&mark, DetectionMethod::Reading)]
+            ),
+            vec![Some(HeldReason::AlreadyOnScreen)]
+        );
+    }
+
+    /// Rule B covers the short quotation and the paraphrase as well, and the reason
+    /// is one sentence: a candidate found in the verse's own text cannot tell the
+    /// operator anything about the verse they are already looking at.
+    #[test]
+    fn every_kind_of_text_match_is_held_by_the_wall_but_no_reference_is() {
+        let r = vr("Psalms", 23, 4);
+        for m in [
+            DetectionMethod::Reading,
+            DetectionMethod::Quoted,
+            DetectionMethod::Semantic,
+        ] {
+            assert_eq!(
+                hold(Some(&r), Some("Psalms 23:4"), false, &[(&r, m)]),
+                vec![Some(HeldReason::AlreadyOnScreen)],
+                "{m:?} of the verse on the wall should be held"
+            );
+        }
+        // …and NOTHING reference-shaped is, at any time, under any rule. This is
+        // constraint 1 and rule 10: only what Relay HEARD may reach a congregation,
+        // and only what Relay heard may reach the OPERATOR unguarded either.
+        for m in [
+            DetectionMethod::Direct,
+            DetectionMethod::Ambiguous,
+            DetectionMethod::UncertainBook,
+            DetectionMethod::UncertainNumber,
+        ] {
+            assert_eq!(
+                hold(Some(&r), Some("Psalms 23:4"), false, &[(&r, m)]),
+                vec![None],
+                "{m:?} was parsed from the words and may never be held"
+            );
+        }
+    }
+
+    /// Nothing on the wall → rule B has nothing to compare with. This is the state
+    /// after a clear or a blackout (`Router::forget_last_fire`) and after a song
+    /// (`Router::forget_wall`), and it is what makes a re-reading of a verse the
+    /// operator cleared come straight back.
+    #[test]
+    fn a_cleared_wall_holds_nothing() {
+        let r = vr("Psalms", 23, 4);
+        assert_eq!(
+            hold(Some(&r), None, false, &[(&r, DetectionMethod::Reading)]),
+            vec![None]
+        );
+    }
+
+    // ── RULE A · OUTSIDE THE READING ─────────────────────────────────────────
+
+    /// The operator's own complaint. `Psalms 107:8` is being read; the same words are
+    /// verbatim in `Psalms 107:21`, and a run also lands in `Ephesians 5:20`, which is
+    /// a different passage entirely. The one inside the chapter survives; the one
+    /// outside it is held.
+    #[test]
+    fn while_a_passage_is_being_read_a_verse_from_elsewhere_is_held() {
+        let on = vr("Psalms", 107, 8);
+        let same_chapter = vr("Psalms", 107, 21);
+        let elsewhere = vr("Ephesians", 5, 20);
+        assert_eq!(
+            hold(
+                Some(&on),
+                Some("Psalms 107:8"),
+                false,
+                &[
+                    (&on, DetectionMethod::Reading),
+                    (&same_chapter, DetectionMethod::Quoted),
+                    (&elsewhere, DetectionMethod::Quoted),
+                ]
+            ),
+            vec![
+                Some(HeldReason::AlreadyOnScreen),
+                None,
+                Some(HeldReason::OutsideTheReading),
+            ]
+        );
+    }
+
+    /// **`PhraseHit::sole`'s own example, and it is a within-chapter one.** A
+    /// preacher reading John 3:16 aloud produces a 25-word run in 3:16 and a 10-word
+    /// run in 3:15, because those ten words are in both. 3:15 stays offered: it is a
+    /// perfectly reasonable thing for the operator to want, it is inside the chapter,
+    /// and the operator asked for suggestions to stay *within the verse/chapter*.
+    #[test]
+    fn a_sub_span_inside_the_same_chapter_is_still_offered() {
+        let on = vr("John", 3, 16);
+        let sub = vr("John", 3, 15);
+        assert_eq!(
+            hold(
+                Some(&on),
+                Some("John 3:16"),
+                false,
+                &[
+                    (&on, DetectionMethod::Reading),
+                    (&sub, DetectionMethod::Quoted),
+                ]
+            ),
+            vec![Some(HeldReason::AlreadyOnScreen), None]
+        );
+    }
+
+    /// **CONSTRAINT 1, AND IT IS THE WHOLE OF RULE 40.** "Turn to Romans eight"
+    /// while Psalms 107 is being read gets through in the same instant it always
+    /// did — and so does everything else in that window, because a window that names
+    /// a reference disarms rule A entirely rather than exempting one candidate.
+    #[test]
+    fn a_window_that_names_a_reference_holds_nothing_at_all() {
+        let on = vr("Psalms", 107, 8);
+        let spoken = vr("Romans", 8, 28);
+        let elsewhere = vr("Ephesians", 5, 20);
+        assert_eq!(
+            hold(
+                Some(&on),
+                Some("Psalms 107:8"),
+                // the words said
+                true,
+                &[
+                    (&on, DetectionMethod::Reading),
+                    (&spoken, DetectionMethod::Direct),
+                    (&elsewhere, DetectionMethod::Quoted),
+                ]
+            ),
+            // Rule B still holds the verse that is literally on the wall — that is
+            // not about the passage and a named reference does not make a re-showing
+            // of the current verse informative. Rule A holds nothing.
+            vec![Some(HeldReason::AlreadyOnScreen), None, None]
+        );
+    }
+
+    /// **WHAT ENDS IT, MEASURED BY ITS ABSENCE.** The preacher has stopped reading
+    /// Psalms 107 and is now quoting Isaiah without naming it. There is no
+    /// in-passage run in this window, so the guard does not arm and Isaiah is
+    /// offered — the first window, not the second, and with nothing to clear.
+    ///
+    /// This is why the guard is not `quoted(text, Some(on_screen_book), k)`. That
+    /// restriction would hide Isaiah until something else moved `ContextMemory`,
+    /// which needs an operator.
+    #[test]
+    fn a_preacher_who_has_moved_on_is_never_held_even_once() {
+        let on = vr("Psalms", 107, 8);
+        let isaiah = vr("Isaiah", 58, 6);
+        assert_eq!(
+            hold(
+                Some(&on),
+                Some("Psalms 107:8"),
+                false,
+                &[(&isaiah, DetectionMethod::Reading)]
+            ),
+            vec![None]
+        );
+    }
+
+    /// A paraphrase inside the passage is NOT evidence that the preacher is reading
+    /// it. A cosine is a bag of words in no order (rule 18); the assertion "this
+    /// chapter is being read aloud" needs words in the speaker's own order, which is
+    /// what a verbatim run is and the only reason `Reading` was allowed to exist.
+    #[test]
+    fn only_a_verbatim_run_may_arm_the_guard() {
+        let on = vr("Psalms", 107, 8);
+        let same_chapter = vr("Psalms", 107, 21);
+        let elsewhere = vr("Ephesians", 5, 20);
+        assert_eq!(
+            hold(
+                Some(&on),
+                None,
+                false,
+                &[
+                    (&same_chapter, DetectionMethod::Semantic),
+                    (&elsewhere, DetectionMethod::Quoted),
+                ]
+            ),
+            vec![None, None],
+            "a paraphrase in the passage must not arm the guard"
+        );
+        // Swap the in-passage evidence for a real run and the same window holds.
+        assert_eq!(
+            hold(
+                Some(&on),
+                None,
+                false,
+                &[
+                    (&same_chapter, DetectionMethod::Quoted),
+                    (&elsewhere, DetectionMethod::Quoted),
+                ]
+            ),
+            vec![None, Some(HeldReason::OutsideTheReading)],
+        );
+    }
+
+    /// Nothing on the screen at all — the first reading of a service — holds
+    /// nothing. A guard that bit before anything had ever been fired would make the
+    /// first verse of every service harder to reach than the rest.
+    #[test]
+    fn nothing_on_screen_holds_nothing() {
+        let a = vr("Psalms", 107, 8);
+        let b = vr("Ephesians", 5, 20);
+        assert_eq!(
+            hold(
+                None,
+                None,
+                false,
+                &[
+                    (&a, DetectionMethod::Reading),
+                    (&b, DetectionMethod::Quoted)
+                ]
+            ),
+            vec![None, None]
+        );
+    }
+
+    /// Chapter, not book. The operator said *verse/chapter*, and Psalms 23 is a
+    /// different passage from Psalms 107 however much the book name agrees.
+    #[test]
+    fn the_scope_is_the_chapter_and_not_the_book() {
+        let on = vr("Psalms", 107, 8);
+        let other_chapter = vr("Psalms", 23, 1);
+        assert_eq!(
+            hold(
+                Some(&on),
+                None,
+                false,
+                &[
+                    (&on, DetectionMethod::Reading),
+                    (&other_chapter, DetectionMethod::Quoted),
+                ]
+            ),
+            vec![None, Some(HeldReason::OutsideTheReading)]
+        );
+    }
+
+    // ── THE THREE THINGS IT DELIBERATELY DOES NOT CATCH ─────────────────────
+
+    /// **FIELD, service 39, 1508 s → 1517 s: `Philippians 1:23` then `1:24`.** One
+    /// reading walking forward. Rule B holds the first (it is on the wall) and the
+    /// second is NOT held, so the wall follows the reader.
+    ///
+    /// Freezing on verse 23 until somebody named another reference would leave a
+    /// verse the preacher had finished in front of a congregation for as long as the
+    /// reading lasted — a wrong verse chosen on purpose — and it would reverse the
+    /// instruction of 2026-09-23 that created `Reading`. **If this assertion is ever
+    /// inverted, it is a product decision and not a bug fix.**
+    #[test]
+    fn field_2026_09_24_the_reader_walking_to_the_next_verse_is_followed() {
+        let on = vr("Philippians", 1, 23);
+        let next = vr("Philippians", 1, 24);
+        assert_eq!(
+            hold(
+                Some(&on),
+                Some("Philippians 1:23"),
+                false,
+                &[
+                    (&on, DetectionMethod::Reading),
+                    (&next, DetectionMethod::Reading),
+                ]
+            ),
+            vec![Some(HeldReason::AlreadyOnScreen), None],
+        );
+    }
+
+    /// **FIELD, service 39, 955 s → 968 s: `Micah 4:1` as a reading, then the SAME
+    /// verse thirteen seconds later as a spoken reference.** A duplicate fire, and
+    /// this guard will not touch it: the second was heard as a reference, and
+    /// constraint 1 says a spoken reference always gets through. Fixing it means
+    /// changing `DEFAULT_DEBOUNCE_MS`, which governs every `Direct` in the product.
+    #[test]
+    fn a_spoken_reference_repeating_a_reading_is_not_this_guards_business() {
+        let micah = vr("Micah", 4, 1);
+        assert_eq!(
+            hold(
+                Some(&micah),
+                Some("Micah 4:1"),
+                true,
+                &[(&micah, DetectionMethod::Direct)]
+            ),
+            vec![None]
+        );
+    }
+
+    /// **THE INVARIANT THAT MAKES THE ANNOUNCEMENT REACHABLE.** Rule A arms only on
+    /// an in-passage verbatim run, and rule A never holds an in-passage candidate —
+    /// so whenever rule A holds anything, something survives to carry the report.
+    ///
+    /// Rule B can hold a window's every candidate, and that is correct and needs no
+    /// escape: the one thing it holds is the verse the screens are already showing,
+    /// so the evidence the operator needs is the wall.
+    #[test]
+    fn rule_a_can_never_hold_a_whole_window() {
+        let on = vr("Psalms", 107, 8);
+        let a = vr("Ephesians", 5, 20);
+        let b = vr("Romans", 12, 2);
+        let out = hold(
+            Some(&on),
+            None,
+            false,
+            &[
+                (&on, DetectionMethod::Reading),
+                (&a, DetectionMethod::Quoted),
+                (&b, DetectionMethod::Semantic),
+            ],
+        );
+        assert!(
+            out.iter().any(Option::is_none),
+            "rule A held every candidate, so nothing could announce it"
+        );
+        assert_eq!(
+            out.iter()
+                .filter(|h| **h == Some(HeldReason::OutsideTheReading))
+                .count(),
+            2
+        );
+    }
+
+    /// The order of the answers is the order of the candidates, because the caller
+    /// zips them. An off-by-one here would hold the wrong verse silently.
+    #[test]
+    fn the_answers_line_up_with_the_candidates() {
+        let on = vr("Psalms", 107, 8);
+        let out_of = vr("Ephesians", 5, 20);
+        let cands = [
+            (&out_of, DetectionMethod::Quoted),
+            (&on, DetectionMethod::Reading),
+        ];
+        let out = hold(Some(&on), None, false, &cands);
+        assert_eq!(out.len(), cands.len());
+        assert_eq!(out[0], Some(HeldReason::OutsideTheReading));
+        assert_eq!(out[1], None);
+    }
+
+    /// `window_states_a_reference` is rule 40's pair, and the second half is the one
+    /// FIELD F-8 was about: a window can STATE a chapter with nothing parsing out of
+    /// it, and a preacher who has just announced a chapter is no longer reading the
+    /// last one.
+    #[test]
+    fn a_stated_chapter_disarms_the_guard_even_when_nothing_parsed() {
+        assert!(!window_states_a_reference("and he said unto them", None));
+        assert!(window_states_a_reference(
+            "is taken from 4th peter chapter 5 verse 10",
+            None
+        ));
+        let anchor = vr("Romans", 8, 28);
+        assert!(window_states_a_reference("romans 8 28", Some(&anchor)));
+        // Swahili, for the same reason `chapter_named` is not an English literal.
+        assert!(window_states_a_reference("yohana sura ya tatu", None));
+    }
+}
+
+/// **THE CITATION-DOUBT RULE** — `doubt_from_a_quotation`. RG-305 and the register
+/// row are dated 2026-09-25; no `DECISIONS §` is cited here on purpose, because the
+/// section this was drafted against is not written yet and a citation that resolves
+/// to the WRONG place is worse than one that resolves to nothing.
+///
+/// Every positive here is a row out of the operator's own database, quoted with its
+/// `detections.id`. Every negative is either a fire that was CORRECT on the same
+/// day, or a shape the design refuses on purpose — and there are more negatives
+/// than positives, deliberately: this rule demotes a 0.95 `Direct`, the strongest
+/// claim Relay can make, so the cases it must not touch are the expensive half.
+#[cfg(test)]
+mod citation_doubt {
+    use super::*;
+
+    fn vr(book: &str, chapter: i64, verse: i64) -> VerseRef {
+        VerseRef {
+            book: book.into(),
+            chapter,
+            verse,
+        }
+    }
+
+    /// A spoken reference: one verse, nothing inferred.
+    fn said(r: &VerseRef) -> Claim<'_> {
+        Claim {
+            r,
+            method: DetectionMethod::Direct,
+            verse_end: None,
+            whole_chapter: false,
+            run: None,
+        }
+    }
+
+    /// A verbatim run of `words` words, held by one verse alone.
+    fn run<'a>(r: &'a VerseRef, words: usize) -> Claim<'a> {
+        Claim {
+            r,
+            method: DetectionMethod::for_quotation(words, true),
+            verse_end: None,
+            whole_chapter: false,
+            run: Some((words, true)),
+        }
+    }
+
+    // ── THE FIELD INSTANCES IT CATCHES ───────────────────────────────────────
+
+    /// **FIELD, service 40, 2026-09-25 at 1772 s, `detections.id = 603`.**
+    /// *"This one was born there, the other one was born there, all my springs are
+    /// in thee. Psalm 7 verse 1 to 7."* Those words are `Psalms 87`; the preacher
+    /// said *"Psalm 87"* and the *eighty* was lost. Relay fired **Psalms 7:1** at
+    /// 0.95, unattended, to a congregation.
+    ///
+    /// The run measured through the real index is seven words — *"there all my
+    /// springs are in thee"* — and `sole`.
+    #[test]
+    fn field_603_a_lost_eighty_is_contradicted_by_the_words_in_the_same_breath() {
+        let spoken = vr("Psalms", 7, 1);
+        let quoted = vr("Psalms", 87, 7);
+        let cands = [
+            Claim {
+                verse_end: Some(7),
+                ..said(&spoken)
+            },
+            run(&quoted, 7),
+        ];
+        assert_eq!(
+            doubt_from_a_quotation(&cands),
+            vec![Some(Doubt::SpokenChapter), Some(Doubt::TheQuotation)],
+            "the chapter the words point at is the chapter that was said with its \
+             leading digit back on"
+        );
+    }
+
+    /// **FIELD, service 40 at 26263 s, `detections.id = 786`.** *"And then we shall
+    /// find faith on the earth. Luke chapter 8, chapter 8, verse 8."* Those words
+    /// are `Luke 18:8`; whisper dropped the *eight-* from *eighteen*, twice, so
+    /// there was no fumble to notice. The finalized window parses as a WHOLE
+    /// CHAPTER (`Luke 8`), which is why the verse test has to allow one.
+    ///
+    /// The run is five words — *"find faith on the earth"* — the shortest a
+    /// quotation may be, and the reason the bar is `MIN_RUN_WORDS` and not eight.
+    #[test]
+    fn field_786_a_whole_chapter_is_contradicted_too_and_the_run_is_five_words() {
+        let spoken = vr("Luke", 8, 1);
+        let quoted = vr("Luke", 18, 8);
+        let cands = [
+            Claim {
+                whole_chapter: true,
+                ..said(&spoken)
+            },
+            run(&quoted, 5),
+        ];
+        assert_eq!(
+            doubt_from_a_quotation(&cands),
+            vec![Some(Doubt::SpokenChapter), Some(Doubt::TheQuotation)]
+        );
+    }
+
+    /// **FIELD, service 40 at 9831 s, `detections.id = 668`** — the clearest of the
+    /// set. *"Acts 8, 12, I wisdom dwell with prudence and find out the knowledge of
+    /// witty inventions."* Those words are `Proverbs 8:12`, which this same preacher
+    /// had cited correctly two hours earlier; whisper heard *Proverbs* as *Acts*.
+    /// Relay fired **Acts 8:12**.
+    ///
+    /// Same chapter, same verse, a different book — and the run is eight words and
+    /// sole, so it is a `Reading` and could have reached a wall by itself. It does
+    /// not: it is demoted with the reference it accuses.
+    #[test]
+    fn field_668_a_misheard_book_at_the_same_chapter_and_verse() {
+        let spoken = vr("Acts", 8, 12);
+        let quoted = vr("Proverbs", 8, 12);
+        let cands = [said(&spoken), run(&quoted, 8)];
+        assert_eq!(cands[1].method, DetectionMethod::Reading);
+        assert_eq!(
+            doubt_from_a_quotation(&cands),
+            vec![Some(Doubt::SpokenBook), Some(Doubt::TheQuotation)]
+        );
+    }
+
+    /// The other measured slips, as the rule sees them: a chapter the decoder
+    /// produced by losing the front of the number, with the verse intact. Both of
+    /// these were wrong verses on congregation-facing screens on 2026-09-25, and
+    /// NEITHER carried a long enough run in its own window to be caught in the
+    /// field — see `what_this_rule_could_not_have_caught_in_the_field`. The rule is
+    /// right about the shape and the evidence was not there.
+    #[test]
+    fn the_measured_slips_are_all_one_lost_leading_digit() {
+        for (book, said_ch, run_ch, verse, id) in
+            [("Isaiah", 1, 61, 3, 818), ("Romans", 2, 12, 3, 861)]
+        {
+            let a = vr(book, said_ch, verse);
+            let b = vr(book, run_ch, verse);
+            let cands = [said(&a), run(&b, 6)];
+            assert_eq!(
+                doubt_from_a_quotation(&cands)[0],
+                Some(Doubt::SpokenChapter),
+                "{book} {said_ch}:{verse} against a run in {run_ch} (id {id})"
+            );
+        }
+    }
+
+    /// **THE TWO OTHER MECHANISMS FROM THE SAME DAY, AND THIS RULE REACHES NEITHER.**
+    /// Stated as a test rather than as prose, because the next person to read the
+    /// rule will want to widen it to cover them and should see first that the
+    /// widening was considered.
+    ///
+    ///  * **A digit INVENTED from a stammer** — `detections.id = 863`, *"2
+    ///    Corinthians, 2 Corinthians, 2 Corinthians, 4, and verse 13"* fired
+    ///    `2 Corinthians 2:13` after a correct `4:13`. `2` is not what is left of
+    ///    `4`; it is one of the book's own ordinals read as a chapter. The numbers
+    ///    are not one slip apart in either direction, so nothing here can see it.
+    ///    RG-301.
+    ///  * **A verse-only mishearing** — `detections.id = 645`, *"Mark 6, 12"* fired
+    ///    `Mark 6:12` while the words being read were `Mark 6:2`. One book, one
+    ///    chapter, a different verse: the exact shape of the two CORRECT fires
+    ///    below, and indistinguishable from them. Catching this would cost the
+    ///    John 15 and Hebrews 13 cases, and that trade is refused.
+    #[test]
+    fn the_two_other_mechanisms_of_the_same_day_are_out_of_reach() {
+        let stammer = (vr("2 Corinthians", 2, 13), vr("2 Corinthians", 4, 13));
+        assert_eq!(
+            doubt_from_a_quotation(&[said(&stammer.0), run(&stammer.1, 9)]),
+            vec![None, None],
+            "a chapter invented from a stammered ordinal is not a lost digit"
+        );
+        let verse_only = (vr("Mark", 6, 12), vr("Mark", 6, 2));
+        assert_eq!(
+            doubt_from_a_quotation(&[said(&verse_only.0), run(&verse_only.1, 9)]),
+            vec![None, None],
+            "a verse-only difference is the correct-fire shape and is never a doubt"
+        );
+    }
+
+    /// 34 heard as 35 — `detections.id = 930`, *"from Psalm 35 verse 5"* over words
+    /// that are `Psalms 34:5`. A SUBSTITUTED digit, not a lost one, and the only
+    /// instance of its shape in the day's eight.
+    #[test]
+    fn field_930_a_substituted_digit_at_two_digits_counts() {
+        let a = vr("Psalms", 35, 5);
+        let b = vr("Psalms", 34, 5);
+        assert_eq!(
+            doubt_from_a_quotation(&[said(&a), run(&b, 9)])[0],
+            Some(Doubt::SpokenChapter)
+        );
+    }
+
+    // ── THE CORRECT FIRES IT MUST NOT TOUCH ──────────────────────────────────
+
+    /// **WATCHED LIVE ON THE SAME DAY, AND THE CITATION WAS RIGHT.** `John 15:15`
+    /// was read aloud — a fifteen-word `Reading` — and *"John 15, 14"* was cited one
+    /// verse later, the preacher starting the passage. One book, one chapter, one
+    /// verse apart.
+    ///
+    /// A rule that demoted this would be worse than the disease, which is why a
+    /// verse-only difference is never a disagreement at any distance.
+    ///
+    /// **WATCHED TO FAIL, AND IT TOOK THREE REVERTS TO MAKE IT.** Removing the
+    /// verse check alone leaves this green (the same-chapter escape catches it);
+    /// removing the same-chapter escape alone leaves it green (the verse check
+    /// catches it); removing both leaves it green until
+    /// `chapter_is_a_decode_slip` is also made to accept equality. Three
+    /// independent statements of one rule, each of which makes the test for the
+    /// others unable to fail — the shape this repository records as a theory that
+    /// was never tested. The guarantee is genuinely held three times; the honest
+    /// revert-check is all three at once, and it then fails here, on Hebrews, and
+    /// on `the_two_other_mechanisms_of_the_same_day_are_out_of_reach`.
+    #[test]
+    fn john_15_14_cited_while_15_15_is_read_is_not_a_disagreement() {
+        let spoken = vr("John", 15, 14);
+        let quoted = vr("John", 15, 15);
+        assert_eq!(
+            doubt_from_a_quotation(&[said(&spoken), run(&quoted, 15)]),
+            vec![None, None]
+        );
+    }
+
+    /// **THE SECOND ONE, AND HE INTERRUPTED THE SERVICE TO INSIST ON VERSE 7.**
+    /// `Hebrews 13:7` cited while he quoted `13:17` from memory, seventeen words and
+    /// sole. Ten verses apart, in the chapter he named.
+    #[test]
+    fn hebrews_13_7_cited_while_13_17_is_quoted_is_not_a_disagreement() {
+        let spoken = vr("Hebrews", 13, 7);
+        let quoted = vr("Hebrews", 13, 17);
+        assert_eq!(
+            doubt_from_a_quotation(&[said(&spoken), run(&quoted, 17)]),
+            vec![None, None]
+        );
+    }
+
+    /// **A preacher reading Proverbs who quotes Isaiah is quoting Isaiah**, which
+    /// the quotation call site has recorded since the phrase index was built. A run
+    /// somewhere else in scripture is the most ordinary thing in preaching and says
+    /// nothing whatever about the reference that was named.
+    #[test]
+    fn a_quotation_from_somewhere_else_entirely_is_not_a_disagreement() {
+        let spoken = vr("Romans", 8, 28);
+        for other in [vr("John", 14, 6), vr("Isaiah", 55, 8), vr("Psalms", 23, 1)] {
+            assert_eq!(
+                doubt_from_a_quotation(&[said(&spoken), run(&other, 12)]),
+                vec![None, None],
+                "{other:?} was read as contradicting Romans 8:28"
+            );
+        }
+    }
+
+    /// **RG-301's Jude, and it is a negative on purpose.** At 674 s the window held
+    /// *"…his ways and his paths are past finding out. We have tried to look at that
+    /// from Jude 28 and verse 7 to 28."* — a seven-word sole run in `Romans 11:33`,
+    /// the verse he was referring BACK to, beside a fire of `Jude 1:7`.
+    ///
+    /// This rule does not catch it and must not: the run is a different book, a
+    /// different chapter and a different verse, so it is not a slip of the reference
+    /// — it is a second thing he said. Catching it needs a rule broad enough to
+    /// demote the Isaiah case above, and that trade is not worth making. RG-301.
+    #[test]
+    fn field_588_the_referred_back_quotation_is_deliberately_not_caught() {
+        let spoken = vr("Jude", 1, 7);
+        let quoted = vr("Romans", 11, 33);
+        assert_eq!(
+            doubt_from_a_quotation(&[said(&spoken), run(&quoted, 7)]),
+            vec![None, None]
+        );
+    }
+
+    /// **A chapter number shared with another book is Tuesday.** "Turn to Romans 8"
+    /// while a run from John 8 is in the air: same chapter, different book, and the
+    /// spoken reference named no verse. Excluded, because chapter numbers collide
+    /// across sixty-six books constantly and the verse is what makes `Proverbs 8:12`
+    /// against `Acts 8:12` a coincidence worth acting on.
+    #[test]
+    fn a_whole_chapter_never_disagrees_with_another_book() {
+        let spoken = vr("Romans", 8, 1);
+        let quoted = vr("John", 8, 12);
+        let cands = [
+            Claim {
+                whole_chapter: true,
+                ..said(&spoken)
+            },
+            run(&quoted, 11),
+        ];
+        assert_eq!(doubt_from_a_quotation(&cands), vec![None, None]);
+    }
+
+    /// **A SPAN IS NOT A LICENCE TO DISAGREE ACROSS BOOKS.** "Romans 8 verse 1 to
+    /// 39" while `John 8:12` is quoted verbatim: the chapter numbers match, the
+    /// verse falls inside the span he asked for, and it is still nothing but a
+    /// coincidence. Across books the verse must be the one he said, exactly.
+    ///
+    /// Found by revert-checking, not by reading: the verse test was written as
+    /// *"inside what was said"* for `Psalms 7 verse 1 to 7`, and that reading made
+    /// every wide citation in the Bible a cross-book accusation waiting for a
+    /// chapter number to collide.
+    #[test]
+    fn a_wide_spoken_span_does_not_disagree_across_books() {
+        let spoken = vr("Romans", 8, 1);
+        let quoted = vr("John", 8, 12);
+        let cands = [
+            Claim {
+                verse_end: Some(39),
+                ..said(&spoken)
+            },
+            run(&quoted, 11),
+        ];
+        assert_eq!(doubt_from_a_quotation(&cands), vec![None, None]);
+        // The same span DOES still reach a digit-slip chapter in its own book.
+        let slipped = vr("Romans", 18, 12);
+        let same_book = [
+            Claim {
+                verse_end: Some(39),
+                ..said(&spoken)
+            },
+            run(&slipped, 11),
+        ];
+        assert_eq!(
+            doubt_from_a_quotation(&same_book)[0],
+            Some(Doubt::SpokenChapter)
+        );
+    }
+
+    /// **One digit is not a slip, it is the next chapter along.** `Romans 1:16`
+    /// cited against a sole run in `Romans 2:16` is one substitution — and so is
+    /// every other single-digit chapter, so at that length there is no honest way to
+    /// tell a decode slip from a preacher reading on.
+    #[test]
+    fn a_single_digit_substitution_is_refused() {
+        let spoken = vr("Romans", 1, 16);
+        let quoted = vr("Romans", 2, 16);
+        assert_eq!(
+            doubt_from_a_quotation(&[said(&spoken), run(&quoted, 10)]),
+            vec![None, None]
+        );
+        assert!(!chapter_is_a_decode_slip(1, 2));
+        assert!(!chapter_is_a_decode_slip(8, 9));
+        // Two digits and one substitution IS the measured shape.
+        assert!(chapter_is_a_decode_slip(35, 34));
+        // A lost leading digit, in the direction the decoder loses them.
+        assert!(chapter_is_a_decode_slip(7, 87));
+        assert!(chapter_is_a_decode_slip(8, 18));
+        assert!(
+            !chapter_is_a_decode_slip(87, 7),
+            "the decoder loses digits, it does not add them"
+        );
+        assert!(!chapter_is_a_decode_slip(1, 100), "100 does not end in 1");
+        assert!(!chapter_is_a_decode_slip(3, 3));
+    }
+
+    // ── WHAT MAY RAISE A DOUBT, AND WHAT MAY NOT ─────────────────────────────
+
+    /// **A run two verses share says nothing about WHICH verse**, and which verse is
+    /// this rule's entire business. Not sole, no doubt — at any length.
+    #[test]
+    fn a_run_two_verses_share_may_not_raise_a_doubt() {
+        let spoken = vr("Psalms", 7, 1);
+        let quoted = vr("Psalms", 87, 1);
+        let cands = [
+            said(&spoken),
+            Claim {
+                r: &quoted,
+                method: DetectionMethod::for_quotation(20, false),
+                verse_end: None,
+                whole_chapter: false,
+                run: Some((20, false)),
+            },
+        ];
+        assert_eq!(doubt_from_a_quotation(&cands), vec![None, None]);
+    }
+
+    /// **A paraphrase may never raise a doubt.** A cosine is a bag of words in no
+    /// order (rule 18) and knows nothing about which verse was read; overruling a
+    /// 0.95 heard reference on one would be rule 10 upside down.
+    #[test]
+    fn a_paraphrase_may_never_raise_a_doubt() {
+        let spoken = vr("Psalms", 7, 1);
+        let guess = vr("Psalms", 87, 1);
+        let cands = [
+            said(&spoken),
+            Claim {
+                r: &guess,
+                method: DetectionMethod::Semantic,
+                verse_end: None,
+                whole_chapter: false,
+                run: None,
+            },
+        ];
+        assert_eq!(doubt_from_a_quotation(&cands), vec![None, None]);
+    }
+
+    /// A run of four words is below `MIN_RUN_WORDS` and may not be offered at all,
+    /// so it may not overrule anything either. *"the oil of joy"* — `detections.id
+    /// = 818`'s own evidence — is exactly four, which is why that instance is one
+    /// this rule cannot reach in the field however well it reads on paper.
+    #[test]
+    fn a_run_shorter_than_the_floor_may_not_raise_a_doubt() {
+        let spoken = vr("Isaiah", 1, 3);
+        let quoted = vr("Isaiah", 61, 3);
+        assert_eq!(
+            doubt_from_a_quotation(&[said(&spoken), run(&quoted, MIN_RUN_WORDS - 1)]),
+            vec![None, None]
+        );
+        assert_eq!(
+            doubt_from_a_quotation(&[said(&spoken), run(&quoted, MIN_RUN_WORDS)]),
+            vec![Some(Doubt::SpokenChapter), Some(Doubt::TheQuotation)]
+        );
+    }
+
+    /// **Only a reference Relay HEARD is demoted.** The other reference-shaped
+    /// methods are already capped at Suggest at any score, so there is nothing to
+    /// take from them and every reason not to give this rule more surface.
+    #[test]
+    fn only_a_heard_reference_is_doubted() {
+        let spoken = vr("Psalms", 7, 1);
+        let quoted = vr("Psalms", 87, 1);
+        for m in [
+            DetectionMethod::UncertainBook,
+            DetectionMethod::UncertainNumber,
+            DetectionMethod::Ambiguous,
+            DetectionMethod::Semantic,
+        ] {
+            let cands = [
+                Claim {
+                    method: m,
+                    ..said(&spoken)
+                },
+                run(&quoted, 9),
+            ];
+            assert_eq!(doubt_from_a_quotation(&cands), vec![None, None], "{m:?}");
+        }
+    }
+
+    /// The verse has to be the one that was said, or inside the span that was said.
+    /// `Psalms 7 verse 1 to 7` against `Psalms 87:7` is inside; against `Psalms
+    /// 87:9` it is not, and a run in a psalm eighty chapters away that is not even
+    /// the verse he asked for is not evidence about his reference.
+    #[test]
+    fn the_verse_must_be_one_that_was_said() {
+        let spoken = vr("Psalms", 7, 1);
+        for (v, want) in [
+            (1, Some(Doubt::SpokenChapter)),
+            (7, Some(Doubt::SpokenChapter)),
+            (8, None),
+            (9, None),
+        ] {
+            let quoted = vr("Psalms", 87, v);
+            let cands = [
+                Claim {
+                    verse_end: Some(7),
+                    ..said(&spoken)
+                },
+                run(&quoted, 7),
+            ];
+            assert_eq!(doubt_from_a_quotation(&cands)[0], want, "verse {v}");
+        }
+    }
+
+    /// **Nothing is held and nothing is dropped.** Both sides survive into the
+    /// candidate set — the operator has to be able to pick the right one, and a
+    /// silent discard is a different lie (DECISIONS §106). What changes is only
+    /// what may reach a wall unattended.
+    #[test]
+    fn a_window_with_no_disagreement_is_untouched() {
+        let a = vr("Romans", 8, 28);
+        let b = vr("Romans", 8, 28);
+        let cands = [said(&a), run(&b, 14)];
+        assert!(doubt_from_a_quotation(&cands).iter().all(Option::is_none));
+    }
+
+    /// The wire names both rules, because the console renders them and a rename that
+    /// silently changed a key would leave the operator reading nothing.
+    #[test]
+    fn the_two_rules_name_themselves_on_the_wire() {
+        assert_eq!(
+            serde_json::to_string(&Doubt::SpokenChapter).unwrap(),
+            "\"spoken_chapter\""
+        );
+        assert_eq!(
+            serde_json::to_string(&Doubt::SpokenBook).unwrap(),
+            "\"spoken_book\""
+        );
+        assert_eq!(
+            serde_json::to_string(&Doubt::TheQuotation).unwrap(),
+            "\"the_quotation\""
+        );
+    }
+}
+
+// ── THE SHORT RUN A NAMED CHAPTER MAKES ADMISSIBLE — RG-313 ─────────────────
+//
+// §123 reaches three of the nine wrong references of 2026-09-25. Two of the six
+// it misses fail for ONE reason, and it is a reason that does not have to hold:
+//
+//   id 818  "…the oil of gladness. Now, Isaiah 1 verse 3…"   → fired Isaiah 1:3
+//           "the oil of joy" is Isaiah 61:3 and is FOUR words
+//   id 861  "…measure of faith, Romans, 2, 3"                → fired Romans 2:3
+//           "the measure of faith" is Romans 12:3 and is THREE words
+//
+// `MIN_RUN_WORDS` is 5 because `PhraseIndex::quoted` answers *which verse do
+// these words belong to*, and below five words that question has too many
+// answers. **But the preacher already named the book and the chapter.** The
+// question left is not which verse — it is *did these words touch the verse that
+// is one digit away from the one he said*, and that is answerable from a much
+// shorter run against ONE named verse.
+//
+// `shared_run_with` (RG-312) is exactly that predicate, and
+// `PARAPHRASE_RUN_WORDS` = 3 is its floor, chosen because three is what it takes
+// to CORROBORATE a score that already exists rather than to OFFER a quotation
+// standing alone. The same reasoning transfers here unchanged.
+//
+// **The probe is bounded by the slip test, not by the corpus.** For a one-digit
+// chapter there are nine un-slipped chapters (`7` → 17, 27 … 97); for a
+// two-digit one, the substitutions one digit away. Nothing is scanned.
+#[cfg(test)]
+mod short_run_doubt {
+    use super::*;
+
+    /// Every chapter the decoder could have slipped FROM to produce `said`.
+    ///
+    /// The inverse of `chapter_is_a_decode_slip`, enumerated rather than searched:
+    /// a lost leading digit means `said` is a suffix of the original, and a
+    /// substitution means the same length with one digit different.
+    fn chapters_it_could_have_been(said: i64, max: i64) -> Vec<i64> {
+        let mut out = Vec::new();
+        for c in 1..=max {
+            if chapter_is_a_decode_slip(said, c) {
+                out.push(c);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn the_inverse_of_the_slip_test_is_the_set_the_probe_walks() {
+        // "7" could have been 17, 27 … 97 — the lost-leading-digit shape.
+        let from7 = chapters_it_could_have_been(7, 150);
+        assert!(
+            from7.contains(&87),
+            "Psalm 87 is not reachable from a heard 7"
+        );
+        assert!(from7.contains(&17));
+        assert!(!from7.contains(&7), "a chapter is not a slip of itself");
+        // "2" could have been 12 — RG-305 (7), Romans 12:3.
+        assert!(chapters_it_could_have_been(2, 150).contains(&12));
+        // "1" could have been 61 — RG-305 (6), Isaiah 61:3.
+        assert!(chapters_it_could_have_been(1, 150).contains(&61));
+        // And the set stays small: this is a probe, never a scan.
+        assert!(from7.len() < 20, "the probe walks {} chapters", from7.len());
+    }
+
+    #[test]
+    fn a_two_digit_substitution_is_in_the_set_too() {
+        // RG-305 (8): "Psalm 35 verse 5" for Psalms 34:5.
+        assert!(chapters_it_could_have_been(35, 150).contains(&34));
+    }
+
+    /// THE FIELD CASES, by the words the decoder actually produced.
+    ///
+    /// Both are `#[ignore]`d rather than unit-sized because they need the bundled
+    /// KJV; `cargo test short_run_doubt -- --ignored --nocapture` runs them.
+    #[test]
+    #[ignore]
+    fn the_two_short_run_field_cases_are_reachable_from_a_three_word_run() {
+        let kjv: serde_json::Value =
+            serde_json::from_str(include_str!("../data/kjv.json").trim_start_matches('\u{feff}'))
+                .expect("kjv");
+        let mut corpus: Vec<(VerseRef, String)> = Vec::new();
+        for book in kjv.as_array().expect("books") {
+            let abbrev = book["abbrev"].as_str().unwrap_or("?").to_string();
+            for (ci, chapter) in book["chapters"].as_array().expect("ch").iter().enumerate() {
+                for (vi, verse) in chapter.as_array().expect("v").iter().enumerate() {
+                    corpus.push((
+                        VerseRef {
+                            book: abbrev.clone(),
+                            chapter: ci as i64 + 1,
+                            verse: vi as i64 + 1,
+                        },
+                        verse.as_str().unwrap_or("").to_string(),
+                    ));
+                }
+            }
+        }
+        let idx = PhraseIndex::build(&corpus);
+
+        // id 818 — the window that fired Isaiah 1:3.
+        // THE REAL WINDOW, verbatim from `detections.heard_text` id 818. My first
+        // draft reconstructed it from memory and appended "for mourning", which
+        // the decoder never produced — and that lengthened the run from 4 to 6 and
+        // would have made this test claim the case was reachable by a rule that
+        // cannot reach it.
+        let heard818 = "Verse 5 and verse 7 and 8, the oil of gladness. Now, Isaiah 1 verse 3, it calls it the oil of joy.";
+        // THE BOOK KEY IS THE CORPUS'S OWN. `kjv.json` stores `"is"` and `"rm"`,
+        // not full names — the shipped index is built from `db::all_verses`, which
+        // returns what the DATABASE holds. A test that invents a spelling the
+        // corpus does not use measures nothing and answers 0, which is what this
+        // one did on its first run.
+        let target818 = VerseRef {
+            book: "is".into(),
+            chapter: 61,
+            verse: 3,
+        };
+        let run818 = idx.shared_run_with(heard818, &target818);
+        println!("818  Isaiah 61:3  shared run = {run818} words");
+
+        // id 861 — the window that fired Romans 2:3.
+        let heard861 =
+            "We have common faith, measure of faith, Romans, 2, 3 We have little faith, Matthew, 2";
+        let target861 = VerseRef {
+            book: "rm".into(),
+            chapter: 12,
+            verse: 3,
+        };
+        let run861 = idx.shared_run_with(heard861, &target861);
+        println!("861  Romans 12:3  shared run = {run861} words");
+
+        // THE CLAIM: both clear the corroboration floor, and NEITHER clears the
+        // standalone floor — which is precisely why §123 could not see them.
+        assert!(
+            run818 >= PARAPHRASE_RUN_WORDS,
+            "Isaiah 61:3 is unreachable even from a short run: {run818}"
+        );
+        assert!(
+            run861 >= PARAPHRASE_RUN_WORDS,
+            "Romans 12:3 is unreachable even from a short run: {run861}"
+        );
+        assert!(
+            run818 < MIN_RUN_WORDS && run861 < MIN_RUN_WORDS,
+            "these would already have been reachable; {run818} and {run861}"
+        );
+    }
+
+    /// A claim, with the one coordinate each case is about.
+    fn said(chapter: i64, verse: i64) -> VerseRef {
+        VerseRef {
+            book: "rm".into(),
+            chapter,
+            verse,
+        }
+    }
+
+    #[test]
+    fn a_short_run_on_a_chapter_one_digit_away_is_doubt() {
+        let r = said(2, 3);
+        let claim = Claim {
+            r: &r,
+            method: DetectionMethod::Direct,
+            verse_end: None,
+            whole_chapter: false,
+            run: None,
+        };
+        // The probe answers a long run for Romans 12:3 and nothing anywhere else.
+        let found = chapter_the_words_point_at(&claim, 150, |p| {
+            if p.chapter == 12 && p.verse == 3 {
+                PARAPHRASE_RUN_WORDS
+            } else {
+                0
+            }
+        });
+        assert_eq!(found, Some(12));
+    }
+
+    #[test]
+    fn a_run_one_word_short_of_the_floor_is_not_doubt() {
+        let r = said(2, 3);
+        let claim = Claim {
+            r: &r,
+            method: DetectionMethod::Direct,
+            verse_end: None,
+            whole_chapter: false,
+            run: None,
+        };
+        let found = chapter_the_words_point_at(&claim, 150, |_| PARAPHRASE_RUN_WORDS - 1);
+        assert_eq!(found, None, "the floor is the floor");
+    }
+
+    #[test]
+    fn a_man_reading_the_verse_he_named_is_never_doubted() {
+        // `Isaiah 41 and verse 15, Behold, I will make thee a` — right, verbatim,
+        // and doubted by an absolute three-word floor because *behold I will* is in
+        // a chapter one digit away as well. Both auto-fires an earlier draft of this
+        // rule cost had exactly this shape.
+        let r = said(41, 15);
+        let claim = Claim {
+            r: &r,
+            method: DetectionMethod::Direct,
+            verse_end: None,
+            whole_chapter: false,
+            run: None,
+        };
+        let found = chapter_the_words_point_at(&claim, 150, |p| {
+            // The verse he NAMED holds six of these words; a neighbour holds three.
+            if p.chapter == 41 {
+                6
+            } else {
+                PARAPHRASE_RUN_WORDS
+            }
+        });
+        assert_eq!(
+            found, None,
+            "the words point at the verse he said, so nothing is in doubt"
+        );
+    }
+
+    #[test]
+    fn the_probe_must_beat_the_claim_not_merely_tie_it() {
+        // A tie is not evidence: it says the words fit both chapters equally, which
+        // is what a short run does everywhere in scripture.
+        let r = said(2, 3);
+        let claim = Claim {
+            r: &r,
+            method: DetectionMethod::Direct,
+            verse_end: None,
+            whole_chapter: false,
+            run: None,
+        };
+        let tie = chapter_the_words_point_at(&claim, 150, |_| 4);
+        assert_eq!(tie, None, "a tie doubted the claim");
+        // One word more, and the same window is evidence.
+        let beat = chapter_the_words_point_at(&claim, 150, |p| if p.chapter == 12 { 5 } else { 4 });
+        assert_eq!(beat, Some(12));
+    }
+
+    #[test]
+    fn a_spoken_span_names_no_one_verse_to_probe() {
+        // `Isaiah 32 verse 15 to 17` — right, and doubted by a draft that compared
+        // the window against verse 15 alone. The run answers generously for a
+        // neighbour and the span must still refuse it.
+        let r = said(32, 15);
+        let claim = Claim {
+            r: &r,
+            method: DetectionMethod::Direct,
+            verse_end: Some(17),
+            whole_chapter: false,
+            run: None,
+        };
+        assert_eq!(chapter_the_words_point_at(&claim, 150, |_| 99), None);
+        // A `verse_end` equal to the verse is not a span — one verse, stated twice.
+        let one = Claim {
+            r: &r,
+            method: DetectionMethod::Direct,
+            verse_end: Some(15),
+            whole_chapter: false,
+            run: None,
+        };
+        assert_eq!(
+            chapter_the_words_point_at(&one, 150, |p| if p.chapter == 12 { 9 } else { 0 }),
+            Some(12),
+            "a single verse was treated as a span"
+        );
+    }
+
+    #[test]
+    fn a_whole_chapter_names_no_verse_to_probe() {
+        // "Turn to Romans 2" gives this rule nothing to compare, and inventing a
+        // verse to probe would be inventing the evidence. A run answering
+        // generously must still produce nothing.
+        let r = said(2, 1);
+        let claim = Claim {
+            r: &r,
+            method: DetectionMethod::Direct,
+            verse_end: None,
+            whole_chapter: true,
+            run: None,
+        };
+        let found = chapter_the_words_point_at(&claim, 150, |_| 99);
+        assert_eq!(found, None);
+    }
+
+    #[test]
+    fn only_a_direct_claim_is_probed() {
+        // The other reference-shaped methods are already capped at Suggest, so
+        // demoting them moves nothing and would only cost index lookups.
+        for method in [
+            DetectionMethod::Semantic,
+            DetectionMethod::Quoted,
+            DetectionMethod::Reading,
+            DetectionMethod::Ambiguous,
+            DetectionMethod::UncertainBook,
+            DetectionMethod::UncertainNumber,
+        ] {
+            let r = said(2, 3);
+            let claim = Claim {
+                r: &r,
+                method,
+                verse_end: None,
+                whole_chapter: false,
+                run: None,
+            };
+            let found = chapter_the_words_point_at(&claim, 150, |_| 99);
+            assert_eq!(found, None, "{method:?} was probed");
+        }
+    }
+
+    #[test]
+    fn the_chapter_that_was_said_is_asked_about_once_and_is_never_the_answer() {
+        // A preacher moving about inside the chapter he named is what a preacher
+        // does, so that chapter can never be the doubt — `chapter_is_a_decode_slip`
+        // refuses equality and this is the test that holds it at THIS call site.
+        //
+        // It IS asked about, exactly once, because it is the bar: the relative test
+        // needs to know how much of the window belongs to the verse he said. An
+        // earlier draft of this test asserted it was never asked at all, which was
+        // true of the absolute floor and became false the moment the floor stopped
+        // being absolute.
+        let r = said(12, 3);
+        let claim = Claim {
+            r: &r,
+            method: DetectionMethod::Direct,
+            verse_end: None,
+            whole_chapter: false,
+            run: None,
+        };
+        let mut asked: Vec<i64> = Vec::new();
+        let found = chapter_the_words_point_at(&claim, 150, |p| {
+            asked.push(p.chapter);
+            // Generous, so only the equality refusal can keep 12 out of the answer.
+            99
+        });
+        assert_eq!(
+            asked.iter().filter(|c| **c == 12).count(),
+            1,
+            "the chapter he said was asked about {} times, not once as the bar",
+            asked.iter().filter(|c| **c == 12).count()
+        );
+        assert_ne!(
+            found,
+            Some(12),
+            "the chapter he said was returned as the doubt"
+        );
+        assert!(asked.len() > 1, "the probe asked about nothing but the bar");
+    }
+
+    #[test]
+    fn the_probe_keeps_the_book_and_the_verse_it_was_given() {
+        // Only the CHAPTER moves. A probe that wandered across books would be the
+        // cross-book carve-out this rule deliberately does not touch, and one that
+        // moved the verse would be guessing at two coordinates at once.
+        let r = said(2, 3);
+        let claim = Claim {
+            r: &r,
+            method: DetectionMethod::Direct,
+            verse_end: None,
+            whole_chapter: false,
+            run: None,
+        };
+        let _ = chapter_the_words_point_at(&claim, 150, |p| {
+            assert_eq!(p.book, "rm");
+            assert_eq!(p.verse, 3);
+            0
+        });
     }
 }

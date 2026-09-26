@@ -54,23 +54,73 @@ impl Thresholds {
     /// | dial | auto_fire | suggest | behaviour              |
     /// |------|-----------|---------|------------------------|
     /// | 0    | 0.90      | 0.70    | cautious — few, sure   |
-    /// | 50   | 0.50      | 0.35    | **the default**        |
-    /// | 100  | 0.30      | 0.20    | eager — many, noisy    |
+    /// | 50   | 0.50      | 0.30    | **the default**        |
+    /// | 100  | 0.30      | 0.10    | eager — many, noisy    |
+    ///
+    /// `suggest` is not a curve of its own any more: it is `auto_fire` less
+    /// `SUGGEST_BAND`, at every dial position (DECISIONS §117, the operator's
+    /// instruction of 2026-09-23). It used to run 0.70 → 0.35 → 0.20 beside an
+    /// auto bar of 0.90 → 0.50 → 0.30, so the band between "offer it" and "put it
+    /// up" narrowed from 20 points to 10 as the dial went right — narrowest at
+    /// exactly the end where an operator most wants things offered rather than
+    /// fired. The auto-fire curve itself is untouched.
     ///
     /// Note these gate `Direct` detections only — semantic/ambiguous candidates
     /// can never auto-fire at ANY dial position (see `Router::decide`).
     pub fn from_sensitivity(sensitivity: u8) -> Self {
         let s = (sensitivity.min(100) as f32) / 100.0;
-        let (auto_fire, suggest) = if s <= 0.5 {
+        let auto_fire = if s <= 0.5 {
             let t = s * 2.0; // 0..1 across the cautious half
-            (lerp(0.90, 0.50, t), lerp(0.70, 0.35, t))
+            lerp(0.90, 0.50, t)
         } else {
             let t = (s - 0.5) * 2.0; // 0..1 across the eager half
-            (lerp(0.50, 0.30, t), lerp(0.35, 0.20, t))
+            lerp(0.50, 0.30, t)
         };
         Thresholds {
             auto_fire,
-            suggest: suggest.min(auto_fire),
+            suggest: (auto_fire - SUGGEST_BAND).max(0.0),
+        }
+    }
+
+    /// The gate as an operator reads it: how READY Relay is, 0 = never, 100 =
+    /// anything.
+    ///
+    /// ── Why the printed figure is not the threshold ────────────────────────
+    ///
+    /// The operator's instruction, 2026-09-23: *"when the sensor is on Auto fire
+    /// above 100, then it auto fires not when on 0."* The two figures were
+    /// printed as the raw confidence bars, directly under the sensitivity slider
+    /// — and they run the OPPOSITE way to it. The dial's cautious end (0) printed
+    /// `Auto-fire above 90%`; its eager end (100) printed `30%`. Sitting under a
+    /// control, a figure reads as a setting, and that one said the machine was
+    /// keenest where it fires least.
+    ///
+    /// A threshold cannot be made to rise with eagerness — a bar you must clear
+    /// is lower when more gets through, and that is arithmetic, not a choice. So
+    /// the printed quantity changes instead of its direction — and then the WORD
+    /// changed too, which is what finally settled it (the passage guard, 2026-09-25).
+    ///
+    /// This is what each bar NEEDS: a match's confidence, 0-100. So `auto_fire`
+    /// is always the LARGER of the two, by exactly `SUGGEST_BAND`, because an
+    /// auto-fire is the harder bar — which is the operator's second instruction,
+    /// *"suggestions should be lower by 20 if auto fire is on 100 so auto fire
+    /// has the higher priority"*, and it is true at every dial position.
+    ///
+    /// **The figures fall as the dial rises, and that is not a bug.** A bar you
+    /// must clear is lower when more gets through; no labelling changes that.
+    /// §117 tried to fix the confusion by inverting the number, which put the
+    /// pair in an order that reads as a ranking — a suggestion outranking an
+    /// auto-fire. The word "needs" fixes it instead: a smaller number under
+    /// "needs" is obviously the easier bar rather than the keener setting, and
+    /// the dial keeps its own direction as the control.
+    ///
+    /// It lives here, beside the mapping, for the reason `follows_dial` does: a
+    /// copy of this arithmetic in the frontend would be a second opinion about
+    /// one gate.
+    pub fn readiness(self) -> GateReadiness {
+        GateReadiness {
+            auto_fire: readiness_of(self.auto_fire),
+            suggest: readiness_of(self.suggest),
         }
     }
 
@@ -135,6 +185,29 @@ impl Thresholds {
 /// thresholds are floats and the dial is an integer, so a gate that came back
 /// from SQLite as an `f64` must still be allowed to say it is the dial's.
 pub const DIAL_READOUT_EPSILON: f32 = 0.005;
+
+/// How far below the auto-fire bar the suggest bar sits, at every dial position.
+///
+/// Twenty points, on the operator's instruction of 2026-09-23. It replaces a
+/// second interpolation curve whose band narrowed from 0.20 at the cautious end
+/// to 0.10 at the eager end — narrowest exactly where a wide band of offers is
+/// most wanted. One number, one relationship, and `from_sensitivity` is the only
+/// place it is applied.
+pub const SUGGEST_BAND: f32 = 0.20;
+
+/// The gate as a pair of 0-100 figures that rise with the dial. See
+/// `Thresholds::readiness`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GateReadiness {
+    pub auto_fire: u8,
+    pub suggest: u8,
+}
+
+/// One threshold as the confidence it needs. Whole percentage points, because that is
+/// what is printed; clamped, because a stored gate can be anything.
+fn readiness_of(threshold: f32) -> u8 {
+    ((threshold.clamp(0.0, 1.0) * 100.0).round() as i32).clamp(0, 100) as u8
+}
 
 /// Decide what thresholds a voice-profile save should land on.
 ///
@@ -226,6 +299,33 @@ pub struct Router {
     /// nudge: rejecting a 0.99 fire and rejecting a 0.51 fire would move the gate
     /// by the same amount, which is not what either one means.
     last_fire_conf: Option<f32>,
+    /// The last verse the router put on a screen — auto, manual, or a nav step
+    /// (everything goes through `note_fired`).
+    ///
+    /// **Not a second copy of `ContextMemory.current`, and the difference is the
+    /// one `liveCue` already records: position and on-air-ness are separate
+    /// facts.** `ContextMemory` is where `→` resumes and deliberately survives a
+    /// blackout, so a cleared screen still knows which passage it was walking.
+    /// This is what the screens are actually showing, so a clear drops it
+    /// (`forget_last_fire`) and a song replaces it (`forget_wall`). Asking
+    /// `ContextMemory` instead would mean a verse cleared off the wall could never
+    /// be read back onto it, which is the exact hole `forget_last_fire` exists to
+    /// stop.
+    ///
+    /// **Not `fired_at` either**, which is a COOLDOWN and expires after ten
+    /// seconds. The whole finding behind the passage guard is that a reading
+    /// outlives that (11, 17 and 120 seconds measured), so the question "is this
+    /// verse already up?" cannot be answered by anything with a clock in it.
+    last_wall: Option<String>,
+    /// May a verse Relay heard being READ go to the screens unattended?
+    ///
+    /// The operator's instruction of 2026-09-23, and the church's switch over it
+    /// (`app_settings['detection.follow_the_reader']`, default ON). It lives on
+    /// the router rather than in `detection` because this is the one door every
+    /// candidate passes through — rule 36. `detection::for_quotation` decides what
+    /// the EVIDENCE is; this decides whether the church wants it acted on, and a
+    /// second construction site for quoted candidates could not get round it.
+    follow_the_reader: bool,
 }
 
 impl Default for Router {
@@ -237,6 +337,10 @@ impl Default for Router {
             fired_at: HashMap::new(),
             sighted_at: HashMap::new(),
             last_fire_conf: None,
+            last_wall: None,
+            // ON by default, as instructed. A church that wants the old behaviour
+            // turns it off in Settings → AI & Detection.
+            follow_the_reader: true,
         }
     }
 }
@@ -315,7 +419,15 @@ impl Router {
         // holding a verse that never reached a screen — so the corroborating pass
         // one step later would be swallowed as a repeat. The gate has to decline
         // the fire, not undo it.
-        if !corroborated && method.may_auto_fire() && confidence >= self.thresholds.auto_fire {
+        // The SAME predicate `decide` uses, never a restatement of it. Asking
+        // "is the score over the bar?" here was right while every auto-firing
+        // method was gated on its score — and a `Reading` is not, so that question
+        // answers NO for a reading at a cautious dial, the corroboration wait is
+        // skipped, and `decide` fires it one line later anyway. A safety wait lost
+        // by a predicate drifting out of step with the gate it guards is rule 34,
+        // arriving silently.
+        if !corroborated && self.may_reach_a_wall(method) && self.clears_the_bar(confidence, method)
+        {
             return RouteDecision::Suggest;
         }
         self.decide(key, confidence, method, now_ms)
@@ -340,6 +452,46 @@ impl Router {
         seen_before
     }
 
+    /// May a candidate detected THIS WAY reach a congregation unattended, in
+    /// this install, right now?
+    ///
+    /// Two facts: what the method is (`may_auto_fire`, the hard rule) and whether
+    /// the church has asked Relay to follow a reader (the switch). One place, so
+    /// there is one answer.
+    fn may_reach_a_wall(&self, method: DetectionMethod) -> bool {
+        method.may_auto_fire() && (method != DetectionMethod::Reading || self.follow_the_reader)
+    }
+
+    /// Has this candidate cleared the numeric gate — for the methods that HAVE
+    /// one?
+    ///
+    /// A `Reading` does not. Its qualification is a run of words the speaker said
+    /// verbatim, held by exactly one verse (`detection::for_quotation`), and its
+    /// `confidence` is that run length on a scale of its own. Comparing it with
+    /// `auto_fire`, which is a parse probability, is the incomparable-scales
+    /// mistake this whole module exists to prevent — read in the other direction
+    /// it would mean a church at the cautious end of the dial needs a
+    /// FIFTEEN-word run before Relay follows a reader, for no reason anybody
+    /// could state. The dial governs what Relay does with a number; a reading
+    /// does not bring one.
+    fn clears_the_bar(&self, confidence: f32, method: DetectionMethod) -> bool {
+        match method {
+            DetectionMethod::Reading => true,
+            _ => confidence >= self.thresholds.auto_fire,
+        }
+    }
+
+    /// Is Relay following a reader in this install? See `follow_the_reader`.
+    pub fn follows_the_reader(&self) -> bool {
+        self.follow_the_reader
+    }
+
+    /// The church's switch. Applied at launch from `app_settings` and by
+    /// `set_follow_the_reader` in main.rs; nothing else may move it.
+    pub fn set_follow_the_reader(&mut self, on: bool) {
+        self.follow_the_reader = on;
+    }
+
     pub fn decide(
         &mut self,
         key: &str,
@@ -348,14 +500,14 @@ impl Router {
         now_ms: u64,
     ) -> RouteDecision {
         // Uncalibrated methods can reach the operator, never the screen.
-        if !method.may_auto_fire() {
+        if !self.may_reach_a_wall(method) {
             return if confidence >= self.thresholds.suggest {
                 RouteDecision::Suggest
             } else {
                 RouteDecision::Drop
             };
         }
-        if confidence >= self.thresholds.auto_fire {
+        if self.clears_the_bar(confidence, method) {
             if let Some(t) = self.fired_at.get(key) {
                 if now_ms.saturating_sub(*t) < self.debounce_ms {
                     // Already on screen, and said again within the cooldown —
@@ -363,10 +515,55 @@ impl Router {
                     return RouteDecision::Drop;
                 }
             }
+            // ONE SENTENCE HEARD TWO WAYS — 2026-09-20, live, on a congregation's
+            // screens.
+            //
+            // The window decoded one utterance 3.2 seconds apart and disagreed with
+            // itself about the book: `Numbers 10:29` at 0.88, then `Genesis 10:29`
+            // at 0.88. The preacher said Numbers; the operator walked Numbers 10:30
+            // to 10:32 by hand straight after, which is how we know.
+            //
+            // **Nothing above could see it.** The cooldown a few lines up is keyed
+            // per REFERENCE, and those are two different references — the blind spot
+            // rule 29 records for two verses in one window, in a new shape: one
+            // sentence across two windows. `decide_live`'s corroboration cannot see
+            // it either, because that rule waits for a second pass to AGREE and this
+            // second pass did not disagree, it asserted a different book just as
+            // confidently.
+            //
+            // **And no threshold could have saved it**, which is why this is a rule
+            // and not a number. Both readings scored 0.88 while six CORRECT fires
+            // that same morning scored 0.55; raising the bar discards the six and
+            // keeps this one. Rule 10, in the costume it keeps returning in.
+            //
+            // The chapter and the verse agreeing while the book does not, inside the
+            // cooldown, is treated as what it almost always is. The second reading
+            // is OFFERED, never fired — not dropped, because the operator may want
+            // it and a silent discard is a different lie. A genuine second citation
+            // outside the cooldown is untouched, and so is any other verse.
+            if let Some((book, chapter_verse)) = key.rsplit_once(' ') {
+                let heard_another_way = self.fired_at.iter().any(|(fired, at)| {
+                    now_ms.saturating_sub(*at) < self.debounce_ms
+                        && fired
+                            .rsplit_once(' ')
+                            .is_some_and(|(b, cv)| cv == chapter_verse && b != book)
+                });
+                if heard_another_way {
+                    return RouteDecision::Suggest;
+                }
+            }
             self.note_fired(key, now_ms);
             // Remember WHAT we put on screen, so a later "undo" is a proportional
             // correction rather than a blind nudge.
-            self.last_fire_conf = Some(confidence);
+            //
+            // ONLY WHEN THE NUMBER IS ONE THE GATE CAN LEARN FROM. `record_feedback`
+            // falls back to this when a dismiss arrives with no argument, and a
+            // `Reading`'s score is a word count — pushing the bar that governs
+            // spoken references past it would make Relay deafer to every reference
+            // anybody says because the operator cleared a reading off a wall. The
+            // dismissal still counts; it just carries no number, which
+            // `record_feedback` already handles.
+            self.last_fire_conf = method.confidence_is_calibrated().then_some(confidence);
             RouteDecision::AutoFire
         } else if confidence >= self.thresholds.suggest {
             RouteDecision::Suggest
@@ -387,9 +584,16 @@ impl Router {
     /// leaving it set meant a dismiss *after* a clear would tune the gate using the
     /// score of an auto-fire that is no longer on screen — correcting the router
     /// for a decision the operator was not actually reacting to.
+    /// Clears the record of what is ON the wall too, and that half is load-bearing
+    /// for the passage guard: rule B refuses to re-fire a verse the screens are
+    /// already showing, and after a clear they are showing nothing. Without this a
+    /// preacher who re-read the verse the operator had just cleared would find
+    /// Relay silently declining to put it back — the same defect this function was
+    /// written for, in the guard's costume.
     pub fn forget_last_fire(&mut self) {
         self.fired_at.clear();
         self.last_fire_conf = None;
+        self.last_wall = None;
     }
 
     /// Stamp a reference as on-screen, and drop every entry whose cooldown has
@@ -403,6 +607,45 @@ impl Router {
         self.fired_at
             .retain(|_, t| now_ms.saturating_sub(*t) < debounce);
         self.fired_at.insert(key.to_string(), now_ms);
+    }
+
+    /// What the screens are showing, as far as this module has been told. `None`
+    /// when nothing is, or when nobody can say (see `last_wall`).
+    pub fn wall(&self) -> Option<&str> {
+        self.last_wall.as_deref()
+    }
+
+    /// A verse has actually gone out to the screens.
+    ///
+    /// **Called from `broadcast_with_clock` — the ONE door content leaves the
+    /// machine by — and NOT from `note_fired`, which was the first attempt and was
+    /// measurably wrong.** `decide` returns `AutoFire` per candidate, and rule 29
+    /// then lets only rank 0 reach a wall: *"one window may inform the operator
+    /// about several verses; it may put at most ONE on a wall."* So `note_fired`
+    /// records verses that were demoted to suggestions and never shown.
+    ///
+    /// It was not a theoretical objection. Service 40 of 2026-09-25, 769.2 s:
+    /// *"Jeremiah chapter 6 verse 16 verse 17 verse 17"* yields `6:16` at 0.95 AND
+    /// `6:17` at 0.88, both `Direct`, both `AutoFire`. `6:16` went to the screens
+    /// and `6:17` was offered — and with the record kept in `note_fired`, the wall
+    /// read `Jeremiah 6:17`. Eleven seconds later the preacher read verse 16 aloud,
+    /// the guard compared it with `6:17`, found no match and fired the duplicate the
+    /// whole rule exists to stop. Caught by the bench, on real transcripts, not by
+    /// reading the code.
+    pub fn note_wall(&mut self, key: &str) {
+        self.last_wall = Some(key.to_string());
+    }
+
+    /// Something that is NOT scripture has taken the screens — a song, a notice, a
+    /// picture, a countdown — so no verse is on them any more.
+    ///
+    /// Called from the same branch of the same door `ContextMemory::forget` is
+    /// called at (rule 38), and for the same reason: a content kind added next year
+    /// is handled by construction. Deliberately does NOT touch `fired_at`, because
+    /// the repeat cooldown and the RG-178 rule are about what was recently HEARD and
+    /// a song does not change that.
+    pub fn forget_wall(&mut self) {
+        self.last_wall = None;
     }
 
     /// Operator manual override — always fires, bypassing thresholds and
@@ -629,14 +872,14 @@ mod tests {
         // is a caveat nobody reads.
         assert!(Thresholds {
             auto_fire: 0.5 + 0.001,
-            suggest: 0.35 - 0.001,
+            suggest: 0.30 - 0.001,
         }
         .follows_dial());
     }
 
     #[test]
     fn gates_by_tier() {
-        let mut r = Router::default(); // 0.50 / 0.35 (push above ~50%)
+        let mut r = Router::default(); // 0.50 / 0.30 (push above ~50%)
                                        // Above auto-fire → straight to the screens.
         assert_eq!(
             r.decide("John 3:16", 0.70, DIRECT, 0),
@@ -649,8 +892,110 @@ mod tests {
         );
         // Below suggest → dropped silently.
         assert_eq!(
-            r.decide("Psalms 23:1", 0.30, DIRECT, 200),
+            r.decide("Psalms 23:1", 0.25, DIRECT, 200),
             RouteDecision::Drop
+        );
+    }
+
+    /// ONE SENTENCE, DECODED TWICE, INTO TWO DIFFERENT BOOKS — 2026-09-20, live.
+    ///
+    /// The rolling window decoded the same utterance 3.2 seconds apart:
+    ///
+    /// ```text
+    /// 375.4  "Numbers chapter 10. I'll read verse 29."            -> Numbers 10:29  0.88  AUTO
+    /// 378.6  "Genesis 10, I'll read verse 29. It's the New King"  -> Genesis 10:29  0.88  AUTO
+    /// ```
+    ///
+    /// The preacher said Numbers. The operator then walked Numbers 10:30, 10:31
+    /// and 10:32 by hand, which is the corroboration. **Genesis 10:29 reached the
+    /// congregation's screens and nobody said it.**
+    ///
+    /// Nothing in the router could see it. The debounce is keyed per REFERENCE and
+    /// those are two different references — the same blind spot rule 29 records for
+    /// two verses sharing one window, in a new shape: not two verses in one window,
+    /// but one sentence in two windows. Corroboration (`decide_live`) cannot catch
+    /// it either: that rule holds a reference until a second pass AGREES, and this
+    /// second pass did not disagree, it asserted a different book at the same
+    /// confidence.
+    ///
+    /// **And confidence could never have separated them.** Both scored 0.88, while
+    /// six CORRECT fires that morning scored 0.55. Raising the bar would have
+    /// discarded the six and kept this one — rule 10, in the costume it keeps
+    /// coming back in.
+    ///
+    /// So the chapter and verse agreeing while the book does not, inside the
+    /// cooldown, is treated as what it almost always is: one utterance heard two
+    /// ways. The second is offered, never fired. It is NOT dropped — the operator
+    /// may want it, and a silent discard would be a different lie.
+    #[test]
+    fn a_second_book_at_the_same_chapter_and_verse_is_offered_never_fired() {
+        let mut r = Router::default();
+        assert_eq!(
+            r.decide("Numbers 10:29", 0.88, DIRECT, 375_400),
+            RouteDecision::AutoFire,
+            "the first reading of the sentence must still reach the screen"
+        );
+        assert_eq!(
+            r.decide("Genesis 10:29", 0.88, DIRECT, 378_600),
+            RouteDecision::Suggest,
+            "the same chapter and verse in a different book, 3.2s later, auto-fired"
+        );
+    }
+
+    /// The half that must not regress, in four directions.
+    #[test]
+    fn the_second_book_rule_is_narrow() {
+        let mut r = Router::default();
+
+        // 1. A DIFFERENT verse in a different book is untouched. This is the
+        //    ordinary case of a preacher moving between books and it must not slow.
+        assert_eq!(
+            r.decide("Numbers 10:29", 0.9, DIRECT, 0),
+            RouteDecision::AutoFire
+        );
+        assert_eq!(
+            r.decide("Genesis 1:1", 0.9, DIRECT, 1_000),
+            RouteDecision::AutoFire,
+            "an unrelated verse was held back"
+        );
+
+        // 2. OUTSIDE the cooldown it is two real citations, not one utterance.
+        let mut r = Router::default();
+        assert_eq!(
+            r.decide("Numbers 10:29", 0.9, DIRECT, 0),
+            RouteDecision::AutoFire
+        );
+        assert_eq!(
+            r.decide("Genesis 10:29", 0.9, DIRECT, 60_000),
+            RouteDecision::AutoFire,
+            "a genuine second citation a minute later was held back"
+        );
+
+        // 3. The SAME reference still Drops rather than Suggests. The existing
+        //    debounce owns that case and this rule must not take it over: a repeat
+        //    is already on the screen, and offering it again is noise.
+        let mut r = Router::default();
+        assert_eq!(
+            r.decide("Numbers 10:29", 0.9, DIRECT, 0),
+            RouteDecision::AutoFire
+        );
+        assert_eq!(
+            r.decide("Numbers 10:29", 0.9, DIRECT, 1_000),
+            RouteDecision::Drop,
+            "the same-verse debounce changed behaviour"
+        );
+
+        // 4. A numbered book is split correctly. `1 Corinthians 13:4` must yield
+        //    the book `1 Corinthians`, not `1`.
+        let mut r = Router::default();
+        assert_eq!(
+            r.decide("1 Corinthians 13:4", 0.9, DIRECT, 0),
+            RouteDecision::AutoFire
+        );
+        assert_eq!(
+            r.decide("2 Corinthians 13:4", 0.9, DIRECT, 2_000),
+            RouteDecision::Suggest,
+            "a numbered book was split on the wrong space"
         );
     }
 
@@ -664,7 +1009,29 @@ mod tests {
             r.set_thresholds(Thresholds::from_sensitivity(s));
             // Every confidence, including a perfect 1.0, and every dial position.
             for conf in [0.51, 0.75, 0.95, 0.99, 1.0] {
-                for m in [DetectionMethod::Semantic, DetectionMethod::Ambiguous] {
+                // `Quoted` joined this list on 2026-09-20 and it is the one most
+                // likely to be argued with, because its evidence LOOKS strong: a
+                // contiguous run of a preacher's words that is verbatim in one
+                // verse. It is still not a spoken reference. A preacher quotes
+                // far more scripture than a congregation is shown, so the run
+                // length says which verse and says nothing whatever about
+                // whether anybody wants it on a wall.
+                //
+                // `UncertainBook` and `UncertainNumber` joined it on 2026-09-25 with
+                // RG-305, and the gap they closed is worth stating: both were capped
+                // here by `may_auto_fire` from the day they were added and NEITHER was
+                // in this list, so the property test that exists to prove the gate is
+                // the method covered three of five. The citation-doubt rule now demotes
+                // a 0.95 `Direct` into one of those two, which makes the cap the whole
+                // of its safety claim — a claim that was resting on a test that did not
+                // check it.
+                for m in [
+                    DetectionMethod::Semantic,
+                    DetectionMethod::Ambiguous,
+                    DetectionMethod::Quoted,
+                    DetectionMethod::UncertainBook,
+                    DetectionMethod::UncertainNumber,
+                ] {
                     assert_ne!(
                         r.decide("John 3:16", conf, m, 0),
                         RouteDecision::AutoFire,
@@ -1000,7 +1367,9 @@ mod tests {
         assert!((mid.suggest - def.suggest).abs() < 1e-6);
         // And it is the documented operator preference: push above ~50%.
         assert!((def.auto_fire - 0.50).abs() < 1e-4, "{}", def.auto_fire);
-        assert!((def.suggest - 0.35).abs() < 1e-4, "{}", def.suggest);
+        // 0.30, not the 0.35 this line pinned until 2026-09-23: `suggest` is
+        // `auto_fire - SUGGEST_BAND` everywhere now (DECISIONS §117).
+        assert!((def.suggest - 0.30).abs() < 1e-4, "{}", def.suggest);
     }
 
     #[test]
@@ -1268,5 +1637,338 @@ mod sensitivity_sweep {
                 println!("          wrong: {names:?}");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod gate_readout_tests {
+    use super::*;
+
+    /// THE OPERATOR'S INSTRUCTION, 2026-09-23: *"Suggest above should be 20 below
+    /// the auto-fire above."*
+    ///
+    /// It used to follow a curve of its own — 0.70 at the cautious end, 0.35 at
+    /// the default, 0.20 at the eager end — so the band between "offer it" and
+    /// "put it up" narrowed from 20 points to 10 as the dial was pushed right.
+    /// That is the wrong way round: the eager end is exactly where an operator
+    /// most wants a wide band of things offered rather than fired.
+    #[test]
+    fn the_suggest_bar_sits_exactly_twenty_below_the_auto_fire_bar() {
+        for s in 0..=100u8 {
+            let t = Thresholds::from_sensitivity(s);
+            assert!(
+                (t.auto_fire - t.suggest - SUGGEST_BAND).abs() < 1e-5,
+                "dial {s}: auto {:.3} suggest {:.3} — band {:.3}, wanted {SUGGEST_BAND}",
+                t.auto_fire,
+                t.suggest,
+                t.auto_fire - t.suggest
+            );
+        }
+    }
+
+    /// THE OPERATOR'S INSTRUCTION, 2026-09-23: *"when the sensor is on Auto fire
+    /// above 100, then it auto fires not when on 0."*
+    ///
+    /// The printed figure was the raw confidence bar, which runs the other way
+    /// from the dial it is printed under: the dial's cautious end (0) showed
+    /// `Auto-fire above 90%` and its eager end (100) showed `30%`. Read as a
+    /// setting — which is how it reads, sitting under a slider — that says the
+    /// machine is keenest at the position where it fires least.
+    ///
+    /// `readiness` was that, and it put the figures in an order the operator then
+    /// objected to in their turn: *"suggestions should be lower by 20 if auto
+    /// fire is on 100 so auto fire has the higher priority."* On a readiness
+    /// scale a suggestion is the LARGER number, because it is the easier bar.
+    ///
+    /// Both complaints are about the same pair and only one framing satisfies
+    /// both: print what each one NEEDS. Auto-fire needs more confidence than a
+    /// suggestion — always, at every dial position, by exactly `SUGGEST_BAND` —
+    /// so auto-fire is the larger figure and the word "needs" makes a smaller
+    /// number obviously the easier bar rather than the keener setting. The dial
+    /// is the control and keeps its own direction; these are what it produced.
+    #[test]
+    fn auto_fire_always_needs_more_than_a_suggestion_and_by_exactly_the_band() {
+        for s in 0..=100u8 {
+            let g = Thresholds::from_sensitivity(s).readiness();
+            assert!(
+                g.auto_fire > g.suggest,
+                "dial {s}: a suggestion needs as much as an auto-fire ({} vs {})",
+                g.suggest,
+                g.auto_fire
+            );
+            assert_eq!(
+                g.auto_fire as i16 - g.suggest as i16,
+                20,
+                "dial {s}: the band is not 20 points wide on the printed scale"
+            );
+        }
+        // The two ends, named, so a change to the curve has to say so out loud.
+        // The dial's EAGER end needs the least, which is what eager means.
+        assert_eq!(Thresholds::from_sensitivity(0).readiness().auto_fire, 90);
+        assert_eq!(Thresholds::from_sensitivity(100).readiness().auto_fire, 30);
+    }
+
+    /// AND THE FIGURES FALL AS THE DIAL RISES, deliberately.
+    ///
+    /// That is the half §117 was written about and it has NOT been reverted: a
+    /// bar you must clear is lower when more gets through, and no labelling can
+    /// change that. What §117 got wrong was trying to fix it by turning the
+    /// number over, which put the two in an order that read as a ranking. The
+    /// fix is the WORD — "needs" — not the arithmetic, and this test exists so
+    /// nobody re-inverts the figures to make them rise with the slider again.
+    #[test]
+    fn what_each_needs_falls_as_the_dial_rises() {
+        let mut prev_auto = 101i16;
+        for s in 0..=100u8 {
+            let g = Thresholds::from_sensitivity(s).readiness();
+            assert!(
+                g.auto_fire as i16 <= prev_auto,
+                "dial {s}: what an auto-fire needs ROSE to {}",
+                g.auto_fire
+            );
+            prev_auto = g.auto_fire as i16;
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FOLLOWING THE READER · THE GATE (DECISIONS §118)
+// ═══════════════════════════════════════════════════════════════════════════
+#[cfg(test)]
+mod reading_gate {
+    use super::*;
+
+    const READING: DetectionMethod = DetectionMethod::Reading;
+    const QUOTED: DetectionMethod = DetectionMethod::Quoted;
+
+    /// THE OPERATOR'S INSTRUCTION, 2026-09-23: *"follow the verse whenever a
+    /// preacher is reading a bible verse, you dont need to wait or suggest it."*
+    ///
+    /// And at EVERY dial position, because the thing that qualified it is a run
+    /// of words, not a score — so there is no number for a dial to erase. This
+    /// mirrors `semantic_can_never_auto_fire` deliberately: the same sweep, the
+    /// opposite answer, for the one method where the evidence is what was said.
+    #[test]
+    fn a_reading_reaches_the_wall_at_every_dial_position() {
+        for s in 0..=100u8 {
+            let mut r = Router::default();
+            r.set_thresholds(Thresholds::from_sensitivity(s));
+            assert_eq!(
+                r.decide("John 3:16", 0.69, READING, 0),
+                RouteDecision::AutoFire,
+                "a reading was held back at sensitivity {s}"
+            );
+        }
+    }
+
+    /// AND THE CHURCH MAY TURN IT OFF. Default on, per the operator; off, a
+    /// reading behaves exactly as `Quoted` always has.
+    #[test]
+    fn the_switch_puts_it_back_where_it_was() {
+        assert!(
+            Router::default().follows_the_reader(),
+            "the default must be ON — the operator asked for it"
+        );
+        let mut r = Router::default();
+        r.set_follow_the_reader(false);
+        assert_eq!(
+            r.decide("John 3:16", 0.69, READING, 0),
+            RouteDecision::Suggest
+        );
+        // Still offered, never silently dropped: the operator asked for less
+        // firing, not for less information.
+        r.set_follow_the_reader(true);
+        assert_eq!(
+            r.decide("John 3:16", 0.69, READING, 5_000),
+            RouteDecision::AutoFire
+        );
+    }
+
+    /// EVERYTHING SHORT OF THE BAR IS UNTOUCHED. `Quoted` is still capped at
+    /// `Suggest` at any score and any dial — the cap moved for one new method,
+    /// not for the class.
+    #[test]
+    fn a_quotation_that_is_not_a_reading_still_cannot_fire() {
+        for s in 0..=100u8 {
+            let mut r = Router::default();
+            r.set_thresholds(Thresholds::from_sensitivity(s));
+            for conf in [0.51, 0.75, 0.95, 1.0] {
+                assert_ne!(
+                    r.decide("John 3:16", conf, QUOTED, 0),
+                    RouteDecision::AutoFire,
+                    "Quoted auto-fired at conf={conf} sensitivity={s}"
+                );
+            }
+        }
+    }
+
+    /// RULE 28 STILL APPLIES, and this is the trap it was nearly lost to.
+    ///
+    /// `decide_live` held a reference back for one more decode pass by asking
+    /// "would this fire on its score?" — `confidence >= auto_fire`. A reading is
+    /// NOT gated on its score, so at a cautious dial that question answers no, the
+    /// corroboration wait is skipped, and the thing that skipped it fires anyway
+    /// one line later. Removing a safety wait to make a path faster is rule 34,
+    /// and it would have happened silently.
+    #[test]
+    fn a_reading_from_a_partial_window_still_waits_for_a_second_pass() {
+        let mut r = Router::default();
+        r.set_thresholds(Thresholds::from_sensitivity(0)); // the most cautious dial
+        assert_eq!(
+            r.decide_live("John 3:16", 0.69, READING, 0, false),
+            RouteDecision::Suggest,
+            "a reading read once out of a partial window reached the wall"
+        );
+        assert_eq!(
+            r.decide_live("John 3:16", 0.69, READING, 400, false),
+            RouteDecision::AutoFire,
+            "the corroborating pass did not fire it"
+        );
+        // A closed utterance has no next pass coming, so it fires on first sight —
+        // unchanged.
+        let mut r = Router::default();
+        assert_eq!(
+            r.decide_live("Romans 8:28", 0.69, READING, 0, true),
+            RouteDecision::AutoFire
+        );
+    }
+
+    /// A READING MUST NEVER TEACH THE AUTO-FIRE BAR.
+    ///
+    /// `dismiss_detection` carries no number: the router falls back to the score
+    /// of whatever it last put on screen. If that was a reading, the fallback is
+    /// `quoted_confidence(run)` — a word count — and `record_feedback` would push
+    /// the bar that governs SPOKEN REFERENCES past it. The operator pulled a
+    /// followed reading off the wall and the machine would have got deafer to
+    /// every reference anybody says.
+    #[test]
+    fn dismissing_a_followed_reading_does_not_move_the_reference_gate() {
+        let mut r = Router::default();
+        let before = r.thresholds().auto_fire;
+        assert_eq!(
+            r.decide("John 3:16", 0.95, READING, 0),
+            RouteDecision::AutoFire
+        );
+        r.record_feedback(false, None); // the operator clears it off the wall
+        let after = r.thresholds().auto_fire;
+        assert!(
+            after <= before + 1e-6,
+            "a reading taught the reference gate: {before} → {after}"
+        );
+        // A DIRECT fire in the same position still does teach it — proving the
+        // guard is about the method and not about the feedback path being inert.
+        let mut r = Router::default();
+        let before = r.thresholds().auto_fire;
+        assert_eq!(
+            r.decide("John 3:16", 0.95, DetectionMethod::Direct, 0),
+            RouteDecision::AutoFire
+        );
+        r.record_feedback(false, None);
+        assert!(r.thresholds().auto_fire > before);
+    }
+
+    /// The debounce, the cooldown and the RG-178 two-books rule all still see a
+    /// reading — it goes through the same door as everything else.
+    #[test]
+    fn a_reading_is_debounced_like_anything_else() {
+        let mut r = Router::default();
+        assert_eq!(
+            r.decide("John 3:16", 0.69, READING, 0),
+            RouteDecision::AutoFire
+        );
+        assert_eq!(
+            r.decide("John 3:16", 0.69, READING, 500),
+            RouteDecision::Drop,
+            "the same verse re-transcribed fired twice"
+        );
+    }
+}
+
+/// **WHAT IS ON THE WALL** — `last_wall`, the fact the passage guard rests on
+/// (the passage guard, 2026-09-25).
+///
+/// The wall is TOLD, not inferred, and that is the whole design: `broadcast_with_clock`
+/// calls `note_wall` for scripture and `forget_wall` for everything else, so this
+/// module records what actually left the machine rather than what it decided. The
+/// end-to-end half — that every door a verse reaches a screen by really does arrive
+/// here — is in `e2e`, because only the running app has the door.
+#[cfg(test)]
+mod the_wall {
+    use super::*;
+
+    #[test]
+    fn a_fresh_router_says_nothing_is_on_the_wall() {
+        assert_eq!(Router::default().wall(), None);
+    }
+
+    /// **DECIDING IS NOT SHOWING**, and this is the test the first design failed.
+    ///
+    /// `decide` returns `AutoFire` per candidate; rule 29 then lets only rank 0 reach
+    /// a wall. So a gate decision may NEVER by itself claim the screens — service 40
+    /// of 2026-09-25 yielded `Jeremiah 6:16` and `6:17` from one sentence, both
+    /// `AutoFire`, and only 6:16 was shown. See `note_wall`.
+    #[test]
+    fn a_gate_decision_alone_never_claims_the_wall() {
+        let mut r = Router::default();
+        assert_eq!(
+            r.decide("Jeremiah 6:16", 0.95, DetectionMethod::Direct, 1_000),
+            RouteDecision::AutoFire
+        );
+        assert_eq!(
+            r.decide("Jeremiah 6:17", 0.88, DetectionMethod::Direct, 1_000),
+            RouteDecision::AutoFire
+        );
+        assert_eq!(
+            r.wall(),
+            None,
+            "the gate said yes twice and rule 29 shows one; neither is a screen"
+        );
+        // The broadcast is what says so.
+        r.note_wall("Jeremiah 6:16");
+        assert_eq!(r.wall(), Some("Jeremiah 6:16"));
+    }
+
+    /// **THE CLEAR IS THE RELEASE THAT MATTERS.** `forget_last_fire` runs on a clear
+    /// and a blackout, and without this half a preacher who re-read the verse the
+    /// operator had just cleared would find Relay silently declining to put it back —
+    /// the exact defect that function was written for, in the guard's costume.
+    #[test]
+    fn clearing_the_screens_forgets_what_was_on_them() {
+        let mut r = Router::default();
+        r.note_wall("John 3:16");
+        r.forget_last_fire();
+        assert_eq!(r.wall(), None);
+    }
+
+    /// A song, a notice, a picture or a countdown takes the screens, so no verse is
+    /// on them.
+    #[test]
+    fn content_that_is_not_scripture_forgets_the_verse() {
+        let mut r = Router::default();
+        r.decide("John 3:16", 0.95, DetectionMethod::Direct, 1_000);
+        r.note_wall("John 3:16");
+        r.forget_wall();
+        assert_eq!(r.wall(), None);
+        // …and it leaves the repeat cooldown alone, because a song does not change
+        // what was recently HEARD. The same verse inside the cooldown still Drops.
+        assert_eq!(
+            r.decide("John 3:16", 0.95, DetectionMethod::Direct, 2_000),
+            RouteDecision::Drop
+        );
+    }
+
+    /// The wall is NOT the cooldown, and this is the measurement that forced the two
+    /// apart: the field gaps between a reading and the verse already on the wall were
+    /// 11, 17 and 120 seconds, and `DEFAULT_DEBOUNCE_MS` is 10. Anything with a clock
+    /// in it answers "no verse is up" while the verse is plainly up.
+    #[test]
+    fn the_wall_has_no_clock_in_it() {
+        let mut r = Router::default();
+        r.note_wall("Jeremiah 6:16");
+        const { assert!(DEFAULT_DEBOUNCE_MS < 120_000) };
+        // Two minutes on, with the cooldown long expired, the wall still says the
+        // same thing — because it is a fact and not a timer.
+        r.decide("Jeremiah 6:16", 0.95, DetectionMethod::Direct, 121_000);
+        assert_eq!(r.wall(), Some("Jeremiah 6:16"));
     }
 }

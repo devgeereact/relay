@@ -36,6 +36,29 @@ const TARGET_RATE: u32 = 16_000; // whisper input rate
 /// re-detected on every pass — which is why `router::DEFAULT_DEBOUNCE_MS` is
 /// derived from this value rather than picked independently. Keep them coupled.
 pub const WINDOW_SECS: usize = 8;
+
+/// **A FULL WINDOW IS A BOUNDARY, NOT A PLACE TO DROP AUDIO — RG-262.**
+///
+/// The decode loop kept the last `WINDOW_SECS` of an open utterance and drained
+/// the front, and `transcribe` decodes the whole window each pass. So a FINAL
+/// carried the last eight seconds of the utterance and nothing before it: a
+/// preacher speaking for forty seconds without a 1.4 s gap produced one line of
+/// about eight seconds, and the other thirty-two existed only as partials, each
+/// overwriting the last.
+///
+/// **Measured in a real service rather than argued.** Across 982 rows of the
+/// author's own database no transcript line anywhere exceeds 160 characters —
+/// that ceiling IS this window, visible in the data — and service 24, ninety
+/// three minutes of preaching, produced 9,987 characters in total.
+///
+/// So a window that has no room CLOSES. The text is emitted and kept, the window
+/// is cleared, and the audio that would not fit starts the next one. Nothing is
+/// decoded twice and nothing is thrown away; the cost is that a word straddling
+/// the boundary can be split, which is a far smaller harm than losing four
+/// fifths of a sermon.
+pub(crate) fn window_is_full(window_len: usize, incoming: usize, max_window: usize) -> bool {
+    window_len + incoming > max_window
+}
 /// The SLOWEST the worker will step: one pass per second of new audio. This is
 /// also the ceiling the real-time budget is judged against, and it is what the
 /// cadence used to be, always, on every machine.
@@ -120,6 +143,100 @@ fn step_samples_for(decode_ema_ms: f32) -> usize {
 /// the middle of one.
 const SILENCE_FINALIZE: u32 = 7;
 
+/// **HOW LONG A PAUSE IS HELD WHEN THE WORDS SO FAR END ON A BOOK NAME — RG-284.**
+///
+/// 15 hops ≈ 3.0 s, against `SILENCE_FINALIZE`'s 7 ≈ 1.4 s.
+///
+/// The operator: *"when you hear psalms and there is a pause in the voice, wait to
+/// hear the next couple sentence for any chapter and verse before breaking
+/// transcript."* Finalizing CLEARS the window, so "Turn with me to Psalms" …
+/// [page turn] … "chapter twenty-three, verse one" is decoded as two windows, one
+/// holding a book with no numbers and one holding numbers with no book. Neither is
+/// a reference and nothing downstream can reassemble them: `detection.rs` is handed
+/// one window at a time, on purpose.
+///
+/// **Three seconds, and the number is not a taste judgement.** The unit is SILENCE,
+/// not speech — the moment the preacher says anything the run resets and the window
+/// stays open for as long as they keep talking, so three seconds of held silence
+/// buys the whole of the next sentence, which is what was asked for. The ceiling is
+/// the window: `WINDOW_SECS` is 8 s, a phrase ending on a book name has already
+/// spent two or three of them, and held silence spends the rest. A hold long enough
+/// to fill the window on its own would force-close it (RG-262) BEFORE the chapter
+/// could arrive — buying nothing, and still delaying every FINAL behind it. A FINAL
+/// is what carries persistence and the spoken commands (rule 33), so it is not free
+/// to postpone.
+///
+/// The hard ceiling is structural and stays where it is: `window_is_full` closes the
+/// window whatever this constant says. This is the softer bound, and it is pinned by
+/// `the_hold_can_never_on_its_own_exhaust_the_window`.
+const DANGLING_SILENCE_FINALIZE: u32 = 15;
+
+/// The probe appended to the transcript to ask the parser whether the tail is a
+/// book name waiting for its numbers. Digits and the pairing colon, so it says the
+/// same thing in every language Relay ships.
+const PROBE_NUMBERS: &str = "1:1";
+
+/// How many consecutive silent chunks end this utterance.
+///
+/// The ONLY place the two silence thresholds are chosen between, so the policy is
+/// one expression rather than a condition repeated at a call site — the shape rule
+/// 36 asks for, one door down.
+pub(crate) fn finalize_after(tail_may_be_unfinished: bool) -> u32 {
+    if tail_may_be_unfinished {
+        DANGLING_SILENCE_FINALIZE
+    } else {
+        SILENCE_FINALIZE
+    }
+}
+
+/// **COULD THESE WORDS BE THE FIRST HALF OF A REFERENCE? — RG-284.**
+///
+/// ── The interface, which is the judgement call in this change ───────────────
+///
+/// `stt.rs` decodes. It does not know what a book is, and after this function it
+/// still does not: there is no alias table here, no book list, no language list and
+/// no grammar. The question is asked of `detection::detect_direct`, the public
+/// parser that owns all four, and it is asked as a PROBE — *does appending a
+/// chapter and verse make a reference appear at the tail that was not there
+/// before?* That is exactly the question, phrased in the one vocabulary both
+/// modules already share.
+///
+/// The alternative was a `detection::` predicate written for this caller. It would
+/// be a better name and a worse boundary: a second entry point into the parser,
+/// with its own view of what a book name is, to keep in step with the first. The
+/// probe cannot drift from `detect_direct`, because it IS `detect_direct`.
+///
+/// ── What it deliberately does not do ────────────────────────────────────────
+///
+/// A reading that ALREADY parses at the tail returns false and is not delayed.
+/// DECISIONS §34 settled that: guarding every tail match costs about a second on
+/// essentially every auto-fire, and `RefMatch::is_provisional` already owns the
+/// "the verse number has not arrived yet" case at the detection layer. This
+/// function is only about the pause BEFORE any number has been said at all.
+///
+/// ── What it gets wrong, measured rather than guessed ────────────────────────
+///
+/// Rule 10's ordinary English words that are also one-token aliases — `job`,
+/// `song`, `mark` — make this answer true at the end of a sentence that had
+/// nothing to do with scripture. The cost of a wrong yes is bounded and small: a
+/// FINAL waits up to `DANGLING_SILENCE_FINALIZE`, nothing fires, nothing is lost.
+/// `bench::dangling_hold_rate` measures how often it happens on real preaching.
+pub(crate) fn tail_may_be_an_unfinished_reference(text: &str) -> bool {
+    if text.trim().is_empty() {
+        return false;
+    }
+    if crate::detection::detect_direct(text)
+        .iter()
+        .any(|m| m.at_tail)
+    {
+        return false;
+    }
+    let probed = format!("{text} {PROBE_NUMBERS}");
+    crate::detection::detect_direct(&probed)
+        .iter()
+        .any(|m| m.at_tail)
+}
+
 /// A transcript update pushed to the UI. `is_final` marks an utterance closed
 /// by a silence gap; partials update the same in-progress line.
 #[derive(Debug, Clone, Serialize)]
@@ -127,6 +244,15 @@ pub struct TranscriptUpdate {
     pub text: String,
     pub language: String,
     pub is_final: bool,
+    /// **THE UTTERANCE IS STILL GOING — RG-262.** `true` when this final closed
+    /// because the window filled rather than because the speaker stopped.
+    ///
+    /// It is a FINAL for every purpose that keeps text: it is shown, it is
+    /// persisted, and it is not overwritten by the next partial. It is NOT an
+    /// utterance boundary, and the detection side must not treat it as one —
+    /// rule 28's corroboration exemption exists because "no next pass is coming",
+    /// and after a forced close the next pass is coming immediately.
+    pub continued: bool,
     pub timestamp_ms: u64,
     /// The decode pass this text came out of (`latency::begin_pass`). Rides to the
     /// console and on to detection so ONE identifier spans microphone to
@@ -405,6 +531,10 @@ fn worker<F>(
     let threads = (cores / 2).clamp(1, 4) as i32;
 
     let mut window: Vec<f32> = Vec::with_capacity(TARGET_RATE as usize * WINDOW_SECS);
+    // Audio that arrived with no room left in the window (RG-262). It starts the
+    // next window rather than being drained off the front of this one.
+    let mut carry: Vec<f32> = Vec::new();
+    let mut force_close = false;
     let max_window = TARGET_RATE as usize * WINDOW_SECS;
     let mut new_since_step = 0usize;
     // Cadence, and the measurement that drives it. Starts at the old fixed second
@@ -413,6 +543,13 @@ fn worker<F>(
     let mut step_samples = STEP_SAMPLES;
     let mut decode_ema_ms = 0.0f32;
     let mut silence_run = 0u32;
+    // RG-284. Did the LAST decode of this still-open window end on something that
+    // could be the first half of a reference? Recomputed once per decode, never per
+    // chunk: the decoder's thread decodes (rule 33), and this is the cheapest place
+    // the answer can be had — the text is already in hand and nothing else on the
+    // path needs it. Cleared at every window boundary, because the next window's
+    // text is not known until it has been decoded.
+    let mut tail_may_be_unfinished = false;
     // Timestamp of the newest chunk seen. Now that a batch is drained before any
     // decode, this must persist ACROSS batches — a batch of purely-overlapping
     // chunks assigns nothing, and the last real timestamp is still the right one.
@@ -509,7 +646,12 @@ fn worker<F>(
             // End of utterance: a real run of silence, with something to close. Tested
             // here — before any `continue` below — so a chunk that happens to be fully
             // overlapping cannot skip past the check and swallow the finalize.
-            if silence_run >= SILENCE_FINALIZE && !window.is_empty() {
+            //
+            // HOW LONG THAT RUN HAS TO BE IS NOT A CONSTANT (RG-284). A pause after a
+            // dangling book name is a preacher finding the page, not the end of the
+            // sentence, and finalizing there clears the window and separates the book
+            // from its chapter and verse for good. `finalize_after` owns that choice.
+            if silence_run >= finalize_after(tail_may_be_unfinished) && !window.is_empty() {
                 want_final = true;
             }
 
@@ -555,10 +697,15 @@ fn worker<F>(
                 continue; // fully overlapping — nothing new
             }
             let resampled = resample_linear(new_slice, chunk.sample_rate, TARGET_RATE);
-            window.extend_from_slice(&resampled);
-            if window.len() > max_window {
-                let drop = window.len() - max_window;
-                window.drain(..drop);
+            // RG-262. A window with no room left is CLOSED rather than drained:
+            // the audio that will not fit is held back and starts the next one,
+            // so the text of what has already been heard is emitted and kept
+            // instead of falling off the front unsaid.
+            if window_is_full(window.len(), resampled.len(), max_window) {
+                force_close = true;
+                carry.extend_from_slice(&resampled);
+            } else {
+                window.extend_from_slice(&resampled);
             }
             new_since_step += resampled.len();
 
@@ -574,10 +721,17 @@ fn worker<F>(
 
         // ONE decode per batch. `final` wins: the speaker has stopped, and the
         // finalized text is what the console keeps.
-        if !want_final && !want_step {
+        // A FORCED CLOSE IS A DECODE, whatever the cadence says. The window is
+        // full; waiting for the next step would mean draining it after all.
+        if !want_final && !want_step && !force_close {
             continue;
         }
-        let is_final = want_final;
+        // AND IT IS A FINAL, because the window really is closing: the text has
+        // to be kept, and a partial is a line that gets overwritten. It is NOT
+        // the end of what the preacher is saying, and `continued` is how the
+        // detection side is told the difference (RG-262).
+        let is_final = want_final || force_close;
+        let continued = force_close && !want_final;
         let started = std::time::Instant::now();
         let window_ms = window.len() as u64 * 1000 / TARGET_RATE as u64;
         let trace = crate::latency::begin_pass(
@@ -616,10 +770,15 @@ fn worker<F>(
                     voiced,
                 );
                 emitted = true;
+                // RG-284. Ask ONCE per decode, before the text is handed on, so a
+                // pause arriving in the very next chunk is judged against words
+                // that have actually been decoded.
+                tail_may_be_unfinished = tail_may_be_an_unfinished_reference(&text);
                 on_update(TranscriptUpdate {
                     text,
                     language: detected,
                     is_final,
+                    continued,
                     timestamp_ms: last_ts_ms,
                     trace_id: trace,
                 });
@@ -634,10 +793,30 @@ fn worker<F>(
         new_since_step = 0;
         oldest_pending_us = None;
         if is_final {
+            // THE HOLD DOES NOT SURVIVE THE WINDOW IT WAS HELD FOR (RG-284). This
+            // covers both closes: a real stop, and a forced close whose `carry`
+            // starts the next window with audio nothing has decoded yet. Claiming
+            // a dangling book name in text that has not been produced would hold
+            // the NEXT window on the strength of the last one.
+            tail_may_be_unfinished = false;
             window.clear();
-            // The utterance is closed; the next voiced chunk starts a new one.
-            voice_opened_us = None;
+            // THE AUDIO THAT WOULD NOT FIT STARTS THE NEXT WINDOW (RG-262).
+            // Held back rather than dropped, which is the whole of the change:
+            // before this the same samples were drained off the front and their
+            // words were never said in any line anybody kept.
+            if !carry.is_empty() {
+                window.extend_from_slice(&carry);
+                carry.clear();
+            }
+            // A FORCED CLOSE DOES NOT END THE UTTERANCE. The preacher is still
+            // speaking; only the window ended, so the voice stays open and the
+            // latency trace goes on measuring the same breath.
+            if !continued {
+                // The utterance is closed; the next voiced chunk starts a new one.
+                voice_opened_us = None;
+            }
         }
+        force_close = false;
 
         // Whisper cannot keep up with the preacher on this machine. Say so ONCE,
         // with the numbers — a transcript that silently runs late is the hardest
@@ -671,7 +850,7 @@ fn worker<F>(
                 // this form. It used to name three millisecond figures and nothing
                 // else, so an operator who followed it landed on `ggml-base`, which is
                 // the configuration that produced four wrong verses in 85.5 minutes on
-                // 2026-09-06 (`docs/qa/audits/FIELD-2026-09-06.md` §3, RG-116). A
+                // 2026-09-06 (`docs/qa/audits/FIELD.md` §3, RG-116). A
                 // speed setting that is really an accuracy setting must say so at the
                 // point where it is offered. `small` is named because rule 32 makes it
                 // free: 153ms rounds to the same single 200ms chunker hop that base's
@@ -1533,6 +1712,199 @@ mod deoverlap_tests {
         }
     }
 
+    /// FOUR FIFTHS OF A SERMON WAS NEVER WRITTEN DOWN — RG-262.
+    ///
+    /// The operator: *"make the live transcript capture everything being said
+    /// without hiding or dismissing any part"*. The loss was not in the store
+    /// (uncapped since 2026-09-20), not in the card (a paint budget that grows on
+    /// scroll) and not in the database (every final is kept). It was here: the
+    /// window drained its front, `transcribe` decodes the whole window, so a
+    /// final carried the last eight seconds of an utterance and nothing before.
+    ///
+    /// **Measured in a real database rather than argued.** Across 982 rows of the
+    /// author's own services no line exceeds 160 characters — that ceiling IS the
+    /// eight-second window, visible in the data — and service 24, ninety three
+    /// minutes of preaching, produced 9,987 characters in total.
+    #[test]
+    fn a_full_window_closes_rather_than_dropping_what_it_cannot_hold() {
+        let max = TARGET_RATE as usize * WINDOW_SECS;
+
+        // Room left: the audio goes in.
+        assert!(!window_is_full(0, 1000, max));
+        assert!(!window_is_full(max - 1000, 1000, max));
+
+        // NO ROOM: the window closes. The old rule made room by draining the
+        // front, and the words in those samples were never said in any line
+        // anybody kept.
+        assert!(window_is_full(max, 1, max));
+        assert!(window_is_full(max - 999, 1000, max));
+    }
+
+    /// **A PAUSE AFTER A BARE BOOK NAME IS NOT THE END OF THE SENTENCE — RG-284.**
+    ///
+    /// The operator: *"when audio is listening if a scripture is called make sure
+    /// to hear the full bible verse before breaking transcript to keep accuracy …
+    /// when you hear psalms and there is a pause in the voice, wait to hear the
+    /// next couple sentence for any chapter and verse before breaking transcript."*
+    ///
+    /// "Turn with me to Psalms" — the preacher finds the page — "chapter
+    /// twenty-three, verse one." The pause clears `SILENCE_FINALIZE`, the window
+    /// is finalized AND CLEARED, and the two halves land in two different windows:
+    /// one with a book and no numbers, one with numbers and no book. Neither is a
+    /// reference, and nothing downstream can reassemble them — `detection.rs` is
+    /// handed one window at a time.
+    ///
+    /// This is the same failure `SILENCE_FINALIZE`'s own comment records when it
+    /// was raised from 5 to 7 ("the second half of 'Romans chapter eight … verse
+    /// twenty-eight' was being decoded with no memory of the first half"). 1.4 s
+    /// does not cover a preacher turning a page.
+    #[test]
+    fn a_pause_after_a_bare_book_name_holds_the_window_open() {
+        // Nothing that could be the start of a reference: the gap closes the
+        // utterance exactly as it always did. This half must not move.
+        assert_eq!(finalize_after(false), SILENCE_FINALIZE);
+        // A dangling book name: the window is held, so the chapter and verse
+        // arrive in the SAME window the book is in.
+        assert!(finalize_after(true) > SILENCE_FINALIZE);
+        assert_eq!(finalize_after(true), DANGLING_SILENCE_FINALIZE);
+    }
+
+    /// **AND THE HOLD IS BOUNDED, BY A NUMBER WITH A REASON.**
+    ///
+    /// An unbounded wait is a transcript that never arrives. The bound is not a
+    /// taste judgement: a hold long enough to fill the window on its own would
+    /// force-close it (RG-262) before the chapter could arrive, so it would buy
+    /// nothing at all and still delay every FINAL — which carries persistence and
+    /// the spoken commands — behind it.
+    ///
+    /// Put the defect back by raising `DANGLING_SILENCE_FINALIZE` to a window's
+    /// worth of hops and this fails.
+    #[test]
+    fn the_hold_can_never_on_its_own_exhaust_the_window() {
+        let hold_ms = DANGLING_SILENCE_FINALIZE as usize * crate::audio::HOP_MS as usize;
+        let window_ms = WINDOW_SECS * 1000;
+        assert!(
+            hold_ms * 2 < window_ms,
+            "a {hold_ms}ms hold leaves under half of a {window_ms}ms window for the \
+             words on either side of the pause"
+        );
+        const { assert!(DANGLING_SILENCE_FINALIZE > SILENCE_FINALIZE) };
+    }
+
+    /// **AND THE LOOP HAS TO ASK — RG-284.**
+    ///
+    /// The worker owns a whisper state and a channel, so no test drives it. What a
+    /// test CAN hold is that there is exactly ONE place an utterance is closed on
+    /// silence and that it goes through the policy function: a call site comparing
+    /// `silence_run` against `SILENCE_FINALIZE` directly is the hold silently
+    /// deleted, and it would read exactly like the code that was here before.
+    ///
+    /// The same shape as rule 36 — put the check on the one door rather than at the
+    /// call sites — and the scanner asserts what it found before asserting anything
+    /// about it, because a scanner that quietly matches nothing passes everything.
+    #[test]
+    fn the_silence_run_is_judged_in_exactly_one_place() {
+        let src = include_str!("stt.rs");
+        // Split, so the scanner cannot match its own filter — its first version
+        // did, and reported two sites in a file that has one.
+        let needle = concat!("silence_run ", ">=");
+        let sites: Vec<&str> = src
+            .lines()
+            .map(str::trim)
+            .filter(|l| l.contains(needle))
+            .collect();
+        assert_eq!(
+            sites.len(),
+            1,
+            "expected one place to close an utterance on silence, found {sites:?}"
+        );
+        assert!(
+            sites[0].contains("finalize_after("),
+            "the loop closes on a constant and not on the policy: {:?}",
+            sites[0]
+        );
+    }
+
+    /// **WHAT COUNTS AS "COULD BE THE START OF A REFERENCE".**
+    ///
+    /// A book name with nothing after it, in any of the four shipped languages.
+    /// Code-switching is the normal case (CLAUDE.md), so nothing here may assume
+    /// English — and nothing here may hold a window that ends mid-sentence with no
+    /// book name in it.
+    #[test]
+    fn only_a_dangling_book_name_holds_anything() {
+        // ── HOLD ──
+        for t in [
+            "turn with me to psalms",
+            "if you have your bibles open to the book of romans",
+            // §34's dangling verse marker: the grammar committed to a number and
+            // the number has not arrived. That is the same pause, one word later.
+            "turn with me to psalms chapter",
+            // Yorùbá, Swahili, Hausa — the alias table, not an English word list.
+            "e jowo, e si iwe Saamu",
+            "tufungue Zaburi",
+            "mu bude Zabura",
+        ] {
+            assert!(
+                tail_may_be_an_unfinished_reference(t),
+                "should hold the window: {t:?}"
+            );
+        }
+
+        // ── DO NOT HOLD ──
+        for t in [
+            "",
+            "and that is what the lord has done for us",
+            "he went down to the market that afternoon",
+            // A COMPLETE READING AT THE TAIL IS NOT DELAYED. DECISIONS §34 settled
+            // this: guarding every tail match costs ~1s on essentially every
+            // auto-fire. `RefMatch::is_provisional` owns the "the verse number has
+            // not arrived yet" case, at the detection layer, where it belongs.
+            "turn with me to psalms 23",
+            "psalms chapter 23 verse 1",
+            "john 3:16",
+        ] {
+            assert!(
+                !tail_may_be_an_unfinished_reference(t),
+                "should NOT hold the window: {t:?}"
+            );
+        }
+    }
+
+    /// AND A FORCED CLOSE IS NOT AN UTTERANCE END.
+    ///
+    /// Rule 28's corroboration exemption rests on "a FINAL window is exempt — no
+    /// next pass is coming". After a window fills, the next pass is coming
+    /// immediately, because the preacher has not stopped. `continued` is how the
+    /// two are told apart, and `main::handle_transcript` hands
+    /// `is_final && !continued` to the detector for exactly that reason.
+    ///
+    /// Recovering four fifths of a sermon may not cost one of rule 10's, 28's or
+    /// 30's guarantees — rule 34, which this repository has had to write down
+    /// three times.
+    #[test]
+    fn the_transcript_event_can_say_the_speaker_has_not_stopped() {
+        let ended = TranscriptUpdate {
+            text: "and he said unto them".into(),
+            language: "en".into(),
+            is_final: true,
+            continued: false,
+            timestamp_ms: 1000,
+            trace_id: 1,
+        };
+        let filled = TranscriptUpdate {
+            continued: true,
+            ..ended.clone()
+        };
+
+        // BOTH are finals for every purpose that keeps text: shown, persisted,
+        // and never overwritten by the next partial.
+        assert!(ended.is_final && filled.is_final);
+        // Only one of them is a boundary the detector may relax a rule at.
+        assert!(ended.is_final && !ended.continued);
+        assert!(!(filled.is_final && !filled.continued));
+    }
+
     /// THE BUG THIS EXISTS FOR. `audio.rs` emits `CHUNK_MS = 400` every
     /// `HOP_MS = 200` — half of every chunk is the previous chunk. Fed verbatim,
     /// whisper hears every hop twice.
@@ -1780,6 +2152,88 @@ mod tests {
 #[cfg(test)]
 mod bench {
     use super::*;
+
+    /// **WHAT THE HOLD COSTS AND WHAT IT BUYS, ON REAL PREACHING — RG-284.**
+    ///
+    /// `RELAY_TRANSCRIPT_CORPUS=<file> cargo test dangling_hold_rate -- --ignored --nocapture`
+    ///
+    /// One finalized transcript line per line of the file, IN SERVICE ORDER. The
+    /// author's own database produces it:
+    ///
+    /// ```text
+    /// sqlite3 -readonly relay.db -noheader \
+    ///   "select replace(text, char(10), ' ') from transcripts where trim(text) <> '';"
+    /// ```
+    ///
+    /// Two numbers come out, and they answer different questions.
+    ///
+    /// **The cost**: how many FINALS would have been held, each by up to
+    /// `DANGLING_SILENCE_FINALIZE - SILENCE_FINALIZE` hops. A hold fires nothing and
+    /// loses nothing; it postpones persistence and any spoken command in that window.
+    ///
+    /// **The buy**: adjacent lines where the join yields a reference that NEITHER half
+    /// yields. That is the operator's bug, counted in the data rather than argued from
+    /// an example — and it is a SIMULATION, because these lines were produced by a
+    /// pipeline that did not have the hold. Rejoining their text is not the same as
+    /// decoding their audio in one window, which is the other half of the effect and
+    /// needs audio nobody has recorded yet. Do not quote the second number as an
+    /// accuracy improvement.
+    #[test]
+    #[ignore]
+    fn dangling_hold_rate() {
+        let Ok(path) = std::env::var("RELAY_TRANSCRIPT_CORPUS") else {
+            println!("set RELAY_TRANSCRIPT_CORPUS to a file of finalized lines, in order");
+            return;
+        };
+        let body = std::fs::read_to_string(&path).expect("corpus unreadable");
+        let lines: Vec<&str> = body
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .collect();
+
+        let refs = |t: &str| -> Vec<String> {
+            crate::detection::detect_direct(t)
+                .iter()
+                .map(|m| {
+                    format!(
+                        "{} {}:{}",
+                        m.reference.book, m.reference.chapter, m.reference.verse
+                    )
+                })
+                .collect()
+        };
+
+        let probe_start = std::time::Instant::now();
+        let held: Vec<usize> = (0..lines.len())
+            .filter(|i| tail_may_be_an_unfinished_reference(lines[*i]))
+            .collect();
+        let probe_us = probe_start.elapsed().as_micros() as f64 / lines.len() as f64;
+
+        let mut gained = 0usize;
+        for &i in &held {
+            let next = lines.get(i + 1).copied().unwrap_or("");
+            let (a, b) = (refs(lines[i]), refs(next));
+            let joined = format!("{} {next}", lines[i]);
+            if refs(&joined)
+                .iter()
+                .any(|r| !a.contains(r) && !b.contains(r))
+            {
+                gained += 1;
+            }
+        }
+
+        let extra_ms =
+            (DANGLING_SILENCE_FINALIZE - SILENCE_FINALIZE) as usize * crate::audio::HOP_MS as usize;
+        println!(
+            "\n  lines={}  held={} ({:.1}%)  each by up to {extra_ms}ms\n  \
+             adjacent joins that gain a reference={gained}\n  \
+             predicate cost={probe_us:.1}us per decoded line\n",
+            lines.len(),
+            held.len(),
+            held.len() as f64 * 100.0 / lines.len() as f64,
+        );
+    }
 
     /// Word error rate: the number Relay has never had.
     ///

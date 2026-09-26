@@ -23,6 +23,7 @@
   import { BUILTINS } from '../../templates.js';
   import TemplateRender from '../../TemplateRender.svelte';
   import { reviewTemplate, PREVIEW_DISTANCES_M, previewScale } from '../../legibility.js';
+  import { clampGeom, OVERFLOW_MIN, OVERFLOW_MAX } from './geombounds.js';
   import TemplatePreviewOverlay from '../../TemplatePreviewOverlay.svelte';
   import { testTemplateOnOutputs } from '../../templateTest.js';
   import { humanError } from '../../errors.js';
@@ -83,6 +84,57 @@
   let savedTick = false;
   let err = '';
   let selId = null;
+  // ── THE DESIGN PANEL IS FOUR JOBS, NOT ONE LIST (RG-217) ───────────────────
+  //
+  // `docs/superpowers/plans/2026-09-21-stage-templates-media.md` §3. The problem
+  // was never the NUMBER of controls; it is that one column asked an operator to
+  // hold four jobs at once, and then asked a fifth question at the bottom that
+  // was not about the object they had selected at all.
+  //
+  // `scope` is that fifth question given its own place: the TEMPLATE's name and
+  // the kinds it renders belong to the template, not to whichever layer happens
+  // to be selected, and they sat under the layer's controls where they read as
+  // more of the same list.
+  //
+  // `openGroup` is in-memory on purpose. A remembered collapse is a surface that
+  // opens differently for two operators on the same machine, and the defaults
+  // here are a decision — "how it reads" is used on every layer every time, the
+  // geometry is for the one occasion two layers must line up exactly, and the
+  // rest are touched about once a year.
+  let scope = 'object'; // content (object) | style | position | template
+  /**
+   * TAKE THIS OBJECT THE WHOLE WAY TO ONE END OF THE STACK (RG-230).
+   *
+   * `moveLayer` walks one place, which is the layer list's ↑ ↓; Arrange also
+   * wants "to front" and "to back", and an operator pressing Forward eleven
+   * times is an operator the panel has failed. It reuses `moveInOrder` rather
+   * than splicing the array itself, so a band's words keep the one rule about
+   * where they may go — a word cannot leave its band by being sent to the back.
+   */
+  function moveLayerEnd(id, dir) {
+    for (let i = 0; i < 64; i += 1) {
+      const before = edit.layout.layers || [];
+      const after = moveInOrder(before, id, dir);
+      if (after === before) return;
+      edit.layout.layers = after;
+    }
+    edit = edit;
+  }
+  // `where` went to its own tab (RG-230); what is left here is the two groups
+  // that stayed in the object column.
+  let openGroup = { reads: true, more: false };
+  const toggleGroup = (k) => (openGroup = { ...openGroup, [k]: !openGroup[k] });
+  /**
+   * Does this object have a CONTENT binding — is it one of the kinds the
+   * property chain's final branch renders (text and timer)?
+   *
+   * Stated as the same list the chain tests, in the same order, because the two
+   * have to agree: a kind added to the chain and not here would have its binding
+   * row silently disappear, and a kind added here and not there would grow a
+   * second one.
+   */
+  const carriesBinding = (L) =>
+    !!L && !['background', 'media', 'region', 'band', 'shape'].includes(L.type);
   // THE ADD-LAYER MENU IS POSITIONED FIXED, anchored to the button's screen rect.
   //
   // It used to be `position:absolute; top:28px; right:0` inside `.te-addwrap`,
@@ -634,10 +686,13 @@
   // untouched, and §29's resolution order is unchanged.
   function set(k, v) { if (sel) { sel[k] = v; edit = edit; } }
   /** A geometry number, clamped to the canvas so an object cannot be typed off it. */
+  // AN OBJECT MAY HANG OFF THE SLIDE (RG-233). The bound is `geombounds.js`'s,
+  // shared with the drag and the nudge keys so the three cannot disagree about
+  // where the edge of the world is.
   function geom(k, v) {
-    const n = Number(v);
-    if (!Number.isFinite(n)) return;
-    set(k, Math.max(0, Math.min(100, n)));
+    const n = clampGeom(v);
+    if (n === null) return;
+    set(k, n);
   }
   function num(k, v) { set(k, +v); }
   // Layer colour/fill/font can bind to a STYLE TOKEN (`theme:accent`) that follows
@@ -708,14 +763,19 @@
     const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
     const m = drag.mode;
     if (m === 'move') {
-      let nx = clamp(r1(drag.lx + dx), 0, 100 - L.w);
-      let ny = clamp(r1(drag.ly + dy), 0, 100 - L.h);
+      let nx = clamp(r1(drag.lx + dx), OVERFLOW_MIN, OVERFLOW_MAX - L.w);
+      let ny = clamp(r1(drag.ly + dy), OVERFLOW_MIN, OVERFLOW_MAX - L.h);
       // Snap the layer's centre/edges to the canvas centre (50%) and edges
       // (0/100%), and show the guide line while snapped. Holding a key isn't
       // required — the threshold is small enough to snap only when close, which
       // is how "centre items" is expected to feel. Shift disables snapping for
       // fine placement.
-      const SNAP = e.shiftKey ? 0 : 1.2;
+      // The latch AND the key (RG-231). Shift has always turned snapping off for
+      // one drag; nothing said so, which is a behaviour nobody finds. The button
+      // on the canvas foot says it, and Shift still wins for the single drag an
+      // operator wants free — a latch you have to remember to put back would be
+      // worse than the modifier it replaced.
+      const SNAP = e.shiftKey || !snapOn ? 0 : 1.2;
       let gv = null;
       let gh = null;
       if (SNAP) {
@@ -728,8 +788,8 @@
         else if (Math.abs(ny) <= SNAP) { ny = 0; gh = 0; }
         else if (Math.abs(ny + L.h - 100) <= SNAP) { ny = 100 - L.h; gh = 100; }
       }
-      L.x = r1(clamp(nx, 0, 100 - L.w));
-      L.y = r1(clamp(ny, 0, 100 - L.h));
+      L.x = r1(clamp(nx, OVERFLOW_MIN, OVERFLOW_MAX - L.w));
+      L.y = r1(clamp(ny, OVERFLOW_MIN, OVERFLOW_MAX - L.h));
       guides = { v: gv, h: gh };
     } else {
       // Resize from any edge. Left/top edges move the origin and shrink; right/
@@ -828,10 +888,29 @@
     e.preventDefault();
     const [k, d] = m;
     const max = k === 'x' ? 100 - sel.w : 100 - sel.h;
-    set(k, Math.max(0, Math.min(max, Math.round(sel[k] + d))));
+    // The nudge keys share the bleed bound for x and y; a SIZE still cannot go
+    // negative, which is what `max` is passed for.
+    set(k, k === 'x' || k === 'y' ? clampGeom(sel[k] + d) : Math.max(0, Math.min(max, Math.round(sel[k] + d))));
   }
 
   // ── Preview content + canvas chrome ────────────────────────────────────────
+  // ── THE CLOCKS, AS A SAMPLE, SO A LAYER FOR THEM CAN BE PLACED (RG-232) ────
+  //
+  // A programme rail renders only `{#if progRows.length}` and a countdown only
+  // when the content carries one, so in an editor that sent neither, both layers
+  // drew NOTHING — and an operator pressing Align on an invisible box cannot
+  // tell a broken control from an empty one. That is the whole of *"the
+  // alignments of the timer not working"*: the alignment was writing x and y
+  // correctly and there was nothing on the canvas to watch move.
+  //
+  // It is a SAMPLE and never the church's programme: two made-up rows on the
+  // editor's own clock, running nowhere. `Sermon` and `Offering` because those
+  // are the two every seeded stage template names, and a long label beside a
+  // short one is what finds a rail that cannot fit its own words.
+  const SAMPLE_PROGRAMME = [
+    { id: -1, label: 'Sermon', countdown_to: Date.now() + 754_000, countdown_from: Date.now() - 60_000 },
+    { id: -2, label: 'Offering', countdown_to: Date.now() + 210_000, countdown_from: Date.now() },
+  ];
   const SAMPLE = {
     text: 'And God called the firmament Heaven. And the evening and the morning were the second day.',
     reference: 'Genesis 1:8 · KJV',
@@ -844,11 +923,42 @@
   // (media renders full-frame by default, so injecting it unconditionally painted
   // every empty template with a background it never had).
   $: hasMediaLayer = layered && layers.some((l) => l.type === 'media');
-  $: previewContent = hasMediaLayer && BACKGROUNDS.length
-    ? { ...SAMPLE, media_url: BACKGROUNDS[0].url, media_kind: 'image' }
-    : SAMPLE;
-  const ZOOMS = [40, 55, 70, 85, 100];
-  let zoomIdx = ZOOMS.length - 1;
+  $: hasClockLayer = layers.some(
+    (L) => L.visible !== false && (L.type === 'timer' || L.bind === 'countdown'),
+  );
+  $: hasProgrammeLayer = layers.some((L) => L.visible !== false && L.bind === 'programme');
+  $: previewProgramme = hasProgrammeLayer ? SAMPLE_PROGRAMME : [];
+  $: previewContent = {
+    ...(hasMediaLayer && BACKGROUNDS.length
+      ? { ...SAMPLE, media_url: BACKGROUNDS[0].url, media_kind: 'image' }
+      : SAMPLE),
+    // ONLY WHERE A LAYER ASKED FOR IT. Handing every preview a countdown trips
+    // the renderer's default-countdown path, which HIDES the verse and the
+    // reference on a template that has no timer layer — so a sample meant to
+    // help place one clock would blank the two things every other template is
+    // about.
+    ...(hasClockLayer ? { countdown_to: Date.now() + 754_000, countdown_from: Date.now() - 60_000 } : {}),
+  };
+  // ── THE ZOOM GOES PAST FIT (RG-228) ───────────────────────────────────────
+  //
+  // `zoom` is the board's width as a share of the PANE, and it stopped at 100 —
+  // fit. So the control could only ever make the slide smaller, and exact work
+  // on a small layer (a reference line, a figure on the rail) meant squinting at
+  // a 30px box with no way to get closer. Every editor of this kind goes past
+  // 100%; this one could not.
+  //
+  // The ceiling is 400 because past it a template's own `cqw` sizing stops being
+  // something a person can judge, and the pane already scrolls (`.te-stage` is
+  // `overflow:auto`) — the only thing that stopped it was `max-width:100%` on the
+  // wrapper, which is now lifted exactly when the board is wider than the pane.
+  //
+  // It remains a VIEW and touches no layer: a zoom that wrote into the model
+  // would resize something on a congregation screen for the rest of the service.
+  // Snapping is on, and stays on unless somebody turns it off — the drag rule
+  // reads this beside `shiftKey`. See the canvas foot for why it became visible.
+  let snapOn = true;
+  const ZOOMS = [40, 55, 70, 85, 100, 150, 200, 300, 400];
+  let zoomIdx = 4;
   $: zoom = ZOOMS[zoomIdx];
   let previewMode = false;
 
@@ -938,7 +1048,7 @@
       savedTick = true;
       setTimeout(() => (savedTick = false), 1400);
       err = '';
-    } catch (e) { err = 'Live update failed: ' + e; }
+    } catch (e) { err = 'Live update failed: ' + humanError(e); }
     saving = false;
   }
   /** Insert the draft. This is the call `newFrom` used to make before anybody
@@ -1180,13 +1290,6 @@
       </Toolbar>
     {/if}
     <span class="te-spring"></span>
-    <Toolbar size="sm" gap={4} class="te-zoom">
-      <IconButton size="sm" class="te-zbtn" on:click={() => (zoomIdx = Math.max(0, zoomIdx - 1))} disabled={zoomIdx === 0} label="Zoom out"
-        disabledReason="Already at the smallest zoom.">−</IconButton>
-      <span class="te-pct r-mono">{zoom}%</span>
-      <IconButton size="sm" class="te-zbtn" on:click={() => (zoomIdx = Math.min(ZOOMS.length - 1, zoomIdx + 1))} disabled={zoomIdx === ZOOMS.length - 1} label="Zoom in"
-        disabledReason="Already at the largest zoom.">+</IconButton>
-    </Toolbar>
     <button class="r-btn ghost sm" class:on={previewMode} on:click={() => (previewMode = !previewMode)}>{previewMode ? 'Editing' : 'Preview'}</button>
     <button class="r-btn ghost sm" on:click={() => (fsPreview = true)} disabled={!edit} title="Preview this template fullscreen in the console — reaches no output">Fullscreen</button>
     <!-- A DRAFT CANNOT BE TESTED ON THE REAL SCREENS, for the same reason
@@ -1251,12 +1354,32 @@
     </div>
   {:else}
     <div class="te-body">
-      <!-- ══ LAYERS ══ -->
-      <aside class="te-pane te-layers">
-        <div class="te-panehead">
-          <span class="r-lbl">Layers</span>
-          <div class="te-addwrap">
-            <button class="r-iconbtn te-addbtn" on:click|stopPropagation={toggleAdd} aria-expanded={addOpen} aria-haspopup="menu" aria-label="Add layer">＋</button>
+      <!-- ══ TOOLS ══ WHERE AN OBJECT COMES FROM (RG-227).
+           Creation lived behind a `＋` inside the Layers pane's own header, so
+           an operator asking "how do I add a picture" had to find a plus on a
+           panel about something else. Every editor of this kind puts it on a
+           rail, and so does the design the operator approved.
+
+           The binding menu is MOVED, not copied: the Text tool IS its button and
+           keeps the class the existing tests hold it by, rule 44's Escape
+           guarantee included. Two buttons onto one menu would be the twin door
+           this repository keeps deleting. -->
+      <nav class="te-tools" aria-label="Tools">
+        <!-- THE RESTING TOOL, AND IT DOES SOMETHING. A button that looks live
+             and does nothing is what `inventory.test.js` counts, and it counted
+             this one: an arrow that was pressed-looking and inert. Pressing it
+             DROPS the selection, which is the one thing an operator wants from
+             an arrow they have just clicked — and it makes no layer, which is
+             what separates it from every other tool on the rail. -->
+        <button class="te-tool" class:on={!sel} aria-label="Select" aria-pressed={!sel}
+          on:click={() => (selId = null)} title="Select and move — press to drop the selection">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 3l14 8-6 1.6L9.6 19z"/></svg>
+        </button>
+        <div class="te-addwrap">
+          <button class="te-tool te-addbtn" on:click|stopPropagation={toggleAdd} aria-expanded={addOpen} aria-haspopup="menu" aria-label="Text" title="Add text — pick what it shows">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M5 6h14M12 6v13M9 19h6"/></svg>
+          </button>
+
             {#if addOpen}
               <!-- The click handler is not an interaction: it stops the document-level
                    outside-click closer from seeing a click on the menu itself. Every real
@@ -1278,7 +1401,29 @@
                 {/each}
               </div>
             {/if}
-          </div>
+        </div>
+        <button class="te-tool" on:click={() => addLayer('shape')} aria-label="Shape" title="Add a shape">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2.5"/></svg>
+        </button>
+        <button class="te-tool" on:click={() => addLayer('media')} aria-label="Picture" title="Add a picture or clip placement">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M3 15l5-4 4 3 3-2 6 5"/></svg>
+        </button>
+        <button class="te-tool" on:click={() => addLayer('band')} aria-label="Band" title="Add a lower-third band">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="14" width="18" height="6" rx="1.5"/><path d="M3 6h18" opacity=".45"/></svg>
+        </button>
+        <button class="te-tool" on:click={() => addLayer('timer')} aria-label="Clock" title="Add a countdown">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 8v4.4l2.8 1.8"/></svg>
+        </button>
+        <span class="te-toolsep" aria-hidden="true"></span>
+        <button class="te-tool" on:click={() => addLayer('background')} aria-label="Background" title="Add a background">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16" opacity=".5"/></svg>
+        </button>
+      </nav>
+      <!-- ══ LAYERS ══ -->
+      <aside class="te-pane te-layers">
+        <div class="te-panehead">
+          <span class="r-lbl">Layers</span>
+          <span class="te-panenote2 r-mono">front to back</span>
         </div>
         <div class="te-layerlist r-scroll">
           {#each panelRows as row (row.L.id)}
@@ -1360,62 +1505,6 @@
         </div>
         <p class="te-panenote">Top of the list is the front. Drag a row by its grip to reorder, or use ↑ ↓. An indented row is a word inside the band above it — the band decides where it sits, so it moves within the band and not out of it. A locked row will not move, here or on the canvas.</p>
 
-        <!-- READABILITY. Still under the layer list, in the panel a designer
-             already has open — but FOLDED, because what was here was seven
-             paragraphs of small italic prose, three verdict rows, two number
-             fields and a button: the biggest thing in the column and the least
-             used. It is one row now, and that row carries the verdict, so it is
-             not "behind a button you have to know about" either. -->
-        {#if legible}
-          <!-- A DISCLOSURE ROW, not a button — the panel's own heading with its
-               current verdict on it and a chevron at the end. It is a <button>
-               so the whole row is the target and the keyboard reaches it; it
-               carries `aria-expanded`, so what it does is stated rather than
-               drawn. -->
-          <!-- Folding the panel also puts the distance strip away. Its only
-               switch lives INSIDE the panel, so leaving it on over a closed
-               panel would paint four extra renders across the canvas with
-               nothing on screen able to turn them off. -->
-          <button class="te-legtoggle" aria-expanded={legOpen} on:click={() => { legOpen = !legOpen; if (!legOpen) showDistances = false; }}>
-            <span class="r-lbl">Readability</span>
-            <span class="te-legsum" class:bad={legState === 'bad'} class:unknown={legState === 'unknown'}>{legSummary}</span>
-            <span class="te-legchev" aria-hidden="true">{legOpen ? '▴' : '▾'}</span>
-          </button>
-        {/if}
-        {#if legible && legOpen}
-          <ul class="te-leg">
-            {#each [['Verse', legible.verse], ['Reference', legible.reference], ['From the back', legible.distance]] as [label, c] (label)}
-              <li class="te-legrow" class:bad={c.state === 'low' || c.state === 'small'} class:unknown={c.state === 'unknown'}>
-                <b>{label}</b>
-                <span>{c.note}</span>
-              </li>
-            {/each}
-            <!-- THE MEASURED ROW. The three above are computed from the template's
-                 declared colours and sizes; this one is what the renderer actually
-                 settled at on this artboard, which is the only one of the four that
-                 can catch rule 37's failure. Absent when there is nothing to say,
-                 like every other honest row in this product. -->
-            {#if fitNote}
-              <li class="te-legrow" class:bad={fitBad}>
-                <b>Measured</b>
-                <span>{fitNote}</span>
-              </li>
-            {/if}
-          </ul>
-          <div class="te-legroom">
-            <label class="te-leglab" for="te-scr">Screen width (m)</label>
-            <input id="te-scr" class="r-input te-legin" inputmode="decimal" bind:value={screenWidthM} placeholder="4" />
-            <label class="te-leglab" for="te-back">Back row (m)</label>
-            <input id="te-back" class="r-input te-legin" inputmode="decimal" bind:value={backRowM} placeholder="18" />
-          </div>
-          <button class="r-btn ghost sm te-legbtn" on:click={() => (showDistances = !showDistances)}>
-            {showDistances ? 'Hide' : 'Show'} how it looks from further back
-          </button>
-          <!-- THE CAVEAT RIDES WITH THE VERDICT. The person reading it is deciding
-               whether to trust it right now, and it has never been checked against
-               a projector in a church. -->
-          <p class="te-panenote">{legible.caveat}</p>
-        {/if}
       </aside>
 
       <!-- ══ CANVAS ══ -->
@@ -1462,7 +1551,7 @@
               <figure class="te-dist">
                 <div class="te-distbox">
                   <div class="te-distinner" style="transform:scale({previewScale(d)})">
-                    <TemplateRender template={themedEdit} content={previewContent} />
+                    <TemplateRender template={themedEdit} content={previewContent} programme={previewProgramme} />
                   </div>
                 </div>
                 <figcaption class="r-mono">{d}m</figcaption>
@@ -1471,7 +1560,7 @@
           </div>
         {/if}
         <div class="te-stage">
-          <div class="te-board-wrap" style="width:{zoom}%">
+          <div class="te-board-wrap" class:over={zoom > 100} style="width:{zoom}%">
             {#if !previewMode}
               <div class="te-ruler te-ruler-x">{#each Array(11) as _, i}<span style="left:{i * 10}%">{i * 10}</span>{/each}</div>
               <div class="te-ruler te-ruler-y">{#each Array(11) as _, i}<span style="top:{i * 10}%">{i * 10}</span>{/each}</div>
@@ -1488,7 +1577,7 @@
                  The card thumbnails deliberately still pass nothing: they are
                  194px wide, so their fit is not the wall's fit and a warning there
                  would be noise. -->
-            <TemplateRender template={themedEdit} content={previewContent} onFit={noteFit} />
+            <TemplateRender template={themedEdit} content={previewContent} programme={previewProgramme} onFit={noteFit} />
             {#if !previewMode}
               <!-- Selection / drag overlay: one handle box per positioned layer. -->
               <div class="te-overlay">
@@ -1525,6 +1614,57 @@
                     </div>
                   {/if}
                 {/each}
+
+                <!-- ══ THE FLOATING BAR ══ THE CONTROLS COME TO THE OBJECT (RG-229).
+                     The two or three properties touched on every layer used to
+                     mean crossing the window to a column on the right. This is
+                     the operator's own reference, and it is NOT a second set of
+                     controls: every button writes through the same `set`/`num`
+                     the panel writes through, so a change made here and a change
+                     made there are one change and the panel shows it at once.
+
+                     It carries only what the selected KIND can do. A control
+                     that does nothing for a shape is absent rather than greyed —
+                     a greyed control an operator cannot explain reads as a
+                     broken app, which is RG-223 stated as a rule.
+
+                     `stopPropagation` on the pointer: the bar sits inside the
+                     overlay, over the layer's own hit box, and a press must not
+                     start dragging the thing it is about. -->
+                {#if sel && sel.type !== 'background'}
+                  {@const fb = drawn.get(sel.id) || sel}
+                  {@const low = (Number(fb.y) || 0) < 12}
+                  <!-- svelte-ignore a11y-no-static-element-interactions -->
+                  <div
+                    class="te-float"
+                    class:below={low}
+                    style="left:{Math.max(0, Math.min(100, (Number(fb.x) || 0) + (Number(fb.w) || 0) / 2))}%; top:{low ? (Number(fb.y) || 0) + (Number(fb.h) || 0) : Number(fb.y) || 0}%;"
+                    on:pointerdown|stopPropagation
+                    role="toolbar"
+                    aria-label="{layerLabel(sel)} — quick controls">
+                    {#if sel.type === 'text' || sel.type === 'timer'}
+                      <span class="te-fgroup">
+                        <button class="te-fbtn" aria-label="Smaller" title="Smaller type" on:click={() => num('size', Math.max(0.5, Math.round(((sel.size ?? 3) - 0.2) * 10) / 10))}>−</button>
+                        <span class="te-fnum r-mono">{sel.size ?? 3}</span>
+                        <button class="te-fbtn" aria-label="Bigger" title="Bigger type" on:click={() => num('size', Math.min(16, Math.round(((sel.size ?? 3) + 0.2) * 10) / 10))}>+</button>
+                      </span>
+                      <span class="te-fsep"></span>
+                      <button class="te-fbtn wide" class:on={(sel.weight ?? 400) >= 600} aria-pressed={(sel.weight ?? 400) >= 600}
+                        aria-label="Bold" title="Bold" on:click={() => set('weight', (sel.weight ?? 400) >= 600 ? 400 : 700)}><b>B</b></button>
+                      <button class="te-fbtn wide" class:on={!!sel.italic} aria-pressed={!!sel.italic}
+                        aria-label="Italic" title="Italic" on:click={() => set('italic', !sel.italic)}><i>I</i></button>
+                      <span class="te-fsep"></span>
+                      {#each ['left', 'center', 'right'] as a}
+                        <button class="te-fbtn" class:on={sel.align === a} aria-label={TEXT_ALIGN_LABEL[a]} title={TEXT_ALIGN_LABEL[a]} on:click={() => set('align', a)}>
+                          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16"/><path d={a === 'left' ? 'M4 12h10' : a === 'right' ? 'M10 12h10' : 'M7 12h10'}/><path d="M4 18h16"/></svg>
+                        </button>
+                      {/each}
+                    {/if}
+                    <span class="te-fsep"></span>
+                    <button class="te-fbtn wide" aria-label="Place exactly" title="Open the position controls"
+                      on:click={() => (scope = 'position')}>Position</button>
+                  </div>
+                {/if}
               </div>
             {/if}
           </div>
@@ -1534,17 +1674,69 @@
           <span class="r-lbl">Canvas</span>
           <span class="te-botnote">{transparentBg ? 'Transparent — keys out in OBS / ATEM' : 'Opaque background'}</span>
           <span class="te-spring"></span>
-          {#if sel}<span class="te-botchip r-mono">{Math.round(sel.x)},{Math.round(sel.y)} · {Math.round(sel.w)}×{Math.round(sel.h)}</span>{/if}
+          <!-- WHAT IS SELECTED, NOT ONLY WHERE IT IS (RG-228). Four numbers with
+               nothing naming the layer is a readout an operator has to look away
+               from the canvas to interpret — and the SIZE was not among them,
+               which is the one figure RG-223 turned out to be an argument
+               about. -->
+          {#if sel}
+            <span class="te-botwho">{layerLabel(sel)}</span>
+            <span class="te-botchip r-mono">{Math.round(sel.x)},{Math.round(sel.y)} · {Math.round(sel.w)}×{Math.round(sel.h)}</span>
+            {#if sel.size != null && (sel.type === 'text' || sel.type === 'timer')}
+              <span class="te-botchip r-mono">{sel.size} cqw</span>
+            {/if}
+          {/if}
+          <span class="te-spring"></span>
+          <!-- ══ THE VIEW'S OWN CONTROLS, UNDER THE THING THEY ARE ABOUT ══════
+               Zoom sat in the header beside Undo and Save — a row about the
+               TEMPLATE — where it is the one member that changes nothing about
+               it. It belongs to the canvas, which is what the approved design
+               shows, and it is the same control moved: one zoom, not two.
+
+               SNAP IS NOW A LATCH AS WELL AS A KEY. Holding Shift has always
+               turned snapping off, and a modifier is not discoverable: nothing
+               anywhere said the behaviour existed. The button says it, and the
+               key still works for the one drag an operator wants it off for. -->
+          <button class="r-btn ghost sm" class:on={snapOn} aria-pressed={snapOn}
+            title={snapOn ? 'Snapping to centres and edges — hold Shift to place freely' : 'Snapping off'}
+            on:click={() => (snapOn = !snapOn)}>Snap</button>
+          <Toolbar size="sm" gap={4} class="te-zoom">
+            <IconButton size="sm" class="te-zbtn" on:click={() => (zoomIdx = Math.max(0, zoomIdx - 1))} disabled={zoomIdx === 0} label="Zoom out"
+              disabledReason="Already at the smallest zoom.">−</IconButton>
+            <span class="te-pct r-mono">{zoom}%</span>
+            <IconButton size="sm" class="te-zbtn" on:click={() => (zoomIdx = Math.min(ZOOMS.length - 1, zoomIdx + 1))} disabled={zoomIdx === ZOOMS.length - 1} label="Zoom in"
+              disabledReason="Already at the largest zoom.">+</IconButton>
+          </Toolbar>
+          <button class="r-btn ghost sm" on:click={() => (zoomIdx = 4)} disabled={zoomIdx === 4}
+            title="Fit the whole slide in the pane">Fit</button>
         </footer>
       </section>
 
       <!-- ══ PROPERTIES ══ -->
       <aside class="te-pane te-design">
-        <div class="te-panehead"><span class="r-lbl">Design</span><span class="te-designfor r-mono">{sel ? layerLabel(sel) : ''}</span></div>
+        <div class="te-panehead">
+          <span class="r-lbl">Design</span>
+          <!-- WHICH QUESTION THIS PANEL IS ANSWERING (RG-217). The template's own
+               facts used to be the last section under a layer's controls, so an
+               operator scrolling an object's properties fell off the end of them
+               into a different subject with no boundary but a heading. -->
+          <span class="te-scope" role="tablist" aria-label="What this panel edits">
+            <button class="te-scopebtn" class:on={scope === 'object'} role="tab"
+              aria-selected={scope === 'object'} on:click={() => (scope = 'object')}>Content</button>
+            <button class="te-scopebtn" class:on={scope === 'style'} role="tab"
+              aria-selected={scope === 'style'} on:click={() => (scope = 'style')}>Style</button>
+            <button class="te-scopebtn" class:on={scope === 'position'} role="tab"
+              aria-selected={scope === 'position'} on:click={() => (scope = 'position')}>Position</button>
+            <span class="te-spring"></span>
+            <button class="te-scopebtn te-scopetpl" class:on={scope === 'template'} role="tab"
+              aria-selected={scope === 'template'} on:click={() => (scope = 'template')}>Template</button>
+          </span>
+          <span class="te-designfor r-mono">{scope === 'object' && sel ? layerLabel(sel) : ''}</span>
+        </div>
         <!-- THE OBJECTS ON THIS SLIDE. A wrapping strip, never a scrolling one:
              a tab that has scrolled behind a hidden scrollbar is a tab nobody
              knows is there. -->
-        {#if layers.length}
+        {#if scope !== 'template' && layers.length}
           <div class="te-objtabs" role="tablist" aria-label="Objects on this slide">
             {#each layers as L (L.id)}
               <button
@@ -1565,11 +1757,9 @@
                  change, and every text object on a slide was called "Verse
                  text" after its binding. Empty falls back to the binding's own
                  label, which is what a fresh object already shows. -->
-            <div class="te-frow te-objname">
-              <label class="te-fk" for="te-oname">Object name</label>
-              <input id="te-oname" class="r-input te-fv" value={sel.name ?? ''} placeholder={layerLabel(sel)}
-                on:input={(e) => set('name', e.target.value)} />
-            </div>
+            <!-- The name moved into the panel's first group (RG-217): it is half
+                 of "what is this?", and the other half — the binding — could only
+                 ever be rendered down in the property chain. -->
             <div class="te-objacts">
               <button class="r-btn sm ghost" on:click={() => duplicate(sel.id)}>Duplicate</button>
               <button class="r-btn sm ghost" on:click={() => resetObject(sel.id)}>Reset this object</button>
@@ -1583,24 +1773,34 @@
           {/if}
         {/if}
         <div class="te-designbody r-scroll">
-          <!-- ══ THE SELECTED OBJECT COMES FIRST (§3.2) ══════════════════════
-               This panel used to open on the TEMPLATE — its name, the kinds of
-               content it is used for, the kinds it shows — and an operator who
-               had just clicked an object on the canvas then had to scroll past
-               all of it to reach that object's properties. The tab strip above
-               says which object is selected; what follows it is that object,
-               and the template's own facts are one section at the foot.
+          {#if scope === 'position'}
+            <!-- ══ POSITION ══ ITS OWN PANEL (RG-230) ═════════════════════════
+                 The geometry was a collapsed group at the foot of the object's
+                 column — reachable, under everything else, and shut by default.
+                 The approved design gives it a tab, with the one thing that had
+                 no home but the layer list: the stacking order.
 
-               ONE DEVIATION FROM §3.2, STATED RATHER THAN HIDDEN: the reference
-               groups an object as Text / Position / Effects and this renders
-               Position FIRST, because Position is the one group every movable
-               kind has and there is exactly ONE of it. Putting it between Text
-               and Effects would mean emitting the group inside each kind's
-               branch — and this file already carries the scar of a duplicated
-               Position group that did not agree with its twin and moved a
-               locked object. One group in a slightly different place is a much
-               smaller problem than two groups. -->
-          {#if sel && sel.type !== 'band' && !bandOf(layers, sel.id)}
+                 NO SECOND ALIGN-TO-THE-FRAME. `.te-alignbar` on the canvas has
+                 done that since it was written, and a second set here would be
+                 two doors onto one job. -->
+            {#if !sel}
+              <p class="te-fnote te-emptyhint">Select a layer to place it.</p>
+            {/if}
+            {#if sel}
+              <h3 class="te-sec">Arrange</h3>
+              <div class="te-arrange">
+                <button class="r-btn ghost sm" on:click={() => moveLayer(sel.id, 1)} title="One place toward the front">Forward</button>
+                <button class="r-btn ghost sm" on:click={() => moveLayer(sel.id, -1)} title="One place toward the back">Backward</button>
+                <button class="r-btn ghost sm" on:click={() => moveLayerEnd(sel.id, 1)} title="All the way to the front">To front</button>
+                <button class="r-btn ghost sm" on:click={() => moveLayerEnd(sel.id, -1)} title="All the way to the back">To back</button>
+              </div>
+              <p class="te-fnote">The top of the layer list is the front. A word inside a band moves within its band and never out of it.</p>
+            {/if}
+            <!-- A BAND AND ITS WORDS ARE NOT HERE, because x/y/w/h is not where
+                 either of them sits: a band is placed by `top`/`side` and its
+                 words by the band. Four numbers that change nothing is the
+                 defect DECISIONS §69 closed. -->
+            {#if sel && sel.type !== 'band' && !bandOf(layers, sel.id)}
             <!-- POSITION — ONE GROUP, §3.2. These were reachable only by dragging
                  on the canvas, so a keyboard-only operator could not place an
                  object at all and nobody could place one exactly. Percentages of
@@ -1618,7 +1818,7 @@
                  of them sits: a band is placed by `top`/`side` and its words by the
                  band. Four numbers that change nothing is the defect DECISIONS §69
                  closed, so they get the controls that do move them instead. -->
-            <h3 class="te-sec">Position</h3>
+            <h3 class="te-sec">Exact</h3>
             <div class="te-geom">
               {#each [['x', 'X'], ['y', 'Y'], ['w', 'W'], ['h', 'H']] as [k, label]}
                 <label class="te-geomcell">
@@ -1626,8 +1826,8 @@
                   <input
                     class="te-num r-mono"
                     type="number"
-                    min="0"
-                    max="100"
+                    min={OVERFLOW_MIN}
+                    max={OVERFLOW_MAX}
                     step="0.5"
                     value={Math.round((sel[k] ?? 0) * 10) / 10}
                     disabled={sel.locked}
@@ -1642,16 +1842,27 @@
               <button class="r-btn ghost te-alignbtn" on:click={() => center('both')} title="Centre on canvas">Centre</button>
             </div>
             {#if sel.locked}<p class="te-fnote">This object is locked. Unlock it in the layer list to move it.</p>{/if}
-            <p class="te-fnote">Percent of the screen. Drag on the canvas — layers snap to centre and edges (hold Shift to place freely) — or type exact values.</p>
+            <p class="te-fnote">Percent of the screen, so a template scales the same at any output size. Drag on the canvas — layers snap to centre and edges (hold Shift to place freely) — or type exact values.</p>
+            <!-- NO ROTATE, AND THE PANEL SAYS SO. Nothing downstream renders a
+                 rotated layer, so the field would move a number no screen reads
+                 — the defect DECISIONS §69 closed seven controls of. When the
+                 renderer grows rotation it belongs here, and a stated absence is
+                 how the next person finds that out. -->
+            <p class="te-fnote te-absent">No <b>Rotate</b>: nothing that paints a screen renders a rotated layer yet, so the control would move a number nothing reads.</p>
           {/if}
-
-          {#if !sel}
-            <!-- NOT `te-guide`. That class is the canvas's 1px alignment hairline
-                 (position:absolute, background:var(--v-accent)), and this paragraph
-                 was silently inheriting all of it: grey text on a solid amethyst bar
-                 at about 1.9:1, pulled out of flow across the top of the panel. Two
-                 unrelated things, one class name. -->
-            <p class="te-fnote te-emptyhint">Select a layer to edit it, or add one with ＋.</p>
+          {:else if scope === 'style'}
+            <!-- ══ STYLE ══ HOW IT READS, AND WHAT IT IS MADE OF (RG-231) ═════
+                 The approved canvas keeps the object's identity and its look
+                 apart: Content answers *what is this*, Style answers *how does
+                 it read*. Readability came here with them — it was the biggest
+                 thing in the LEFT column and the least used, under a list about
+                 something else entirely. -->
+            <!-- ONE empty state for this tab. The chain below used to carry its
+                 own ("or add one with ＋"), which named a control that is now a
+                 rail (RG-227) — a hint pointing at a button that moved is worse
+                 than none. -->
+            {#if !sel}
+              <p class="te-fnote te-emptyhint">Select a layer to style it.</p>
           {:else if sel.type === 'background'}
             <h3 class="te-sec">Background</h3>
             <div class="te-frow">
@@ -1768,16 +1979,16 @@
                 <p class="te-fnote">Placed by <b>{layerLabel(selBand)}</b>: the band sets where this line sits and how wide it is. Height is its share of the band, and the band grows it when it gives ground.</p>
               {/if}
             {/if}
-            <h3 class="te-sec">Text</h3>
-            <div class="te-frow">
-              <label class="te-fk" for="te-bind">Content</label>
-              <select id="te-bind" class="r-select te-fv" value={sel.bind} on:change={(e) => set('bind', e.target.value)}>
-                {#each BINDINGS as b}<option value={b.key}>{b.label}</option>{/each}
-              </select>
-            </div>
-            {#if sel.bind === 'static'}
-              <div class="te-frow"><label class="te-fk" for="te-txt">Text</label><input id="te-txt" class="r-input te-fv" value={sel.text || ''} on:input={(e) => set('text', e.target.value)} /></div>
-            {/if}
+            <!-- 2 · HOW DOES IT READ? Open by default: this is the group used on
+                 every layer, every time, and it comes before anything
+                 decorative. The binding and the name left it for the group above
+                 — everything here is about a layer whose job is already chosen. -->
+            <div class="te-group" class:closed={!openGroup.reads}>
+              <button class="te-grouphead" aria-expanded={openGroup.reads} on:click={() => toggleGroup('reads')}>
+                <span class="te-groupi" aria-hidden="true">{openGroup.reads ? '▾' : '▸'}</span>
+                <span>How does it read?</span>
+              </button>
+              {#if openGroup.reads}
             <div class="te-frow">
               <label class="te-fk" for="te-font">Font</label>
               <select id="te-font" class="r-select te-fv" value={sel.font} on:change={(e) => set('font', e.target.value)}>
@@ -1789,6 +2000,15 @@
             <button class="r-btn quiet sm te-minilink" on:click={() => detectFonts(false)}>Use all computer fonts {fontMsg}</button>
             {#if missingFont}<p class="te-fwarn">“{fontLabel(missingFont)}” isn't installed here — outputs use a default. Install it to use it.</p>{/if}
             <div class="te-frow"><label class="te-fk" for="te-size">Size</label><span class="te-fv te-stepper"><input id="te-size" class="te-num r-mono" type="number" min="1" max="16" step="0.1" value={sel.size} on:input={(e) => num('size', e.target.value)} /><span class="te-unit r-mono">cqw</span></span></div>
+            {#if sel.bind === 'programme'}
+              <!-- WHY THE DIAL STOPS (RG-223). The rail's figures may shrink to
+                   fit the box and may never grow past it, so past a point the
+                   BOX is what is holding them and the control looks dead. That
+                   was reported as a bug and the 64px ceiling behind it is gone;
+                   this is the half that remains true and has to be said where
+                   the control is, not discovered by dragging. -->
+              <p class="te-fnote">Figures are capped by the box: make the layer taller in <b>Where does it sit?</b> for bigger digits.</p>
+            {/if}
             <div class="te-frow"><label class="te-fk" for="te-col">Colour</label><span class="te-fv te-swatch"><input id="te-col" type="color" value={isColor(sel.color) ? sel.color : '#ffffff'} on:input={(e) => set('color', e.target.value)} disabled={isThemeToken(sel.color)} /><span class="te-hex r-mono">{isThemeToken(sel.color) ? 'linked' : isColor(sel.color) ? sel.color.toUpperCase() : '#FFFFFF'}</span></span></div>
             <div class="te-frow"><label class="te-fk" for="te-colbind">Style link</label><select id="te-colbind" class="r-select te-fv" value={isThemeToken(sel.color) ? sel.color : 'custom'} on:change={(e) => bindToken('color', e.target.value, '#ffffff')}><option value="custom">Custom colour</option>{#each COLOUR_TOKENS as t}<option value={t.token}>{t.label}</option>{/each}</select></div>
             <div class="te-frow">
@@ -1824,7 +2044,17 @@
             </div>
             <div class="te-frow"><label class="te-fk" for="te-lh">Line height</label><span class="te-fv te-rangerow"><input id="te-lh" class="r-range" type="range" min="0.9" max="2" step="0.05" value={sel.lineHeight || 1.32} on:input={(e) => num('lineHeight', e.target.value)} use:rangeFill={sel.lineHeight || 1.32} /><span class="te-rnum r-mono">{(sel.lineHeight || 1.32).toFixed(2)}</span></span></div>
             <div class="te-frow"><label class="te-fk" for="te-ls">Spacing</label><span class="te-fv te-rangerow"><input id="te-ls" class="r-range" type="range" min="-0.05" max="0.4" step="0.01" value={sel.letterSpacing || 0} on:input={(e) => num('letterSpacing', e.target.value)} use:rangeFill={sel.letterSpacing || 0} /><span class="te-rnum r-mono">{(sel.letterSpacing || 0).toFixed(2)}em</span></span></div>
-            <h3 class="te-sec">Effects</h3>
+              {/if}
+            </div>
+            <!-- 4 · ANYTHING ELSE. Collapsed: these are the controls an operator
+                 touches about once a year, and they were sitting at the same
+                 visual weight as Colour. -->
+            <div class="te-group" class:closed={!openGroup.more}>
+              <button class="te-grouphead" aria-expanded={openGroup.more} on:click={() => toggleGroup('more')}>
+                <span class="te-groupi" aria-hidden="true">{openGroup.more ? '▾' : '▸'}</span>
+                <span>Anything else</span>
+              </button>
+              {#if openGroup.more}
             <div class="te-frow"><label class="te-fk" for="te-sh">Shadow</label><span class="te-fv te-rangerow"><input id="te-sh" class="r-range" type="range" min="0" max="1" step="0.05" value={sel.shadow || 0} on:input={(e) => num('shadow', e.target.value)} use:rangeFill={sel.shadow || 0} /><span class="te-rnum r-mono">{Math.round((sel.shadow || 0) * 100)}%</span></span></div>
             <div class="te-frow">
               <label class="te-fk" for="te-fit">Scale</label>
@@ -1846,13 +2076,127 @@
             </div>
             <button class="te-swrow" on:click={() => set('italic', !sel.italic)}><span>Italic</span><span class="r-switch" class:on={sel.italic}></span></button>
             <button class="te-swrow" on:click={() => set('scroll', !sel.scroll)}><span>Scroll (ticker)</span><span class="r-switch" class:on={sel.scroll}></span></button>
+              {/if}
+            </div>
+          {/if}
+            <!-- READABILITY. Still under the layer list, in the panel a designer
+                 already has open — but FOLDED, because what was here was seven
+                 paragraphs of small italic prose, three verdict rows, two number
+                 fields and a button: the biggest thing in the column and the least
+                 used. It is one row now, and that row carries the verdict, so it is
+                 not "behind a button you have to know about" either. -->
+            {#if legible}
+              <!-- A DISCLOSURE ROW, not a button — the panel's own heading with its
+                   current verdict on it and a chevron at the end. It is a <button>
+                   so the whole row is the target and the keyboard reaches it; it
+                   carries `aria-expanded`, so what it does is stated rather than
+                   drawn. -->
+              <!-- Folding the panel also puts the distance strip away. Its only
+                   switch lives INSIDE the panel, so leaving it on over a closed
+                   panel would paint four extra renders across the canvas with
+                   nothing on screen able to turn them off. -->
+              <button class="te-legtoggle" aria-expanded={legOpen} on:click={() => { legOpen = !legOpen; if (!legOpen) showDistances = false; }}>
+                <span class="r-lbl">Readability</span>
+                <span class="te-legsum" class:bad={legState === 'bad'} class:unknown={legState === 'unknown'}>{legSummary}</span>
+                <span class="te-legchev" aria-hidden="true">{legOpen ? '▴' : '▾'}</span>
+              </button>
+            {/if}
+            {#if legible && legOpen}
+              <ul class="te-leg">
+                <!-- The countdown row is ABSENT on a look that cannot show one —
+                     `review` answers null rather than a fourth `unknown`, because a
+                     row that is always there is a row nobody reads. What it adds is
+                     the one colour the other three could never see: the last-minute
+                     red is hard-coded in the renderer, not declared by the template,
+                     so nothing here was checking the most time-critical thing Relay
+                     puts on a wall. -->
+                {#each [['Verse', legible.verse], ['Reference', legible.reference], ['From the back', legible.distance], ...(legible.countdownWarn ? [['Countdown, last minute', legible.countdownWarn]] : [])] as [label, c] (label)}
+                  <li class="te-legrow" class:bad={c.state === 'low' || c.state === 'small'} class:unknown={c.state === 'unknown'}>
+                    <b>{label}</b>
+                    <span>{c.note}</span>
+                  </li>
+                {/each}
+                <!-- THE MEASURED ROW. The three above are computed from the template's
+                     declared colours and sizes; this one is what the renderer actually
+                     settled at on this artboard, which is the only one of the four that
+                     can catch rule 37's failure. Absent when there is nothing to say,
+                     like every other honest row in this product. -->
+                {#if fitNote}
+                  <li class="te-legrow" class:bad={fitBad}>
+                    <b>Measured</b>
+                    <span>{fitNote}</span>
+                  </li>
+                {/if}
+              </ul>
+              <div class="te-legroom">
+                <label class="te-leglab" for="te-scr">Screen width (m)</label>
+                <input id="te-scr" class="r-input te-legin" inputmode="decimal" bind:value={screenWidthM} placeholder="4" />
+                <label class="te-leglab" for="te-back">Back row (m)</label>
+                <input id="te-back" class="r-input te-legin" inputmode="decimal" bind:value={backRowM} placeholder="18" />
+              </div>
+              <button class="r-btn ghost sm te-legbtn" on:click={() => (showDistances = !showDistances)}>
+                {showDistances ? 'Hide' : 'Show'} how it looks from further back
+              </button>
+              <!-- THE CAVEAT RIDES WITH THE VERDICT. The person reading it is deciding
+                   whether to trust it right now, and it has never been checked against
+                   a projector in a church. -->
+              <p class="te-panenote">{legible.caveat}</p>
+            {/if}
+          {:else if scope === 'object'}
+          <!-- ══ THE SELECTED OBJECT COMES FIRST (§3.2) ══════════════════════
+               This panel used to open on the TEMPLATE — its name, the kinds of
+               content it is used for, the kinds it shows — and an operator who
+               had just clicked an object on the canvas then had to scroll past
+               all of it to reach that object's properties. The tab strip above
+               says which object is selected; what follows it is that object,
+               and the template's own facts are one section at the foot.
+
+               ONE DEVIATION FROM §3.2, STATED RATHER THAN HIDDEN: the reference
+               groups an object as Text / Position / Effects and this renders
+               Position FIRST, because Position is the one group every movable
+               kind has and there is exactly ONE of it. Putting it between Text
+               and Effects would mean emitting the group inside each kind's
+               branch — and this file already carries the scar of a duplicated
+               Position group that did not agree with its twin and moved a
+               locked object. One group in a slightly different place is a much
+               smaller problem than two groups. -->
+
+          {#if sel}
+            <!-- 1 · WHAT IS THIS? Name and binding, and it does not collapse:
+                 everything below it is about an object whose job is already
+                 chosen, so this is the one thing that must never scroll away or
+                 be shut. The two halves used to sit at opposite ends of the
+                 panel — the name above the scroller, the binding buried in the
+                 property chain — which is the clearest single example of the
+                 "one list" this regroup is about (RG-217). -->
+            <div class="te-group te-what">
+              <div class="te-grouplbl r-lbl">What is this?</div>
+              {#if carriesBinding(sel)}
+                <div class="te-frow">
+                  <label class="te-fk" for="te-bind">Content</label>
+                  <select id="te-bind" class="r-select te-fv" value={sel.bind} on:change={(e) => set('bind', e.target.value)}>
+                    {#each BINDINGS as b}<option value={b.key}>{b.label}</option>{/each}
+                  </select>
+                </div>
+                {#if sel.bind === 'static'}
+                  <div class="te-frow"><label class="te-fk" for="te-txt">Text</label><input id="te-txt" class="r-input te-fv" value={sel.text || ''} on:input={(e) => set('text', e.target.value)} /></div>
+                {/if}
+              {/if}
+              <div class="te-frow te-objname">
+                <label class="te-fk" for="te-oname">Object name</label>
+                <input id="te-oname" class="r-input te-fv" value={sel.name ?? ''} placeholder={layerLabel(sel)}
+                  on:input={(e) => set('name', e.target.value)} />
+              </div>
+            </div>
           {/if}
 
-          <!-- ══ AND THE TEMPLATE ITSELF, UNDERNEATH ═════════════════════════
-               Unchanged controls; what moved is where they sit. The rule above
-               the heading is a real boundary: everything above it is about one
-               object on this slide, everything below it is about the template
-               all of them belong to. -->
+          {:else}
+          <!-- ══ AND THE TEMPLATE ITSELF, BEHIND ITS OWN TAB (RG-217) ════════
+               Unchanged controls; what moved is where they sit. They were the
+               last section under a layer's properties, separated by a rule — and
+               a rule is not a boundary an operator scrolling a long column
+               notices. They answer a different question from everything in the
+               object panel, so they are now a different panel. -->
           <h3 class="te-sec te-templatesec">Template</h3>
           <div class="te-frow"><label class="te-fk" for="te-name">Name</label><input id="te-name" class="r-input te-fv" bind:value={edit.name} /></div>
           <!-- "USED FOR" WAS HERE, AND IS NOW IN TWO PLACES INSTEAD OF THREE.
@@ -1890,6 +2234,7 @@
               </button>
             {/each}
           </div>
+          {/if}
         </div>
         {#if err}<div class="te-err" role="alert">{err}</div>{/if}
       </aside>
@@ -1913,6 +2258,45 @@
     color:var(--v-dim); cursor:pointer; text-align:left; }
   .te-legtoggle:hover{ background:var(--v-surf2); }
   .te-legtoggle .r-lbl{ flex:0 0 auto; }
+
+  /* ── THE FOUR GROUPS (RG-217) ──────────────────────────────────────────────
+     A group is a seam, not a box: a panel of nested cards at this width reads as
+     four things competing rather than one column with four jobs in it. The rule
+     above each head is the whole of the decoration. */
+  .te-group{ border-top:1px solid var(--v-line2); padding:8px 0 2px; }
+  .te-group:first-child{ border-top:0; padding-top:2px; }
+  .te-group.closed{ padding-bottom:8px; }
+  /* The head IS the control. A separate chevron button would be a second tab
+     stop for one action, and the whole row is the target an operator aims at. */
+  .te-grouphead{
+    display:flex; align-items:center; gap:6px; width:100%;
+    padding:2px 0; background:none; border:0; cursor:pointer;
+    font-size:var(--v-fs-lbl); line-height:var(--v-lh-lbl); font-weight:600;
+    letter-spacing:var(--v-tr-caps); text-transform:uppercase;
+    color:var(--v-dim); text-align:left;
+  }
+  .te-grouphead:hover{ color:var(--v-txt); }
+  .te-groupi{ flex:0 0 auto; font-size:var(--v-fs-cap); color:var(--v-faint); }
+  /* The one group that does not collapse gets the same type and no affordance,
+     so it does not read as a group somebody has failed to open. */
+  .te-grouplbl{ display:block; padding:2px 0 4px; }
+  .te-what{ padding-bottom:6px; }
+  /* Four buttons in two rows — the stacking order, on the Position tab (RG-230). */
+  .te-arrange{ display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:6px; padding:2px 0 6px; }
+  /* A STATED ABSENCE, not a warning: nothing is wrong, and a control that does
+     not exist yet is worth naming so the next person does not go looking. */
+  .te-absent{ color:var(--v-faint); }
+  /* WHICH PANEL THIS IS. Two words, in the head, where the question is asked. */
+  .te-scope{ display:inline-flex; gap:2px; margin-left:8px; }
+  /* A TAB. One of four, choosing which panel the inspector shows — it changes
+     what this editor displays and nothing about a template. */
+  .te-scopebtn{
+    padding:2px 8px; border-radius:var(--v-r-sm); cursor:pointer;
+    background:var(--v-surf2); border:1px solid var(--v-500);
+    color:var(--v-dim); font-size:var(--v-fs-lbl); line-height:var(--v-lh-lbl);
+  }
+  .te-scopebtn:hover{ background:var(--v-surf3); color:var(--v-txt); }
+  .te-scopebtn.on{ background:var(--v-sel-soft); border-color:var(--v-sel-line); color:var(--v-txt); font-weight:600; }
   /* THE VERDICT, in the one line that is always on screen. Rose when there is
      something to look at, dim italic when Relay CANNOT answer (a photograph
      behind the words), neither when it is clean — three different sentences for
@@ -2008,9 +2392,30 @@
      simplest one that exists. The rail is the column an operator opens this
      screen to use; the artboard loses 42px out of about a thousand and is still
      the largest thing on the desk. */
-  .te-body{ flex:1; min-height:0; display:grid; grid-template-columns:264px minmax(0,1fr) 300px; gap:12px; }
-  @media (max-width:1180px){ .te-body{ grid-template-columns:216px minmax(0,1fr) 268px; } }
-  @media (max-width:980px){ .te-shell{ height:auto; } .te-body{ grid-template-columns:1fr; } }
+  .te-body{ flex:1; min-height:0; display:grid; grid-template-columns:46px 264px minmax(0,1fr) 300px; gap:12px; }
+  @media (max-width:1180px){ .te-body{ grid-template-columns:46px 216px minmax(0,1fr) 268px; } }
+  /* The rail folds to a ROW above everything when the columns stack, rather than
+     being dropped: it is the only way to add an object, so losing it at a narrow
+     window would make the editor read-only. */
+  @media (max-width:980px){ .te-shell{ height:auto; } .te-body{ grid-template-columns:1fr; }
+    .te-tools{ flex-direction:row; width:auto; padding:6px 8px; }
+    .te-toolsep{ width:1px; height:20px; margin:0 4px; } }
+
+  /* ── THE TOOL RAIL (RG-227) ──────────────────────────────────────────────── */
+  .te-tools{ display:flex; flex-direction:column; align-items:center; gap:4px;
+    padding:8px 0; border-radius:var(--v-r-md);
+    background:var(--v-surf); border:1px solid var(--v-line2); }
+  /* A TOOL in the rail, the shape every canvas editor uses: it ARMS what the
+     next press on the board will do rather than doing anything itself. */
+  .te-tool{ width:32px; height:32px; display:grid; place-items:center; cursor:pointer;
+    background:transparent; border:1px solid transparent; border-radius:var(--v-r-sm);
+    color:var(--v-dim); }
+  .te-tool:hover{ background:var(--v-surf3); color:var(--v-txt); }
+  /* Steel — the thing being worked on. NEVER amber: this editor reaches no
+     output, and amber means a screen is on air (rule 18). */
+  .te-tool.on{ background:var(--v-sel-soft); border-color:var(--v-sel-line); color:var(--v-txt); }
+  .te-toolsep{ width:20px; height:1px; background:var(--v-line2); margin:4px 0; }
+  .te-panenote2{ font-size:var(--v-fs-cap); color:var(--v-faint); }
 
   .te-pane{ display:flex; flex-direction:column; min-height:0; overflow:hidden; background:var(--v-surf); border:1px solid var(--v-line); border-radius:var(--v-r-lg); }
   .te-panehead{ display:flex; align-items:center; justify-content:space-between; gap:8px; padding:11px 13px; border-bottom:1px solid var(--v-line); flex:0 0 auto; }
@@ -2233,6 +2638,11 @@
   .te-stage::before{ content:""; position:absolute; inset:0; pointer-events:none; background:radial-gradient(130% 110% at 50% 32%, transparent 45%, rgba(0,0,0,.45) 100%); }
   /* board wrapper carries the rulers; the artboard sits inside, offset for them. */
   .te-board-wrap{ position:relative; max-width:100%; padding:18px 0 0 26px; flex:0 0 auto; z-index:1; }
+  /* PAST FIT, the cap is what has to give (RG-228). `.te-stage` already scrolls;
+     `max-width:100%` was silently holding the board at fit however far the
+     control was pushed, so the two zoom steps past 100 would have done nothing
+     at all and read as a dead control — the RG-223 complaint in another place. */
+  .te-board-wrap.over{ max-width:none; }
   .te-ruler{ position:absolute; color:var(--v-faint); font-family:var(--f-mono); font-size:7px; pointer-events:none; }
   .te-ruler-x{ top:2px; left:26px; right:0; height:14px; border-bottom:1px solid var(--v-line2); }
   .te-ruler-x span{ position:absolute; transform:translateX(1px); }
@@ -2276,6 +2686,31 @@
   .te-botbar{ flex:0 0 auto; display:flex; align-items:center; gap:var(--v-sp-sm); padding:10px 12px; border-top:1px solid var(--v-line); }
   .te-botnote{ font-size:var(--v-fs-cap); color:var(--v-faint); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .te-botchip{ padding:5px 10px; border-radius:var(--v-r-md); background:var(--v-surf2); border:1px solid var(--v-line2); font-size:var(--v-fs-cap); color:var(--v-dim); }
+  /* ── THE FLOATING BAR (RG-229) ──────────────────────────────────────────────
+     Above the selection, centred on it, and BELOW it when the layer is near the
+     top — a bar drawn above a layer at y=2 hangs off the slide, and on a pane
+     that scrolls that is a bar nobody can reach.
+     Steel and neutral: this editor reaches no output, so amber (ON AIR), cyan
+     (the AI guessed) and amethyst (rehearsal) are all lies here (rule 18). */
+  .te-float{ position:absolute; z-index:6; transform:translate(-50%, calc(-100% - 10px));
+    display:flex; align-items:center; gap:3px; padding:4px 6px; white-space:nowrap;
+    border-radius:var(--v-r-md); background:var(--v-surf); border:1px solid var(--v-line2);
+    box-shadow:0 12px 28px rgba(0,0,0,.5); }
+  .te-float.below{ transform:translate(-50%, 10px); }
+  /* A TOOLBAR BUTTON on the floating bar: a 24px square that takes an icon or a
+     single letter, in a row of its own kind. It carries its own shape because
+     the bar has no shared group styling it. */
+  .te-fbtn{ min-width:24px; height:24px; padding:0 4px; display:grid; place-items:center;
+    cursor:pointer; background:transparent; border:1px solid transparent;
+    border-radius:var(--v-r-sm); color:var(--v-dim); font-size:var(--v-fs-lbl); }
+  .te-fbtn.wide{ padding:0 8px; }
+  .te-fbtn:hover{ background:var(--v-surf3); color:var(--v-txt); }
+  .te-fbtn.on{ background:var(--v-sel-soft); border-color:var(--v-sel-line); color:var(--v-txt); }
+  .te-fgroup{ display:inline-flex; align-items:center; border:1px solid var(--v-line2); border-radius:var(--v-r-sm); }
+  .te-fnum{ min-width:32px; text-align:center; font-size:var(--v-fs-cap); color:var(--v-txt); font-variant-numeric:tabular-nums; }
+  .te-fsep{ width:1px; height:16px; background:var(--v-line2); margin:0 2px; }
+  .te-botwho{ font-size:var(--v-fs-lbl); color:var(--v-txt); font-weight:600;
+    max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
   /* design panel */
   .te-designbody{ flex:1; min-height:0; overflow-y:auto; padding:14px; display:flex; flex-direction:column; gap:10px; }
@@ -2298,7 +2733,7 @@
      here: the alignment, because a quiet button centres its label by default
      and this one begins under the select's left edge. */
   .te-minilink{ justify-content:flex-start; padding-left:0; align-self:flex-start; }
-  .te-fwarn{ margin:0; padding:8px 10px; border:1px solid var(--v-amber-soft); border-radius:var(--v-r-sm); background:var(--v-amber-soft); color:var(--v-amber2); font-size:var(--v-fs-cap); line-height:1.45; }
+  .te-fwarn{ margin:0; padding:8px 10px; border:1px solid var(--v-caution-line); border-radius:var(--v-r-sm); background:var(--v-caution-soft); color:var(--v-caution2); font-size:var(--v-fs-cap); line-height:1.45; }
   .te-stepper{ display:flex; align-items:center; }
   .te-num{ height:32px; padding:0 8px; border-radius:var(--v-r-md); background:var(--v-bg); border:1px solid var(--v-line2); color:var(--v-txt); font-size:var(--v-fs-b2); outline:none; width:100%; box-sizing:border-box; }
   .te-num:focus{ border-color:var(--v-accent-line); }

@@ -101,7 +101,7 @@ pub struct ModelInfo {
 /// ── WHY THERE IS MORE THAN `base` HERE ──────────────────────────────────────
 ///
 /// Relay shipped only `base` — the smallest useful whisper — for its entire life,
-/// while `docs/qa/audits/PRODUCT-2026-07-13.md` called African-language accuracy the biggest
+/// while `docs/qa/audits/SUPERSEDED.md` called African-language accuracy the biggest
 /// weakness in the product. Those two facts were never connected, because nothing
 /// had ever measured what a larger model buys. `stt::bench::engine_shootout` is
 /// that measurement, and these are the models it has to choose between.
@@ -1085,6 +1085,38 @@ mod config_boots {
                 || body.to_lowercase().contains("this computer"),
             "the usage string must say what happens to the audio — it is the one thing \
              a church actually wants to know: {body:?}"
+        );
+
+        // AND THE SECOND TCC STRING, which fails more quietly than the first.
+        //
+        // macOS gates `~/Documents` the same way it gates the microphone, but the
+        // failure is worse to diagnose: a hardened-runtime build without this key
+        // does not get a refusal it can report, the directory simply reads as
+        // EMPTY. So `find_propresenter` would answer "no library here" on a machine
+        // with 726 songs in it, and nothing in any log would say why. Same trap as
+        // rule 17, same invisibility under `tauri dev`, same repair.
+        let docs = plist
+            .split("NSDocumentsFolderUsageDescription")
+            .nth(1)
+            .expect(
+                "no NSDocumentsFolderUsageDescription — ~/Documents reads as EMPTY under the \
+                 hardened runtime, so finding a ProPresenter library silently finds nothing",
+            )
+            .split("<string>")
+            .nth(1)
+            .and_then(|s| s.split("</string>").next())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        assert!(
+            docs.len() > 40,
+            "the Documents usage string is missing or too thin to explain anything: {docs:?}"
+        );
+        // It must say what Relay wants in there. "Relay needs access to Documents"
+        // tells a volunteer nothing they can act on.
+        assert!(
+            docs.to_lowercase().contains("propresenter") || docs.to_lowercase().contains("song"),
+            "the Documents usage string must say what Relay is looking for: {docs:?}"
         );
     }
 }

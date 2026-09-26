@@ -76,6 +76,28 @@ export function sundayReport(timeline = [], perf = [], detail = null) {
   const rejected = cueCount('suggestion_dismissed');
   const actedOn = accepted + rejected;
 
+  // ── AND WHAT RELAY OFFERED, WHICH IS NEW AND IS THE DENOMINATOR (RG-309) ────
+  //
+  // The paragraph above is still the operator's half and still comes from `cues`.
+  // What it could not give is the other half: how many suggestions there WERE. Until
+  // RG-309, `persist_fire` ran only inside `if fire.may_broadcast()` and a paraphrase
+  // can never broadcast (rule 10), so `status = 'suggested'` was structurally
+  // unreachable and this file said 0 for it — which is why these counters were moved
+  // to `cues` in the first place. The rows exist now.
+  //
+  // **From `detail.detections`, NOT from the timeline.** `service_timeline` is the
+  // one ordered record of what HAPPENED and deliberately excludes offers — a
+  // 16-hour service offers thousands of them against a few hundred fires, and a
+  // timeline that was 95% suggestions would be unreadable and would break the
+  // replay's own index into it. The forensic list is `service_detections`, and this
+  // is the only figure that needs the whole of it.
+  //
+  // `null`, not 0, when the service predates the change or recorded none. A service
+  // from last month has no suggestion rows and never will, and printing `0 offered`
+  // over it is the same false claim in a new column.
+  const offered = splitDetections(detail?.detections).offered.length;
+  const suggestionsOffered = offered || null;
+
   // What went wrong. These have no other home — before `service_events` existed, a
   // panic control that did not reach the screens left no trace once the operator
   // dismissed the banner.
@@ -99,6 +121,13 @@ export function sundayReport(timeline = [], perf = [], detail = null) {
     // they acted on none — 0% would read as "the operator rejected everything",
     // which is a different and much worse claim.
     suggestionUptake: actedOn ? accepted / actedOn : null,
+    suggestionsOffered,
+    // Of everything Relay offered, how much did the operator answer AT ALL? This is
+    // the figure `suggestionUptake` deliberately is not: uptake is out of the ones
+    // they answered, and this is out of everything. Measured on the author's own
+    // 16-hour service of 2026-09-25 it is one acceptance against roughly 8,000
+    // offers, and that number is the finding rather than a rounding error.
+    suggestionsAnswered: suggestionsOffered ? actedOn / suggestionsOffered : null,
     panicFailures,
     outputsLost,
     outputsRecovered,
@@ -107,10 +136,42 @@ export function sundayReport(timeline = [], perf = [], detail = null) {
     // Said out loud in the report itself rather than left for a reader to notice.
     notMeasured: [
       'Whether any verse shown was the RIGHT one — nothing here checks that, and only a person in the room can',
-      'How many suggestions you never acted on — a suggestion that scrolls away unanswered is recorded nowhere, so the acceptance figure is out of the ones you DID answer, not out of everything Relay offered',
+      'Whether a suggestion you never answered was RIGHT — the offers are recorded now, with the words behind each one, but nothing here judges them and only a person who was in the room can',
       'Word error rate, in any language',
       'Whether the app crashed — crashes are recorded per launch, not per service, and guessing which service one belonged to would be a fabrication',
     ],
+  };
+}
+
+/**
+ * A service's detection rows split by whether they reached a screen — RG-309.
+ *
+ * ## Why this is a function and not a filter written twice
+ *
+ * Until suggestions were persisted, every row in `detections` had been on a screen,
+ * so `db::service_detections` returning "the service's detections" and History
+ * rendering them all under **Detected verses (N)** were the same statement. Once
+ * `status = 'suggested'` became reachable they stopped being the same statement, by
+ * roughly twenty to one: the author's service of 2026-09-25 put **365** verses on a
+ * screen and offered in the region of **8,000**, and the column would have printed
+ * the second number under the first word.
+ *
+ * That is rule 35 in the archive rather than on the desk — a figure whose meaning
+ * changed while its label did not — and a filter inlined at the one surface that
+ * renders it today is how the next surface gets it wrong. `status` is the load-bearing
+ * column (the router learns from it, rule 14) and this is the one place its four
+ * values are turned into the two questions a reader actually has.
+ *
+ * **Total over the input, deliberately.** A fifth status added to the CHECK
+ * constraint one day lands in `offered` rather than vanishing: a detection the
+ * history quietly stops showing is worse than one filed under the wrong heading.
+ */
+export function splitDetections(list) {
+  const rows = Array.isArray(list) ? list : [];
+  const reached = (d) => d?.status === 'auto' || d?.status === 'manual';
+  return {
+    fired: rows.filter(reached),
+    offered: rows.filter((d) => !reached(d)),
   };
 }
 

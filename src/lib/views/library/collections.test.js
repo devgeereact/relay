@@ -17,6 +17,7 @@ import { tick } from 'svelte';
 import { readFileSync } from 'node:fs';
 import { COLLECTIONS, VIEW_KEYS, collectionOf, collectionByKey, countMark, countWords } from './collections.js';
 import Collections from './Collections.svelte';
+import { codeOnly } from '../../codeonly.js';
 
 const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
 const bar = read('./Collections.svelte');
@@ -28,10 +29,7 @@ const css = read('../../../tokens.css') + read('../../../app.css');
 
 /** Markup and rules only. This file EXPLAINS the colour law in prose, and a grep
     a comment can trip is a grep that will trip on the next comment. */
-const barCode = bar
-  .replace(/<!--[\s\S]*?-->/g, ' ')
-  .replace(/\/\*[\s\S]*?\*\//g, ' ')
-  .replace(/(^|\s)\/\/[^\n]*/g, ' ');
+const barCode = codeOnly(bar);
 
 function mount(props = {}) {
   const host = document.createElement('div');

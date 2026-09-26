@@ -93,15 +93,49 @@ describe('finals and their timestamps are sliced in LOCKSTEP', () => {
     }
   });
 
-  it('the cap keeps the NEWEST lines, because the operator is reading now', () => {
+  it('KEEPS EVERY LINE — there is no cap, and the first one survives', () => {
+    // The cap was 12, then 240, and then nothing: *"I want all transcript to be
+    // kept, not just what you hear before another minute"* (operator,
+    // 2026-09-20). 400 lines is more than twice a real service produced.
     let t = { ...EMPTY };
-    for (let i = 1; i <= 40; i++) t = applyTranscript(t, { text: `line ${i}`, is_final: true }, `t${i}`);
+    for (let i = 1; i <= 400; i++) t = applyTranscript(t, { text: `line ${i}`, is_final: true }, `t${i}`);
 
-    expect(t.finals.at(-1)).toBe('line 40');
-    expect(t.finals).not.toContain('line 1');
-    // And it is genuinely bounded: a sermon is an hour long.
-    expect(t.finals.length).toBeLessThanOrEqual(12);
-    expect(t.finals.length).toBeGreaterThan(1);
+    expect(t.finals.at(-1)).toBe('line 400');
+    // THE ASSERTION THAT MATTERS, and it is the inverse of the one it replaces:
+    // the very first thing said this morning is still there at the end.
+    expect(t.finals[0]).toBe('line 1');
+    expect(t.finals.length).toBe(400);
+  });
+
+  it('every kept line still carries its own hour, minute and second', () => {
+    // *"keep all, starting from different seconds and minute and hour."* The
+    // stamps are paired by INDEX across two arrays, which is how they drifted
+    // once before when the cap shifted one array and not the other. With no cap
+    // there is no shift, and this proves the pairing over a whole service.
+    let t = { ...EMPTY };
+    for (let i = 1; i <= 300; i++) {
+      const at = `${String(9 + Math.floor(i / 120)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}:07`;
+      t = applyTranscript(t, { text: `line ${i}`, is_final: true }, at);
+    }
+    expect(t.finalsAt.length).toBe(t.finals.length);
+    expect(t.finalsAt[0]).toBe('09:01:07');
+    expect(t.finalsAt.at(-1)).toBe('11:00:07');
+    // Pairwise, not by length: line N must carry line N's stamp.
+    for (let i = 0; i < t.finals.length; i++) {
+      const n = Number(t.finals[i].split(' ')[1]);
+      expect(t.finalsAt[i].slice(3, 5)).toBe(String(n % 60).padStart(2, '0'));
+    }
+  });
+
+  it('keeps enough of a real service to scroll back through', () => {
+    // MEASURED, not chosen: the service of 2026-09-20 closed 147 utterances in
+    // 5611 seconds, one every ~38 s. The old cap of 12 held about seven minutes
+    // of that, which is why the card ran out of history almost at once.
+    let t = { ...EMPTY };
+    for (let i = 1; i <= 147; i++) t = applyTranscript(t, { text: `line ${i}`, is_final: true }, `t${i}`);
+    expect(t.finals).toContain('line 1');
+    expect(t.finals.length).toBe(147);
+    expect(t.finalsAt.length).toBe(147);
   });
 
   it('a state restored without finalsAt degrades instead of crashing', () => {

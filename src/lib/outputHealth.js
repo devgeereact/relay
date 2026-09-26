@@ -90,7 +90,28 @@ export function paintState({ black, visible, content }) {
  * `getWs` is likewise a getter: a kiosk socket is replaced on every reconnect, and
  * a captured reference would keep beating down a dead one.
  */
-export function startBeat({ channelId, getState, getWs = () => null, invoke = null }) {
+export function startBeat({
+  channelId,
+  getState,
+  getWs = () => null,
+  invoke = null,
+  // WHERE THIS SCREEN'S CLIP IS, or `null` when it is not playing one.
+  //
+  // It rides the beat rather than a channel of its own, because the beat is
+  // already the one thing a screen says about itself and it already carries the
+  // answer to "are you still painting". A clip's position is worth nothing
+  // without that: a position from a screen that stopped answering a minute ago is
+  // a countdown an operator would time the next cue against.
+  //
+  // The console must never compute this from its own preview. Its programme pane
+  // renders through the same component, so it holds a second player of the same
+  // file that buffers differently and carries on if the wall's copy stalls.
+  getMedia = () => null,
+  // WHAT THIS SCREEN COULD NOT LOAD, as a short sentence, or `null` (O-4). Sent
+  // only when set, so an absent field means "nothing failed" and clears the
+  // desk's last report — which is the honest reading of a beat that says nothing.
+  getMediaError = () => null,
+}) {
   // Channel 0 is a raw template preview with no channel behind it — there is no
   // screen for an operator to worry about, so there is nothing to report.
   if (!Number.isFinite(channelId) || channelId <= 0) return () => {};
@@ -142,29 +163,66 @@ export function startBeat({ channelId, getState, getWs = () => null, invoke = nu
     return out;
   };
 
-  const sendOverSocket = (ws, state, g) => {
+  /**
+   * The clip fields for the wire, or nothing at all.
+   *
+   * A report with no duration is dropped whole rather than sent with a zero: zero
+   * is not a clip that takes no time, it is a player that has not loaded one yet,
+   * and "0:00 left" over a clip that has barely started is worse than saying
+   * nothing. The engine drops it again on arrival for the same reason; this is the
+   * near half of one rule, not a second one.
+   */
+  const mediaErrorField = () => {
+    let e = null;
+    try {
+      e = getMediaError();
+    } catch {
+      e = null;
+    }
+    return typeof e === 'string' && e.trim() ? { media_error: e.trim().slice(0, 300) } : {};
+  };
+  const mediaFields = (m) => {
+    const dur = Number(m?.dur_ms);
+    const pos = Number(m?.pos_ms);
+    if (!Number.isFinite(dur) || dur <= 0 || !Number.isFinite(pos) || pos < 0) return null;
+    return {
+      media_pos_ms: Math.round(Math.min(pos, dur)),
+      media_dur_ms: Math.round(dur),
+      media_paused: !!m.paused,
+    };
+  };
+
+  const sendOverSocket = (ws, state, g, m) => {
     // OPEN only (readyState 1). A queued send on a reconnecting socket arrives
     // seconds later and would report a screen as healthy at a moment it demonstrably
     // was not — the beat would paper over the very gap it exists to expose.
     if (!ws || ws.readyState !== 1) return false;
     try {
-      ws.send(JSON.stringify({ kind: 'beat', channel: channelId, state, ...g }));
+      ws.send(JSON.stringify({ kind: 'beat', channel: channelId, state, ...g, ...(mediaFields(m) ?? {}), ...mediaErrorField() }));
       return true;
     } catch {
       return false;
     }
   };
 
-  const sendOverBridge = async (state, g) => {
+  const sendOverBridge = async (state, g, m) => {
     try {
       const inv = invoke ?? (await import('@tauri-apps/api/core')).invoke;
       // camelCase across the bridge, snake_case on the wire: Tauri maps the
       // argument names and the WebSocket protocol does not.
+      const mf = mediaFields(m);
       await inv('output_beat', {
         channelId,
         state,
         sinceMs: g.since_ms ?? null,
         hiddenMs: g.hidden_ms ?? null,
+        // camelCase across the bridge, snake_case on the wire — the same mapping
+        // the two lines above already make.
+        mediaPosMs: mf?.media_pos_ms ?? null,
+        mediaDurMs: mf?.media_dur_ms ?? null,
+        mediaPaused: mf?.media_paused ?? null,
+        // A PICTURE OR CLIP THIS SCREEN COULD NOT LOAD, or null (O-4).
+        mediaError: mediaErrorField().media_error ?? null,
       });
     } catch {
       /* no backend, or the command is gone. Stay silent and go stale. */
@@ -189,10 +247,19 @@ export function startBeat({ channelId, getState, getWs = () => null, invoke = nu
       ws = null;
     }
     const g = gap();
-    if (sendOverSocket(ws, state, g)) return;
+    // Read once per beat, not per frame. `timeupdate` fires several times a second
+    // and none of those are worth a message; the beat's own interval is the rate
+    // an operator can read anyway.
+    let m = null;
+    try {
+      m = getMedia();
+    } catch {
+      m = null;
+    }
+    if (sendOverSocket(ws, state, g, m)) return;
     // A kiosk page has no bridge, so this is a no-op there and the beat correctly
     // goes stale while its socket is down.
-    void sendOverBridge(state, g);
+    void sendOverBridge(state, g, m);
   };
 
   // Report at once, so a screen that has just opened is not shown as silent for
@@ -253,7 +320,7 @@ export function screenFault(st) {
 /**
  * What to say about one screen.
  *
- * Returns `{ kind, label, note }`. `kind` chooses the colour, and it obeys the
+ * Returns `{ kind, label, note, shows }`. `kind` chooses the colour, and it obeys the
  * colour law (DECISIONS §22): **amber is spent only on a screen that is both
  * genuinely on air and answering.** A screen that is not answering can never be
  * amber, and neither can one that IS answering and says it is showing nothing —
@@ -265,22 +332,45 @@ export function screenFault(st) {
  * either claim is compared, because the two disagree on purpose there and the
  * disagreement is not news.
  *
+ * `shows` is the same verdict saying one thing more: what a surface that PAINTS
+ * this screen — the Outputs workspace's cards — is allowed to put in the frame.
+ * It is part of this function rather than a second rule beside it, because a
+ * badge and a picture derived separately are how a card comes to argue with its
+ * own label (RG-211). Four answers, and every branch gives one:
+ *
+ * - `content` — paint what Relay is sending. The screen has said it is painting
+ *               content, so the card and the screen agree.
+ * - `blank`   — paint nothing. The screen is down, taken down, blacked out, in a
+ *               rehearsal nothing reaches, or has itself said it is clear.
+ * - `stale`   — paint the last frame this screen was KNOWN to be showing, and
+ *               say that it is old. Painting the current programme under a **Not
+ *               responding** badge is the rule 35 failure in a new place: the
+ *               verse on that card is one the screen never received.
+ * - `unknown` — paint nothing and claim nothing. Nobody has heard from it yet.
+ *
  * @param st       the channel's `ChannelLiveness` row, or null before the first poll
  * @param wall     `{ rehearsing, live, black }` — what Relay believes it is sending
  * @param waitedMs how long this screen has been attached without answering
  */
 export function describeScreen(st, wall, waitedMs = 0) {
   const fault = screenFault(st);
-  if (fault === 'unknown') return { kind: 'unknown', label: 'Checking…', note: '' };
+  if (fault === 'unknown')
+    return { kind: 'unknown', label: 'Checking…', note: '', shows: 'unknown' };
   if (fault === 'unsupported')
-    return { kind: 'idle', label: 'Unavailable', note: st.detail ?? '' };
-  if (fault === 'offline') return { kind: 'idle', label: 'No window', note: st.detail ?? '' };
+    return { kind: 'idle', label: 'Unavailable', note: st.detail ?? '', shows: 'blank' };
+  if (fault === 'offline')
+    return { kind: 'idle', label: 'No window', note: st.detail ?? '', shows: 'blank' };
 
   if (fault !== 'ok') {
     // Never answered AND still inside the grace window: say so plainly rather
     // than accusing a screen that is still starting up.
     if (fault === 'never' && waitedMs < BEAT_GRACE_MS)
-      return { kind: 'idle', label: 'Waiting…', note: 'the screen has not reported yet' };
+      return {
+        kind: 'idle',
+        label: 'Waiting…',
+        note: 'the screen has not reported yet',
+        shows: 'unknown',
+      };
     return {
       kind: 'down',
       label: 'Not responding',
@@ -288,6 +378,7 @@ export function describeScreen(st, wall, waitedMs = 0) {
         fault === 'never'
           ? 'this screen has never reported painting'
           : `last answered ${Math.round(st.last_beat_ms / 1000)}s ago`,
+      shows: 'stale',
     };
   }
 
@@ -331,7 +422,8 @@ export function describeScreen(st, wall, waitedMs = 0) {
   // and a fixture must not be able to earn amber that a screen would not.
   const says = PAINT_STATES.includes(st.paint_state) ? st.paint_state : null;
   const seen = says ? `screen: ${says}` : '';
-  if (wall?.rehearsing) return { kind: 'rehearsal', label: 'Rehearsal', note: seen };
+  if (wall?.rehearsing)
+    return { kind: 'rehearsal', label: 'Rehearsal', note: seen, shows: 'blank' };
 
   // ── THE OPERATOR TOOK THIS SCREEN OUT OF THE WALL ──────────────────────────
   //
@@ -358,10 +450,24 @@ export function describeScreen(st, wall, waitedMs = 0) {
       kind: 'ready',
       label: st.down === 'black' ? 'Taken down · black' : 'Taken down',
       note: seen ? `you took this screen down · ${seen}` : 'you took this screen down',
+      shows: 'blank',
     };
   }
 
   // What Relay believes it is sending this screen, in the screen's own vocabulary.
+  // A SCREEN THAT SAYS ITS PICTURE DID NOT LOAD IS NOT ON AIR (O-4, 2026-09-21).
+  // Its DOM has a slide, so `paint_state` honestly reads `content`; the picture
+  // inside it is blank. Ranked with `down`, because a congregation looking at a
+  // blank frame under an amber badge is the failure rule 35 exists to stop.
+  if (typeof st.media_error === 'string' && st.media_error.trim()) {
+    return {
+      kind: 'down',
+      label: 'Not painting the picture',
+      note: st.media_error.trim(),
+      shows: 'content',
+    };
+  }
+
   const sending = wall?.live && !wall?.black ? 'content' : wall?.black ? 'black' : 'clear';
   // `clear` and `black` both mean "nothing of ours is on that screen", which is
   // the claim a Blackout or a Ready badge makes. Only `content` vs not-content is
@@ -376,10 +482,17 @@ export function describeScreen(st, wall, waitedMs = 0) {
         says === null
           ? 'the screen has not said what it is showing'
           : `${RELAY_CLAIM[sending]} · the screen says ${says}`,
+      shows: says === null ? 'unknown' : says === 'content' ? 'content' : 'blank',
     };
   }
-  if (sending === 'content') return { kind: 'onair', label: 'On Air', note: seen };
-  return { kind: 'ready', label: sending === 'black' ? 'Blackout' : 'Ready', note: seen };
+  if (sending === 'content')
+    return { kind: 'onair', label: 'On Air', note: seen, shows: 'content' };
+  return {
+    kind: 'ready',
+    label: sending === 'black' ? 'Blackout' : 'Ready',
+    note: seen,
+    shows: 'blank',
+  };
 }
 
 /** Relay's half of the note, in words — one per thing Relay can be sending. */

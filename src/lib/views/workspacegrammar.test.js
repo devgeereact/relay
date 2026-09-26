@@ -21,6 +21,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { codeOnly } from '../codeonly.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '../../..');
@@ -34,11 +35,7 @@ const read = (f) => readFileSync(resolve(ROOT, f), 'utf8');
  * scanner reading raw source flags the explanation as the offence. `panic.test.js`
  * records the same lesson in the same words: only the code is the claim.
  */
-const code = (f) =>
-  read(f)
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^\s*\/\/.*$/gm, '');
+const code = (f) => codeOnly(read(f));
 
 const FRAME = 'src/lib/views/WorkspaceFrame.svelte';
 // The workspaces this pass covers. Live is deliberately absent: it is the run
@@ -419,7 +416,7 @@ const SWEPT_HEX_ONLY = [
 // explanation — which is the more valuable half.
 const styleOf = (src) => {
   const i = src.lastIndexOf('<style>');
-  return (i === -1 ? '' : src.slice(i)).replace(/\/\*[\s\S]*?\*\//g, '');
+  return codeOnly(i === -1 ? '' : src.slice(i));
 };
 
 describe('§1 · the token sweep — wave 4', () => {
@@ -575,7 +572,7 @@ describe('§1 · the control metrics', () => {
   // The rule's body, by selector, with comments stripped so a retired value
   // documented in prose cannot satisfy or break an assertion.
   const ruleFor = (sel) => {
-    const bare = css.replace(/\/\*[\s\S]*?\*\//g, '');
+    const bare = codeOnly(css);
     const i = bare.indexOf(sel + '{');
     expect(i, `no rule for ${sel}`).toBeGreaterThan(-1);
     return bare.slice(i, bare.indexOf('}', i));
@@ -701,7 +698,7 @@ describe('the retired red never comes back', () => {
 
   it('is in no stylesheet and no component', () => {
     const offenders = files.filter((f) => {
-      const body = read(f).replace(/\/\*[\s\S]*?\*\//g, '');
+      const body = codeOnly(read(f));
       return /rgba\(\s*239\s*,\s*68\s*,\s*68/.test(body);
     });
     expect(offenders, 'use var(--v-red) / --v-red-soft / --v-red-line').toEqual([]);
@@ -748,7 +745,7 @@ describe('the retired red never comes back', () => {
     const scan = [...files, 'src/Stage.svelte', 'src/Output.svelte', 'src/App.svelte'];
     const offenders = [];
     for (const f of scan) {
-      const body = read(f).replace(/\/\*[\s\S]*?\*\//g, '').replace(/<!--[\s\S]*?-->/g, '');
+      const body = codeOnly(read(f));
       for (const [re, why] of RETIRED) {
         for (const m of body.matchAll(re)) offenders.push(`${f}: ${m[0]} — ${why}`);
       }
@@ -792,7 +789,7 @@ describe('the retired red never comes back', () => {
     const seen = read('src/lib/views/library/VerseDeck.svelte');
     expect(seen, 'VerseDeck no longer mentions the retired amber even in prose')
       .toMatch(/rgba\(255, ?176, ?0/);
-    const stripped = seen.replace(/\/\*[\s\S]*?\*\//g, '');
+    const stripped = codeOnly(seen);
     expect(stripped, 'the retired amber is back in VerseDeck\'s code')
       .not.toMatch(/rgba\(255, ?176, ?0/);
   });
@@ -800,7 +797,7 @@ describe('the retired red never comes back', () => {
 
 describe('§1 · one button, everywhere', () => {
   const css = read('src/app.css');
-  const bare = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const bare = codeOnly(css);
   const ruleFor = (sel) => {
     const i = bare.indexOf(sel + '{');
     expect(i, `no rule for ${sel}`).toBeGreaterThan(-1);
@@ -1134,7 +1131,7 @@ describe('§1 · a button is the shared one, or a named shape — Planner · Out
     const offenders = [];
     for (const f of B3) {
       const src = read(f);
-      const style = rawStyleOf(src).replace(/\/\*[\s\S]*?\*\//g, '');
+      const style = codeOnly(rawStyleOf(src));
       const companions = new Set();
       for (const b of buttonsIn(templateOf(src))) {
         const classes = classesOf(b.attrs);
@@ -1172,7 +1169,7 @@ describe('§1 · a button is the shared one, or a named shape — Planner · Out
     // stylesheet both now carry a comment NAMING the rule that was deleted, so
     // a scanner reading the whole file would report the defect present and the
     // defect fixed at once, whichever way round the code actually was.
-    const s = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/<!--[\s\S]*?-->/g, '');
+    const s = codeOnly(raw);
     expect(s, 'the section rail draws its own row again').not.toMatch(/s-railbtn/);
     expect(raw, 'the scanner is reading a file with no prose in it at all').toMatch(/s-railbtn/);
     expect(s, 'the section rail rows are not the shared rail row').toMatch(/class="rw-item r-focus"/);

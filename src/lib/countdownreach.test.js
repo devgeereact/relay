@@ -172,12 +172,25 @@ describe('the two exclusions are the real rules, not a copy of them', () => {
   });
 });
 
-// ── AND THE DOCK ACTUALLY RENDERS IT ────────────────────────────────────────
+// ── AND THE RUN SURFACE ACTUALLY RENDERS IT ─────────────────────────────────
 //
-// The rule above is pure so the dock and Live cannot disagree about the same
+// The rule above is pure so that two surfaces cannot disagree about the same
 // screens. That is worth nothing if the transport renders none of it. This
 // repository has shipped fourteen passing tests against a component nothing
 // imported; a helper nobody calls is the same shape one level down.
+//
+// IT WAS THE DOCK UNTIL 2026-09-20. The Screen Countdown left Quick tools on the
+// operator's instruction and the reach line went with it, onto the `Screen
+// Countdown` band in `views/Live.svelte`. Left mounting the dock, this describe
+// would have found no `.cdreach` at all — and a `toBeTruthy` on a null is a loud
+// failure, which is luck; the `not.toContain` assertions under it would have
+// passed over an element that does not exist.
+//
+// ONE THING THE MOVE CHANGED, and it is asserted rather than glossed: the line on
+// Live answers about the screens the countdown is AIMED at, not about every
+// screen in the building. With the aim left at its default — every screen — that
+// is the same question the dock asked, which is why these cases read unchanged.
+// `screencountdown.test.js` holds the narrowed case.
 
 import { beforeEach, afterEach, vi } from 'vitest';
 import { tick } from 'svelte';
@@ -188,7 +201,8 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a) => invoke(...a) }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: async () => () => {} }));
 
 const cap = await import('./stores/capture.js');
-const Dock = (await import('./Dock.svelte')).default;
+const { setSession } = await import('./session.js');
+const Live = (await import('./views/Live.svelte')).default;
 
 let host;
 let app;
@@ -198,6 +212,9 @@ function bridge({ channels = [], templates = [] } = {}) {
     if (cmd === 'list_output_channels') return channels;
     if (cmd === 'list_templates') return templates;
     if (cmd === 'list_timers') return [];
+    if (cmd === 'list_plans') return [];
+    if (cmd === 'list_books') return [{ book: 'Psalms', chapters: 150 }];
+    if (cmd === 'rehearsal') return false;
     if (cmd === 'get_sensitivity') return 50;
     if (cmd === 'get_default_template') return null;
     return null;
@@ -206,14 +223,14 @@ function bridge({ channels = [], templates = [] } = {}) {
 
 /**
  * MOUNT AND LET THE POLL RUN, for the reason `wayback.test.js` records at the
- * same point: the dock's mount-time reads do not all reach the mocked bridge in
- * this environment, so it is the two-second poll these tests watch.
+ * same point: the surface's mount-time reads do not all reach the mocked bridge
+ * in this environment, so it is the two-second poll these tests watch.
  */
 async function mountAndRead() {
   host = document.createElement('div');
   document.body.appendChild(host);
   vi.useFakeTimers({ shouldAdvanceTime: true });
-  app = new Dock({ target: host, props: {} });
+  app = new Live({ target: host, props: {} });
   await vi.advanceTimersByTimeAsync(2100);
   await tick();
   vi.useRealTimers();
@@ -279,7 +296,12 @@ beforeEach(async () => {
   cap.live.set(null);
   cap.templates.set([]);
   cap.readErrors.set({});
-  cap.capture.update((s) => ({ ...s, available: true }));
+  cap.detections.set([]);
+  cap.resolvedDetections.set([]);
+  cap.liveCue.set({ cueId: null, slide: 0, onAir: false });
+  cap.channelHealth.set({});
+  cap.capture.update((s) => ({ ...s, available: true, stt: { ...s.stt, loaded: true } }));
+  setSession({ planId: null });
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -287,32 +309,7 @@ afterEach(() => {
   host?.remove();
   app = host = null;
   cap.readErrors.set({});
+  cap.detections.set([]);
+  cap.resolvedDetections.set([]);
 });
 
-describe('the transport renders the answer', () => {
-  it('names the screen that ignores it, on the rendered control', async () => {
-    cap.templates.set(TEMPLATES);
-    bridge({ channels: [chan(1, 'Main screen', 1), chan(2, 'Lobby screen', 2)], templates: TEMPLATES });
-    await mountAndRead();
-    expect(line(), 'the countdown block renders no reach line at all').toBeTruthy();
-    expect(line().textContent).toContain('Lobby screen ignores it');
-  });
-
-  it('and says something different when every screen would show it', async () => {
-    cap.templates.set(TEMPLATES);
-    bridge({ channels: [chan(1, 'Main screen', 1), chan(2, 'Overflow', 1)], templates: TEMPLATES });
-    await mountAndRead();
-    expect(line().textContent.trim()).toBe('Goes to all 2 screens');
-  });
-
-  it('wears no law colour, whatever it says', async () => {
-    // Amber is ON AIR and is never allowed to lie, cyan is a guess, amethyst is
-    // rehearsal (rule 18). "which screens would show this" is none of the three.
-    cap.templates.set(TEMPLATES);
-    bridge({ channels: [chan(1, 'Lobby screen', 2)], templates: TEMPLATES });
-    await mountAndRead();
-    for (const cls of ['onair', 'inreh', 'guess', 'amber']) {
-      expect(line().classList.contains(cls), `the line wears .${cls}`).toBe(false);
-    }
-  });
-});

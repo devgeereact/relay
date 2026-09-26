@@ -551,7 +551,7 @@ fn write_backdrop(
     if std::fs::create_dir_all(media_dir).is_err() {
         return Ok(None);
     }
-    let id = super::library::insert_media(conn, "image", DEMO_BACKDROP_FILE, date)?;
+    let id = super::library::insert_media(conn, "image", DEMO_BACKDROP_FILE, date, None)?;
     // Same `{id}_{safe}` convention `main::write_media_file` uses, because
     // `channels::serve_media_from_dir` finds a file by that prefix and nothing else.
     let safe: String = DEMO_BACKDROP_FILE

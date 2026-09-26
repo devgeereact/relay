@@ -1,6 +1,31 @@
 # Stage display, timers and mobile connections
 
-Date: 2026-09-19. Status: review and implementation plan; first mobile-link safeguards implemented locally. The complete upgrade is not implemented or validated on a physical device.
+Date: 2026-09-19. **Status reconciled 2026-09-22 against the tree, phase by phase.** Phases 0
+to 4 have substantially shipped, phase 5 is half built and phase 6 has never been run. The
+line below said phases 1, 2, 4, 5 and 6 "remain open" long after most of them stopped being
+open, which is the same defect as a plan claiming no code had been written — a document
+nobody can trust to say what is owed.
+
+| Phase | State | Evidence |
+|---|---|---|
+| 0 · baseline and QR safeguards | **DONE** | as recorded below |
+| 1 · the connection journey | **DONE** | `main.rs::network_addresses` (`sysprobe::NetworkAddress`); `Channels.svelte`'s `selectedStageId` → `stageRemoteUrl(lanIp, channels, selectedStageId)`; Refresh addresses with a named failure; the QR is keyed to its address (`qrOpen === c.id && qrUrl === address`) so a changed link cannot keep an old photograph; the build marker is `diagnostics::BUILD` (RG-209) |
+| 2 · lifecycle and trustworthy time | **DONE** | reconnect backoff and single-socket enforcement (`stagereconnect.test.js`); `hostOffsetMs`, a median of five `beat_ack` samples, resampled on wake; `stale`/`staleForS` printing *not answering · Ns* after three unanswered beats; remote calls bounded by `AbortController` plus a deadline race |
+| 3 · timer state and transport | **DONE but for one deferral** | pause through zero (§101), reset-to-configured (`Timer.configured_ms`), duration and count-down-to-local-time (§102), persistence across a relaunch (RG-208, §112). **Elapsed is still deferred** with the reason recorded in the phase |
+| 4 · saved stage layouts | **SHIPPED, and NOT the way this phase said** | `stage_layouts` + `output_channels.stage_layout_id`, the Outputs editor, `stage_zones` on the wire, `timer_size` on the layout (RG-239 … RG-241). **DECISIONS §103 overruled this phase's "extend the existing template schema" instruction**: `stage.html` is a hand-drawn monitor, `Stage.svelte` renders no `TemplateRender` at all, and one table holding both would be two kinds of thing behind two renderers. Converging the renderers stays the coherent end state and is not a prerequisite |
+| 5 · output and cue integration | **HALF** | RG-161 closed the per-screen half. **Stage-layout cue actions are still not built**, by this phase's own rule: add them after manual assignment is proven on a device, and no device has proven it |
+| 6 · packaged rehearsal | **NOT RUN** | the script is `docs/qa/QA_HARNESS.md` Part 7 |
+
+**What is genuinely still open**, and it is a short list: the elapsed timer (phase 3),
+stage-layout cue actions (phase 5), and the rehearsal itself (phase 6). Everything phase 6
+covers — a physical projector, a real phone, a 60-minute clock comparison — remains
+**NOT TESTED**, and no claim in this document or the register substitutes for running it.
+
+<details><summary>The status as written, 2026-09-19</summary>
+
+Status: review and implementation plan; first mobile-link safeguards implemented locally. The complete upgrade is not implemented or validated on a physical device.
+
+</details>
 
 ## Outcome and scope
 
@@ -49,8 +74,8 @@ Evidence labels distinguish executed behaviour from source observations. Priorit
 | S10 | P2, source-confirmed | The mobile timer rail intentionally limits what fits, using `programme` and the overflow entry in `Stage.svelte`. Having multiple registry timers does not guarantee the wanted timer is visible. | Saved layout chooses a primary timer and secondary timers, with explicit overflow. Test long names, large digits and small screens. |
 | S11 | P1, reproduced; **closed** | `Stage.svelte` sends exactly one message for its whole lifetime — the `hello` at line 893. It never sends `beat`, which `Output.svelte` sends every two seconds via `startBeat` (`Output.svelte:18,932`). So `OutputHealth` holds `last_beat_ms == null` for a stage channel forever and `describeStageReach` reports a correctly wired tablet as one that "has never reported painting". This is the console's view of the connection, where S5 is the phone's. | Fixed. `Stage.svelte` now calls the same `startBeat` every other output page calls, passing `getWs` — which that function already accepts precisely because a kiosk client has a socket and no bridge. No new frame kind, no new protocol and **no Rust change**: the hub has read `channel` and `state` off an inbound `beat` since the mechanism shipped (`channels.rs:2710`). Channel 0 is refused inside `startBeat`, so an unidentified page cannot attach health to a screen nobody chose. |
 | S12 | P2, reproduced; **closed in this slice** | The Screens inspector's Show QR had no loopback guard, so with no usable address it generated a QR encoding `http://localhost:8032/output.html?channel=2&name=Stage%20display` — the same defect as S1, on the door S1's own fix did not touch. Reproduced by a mounted test before the repair. | Fixed. `isSharableHost` is now one exported, named predicate in `channelroles.js` used by both doors. The output URL and Copy URL are deliberately unchanged, because a loopback output address is correct for OBS on this computer; only the photograph is refused, since a QR is a second device by definition. |
-| S13 | P2, development-time only | `networkAddresses()` is written to throw, and `refreshNetwork` awaits it inside `Promise.all`, so a backend that does not register `network_addresses` fails the whole resolve and the Sharing pane offers no link at all — even though `local_ip` would have answered. A shipped build cannot diverge this way; a working tree whose binary predates the command can, and did (the built binary was older than `main.rs`). | Leave the throwing contract intact: a failed refresh must not look successful. Address it instead with phase 1's build/version marker, so a stale development build is identified rather than inferred from a blank panel. |
-| S14 | P2, recorded, not fixed | `Output.svelte` does not read `beat_ack`, so a congregation screen's countdown is still computed against its own clock. In the common case it is the native window on the same machine, where the skew is zero by construction — but a kiosk browser source on a SECOND computer has exactly the exposure S6 describes, and a wrong countdown on the wall is seen by more people than a wrong one on the preacher's phone. | Thread the offset into `TemplateRender`, which ticks its own `Date.now()` and is the shared renderer for the wall. Its own slice, with its own tests, because it changes what a congregation sees. The verdict table in `r6-contracts.test.js` carries an explicit `beat_ack: false` for that page with this reason, so it cannot be forgotten quietly. |
+| S13 | P2, development-time only; **closed 2026-09-21** (RG-209): `diagnostics::BUILD` is stamped by `build.rs`, printed at boot, written on every `services` row and shown on Settings → This machine | `networkAddresses()` is written to throw, and `refreshNetwork` awaits it inside `Promise.all`, so a backend that does not register `network_addresses` fails the whole resolve and the Sharing pane offers no link at all — even though `local_ip` would have answered. A shipped build cannot diverge this way; a working tree whose binary predates the command can, and did (the built binary was older than `main.rs`). | Leave the throwing contract intact: a failed refresh must not look successful. Address it instead with phase 1's build/version marker, so a stale development build is identified rather than inferred from a blank panel. |
+| S14 (closed 2026-09-21, RG-194: `Output.svelte` reads `beat_ack` and hands `hostOffsetMs` to `TemplateRender`) | P2, recorded, not fixed | `Output.svelte` does not read `beat_ack`, so a congregation screen's countdown is still computed against its own clock. In the common case it is the native window on the same machine, where the skew is zero by construction — but a kiosk browser source on a SECOND computer has exactly the exposure S6 describes, and a wrong countdown on the wall is seen by more people than a wrong one on the preacher's phone. | Thread the offset into `TemplateRender`, which ticks its own `Date.now()` and is the shared renderer for the wall. Its own slice, with its own tests, because it changes what a congregation sees. The verdict table in `r6-contracts.test.js` carries an explicit `beat_ack: false` for that page with this reason, so it cannot be forgotten quietly. |
 
 ### Behaviour already present, preserve it
 
@@ -180,7 +205,7 @@ Acceptance: a cue may change the intended stage layout/timer without touching an
 
 ### Phase 6: packaged rehearsal and operator acceptance
 
-**The script exists: [`../../qa/STAGE_PHONE_REHEARSAL.md`](../../qa/STAGE_PHONE_REHEARSAL.md).**
+**The script exists: [`../../qa/QA_HARNESS.md` Part 7](../../qa/QA_HARNESS.md) (it was `docs/qa/STAGE_PHONE_REHEARSAL.md`, a path that no longer exists, until it was folded into the harness on 2026-09-21).**
 Twelve numbered sections, in dependency order, each saying what to expect and what to record
 when it does not happen. It opens with the build step because a binary predating
 `network_addresses` reproduces the very defect it is meant to test (S13), and it ends with
@@ -195,6 +220,8 @@ what a useful report back looks like. It is NOT RUN.
 
 Acceptance: record visible results and failures. No general-release claim from this work alone; the repository's existing supervised-pilot decision remains in force.
 
+**Timer persistence — done 2026-09-21** (RG-208, DECISIONS §112). `TimerRegistry` writes every change to a `timers` table on its own thread and a relaunch restores the rows: the stage is told, a congregation countdown is offered on Live for Put back. This was the largest open item in this area.
+
 ## Decisions and compatibility
 
 The user's approval covers including signed overtime Pause/Resume and saved layouts. The following are the proposed concrete contracts, not silently enacted architecture changes:
@@ -205,6 +232,12 @@ The user's approval covers including signed overtime Pause/Resume and saved layo
 - **LAN trust:** retain DECISIONS §35. Pairing or new authentication would need its own explicit proposal. Never describe a channel ID or QR as a credential.
 
 ## Verification and current delivery
+
+**These are the figures of 2026-09-19 and they are kept as a record, not as a claim about the
+tree today.** A frozen verification block is evidence of what was run that day; the counts have
+moved a long way since (`npx vitest run` and `cd src-tauri && cargo test` print the current
+ones, and `docs/qa/QA_HARNESS.md` §0 is the register that carries values beside the command
+that produces them). Do not update the numbers below — read them as dated.
 
 Initial code repair: `channelroles.js::stageRemoteUrl`, `Channels.svelte::showStageQr` and Sharing markup; regressions in `stageremote.test.js`. No Rust behaviour or database schema changed in this first repair.
 
@@ -221,4 +254,27 @@ Initial code repair: `channelroles.js::stageRemoteUrl`, `Channels.svelte::showSt
 
 Rollback for the first repair: revert its local source/test changes together; no data migration is involved. For subsequent schema work, take and test a local database backup before a packaged upgrade, and document whether an older binary can read it. Keep each PR independently reviewable.
 
-Next implementation slice: complete phase 1's address refresh and stage-channel selection, then reproduce the user's actual scan/connect failure on the installed app before treating the connection issue as closed.
+Next implementation slice, **as reconciled on 2026-09-22**: phase 1's address refresh and
+stage-channel selection are built (see the table at the top), so the next thing is the one
+that has not moved since this was written — **reproduce the user's actual scan/connect
+failure on the installed app**. That is phase 6, and no amount of further building
+substitutes for it. The scan result, phone, browser, build and network arrangement are still
+not supplied, so the original field failure remains **NOT TESTED**.
+
+## Open questions inherited from the 2026-09-19 design
+
+Carried here on 2026-09-21 when `specs/2026-09-19-stage-planner-media-propresenter-design.md` was archived (its sub-projects shipped on 2026-09-20; see RG-161 to RG-177, DECISIONS §104, §105). These are the things it said it would not decide, and nothing has decided them since:
+
+- How a countdown is started when there is no plan (3a).
+- Which of the three numbering changes the operator meant (5a).
+- Whether media transport ships without a reverse channel. The recommendation is
+  that it does not, and that is a recommendation rather than a decision.
+- Anything covered by this plan's own phases. **That list was reconciled against the
+  tree on 2026-09-22 and is now short**: the elapsed timer (phase 3), stage-layout cue
+  actions (phase 5) and the rehearsal (phase 6). It used to read "phases 1, 2, 4, 5 and 6
+  remain open", which was true when it was written and stayed on the page for three days
+  after most of them shipped. Phase 6 is the one that has not moved at all: a written
+  rehearsal script that has never been run, and no claim here about a physical stage TV, a
+  phone or a projector can be made until it is.
+
+Also still open from that design: 4e click semantics (contradicted by DECISIONS §81 on the run surface, so it needs a ruling rather than a build), 5c playlists into plans, 5e media import (BLOCKED on the church's media folder), and the elapsed timer.

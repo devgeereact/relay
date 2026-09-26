@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { tick } from 'svelte';
 import TemplateRender from './TemplateRender.svelte';
+import { codeOnly } from './codeonly.js';
 
 // WHAT THE FIT LOOP CANNOT SEE, IT CANNOT SHRINK — AND CANNOT REPORT.
 //
@@ -367,7 +368,7 @@ describe('ticker mode is measured', () => {
 // exactly what the clearest explanation of this fix needs to say) without
 // that prose deciding CI's verdict on its own.
 describe('the contrast panel clips', () => {
-  const stripComments = (css) => css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const stripComments = (css) => codeOnly(css);
 
   it('does not set overflow: visible', async () => {
     const src = await import('node:fs').then((fs) =>

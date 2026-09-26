@@ -1,10 +1,11 @@
 <script>
-  // LIBRARY → BIBLE. Rebuilt from docs/design/relay-main-library-screen.png.
+  // LIBRARY → BIBLE.
   //
   //   BOOKS rail  ·  the chapter  ·  the verse inspector
   //
-  // The mockup's three panes, its Slides/Read/Table segment, its 25-per-page
-  // footer and its right-hand inspector, section for section.
+  // Three panes, a Slides/Read/Table segment, a 25-per-page footer and a
+  // right-hand inspector. Rebuilt from a rendered reference that was deleted on
+  // 2026-09-21; the structure it gave is the five lines above.
   //
   // ── Where the CONTENT differs from the mockup ─────────────────────────────
   //
@@ -29,6 +30,7 @@
   import EmptyState from '../../ui/EmptyState.svelte';
   import ErrorState from '../../ui/ErrorState.svelte';
   import Loading from '../../ui/Loading.svelte';
+  import ChapterPicker from '../../ui/ChapterPicker.svelte';
   import VerseDeck from './VerseDeck.svelte';
   import { humanError } from '../../errors.js';
   import { safeMode } from '../../boot/boot.js';
@@ -253,7 +255,7 @@
   function queueChecked() {
     const add = source
       .filter((v) => checked.has(refOf(v)) && !queue.some((q) => q.reference === refOf(v)))
-      .map((v) => ({ reference: refOf(v), text: v.text }));
+      .map((v) => ({ reference: refOf(v), text: v.text, kind: 'scripture' })); // tagged (RG-185)
     if (add.length) onQueueChange([...queue, ...add]);
     msg = `Queued ${add.length} verse${add.length === 1 ? '' : 's'}`;
     checked = new Set();
@@ -328,7 +330,6 @@
   const words = (t) => (t ? t.trim().split(/\s+/).length : 0);
   const isSaved = (v, list) => list.some((s) => s.reference === refOf(v));
 
-  $: chapterCount = books.find((b) => b.book === book)?.chapters ?? 0;
   $: searchMode = !!query?.trim();
   $: base = passage ? inRange(verses, passage) : searchMode ? results : verses;
   $: source = favouritesOnly ? base.filter((v) => isSaved(v, savedList)) : base;
@@ -404,6 +405,22 @@
               <span class="nm">{b.book}</span>
               <span class="ct r-mono">{b.chapters}</span>
             </button>
+            <!-- THE SAME PICKER LIVE USES (RG-216), mounted under the book it
+                 belongs to, which is where the operator's hand already is. It
+                 replaces a `<select>` of "Chapter 1 … Chapter 150": the same job
+                 in a shape that cannot do it, because finding 119 of 150 in a
+                 dropdown means reading every entry on the way.
+
+                 Only for the OPEN book. Every book at once is 1189 chips, which
+                 is a wall rather than a picker. -->
+            {#if book === b.book}
+              <ChapterPicker
+                book={b.book}
+                count={b.chapters}
+                current={chapter}
+                caption="Opens the chapter here"
+                onPick={(c) => (chapter = c)} />
+            {/if}
           {/each}
         </div>
         <!-- The footer held a "Browse All Books" button that set `book` to the
@@ -483,11 +500,10 @@
                there, and a range filters the grid). Two controls for one job,
                and one of them was the box the operator is already looking at —
                the same argument that deleted the book select. -->
-          <select class="r-select sm br-sel" aria-label="Chapter" bind:value={chapter}>
-            {#each Array(chapterCount) as _, i}
-              <option value={i + 1}>Chapter {i + 1}</option>
-            {/each}
-          </select>
+          <!-- The Chapter `<select>` was DELETED, not moved (RG-216). The books
+               rail below carries Live's own chapter grid under the open book, and
+               two controls over one piece of state is the argument that deleted
+               the Book select from this same row. -->
           <!-- Icon-only, and named twice over: a toggle whose STATE is the whole
                message does not need to spell its name beside it on a row that
                has no room. `aria-pressed` and the label carry it for anyone who

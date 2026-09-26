@@ -1129,6 +1129,61 @@ Pinned by `a_common_single_shared_word_is_not_offered_as_a_paraphrase` and
 `a_rare_single_shared_word_is_evidence_enough`, both **mutation-verified**: removing the
 rarity exception fails the second, and treating every term as rare fails the first.
 
+### REVERSED, 2026-09-20. Three shared words, and nothing is exempt.
+
+**The operator found this before any instrument here did**, watching a real service:
+*"it is still suggesting just one word ... in a paragraph of words find three to four
+words that match and suggest them, not just one word only, else we will have too much
+going on the preview and missing the right verse before the operator reads through."*
+
+Two doors led past the bar and together they were most of what this matcher offered.
+The rarity exception above is the first. The second was never written down at all:
+`required` bent down to **2** for a short query, on the reasonable-sounding grounds that
+a short query cannot corroborate itself three ways.
+
+Measured across all **816 transcript windows** of the service of 2026-09-20, against
+both benchmarks. `@3` matters because `SEMANTIC_SUGGESTIONS_MAX` is 3, so it is the
+last rank an operator can ever see:
+
+| rule | offers | one-word | @1 | @3 | @5 | story@1 | modern@1 |
+|---|---|---|---|---|---|---|---|
+| 3 terms, **or** one rare (this section, as decided) | 638 | 287 | 69% | 81% | 88% | 84% | 59% |
+| 3 terms, no rare exception | 302 | 0 | 75% | — | 81% | — | — |
+| **3 terms, neither exception** | **186** | **0** | **75%** | **81%** | 81% | **88%** | **71%** |
+| 4 terms, neither | 175 | 0 | 62% | — | 69% | — | — |
+
+**Seven offers a minute became two, and nothing an operator can see got worse.**
+recall@3 is 13/16 either way and recall@1 went *up*, 11/16 to 12/16. The whole cost is
+recall@5, which is two ranks no console renders.
+
+**The argument this section makes for the gloss turns out to be measurably false**, and
+that is the part worth keeping. The claim was that a flat floor "makes the gloss inert",
+because a modern retelling reaches its verse through exactly one rare KJV noun. The
+`modern@1` column is that claim's own test, and it is the single biggest improvement in
+the table: **59% → 71%**. The reason is in the example the section chose: "he ended up
+feeding pigs" is a *probe*, not a sentence. A preacher retelling that story says *"he was
+so hungry he would have filled his belly with what the pigs were eating"*, and a sentence
+corroborates itself. What the rare-word rule was actually buying was a one-word match
+taking rank 1 in front of a properly corroborated verse.
+
+**What replaces it, and what did not change.** The bar is a flat `MIN_EVIDENCE_TERMS`
+(3) with no exception and no bend. `RARE_DF_FRACTION` and the `rare_terms` set are
+deleted rather than left computed and unread. Nothing here changes what *fires*:
+`Semantic` is still capped at `Suggest` (rule 10), and `Quoted` — the contiguous-phrase
+method added the same day, which is what now answers a short exact quotation like "the
+lord is my shepherd" — is capped beside it.
+
+`a_rare_single_shared_word_is_evidence_enough` is replaced by its own inverse,
+`a_rare_single_shared_word_is_no_longer_evidence_enough`, so the two cannot both be in
+the file. The recall ratchet in `eval.rs` now asserts **@3 as well as @5**; lowering the
+@5 floor without adding @3 would have turned a ratchet into a ratchet with a hole in it.
+
+**A note on the citations.** Six comments in `detection.rs` and `eval.rs` cited this
+rule as **§25**, which is *One vocabulary, one wiring hub* and has nothing to do with
+paraphrase evidence. Corrected to §33 on 2026-09-20. Per CLAUDE.md, a citation that
+resolves to the wrong decision is worse than one resolving to nothing: the dead one
+announces that it needs checking, and this one read as evidence.
+
 ---
 
 ## 34. A reference cut off mid-sentence is not a reference (2026-08-03)
@@ -1608,7 +1663,7 @@ Everything above is a development machine, a release binary run from `cargo`, an
 text-to-speech audio in no room at all. Word error rate is still unmeasured in every
 language. Nobody has run a service. The `end_to_end_speech_to_scripture` and
 `audio_to_visible_transcript` spans need a webview and an output page and therefore a
-real app, and no number for them appears here. See `docs/qa/audits/PERF-2026-08-24.md`
+real app, and no number for them appears here. See `docs/qa/audits/PERF.md`
 for exactly what was and was not measured, and Stage F of the human test script for
 what has to happen in a room.
 
@@ -2386,7 +2441,7 @@ be seen as leftover at all.
 
 ### A bare verse belongs to the book this sentence names
 
-**Found in a live service, not in this repository** — `docs/qa/audits/FIELD-2026-08-30.md`.
+**Found in a live service, not in this repository** — `docs/qa/audits/FIELD.md`.
 
 The operator fired **Proverbs 3:6** by hand. Five minutes later the preacher said
 *"…what was going through in **Luke 10**. If you read from **verse 32**, 37."*
@@ -2438,7 +2493,7 @@ twice**.
 
 ## 57. The record and the instruments, corrected by a real service (2026-08-30)
 
-Three defects found by pointing `docs/qa/audits/FIELD-2026-08-30.md`'s own numbers at the
+Three defects found by pointing `docs/qa/audits/FIELD.md`'s own numbers at the
 code that produced them. None of them could have been found from source, and none of
 them is in the pipeline — **all three are in what Relay writes down about itself.**
 
@@ -2966,7 +3021,7 @@ ships had never been checked at all until 2026-09-04.
 
 ## 66. A chapter this window states is not one memory may answer for (2026-09-06)
 
-**Found in a live service, not in this repository** — `docs/qa/audits/FIELD-2026-09-06.md`,
+**Found in a live service, not in this repository** — `docs/qa/audits/FIELD.md`,
 finding F-8.
 
 §56 established the first half of this rule and the wording it turned on: *memory is what
@@ -2996,7 +3051,7 @@ Widening the cap is not the fix; the cap is what stops a jump firing on prose.
 
 ### The decision: decline, rather than correct
 
-`detection::resolve_bare_verse_for_window` is now the one place a bare verse is resolved, and
+`detection::resolve_bare_verse_with_source` is now the one place a bare verse is resolved, and
 it is a pure function so the rule is testable at all. Three sources, in strict order:
 
 1. **A reference parsed from this window.** The words said it in this breath. §56.
@@ -4713,7 +4768,7 @@ fails the two clock cases, which is the opposite mistake a reader could make fro
 ## 92. The preacher's programme rail counts up past zero, and prose never enters a slot sized for digits (2026-09-17)
 
 **This decision existed only in a commit message and in
-`docs/superpowers/specs/2026-09-17-consolidation-design.md` §2 for the first day of its life**,
+`docs/archive/WAVE-DESIGNS.md` §2 for the first day of its life**,
 which is the state CLAUDE.md's *"if the decision isn't there, it hasn't been made"* exists to
 stop. It is written down here because two waves built opposite behaviour into the same
 reactive block, three pairs of assertions in `src/lib/timers.test.js` could not both pass, and
@@ -4822,6 +4877,8 @@ on the day the decisions were taken. A frozen ruling that follows a later rename
 can date.
 
 ## 93. Amethyst promises "nothing here reaches a congregation", and the caution gap is named rather than closed (2026-09-17)
+
+> **The caution gap this section leaves open was paid on 2026-09-21 by §111**: a caution ink exists, and the five surfaces enumerated below wear it. The reading of amethyst here is unchanged.
 
 **A human may overrule this. It restates a law rather than moving one, and it deliberately leaves
 one question open instead of answering it with a colour nobody argued for.**
@@ -5180,7 +5237,7 @@ would be inventing the worse of the two facts.
 are all untouched. This changes **who may set the gate and what they are told about it**,
 never where the gate sits. Rules 10, 28, 30 and 34 are not in the diff.
 
-It also does not make the gate a better gate. `docs/qa/audits/FIELD-2026-09-06.md` §2
+It also does not make the gate a better gate. `docs/qa/audits/FIELD.md` §2
 measured that the sensitivity dial is **not** the lever for a wrong verse — its most
 cautious setting still kept a wrong verse at 0.95 and discarded a correct one. Removing a
 second, contradictory way to set it is an honesty fix, not an accuracy one.
@@ -5448,7 +5505,7 @@ negative would never reach that branch.
 
 **The mark is the sign and the word, and in no law colour.** `+12:40 over`. Amber is ON AIR,
 cyan is a guess, amethyst is rehearsal, red is a failure — and a sermon running long is none
-of the four (DECISIONS §93 records that this product publishes no caution ink, and the band
+of the four (DECISIONS §93 recorded that this product published no caution ink, §111 added one, and the band
 already forbids the other three by test). The rail is red because on the preacher's own page
 red is his own bookkeeping; on a console red means something has broken. The over-running
 figure is set in the body ink at weight 600 rather than the dim one, because it is the single
@@ -5800,3 +5857,1380 @@ still visible there AND that the labels are visible in their new home.
 **What this does NOT do.** A layout cannot be assigned by a cue, and a preview of one does
 not exist — an operator picks zones by name and sees the result on the device. Both belong
 with phase 5's cue work rather than here.
+
+## 104. A stage-role screen is not a congregation screen, and a refusal by absence becomes a decision the page takes out loud (2026-09-20)
+
+`r6-contracts.test.js` recorded `timer: false` for `src/Output.svelte` with a reason that is
+still true word for word: *"Sermon · 4:12 left" behind a preacher is the running order in
+front of the whole building.* That sentence is a statement about a CONGREGATION screen, and
+nothing in this decision makes a congregation screen show a programme rail. What changed is
+that `output.html` stopped being only a congregation screen.
+
+**Two addresses put a screen in front of a preacher and only one of them painted the rail.**
+`stage.html?channel=N` is built by `channelroles.js::stageRemoteUrl` and surfaced as Outputs →
+Sharing. `output.html?channel=N` is built by `outputurl.js` and is what **Outputs → Screens →
+Copy URL** hands out, which is the link CLAUDE.md tells operators to use, because only a
+channel-keyed source follows a template swap. §89 already made the second of those a supported
+route to a preacher's screen. So a church that wired its confidence monitor from the obvious
+link watched a Stage Timer count down on the console and send it to nobody, while `stage.html`
+beside it showed the rail. One frame, two clients, opposite answers, decided by which link
+somebody had copied.
+
+**The gate is the ROLE, which is what keeps the safety argument whole.** `Output.svelte:299`
+holds `shownProgramme = acceptsStageMessage(myRole) && !downMode ? stageTimerSet : []`. The
+page keeps the set either way and hands it to `TemplateRender` only when its own channel holds
+the `stage` role; the renderer draws it only where the template carries a `programme` layer. A
+`main`-role screen wearing the very same stage template paints no rail at all, and that case
+matters more than the feature does.
+
+**It reuses the Stage Message's own predicate, deliberately.**
+`channelroles.js::acceptsStageMessage` is the one answer to *may this screen be shown
+something meant for one person*, and a second predicate beside it would be two answers to one
+question, drifting apart on the schedule this repository has now recorded four times. A
+programme rail and a word to the preacher are the same kind of thing: the operator's
+bookkeeping for the platform, not for the room. Only `stage` qualifies, and no role is not a
+stage, so a lobby TV and a streaming feed are refused by the default rather than by a list
+somebody has to remember to extend.
+
+**A screen the operator has taken out of the wall paints neither.** `!downMode` sits on the
+same line for the reason `shownContent` and `shownBackdrop` give above it: a screen taken down
+with a rail left standing has been half taken down, which is the state `downMode` exists to
+make impossible. Derived, never written, so putting the screen back has something to come back
+to.
+
+**`true` in the verdict table is weaker than the `false` it replaced, and that is named rather
+than glossed.** It now means only *this page has a branch*. The rest is held by
+`progtimertemplate.test.js`, which drives the real page for both roles, because a table that
+reads source text cannot say what a page paints. The old reasoning is kept in the row verbatim
+instead of being replaced, because it is still exactly why a `main` screen shows nothing.
+
+**And a panic control now takes the Stage Message off this page.** `output.html` used to keep
+the text and merely stop rendering it: the layer stack sits inside `{#if content}` and the
+page passes `content={visible ? content : null}`, so `clear` HID the message and the next
+verse fired painted a private word nobody had re-sent. `black` did not even hide it the same
+way, leaving it rendered underneath an opaque cover, so whatever lifted the cover showed it
+again. `takeDownStageMessage` at `Output.svelte:346` is called from both branches, at `:789`
+and `:792`. ONE WRITER, because the harsher control must never do less than the milder one.
+
+**A rail of Stage Timers is deliberately NOT taken down with it**, and the line is §91's: a
+panic control silences a room, it does not stop the clocks. A Stage Message SAYS something and
+a timer COUNTS, and only the first is a sentence the operator has taken back.
+
+**Three things were rejected.** A blanket `$:` that re-clears the message whenever the role is
+not `stage` reads as belt and braces and is worse than either half alone: it makes the
+acceptance check redundant, so removing that check would break no test, and the message would
+still be ASSIGNED for an instant before the reactive pass took it away, which on a
+congregation screen is a flash of something private. Each path guards its own case, once.
+Reversing the refusal for every screen was never on the table. And devolving it to the
+template, letting a `programme` layer decide for itself, was refused on §98's line: which
+screen is a stage is the operator's fact, and what a template draws is the designer's.
+
+**What this does NOT do.** It opens no second door to the rail. `channels::stage_alert` still
+publishes to the kiosk hub and emits no Tauri event, so a stage screen wired as a native
+window receives neither the message nor the timers; that limit is unchanged and stays on the
+record (`docs/qa/RELAY_GAP.md` RG-156). It is not a security boundary and is not claimed as
+one, on §89's own terms: the LAN is trusted by decision (§35, `docs/SECURITY.md` T4) and
+anybody may type `?channel=2`. It closes an accident, not a hole.
+
+**Evidence.** `progtimertemplate.test.js` drives the real page and asserts what it paints for
+both roles, including the `main`-role screen wearing the stage template.
+`stagealerttemplate.test.js` holds *"and it does not come back with the next verse (RG-156)"*,
+and `stagealertpanic.test.js` holds the two `output.html` cases beside the phone's, so both
+surfaces are asserted in one file and neither can be tidied into the other later.
+---
+
+## 105. A whole song library is a different import from a handful, and the report is the product (2026-09-20)
+
+**The case.** A real ProPresenter 7 export was measured: **726 `.pro` files**, 14,364 RTF
+blocks, `JESUS.pro` alone carrying 332 — and **about forty files carrying exactly one
+block**. Every part of the existing import path is correct for two or three files and none
+of it survives 726.
+
+**Three things break at that size, and each has its own answer.**
+
+*Memory.* `onFiles` read every picked file to base64 before it decided anything, and
+`capture.js::fileToBase64` documents the four simultaneous copies each of those costs. 726
+of them is the operating system killing Relay on a church laptop with nothing in any log.
+The file list is now **sorted before any byte is read**, and the bulk runner
+(`src/lib/bulkimport.js`) reads ONE file, hands it across, drops it, and commits in batches
+of 25. Pinned as an ordering in `bulkimport.test.js` and as a count-at-a-moment in
+`bulkimportwiring.test.js` — one file read against forty picked.
+
+*Stopping.* A twenty-minute run is stoppable at the next file boundary. **The part-filled
+batch is committed rather than discarded**, so the number on the screen is the number in the
+Library. Discarding it would leave an operator with "read 312, saved 300" and no way to tell
+which twelve went missing.
+
+*A failed commit is not a skipped file.* `save_reviewed_songs` is on the service lock's
+protected list, so the first refusal is the answer for every batch after it. It **aborts**,
+in the sentence `errors.js` gives it. A file that yields nothing does the opposite: it is
+collected, named, and the run carries on.
+
+**The review step is the decision worth recording.** `ImportReview.svelte` builds an
+editable copy of every song and every slide and asks the operator to fix things before
+anything lands. At 726 files that is ~14,000 slides of editable state and 726 accordion rows,
+and nobody reads them. **A review nobody performs is worse than no review**, because the
+Library then holds content the product believes was checked. So above 20 lyric files the
+trade reverses: commit, then **a report that names the files a human still has to open**.
+That is only honest because the commit is reversible where the operator already works — a
+song can be edited or deleted, and re-importing replaces by title.
+
+**The report is the point, not the progress bar.** It names the files that came in with a
+single slide, because a one-line chorus and a file that barely parsed are indistinguishable
+once they are in the Library and about forty of the 726 are in that state; the files nothing
+could be read from; and the titles that arrived from more than one file, since
+`save_reviewed_songs` dedupes by title and the last file read silently wins. It also says
+out loud that **titles come from file names and slides are numbered `Slide N`, so no
+arrangements were imported** — `proimport.rs` cannot see ProPresenter's section names, and an
+operator not told that reads it as a bug.
+
+**Not a dialog.** The panel is an ordinary region in the Library workspace. A
+`[role="dialog"]` would make `shortcuts.js` stand down and take the operator's `Esc` and
+`Clear screens` for twenty minutes over a shell that may have a live microphone in it
+(rule 44). Pinned by `bulkimportui.test.js`.
+
+**What this does NOT do.** It does not decode the export's protobuf config files (`Library`
+playlists, `Media`, `Stage`, `Theme`, `Timers`) — `proimport.rs` says plainly that it does
+not parse protobuf, so playlists do not become service plans. And nobody has yet run it
+against the real 726-file library.
+
+## 106. A verse whose book Relay assumed is offered, never fired (2026-09-21)
+
+**The case.** Rule 40 in CLAUDE.md resolves a bare *"verse N"* three ways: a book named in this
+window wins; a chapter stated with nothing parsed declines; otherwise the passage in memory
+answers. All three were right on 2026-09-20 and the third put **Psalms 55:1** on a congregation's
+wall for a preacher quoting **Hosea 6:1** — *"Out of a prophet called Osir. In verse 1 he says,
+Come and let us return unto the Lord."* The book was misheard into a word no alias knows, so
+nothing parsed and memory answered with the psalm that had been up for four minutes. The
+resolution was not the defect. The candidate was then labelled **`Direct` at a hardcoded 0.88**,
+and rule 10 says `Direct` means *heard*. Nobody said Psalms. RG-179.
+
+**Why it was left that way, and why that ends now.** Rule 40 recorded the label as a lie on
+purpose after the first field service (RG-32, "open on purpose"): making every in-passage *"and
+verse eighteen"* cost a click was too much to spend on one wrong verse in one service. The row
+said it *"wants a second and third Sunday"*. The second Sunday reproduced it. That is the
+evidence the deferral asked for, and the price it feared turns out to be the honest one: a
+verse whose book came from the screen and not from the preacher IS a claim the operator should
+look at, and a click is what looking costs.
+
+**The decision.** `detection::resolve_bare_verse_with_source` says which rule answered.
+`DetectionMethod::for_bare_verse` labels an **anchor** `Direct` (the book was said in this
+breath) and a **memory** answer `UncertainBook` — the variant that already means *"chapter and
+verse heard, the book not"*, and which `Router::decide` caps at Suggest at any score. The
+resolution rules are untouched; only the label moved, and the label is what the router reads.
+On the console the card reads **From memory** in cyan, with no percentage
+(`detect.js::bookFromMemory`), so the operator can tell it from a misheard book word.
+
+**What this deliberately does not do.** It does not drop the candidate: the operator may well
+want Psalms 55:1, and a silent discard is a different lie. It does not touch the anchor case,
+so *"Luke 10 … verse 32"* still fires as before. It does not raise a threshold; both readings
+that morning scored 0.88 against correct fires at 0.55, which is rule 10's whole point.
+
+**Pinned by** `detection::field_2026_09_20::*`, `e2e::a_verse_answered_from_memory_is_offered_never_fired`
+(watched to reproduce the wall with the old label) and `detect.test.js`.
+
+## 107. A fired clip does not loop until somebody asks, and a screen says when its picture did not load (2026-09-21)
+
+**Two defaults, one rule: the wall does what the controls say it does.**
+
+**Loop.** `TemplateRender.svelte` played a fired clip with `loop` on unless a transport frame
+said otherwise; the engine's clean state, the console's store and `Output.svelte`'s own comment
+said *"playing, not looping"*. Three authorities, two answers, and the operator saw the third:
+a Loop button reading off over a wall that looped, and a Pause that un-looped a worship
+background because it sent `looping: null` and the engine's `false` took over (RG-183). The
+default is now **off** everywhere. Off rather than on because the transport exists: an operator
+who wants a background to repeat presses Loop and can see that it is on; a clip that loops
+without being asked is a wall doing something no control claims. The cost is real and accepted:
+a background clip fired from the plan plays once and holds its last frame until Loop is pressed,
+and the Library tile says so where the clip is chosen.
+
+**A picture that did not load.** No media element reported failure, so a 404, an undecodable
+codec and a CSP refusal were one event, nothing, under an amber badge (RG-182). The renderer now
+reports through one callback, the page carries the failure on the beat it already sends, and
+the desk ranks such a screen with `down` and names the URL. It is reported, never enforced:
+Relay keeps sending, because the projector's own window may be painting the same picture fine
+while an OBS source cannot decode it. The one thing this must never do is turn a failed picture
+into a refused fire; that would be the validator refusing content on behalf of a screen, which
+DECISIONS §42 forbids.
+
+**Codec.** Relay does not transcode (KNOWN_ISSUES §2). It probes the container at import
+(`mediaprobe`), keeps the answer in `media_assets.codec`, and warns on the tile and the cue.
+`NULL` means *not probed*, never *fine*.
+
+**Pinned by** `mediadefault.test.js`, `mediaerror.test.js`, `outputhealth.test.js`,
+`channels::tests` and `mediaprobe::tests`.
+
+## 108. Nothing opens over the console, and nothing reaches the wall from a browsing tab in one press (2026-09-21)
+
+**Turn on.** A native screen with no display chosen used to fullscreen wherever the OS put a new
+window, which is the primary display, which is the console. The automatic open at launch had
+refused that case since the dock bug; the manual button had not, and the option that stood in for
+"nothing chosen" was labelled *Primary display*, so the state read as a choice (RG-188). The rule:
+**a manual open never lands on the operator's display unless the operator's display is the only
+one there is.** `manual_open_target` refuses `Anywhere` and the primary monitor in a sentence when
+there is a second monitor to choose; with one monitor, pressing Turn on means what it says and the
+console is covered on purpose (`Esc` still clears, and the window is what the operator asked for).
+Outputs withholds the button until a display is chosen and labels the empty option *Choose a
+display…*.
+
+**Test on screens.** DECISIONS §26 let a template be checked on the real screens before a service.
+It was one unguarded click from a browsing workspace, and nothing asked whether a service was
+being recorded (RG-189). The rule: **no single press on a browsing surface reaches a congregation**
+(the same rule §81 keeps on Live's grid, the other way round). The control arms on the first press,
+names what the second will do, disarms itself after six seconds, and is withheld while a service is
+being recorded unless rehearsal is on. A rehearsal is the one state in which the fire cannot reach
+a congregation (§18), so the check §26 wanted stays available exactly there.
+
+**Pinned by** `main::tests::a_manual_open_never_lands_on_the_operators_display` and
+`gallerycontrols.test.js`.
+
+## 109. The Screen Countdown's transport lives on Live, and the reversal is recorded rather than hidden (2026-09-21)
+
+**The history, in three days.** On the morning of 2026-09-20 the Screen Countdown left Quick
+tools for a band of its own on Live, under the Stage Timer (REBRAND §2). That evening the
+operator asked for it to go, and it went: the countdown became a Planner cue aimed at named
+screens, and Live kept a note where the band had been saying exactly what was lost. On
+2026-09-21 the Phase 1 audit read that note back to the operator as its F13 row: a countdown
+already in front of a room could not be held, reset, nudged or put back from anywhere, and the
+two commands that could do it were imported into Live and called nowhere. The operator asked for
+the band back.
+
+**The decision.** The band is restored unchanged from the commit before its removal
+(`41d3057~1`): the fields, the clock-time target, the format, the figure, the six transport
+controls, the screen picker, the reach line and the way back. Two clocks, two audiences, two
+bands, never merged (§99). The Planner cue stays; it fires through this view like every other cue.
+
+**Why record a reversal at all.** Because the removal was itself recorded, in a note that
+argued for what it cost, and a silent restoration would leave the next reader with two facts and
+no order to put them in. REBRAND §2 already described the band on Live and had been false for a
+day; it is true again.
+
+**Pinned by** `screencountdown.test.js`, which now asserts the band's presence and its place
+under the Stage Timer.
+
+## 110. A second Bible ships bundled, and the NKJV does not (2026-09-21)
+
+**The ask.** *"If you can get a different bible version like NKJV, get it and add it."* The New
+King James Version is Thomas Nelson's, under copyright, and cannot be obtained or bundled without
+a licence; the same is true of the NIV and the ESV (RELAY_GAP §19b). What can be had today, with
+no licence and no internet on a Sunday, is a public-domain text.
+
+**The decision.** The **Berean Standard Bible** (BSB, public domain since 2023, modern English,
+the nearest register to the NKJV among free texts) ships bundled beside the KJV at
+`src-tauri/data/bsb.json`, in the KJV file's shape and, checked at conversion, the KJV's exact
+66-book, 31,102-verse layout with zero chapter-length mismatches, so every anchor,
+`chapter_last_verse` and the semantic index's shape hold. `ensure_bsb_translation` adds it once
+to an install that has the KJV alone. The operator chooses in Settings → Scripture, as before,
+and the readiness screen names the choice beside the model and the language (RG-50's graceful
+minimum).
+
+**What "one Bible at a time" now means in code.** Two translations share the `verses` table.
+Everything that reads verses reads **one**: `verse_count` and `all_verses` are the active
+translation's, the LIKE and FTS searches are scoped to it, and the corpus repair reads and
+rewrites the **KJV alone** by its own id. Before this, `all_verses` would have built the phrase
+and semantic indexes over both texts and offered every quotation twice.
+
+**What this does not do.** It did not add an operator import path for a licensed corpus; that
+is RG-50's option two, and §113 built it the same day. It does not translate the book-name
+aliases (`LANGUAGES.md`), which are about what the preacher *says*, not what the wall reads.
+
+**Pinned by** `db::verses::second_translation::*` and `readiness.test.js` *RG-50*.
+
+## 111. Caution has its own ink, and the gap §93 named is paid rather than reargued (2026-09-21)
+
+**On the operator's approval of the Phase 2 list (F27), after the Phase 1 audit found amber spent on caution in four workspaces.**
+
+§93 read every amethyst surface and settled all but one question: caution. Its ruling was
+that this palette published no caution ink, that every other colour was already a promise,
+and that the surfaces borrowing amethyst for a warning should be *enumerated* rather than
+recoloured, so that paying the gap off would be visible and growing it would not be silent.
+`colourlaw.test.js` held that list at five.
+
+The 2026-09-21 audit found the other half of the same gap. Three surfaces had borrowed
+**amber** for a caution: the Outputs card for a screen the operator took **down**
+(`.ch-downnow`), the line saying no screen has the stage role (`.ch-stage-warn`), and the
+template editor's *font did not load* strip (`.te-fwarn`). Amber is the tally light. On the
+box that says a screen is **not** on air, it is the one colour that may never sit, and a
+volunteer reading it was being told two opposite things by one card. The `SLIDE` badge on
+Live's transport was amber for a third reason, "the plan rail is amber", on a caption painted
+whenever a plan is loaded, including over a wall that read CLEAR (U15).
+
+### The decision
+
+- **`--v-caution`** (`#c9a24a`, with `--v-caution2`, `-soft`, `-line`, `-ink`) joins
+  `src/tokens.css`. A desaturated warm ochre: warm enough to read as a warning, far enough
+  from `#ffa31a` that the two never read as one colour under a projector glow. **It carries
+  no promise about a screen.** That is its whole definition, and the reason it could not be
+  any of the existing five.
+- **Every caution wears it and nothing else does.** The five former amethyst borrowers
+  (`.b-check.warn`, `.s-netwarn`, Help's callout, `.ly-warn`, `.ms-caution`/`.ms-locked`)
+  and the three amber ones move together. The amethyst allow-list in `colourlaw.test.js`
+  shrinks by four entries and the amber one by two, and both lists may still only shrink.
+- **The `SLIDE` badge is steel.** A mode badge is the thing you are working on (§1's
+  definition of `--v-sel`), and it says nothing about what a congregation sees.
+- **What did not move:** amber, amethyst, cyan and grey mean exactly what §1 says. A
+  *failure* is still rose/red, not caution. A sermon running long on the stage page is still
+  in no law colour (§99): the over-run mark is the preacher's own bookkeeping, not a caution
+  to him.
+
+### What holds it
+
+`colourlaw.test.js` gained a caution sweep that names every caution surface with what it
+warns about, and asserts each paints `--v-caution` and neither promise colour; the token
+test asserts the hex differs from amber and amethyst. `settingssections.test.js` was
+retargeted from *"is amethyst"* to *"is the caution ink and not amber"*. RG-207.
+
+## 112. The clocks survive a relaunch, and a congregation countdown comes back to the desk rather than to the wall (2026-09-21)
+
+**On the operator's "go ahead with what's remaining"; F28 in the Phase 1 audit, the largest open item in the stage plan.**
+
+`timers::TimerRegistry` was a `Mutex<HashMap>` and nothing else. A relaunch mid-service — a
+crash, an update, a laptop closed and opened — lost every clock: the preacher's sermon timer,
+and a Screen Countdown a congregation was watching. Nothing said so; the tablet simply went
+blank and the wall kept the last frame the screens retained.
+
+### The decision
+
+- **Every mutation is written.** The registry gains a sink it calls after each change with
+  the WHOLE registry (`timers::Sink`), and `main.rs` installs one that writes the rows through
+  `db::save_timers` on a thread of its own, so the registry never holds the database lock. A
+  snapshot rather than a delta: a message lost on the way is repaired by the next. The
+  announcement sits on the mutators (rule 36), and `every_mutation_is_announced_to_the_sink_once`
+  enumerates them.
+- **`timers` is a table**, one row per timer, the `Timer` as JSON; `next_id` rides in
+  `app_settings` so an id is never handed out twice across a relaunch (a reused id is a `+1`
+  landing on the wrong clock). `db::restorable` drops a clock started in a rehearsal (rehearsal
+  itself does not survive a relaunch) and any clock older than six hours (last Sunday's).
+- **Restoring is not re-airing.** `restore_timers` puts the rows back and tells the stage
+  (`publish_timers`, which carries no content frame), and publishes NOTHING to a congregation
+  screen. A countdown that was on a wall comes back into the registry, where Live's Screen
+  Countdown band already offers a timer that is *counting, off the screens* with **Put back on
+  screens** (RG-152). That is the rule crash recovery keeps for a verse — position restored,
+  on-air-ness deliberately not (§27) — applied to a clock. The deadline model makes a restored
+  running timer correct after any gap: `target_ms` is an instant, not a count.
+
+### What holds it
+
+`timers::tests::{every_mutation_is_announced_to_the_sink_once, a_refused_adjust_announces_nothing,
+restore_never_hands_out_a_restored_id_again}`, `db::timers::tests` (round trip, replace,
+unparseable row skipped, the restore filter), and
+`e2e::a_relaunch_brings_the_clocks_back_without_putting_one_on_a_wall`, watched to fail with
+the stage publish removed. RG-208.
+
+### The one narrowing, 2026-09-23 (RG-269)
+
+The operator: *"When Application close clear all active timer running or if not its running it
+should display on the right output...stage"*. `restore_timers` publishes to the stage
+unconditionally, so a running stage clock left in the registry at quitting time came back on a
+preacher's screen at the next launch, counting from a moment that had passed, with nobody having
+asked for it. `db::restorable`'s six-hour horizon covers last Sunday and does nothing for this
+afternoon.
+
+**A CLEAN exit now stops the clocks a relaunch would paint by itself and would still be counting**
+— `main::stop_clocks_a_relaunch_would_paint`, from a real `RunEvent::Exit` arm, writing the
+registry synchronously because a quitting process does not wait for the `relay-timers` thread.
+That is running `Scope::Stage` clocks and nothing else. A HELD timer stays, because it was not
+running and comes back at the figure somebody parked it at. **A congregation countdown stays**,
+because everything above is what it is for: it comes back to the desk behind **Put back on
+screens** and never to a wall, so it cannot paint itself unasked.
+
+**A crash, a force-quit and a power cut never reach `RunEvent::Exit`**, so two of the three cases
+this section was written for — a crash, and a laptop closed and opened — keep every clock exactly
+as before. The one that changes is an update restart mid-service, which costs the operator one
+press of the sermon clock. `timers::tests::a_clean_exit_takes_the_running_stage_clocks_and_nothing_else`
+and `e2e::a_clean_exit_stops_the_running_stage_clock_and_leaves_the_rest`, both halves of the
+second watched to fail.
+
+## 113. A church may import a Bible it holds a licence for, in the KJV file's shape (2026-09-21)
+
+**On the operator's "go ahead with what's remaining"; RG-50's option two, which §110 left as "still needs its own design".**
+
+The NKJV the preacher named on 2026-09-20 is under copyright and will never ship inside Relay.
+A church that holds a licence and has the text as a file was still told, in effect, to wait.
+
+### The decision
+
+- **`import_translation`** takes a JSON file in the shape the two bundled Bibles already use: a
+  list of the 66 books in canonical order, each `{ "chapters": [[verse, …], …] }`. Book names
+  come from `CANONICAL_BOOKS` by index, so a detected reference and a stored verse agree on
+  spelling by construction. **Verse layout is not required to match the KJV's** — a licensed text
+  may merge or split verses — but every book must be present and no verse may be empty, and the
+  refusal names the book, chapter and verse. Nothing is written until the whole file has passed.
+- **The abbreviation is the identity.** Importing over an abbreviation already imported REPLACES
+  it in one transaction, which is how a corrected file lands without a delete first. `KJV` and
+  `BSB` are refused: the corpus repair reads the KJV by its own id, and the bundled two are the
+  floor a church can always fall back to.
+- **`delete_translation`** refuses the bundled two and the active one (choose another first, so a
+  delete can never leave `active_translation` pointing at nothing), relinks any past detection
+  that pointed into the deleted text at the KJV's same reference, and rebuilds the FTS index.
+- **Both are held back during a service** (`servicelock::PROTECTED`): rebuilding the search
+  index under a running detector is not a Sunday job. The control is two presses for a delete
+  (rule 41) and lives in Settings → Scripture beside the list it changes.
+- **What Relay does not check is the licence.** It stores `license_type = 'licensed'` and the
+  name the operator typed; whether the church may display the text is the church's question,
+  and a dialogue box asking it would be theatre.
+
+### What holds it
+
+`db::verses::imported_translation::*` (import, replace, every refusal, delete's three
+refusals), the `servicelock` tests for the two new entries, and `settingssections.test.js`
+(the control, the two-press delete, the bundled two undeletable from the page).
+
+## 114. A Stage Message leaves by both doors, and the role gate is what keeps it off a wall (2026-09-21)
+
+**Closing the open half of RG-156, which had been filed since 2026-09-16 and re-read three times.**
+
+`channels::stage_alert` published to the kiosk hub and emitted nothing. A screen wired as a
+`network_client` — which the seeded **Stage display** is — received a Stage Message; a screen
+wired as a **native window** and given the `stage` role received nothing at all. The console
+reported the message sent either way.
+
+**The failure direction is silence, which is why nobody had met it.** It takes a church to put a
+confidence monitor on HDMI rather than on the network, and then nothing says a word: the operator
+believes the preacher has been told something the preacher was never told. That is rule 35 seen
+from the engine end rather than the badge end — the thing that cannot detect its own failure is
+the sender.
+
+### The decision
+
+- **`stage_alert` emits `output://stage_alert` as well as publishing to the hub**, carrying
+  `text` and nothing else (`null` takes the message down).
+- **The guarantee does not move, and it never rested on that door being shut.** Neither door can
+  address one screen: the hub records nothing about who connected (§35, not reversed) and a Tauri
+  emit is app-wide. Every congregation browser source has always been *sent* this frame and has
+  always refused it. What refuses it is `channelroles::acceptsStageMessage`, and `Output.svelte`
+  now asks it at both doors **from one function** — two expressions of one rule is the thing that
+  drifts, and a guarantee kept on one of two doors is this repository's most-repeated bug.
+- **Nothing a congregation renderer binds rides on it.** `OutputContent` has no stage-message
+  field and the event carries no `content_kind`, `reference`, `template_json` or `media_url`.
+
+### What holds it
+
+`e2e::r5_a_word_to_the_preacher_reaches_no_congregation_channel` used to assert *"the Tauri door
+stays shut"* by watching the Wall. It now **watches the door**: exactly one event, carrying the
+words, carrying no congregation field, with the wall undisturbed — watched to fail with the emit
+removed. `stagemessagenative.test.js` drives the page half through the real component: a native
+stage window paints it, a native main screen does not, a blank takes it down, and both doors ask
+the one predicate.
+
+## 115. The Screen Countdown leaves Live a second time, and the transport is deleted rather than left uncalled (2026-09-21)
+
+**On the operator's instruction: "remove the Screen Countdown from the live workspace completely."**
+
+### The history, because it has now gone both ways twice
+
+On the morning of 2026-09-20 the band moved from Quick tools to Live. That evening the operator
+asked for it to go, and it went. On 2026-09-21 the Phase 1 audit read the note it left back as
+its F13 row — a countdown already in front of a room could not be held, reset, nudged or put
+back from anywhere — and the operator asked for it back (§109). Later that day the operator
+asked for it removed completely. **This is that decision, and it reverses §109.**
+
+### What goes
+
+The band and its whole transport: the figure fields, the clock-time target, the format, the six
+controls, the screen picker, the reach line and the way back (RG-152). With it, the eleven
+`r7_*` end-to-end tests that drove it, the two blocks in `countdownwiring.test.js` that drove
+its wrappers, and the CSS — an unused selector is a surface somebody rebuilds half of by
+accident.
+
+**And the two commands it was the only caller of: `adjust_countdown` and `show_timer`, deleted
+outright.** This is the half the first removal got wrong. F13 found them *imported into Live and
+called nowhere*, which is precisely the state this repository has deleted ten other commands for:
+every registered command is invokable from the webview, so one nothing calls is attack surface
+nobody is watching. Their wrappers go too (`adjustCountdown`, `pauseCountdown`, `showTimer`), as
+do the two pure readers only the transport used (`countdownRemaining`, `countdownHeld`) and the
+helper in `main.rs` that only they called (it was `newest_congregation_timer`, and naming it
+as a citation here would be a citation to nothing). `servicelock::PROTECTED`'s
+never-block list loses both names, and the test that asserts every name there is a REGISTERED
+command is what caught it.
+
+### What stays, and this is the part that matters to a room
+
+**A church can still run a countdown.** The Planner builds one as a cue aimed at named screens
+and Live fires it like every other cue: `start_countdown` keeps that caller and all of its tests.
+`countdown.js` is untouched, so `TemplateRender`, `Stage.svelte` and `timers.js` render a
+countdown exactly as before, held or running. `startCountdown`'s refusal guard kept its reading
+by inlining it.
+
+### What it costs, recorded rather than argued away
+
+**A countdown already in front of a congregation cannot be held, re-aimed, nudged or put back.
+The only thing that takes one off a wall is Clear screens or Blackout.** That was true between
+2026-09-20 and 2026-09-21 as well, and it is what F13 filed. It is written here, in
+`screencountdown.test.js` and at the top of the e2e block the eleven tests vacated, so the next
+reader meets the cost where they meet the absence.
+
+**Why a reversal is recorded at all.** Because §109 recorded the last one, and a silent removal
+would leave the next reader with three facts and no order to put them in.
+
+**Pinned by** `screencountdown.test.js`, which asserts the band's absence, that no transport
+state is left behind, that nothing is styled that is not drawn, that both commands are gone from
+the bridge — and, as its own guard, that `start_countdown` is NOT.
+
+## 116. A word to the preacher is a note by default and an alarm only when asked (2026-09-21)
+
+**On the operator's instruction:** *"when a message is written in the stage message section in the
+live workspace, it should show on the stage display fixed text only; if the operator sends to
+stage or alert then it fills the screen with flashing warning red."*
+
+### The defect
+
+There was **one** rendering. Anything typed and sent became a full-bleed flashing red panel
+covering the whole stage screen. So *"wrap up in five"* arrived as the same event as *"stop,
+there is a medical incident"*, and there was no way at all to put a quiet word in front of a
+preacher.
+
+**An alarm spent on ordinary business stops being an alarm.** That is the whole cost: the control
+still works, and the person it is aimed at has learned it does not mean anything.
+
+### The decision
+
+Two verbs over one field, and the words are identical — what differs is whether the preacher is
+interrupted.
+
+- **Send to stage** — a note. It paints into the template's `stage_message` layer, where the
+  designer put it. It does not flash and does not cover the reading.
+- **Alert** — the panel, unchanged: full-bleed, flashing, above everything, for the thing that
+  must stop the service. Rose on the control that sends it, never amber (rule 18).
+
+`urgent` defaults to **false** at every door — the command, the frame, the event, the renderer
+prop and the wrapper. The safe default of a two-state control is the state that interrupts
+nobody, and a caller that did not ask for an alarm must never get one.
+
+### The fallback, which is the part that needed care
+
+It was found by reading the operator's own template rather than by reasoning. **`Stage · Reading`
+declares Background, Reading, Reference, Clock and Elapsed — and no `stage_message` layer.** A
+note that painted only into that layer would have been swallowed on the exact screen this was
+asked for: a send reporting success and showing nothing, which is the silence RG-156 filed
+arriving through a different door.
+
+So a note with nowhere declared to go gets a **modest fixed strip** along the foot — over
+nothing, never flashing, two lines at most. A template that DOES declare a place keeps its
+designer's placement. The preacher's phone draws its own zones rather than a template, so the
+strip is its placement in every case.
+
+### What holds it
+
+`stagemessagenative.test.js` — urgency is the renderer's own fact, the panel is gated on it, the
+strip renders exactly when there is nowhere declared, the strip does not animate, and both of the
+page's doors carry urgency. `stagezones`, `stagepanic` and `stagealerttemplate` now send
+`urgent: true`, because what they test is the alarm; each says so at the top of the file.
+
+
+## 117. The gate is printed as readiness, not as the bar it has to clear (2026-09-23)
+
+The operator, looking at the two figures under the sensitivity dial: *"I want the armed sensors to
+work in the other direction now... when the sensor is on Auto fire above 100, then it auto fires not
+when on 0. Suggest above should be 20 below the auto-fire above."*
+
+They were right, and the fault was not the dial. `Auto-fire above` and `Suggest above` were printed
+as the raw confidence bars, immediately under a slider that runs the other way: the dial's cautious
+end (0) printed `Auto-fire above 90%`, and its eager end (100) printed `30%`. A number sitting under
+a control reads as that control's setting, so the read-out said Relay was keenest exactly where it
+fires least.
+
+**A threshold cannot be made to rise with eagerness.** A bar you must clear is LOWER when more gets
+through; that is arithmetic and not a choice, so turning the figure round was never available. What
+changed instead is the QUANTITY printed. Both figures are now readiness — `100 - threshold` — which
+is the thing the operator is actually setting: 0 means nothing is fired, 100 means anything is.
+`Thresholds::readiness` in `router.rs` owns it, beside the curve, for the same reason
+`to_sensitivity` and `follows_dial` live there: a copy of the arithmetic in the frontend would be a
+second opinion about one gate, which is the defect §96 was written to end.
+
+**The sign of the 20 follows the scale.** On the threshold scale a suggestion sits 20 BELOW the
+auto bar. On the readiness scale it sits 20 ABOVE it, because a suggestion is the easier of the two
+bars and an easier bar is a higher readiness. It is the same 20 points the operator asked for and it
+cannot point the same way on both scales; stated here rather than left to be discovered by whoever
+next reads the two figures and thinks one of them is inverted.
+
+**`SUGGEST_BAND = 0.20` replaces a second curve.** `suggest` used to interpolate 0.70 → 0.35 → 0.20
+alongside an auto bar of 0.90 → 0.50 → 0.30, so the band between "offer it" and "put it up" narrowed
+from 20 points to 10 as the dial moved right — narrowest at precisely the end where an operator most
+wants things offered rather than fired. One number, one relationship, applied in `from_sensitivity`
+and nowhere else. **The auto-fire curve itself is untouched**, so the gate a church is running today
+does not move: only the second bar and both printed figures do.
+
+The single baseline still holds by construction — `Thresholds::default() == from_sensitivity(50)` —
+and these figures gate `Direct` detections alone. Semantic, Quoted, Ambiguous and UncertainBook can
+never auto-fire at any dial position, whatever these numbers say (rule 10, `Router::decide`).
+
+`src/lib/gate.js` is the one place the figures become words, and it keeps the three facts rule 35
+requires apart: there is no engine; the engine has not answered yet (50 is both the shipped default
+and an ordinary real setting, so the figure alone cannot tell them apart); and the gate is not where
+the dial would put it, which happens whenever a voice profile restores what it learned, a room is
+applied, or the self-calibration moves it. `null` is the absence and never `0`, because `0` is
+itself a setting — "never fire" — and would read as one.
+
+## 118. A stage screen with nothing on it belongs to the clock and to the desk (2026-09-23)
+
+**On the operator's instruction:** *"When there is no Text on the screen and there is a timing,
+Enlarge the timer to make it more visible and fill the screen"*, and *"Both screens should behave
+like the Preachers screen... when there is no text utilise the full space for the timer and stage
+message when there there is timer running or a stage message"*.
+
+### What was wrong, and it was wrong in one direction only
+
+There are two supported ways to put a screen in front of a preacher (§89): `stage.html`, the phone,
+and `output.html` with a `stage`-role channel. **Everything in this decision already existed on the
+phone.** RG-244 gave it `restingLayout`, so a clock takes the height while nothing is fired; RG-248
+centred its digits; RG-239 and RG-245 gave a word from the desk the reading's whole box. The big
+screen had none of the three, and the operator was looking at the big screen: a 130px rail across
+the foot of a 1080p projector with 950px of black above it, and the digits hard against the left
+edge of it.
+
+That is RG-224, RG-265 and RG-280 for the fourth time. **A feature built for the phone is not a
+feature until the other stage surface has it**, and the honest way to stop paying that is to make
+the rule shared rather than to copy it again.
+
+### The decision
+
+`stagefill.js` is ONE function over `stageresting.js`. It does not re-decide anything the phone's
+rule decides — its test asserts the two agree on every combination of inputs — and it adds only the
+two facts the phone does not have: a clip's own countdown can have taken the rail's place, and the
+template may declare a home for a note that this page must not override.
+
+- Nothing fired, a Stage Timer running → the rail is the screen.
+- Nothing fired, a note from the desk → the note is the screen.
+- Both → they **stack**, words above and digits below, 55/45. Never overlapped, which is the
+  arrangement RG-247 measured at 140px off the middle of a phone.
+- **Anything on the screen and neither of them takes a pixel.** A reading, a slide and a
+  congregation countdown all win, always, and §116's line — *a note may not cover the reading* — is
+  the same sentence said about a clock.
+
+### What this is NOT, because the gate matters more than the layout
+
+It is not a new surface and it does not widen who may see a running order. `Output.svelte` hands no
+programme and no Stage Message to a channel whose role is not `stage`, so the inputs are already
+empty on every congregation screen in the building and the gate is still the ROLE (§89). Nothing
+here can enlarge something that was never there.
+
+### What holds it
+
+`stagefill.test.js` — the rule against the phone's over every input, the geometry, the clip's cover
+including the zero-that-is-not-a-null, and all of it rendered through a real `output.html` on a
+stage-role channel with a congregation screen beside it showing nothing.
+
+**And one thing it could not hold, which is recorded rather than glossed.** jsdom lays nothing out,
+so the fill was measured in Chromium at 1920x1080 — where it immediately showed a clipped clock that
+every green test had missed. The cause was `clientHeight` (the padding box) being handed to
+`programmeRoom` (which is asked about the content box), and the fix is a measurement, not a
+constant. RG-285 carries the figures.
+
+---
+
+## 119. A reference interrupted by a pause is still one reference, and a microphone that dies is not the end of the service (2026-09-23)
+
+Two operator instructions, one morning, and they turn out to be the same complaint
+seen from two ends of the same pipe: *the live transcript keeps losing things.*
+
+> *"when audio is listening if a scripture is called make sure to hear the full
+> bible verse before breaking transcript to keep accuracy… when you hear psalms and
+> there is a pause in the voice, wait to hear the next couple sentence for any
+> chapter and verse before breaking transcript."*
+
+> *"make sure live transcript dosent stop. as long as there is audio coming in….
+> when audio input switch, continue transcript once audio is dected…"*
+
+### The pause (RG-284)
+
+`SILENCE_FINALIZE` is 7 chunker hops — 1.4 s — and finalizing CLEARS the rolling
+window. So "Turn with me to Psalms", a page turn, "chapter twenty-three, verse one"
+is decoded as two windows: one holding a book with no numbers, one holding numbers
+with no book. Neither is a reference. Nothing downstream can rejoin them, because
+`detection.rs` is handed one window at a time on purpose.
+
+This is not a new observation. `SILENCE_FINALIZE`'s own comment records it when the
+value was raised from 5 to 7 — *"the second half of 'Romans chapter eight … verse
+twenty-eight' was being decoded with no memory of the first half"* — and 1.4 s was
+simply a better guess than 1 s, not an answer.
+
+**So the threshold stops being a constant.** `stt::finalize_after` is the one place
+it is chosen, and when the words decoded so far end on something that could be the
+START of a reference the window is held for `DANGLING_SILENCE_FINALIZE` instead —
+15 hops, 3.0 s. The unit is SILENCE: the moment the preacher speaks the run resets
+and the window stays open for as long as they keep talking, so three seconds of
+held silence buys the whole of the next sentence, which is what was asked for.
+
+**Three seconds is bounded and the bound has a reason.** `WINDOW_SECS` is 8 s; a
+phrase ending on a book name has already spent two or three of them. A hold long
+enough to fill the window on its own would force-close it (RG-262) BEFORE the
+chapter arrived — buying nothing and still postponing every FINAL, which is what
+carries persistence and the spoken commands (rule 33). `window_is_full` remains the
+hard ceiling whatever the constant says.
+
+**What it deliberately does not do**, and this is §34 restated rather than
+re-litigated: a reading that ALREADY parses at the tail is not delayed. Guarding
+every tail match costs about a second on essentially every auto-fire, and
+`RefMatch::is_provisional` already owns "the verse number has not arrived yet" at
+the detection layer. This is only about the pause before any number has been said.
+
+**The interface is the judgement call, and it is written down rather than made
+quietly.** `stt.rs` decodes; it does not know what a book is, and after this change
+it still does not. There is no alias table here, no book list, no language list and
+no grammar. The question is asked of `detection::detect_direct` — the public parser
+that owns all four — as a PROBE: *does appending a chapter and verse make a
+reference appear at the tail that was not there before?* The alternative was a
+`detection::` predicate written for this one caller: a better name and a worse
+boundary, being a second entry point into the parser with its own view of what a
+book name is, to be kept in step with the first. The probe cannot drift from
+`detect_direct`, because it IS `detect_direct`.
+
+**What it gets wrong is measured, not guessed.** Rule 10's ordinary English words
+that are also one-token aliases — `job`, `song`, `mark` — make the answer true at
+the end of a sentence with nothing to do with scripture. On 1331 finalized lines
+from the author's own services, 19 (1.4%) would be held, each by up to 1600 ms;
+nothing fires and nothing is lost. Two adjacent pairs gain a reference the two
+halves do not: **Psalms 1:1**, a real call to worship that Relay detected nothing
+for, and **Nahum 2:1**, from a mishearing joined to a recitation of book names.
+Both are whole-chapter at 0.45 and route to `Suggest`; neither can reach a wall.
+One correct suggestion gained and one wrong one, at this sample — which is not an
+accuracy improvement and is not claimed as one.
+
+**And the half that could not be measured at all.** The other effect of holding the
+window is acoustic: whisper decodes the numbers with the book name still in its
+context, which is where a gain would actually come from. That needs audio. There is
+no recorded church audio on this machine, `stt::realtime` could not be run, and
+that claim is NOT TESTED.
+
+### The microphone (RG-291)
+
+Rule 5 makes a dead device stop the loop, store the reason, write the debug
+recording and raise `audio://error`. Every word of that is right and all of it ends
+there. A USB mic that glitches, an input another application takes for a moment, a
+desk feed re-plugged — each one ended the transcript for the rest of the service,
+and the only way back was an operator noticing and pressing Start.
+
+**The operator is not asking for rule 5 to be undone. They are asking for the step
+after it.** So nothing about the stop changes: the loop still exits, the reason is
+still the FIRST one cpal gave, the recording for that segment is still on disk
+before anything is reported — and on its own `-2`, `-3` … path, so a resume can
+never truncate the segment before it (F-11).
+
+What is added is a **bounded, backed-off re-open**: 500 ms, 1 s, 2 s, 4 s, 8 s, and
+then it stops. 15.5 s is what a person takes to notice a cable, push it back in and
+let the OS re-enumerate. Unbounded would be a microphone that never admits it is
+gone, and an operator watching "Reconnecting" for the rest of a service with no
+banner and no way to tell it from a working one — rule 35 with extra steps.
+
+**Two flags where there was one.** An operator pressing Stop and a microphone dying
+were the same `AtomicBool`, which is fine for a loop that only ever exits, and
+useless to a loop that has to decide whether to try again. `stop` belongs to
+`AudioEngine` and is never reset; `dead` belongs to the attempt, and
+`note_stream_error` sets that one.
+
+**A resume is evidenced by audio, never by an open.** A device can be resolved,
+report every config it supports, accept `play()` and deliver no frames at all —
+that is exactly the failure `DEAD_INPUT_MS` exists for. So "listening again" is said
+by a buffer arriving and by nothing else, once per attempt, and it names the input
+it resumed ON: "it came back" and "it came back on a microphone nobody chose" are
+different facts (RG-121). The budget resets when audio flows, so a glitch in the
+first minute does not spend the chances for a different one an hour later.
+
+**The service lock is deliberately not consulted.** `servicelock.rs` holds back
+irreversible actions and things that take the speech engine away. A microphone
+coming back is neither, and changing microphone mid-service — the desk feed died,
+plug in a handheld — is the ordinary thing this desk is for. §40: the operator
+outranks it, always.
+
+**And `setInputDevice` was the same gap by a second door.** It updated the store and
+persisted the setting and never told the engine, so a change of microphone took
+effect at the NEXT `start_capture`. It now stops and reopens a running capture — and
+a stop that did NOT stop ends there rather than opening a second capture thread on
+one device, which is `micstop.test.js`'s bug one level up.
+
+### What is NOT delivered, and is not claimed
+
+`Recovery` carries the three facts rule 35 requires be distinguishable — `Lost`
+(and trying again), `Listening` (audio is arriving, from this input), `GaveUp`. They
+go to stderr, because putting them in front of an operator needs an emitter in
+`main.rs` and a line in `degraded.js`, and neither was this change's to make. Until
+that lands a self-healed glitch is invisible and only the final failure reaches a
+banner. The mechanism is real; the surface is owed.
+
+## 120. The note is red too, and the line it used to hold now rests on shape (2026-09-24)
+
+**Amends §116.** That decision drew the line between a note and an alarm, and the INK was half of
+how it was drawn: ochre for a word from the desk, a full-bleed flashing red panel for an emergency.
+Rule 18 agreed — red is spent on destructive and on failure, and a message is neither.
+
+**The operator overruled it, about the one surface they are the sole judge of:** *"when the message
+is sent make it flashing red text so it can catch attention of the preacher — just as on the
+Preacher screen."* This is the second report of the same thing. RG-239 gave the phone the caution
+ink and a pulse; RG-268 gave the big screen the same after the operator said it was *"just showing
+a gray/white text which can easily be missed"*; and the person the message is FOR has now said that
+the ochre is still not catching their eye. That is evidence of a kind no colour rule outranks, and
+it is worth naming plainly that this reverses a position taken three days earlier on the same
+person's instruction.
+
+**What that costs, and where the guarantee went.** §116's distinction cannot be allowed to
+disappear — a preacher who cannot tell *"wrap up"* from *"stop the service"* is worse off than one
+who misses a note. It now rests entirely on **shape**:
+
+- a **note** is a strip at the foot, or a panel with the screen's own content beside it, with a
+  rule down one side and its TEXT pulsing;
+- an **alarm** is the whole screen in a solid `#c8121c` field with the PANEL pulsing.
+
+Those are unmistakably different from the back of a room, which is the test that matters — and
+arguably a better test than a hue, which a projector's colour profile can flatten. `colourlaw.test.js`
+asserts the shapes rather than only the inks, and holds both surfaces together: **both or neither**,
+because RG-268 was filed precisely because the phone had an ink the big screen did not for two days.
+
+**What did NOT change.** Amber still means ON AIR and amethyst still means rehearsal, and neither
+may appear on either surface; both are still asserted. The alarm keeps its own field colour. A
+message still never claims anything about what a congregation is looking at.
+
+## 121. The gate is printed as what each bar NEEDS, and auto-fire needs more (2026-09-25)
+
+**Amends §117**, which amended the printing of the same pair three days earlier. Two operator
+complaints about two figures; worth recording together, because the second one only exists because
+of how the first was answered.
+
+**§117's complaint:** *"when the sensor is on Auto fire above 100, then it auto fires not when on
+0."* The raw confidence bars were printed directly under a slider they run the opposite way to, so
+the larger number read as the keener setting. Answered by inverting them into a readiness — `100 −
+threshold` — which rises with the dial.
+
+**This complaint:** *"suggestions should be lower by 20 if auto fire is on 100 so auto fire has the
+higher priority."* On a readiness scale a suggestion is the LARGER number, because it is the easier
+bar. The screenshot shows `Auto-fire 70 / Suggest 90` and reads as a suggestion outranking an
+auto-fire, which is the opposite of how the gate works.
+
+**Both cannot be satisfied by arithmetic, and neither is a wording nit.** A bar you must clear is
+lower when more gets through; that is arithmetic and not a choice. So on any honest scale exactly
+one of the two orderings holds, and the operator has now objected to both — first that the figures
+ran against the dial, then that they ran against each other.
+
+**What settles it is the WORD.** These are what each bar NEEDS. Auto-fire needs more than a
+suggestion — always, at every dial position, by exactly `SUGGEST_BAND` — because it is the stricter
+rule. Under "needs", a smaller number is plainly the easier bar rather than the keener setting, and
+the ranking reads correctly: the harder thing requires more.
+
+The figures still FALL as the dial rises, and that is now explicitly what the dial's own labels
+say: moving it right lowers what both bars need, which is what eager means. The dial is the
+control; these are what it produced.
+
+**Nothing about the gate itself moved.** `from_sensitivity` is untouched, `SUGGEST_BAND` is still
+0.20, and `Thresholds::default() == from_sensitivity(50)` still holds by construction. Only the
+printed quantity changed, and it changed back to the threshold it started as — with a word in front
+of it that the original never had. **`readiness()` keeps its name and its field names** so no caller
+had to be found and changed; `router.rs` carries the meaning at the definition.
+
+Guarded in `router.rs` by `auto_fire_always_needs_more_than_a_suggestion_and_by_exactly_the_band`
+and by `what_each_needs_falls_as_the_dial_rises` — the second exists so nobody re-inverts the
+figures to make them rise with the slider again, which is the fix that has now been tried and has
+produced this second complaint.
+
+## 122. A verse already on a wall is not news, and a reading stays inside the passage it is reading (2026-09-25)
+
+**On the operator's instruction:** *"I dont want suggestion to be changing when a bible verse is reading
+because it heard a phrase which is in another bible verse… verses needs to be guarded so when a preacher
+is reading a verse it stays within the verse/chapter until the preacher calls another verse… suggesting
+too many verses whilst the preacher is reading a verse will cause confusion…"*
+
+### The two things that were wrong, and only one of them was the complaint
+
+§118's promotion lets a long, sole, verbatim run reach a congregation unattended. It works: eight of ten
+such auto-fires across services 38-40 were correct and unremarkable. The two that were not are one
+failure, and the **ordinary shape of a sermon** produces it: announce the reference, Relay fires it
+`Direct`, then read the verse aloud, and Relay fires the same verse again. Eleven seconds, six times
+across three services, in front of congregations.
+
+**No number could have fixed it.** `DEFAULT_DEBOUNCE_MS` is `WINDOW_SECS + 2` — ten seconds — and rests
+on *"anything re-detected inside it is the same utterance being heard again"*. True of a spoken
+reference, which is over in two seconds; false of a reading, which produces matching runs for as long as
+the reading lasts. The measured gaps are 11, 11, 17, 21 and 120 seconds: a cooldown of 12 catches two of
+five, one of 20 begins swallowing genuine second citations. Ranking cannot help either — `Mark 6:2`
+scored 0.69 then 0.90 as more of the verse was heard, so the duplicate is the STRONGER candidate by
+every rule in `pipeline::better`.
+
+The operator's own complaint is the second thing: a verse read aloud is not only in the verse being
+read. Synoptic parallels, repeated formulae, `Psalms 107:8` and `107:21`, and plain sub-spans — a
+twenty-five-word run in John 3:16 carries a ten-word run in John 3:15, because those ten words are in
+both. So the list churns for exactly as long as the reading lasts.
+
+### The decision
+
+`detection::hold_for_the_passage` — pure, DB-free, applied once in `main::candidates_for_window` over a
+window's finished candidate set, because it is a decision about the SET and a set-level rule added at
+four gathering sites is the shape rule 36 records four separate bugs for.
+
+- **The wall already says it.** A candidate found in a verse's own text whose reference is the one Relay
+  last put on a screen is held. It cannot be new information.
+- **Outside the reading.** While this window holds a run of the speaker's own words verbatim inside the
+  book and chapter on the screen, text-derived candidates from outside that chapter are held. Chapter,
+  not book: the operator said *verse/chapter*, and Psalms 23 is not Psalms 107.
+- **Nothing reference-shaped is ever held.** `Direct`, `Ambiguous`, `UncertainBook`, `UncertainNumber` —
+  at any dial, in any window, under either rule. A window that NAMES a reference disarms the passage rule
+  entirely, not one candidate. That is rule 40's sentence and it is checked first, because a guard that
+  could swallow a spoken reference would be strictly worse than the churn it fixes.
+
+**Nothing has to be cleared and nothing can be left on.** The passage rule is armed by evidence in the
+window in front of it, so it stops biting in the first window with no in-passage run — the window the
+preacher moved on. The wall rule is released by the next verse, by `Router::forget_last_fire` (a clear or
+a blackout) and by `Router::forget_wall` (anything that is not scripture taking the screen — the same
+door rule 38 disarms the passage at).
+
+### What is deliberately NOT done, because §118 asked for the opposite
+
+**The wall still follows a reader from verse to verse.** `Philippians 1:23` at 1508 s and `1:24` at
+1517 s is one reading walking forward; the first is held because it is already up and the second fires.
+`Job 22:27` → `22:28` at +25 s is the same shape and is plainly correct. Freezing the wall on the first
+verse of a reading until somebody named another reference would leave a verse the preacher had finished
+in front of a congregation for as long as the reading lasted — a wrong verse chosen on purpose — and it
+would reverse the instruction that created `Reading` at all. The operator's words are *within the
+verse/chapter*, and the adjacent verse is inside it.
+
+**A spoken reference repeating a reading is untouched.** `Micah 4:1` fired as a reading and then,
+thirteen seconds later, as a spoken reference. That is a duplicate and this decision will not stop it,
+because stopping it means demoting something the preacher said out loud.
+
+### Relay says what it is holding
+
+A guard that quietly stops offering verses is indistinguishable from a detector that has gone deaf, which
+is rule 35 exactly. `detection://held` carries the passage, the phrase that proves the reading, and every
+held candidate with the rule that held it and the words that produced it — never a number (rule 18). It
+is emitted once, at the place the decision is made, and `capture.js`'s `passageHold` store expires it,
+because a reading that ENDS emits nothing and a permanent "holding 3" is the same failure from the other
+side.
+
+**Writing it revealed the hole it exists to close**: `emit_detections` returned early when no candidate
+survived the gate, and the wall rule can legitimately hold a whole window — a preacher reading on through
+the verse Relay already put up, the commonest case there is. The report went with the return. Caught by
+the first end-to-end test, on its first run.
+
+### And the record of what is on a wall is kept at the door, not at the gate
+
+`Router::note_wall` is called from `broadcast_with_clock`. Recording it inside `Router::decide` was the
+first attempt and was measurably wrong: `decide` returns `AutoFire` per candidate and rule 29 then shows
+only rank 0, so *"Jeremiah chapter 6 verse 16 verse 17 verse 17"* — which yields `6:16` at 0.95 and
+`6:17` at 0.88, both `AutoFire` — left the record reading `Jeremiah 6:17` while the congregation saw
+`6:16`. Eleven seconds later the guard compared the reading against the wrong verse and fired the
+duplicate it exists to stop. Found by replaying a real service, not by reading the code.
+
+It is also **not** `ContextMemory.current`, and that distinction is `liveCue`'s: position and
+on-air-ness are separate facts. `ContextMemory` is where `→` resumes and survives a blackout on purpose;
+this is what the screens are showing, so a clear drops it. One field for both would mean a verse cleared
+off a wall could never be read back onto it.
+
+### What holds it
+
+`detection::passage_guard` (sixteen), `router::the_wall` (five), `main::passage_guard_wiring` (three,
+including that the guard and the router spell a reference the same way — two spellings would hold
+nothing, break no test and print no error), three `e2e` tests on the real fire path, and
+`passagehold.test.js`. Every rule revert-checked; the `e2e` ones were watched to reproduce
+`["Jeremiah 6:16", "Jeremiah 6:16"]` and a cleared verse that never comes back.
+
+**And one instrument that cannot see this at all, stated rather than glossed.** `eval::print_scorecard`
+reports 100% recall, 53/53 verses and a 0.0% wrong-verse rate with the guard on — and exactly the same
+with it off, because it scores one window at a time and has no wall for a verse to be already on. That is
+RG-296's finding one door along. The number that means something is `main::passage_guard_bench`: 971 real
+transcript lines across three services, **11 duplicate broadcasts removed, no verse lost, suggestions
+549 → 448**. It is a floor, not a measurement — the corpus is finalized lines and the live path also
+detects on every partial — and there is no recorded church audio on this machine, so none of it is a
+claim about accuracy in any language.
+
+## 123. Two things the preacher said that disagree is evidence, and a third of them can be heard at once (2026-09-25)
+
+**Three services, sixteen hours, twelve wrong verses. Eight are one mechanism**: the decoder loses
+or alters a digit or an ordinal in a spoken reference. *eighty*-seven → 7 · *eigh*-teen → 8 ·
+*Second* Timothy → 1 Timothy · *sixty*-one → 1 · *twelve* → 2 · 34 → 35, and two book names.
+
+**No number could reach this class and that is worth stating plainly.** Every result is a SMALLER,
+VALID, WRONG reference. The parse confidence is genuine — it is a real confidence about a real
+parse of the words the decoder produced. The verse exists. The chapter exists. `Direct` at 0.95 is
+the strongest claim Relay can make and it was correct in every respect except that the preacher had
+said a different number. No threshold, no ambiguity check, no impossible-chapter rule and no
+ranking can see it, because every individual piece of evidence is sound.
+
+### The rule
+
+`detection::doubt_from_a_quotation`, pure and DB-free, applied once in
+`main::candidates_for_window` — the same choke point `hold_for_the_passage` uses, for the same
+reason (rule 36): it is a decision about the SET.
+
+A spoken `Direct` reference and a verbatim run **disagree** only when they differ in exactly ONE
+coordinate and that difference is the measured decode slip:
+
+- **`SpokenChapter`** — same book, the run's verse inside the verse or span that was said, and the
+  chapter is what is left of the run's chapter when the front of the number is lost (`7`⊂`87`,
+  `8`⊂`18`, `1`⊂`61`, `2`⊂`12`), or the two are the same length, **two digits or more**, and one
+  digit apart (`35`/`34`). **The length floor is load-bearing**: at one digit every chapter is one
+  substitution from every other, so `Romans 1` would contradict `Romans 2`, and a preacher reading
+  on is not a decode slip.
+- **`SpokenBook`** — a different book holding the run at the **exact** chapter and verse that was
+  said, never a whole chapter. `Acts 8:12` against a run in `Proverbs 8:12` is the finding; *"turn
+  to Romans 8"* against a run in `John 8` is Tuesday.
+
+**A verse-only difference is never a disagreement, at any distance.** That single line protects the
+two cases from the same day where believing the number was RIGHT: `John 15:15` read then *"John 15,
+14"* cited, a preacher starting a passage; and `Hebrews 13:7` cited while he quoted 13:17 from
+memory — he had interrupted the service an hour earlier to insist on verse 7.
+
+### Both sides are demoted, and the alternative was tempting
+
+The citation drops to `UncertainNumber` or `UncertainBook`, the accusing run to `Quoted`. All three
+are already capped at Suggest by `Router::decide` at any score and any dial, so **a disagreement
+fires nothing at all** and both candidates are offered.
+
+Leaving the accuser alone would have auto-fired the CORRECT `Proverbs 8:12` in place of `Acts 8:12`
+— a better morning when the rule is right, and a brand-new wrong verse when it is not. Rule 10's
+cap is applied to one more case here and relaxed for none. Nothing gained a wall.
+
+### What it costs, measured
+
+**7,741 real transcript lines across three services: 3 fires removed, 0 gained, ZERO correct fires
+lost.** All three removed were wrong verses that reached congregations. Suggestions 3041 → 3046.
+The one extra index lookup runs in 5.3% of windows at 1.6 µs, against a decode of 139-600 ms.
+
+### What it CANNOT reach, and the limit is the evidence rather than the predicate
+
+**Three of nine.** Six carry no admissible evidence in the window that fired: three windows are the
+reference and nothing else, two carry runs of four and three words (under `MIN_RUN_WORDS`), and
+`Jude 1:7`'s run points at a verse the preacher was referring BACK to. In four of those six the
+quotation arrived **6 to 16 seconds later, in a separate window**, and named the right verse after
+the wrong one was already on the wall. Reaching those means taking a verse off a congregation's
+screen, which is a different decision with a different cost, and it is not taken here.
+
+`which_field_instances_this_rule_can_reach` **asserts** the ceiling at 3 rather than describing it,
+so the claim cannot drift into something warmer.
+
+### One carve-out to rule 40's book restriction, with its exact scope
+
+The phrase index is asked a second time unrestricted, and a hit is admitted **only** if it is in
+another book at the exact chapter and verse a spoken reference in that window named. Everything
+else outside the named book stays hidden exactly as before. Without it, `Acts 8:12` was unreachable.
+
+### The third instance of an instrument that cannot see the thing it appears to cover
+
+`eval::print_scorecard` and `phrase_bench::read_the_bible_back_and_count_wrong_verses` report
+**identical figures with this rule on and off**. Neither calls `candidates_for_window`: `eval.rs`
+assembles its own candidate set and is a **third copy of the window assembly**, which is exactly the
+duplication `candidates_for_window` was created to end. RG-296 found this blindness for the
+`Reading` promotion, RG-306 for the passage guard, and this is the third. Recorded in the code, not
+only here.
+
+### Owed
+
+`detection://held` gained a `doubted` array carrying the reference, the method, the WORDS and which
+rule — never a number (rule 18). **Nothing renders it yet.** The structural cap works today; the
+operator-facing sentence is owed, and it belongs with a defect found on the way: `uncertain_number`
+has no frontend case at all, so a candidate whose numbers Relay inferred currently renders as
+*"Heard the reference"* with a confidence bar.
+
+## 124. What the AI offered is part of what happened (2026-09-25)
+
+**The defect was structural, not a bug anybody could have seen.** `persist_fire` sat inside
+`if fire.may_broadcast()`. Rule 10 caps a paraphrase at `Suggest` at any score, `may_broadcast` is
+false for a suggestion, and so **a paraphrase never reached the database**. Across every service
+this machine has recorded, `status = 'suggested'` has never once been written. `detections.status`
+permits it, `db/services.rs` documents all four values and `service_timeline` reads them — two of
+the four were unreachable.
+
+### Why this is not the decision that was already taken
+
+`dismiss_detection`'s own comment argues the other way — *"persisting every suggestion is not the
+fix … hundreds of rows a minute"* — and that argument was accepted, and the operator's acceptances
+and dismissals were moved to `cues` instead, which was right and is untouched.
+
+**What was never done was the measurement the sentence rests on.** It is about **8 a minute**, not
+hundreds: 3,038 offers across 16 hours of finals, ~7,000-8,000 including partials, 9.3 µs and 179
+bytes each, **1.4 MB a service** against the 1.85 MB `perf_samples` already writes. A figure nobody
+had measured was deciding a schema.
+
+### What a suggestion may and may not do
+
+It writes a `detections` row with `status = 'suggested'` and its real method. It does **not** write
+a transcript row, and that is not a judgement about importance: only finals are persisted, the live
+path detects on every partial, and an offer that inserted its own row would put thousands of rows of
+mid-word text into the table every history surface renders. The window rides in `heard_text`, which
+is the column FIELD F-2 added for exactly this.
+
+**Rule 14 is untouched.** The status written is the one the gate reached: `'auto'` is still Relay's
+own initiative, `'manual'` is still a human, and a suggestion is neither.
+
+### The privacy precedent is `heard_text`'s, and the argument is short
+
+`service_events.detail` carries a phrase Relay COMPOSES and must keep carrying nothing else.
+`detections.heard_text` carries what was said, on every fire, and exists so a wrong verse can be
+explained. A suggestion is the same kind of artefact about the same kind of claim — and the decisive
+point is that it **widens nothing**: the window a suggestion was read from is already in
+`transcripts`, verbatim, and `delete_service` erases both together.
+
+### The half that makes the other half worth having
+
+`db_method` collapsed seven variants into `'direct'` and `'semantic'`, so the record could not tell
+a paraphrase from a quotation from a followed reading. That was a filed known gap and a tolerable
+one while every row was a fire. **It is not tolerable in a record built to answer *what did the
+paraphrase detector do*, where 2,325 of 2,790 offers are the ambiguous word.** The v6 rung rebuilds
+the table to the seven `DetectionMethod::wire()` names — the vocabulary the console has spoken since
+§21 — so `detect.js`'s existing helpers become correct on an archive row for the first time.
+Existing rows keep their word: which of the three a legacy `semantic` was cannot be recovered, and
+guessing would invent the evidence this column exists to carry.
+
+### What it does not claim
+
+**Nothing here says a suggestion was right.** Only a person in the room can judge that. What the
+record does show, on its first day, is not flattering: **2,325 paraphrase offers in one service,
+median cosine 0.356 against a 0.30 floor, one acceptance** — roughly one per 2,800. Whether that
+list should be shorter, by an evidentiary bar or a per-window cap like rule 29's, is an operator
+decision and this decision does not take it.
+
+## 125. The paraphrase bar is measured now, and the number is not the lever (2026-09-25)
+
+**Answers the sentence §124 left open**: *"Whether that list should be shorter, by an evidentiary
+bar or a per-window cap like rule 29's, is an operator decision and this decision does not take
+it."*
+
+### What was owed, and what it turned out to say
+
+`SEMANTIC_FLOOR = 0.30` carried its own reason for never moving: *"the corpus has no negative cases
+yet (transcript that mentions no scripture at all), so the noise it would cost is currently
+UNMEASURED. Do not lower it on a hunch."* RG-310 made the offers observable and three services on
+2026-09-25 left the negative cases in `transcripts`. Eleven services, **14,158 final lines over
+35.3 hours**, replayed through the real `candidates_for_window` and the real `Router`. **85.3% of
+windows name nothing reference-shaped and hold no verbatim run**, and **85.7% of all 4,853
+paraphrase offers come from them**.
+
+150 of them were read by hand: **28 answer what was said, 11 are arguable, 111 are noise** — a
+**74% false-positive rate**. Prayer, congregational response, offering liturgy, song lyrics, and
+announcements matched on a member's name (`Esther 7:3`) or the service's own title
+(`1 Timothy 1:17`).
+
+### Why raising it is refused, and the refusal is arithmetic rather than caution
+
+**The two populations have the same distribution.** p50 cosine **0.356** where no scripture is
+named against **0.361** where it is. There is nothing for an absolute to cut between, which is rule
+12's sentence one door along: a signal compared to an absolute level that does not separate
+anything is not a measurement.
+
+**And the ordering is inverted at both tails.** The highest-scoring false positives in the whole
+sample are stock liturgical formulae — *"Hallelujah. Hallelujah. Praise the Lord."* scoring
+`Psalms 146:1` at **0.557**, *"In the name of Jesus Christ"* four times scoring `1 Corinthians 5:4`
+at **0.580** — and they outscore twenty-six of the twenty-eight correct offers, whose bottom end is
+genuine citation: *"ten times better than their colleagues"* → `Daniel 1:20` at **0.327**. A floor
+set high enough to silence the boilerplate silences the citations first. Both matches are also
+lexically CORRECT — those psalms really do say those words — so this is not a defect in the index
+and cannot be fixed by disbelieving the score.
+
+**Every bar that cuts volume materially kills the claim.** `para_cases()` MODERN recall falls
+41% → 6% at a floor of 0.40 and → 0% at 0.45, and the modern-wording retellings are exactly *"the
+preacher paraphrases a lot so I want you to catch that"*. At 0.40, precision rises 18.7% → 38.0%
+while a third of the correct answers die **and the surviving list is still majority noise**.
+
+### What the data does support, and why it is not being built here
+
+A **contiguous run of three words shared with the verse named** beats every value of all three
+constants on all four measurements at once: removes 73.5% of offers against 0.40's 70.9%, precision
+50.0% against 38.0%, labelled recall 78.6% against 67.9%, corpus recall 70%/24% against 58%/6%. An
+offer with no such run is wrong 89% of the time.
+
+It is **not** taken here, for three reasons and each stands alone. It is a new instrument rather
+than a number, so it means `candidates_for_window` asking `PhraseIndex` a question it does not ask
+— a change at the set-level gathering site rule 36 governs, owed its own unit and its own `e2e`
+case. It **silences 5 of the 43 labelled retellings**, every one `vocab: modern`, and they are the
+narrative case the product's claim rests on: four friends tearing open a roof, the prodigal son,
+Zacchaeus up a tree, the furnace, the jail at midnight. And a second instrument added quietly
+beside an existing number is how a gate ends up with two owners, which is §96's whole subject.
+
+### The finding that outranks the bar
+
+The detector produced roughly **224 defensible paraphrase offers in service 40 and the operator
+accepted one.** The gate is not too tight for the right answers — they got through, 224 times, into
+a list of 2,534 that a person has correctly learned to ignore. **That is a surface defect, not a
+threshold defect**, and the measurement says one concrete thing about the surface: it is ordered by
+a number that ranks *"Hallelujah, praise the Lord"* above *"ten times better than their
+colleagues"*, and it shows an unordered bag of words (`terms.join(" · ")`, §21) while discarding the
+one fact that separates a citation from noise — whether any of those words were said in the verse's
+own order. A run length beside the phrase is something a volunteer can judge in the second they
+have. A cosine is not, and §21 already says so.
+
+### What holds it
+
+`suggestions::why_the_floor_holds` — two tests, reproducible from the bundled KJV with no database,
+asserting the inversion. The first was **watched to fail** with its comparison reversed, printing
+`Psalms 146:1 0.557` against `Daniel 1:20 0.327`, the same figures the hand-read sample recorded.
+Its failure message says what its failing would mean: the index has changed, and whether this floor
+can now separate the two populations is worth measuring again. `SEMANTIC_FLOOR`'s comment carries
+the table, and the two recall figures it had been quoting from a smaller corpus — 98% and 84% — are
+corrected to the 100% @5 and 77% the scorecard prints today.
+
+**Nothing about the gate moved.** No constant changed, `Semantic` is still capped at `Suggest` at
+any score by rule 10, and the recall a church is running today is the recall it was running
+yesterday: 77% ALL, 41% MODERN.
+
+## 126. The lever the operator was owed, and the price is theirs to pay (2026-09-26)
+
+### What §125 got right, and what it left undone
+
+§125 proved the number is not the lever, and named the one that is: a contiguous run of three of
+the verse's own words, which beats every value of `SEMANTIC_FLOOR`, `SEMANTIC_RELATIVE_FLOOR` and
+`MIN_EVIDENCE_TERMS` on all four measures at once. Then it declined to build it, on three grounds.
+
+Two of the three were about HOW — a new instrument rather than a constant, needing
+`candidates_for_window` to ask `PhraseIndex` a question it did not ask, owed its own unit and its
+own `e2e` case. That is engineering, and it is now paid.
+
+The third was that it costs the modern-wording retellings the product's claim rests on. **That is
+not a reason not to build it. It is a reason not to DECIDE it.** §125 was right that this belongs
+to an operator and wrong that the operator therefore gets nothing: a church drowning in suggestions
+was left with the measurement and no lever.
+
+### A switch, and the whole design is the default
+
+`app_settings['detection.paraphrase_needs_a_run']`. **Absent means OFF, and only an explicit `1` is
+on**, so an unreadable row lands on the shipped behaviour rather than silently starting to silence
+retellings.
+
+OFF is asserted, not argued: `held_off == 0` over **14,478 real windows**, and
+`nothing_but_a_paraphrase_changes_when_the_switch_moves` shows the switch cannot reach anything
+that is not a paraphrase, in either direction. A church that never opens Settings runs 77% ALL /
+41% MODERN — what it ran yesterday.
+
+### The price, in words on the screen and in numbers in the code
+
+The control says: *"Only suggest a paraphrase when the preacher said some of the verse's own words
+in a row. Far fewer wrong suggestions — and Relay will miss a Bible story retold entirely in modern
+words. A paraphrase is only ever a suggestion either way; this never changes what reaches a
+screen."* The percentages live in `PARAPHRASE_RUN_WORDS`, not in the operator's face. **A switch
+that advertised only "fewer wrong suggestions" would sell a trade as an improvement**, and the
+person paying would not know they had.
+
+ON: 4,905 offers → **1,293** (73.6% removed), recall 77%/41% → **70%/24%**, 3,828 candidates held
+and reported.
+
+### Two corrections to §125, both AGAINST this change
+
+**Three retellings are silenced, not five** — `roof-paralytic-modern`, `paul-silas-modern` and
+`jonah-modern`. §125 named the prodigal, Zacchaeus and the furnace; the paraphrase path does not
+reach those with the bar OFF either, so a rule that only removes answers cannot have lost them, and
+it omitted the one it does lose. The correction makes the bar look **worse**-priced, not better:
+the real cost is concentrated rather than diffuse.
+
+**And the single acceptance it costs is a decoder problem, not a vocabulary one.** `John 15:2` in
+service 39: the preacher *was* saying the verse, and whisper produced *"every branch a man that
+bearer not fruit"* for *"Every branch in me that beareth not fruit"*. Longest run: two. **A run test
+over a transcript is a run test over what the decoder heard**, and WER is unmeasured in every
+language.
+
+### Why not the service lock, and why not the Router
+
+**Not the lock**, though its structural twin `set_follow_the_reader` is behind it: that setting
+changes what reaches a congregation unattended and this one cannot — `Semantic` is capped at
+`Suggest` by rule 10 at any score and any setting, so it only removes rows from the operator's own
+list. The operator who most needs it is the one drowning at 10:31, and over-blocking is the more
+dangerous failure there.
+
+**Not the `Router`**, though `get_follow_the_reader` reads from it: the router reads that one
+because the router decides it. This is decided in `candidates_for_window`, before the gate, so the
+router would be a thing that does not decide — and the next reader would consume it inside
+`Router::decide`, where it would be a fourth cap over a method rule 10 already caps absolutely.
+`Detecting` is the precedent, and an `AtomicBool` can never contend a lock the decoder waits on.
+
+### What this does NOT fix, and it is still §125's closing finding
+
+Even ON, the operator sees roughly thirty offers an hour at about 50% precision. **The bar shortens
+the list; it does not make it ordered or judgeable.** And the run length the bar computes is
+**thrown away** — it is the one fact §125 says a volunteer can act on, and a paraphrase still
+reaches the console as `terms.join(" · ")`, a bag of words in no order that §21 already refuses to
+put a percentage beside.
+
+Carrying the run beside the offer — *"said in order: whom the Lord loveth"*, or *"no words in
+order"* — and ranking by it would improve the list **whether the bar is on or off, and it removes
+nothing**. That is the next piece of work, ahead of any further tuning of any number here.
+
+### And the fourth instance
+
+`eval::print_suggestion_policy` and `print_paraphrase_scorecard` are **byte-identical in both
+states** — demonstrated by forcing the flag, not assumed — because neither calls
+`candidates_for_window`. §122 and §123 record the same blindness for the passage guard and the
+citation-doubt rule. This is the fourth.
+
+## 127. A short run can corroborate a reference or accuse one, and the same floor cannot do both (2026-09-26)
+
+§123 built the citation-doubt rule and measured its own ceiling honestly: of the nine wrong verses
+of 2026-09-25, it reaches **three**. This section takes that to **five** and records what the two
+extra ones cost, because the cost is the interesting half.
+
+### Why six were out of reach, and why only two of them had to be
+
+`doubt_from_a_quotation` sources its accusing run from `PhraseIndex::quoted`, which needs
+`MIN_RUN_WORDS` (5) because it answers *which verse do these words belong to* and below five words
+that question has too many answers. Two of the six fail on that floor and on nothing else, measured
+on the operator's own windows rather than imagined:
+
+| `detections.id` | fired | should have been | run shared with the right verse |
+|---|---|---|---|
+| 818 | `Isaiah 1:3` | `Isaiah 61:3` | **4 words** |
+| 861 | `Romans 2:3` | `Romans 12:3` | **3 words** |
+
+Both preachers had already said the book and the chapter out loud. That leaves a narrower question
+than the one `quoted` answers — *did these words touch the verse one digit away from the one he
+said* — and a narrower question can be answered from a shorter run against **one named verse**,
+which is what `PhraseIndex::shared_run_with` measures. `PARAPHRASE_RUN_WORDS` (3) is already the
+floor for exactly that shape of evidence in the paraphrase bar (§126).
+
+`detection::chapter_the_words_point_at` is the rule. The chapters it asks about are the inverse of
+`chapter_is_a_decode_slip` — nine for a one-digit chapter, a handful of substitutions above that —
+so it is **a probe, not a scan**: bounded by the slip test and never by the corpus. It can only ever
+return `Doubt::SpokenChapter`, so the cross-book carve-out that protects `John 15:14` and
+`Hebrews 13:7` is untouched, and it runs second, only on candidates the stronger rule left alone.
+
+### The first draft was wrong, and the measurement is what said so
+
+Built with a flat three-word floor, this rule **doubted four references the preacher had said
+correctly and cost two auto-fires** over 7,741 real transcript lines:
+
+- *"Proverbs 24 verse 5 A wise man is strong, yea, a man of knowledge"* — that **is** Proverbs 24:5.
+- *"Isaiah, chapter 44, and verse 3. I will pour water upon him that is thirsty"* — that is Isaiah 44:3.
+- `Isaiah 41:15`, *"Behold, I will make thee a"* — right, and the fire was lost and returned 10 s late.
+- `Isaiah 32:15` — right, and the fire was lost.
+
+Every one was accused because three words of the verse he was reading — *behold I will*, *I will
+pour* — also occur in a chapter one digit away. **Scripture is full of three-word runs.** Three words
+is safe in §126 because it CORROBORATES a reference somebody said out loud; here the run ACCUSES one,
+on behalf of a verse nobody named, and the floor that serves the first job cannot serve the second.
+`quoted`'s `sole` test is what the stronger rule has instead and this rule has no access to it.
+
+**So the bar is relative: the words must point at the probed verse MORE than at the verse that was
+said.** That is the question a person would ask of two chapters, and the absolute floor never asked
+it. It costs one extra `shared_run_with`, for the claim itself, and it removed three of the four.
+
+**The fourth needed a second guard: a span names no one verse.** *"Seek water and there is none and
+their tongue felleth for thirst. Isaiah 32 verse 15 to 17"* — the reference is right, the quotation in
+front of it belongs to the passage he had just left, and the probe compared it against verse 15 alone.
+`doubt_from_a_quotation` already refuses a span across books in the same words, for the same reason.
+Neither field case is a span, so the guard costs nothing they need.
+
+### What it is worth, stated with the part that is not good news
+
+**It reaches five of the nine instead of three**, and the two it adds are the two the table above
+names. Over the same 7,741 lines the whole rule now removes **5 broadcasts and gains 1**, against
+**3 and 0** for §123 alone — so this section is worth exactly **two removals**, and they are `Isaiah
+1:3` and `Romans 2:3`, the two cases it was built for. **No correct fire is lost**, and that is the
+number that decided whether to ship it: the first draft lost two, and the answer was to fix the rule
+rather than to quote the reach.
+
+**The cost is 8.0 µs per window** — 7,741 windows, 467 probed candidates, 6,785 index lookups,
+133 µs per probed candidate — on `relay-detect`, inside a 144 ms budget.
+`main::passage_guard_bench::what_the_short_run_probe_costs` is the rig, because rule 31's lesson is
+that this path is measured and not reasoned about.
+
+**It is not a clean win in one of the two.** With `Isaiah 1:3` demoted, `Isaiah 1:5` ranks first in
+the same window and fires — the preacher had said *"Verse 5 and verse 7 and 8"* — so the congregation
+still sees a wrong verse there, just a different one. `Romans 2:3` is a clean removal with nothing
+behind it. A rule that stops one wrong verse and lets another through in the same breath is worth
+having and is not worth overstating.
+
+**The four still out of reach carry no evidence any window-local rule can use**, and §123's paragraph
+on that stands unchanged: three windows are the reference and nothing else, one points at a verse he
+was referring back to, and in four of the six the quotation arrived 6 to 16 seconds LATER, in a
+separate window, after the wrong verse was already on the wall.
+
+### And the fifth instance
+
+Both eval scorecards are unchanged by this rule, because `eval.rs` assembles its own candidate set and
+never calls `candidates_for_window`. §122, §123 and §126 record the same blindness for the passage
+guard, the citation-doubt rule and the paraphrase bar. **This is the fifth, and one root cause**: the
+scorecard is a third copy of the window assembly. Fixing that is a larger change than any of the five
+rules it cannot see, and it is now the thing most worth doing to the detection instruments.

@@ -19,6 +19,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { get } from 'svelte/store';
+import { codeOnly } from './codeonly.js';
 
 const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a) => invoke(...a) }));
@@ -31,11 +32,7 @@ const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 const SETTINGS = read('src/lib/views/Settings.svelte');
 const APP = read('src/App.svelte');
 /** Comments are not the surface — this repository's own scanning rule. */
-const strip = (s) =>
-  s
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^\s*\/\/.*$/gm, '');
+const strip = (s) => codeOnly(s);
 
 describe('the countdown warning default', () => {
   beforeEach(() => {

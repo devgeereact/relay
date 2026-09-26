@@ -1,6 +1,6 @@
 // THE AUDIT'S OWN ARITHMETIC, CHECKED BY SOMETHING THAT CANNOT TALK ITSELF ROUND.
 //
-// `docs/RELAY_V1_AUDIT.md` makes three claims about itself that a reader has to do
+// The V1 production audit (now `docs/archive/RETIRED-AUDIT-DOCS.md`, with its scorecards in `docs/qa/QA_HARNESS.md` Parts 5 and 6) makes three claims about itself that a reader has to do
 // sums to verify, and that nobody will:
 //
 //   1. every phase of the PWA brief (01–42) is dispositioned,
@@ -29,24 +29,36 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const root = resolve(__dirname, '../..');
-const DOC = readFileSync(resolve(root, 'docs/RELAY_V1_AUDIT.md'), 'utf8');
+// WHERE THE AUDIT LIVES NOW (2026-09-21). The V1 audit was one file until the
+// Phase 1 audit found it and the launch checklist contradicting each other on
+// the updater for a fortnight. Its scorecards and brief disposition are
+// QA_HARNESS.md Parts 5 and 6 (frozen at 2026-09-05), its reasoning is
+// RELAY_GAP.md §24, and the whole document is archived unedited. The arithmetic
+// this file checks did not move; only the file it reads.
+const DOC = readFileSync(resolve(root, 'docs/qa/QA_HARNESS.md'), 'utf8');
+const ARCHIVE = readFileSync(resolve(root, 'docs/archive/RETIRED-AUDIT-DOCS.md'), 'utf8');
 
 /** The text between two headings. */
-function section(from, to) {
-  const a = DOC.indexOf(from);
+function section(from, to, doc = DOC) {
+  const a = doc.indexOf(from);
   expect(a, `the audit no longer contains "${from}"`).toBeGreaterThan(-1);
-  const b = to ? DOC.indexOf(to, a) : DOC.length;
+  const b = to ? doc.indexOf(to, a) : doc.length;
   expect(b, `the audit no longer contains "${to}"`).toBeGreaterThan(-1);
-  return DOC.slice(a, b);
+  return doc.slice(a, b);
 }
 
 describe('the V1 audit is internally consistent', () => {
   it('is the document this test thinks it is (the guard on everything below)', () => {
     // Every assertion here would also pass over a file that had been emptied.
     expect(DOC.length).toBeGreaterThan(20_000);
-    expect(DOC).toMatch(/^# Relay — V1 Production Audit/);
-    expect(DOC).toContain('## 15. The scorecards');
-    expect(DOC).toContain('## 17. Brief disposition');
+    expect(DOC).toMatch(/^# Relay — the QA harness/);
+    expect(DOC).toContain('# Part 5 · The scorecards');
+    expect(DOC).toContain('# Part 6 · Brief disposition');
+    // And the archive is the audit, unedited but for its header and its links.
+    expect(ARCHIVE).toMatch(/^# Retired audit documents/);
+    expect(ARCHIVE).toContain('> **Archived 2026-09-21.**');
+    expect(ARCHIVE).toContain('# Relay — V1 Production Audit');
+    expect(ARCHIVE).toContain('## 6. The fix process');
   });
 
   it('dispositions every phase of the PWA brief, 01 to 42, exactly once', () => {
@@ -71,7 +83,7 @@ describe('the V1 audit is internally consistent', () => {
     // §17.2 groups the 105 sections into ranges — which is the right call, because
     // 105 rows of "EXISTS" is not a report — but it turns "every section is
     // accounted for" into a claim about arithmetic that no reader will check.
-    const table = section('### 17.2 The Relay live-service audit', '## 18. Recommended');
+    const table = section('### 17.2 The Relay live-service audit', null);
     const covered = new Set();
     const overlaps = [];
     for (const m of table.matchAll(/^\| \*\*(\d{2,3})(?:–(\d{2,3}))?\*\*/gm)) {
@@ -141,7 +153,7 @@ describe('the V1 audit is internally consistent', () => {
   });
 
   it('the live-service reliability score adds up, and is not hidden by the other two', () => {
-    const block = section('### 15.3 Live-service reliability', '## 16. Remaining risks');
+    const block = section('### 15.3 Live-service reliability', '# Part 6');
     const got = rows(block);
     const sum = got.reduce((a, b) => a + b, 0);
 
@@ -161,7 +173,7 @@ describe('the V1 audit is internally consistent', () => {
     // The brief asks for problem · root cause · solution · files · test · result.
     // A fix write-up missing the last two is a claim, not a report — and this
     // document's whole argument is that it acted rather than looked.
-    const block = section('## 6. The fix process', '## 7. Regression results');
+    const block = section('## 6. The fix process', '## 7. Regression results', ARCHIVE);
     const fixes = [...block.matchAll(/^### (F-\d+) · ([^\n]+)$/gm)];
     expect(fixes.length, 'the fix list shrank').toBeGreaterThanOrEqual(10);
 
@@ -185,29 +197,8 @@ describe('the V1 audit is internally consistent', () => {
     expect(unfiled, `fixes citing no RG- row: ${unfiled.join(', ')}`).toEqual([]);
   });
 
-  it('quotes the same counts the register of counts holds', () => {
-    // `qa/QA_HARNESS.md` §0 is the register for the whole repository, and this
-    // document cites it rather than owning it. Two copies of a number is how
-    // four documents came to disagree, which is the condition the sweep before
-    // this one was called to end.
-    const harness = readFileSync(resolve(root, 'docs/qa/QA_HARNESS.md'), 'utf8');
-    const of = (re, where) => {
-      const m = where.match(re);
-      expect(m, `could not find ${re} in the register`).toBeTruthy();
-      return m[1];
-    };
-    const rust = of(/\| Rust tests \| \*\*(\d+) passing\*\*/, harness);
-    const front = of(/\| Frontend tests \| \*\*(\d+) passing\*\*/, harness);
-    const cmds = of(/\| Registered `#\[tauri::command\]` \| \*\*(\d+)\*\*/, harness);
-
-    expect(DOC, `the audit does not quote the register's Rust count (${rust})`).toContain(
-      `**${rust} passed**`,
-    );
-    expect(DOC, `the audit does not quote the register's frontend count (${front})`).toContain(
-      `**${front} passed**`,
-    );
-    expect(DOC, `the audit does not quote the register's command count (${cmds})`).toContain(
-      `registers **${cmds}** commands`,
-    );
-  });
+  // The test that used to sit here asserted the audit quoted the same test
+  // counts as QA_HARNESS §0. The audit is frozen now and §0 is not, so the two
+  // cannot be asked to agree; the archived copy carries the counts of its day
+  // and says so in its header.
 });

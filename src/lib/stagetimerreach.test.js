@@ -98,6 +98,19 @@ describe('the Copy URL trap, which is the one an operator cannot guess', () => {
     // `channelroles.js::stageRemoteUrl` produces that address. A screen wired from
     // the wrong copied link is online, is attached, and will never show a Stage
     // Timer. "Not responding" would send the operator to look at the wifi.
+    //
+    // ── AND HALF OF THAT CHANGED, WHICH IS WHY THE SENTENCE DID NOT ──────────
+    //
+    // Requirement 2b gave `output.html` a `timer` branch: a channel holding the
+    // `stage` role, wearing a template with a `programme` layer, now paints the
+    // rail (`progtimertemplate.test.js`). So the trap is narrower than it was —
+    // but it is not gone, and the line is still the right advice for the screen
+    // this case describes. That screen has never reported painting at all, so
+    // nothing here knows which page is open on it, whether its channel holds the
+    // role, or whether its template carries the layer; the stage address is the
+    // one route that needs none of the three. Widening this sentence into "check
+    // the role and the template" would be a status line guessing at facts it does
+    // not have, which is the rule this whole file is an instance of.
     const r = describeStageReach(
       [row(chan(), { kind: 'down' }, health({ painting: false, last_beat_ms: null, paint_state: null }))],
       { read: true },

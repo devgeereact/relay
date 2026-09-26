@@ -69,8 +69,25 @@
     lookIdFor,
   } from '../layers.js';
   import { outputUrl } from '../outputurl.js';
-  import { CHANNEL_ROLES, NO_ROLE_LABEL, stageRemoteUrl, isSharableHost } from '../channelroles.js';
+  import {
+    CHANNEL_ROLES,
+    NO_ROLE_LABEL,
+    stageRemoteUrl,
+    isSharableHost,
+    // READ HERE TOO, not only by Live. Live is where a service is run; this is
+    // where a screen is WIRED, and the question "will a Stage Timer reach
+    // anybody" is asked with a tablet in the operator's hand. One helper, so the
+    // two surfaces cannot come to different conclusions about one screen.
+    describeStageReach,
+  } from '../channelroles.js';
+  // WHAT THE CONSOLE MAY SAY ABOUT A SCREEN IT CANNOT SEE — pure, and every
+  // answer it cannot give comes back as `unknown` rather than as a guess.
+  import { stageMirrorZones, stageMirrorReading } from '../stagemirror.js';
+  import { stageTimers, timerRemainingMs, timerIsHeld } from '../timers.js';
+  import { formatCountdown } from '../layers.js';
   import { STAGE_ZONES, DEFAULT_STAGE_ZONES, readStageZones } from '../stagelayout.js';
+  import { stagePlacement } from '../stagelayers.js';
+  import { TIMER_SIZES, readTimerSize } from '../stagelayout.js';
   import {
     capture,
     templates,
@@ -88,6 +105,7 @@
     setChannelTemplate,
     setChannelRole,
     listStageLayouts,
+    listTimers,
     setChannelStageLayout,
     upsertStageLayout,
     deleteStageLayout,
@@ -118,10 +136,24 @@
   // rail and the inspector: a section that drops two of the three columns is a
   // different workspace wearing the same tab, and that is what made Content
   // looks and Sharing read as a separate product.
-  let view = 'screens'; // screens | looks | layouts | sharing
+  let view = 'screens'; // screens | stage | looks | layouts | sharing
   const VIEWS = [
     { key: 'screens', label: 'Screens',
       lead: 'Every target Relay can paint: a projector on HDMI, an OBS or kiosk browser source over the network.' },
+    // ── THE PREACHER'S SCREEN, IN ONE PLACE (operator instruction, 2026-09-20)
+    //
+    // *"Build a proper Screen section on the Output page that shows what is
+    // currently on the preacher's device, with the QR code available to scan
+    // from that same section. This replaces the current journey of going to
+    // Sharing and then Stage Layout. Keep the old path working until the new one
+    // is verified."*
+    //
+    // ADDITIVE, on the operator's own instruction: Sharing and Stage layouts are
+    // both still here and both still work. Nothing was moved out of them — this
+    // section reads the same facts through the same helpers, which is what makes
+    // two doors safe rather than two answers.
+    { key: 'stage', label: "Preacher's screen",
+      lead: 'What Relay has told the preacher\u2019s device to show, the link that opens it, and the layout behind it.' },
     { key: 'looks', label: 'Content looks',
       lead: 'Which template each kind of content wears on any screen that has no look of its own.' },
     { key: 'layouts', label: 'Stage layouts',
@@ -318,6 +350,13 @@
    * with no screens, and claiming "not connected" from an ambiguity would be the
    * same defect pointing the other way. Same judgement as `resolve_display`.
    */
+  /** A native screen with no display chosen while there is more than one to
+   *  choose from: a manual Turn on would land on this console (RG-188). */
+  const needsDisplay = (c) => {
+    if (!c || !isNative(c)) return false;
+    const i = parseInt(c.display_target ?? '', 10);
+    return !Number.isFinite(i) && monitors.length > 1;
+  };
   const missingDisplay = (c) => {
     if (!isNative(c) || !monitors.length) return null;
     const i = parseInt(c.display_target ?? '', 10);
@@ -604,6 +643,11 @@
   let selLayout = null;
   let layoutName = '';
   let layoutZones = { ...DEFAULT_STAGE_ZONES };
+  // HOW BIG THE PREACHER'S CLOCK IS (RG-240). It rides in the same blob the
+  // zones do, so a screen can never be holding one operator's zones and
+  // another's size, and the operator sets it here because the picker is no
+  // longer on the phone at all (RG-241).
+  let layoutTimerSize = 'normal';
   let layoutBusy = false;
   let layoutDelArm = null;
 
@@ -612,6 +656,7 @@
     selLayout != null &&
     layoutSaved != null &&
     (layoutName.trim() !== layoutSaved.name ||
+      layoutTimerSize !== readTimerSize(layoutSaved.zones) ||
       STAGE_ZONES.some((z) => !!layoutZones[z.key] !== !!(readStageZones(layoutSaved.zones) ?? DEFAULT_STAGE_ZONES)[z.key]));
   /** Which screens wear this layout — the same fact the delete refusal names. */
   $: layoutWornBy = channels.filter((c) => c.stage_layout_id === selLayout).map((c) => c.name);
@@ -620,12 +665,14 @@
     selLayout = l.id;
     layoutName = l.name;
     layoutZones = { ...(readStageZones(l.zones) ?? DEFAULT_STAGE_ZONES) };
+    layoutTimerSize = readTimerSize(l.zones);
     layoutDelArm = null;
   }
   function newLayout() {
     selLayout = 'new';
     layoutName = '';
     layoutZones = { ...DEFAULT_STAGE_ZONES };
+    layoutTimerSize = 'normal';
     layoutDelArm = null;
   }
   const toggleLayoutZone = (key) =>
@@ -643,7 +690,10 @@
       const id = await upsertStageLayout(
         selLayout === 'new' ? null : selLayout,
         layoutName,
-        layoutZones,
+        // The size travels WITH the zones, in one blob on one path. A second
+        // column or a second frame would be two writers over one screen's
+        // appearance, which is the twin door this repository keeps deleting.
+        { ...layoutZones, timer_size: layoutTimerSize },
       );
       stageLayouts = (await listStageLayouts()) ?? [];
       // Select what was just saved BY THE ID THE ENGINE GAVE BACK, rather than
@@ -898,6 +948,7 @@
       $live ? $liveTemplatePinned : false,
       $templates.find((t) => t.id === $defaultTemplateId) || null,
       previewKindLook,
+      previewKind,
     ) || DEFAULT_TEMPLATE;
   // What the preview is a preview OF. "Sample" said the same thing for a screen
   // with its own look and for one following a look it never showed — rule 35 in
@@ -955,6 +1006,20 @@
   // together the moment a verse fires. Idle: the stand-in, so a template is still
   // legible on a Tuesday.
   $: cardContent = $live ? $liveContent : PREVIEW;
+
+  // ── THE LAST FRAME EACH SCREEN WAS KNOWN TO BE SHOWING (RG-211) ────────────
+  //
+  // A plain `Map`, deliberately NOT a store and NOT a `$:` value. It is written
+  // from inside the `cards` computation below, and a reactive container written
+  // where it is read is a loop. Nothing renders from it directly either: the
+  // frame a card paints is chosen once, in that same computation, so there is one
+  // place to read and one place to reason about.
+  //
+  // It only ever holds a frame a screen ITSELF said it was painting — see
+  // `shows === 'content'` below — which is what makes it honest to keep showing
+  // when that screen stops answering. A map filled from Relay's belief would
+  // retain frames the screen never received, which is the bug in slower motion.
+  const lastFrames = new Map();
   $: cards = shown.map((c) => {
     const st = status[c.id] ?? null;
     const own = c.template_id == null ? null : ($templates.find((t) => t.id === c.template_id) ?? null);
@@ -970,14 +1035,49 @@
         $live ? $liveTemplatePinned : false,
         $templates.find((t) => t.id === $defaultTemplateId) || null,
         kindLook,
+        // THE KIND, so a card shows the house style on the words exactly as the
+        // wall does (RG-219). Without it this preview would be the one surface
+        // that disagrees with the screen it is a picture of.
+        previewKind,
       ) || DEFAULT_TEMPLATE;
     const i = parseInt(c.display_target ?? '', 10);
     const mon = Number.isFinite(i) ? (monitors.find((m) => m.index === i) ?? null) : null;
+    // ── WHAT THIS CARD MAY PAINT, from the SAME verdict as its badge ─────────
+    //
+    // Every card used to be handed `cardContent` — the programme — whatever its
+    // screen was doing. So a screen that had dropped off the network painted the
+    // verse that fired after it died, in full, under a badge reading **Not
+    // responding**, and a screen the operator had taken down painted the
+    // programme it had been taken out of. The picture is the half of this
+    // surface an operator actually looks at, so the card was telling them the
+    // opposite of its own label (rule 35, RG-211).
+    //
+    // `shows` comes from `describeScreen`, beside the word — one rule, one
+    // place, so the two cannot drift apart.
+    const shows = verdicts[c.id]?.shows ?? 'unknown';
+    if ($live && shows === 'content' && cardContent) lastFrames.set(c.id, cardContent);
+    // WITH NOTHING ON THE PROGRAMME every card shows the stand-in, and that is
+    // not the same decision as `blank`. On a Tuesday there is no content to be
+    // wrong about, and a grid of empty boxes answers none of the questions this
+    // tab is opened to ask about the LOOKS.
+    const frame = !$live
+      ? cardContent
+      : shows === 'content'
+        ? cardContent
+        : shows === 'stale'
+          ? (lastFrames.get(c.id) ?? null)
+          : null;
     return {
       c,
       st,
       tpl,
       mon,
+      frame,
+      // A frame is stale when it is the last thing this screen was KNOWN to be
+      // showing and the programme has since moved on. It is said in words on the
+      // card, because a picture that is merely old looks exactly like a picture
+      // that is current.
+      stale: !!($live && shows === 'stale' && frame),
       // THE SAME RULE LIVE USES, with the same four inputs (rule 35), and now the
       // same OBJECT the inspector and the rail read — see `verdicts`. The cards
       // used to derive their word from `FAULT_WORD[screenFault(st)]`, which knows
@@ -1041,6 +1141,142 @@
   // offered **Turn on** for a screen that may well already be open. That is a
   // guess printed as a control, and pressing it opens a second window.
   $: selSwitch = screenSwitch(selStatus, sel);
+
+  // ══ THE PREACHER'S SCREEN ══════════════════════════════════════
+  //
+  // ONE SECTION FOR THE THING AN OPERATOR HAS TO SET UP WITH A TABLET IN THEIR
+  // HAND: what that tablet has been told to show, the link and QR that open it,
+  // whether it is answering, and the layout behind it. The journey it replaces
+  // is Sharing (for the link) then Stage layouts (for the zones) then Screens
+  // (to assign one) — three sections for one screen.
+  //
+  // ── WHY THIS IS A PROJECTION AND NOT AN EMBEDDED `Stage.svelte` ─────────
+  //
+  // The high-fidelity option was to mount the real page in a frame. It was
+  // rejected: `Stage.svelte` opens its OWN WebSocket to the kiosk hub and its own
+  // HTTP calls, so every operator sitting on this tab would be a second client on
+  // the hub — counted in the very liveness tally this desk renders, and the
+  // `answering` badge would go up by one because somebody OPENED A TAB. An
+  // instrument that changes the reading it takes is not an instrument. It would
+  // also have mirrored THIS machine's view, not the tablet's: the zones a stage
+  // page draws come from that device's own `localStorage` when no layout is
+  // assigned, so an embedded copy would paint the console's defaults and call
+  // them the preacher's.
+  //
+  // So the panel composes what the console genuinely knows, and `stagemirror.js`
+  // is the pure module that decides which of those questions have an answer.
+  // Everything else says so — rule 35, on the one panel that exists because the
+  // screen is out of sight.
+  // ── THE REASON IS RENDERED BY THE ONE HUMANISER, NOT SPLICED INTO A SENTENCE ─
+  //
+  // Live builds this field by calling `src/lib/errors.js` itself, and this desk
+  // deliberately cannot: `r6-contracts.test.js` asserts by RAW SUBSTRING that the
+  // humaniser is named nowhere in this file — comments included, which is why
+  // this paragraph does not name it either — because every refusal here goes
+  // through `ui/ErrorState.svelte`, and a second set of words for one failure is
+  // the defect that test exists to hold. So the flag says only THAT the read
+  // failed, which is all `describeStageReach` needs to stop claiming a quiet
+  // Sunday, and the `<ErrorState>` in the pane beneath prints the sentence.
+  $: stageList = {
+    read: !loading,
+    error: $readErrors.listOutputChannels ? 'the screens could not be read' : '',
+  };
+  // THE SCREEN THIS SECTION IS ABOUT — the same one `stageRemoteUrl` hands out an
+  // address for, including the operator's choice between several stages (§89).
+  // Reading it off `stageRemote` rather than re-finding it is what stops the QR
+  // and the mirror describing two different tablets.
+  $: mirrorChannel = stageRemote.channel;
+  $: mirrorLayout =
+    mirrorChannel?.stage_layout_id != null
+      ? (stageLayouts.find((l) => l.id === mirrorChannel.stage_layout_id) ?? null)
+      : null;
+  $: mirrorZones = stageMirrorZones({
+    channel: mirrorChannel,
+    layout: mirrorLayout,
+    list: stageList,
+  });
+  // The SAME verdict every card and the inspector read (`verdicts`), through the
+  // SAME helper Live's Stage Timer band reads. Two surfaces describing one screen
+  // must not be able to disagree about it.
+  $: mirrorReach = describeStageReach(
+    channels.map((c) => ({ c, st: status[c.id] ?? null, s: verdicts[c.id] ?? null })),
+    stageList,
+  );
+  $: mirrorReadingZone =
+    mirrorZones.zones.find((z) => z.key === 'reading')?.state ?? 'unknown';
+  $: mirrorReading = stageMirrorReading({
+    zone: mirrorReadingZone,
+    live: $live,
+    black: $screenBlack,
+    down: mirrorChannel ? ($channelHealth?.[mirrorChannel.id]?.down ?? null) : null,
+    rehearsing: $rehearsing,
+  });
+  /** The words for a zone row. Never a tick and a blank — see the markup. */
+  const ZONE_WORD = { on: 'Showing', off: 'Hidden', unknown: 'Not known' };
+
+  // ── THE STAGE TIMERS, READ WHILE THIS SECTION IS OPEN ──────────────────
+  //
+  // `null` = never read. `[]` = read, and there are none. Live's band draws that
+  // same distinction and for the same reason: a failed read that answered `[]`
+  // would render as a quiet programme nobody was told about.
+  //
+  // The read runs only while this section is showing. A poll behind a section
+  // nobody is looking at is a cost with no reader, and this one has no second
+  // consumer — Live owns the band that starts and stops these clocks.
+  let mirrorTimers = null;
+  // The TYPED error, not a string — `ui/ErrorState.svelte` is the one thing on
+  // this desk that turns a Rust refusal into words.
+  let mirrorTimersErr = null;
+  let mirrorNow = Date.now();
+  let mirrorTick;
+  let mirrorTicks = 0;
+  async function readStageTimers() {
+    try {
+      mirrorTimers = stageTimers(await listTimers());
+      mirrorTimersErr = null;
+    } catch (e) {
+      // THE LAST GOOD LIST STAYS ON SCREEN, with the reason beside it. Emptying
+      // it would report a quiet programme this desk was never told about.
+      mirrorTimersErr = e;
+    }
+  }
+  onMount(() => {
+    mirrorTick = setInterval(() => {
+      mirrorNow = Date.now();
+      mirrorTicks += 1;
+      // Every other second, and only while somebody is looking at it.
+      if (view === 'stage' && mirrorTicks % 2 === 0) readStageTimers();
+    }, 1000);
+    return () => clearInterval(mirrorTick);
+  });
+  // The FIRST read is on arrival rather than up to two seconds later, so the
+  // panel does not open on "Reading…" for a section an operator clicked into.
+  $: if (view === 'stage' && mirrorTimers === null && !mirrorTimersErr && $capture.available)
+    readStageTimers();
+  $: mirrorRows = (mirrorTimers ?? []).map((t) => {
+    // THE SAME CHAIN THE PREACHER'S RAIL USES — `timers.js` → `countdown.js`, one
+    // reader, so this figure and the one on the tablet cannot drift. `past: true`
+    // lifts the floor because past zero the rail counts UP (DECISIONS §99), and a
+    // figure that stopped at 0:00 would tell an operator a sermon twelve minutes
+    // over had just run out.
+    const left = timerRemainingMs(t, mirrorNow, { past: true });
+    return {
+      id: t.id,
+      label: (t.label ?? '').trim(),
+      left,
+      over: left != null && left <= 0,
+      held: timerIsHeld(t),
+    };
+  });
+  /** Assign a layout from THIS section — the same command the Screens inspector calls. */
+  const assignMirrorLayout = (e) =>
+    mirrorChannel ? assignStageLayout(mirrorChannel, e) : undefined;
+  /** Open the layout editor on the layout this screen wears. */
+  function editMirrorLayout() {
+    if (mirrorLayout) pickLayout(mirrorLayout);
+    else newLayout();
+    view = 'layouts';
+  }
 </script>
 
 <!-- NO PAGE TITLE, NO STANDFIRST — and that is the whole point (§2).
@@ -1068,6 +1304,12 @@
       <span class="rw-spring"></span>
       {#if !$capture.available}
         <span class="r-badge rose sm-badge"><span class="bd"></span>No engine</span>
+      {:else if $capture.outputError}
+        <!-- THE LAN SERVER IS NOT RUNNING (RG-191). Every network screen is dead
+             and Copy URL would hand out an address nothing answers. The fact was
+             in the store and rendered on Live only; this is the desk that hands
+             out the URLs, so it says so first. -->
+        <span class="r-badge rose sm-badge" title="Another program is holding Relay's ports, so OBS, kiosk screens and the preacher's phone cannot connect. The projector window is unaffected. The status bar's Reduced cell has the detail."><span class="bd"></span>Server not running · :8032 / :8031</span>
       {:else}
         <!-- NEVER AMBER: amber means something is on the wall, and a screen
              answering does not put it there. Green is "confirmed", and it is now
@@ -1186,7 +1428,23 @@
                   {#if k.plate}
                     <CameraPlate />
                   {/if}
-                  <TemplateRender template={k.tpl} content={cardContent} />
+                  <!-- THE CARD PAINTS ITS OWN SCREEN, not the programme (RG-211).
+                       `k.frame` is null for a screen that is showing nothing — a
+                       blackout, a screen taken down, one that has said it is
+                       clear — and an empty frame is the honest picture of that.
+                       A screen that has stopped answering keeps the last frame it
+                       was known to have and SAYS the frame is old, because a
+                       picture that is merely old looks exactly like a current
+                       one. -->
+                  {#if k.frame}
+                    <!-- STILL (RG-235): a card is a picture of a screen, and a
+                         wall of playing clips is what the operator asked to
+                         stop. The screen itself plays; this is its portrait. -->
+                    <TemplateRender template={k.tpl} content={k.frame} still />
+                  {/if}
+                  {#if k.stale}
+                    <span class="ch-stale r-mono">Last seen</span>
+                  {/if}
                 </div>
 
                 <div class="ch-cardtop">
@@ -1226,7 +1484,10 @@
                     <select class="r-select ch-cardpick" aria-label="Display for {k.c.name}"
                       value={k.c.display_target ?? ''} on:change={(e) => assignDisplay(k.c, e)}
                       disabled={!$capture.available}>
-                      <option value="">Primary display</option>
+                      <!-- NOT "Primary display" (RG-188): with nothing chosen a manual
+                           Turn on now refuses rather than opening over this console,
+                           and the option says what the state IS, not where it would go. -->
+                      <option value="">{monitors.length > 1 ? 'Choose a display…' : 'This display'}</option>
                       {#each monitors as m (m.index)}
                         <option value={String(m.index)}>{m.name} · {m.width}×{m.height}{m.primary ? ' (primary)' : ''}</option>
                       {/each}
@@ -1288,6 +1549,112 @@
           <span class="ch-addsub">Configure a display for HDMI, or a networked OBS / kiosk source for your venue.</span>
         </button>
         <ErrorState {error} />
+      </div>
+    </section>
+
+  {:else if view === 'stage'}
+    <!-- ══ THE PREACHER'S SCREEN ══ A PROJECTION, AND IT SAYS SO.
+         Every row here is something Relay SENT or something Relay was told. The
+         one thing this desk can never have is a readback: the kiosk hub records
+         nothing about who connected (DECISIONS §35) and no frame carries back
+         what a page decided to draw. So each answer that does not exist is
+         printed as "Not known" rather than as a confident row — rule 35, on the
+         one panel built because the screen is out of sight. -->
+    <section class="rw-pane">
+      <div class="rw-panehead">
+        <h2 class="rw-panettl">Preacher's screen</h2>
+        <span class="rw-spring"></span>
+        <span class="ch-headnote r-mono">what Relay told it to show — not a readback</span>
+      </div>
+      <div class="rw-panebody pad">
+        <p class="ch-mhead" class:ch-mwarn={mirrorZones.kind !== 'assigned'}>{mirrorZones.headline}</p>
+        <!-- WHY the read failed, in the words the ONE humaniser gives it. The
+             line above says only THAT it did, so that this desk keeps its single
+             error surface (`r6-contracts.test.js`) rather than growing a second
+             set of words for one refusal. -->
+        {#if $readErrors.listOutputChannels}
+          <ErrorState error={$readErrors.listOutputChannels} onRetry={refresh} />
+        {/if}
+        {#if mirrorZones.note}
+          <p class="ch-stage-sub r-dim">{mirrorZones.note}</p>
+        {/if}
+
+        <!-- WHICH SCREEN, AND IS ANYBODY THERE. The same sentence Live's Stage
+             Timer band prints, from the same helper on the same backend fact
+             (rule 35). It says `attached` and never `on stage`: attached is a
+             claim about a socket, and that is the most this side of the room can
+             honestly make. -->
+        <p class="ch-mreach r-mono"
+          class:ch-mwarn={mirrorReach.kind === 'norole' || mirrorReach.kind === 'down' || mirrorReach.kind === 'unknown'}
+          >{mirrorReach.text}</p>
+
+        <div class="r-lbl ch-flbl">Zones</div>
+        <ul class="ch-mzones">
+          {#each mirrorZones.zones as z (z.key)}
+            <!-- NEVER A TICK AND A BLANK. An unticked box and a box nobody can
+                 see the state of look identical, and they are the difference
+                 between a decision an operator made and one they cannot see. -->
+            <li class="ch-mz" class:on={z.state === 'on'} class:off={z.state === 'off'}
+              class:unk={z.state === 'unknown'}>
+              <span class="ch-mzk">{z.label}</span>
+              <span class="ch-mzv r-mono">{ZONE_WORD[z.state]}</span>
+            </li>
+          {/each}
+        </ul>
+
+        <div class="r-lbl ch-flbl">Reading</div>
+        <p class="ch-mread" class:ch-mwarn={mirrorReading.kind === 'unknown'}>{mirrorReading.headline}</p>
+        {#if mirrorReading.kind === 'content' && $liveContent}
+          <!-- WHAT WENT OUT, IN WORDS, not through `TemplateRender`. That
+               component renders an output LOOK and a stage page draws its own
+               zones in its own type — so a template preview here would be a
+               picture of a screen that does not exist, which is a worse answer
+               than the words. -->
+          <div class="ch-mcontent">
+            {#if $liveContent.reference}
+              <span class="ch-mref">{$liveContent.reference}</span>
+            {/if}
+            {#if $liveContent.text}
+              <span class="ch-mtext">{$liveContent.text}</span>
+            {/if}
+          </div>
+        {/if}
+        {#if mirrorReading.caveat}
+          <p class="ch-stage-sub r-dim">{mirrorReading.caveat}</p>
+        {/if}
+
+        <div class="r-lbl ch-flbl">Stage Timer</div>
+        <!-- THREE ANSWERS, NOT TWO, exactly as Live's band draws them: not read
+             yet · read and empty · read and refused. A failed read keeps the last
+             good list and prints the reason beside it rather than reporting a
+             quiet programme nobody was told about. -->
+        {#if mirrorTimersErr}
+          <ErrorState error={mirrorTimersErr} onRetry={readStageTimers} />
+        {/if}
+        {#if mirrorTimers == null && !mirrorTimersErr}
+          <p class="ch-stage-sub r-dim">Reading…</p>
+        {:else if mirrorRows.length}
+          <ul class="ch-mtimers">
+            {#each mirrorRows as t (t.id)}
+              <li class="ch-mtimer">
+                {#if t.label}<span class="ch-mtname">{t.label}</span>{/if}
+                <!-- PAST ZERO IT COUNTS UP, the same way the preacher's rail
+                     does (DECISIONS §99) — the word carries the sign, never a
+                     colour, because amber is ON AIR and a sermon running long is
+                     not any of the four law colours. -->
+                <span class="ch-mtv r-mono"
+                  >{t.left == null ? 'no deadline' : t.over ? `+${formatCountdown(-t.left)} over` : formatCountdown(t.left)}</span>
+                {#if t.held}<span class="ch-mtheld">held</span>{/if}
+              </li>
+            {/each}
+          </ul>
+          <p class="ch-stage-sub r-dim">
+            Started and stopped on <b>Live</b>. Whether this screen draws them is the
+            <b>Stage Timer</b> zone above.
+          </p>
+        {:else}
+          <p class="ch-stage-sub r-dim">No Stage Timer is running.</p>
+        {/if}
       </div>
     </section>
 
@@ -1627,6 +1994,34 @@
               screen a <b>Stage Message</b> is painted on, and several screens may be
               stages — a confidence monitor and a preacher's tablet, for instance.
             </p>
+            <!-- WHAT RELAY IS PLACING ITSELF, AND HOW TO TAKE IT BACK (RG-226).
+                 Both fallbacks are right — an emergency has to reach a template
+                 designed before Stage Messages existed, and a clock that painted
+                 nowhere is a preacher with no clock — but doing the right thing
+                 SILENTLY is why an operator concluded their template was being
+                 ignored. It names the binding, because the binding is what they
+                 would go looking for in the editor. -->
+            <!-- THE RESOLVED look, not the screen's own row: a screen that
+                 FOLLOWS the content look has no template of its own and would
+                 otherwise be told Relay is placing nothing. `previewTemplate` is
+                 what this screen actually paints through. -->
+            {@const place = stagePlacement(previewTemplate)}
+            {#if place.any}
+              <p class="ch-stagehint">
+                This screen's template has no
+                {#if place.message && place.programme}
+                  <b>Stage Message</b> layer and no <b>Programme</b> layer
+                {:else if place.message}
+                  <b>Stage Message</b> layer
+                {:else}
+                  <b>Programme</b> layer
+                {/if}
+                — Relay is placing
+                {place.message && place.programme ? 'them' : 'it'} along the foot.
+                Add a text layer in Templates and set its <b>Content</b> to place
+                {place.message && place.programme ? 'them' : 'it'} yourself.
+              </p>
+            {/if}
             <!-- ONLY FOR A STAGE, because only `stage.html` has zones. Rendered
                  inside the role branch rather than beside it, so the control
                  cannot be offered for a screen it would do nothing to. -->
@@ -1776,7 +2171,9 @@
               {#if selSwitch.action === 'off'}
                 <button class="r-btn ghost sm" on:click={() => closeNative(sel)}>Turn off</button>
               {:else if selSwitch.action === 'on'}
-                <button class="r-btn primary sm" on:click={() => openNative(sel)} disabled={!$capture.available}>Turn on</button>
+                <button class="r-btn primary sm" on:click={() => openNative(sel)}
+                  disabled={!$capture.available || needsDisplay(sel)}
+                  title={needsDisplay(sel) ? 'Choose a display for this screen first, or it would open over this console (RG-188).' : 'Open this screen'}>Turn on</button>
               {:else}
                 <span class="ch-fixed" title={selSwitch.why}>{selSwitch.label}</span>
               {/if}
@@ -1831,6 +2228,104 @@
       {/if}
     </aside>
 
+  {:else if view === 'stage'}
+    <!-- THE LINK, THE QR AND THE LAYOUT, BESIDE THE MIRROR. The journey this
+         replaces was Sharing → Stage layouts → Screens; this rail is all three,
+         and every control on it calls the SAME function the old surface calls.
+         Two doors onto one guarantee is only safe when it is literally one
+         implementation, which is why nothing here is a second QR builder, a
+         second address chooser or a second assign. -->
+    <aside class="rw-pane rw-insp">
+      <div class="rw-panehead"><h2 class="rw-panettl">Open it on the device</h2></div>
+      <div class="rw-panebody pad">
+        <label class="r-lbl" for="ch-mirror-device">Stage screen</label>
+        <select id="ch-mirror-device" class="r-select ch-fin" value={stageRemote.channel?.id ?? ''}
+          on:change={(e) => (selectedStageId = e.target.value ? Number(e.target.value) : null)}>
+          {#if !stageRemote.channel}<option value="">Choose a stage screen</option>{/if}
+          {#each stageScreens as c (c.id)}<option value={c.id}>{c.name}</option>{/each}
+        </select>
+        {#if stageRemote.others.length}
+          <p class="ch-stage-sub r-dim">
+            Also a stage display: <b>{stageRemote.others.join(', ')}</b>. Each one has its
+            own link.
+          </p>
+        {/if}
+
+        {#if stageUrl}
+          <p class="ch-stage-sub r-dim">
+            Scan this on the phone or tablet, on the same Wi-Fi, or open
+            <code class="r-mono">{stageUrl}</code>.
+          </p>
+          <div class="ch-stage-actions">
+            <!-- THE SAME BUILDER (`showStageQr`), not a third one. This file
+                 already carries two QR builders and a third would be a third
+                 chance for one of them to photograph a loopback address, which
+                 names the PHONE that scans it. -->
+            <button class="r-btn primary sm" on:click={showStageQr} disabled={networkBusy}
+              >{stageQrOpen && stageQrUrl === stageUrl ? 'Hide QR' : 'Show QR'}</button>
+            <button class="r-btn ghost sm" on:click={copyStage} disabled={networkBusy}
+              >{copyLabel(copiedStage, 'Copy link')}</button>
+          </div>
+          {#if stageQrError}<p class="ch-stage-warn" role="status">{stageQrError}</p>{/if}
+          {#if stageQrOpen && stageQrUrl === stageUrl}
+            <img class="ch-stage-qr" src={stageQr} alt="QR code to open the stage remote"
+              width="240" height="240" />
+          {/if}
+        {:else if stageRemote.channel}
+          <p class="ch-stage-warn" role="status">
+            Relay could not find a local network address for the preacher's phone or tablet.
+            Connect this computer and the device to the same local network, then pick an
+            address in <b>Sharing</b>.
+          </p>
+        {:else}
+          <!-- NO ADDRESS, AND A REASON — rule 35. A bare `stage.html` renders the
+               reading perfectly well and silently never receives a Stage Message,
+               so printing one would hand out a link that looks entirely correct. -->
+          <p class="ch-stage-warn">
+            No screen is set as a stage display, so there is no stage link to hand out.
+            Set a screen's <b>Role</b> to <b>Stage display</b> in <b>Screens</b> and the
+            address appears here.
+          </p>
+        {/if}
+
+        {#if mirrorChannel}
+          <div class="r-lbl ch-flbl">Stage layout</div>
+          <!-- THE JOURNEY THIS SECTION REPLACES, WITHOUT LEAVING IT. The same
+               command the Screens inspector's picker calls, on the same screen. -->
+          <select id="ch-mirror-layout" class="r-select ch-fin"
+            value={mirrorChannel.stage_layout_id ?? ''}
+            on:change={assignMirrorLayout}
+            disabled={!$capture.available}>
+            <!-- THE DEFAULT IS A CHOICE, NOT AN ABSENCE — the same words the
+                 Screens inspector uses, because it is the same setting. -->
+            <option value="">Whatever the device is set to</option>
+            {#each stageLayouts as l (l.id)}
+              <option value={l.id}>{l.name}</option>
+            {/each}
+          </select>
+          <div class="ch-stage-actions">
+            <button class="r-btn ghost sm" on:click={editMirrorLayout} disabled={!$capture.available}
+              >{mirrorLayout ? 'Edit this layout' : 'Make a layout'}</button>
+          </div>
+          <p class="ch-stage-sub r-dim">
+            {#if mirrorLayout}
+              The zones above are this layout's. Editing it changes what this screen
+              shows straight away.
+            {:else}
+              Whoever is holding this screen sets its zones, in its own Zones panel.
+              Relay cannot see what they chose. Pick a layout to decide from here instead.
+            {/if}
+          </p>
+        {/if}
+
+        <p class="rw-foot">
+          Anyone on the same Wi-Fi who has the address can open it — Relay does not ask
+          the device who it is (<b>DECISIONS §35</b>), so treat the link the way you
+          would treat the Wi-Fi password.
+        </p>
+        <ErrorState {error} />
+      </div>
+    </aside>
   {:else if view === 'layouts'}
     <aside class="rw-pane rw-insp">
       <div class="rw-panehead">
@@ -1862,6 +2357,22 @@
                 aria-pressed={layoutZones[z.key]}
                 disabled={layoutBusy}
                 on:click={() => toggleLayoutZone(z.key)}>{z.label}</button>
+            {/each}
+          </div>
+
+          <!-- HOW BIG THE CLOCK IS (RG-240). A platform monitor across a room
+               and a phone on a lectern want different figures, and until this
+               existed the page sized itself from its own box with nobody able
+               to say otherwise. -->
+          <div class="r-lbl ch-lzlbl">Timer size</div>
+          <div class="ch-lzones">
+            {#each TIMER_SIZES as t (t.key)}
+              <button
+                class="r-btn ghost sm ch-lz"
+                class:on={layoutTimerSize === t.key}
+                aria-pressed={layoutTimerSize === t.key}
+                disabled={layoutBusy}
+                on:click={() => (layoutTimerSize = t.key)}>{t.label}</button>
             {/each}
           </div>
 
@@ -2100,6 +2611,25 @@
      lays itself out against the page. */
   .ch-frame{ position:relative; aspect-ratio:16/9; min-width:0; overflow:hidden;
     border:1px solid var(--v-line2); border-radius:var(--v-r-sm); background:var(--v-void); }
+  /* A FRAME THAT IS OLD SAYS SO IN WORDS (RG-211). Ochre, because this is a
+     caution and nothing else in the palette may be spent on one (rule 18,
+     DECISIONS §111): it is not amber, which means the screen is on air, and it
+     is not rose, because nothing has failed here that the badge has not already
+     named. It sits over the picture rather than beside it, so it cannot be read
+     as belonging to the card below. */
+  /* ADVICE ABOUT A TEMPLATE, NEVER A CLAIM ABOUT A SCREEN (rule 18). Ochre is
+     the caution ink (DECISIONS §111); amber would say this screen is on air,
+     cyan that the AI guessed, amethyst that it is a rehearsal — none of the
+     three is true of a sentence about a layer. */
+  .ch-stagehint{ margin:6px 0 0; padding:6px 8px; border-radius:var(--v-r-sm);
+    font-size:var(--v-fs-lbl); line-height:1.45; color:var(--v-caution);
+    background:color-mix(in srgb, var(--v-caution) 10%, transparent);
+    border:1px solid color-mix(in srgb, var(--v-caution) 35%, transparent); }
+  .ch-stale{ position:absolute; left:6px; top:6px; z-index:2;
+    padding:2px 6px; border-radius:var(--v-r-sm);
+    font-size:var(--v-fs-lbl); line-height:var(--v-lh-lbl); letter-spacing:.04em;
+    color:var(--v-caution); background:color-mix(in srgb, var(--v-void) 78%, transparent);
+    border:1px solid color-mix(in srgb, var(--v-caution) 45%, transparent); }
   /* `.ch-plate` / `.ch-platelbl` moved into `ui/CameraPlate.svelte` with the
      markup they styled — a rule left behind here would be a rule nobody renders,
      and this file has already been caught by a `class:` directive naming a class
@@ -2146,23 +2676,72 @@
   .ch-stage-sub{ margin:0 0 10px; font-size:var(--v-fs-b2); line-height:1.45; }
   .ch-stage-actions{ display:flex; gap:6px; flex-wrap:wrap; }
   .ch-downrow{ display:flex; gap:6px; flex-wrap:wrap; margin-bottom:6px; }
-  /* A SCREEN THE OPERATOR TOOK DOWN. Amber, not rose: nothing has failed and
-     nothing needs repairing — this is a decision somebody made, and rose here
-     would send a volunteer hunting for a broken projector. Same reading as the
-     badge `describeScreen` gives it. */
+  /* A SCREEN THE OPERATOR TOOK DOWN. The caution ink, not rose: nothing has
+     failed and nothing needs repairing — this is a decision somebody made, and
+     rose here would send a volunteer hunting for a broken projector. Same
+     reading as the badge `describeScreen` gives it. It was AMBER until
+     2026-09-21 (RG-207): the tally light, on the box saying a screen is NOT on
+     air, which is the one place that colour may never sit. */
   .ch-downnow{
     margin:0 0 8px; padding:8px 10px; border-radius:var(--r-sm, 6px);
-    background:var(--v-amber-soft); border:1px solid var(--v-amber-line);
-    color:var(--v-amber); font-size:var(--v-fs-b2); line-height:1.45;
+    background:var(--v-caution-soft); border:1px solid var(--v-caution-line);
+    color:var(--v-caution2); font-size:var(--v-fs-b2); line-height:1.45;
   }
-  /* NO STAGE SCREEN. Amber, not red: nothing has failed, a screen simply has no
-     role — a configuration answer, and red would send an operator looking for a
-     fault. Same reading as the line `stage.html` shows at the other end. */
+  /* NO STAGE SCREEN. The caution ink, not red: nothing has failed, a screen
+     simply has no role — a configuration answer, and red would send an operator
+     looking for a fault. Same reading as the line `stage.html` shows at the
+     other end. Never amber: a stage screen with no role is not on air. */
   .ch-stage-warn{
     margin:0; padding:10px 12px; border-radius:var(--r-sm, 6px);
-    background:var(--v-amber-soft); border:1px solid var(--v-amber-line);
-    color:var(--v-amber); font-size:var(--v-fs-b2); line-height:1.45;
+    background:var(--v-caution-soft); border:1px solid var(--v-caution-line);
+    color:var(--v-caution2); font-size:var(--v-fs-b2); line-height:1.45;
   }
+  /* ── the preacher's screen ──
+     NO LAW COLOUR ANYWHERE IN THIS BLOCK, and that is the point rather than an
+     omission. Amber means ON AIR, cyan a guess, amethyst a rehearsal, rose a
+     failure (rule 18, DECISIONS §22). Every fact here is honestly none of the
+     four: a zone an operator switched on is not a claim that a congregation can
+     see anything, and a zone Relay cannot see the state of is not a fault. The
+     one thing this block does spend is CONTRAST — a row nobody can answer for is
+     quieter than one that has an answer, so it reads as an absence rather than as
+     a third setting. */
+  .ch-mhead{ margin:0 0 8px; font-size:var(--v-fs-b1); line-height:1.45; color:var(--v-txt); }
+  .ch-mreach{ margin:0 0 4px; font-size:var(--v-fs-cap); color:var(--v-faint); }
+  .ch-mwarn{ color:var(--v-dim, var(--v-faint)); }
+  .ch-mzones{ list-style:none; margin:0; padding:0; display:grid; gap:2px; }
+  .ch-mz{ display:flex; align-items:baseline; gap:10px; min-width:0;
+    padding:5px 0; border-bottom:1px solid var(--v-line2); }
+  .ch-mzk{ flex:1; min-width:0; font-size:var(--v-fs-b2); color:var(--v-txt); }
+  .ch-mzv{ flex:0 0 auto; font-size:var(--v-fs-cap); letter-spacing:.06em;
+    text-transform:uppercase; color:var(--v-txt); }
+  /* A ZONE NOBODY CAN ANSWER FOR reads as an absence, not as a third state with
+     a colour of its own. `Hidden` is a decision and stays legible; `Not known` is
+     the quietest thing on the panel, because it is the one row that is about
+     Relay rather than about the screen. */
+  .ch-mz.off .ch-mzk, .ch-mz.off .ch-mzv{ color:var(--v-faint); }
+  .ch-mz.unk .ch-mzk, .ch-mz.unk .ch-mzv{ color:var(--v-faint); font-style:italic; }
+  .ch-mread{ margin:0 0 6px; font-size:var(--v-fs-b2); line-height:1.45; color:var(--v-txt); }
+  .ch-mcontent{ display:flex; flex-direction:column; gap:4px; padding:10px 12px;
+    border-radius:var(--r-sm, 6px); border:1px solid var(--v-line2);
+    background:transparent; }
+  .ch-mref{ font-size:var(--v-fs-b2); font-weight:600; color:var(--v-txt); }
+  /* THE VERSE IS CLAMPED, NEVER SCROLLED. This panel is a summary of a screen and
+     a whole chapter in it would push the link, the QR and the layout picker off
+     the bottom — the three controls the section exists for. */
+  .ch-mtext{ font-size:var(--v-fs-b2); line-height:1.5; color:var(--v-faint);
+    display:-webkit-box; -webkit-line-clamp:4; -webkit-box-orient:vertical; overflow:hidden; }
+  .ch-mtimers{ list-style:none; margin:0 0 8px; padding:0; display:grid; gap:2px; }
+  .ch-mtimer{ display:flex; align-items:baseline; gap:10px; min-width:0;
+    padding:5px 0; border-bottom:1px solid var(--v-line2); }
+  .ch-mtname{ flex:1; min-width:0; font-size:var(--v-fs-b2); color:var(--v-txt);
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* THE FIGURE IS NEVER CLIPPED. `formatCountdown` emits seven characters past an
+     hour and what is left of a clipped clock reads as a valid time (RG-147). */
+  .ch-mtv{ flex:0 0 auto; font-variant-numeric:tabular-nums; font-size:var(--v-fs-b2);
+    color:var(--v-txt); }
+  .ch-mtheld{ flex:0 0 auto; font-size:var(--v-fs-cap); letter-spacing:.06em;
+    text-transform:uppercase; color:var(--v-faint); }
+  #ch-mirror-device, #ch-mirror-layout{ display:block; width:100%; margin:6px 0 12px; }
   .ch-stage-qr{ display:block; max-width:100%; height:auto; margin-top:12px; border-radius:var(--v-r-sm); }
   .ch-qr-img { max-width:100%; height:auto; }
   #stage-device, #stage-network { display:block; width:100%; margin:6px 0 12px; }

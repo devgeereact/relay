@@ -7,7 +7,7 @@
 // exactly the distinction CLAUDE.md draws and RG-21 was filed on: **the test is
 // whether a RENDERED control can get there, not whether a wrapper exists.**
 //
-// The operator's decision (2026-09-17, `docs/superpowers/plans/2026-09-16-wave3-
+// The operator's decision (2026-09-17, `docs/archive/2026-09-16-wave3-
 // timers.md`) puts that control in the dock's Countdown block rather than in Live's
 // programme band, because the dock is on every workspace and the band is on one.
 //
@@ -39,9 +39,26 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a) => invoke(...a) }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: async () => () => {} }));
 
 const cap = await import('./stores/capture.js');
+const { setSession } = await import('./session.js');
 const { isCountdownContent, wayBack } = await import('./countdown.js');
-const Dock = (await import('./Dock.svelte')).default;
-const src = readFileSync(resolve(process.cwd(), 'src/lib/Dock.svelte'), 'utf8');
+// ── WHICH SURFACE CARRIES THE WAY BACK (2026-09-20) ─────────────────────────
+//
+// It was inside the dock's Countdown block, and the 2026-09-17 note beside it
+// said why: the dock is in the SHELL and renders on every workspace, so a way
+// back onto a congregation screen that an operator has to change workspace to
+// reach is a way back they will not find during a service.
+//
+// The operator then asked for the Screen Countdown out of Quick tools, and the
+// way back went with the instrument rather than being stranded in a card that no
+// longer has a countdown in it. The 2026-09-17 argument is not wrong and is now
+// the recorded price of the move — `views/Live.svelte`, above `cdPress`.
+//
+// WHAT DID NOT CHANGE is everything this file is about: `showTimer` is still the
+// one door, it still creates nothing, the offer is still decided by `wayBack`
+// from two facts, and a failed read still says so instead of falling silent.
+const Live = (await import('./views/Live.svelte')).default;
+const src = readFileSync(resolve(process.cwd(), 'src/lib/views/Live.svelte'), 'utf8');
+const dockSrc = readFileSync(resolve(process.cwd(), 'src/lib/Dock.svelte'), 'utf8');
 
 /** A registry row in the shape `list_timers` hands back (`TimerView`). */
 const timer = (over = {}) => ({
@@ -66,7 +83,7 @@ let app;
 function mount() {
   host = document.createElement('div');
   document.body.appendChild(host);
-  app = new Dock({ target: host, props: {} });
+  app = new Live({ target: host, props: {} });
   return host;
 }
 
@@ -80,14 +97,14 @@ async function settle(ms = 10) {
 /**
  * MOUNT, AND WAIT UNTIL THE REGISTRY HAS ACTUALLY BEEN READ.
  *
- * The dock reads `list_timers` on mount and then every two seconds, and in THIS
- * ENVIRONMENT the mount-time read does not reach the mocked bridge: `capture.js`
+ * The run surface reads `list_timers` on mount and then every two seconds, and in
+ * THIS ENVIRONMENT the mount-time read does not reach the mocked bridge: `capture.js`
  * resolves the Tauri core through a dynamic `import()`, and when several wrappers
  * issue one in the same mount, only the first is served the mocked module — the
  * rest get the real one and throw `window.__TAURI_INTERNALS__ is undefined`. That
  * is an artefact of the test runner and not of the product (in the app the module
  * is already loaded), but it is worth writing down: it is also why nothing has
- * ever asserted the dock's OWN mount-time `loadTemplates` call.
+ * ever asserted the surface's OWN mount-time `loadTemplates` call.
  *
  * So the poll is what these tests watch, advanced with fake timers rather than
  * waited out in real seconds. `shouldAdvanceTime` keeps the microtask queue real,
@@ -108,24 +125,44 @@ const byLabel = (text) =>
   [...host.querySelectorAll('button')].find((b) => b.textContent.trim() === text);
 const putBack = () => byLabel('Put back on screens');
 
-/** `list_timers` answers `rows`; everything else the dock asks on mount answers null. */
+/** `list_timers` answers `rows`; the rest of what the surface asks on mount is
+ *  answered with the empty shape each reader expects, so nothing this file is
+ *  not about renders an error over the band it is watching. */
 function registry(rows) {
-  invoke.mockImplementation(async (cmd) => (cmd === 'list_timers' ? rows : null));
+  invoke.mockImplementation(async (cmd) => {
+    if (cmd === 'list_timers') return rows;
+    if (cmd === 'list_output_channels') return [];
+    if (cmd === 'list_templates') return [];
+    if (cmd === 'list_plans') return [];
+    if (cmd === 'list_books') return [{ book: 'Psalms', chapters: 150 }];
+    if (cmd === 'rehearsal') return false;
+    if (cmd === 'get_sensitivity') return 50;
+    return null;
+  });
 }
 
 beforeEach(() => {
   invoke.mockReset();
-  invoke.mockResolvedValue(null);
+  registry([]);
   cap.live.set(null);
   cap.stageAlert.set(null);
-  cap.capture.update((s) => ({ ...s, available: true }));
+  cap.detections.set([]);
+  cap.resolvedDetections.set([]);
+  cap.liveCue.set({ cueId: null, slide: 0, onAir: false });
+  cap.channelHealth.set({});
+  cap.readErrors.set({});
+  cap.capture.update((s) => ({ ...s, available: true, stt: { ...s.stt, loaded: true } }));
   cap.templates.set([]);
+  setSession({ planId: null });
 });
 
 afterEach(() => {
   app?.$destroy();
   host?.remove();
   app = host = null;
+  cap.detections.set([]);
+  cap.resolvedDetections.set([]);
+  cap.readErrors.set({});
 });
 
 // ── THE PURE HALF ───────────────────────────────────────────────────────────
@@ -150,7 +187,9 @@ describe('is a countdown what is on the screens', () => {
   it('a countdown that has RUN OUT is still what is on the screens', () => {
     const finished = { kind: 'countdown', countdown_to: Date.now() - 60_000 };
     cap.live.set(finished);
-    expect(cap.countdownRemaining()).toBe(null); // the transport's reading
+    // `cap.countdownRemaining()` was asserted beside this until 2026-09-21: the
+    // transport that read it is gone with the band (DECISIONS §115), and the
+    // engine-side question below is the one that was always the claim.
     expect(isCountdownContent(finished)).toBe(true); // the engine's
   });
 });
@@ -192,129 +231,3 @@ describe('what the block may say about the way back', () => {
   });
 });
 
-// ── THE RENDERED HALF — the only half RG-152 was about ──────────────────────
-describe('the control in the dock’s Countdown block', () => {
-  it('reaches show_timer with the timer’s own id', async () => {
-    registry([timer({ id: 12 })]);
-    cap.live.set(A_VERSE);
-    await mountAndRead();
-
-    expect(putBack(), 'no rendered control reaches show_timer').toBeTruthy();
-    putBack().click();
-    await settle();
-
-    expect(called('show_timer')).toHaveLength(1);
-    expect(called('show_timer')[0][1]).toMatchObject({ timerId: 12 });
-  });
-
-  // START IS THE ONE CONTROL THAT PUTS A COUNTDOWN IN FRONT OF PEOPLE FOR THE
-  // FIRST TIME. This one returns to a timer that exists and can do nothing else.
-  it('creates nothing — no timer, no countdown', async () => {
-    registry([timer()]);
-    cap.live.set(A_VERSE);
-    await mountAndRead();
-    invoke.mockClear();
-    putBack().click();
-    await settle();
-    expect(called('start_timer')).toHaveLength(0);
-    expect(called('start_countdown')).toHaveLength(0);
-    expect(called('adjust_countdown')).toHaveLength(0);
-  });
-
-  it('is not offered while the countdown is on the screens — including at 0:00', async () => {
-    registry([timer()]);
-    cap.live.set({ kind: 'countdown', countdown_to: Date.now() + 120_000 });
-    await mountAndRead();
-    expect(putBack()).toBeUndefined();
-
-    // Run out, and still on the wall. The transport reads null here and the way
-    // back must not take that for "the screens are showing something else".
-    cap.live.set({ kind: 'countdown', countdown_to: Date.now() - 60_000 });
-    await settle();
-    expect(putBack(), 'offered over a countdown that is still on the wall').toBeUndefined();
-  });
-
-  // `show_timer` refuses a `Stage` timer in words, and a control that has to be
-  // refused is a control that should not have been offered.
-  it('is never offered for a Stage Timer', async () => {
-    registry([timer({ id: 77, scope: 'stage' })]);
-    cap.live.set(A_VERSE);
-    await mountAndRead();
-    expect(putBack()).toBeUndefined();
-    expect(called('show_timer')).toHaveLength(0);
-  });
-
-  it('is not offered before the registry has answered', async () => {
-    invoke.mockImplementation(() => new Promise(() => {})); // never answers
-    cap.live.set(A_VERSE);
-    mount();
-    await settle();
-    expect(putBack()).toBeUndefined();
-  });
-
-  // RULE 35, asked the way that rule asks it: what does this block say when the
-  // thing behind it is broken? Not the same as when everything is fine.
-  it('says the read failed rather than falling silent like an empty registry', async () => {
-    invoke.mockImplementation(async (cmd) => {
-      if (cmd === 'list_timers') throw new Error('the timer registry is poisoned');
-      return null;
-    });
-    cap.live.set(A_VERSE);
-    await mountAndRead();
-    expect(putBack()).toBeUndefined();
-    expect(host.textContent).toContain('Cannot tell whether a countdown is waiting');
-  });
-
-  // The other half of the same claim, and the half that makes it a claim at all:
-  // an EMPTY registry says nothing, so the sentence above cannot be what this
-  // block says whatever happens.
-  it('and says nothing of the kind over a registry that is simply empty', async () => {
-    registry([]);
-    cap.live.set(A_VERSE);
-    await mountAndRead();
-    expect(putBack()).toBeUndefined();
-    expect(host.textContent).not.toContain('Cannot tell whether a countdown is waiting');
-  });
-
-  it('reports a refused put-back instead of claiming the countdown is back', async () => {
-    invoke.mockImplementation(async (cmd) => {
-      if (cmd === 'list_timers') return [timer()];
-      if (cmd === 'show_timer') throw new Error('That timer is not running.');
-      return null;
-    });
-    cap.live.set(A_VERSE);
-    await mountAndRead();
-    putBack().click();
-    await settle();
-    expect(host.querySelector('.derr')?.textContent ?? '').toContain('not running');
-    // And it is still offered, because nothing went back on any screen.
-    expect(putBack()).toBeTruthy();
-  });
-});
-
-describe('where it lives', () => {
-  it('is inside the Screen Countdown block, not a fourth thing in Quick tools', () => {
-    const card = src.slice(src.indexOf('<span class="dk">Quick tools</span>'));
-    const block = card.slice(
-      card.indexOf('<div class="qblock tmr">'),
-      card.indexOf('<span class="r-lbl">Name band</span>'),
-    );
-    expect(block).toContain('Put back on screens');
-    // `quicktools.test.js` pins the card at three blocks on an operator
-    // instruction, and this control is inside one of the three rather than a
-    // fourth beside them.
-    const body = card.slice(0, card.indexOf('<span class="dk">Controls</span>'));
-    expect(body.match(/<div class="qblock/g) ?? []).toHaveLength(3);
-  });
-
-  // The Controls card never scrolls, because an operator may never have to scroll
-  // to reach `Clear screens`. Nothing here is in that card.
-  it('adds nothing to the Controls card', () => {
-    // MARKUP ONLY. The stylesheet below it explains the row's height budget and
-    // names the control while doing so, and a scanner that reads the prose about
-    // a rule instead of the rule passes and fails for the wrong reasons.
-    const markup = src.slice(0, src.indexOf('<style>'));
-    const controls = markup.slice(markup.indexOf('<span class="dk">Controls</span>'));
-    expect(controls).not.toContain('Put back on screens');
-  });
-});

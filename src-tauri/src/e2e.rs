@@ -2697,7 +2697,7 @@ fn r5_a_word_to_the_preacher_reaches_the_stage_and_not_a_rehearsal() {
     let mut kiosk = qa::Kiosk::attach(&h);
 
     // Assert arrival FIRST, so this cannot pass by the publish path being broken.
-    super::send_stage_alert(h.clone(), Some("  Wrap up — 5 minutes  ".into())).expect("send");
+    super::send_stage_alert(h.clone(), Some("  Wrap up — 5 minutes  ".into()), None).expect("send");
     settle();
     let sent = kiosk
         .next()
@@ -2712,7 +2712,7 @@ fn r5_a_word_to_the_preacher_reaches_the_stage_and_not_a_rehearsal() {
     );
 
     // Blank clears rather than painting a red screen with nothing on it.
-    super::send_stage_alert(h.clone(), Some("   ".into())).expect("clear");
+    super::send_stage_alert(h.clone(), Some("   ".into()), None).expect("clear");
     settle();
     let cleared = kiosk.next().expect("clearing is also a message");
     assert!(
@@ -2728,7 +2728,7 @@ fn r5_a_word_to_the_preacher_reaches_the_stage_and_not_a_rehearsal() {
     )
     .expect("enter rehearsal");
 
-    super::send_stage_alert(h.clone(), Some("Rehearsing".into())).expect("send in rehearsal");
+    super::send_stage_alert(h.clone(), Some("Rehearsing".into()), None).expect("send in rehearsal");
     settle();
     assert!(
         kiosk.silent(),
@@ -2755,22 +2755,42 @@ fn r5_a_word_to_the_preacher_reaches_the_stage_and_not_a_rehearsal() {
 ///   - it carries no field a congregation renderer binds — no `content_kind`, no
 ///     `reference`, no `template_json`. `Output.svelte` reads `text` only under
 ///     `kind === 'content'`, so a frame with no content kind cannot paint;
-///   - **the Tauri door stays shut**. A native output window is driven by
-///     `output://content` / `clear` / `black` and nothing else, so a projector on
-///     HDMI is unreachable from here by construction — and the Wall is what proves
-///     it, because the Wall is that door.
+///   - **the Tauri door carries the same thing and no more.** This point USED to
+///     read *"the Tauri door stays shut"*, and that was true and was the defect
+///     (RG-156): a screen wired as a native window and given the `stage` role heard
+///     nothing at all, while the console reported a Stage Message sent. The door is
+///     open since 2026-09-21 and `output://stage_alert` carries `text` and nothing
+///     else — no `content_kind`, no `reference`, no `template_json` — so what a
+///     congregation renderer binds is unchanged, which is what this asserts;
+///   - **and the wall is undisturbed either way.** `Wall` watches `output://content`,
+///     so a stage alert that ever became content would move the count, and a clear
+///     or a black provoked by one would show here too.
 ///
-/// The last point is the one a source scan can never make. An alert published to
-/// the hub is broadcast to every WebSocket client including `output.html`; what
-/// stops a congregation seeing it is that the frame is not a content frame and no
-/// congregation renderer has a branch for it. A future `emit` added here would pass
-/// `r6-contracts` untouched and fail this.
+/// The last two points are the ones a source scan can never make. An alert is
+/// broadcast to every WebSocket client including `output.html` AND emitted to every
+/// webview, and neither door can address one screen — the hub records nothing about
+/// who connected (DECISIONS §35) and a Tauri emit is app-wide. What stops a
+/// congregation seeing it is `channelroles::acceptsStageMessage`, asked on the page
+/// at both doors from one function, plus the fact asserted here: the payload holds
+/// nothing a congregation template binds. `stagemessagenative.test.js` drives the
+/// page half; this drives the engine half.
 #[test]
 fn r5_a_word_to_the_preacher_reaches_no_congregation_channel() {
     let app = app();
     let h = app.handle().clone();
     let wall = Wall::watch(&h);
     let mut kiosk = qa::Kiosk::attach(&h);
+    // The native door, which this test used to prove shut by watching the Wall.
+    let alerts: std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    {
+        let sink = alerts.clone();
+        h.listen("output://stage_alert", move |e| {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(e.payload()) {
+                sink.lock().unwrap().push(v);
+            }
+        });
+    }
 
     // A real verse first, so the test is run against a wall that HAS something on
     // it — the case where a leak would be indistinguishable from the verse.
@@ -2788,7 +2808,7 @@ fn r5_a_word_to_the_preacher_reaches_no_congregation_channel() {
     assert_eq!(before, 1, "the fixture's own fire did not reach the wall");
     while kiosk.next().is_some() {} // drain the fire's own frames
 
-    super::send_stage_alert(h.clone(), Some("Wrap up — 5 minutes".into())).expect("send");
+    super::send_stage_alert(h.clone(), Some("Wrap up — 5 minutes".into()), None).expect("send");
     settle();
 
     let frame = kiosk
@@ -2813,7 +2833,26 @@ fn r5_a_word_to_the_preacher_reaches_no_congregation_channel() {
         );
     }
 
-    // THE OTHER DOOR. A native output window hears Tauri events and nothing else.
+    // THE OTHER DOOR, WATCHED RATHER THAN ASSUMED SHUT (RG-156). It is open now,
+    // so "the Wall did not move" is no longer the whole claim about it: the event
+    // itself has to carry nothing a congregation renderer binds.
+    assert_eq!(
+        alerts.lock().unwrap().len(),
+        1,
+        "the native door got no alert, or got more than one"
+    );
+    let payload = alerts.lock().unwrap()[0].clone();
+    assert_eq!(
+        payload.get("text").and_then(|v| v.as_str()),
+        Some("Wrap up — 5 minutes"),
+        "the native door did not carry the words: {payload}"
+    );
+    for field in ["content_kind", "reference", "template_json", "media_url"] {
+        assert!(
+            payload.get(field).is_none(),
+            "the alert event carries `{field}`, which is congregation content: {payload}"
+        );
+    }
     assert_eq!(
         wall.count(),
         before,
@@ -2924,7 +2963,7 @@ fn r5_a_word_to_the_preacher_reaches_no_screen_that_is_not_a_stage() {
 
     // …AND PUBLISHING AN ALERT CHANGES NONE OF IT. Nothing about sending a word to
     // the preacher may promote a screen into being one.
-    super::send_stage_alert(h.clone(), Some("Wrap up — 5 minutes".into())).expect("send");
+    super::send_stage_alert(h.clone(), Some("Wrap up — 5 minutes".into()), None).expect("send");
     settle();
     let frame = kiosk.next().expect("the alert is published");
     assert!(frame.contains(r#""kind":"stage_alert""#), "{frame}");
@@ -2969,7 +3008,7 @@ fn r9_the_search_finds_a_reference_however_it_is_typed() {
     let conn = db.0.lock().expect("db");
     let sem = h.state::<Semantic>();
     let top = |q: &str| {
-        search_verses(&conn, &sem.0, q)
+        search_verses(&conn, &sem.0.read().expect("semantic index"), q)
             .first()
             .map(|h| format!("{} {}:{}", h.verse.book, h.verse.chapter, h.verse.verse))
     };
@@ -2998,7 +3037,7 @@ fn r9_a_reference_outranks_a_phrase() {
 
     // "John 3:16" is also a phrase that appears in no verse; the reference must
     // win, and win FIRST, because that is what the person typing it meant.
-    let hits = search_verses(&conn, &sem.0, "john 3:16");
+    let hits = search_verses(&conn, &sem.0.read().expect("semantic index"), "john 3:16");
     let first = hits.first().expect("a reference always finds its verse");
     assert_eq!(
         (
@@ -3022,7 +3061,11 @@ fn r9_a_query_that_is_mostly_not_scripture_returns_nothing_rather_than_guessing(
     // This used to come back with NINETEEN verses, Ezekiel 26:9 at the top,
     // because the full-text index returns anything that matched any term. A
     // confident wrong answer is worse than an empty list: the operator acts on it.
-    let junk = search_verses(&conn, &sem.0, "quantum shepherd tractor engine banana");
+    let junk = search_verses(
+        &conn,
+        &sem.0.read().expect("semantic index"),
+        "quantum shepherd tractor engine banana",
+    );
     assert!(
         junk.len() <= 8,
         "a query with one real word in five came back with {} verses",
@@ -3030,10 +3073,19 @@ fn r9_a_query_that_is_mostly_not_scripture_returns_nothing_rather_than_guessing(
     );
 
     // A word that is in no verse at all finds nothing, and says so by being empty.
-    assert!(search_verses(&conn, &sem.0, "flibbertigibbet").is_empty());
+    assert!(search_verses(
+        &conn,
+        &sem.0.read().expect("semantic index"),
+        "flibbertigibbet"
+    )
+    .is_empty());
 
     // And the thing the floor must NOT break: a real phrase still lands.
-    let psalm = search_verses(&conn, &sem.0, "the lord is my shepherd");
+    let psalm = search_verses(
+        &conn,
+        &sem.0.read().expect("semantic index"),
+        "the lord is my shepherd",
+    );
     let first = psalm
         .first()
         .expect("a real phrase must still find its verse");
@@ -3063,7 +3115,7 @@ fn r9_searching_never_puts_anything_on_a_screen() {
         let db = h.state::<Db>();
         let conn = db.0.lock().expect("db");
         let sem = h.state::<Semantic>();
-        let hits = search_verses(&conn, &sem.0, q);
+        let hits = search_verses(&conn, &sem.0.read().expect("semantic index"), q);
         assert!(!hits.is_empty(), "{q} found nothing");
     }
     settle();
@@ -3086,7 +3138,7 @@ fn r9_every_shape_in_the_brief_finds_its_verse() {
     let conn = db.0.lock().expect("db");
     let sem = h.state::<Semantic>();
     let top = |q: &str| {
-        search_verses(&conn, &sem.0, q)
+        search_verses(&conn, &sem.0.read().expect("semantic index"), q)
             .first()
             .map(|h| format!("{} {}:{}", h.verse.book, h.verse.chapter, h.verse.verse))
     };
@@ -3125,7 +3177,7 @@ fn r9_a_book_prefix_is_a_search_feature_and_never_a_detection() {
         ("thessal 4 16", "1 Thessalonians 4:16"),
         ("revela 22 13", "Revelation 22:13"),
     ] {
-        let hits = search_verses(&conn, &sem.0, query);
+        let hits = search_verses(&conn, &sem.0.read().expect("semantic index"), query);
         let found = hits
             .iter()
             .any(|h| format!("{} {}:{}", h.verse.book, h.verse.chapter, h.verse.verse) == want);
@@ -3161,7 +3213,7 @@ fn r9_every_hit_says_why_it_matched() {
         "lamp unto my feet",
         "there is therefore no condemnation in christ",
     ] {
-        let hits = search_verses(&conn, &sem.0, q);
+        let hits = search_verses(&conn, &sem.0.read().expect("semantic index"), q);
         assert!(!hits.is_empty(), "{q} found nothing");
         for hit in &hits {
             assert!(
@@ -3187,14 +3239,18 @@ fn r9_every_hit_says_why_it_matched() {
     }
 
     // A reference the operator typed is NOT a guess, and says so.
-    let typed = search_verses(&conn, &sem.0, "rom 8 28");
+    let typed = search_verses(&conn, &sem.0.read().expect("semantic index"), "rom 8 28");
     let first = typed.first().expect("rom 8 28");
     assert_eq!(first.method, "reference");
     assert!(!first.guess);
     assert!(first.why.contains("rom 8 28"), "{:?}", first.why);
 
     // A prefix Relay expanded IS a guess, and names the book it chose.
-    let pref = search_verses(&conn, &sem.0, "philipp 4 13");
+    let pref = search_verses(
+        &conn,
+        &sem.0.read().expect("semantic index"),
+        "philipp 4 13",
+    );
     let hit = pref
         .iter()
         .find(|h| h.method == "prefix")
@@ -3207,7 +3263,7 @@ fn r9_every_hit_says_why_it_matched() {
     // and the operator has to be able to tell it from a reference they typed.
     let para = search_verses(
         &conn,
-        &sem.0,
+        &sem.0.read().expect("semantic index"),
         "there is therefore no condemnation in christ",
     );
     let guess = para
@@ -3219,7 +3275,11 @@ fn r9_every_hit_says_why_it_matched() {
     assert!(guess.matched.is_empty(), "{:?}", guess.matched);
 
     // A word hit quotes the words that landed, and never the weak ones.
-    let words = search_verses(&conn, &sem.0, "lamp unto my feet");
+    let words = search_verses(
+        &conn,
+        &sem.0.read().expect("semantic index"),
+        "lamp unto my feet",
+    );
     let w = words
         .iter()
         .find(|h| h.method == "words" || h.method == "phrase")
@@ -3253,7 +3313,7 @@ fn r9_nothing_a_search_offers_can_reach_an_auto_fire() {
     // detect with — so ask the router what it would do with one.
     let mut router = crate::router::Router::default();
     for query in ["philipp 4 13", "gene 1 1", "revela 22 13"] {
-        for hit in search_verses(&conn, &sem.0, query) {
+        for hit in search_verses(&conn, &sem.0.read().expect("semantic index"), query) {
             if hit.method != "prefix" {
                 continue;
             }
@@ -3287,7 +3347,7 @@ fn r9_a_hit_is_still_a_verse_row_on_the_wire() {
     let conn = db.0.lock().expect("db");
     let sem = h.state::<Semantic>();
 
-    let hits = search_verses(&conn, &sem.0, "ps 23 1");
+    let hits = search_verses(&conn, &sem.0.read().expect("semantic index"), "ps 23 1");
     let first = hits.first().expect("ps 23 1");
     let json = serde_json::to_value(first).expect("a hit serialises");
     let obj = json.as_object().expect("an object");
@@ -3322,7 +3382,7 @@ fn r9_a_hit_is_still_a_verse_row_on_the_wire() {
 
 /// RG-136 — A RECOVERY IN THE SERVICE RECORD MUST HAVE A LOSS TO RECOVER FROM.
 ///
-/// Field service 2026-09-13 (`audits/FIELD-2026-09-13.md` §3) recorded three
+/// Field service 2026-09-13 (`audits/FIELD.md` §3) recorded three
 /// events for a 110.5 minute service: `service_started`, then `output_recovered`
 /// for the Streaming screen, then `output_lost`. **A screen came back from an
 /// outage the timeline never recorded**, so the report and the replay — which are
@@ -3389,6 +3449,7 @@ fn r136_a_recovery_in_the_record_always_has_a_loss_to_recover_from() {
         channels::PaintState::Content,
         "kiosk",
         channels::BeatGap::default(),
+        None,
     );
     record_output_edges(&h, &health, &list, &[], true);
 
@@ -3419,25 +3480,24 @@ fn r136_a_recovery_in_the_record_always_has_a_loss_to_recover_from() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  THE COUNTDOWN'S MISSING HALF — docs/REBRAND.md §7
+//  THE COUNTDOWN, AND THE TRANSPORT THAT IS NO LONGER HERE
 //
-//  §7 asks for a transport of Start/**Pause** · Reset · ±1 · Clear, and Pause was the
-//  one of the five that was never built. The spec records the honest reason:
-//  `countdown_to` is an absolute INSTANT that rides with the content, so every other
-//  press is just re-aiming that instant — and there is no instant that means "not
-//  moving". A held countdown needed a field the engine owns.
+//  Eleven tests stood here and drove `adjust_countdown` and `show_timer` — hold and
+//  release, a held countdown surviving a re-aim, a transport that could never START
+//  one, the way back after a verse, and a screen joining while it was held. They
+//  went with those two commands on 2026-09-21 (DECISIONS §115), when the operator
+//  asked for the Screen Countdown off Live for the second time and the commands lost
+//  their only caller.
 //
-//  These drive the real commands against a real database and assert on what leaves
-//  the machine, because every claim here is about a number a congregation is looking
-//  at while they wait for a service to start.
+//  WHAT IS STILL TESTED BELOW, because this is the part that matters to a room: a
+//  countdown can be STARTED — by the dock's helper here and by a plan cue — and it
+//  reaches the screens it was aimed at, wearing the right template, and comes down
+//  with a panic control. `start_countdown` keeps its caller and its tests.
+//
+//  WHAT IS NO LONGER TESTED, because it no longer exists: holding, re-aiming or
+//  putting back a countdown already in front of a congregation. The only thing that
+//  takes one off a wall now is Clear screens or Blackout.
 // ════════════════════════════════════════════════════════════════════════════
-
-fn cd_now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
-}
 
 /// Start the five-minute countdown the dock starts, so each test below begins where
 /// an operator does.
@@ -3451,436 +3511,9 @@ fn start_five(h: &tauri::AppHandle<tauri::test::MockRuntime>) {
         None,
         None,
         None,
+        None,
     )
     .expect("start a countdown");
-}
-
-/// A COUNTDOWN CAN BE HELD, AND HOLDING IT CHANGES NOTHING ELSE.
-///
-/// Narrow, and it is the whole feature: after Pause the wall says the same number,
-/// carries the same label and is still a countdown — it has simply stopped moving.
-/// Resume puts the instant back where the hold left it, not back where the countdown
-/// started.
-#[test]
-fn r7_a_countdown_can_be_held_and_released() {
-    let app = app();
-    let h = app.handle().clone();
-    let wall = Wall::watch(&h);
-
-    start_five(&h);
-    settle();
-    let started = wall.last().expect("a countdown on the wall");
-    assert!(
-        started["countdown_paused_ms"].is_null(),
-        "a countdown that has just been STARTED is running: {started}"
-    );
-
-    adjust_countdown(h.clone(), None, Some(true)).expect("hold it");
-    settle();
-    let held = wall.last().expect("the wall");
-    let left = held["countdown_paused_ms"]
-        .as_i64()
-        .expect("a held countdown must say what it is held at");
-    assert!(
-        (4 * 60_000..=5 * 60_000).contains(&left),
-        "the hold must keep the figure it was holding, not reset it: {left}ms"
-    );
-    assert_eq!(
-        held["reference"], "Service begins in",
-        "holding a countdown must not rename it"
-    );
-    // `kind` here, not `content_kind`: a `Wall` records the TAURI event, whose field
-    // is `kind`; the kiosk wire form renames it because that protocol uses `kind` for
-    // the message type. Two doors, two spellings, and this test watches one of them.
-    assert_eq!(
-        held["kind"], "countdown",
-        "it is still a countdown, it has just stopped moving"
-    );
-
-    adjust_countdown(h.clone(), None, Some(false)).expect("release it");
-    settle();
-    let running = wall.last().expect("the wall");
-    assert!(
-        running["countdown_paused_ms"].is_null(),
-        "released, and still carrying the hold: {running}"
-    );
-    let to = running["countdown_to"].as_i64().expect("an instant again");
-    assert!(
-        (to - cd_now_ms() - left).abs() < 5_000,
-        "resume must put back what was HELD ({left}ms), not what was originally set"
-    );
-}
-
-/// **THE ONE THAT COSTS A SERVICE IF IT IS WRONG: A RE-FIRE MUST NOT LOSE THE HOLD.**
-///
-/// `+1` and Reset re-broadcast the countdown. Before the engine owned it, the console
-/// rebuilt that broadcast out of its own mirror — label, done message and template
-/// read back off the event and handed to `start_countdown` again. That worked exactly
-/// as long as every caller remembered every field, and `countdown_paused_ms` is one
-/// more to forget. Forgetting it starts a timer the operator deliberately stopped, in
-/// front of a congregation, from a button that says "+1".
-#[test]
-fn r7_a_held_countdown_is_still_held_after_a_re_aim() {
-    let app = app();
-    let h = app.handle().clone();
-    let wall = Wall::watch(&h);
-
-    start_five(&h);
-    adjust_countdown(h.clone(), None, Some(true)).expect("hold");
-    settle();
-
-    adjust_countdown(h.clone(), Some(6 * 60_000), None).expect("+1");
-    settle();
-    let after = wall.last().expect("the wall");
-    assert_eq!(
-        after["countdown_paused_ms"].as_i64(),
-        Some(6 * 60_000),
-        "a press of +1 released a countdown the operator had stopped: {after}"
-    );
-
-    // …and Reset, which is the same door with a different number.
-    adjust_countdown(h.clone(), Some(5 * 60_000), None).expect("reset");
-    settle();
-    assert_eq!(
-        wall.last().expect("the wall")["countdown_paused_ms"].as_i64(),
-        Some(5 * 60_000),
-        "Reset released the hold"
-    );
-}
-
-/// THE TRANSPORT CAN NEVER PUT A COUNTDOWN ON A WALL BY ITSELF.
-///
-/// Start is the one control that puts a countdown in front of people and there must
-/// be exactly one of those. Every other press is about a countdown that is already
-/// there, so with nothing there they refuse — in words — and touch no screen.
-#[test]
-fn r7_the_transport_can_never_start_a_countdown() {
-    let app = app();
-    let h = app.handle().clone();
-    let wall = Wall::watch(&h);
-
-    for (remaining, paused) in [
-        (Some(5 * 60_000), None),
-        (None, Some(true)),
-        (None, Some(false)),
-    ] {
-        let err = adjust_countdown(h.clone(), remaining, paused)
-            .expect_err("nothing is counting down, so there is nothing to adjust");
-        assert!(
-            err.to_string().contains("Nothing is counting down"),
-            "the refusal has to be readable in a booth: {err}"
-        );
-    }
-    settle();
-    assert_eq!(wall.count(), 0, "a refusal reached a screen");
-
-    // AND ONCE A VERSE HAS REPLACED THE COUNTDOWN, THE TRANSPORT TOUCHES NO SCREEN.
-    //
-    // This half used to assert that the transport REFUSED here, and that refusal was
-    // a consequence of where the state lived rather than a decision anybody took:
-    // the countdown WAS the live content, so a verse forgot it. The timer registry
-    // gives it a lifetime of its own, so the press now succeeds — and the two
-    // assertions that follow are the ones that were always the point, kept verbatim:
-    // **a transport press may never take a congregation screen.** Putting a timer
-    // back in front of people is `show_timer`, an explicit action that says what it
-    // does; it is never a side effect of `+1`.
-    start_five(&h);
-    manual_fire(
-        h.clone(),
-        h.state::<Db>(),
-        "John 3:16".into(),
-        None,
-        None,
-        None,
-    )
-    .expect("fire");
-    settle();
-    let before = wall.count();
-    adjust_countdown(h.clone(), Some(60_000), None).expect("the countdown is still there");
-    settle();
-    assert_eq!(
-        wall.count(),
-        before,
-        "a re-aim repainted a countdown over a sermon"
-    );
-    assert_eq!(
-        wall.last().expect("the wall")["reference"],
-        "John 3:16",
-        "the verse must still be up"
-    );
-}
-
-/// **THE ONE THE WAVE EXISTS TO PASS: A COUNTDOWN SURVIVES A VERSE, AND THE WAY BACK
-/// IS AN EXPLICIT ACTION.**
-///
-/// The reported defect. The countdown was four fields riding on the one live
-/// `OutputContent`, held in a single slot, so firing anything else forgot it and
-/// `adjust_countdown` answered "Nothing is counting down." with no way back at all —
-/// the operator had to start a second countdown and guess how long was left on the
-/// first.
-///
-/// Two halves, and both matter:
-///
-/// * the re-aim **succeeds**, because a timer has a lifetime of its own now;
-/// * the re-aim **paints nothing**, because a transport press may never take a
-///   congregation screen back from a sermon.
-#[test]
-fn r7_a_countdown_survives_a_verse_and_can_still_be_re_aimed_without_taking_the_wall() {
-    let app = app();
-    let h = app.handle().clone();
-    let wall = Wall::watch(&h);
-
-    start_five(&h);
-    manual_fire(
-        h.clone(),
-        h.state::<Db>(),
-        "John 3:16".into(),
-        None,
-        None,
-        None,
-    )
-    .expect("fire");
-    settle();
-    let before = wall.count();
-
-    adjust_countdown(h.clone(), Some(90_000), None).expect("a verse did not end the countdown");
-    settle();
-    assert_eq!(
-        wall.count(),
-        before,
-        "a re-aim repainted a countdown over a sermon"
-    );
-    assert_eq!(
-        wall.last().expect("the wall")["reference"],
-        "John 3:16",
-        "the verse must still be up"
-    );
-
-    // The timer is still there, and it is holding the ADJUSTED figure — not the five
-    // minutes it was started with. A re-aim that silently did nothing would leave the
-    // registry at 5:00 and look exactly like this from the wall's side.
-    let listed = list_timers(h.clone()).expect("list the timers");
-    assert_eq!(
-        listed.len(),
-        1,
-        "one countdown was started, so there is one timer"
-    );
-    assert!(
-        (60_000..=90_000).contains(&listed[0].remaining_ms),
-        "the re-aim did not reach the registry: {}ms left",
-        listed[0].remaining_ms
-    );
-
-    // THE WAY BACK. It is one action, it says what it does, and it carries the
-    // adjusted figure rather than the original one.
-    show_timer(h.clone(), h.state::<Db>(), listed[0].timer.id, None).expect("put it back up");
-    settle();
-    let back = wall.last().expect("the wall");
-    assert_eq!(
-        back["kind"], "countdown",
-        "show_timer put up something else"
-    );
-    assert_eq!(
-        back["reference"], "Service begins in",
-        "the label did not survive the round trip"
-    );
-    let to = back["countdown_to"].as_i64().expect("an instant");
-    let left = to - cd_now_ms();
-    assert!(
-        (60_000..=90_000).contains(&left),
-        "the wall got the ORIGINAL five minutes back, not the 90s it was re-aimed to: {left}ms"
-    );
-}
-
-/// A CLEARED WALL HAS NO COUNTDOWN TO HOLD.
-///
-/// `clear` and `black` are panic controls, and what they take off a screen must stay
-/// off it. A transport that could re-aim a countdown the operator had just cleared
-/// would put it back — rule 43's failure with a panic control in the role of the
-/// thing that gets undone.
-#[test]
-fn r7_a_cleared_countdown_cannot_be_brought_back_by_the_transport() {
-    let app = app();
-    let h = app.handle().clone();
-    let wall = Wall::watch(&h);
-
-    start_five(&h);
-    clear_screens(h.clone()).expect("clear");
-    settle();
-    let before = wall.count();
-    adjust_countdown(h.clone(), Some(60_000), None).expect_err("the wall is clear");
-    adjust_countdown(h.clone(), None, Some(true)).expect_err("the wall is clear");
-    settle();
-    assert_eq!(
-        wall.count(),
-        before,
-        "the transport put a cleared countdown back on the wall"
-    );
-
-    // Blackout is the harsher of the two and must do at least as much.
-    start_five(&h);
-    blackout(h.clone()).expect("black");
-    settle();
-    let before = wall.count();
-    adjust_countdown(h.clone(), Some(60_000), None).expect_err("the wall is black");
-    settle();
-    assert_eq!(wall.count(), before, "a blacked wall got a countdown back");
-}
-
-/// A RE-AIM CHANGES THE NUMBER AND NOTHING ELSE — including the template.
-///
-/// These assertions used to live in the console's own test file, against a re-aim the
-/// console assembled itself. They belong here now: the engine does the carrying, so
-/// the guarantee holds for every caller rather than for the one that was tested.
-/// DECISIONS §29 is the sharp one — a countdown fired from the dock resolves through
-/// the content LOOK, which DEFERS to whatever template each screen has of its own.
-/// Handing the resolved id back as a cue template would take that deference away, and
-/// a press of "+1" would silently re-skin every screen in the building.
-#[test]
-fn r7_a_re_aim_does_not_rename_or_re_skin_the_countdown() {
-    let app = app();
-    let h = app.handle().clone();
-    let wall = Wall::watch(&h);
-
-    // A content look for countdowns, which is how the dock's countdown is dressed.
-    let look = scratch_template(&h, "Countdown look");
-    {
-        let db = h.state::<Db>();
-        let conn = db.0.lock().expect("db");
-        db::set_content_template(&conn, "countdown", Some(look)).expect("content look");
-    }
-    start_countdown(
-        h.clone(),
-        h.state::<Db>(),
-        5.0,
-        "Doors open in".into(),
-        "Please come in".into(),
-        None,
-        None,
-        None,
-    )
-    .expect("start");
-    settle();
-    let started = wall.last().expect("the wall");
-    assert_eq!(started["template_id"].as_i64(), Some(look));
-    assert_eq!(
-        started["template_pinned"], false,
-        "a content look DEFERS to each screen's own template (DECISIONS §29)"
-    );
-
-    adjust_countdown(h.clone(), Some(4 * 60_000), None).expect("−1");
-    settle();
-    let after = wall.last().expect("the wall");
-    assert_eq!(
-        after["reference"], "Doors open in",
-        "the wall renamed itself from a press of the transport"
-    );
-    assert_eq!(
-        after["countdown_done"], "Please come in",
-        "the done message was dropped by a re-aim"
-    );
-    assert_eq!(
-        after["template_pinned"], false,
-        "a re-aim PINNED a template the countdown never pinned — every screen in the \
-         building would have been re-skinned by a press of +1 (DECISIONS §29)"
-    );
-    assert_eq!(
-        after["template_id"].as_i64(),
-        Some(look),
-        "and it must still be wearing the same look"
-    );
-}
-
-/// THE WARNING RULE FINALLY HAS SOMETHING TO WORK FROM.
-///
-/// `countdown_from` was read by `TemplateRender` and written by NOTHING for as long
-/// as it existed, so §7's short-countdown rule — the last tenth of a countdown under
-/// ten minutes, because a minute's warning on a two-minute countdown is a colour lit
-/// for half its life — could never once have fired in the product. A reader with no
-/// writer and a control with no reader are the same defect facing opposite ways
-/// (DECISIONS §69).
-#[test]
-fn r7_a_countdown_says_how_long_it_was_aimed_for() {
-    let app = app();
-    let h = app.handle().clone();
-    let wall = Wall::watch(&h);
-
-    start_countdown(
-        h.clone(),
-        h.state::<Db>(),
-        2.0,
-        "Service begins in".into(),
-        "Welcome".into(),
-        None,
-        None,
-        None,
-    )
-    .expect("start");
-    settle();
-    let f = wall.last().expect("the wall");
-    let from = f["countdown_from"].as_i64().expect("aimed from");
-    let to = f["countdown_to"].as_i64().expect("aimed at");
-    assert!(
-        ((to - from) - 120_000).abs() < 2_000,
-        "the span must be the length that was asked for: {}ms",
-        to - from
-    );
-
-    // AND IT SURVIVES A RE-AIM. Re-stamping it on every press would shrink the
-    // warning window to whatever is left, so the colour that means "this is about to
-    // run out" would arrive later each time somebody pressed a button.
-    adjust_countdown(h.clone(), Some(60_000), None).expect("−1");
-    settle();
-    assert_eq!(
-        wall.last().expect("the wall")["countdown_from"].as_i64(),
-        Some(from),
-        "the aimed-from instant was re-stamped by a re-aim"
-    );
-}
-
-/// A HELD COUNTDOWN IS WHAT A SCREEN THAT JOINS LATE IS SHOWN (rule 43).
-///
-/// The hub retains the last frame of the three kinds that decide what a screen is
-/// showing, and a countdown frame is one of them. The failure this guards is precise:
-/// an OBS source restarting, a lobby TV dropping off the wifi, a kiosk page reloading
-/// — each comes back and must be handed the countdown AS IT IS, held. A retained
-/// frame carrying only the instant would come back counting, and a projector counting
-/// down against a console that says 4:00 is worse than a blank screen, because
-/// nothing about it looks wrong.
-#[test]
-fn r7_a_screen_that_joins_while_the_countdown_is_held_is_shown_a_held_countdown() {
-    let app = app();
-    let h = app.handle().clone();
-    // Attaching the hub is part of the assertion: a publisher with no hub is a silent
-    // no-op that would make this pass for the wrong reason.
-    let _kiosk = qa::Kiosk::attach(&h);
-
-    start_five(&h);
-    adjust_countdown(h.clone(), None, Some(true)).expect("hold");
-    settle();
-
-    let retained = h
-        .state::<channels::KioskHub>()
-        .last_screen_handle()
-        .lock()
-        .expect("retained frame")
-        .clone()
-        .expect("a countdown is what the screens are showing");
-    let v: serde_json::Value = serde_json::from_str(&retained).expect("a frame");
-    assert_eq!(v["kind"], "content");
-    let held = v["countdown_paused_ms"]
-        .as_i64()
-        .expect("the retained frame must carry the HOLD, not only the instant");
-    assert!(
-        (4 * 60_000..=5 * 60_000).contains(&held),
-        "and it must be held where it was held: {held}ms"
-    );
-    // The span rides too, so a screen that joined late warns at the same moment the
-    // ones that were there all along do.
-    assert!(
-        v["countdown_from"].as_i64().is_some(),
-        "the retained frame dropped the aimed-from instant: {v}"
-    );
 }
 
 /// A PICTURE IS A FIRE PATH, AND IT HAD NO TEST.
@@ -3917,10 +3550,10 @@ fn r0_a_picture_reaches_the_wall_and_disarms_the_passage() {
     let media_id = {
         let db = h.state::<Db>();
         let conn = db.0.lock().expect("db");
-        db::insert_media(&conn, "image", "slide.png", "2026-09-15").expect("seed a media row")
+        db::insert_media(&conn, "image", "slide.png", "2026-09-15", None).expect("seed a media row")
     };
 
-    fire_media(h.clone(), h.state::<Db>(), media_id, None).expect("fire the picture");
+    fire_media(h.clone(), h.state::<Db>(), media_id, None, None).expect("fire the picture");
     settle();
 
     assert_eq!(
@@ -3956,7 +3589,7 @@ fn r0_a_picture_reaches_the_wall_and_disarms_the_passage() {
 fn seed_picture(h: &tauri::AppHandle<tauri::test::MockRuntime>) -> i64 {
     let db = h.state::<Db>();
     let conn = db.0.lock().expect("db");
-    db::insert_media(&conn, "image", "sanctuary.jpg", "2026-09-17").expect("seed a picture")
+    db::insert_media(&conn, "image", "sanctuary.jpg", "2026-09-17", None).expect("seed a picture")
 }
 
 /// The picture the hub would replay to a screen that joined just now.
@@ -4077,6 +3710,149 @@ fn r0_a_panic_control_takes_the_background_off_every_screen() {
     }
 }
 
+/// THE PREACHER'S OWN SLIDE REACHES THE STAGE AND SURVIVES A RECONNECT.
+///
+/// Requirement 10. An announcement the preacher has to read out, or their own
+/// deck, on the stage screen and nowhere else.
+///
+/// Rule 43 is the half worth asserting: a stage tablet whose wifi drops mid-sermon
+/// comes back and is sent what is on its screen, which now includes this. Before
+/// the retention slot existed it came back with the reading and no slide and
+/// stayed that way until the operator happened to push it again.
+#[test]
+fn the_preachers_slide_is_replayed_to_a_screen_that_joins_after_it() {
+    let app = app();
+    let h = app.handle().clone();
+    let mut kiosk = qa::Kiosk::attach(&h);
+    let pic = seed_picture(&h);
+
+    send_stage_media(h.clone(), h.state::<Db>(), Some(pic)).expect("put the slide up");
+    settle();
+    let frame = kiosk.next().expect("the slide reached no screen at all");
+    assert!(
+        frame.contains(r#""kind":"stage_media""#),
+        "the slide did not leave the machine: {frame}"
+    );
+
+    // AND THE SCREEN THAT JOINS A MOMENT LATER IS TOLD.
+    let retained = h
+        .state::<channels::KioskHub>()
+        .last_stage_media_handle()
+        .lock()
+        .ok()
+        .and_then(|m| m.clone());
+    assert!(
+        retained.is_some_and(|f| f.contains(r#""kind":"stage_media""#)),
+        "a stage screen joining mid-sermon would come back with no slide"
+    );
+}
+
+/// A PANIC CONTROL TAKES THE PREACHER'S SLIDE TOO.
+///
+/// `Clear screens` means everything. The slide goes through the same retention
+/// door as the backdrop, so `clear` and `black` empty it by construction rather
+/// than by a second message somebody has to remember to send.
+#[test]
+fn a_panic_control_takes_the_preachers_slide_off_the_stage() {
+    for (name, wipe) in [("clear_screens", 0), ("blackout", 1)] {
+        let app = app();
+        let h = app.handle().clone();
+        let _kiosk = qa::Kiosk::attach(&h);
+        let pic = seed_picture(&h);
+
+        send_stage_media(h.clone(), h.state::<Db>(), Some(pic)).expect("slide up");
+        settle();
+        assert!(
+            retained_stage_media(&h).is_some(),
+            "{name}: nothing to take down — the test would pass for the wrong reason"
+        );
+
+        if wipe == 0 {
+            clear_screens(h.clone()).expect("clear");
+        } else {
+            blackout(h.clone()).expect("blackout");
+        }
+        settle();
+        assert!(
+            retained_stage_media(&h).is_none(),
+            "{name} left the preacher's slide on the stage screen"
+        );
+    }
+}
+
+/// NOTHING OF A STAGE SLIDE REACHES A SCREEN DURING A REHEARSAL.
+///
+/// The same guarantee as `stage_next` and `stage_alert`, and asserted on the hub
+/// rather than through `Wall`, because this publisher emits no Tauri event at all
+/// — watching the wall would have watched nothing and passed.
+#[test]
+fn nothing_of_the_preachers_slide_reaches_a_screen_during_a_rehearsal() {
+    let app = app();
+    let h = app.handle().clone();
+    let _kiosk = qa::Kiosk::attach(&h);
+    let pic = seed_picture(&h);
+
+    // THE LIVE CASE FIRST, so this cannot pass by the publisher being broken.
+    send_stage_media(h.clone(), h.state::<Db>(), Some(pic)).expect("slide up");
+    settle();
+    assert!(
+        retained_stage_media(&h).is_some(),
+        "the live case never worked"
+    );
+
+    set_rehearsal(
+        h.clone(),
+        h.state::<Session>(),
+        h.state::<channels::Rehearsal>(),
+        true,
+    )
+    .expect("enter rehearsal");
+    // ONE OPERATION, IN ONE DIRECTION, and that is the whole design of this
+    // assertion. My first version took the slide down and then put it back up
+    // inside the rehearsal, and asserted the slot was still full — which is true
+    // whether or not the gate exists, because the second call refills what the
+    // first emptied. It passed with the rehearsal gate deleted, which makes it a
+    // theory nobody tested (rule 40's own lesson, in a new file).
+    //
+    // A take-down alone cannot be undone by anything later in the test, so the
+    // slot staying full is only possible if the publisher genuinely refused.
+    send_stage_media(h.clone(), h.state::<Db>(), None).expect("ask for it to come down");
+    settle();
+    assert!(
+        retained_stage_media(&h).is_some(),
+        "a rehearsal reached the stage: the take-down left the machine and emptied the slot"
+    );
+}
+
+/// A DOCUMENT IS REFUSED AT THE DOOR, NOT ON A SUNDAY.
+///
+/// Nothing in the product renders a PDF to a screen, so a slide built from one
+/// would look correct in the Library and do nothing when it was reached.
+#[test]
+fn a_document_cannot_be_put_on_the_stage_screen() {
+    let app = app();
+    let h = app.handle().clone();
+    let doc = {
+        let db = h.state::<Db>();
+        let conn = db.0.lock().expect("db");
+        db::insert_media(&conn, "document", "notices.pdf", "2026-09-20", None)
+            .expect("seed a document")
+    };
+    assert!(
+        send_stage_media(h.clone(), h.state::<Db>(), Some(doc)).is_err(),
+        "a PDF was accepted onto the stage screen"
+    );
+}
+
+/// The slide the hub would replay to a stage screen that joined just now.
+fn retained_stage_media(h: &tauri::AppHandle<tauri::test::MockRuntime>) -> Option<String> {
+    h.state::<channels::KioskHub>()
+        .last_stage_media_handle()
+        .lock()
+        .ok()
+        .and_then(|m| m.clone())
+}
+
 /// NOTHING OF A BACKGROUND REACHES A LAN SCREEN DURING A REHEARSAL.
 ///
 /// `set_background` publishes to the hub and emits a Tauri event, so `Wall` would
@@ -4143,7 +3919,7 @@ fn a_document_can_never_become_a_background() {
     let doc = {
         let db = h.state::<Db>();
         let conn = db.0.lock().expect("db");
-        db::insert_media(&conn, "document", "notices.pdf", "2026-09-17").expect("seed")
+        db::insert_media(&conn, "document", "notices.pdf", "2026-09-17", None).expect("seed")
     };
 
     assert!(
@@ -4269,63 +4045,6 @@ fn starting_a_second_countdown_replaces_the_first_rather_than_stacking() {
             .any(|t| t.timer.id == programme),
         "starting a congregation countdown took the preacher's clock with it"
     );
-}
-
-/// THE PREACHER'S OWN CLOCK NEVER REACHES THE CONGREGATION'S WALL.
-///
-/// A `Stage` timer is the programme, and the programme is not something a
-/// congregation is shown: "Sermon · 4:12 left" on the wall behind a preacher is the
-/// operator's bookkeeping in front of the whole building. `show_timer` refuses one
-/// in words rather than projecting it into the four `countdown_*` fields, which it
-/// would otherwise fit perfectly — and fitting perfectly is exactly why this needs a
-/// test rather than a comment.
-#[test]
-fn a_programme_timer_cannot_be_put_on_a_congregation_screen() {
-    let app = app();
-    let h = app.handle().clone();
-    let wall = Wall::watch(&h);
-
-    let programme = start_timer(
-        h.clone(),
-        20.0,
-        "Sermon".into(),
-        "Wrap up".into(),
-        "stage".into(),
-        None,
-        None,
-        None,
-    )
-    .expect("a programme timer");
-    settle();
-    assert_eq!(
-        wall.count(),
-        0,
-        "starting a timer painted a screen by itself"
-    );
-
-    let err = show_timer(h.clone(), h.state::<Db>(), programme, None)
-        .expect_err("a stage timer has no congregation wire form");
-    assert!(
-        err.to_string().contains("stage monitor"),
-        "the refusal has to be readable in a booth: {err}"
-    );
-    settle();
-    assert_eq!(wall.count(), 0, "a refused put-back reached a screen");
-
-    // And an unknown scope is refused rather than guessed at — guessing `both` puts
-    // a programme timer in front of a congregation, which is the one mistake here
-    // that cannot be taken back quietly.
-    start_timer(
-        h.clone(),
-        5.0,
-        "".into(),
-        "".into(),
-        "monitor".into(),
-        None,
-        None,
-        None,
-    )
-    .expect_err("there are two scopes and that is not one of them");
 }
 
 /// A CLEAR TAKES THE CONGREGATION TIMER AND LEAVES THE PROGRAMME TIMER.
@@ -4464,7 +4183,7 @@ fn a_programme_timer_published_during_a_rehearsal_reaches_no_stage_tablet() {
 /// **The assertion surface is the claim**, for the same reason as the rehearsal
 /// test above: `publish_timers` emits no Tauri event, so `qa::Wall` cannot see
 /// this at all and a test written against it would pass over the defect. The
-/// measured defect (`audits/DESIGN-2026-09-16-WAVE3.md` §6) is two separate
+/// measured defect (`audits/DESIGN.md` §6) is two separate
 /// failures and both are asserted here — the registry kept `Rehearsal only`, and
 /// the exit published `clear` and `stage_next` and NO `timer` frame, so the
 /// tablet's set and the registry disagreed silently until something unrelated
@@ -4809,6 +4528,60 @@ fn a_fire_that_names_no_screen_reaches_every_screen() {
     );
 }
 
+/// AND THE SAME QUESTION ASKED OF THE OTHER TWO CUE KINDS, WHICH ANSWERED WRONG.
+///
+/// The Planner's `Screens` row is not gated by cue type, so it renders for all
+/// five kinds. Scripture, song and announce passed the set through; **media and
+/// countdown did not**, because `fire_media` and `start_countdown` never took the
+/// argument at all and `OutputContent.channels` was left `None` by
+/// `..Default::default()`. An operator ticked one screen of three, read "Other
+/// screens keep what they are showing", and all three got it.
+///
+/// This is the fourth time in this repository that a guarantee has been kept on
+/// some doors and not on its twin, which is why the test names the KIND rather
+/// than the command: a sixth cue kind added next year fails here.
+#[test]
+fn a_media_cue_that_names_a_screen_carries_it_to_the_wire() {
+    let app = app();
+    let h = app.handle().clone();
+    let mut kiosk = qa::Kiosk::attach(&h);
+    let pic = seed_picture(&h);
+
+    fire_media(h.clone(), h.state::<Db>(), pic, None, Some(vec![4])).expect("fire the picture");
+    settle();
+
+    let frame = kiosk.next().expect("the fire reached no screen at all");
+    let v: serde_json::Value = serde_json::from_str(&frame).expect("valid JSON");
+    assert_eq!(v["kind"], "content");
+    assert_eq!(
+        v["channels"],
+        serde_json::json!([4]),
+        "a media cue's screen set was dropped between the command and the wire: {frame}"
+    );
+}
+
+/// AND A MEDIA CUE THAT NAMES NONE STILL REACHES EVERY SCREEN.
+///
+/// The half that must not regress. `None` is every screen and `[]` is no screen,
+/// and every media cue written before targeting existed carries neither.
+#[test]
+fn a_media_cue_that_names_no_screen_reaches_every_screen() {
+    let app = app();
+    let h = app.handle().clone();
+    let mut kiosk = qa::Kiosk::attach(&h);
+    let pic = seed_picture(&h);
+
+    fire_media(h.clone(), h.state::<Db>(), pic, None, None).expect("fire the picture");
+    settle();
+
+    let frame = kiosk.next().expect("the fire reached no screen at all");
+    let v: serde_json::Value = serde_json::from_str(&frame).expect("valid JSON");
+    assert!(
+        v["channels"].is_null(),
+        "an untargeted media cue carried a screen set: {frame}"
+    );
+}
+
 /// A CONGREGATION TIMER IS NOT THE PROGRAMME, AND THE STAGE FRAME SAYS SO.
 ///
 /// The two scopes share a registry and a wire vocabulary, which is precisely why
@@ -4921,6 +4694,192 @@ fn a_blackout_answers_the_same_way_as_a_clear() {
     );
 }
 
+/// THE CONSOLE IS TOLD WHAT EVERY SCREEN WAS TOLD — RG-260.
+///
+/// The operator: *"what's on screen is different from what's on the console...
+/// when the replay button is clicked, only the operator's screen replays... I
+/// want the media to work using just one control for all screens or output"*.
+///
+/// **The divergence was structural, not a race.** `set_media_transport` built the
+/// frame, published it to every screen, and returned `()`. The console then
+/// rebuilt its own copy out of the arguments it had passed in — `{paused, loop,
+/// volume}` and nothing else — so the console's preview was handed an object
+/// with no `replay_epoch` and no `seek_epoch`, and `applyMediaTransport` acts on
+/// a replay or a scrub ONLY when it sees an epoch it has not seen. Two shapes for
+/// one instruction, and only one of them complete.
+///
+/// So the command hands the frame back. **It still says nothing about whether a
+/// screen obeyed** — that distinction is the reason the old doc comment refused a
+/// return value, and it survives: a frame is the INSTRUCTION, the beat is the
+/// outcome, and Live still reads the effect from `MediaBeat`. What changes is
+/// that the console stops guessing at the instruction it just gave.
+#[test]
+fn the_transport_command_hands_back_the_frame_it_published() {
+    let app = app();
+    let h = app.handle().clone();
+    let mut kiosk = qa::Kiosk::attach(&h);
+
+    let first = set_media_transport(
+        h.clone(),
+        h.state::<channels::MediaTransport>(),
+        None,
+        None,
+        Some(true),
+        None,
+        None,
+    )
+    .expect("replay");
+    settle();
+
+    // THE FRAME THE CONSOLE IS HANDED AND THE FRAME THE SCREENS RECEIVED ARE THE
+    // SAME FRAME. Asserted field by field against the published JSON rather than
+    // against the struct, because the wire is what a screen actually acts on and
+    // a serialiser that dropped a field would satisfy any assertion made against
+    // the struct alone.
+    let mut published = None;
+    while let Some(m) = kiosk.next() {
+        if m.contains(r#""kind":"media_transport""#) {
+            published = Some(m);
+        }
+    }
+    let wire: serde_json::Value =
+        serde_json::from_str(&published.expect("nothing reached the screens")).expect("valid JSON");
+    assert_eq!(
+        wire["replay_epoch"].as_u64(),
+        Some(first.replay_epoch),
+        "the console was handed a different replay epoch from the screens"
+    );
+    assert!(
+        first.replay_epoch > 0,
+        "a replay that bumped no counter cannot reach a screen at all"
+    );
+    assert!(!first.paused, "replay means the clip is running");
+
+    // AND A SCRUB CARRIES ITS BASELINE. Without `started_at` the corrector on
+    // every page drags the clip back to where the fire implied within two
+    // seconds — the operator moves the handle, the picture jumps back, and the
+    // product looks broken. The console needs it for exactly the same reason:
+    // its preview runs the same corrector.
+    let scrubbed = set_media_transport(
+        h.clone(),
+        h.state::<channels::MediaTransport>(),
+        None,
+        None,
+        None,
+        Some(42_000),
+        None,
+    )
+    .expect("scrub");
+    assert_eq!(scrubbed.seek_ms, 42_000);
+    assert!(
+        scrubbed.seek_epoch > first.seek_epoch,
+        "a scrub that bumped no counter is a frame a screen has already seen"
+    );
+    assert!(
+        scrubbed.started_at.is_some(),
+        "the scrub carried no baseline, so every screen will undo it"
+    );
+    assert_eq!(
+        scrubbed.replay_epoch, first.replay_epoch,
+        "a scrub moved the replay counter, which would restart every clip"
+    );
+}
+
+/// THE DESK SETS A SECOND CLOCK AND THE RAIL CARRIES ONE — RG-250, END TO END.
+///
+/// `timers::tests` proves the registry rule and the stage page's own suites prove
+/// the render. Neither drives the DOOR: `start_timer` is what the dock, the timer
+/// desk, a plan cue and a room all call, and until this test existed the claim
+/// "an operator sets a second timer and the first one goes" was assembled from
+/// two halves that had never been run together.
+///
+/// It asserts on the FRAME rather than the registry, because the frame is what a
+/// preacher's screen is painted from — a registry that is right and a frame that
+/// is stale is exactly the failure rule 35 keeps finding.
+#[test]
+fn a_second_stage_timer_set_from_the_desk_leaves_one_clock_on_the_rail() {
+    let app = app();
+    let h = app.handle().clone();
+    let mut kiosk = qa::Kiosk::attach(&h);
+
+    start_timer(
+        h.clone(),
+        25.0,
+        "Sermon".into(),
+        String::new(),
+        "stage".into(),
+        None,
+        None,
+        None,
+    )
+    .expect("the first programme timer");
+    settle();
+
+    let congregation = start_timer(
+        h.clone(),
+        5.0,
+        "Service begins in".into(),
+        "Welcome".into(),
+        "both".into(),
+        None,
+        None,
+        None,
+    )
+    .expect("a congregation countdown");
+
+    let second = start_timer(
+        h.clone(),
+        2.0,
+        "Notices".into(),
+        String::new(),
+        "stage".into(),
+        None,
+        None,
+        None,
+    )
+    .expect("a second programme timer");
+    settle();
+
+    // THE LAST FRAME IS WHAT THE SCREEN IS HOLDING. An earlier one carrying two
+    // rows would be a rail that flickered rather than a rail that is wrong, and
+    // the assertion has to be about the state it settles in.
+    let mut frames = Vec::new();
+    while let Some(m) = kiosk.next() {
+        if m.contains(r#""kind":"timer""#) {
+            frames.push(m);
+        }
+    }
+    let last = frames
+        .last()
+        .expect("setting a timer told the stage tablet nothing");
+    let v: serde_json::Value = serde_json::from_str(last).expect("valid JSON");
+    let rows = v["timers"].as_array().expect("a timers array");
+    assert_eq!(
+        rows.len(),
+        1,
+        "the preacher's rail is carrying more than one clock: {last}"
+    );
+    assert_eq!(
+        rows[0]["id"].as_i64(),
+        Some(second),
+        "the rail kept the clock the operator replaced: {last}"
+    );
+    assert_eq!(rows[0]["label"].as_str(), Some("Notices"));
+
+    // AND THE CONGREGATION'S COUNTDOWN IS UNTOUCHED. It is not on this frame at
+    // all — the stage frame is `Scope::Stage` only — so the registry is where
+    // that half is read.
+    let ids: Vec<i64> = list_timers(h.clone())
+        .expect("list")
+        .iter()
+        .map(|t| t.timer.id)
+        .collect();
+    assert!(
+        ids.contains(&congregation),
+        "setting a stage clock took the congregation's countdown: {ids:?}"
+    );
+}
+
 /// ENDING THE SERVICE TAKES THE PROGRAMME CLOCKS, AND LEAVES THE CONGREGATION'S.
 ///
 /// `TimerRegistry` never reaps, and until this landed nothing ever stopped a
@@ -4966,17 +4925,12 @@ fn ending_a_service_takes_the_programme_clocks_off_the_preachers_rail() {
         None,
     )
     .expect("a programme timer");
-    let notices = start_timer(
-        h.clone(),
-        2.0,
-        "Notices".into(),
-        String::new(),
-        "stage".into(),
-        None,
-        Some(8),
-        None,
-    )
-    .expect("a second programme timer");
+    // ONE STAGE CLOCK, BECAUSE THERE CAN ONLY BE ONE (RG-250). This started a
+    // second programme timer, `Notices`, and asserted that ending the service
+    // took both. A new stage timer now replaces the one that was running, so the
+    // second start would take `Sermon` before `end_service` was ever called and
+    // the assertion below would pass over a clock nothing had ended. A test that
+    // cannot fail is the thing rule 34's neighbours keep warning about.
     let wall_clock = start_timer(
         h.clone(),
         5.0,
@@ -4989,7 +4943,7 @@ fn ending_a_service_takes_the_programme_clocks_off_the_preachers_rail() {
     )
     .expect("a congregation countdown");
     settle();
-    assert_eq!(list_timers(h.clone()).expect("list").len(), 3);
+    assert_eq!(list_timers(h.clone()).expect("list").len(), 2);
 
     let mut kiosk = qa::Kiosk::attach(&h);
     end_service(
@@ -5006,8 +4960,8 @@ fn ending_a_service_takes_the_programme_clocks_off_the_preachers_rail() {
         .map(|t| t.timer.id)
         .collect();
     assert!(
-        !left.contains(&sermon) && !left.contains(&notices),
-        "a finished service left its programme clocks running on the preacher's \
+        !left.contains(&sermon),
+        "a finished service left its programme clock running on the preacher's \
          screen: {left:?}"
     );
     assert!(
@@ -5499,94 +5453,958 @@ fn r4_a_panic_control_takes_every_screen_whatever_look_it_was_wearing() {
         );
     }
 }
-/// A REFUSAL MAY NOT HAND AN OPERATOR AN INSTRUCTION THAT WILL NOT WORK.
-///
-/// `timer_refusal`'s `TooShort` sentence read *"A countdown needs a second or more
-/// left. Clear the screens to take it down."* over BOTH scopes. On a `Stage` timer
-/// every clause of it is false: it is not a countdown, it is on no screen, and
-/// `Clear screens` takes congregation timers only (DECISIONS §27) — so an operator
-/// mid-service is told to press a panic control that will do nothing about the thing
-/// they are looking at. One reassuring sentence over two different situations is
-/// rule 35, and a sentence is as much a readout as a badge is.
-///
-/// Both halves are asserted, because the two ways to be wrong here are opposite:
-/// a Stage Timer told to clear the screens, and a congregation countdown that stops
-/// being told to. DECISIONS §99.
+/// FIELD 2026-09-20 · service 24 · 23.5 min. Psalms 55 on the wall by hand; the
+/// preacher quotes Hosea 6:1 with the book misheard. **Psalms 55:1 auto-fired at
+/// 0.88.** Through the real path: the bare verse is OFFERED as `uncertain_book`,
+/// the wall is left alone, and the operator decides. RG-32's "wants a second
+/// Sunday" got its second Sunday.
 #[test]
-fn a_refused_stage_timer_is_not_told_to_clear_the_screens() {
+fn a_verse_answered_from_memory_is_offered_never_fired() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+    let offered: std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = offered.clone();
+    h.listen("detection://match", move |e| {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(e.payload()) {
+            sink.lock().unwrap().push(v);
+        }
+    });
+
+    manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "Psalms 55:22".into(),
+        None,
+        None,
+        None,
+    )
+    .expect("the operator's own fire");
+    settle();
+    assert_eq!(wall.references(), vec!["Psalms 55:22".to_string()]);
+
+    emit_detections(
+        &h,
+        "Out of a prophet called Osir. In verse 1 he says, Come and let us return unto the Lord.",
+        0,
+        true,
+        None,
+    );
+    settle();
+
+    assert_eq!(
+        wall.references(),
+        vec!["Psalms 55:22".to_string()],
+        "a verse nobody said the book of reached the congregation unattended: {:?}",
+        wall.last().map(|v| v["reference"].clone())
+    );
+    let got = offered.lock().unwrap();
+    let psalm = got
+        .iter()
+        .find(|v| v["reference"] == "Psalms 55:1")
+        .unwrap_or_else(|| panic!("Psalms 55:1 was not even offered: {got:?}"));
+    assert_eq!(
+        psalm["method"], "uncertain_book",
+        "the offer must say the book came from memory, not from the preacher"
+    );
+    assert_eq!(psalm["status"], "suggested");
+}
+
+/// A RELAUNCH BRINGS THE CLOCKS BACK, AND PUTS NONE OF THEM ON A WALL — F28, DECISIONS §112.
+///
+/// The registry was in memory and nothing else. Here a stage clock and a
+/// congregation countdown are saved the way the sink saves them, the process
+/// "relaunches" (a fresh `app()` over the same rows), and `restore_timers` runs
+/// as `setup` runs it. The stage tablet is told, because a programme clock reaches
+/// it without a content frame; the congregation screens receive NOTHING, because
+/// restoring is not re-airing — the countdown is in the registry for Put back.
+/// Watched to fail with `publish_timers` removed from `restore_timers` (the stage
+/// half) and with a `broadcast_content` added to it (the wall half).
+#[test]
+fn a_relaunch_brings_the_clocks_back_without_putting_one_on_a_wall() {
+    let app = app();
+    let h = app.handle().clone();
+    let now = 1_700_000_000_000;
+    let stage = timers::Timer {
+        id: 3,
+        label: "Sermon".into(),
+        done_msg: String::new(),
+        target_ms: now + 1_200_000,
+        from_ms: now - 600_000,
+        paused_ms: None,
+        warn_ms: Some(300_000),
+        scope: timers::Scope::Stage,
+        configured_ms: 1_800_000,
+        until_ms: None,
+        plan_item_id: None,
+        started_in_rehearsal: false,
+        channels: None,
+    };
+    let wall_clock = timers::Timer {
+        id: 5,
+        scope: timers::Scope::Both,
+        label: "Service starts in".into(),
+        ..stage.clone()
+    };
+    {
+        let db = h.state::<Db>();
+        let conn = db.0.lock().unwrap();
+        db::save_timers(&conn, 5, &[stage.clone(), wall_clock.clone()]).unwrap();
+    }
+    let wall = Wall::watch(&h);
+    let mut kiosk = qa::Kiosk::attach(&h);
+
+    let n = restore_timers(&h, now);
+    settle();
+
+    assert_eq!(n, 2);
+    let reg = h.state::<timers::TimerRegistry>();
+    assert_eq!(reg.get(3), Some(stage));
+    assert_eq!(reg.get(5), Some(wall_clock));
+    assert_eq!(
+        reg.start(timers::Timer {
+            id: 0,
+            ..reg.get(3).unwrap()
+        }),
+        6,
+        "ids resume above the restored ones"
+    );
+
+    // The stage was told, with the stage clock and only the stage clock.
+    let frames = kiosk.drain();
+    let timer_frames: Vec<&String> = frames.iter().filter(|f| f.contains("\"timers\"")).collect();
+    assert!(
+        !timer_frames.is_empty(),
+        "the stage tablet must learn its clock on relaunch: {frames:?}"
+    );
+    assert!(timer_frames[0].contains("\"Sermon\""));
+    assert!(
+        !timer_frames[0].contains("Service starts in"),
+        "a congregation countdown is not a stage frame"
+    );
+    // And no content frame left by either door.
+    assert!(
+        frames.iter().all(|f| !f.contains("content_kind")),
+        "restoring put content on the kiosk: {frames:?}"
+    );
+    assert_eq!(wall.count(), 0, "restoring put content on the wall");
+}
+
+/// A CLEAN EXIT TAKES THE CLOCK A RELAUNCH WOULD PAINT BY ITSELF — RG-269.
+///
+/// The operator: *"When Application close clear all active timer running or if
+/// not its running it should display on the right output...stage"*.
+///
+/// The test above is the promise (§112) and this one is its edge. `restore_timers`
+/// publishes to the stage unconditionally, so a running stage clock left in the
+/// registry at quitting time came back on a preacher's screen at the next launch,
+/// counting from a moment that had passed, with nobody having asked for it. A
+/// congregation countdown never had that problem: it comes back to the DESK and
+/// waits behind **Put back on screens**, which is why it is deliberately left
+/// alone here and the assertions below say so.
+///
+/// Three things are asserted, and the middle one is the load-bearing one: the
+/// SAVED ROWS no longer carry the running clock. Stopping it only in memory would
+/// look identical on this side of the exit and be worth nothing on the other,
+/// because the sink writes on a thread of its own and a process that is quitting
+/// does not wait for it.
+///
+/// Watched to fail with the exit hook not called: the stage clock is still in the
+/// registry, still in the saved rows, and no frame goes to the tablet.
+#[test]
+fn a_clean_exit_stops_the_running_stage_clock_and_leaves_the_rest() {
+    let app = app();
+    let h = app.handle().clone();
+    let now = 1_700_000_000_000;
+    let running = timers::Timer {
+        id: 3,
+        label: "Sermon".into(),
+        done_msg: String::new(),
+        target_ms: now + 1_200_000,
+        from_ms: now - 600_000,
+        paused_ms: None,
+        warn_ms: Some(300_000),
+        scope: timers::Scope::Stage,
+        configured_ms: 1_800_000,
+        until_ms: None,
+        plan_item_id: None,
+        started_in_rehearsal: false,
+        channels: None,
+    };
+    let held = timers::Timer {
+        id: 4,
+        label: "Notices".into(),
+        paused_ms: Some(now + 300_000),
+        ..running.clone()
+    };
+    let wall_clock = timers::Timer {
+        id: 5,
+        scope: timers::Scope::Both,
+        label: "Service starts in".into(),
+        ..running.clone()
+    };
+    {
+        let db = h.state::<Db>();
+        let conn = db.0.lock().unwrap();
+        db::save_timers(&conn, 5, &[running, held, wall_clock]).unwrap();
+    }
+    assert_eq!(restore_timers(&h, now), 3);
+    let wall = Wall::watch(&h);
+    let mut kiosk = qa::Kiosk::attach(&h);
+    settle();
+    kiosk.drain();
+
+    let n = stop_clocks_a_relaunch_would_paint(&h);
+    settle();
+
+    assert_eq!(n, 1, "one running stage clock, and only it");
+    let reg = h.state::<timers::TimerRegistry>();
+    assert!(
+        reg.get(3).is_none(),
+        "the sermon clock survived the quit and comes back counting"
+    );
+    assert!(
+        reg.get(4).is_some(),
+        "a HELD clock was taken — it was not running, and its figure is the one somebody parked"
+    );
+    assert!(
+        reg.get(5).is_some(),
+        "the congregation countdown was taken; DECISIONS §112 brings it back to the desk, never to a wall"
+    );
+
+    // THE HALF THAT SURVIVES THE PROCESS. The sink writes on its own thread and a
+    // quitting process does not wait for it, so the exit hook writes here.
+    let (next_id, rows) = {
+        let db = h.state::<Db>();
+        let conn = db.0.lock().unwrap();
+        db::load_timers(&conn).unwrap()
+    };
+    assert_eq!(
+        rows.iter().map(|t| t.id).collect::<Vec<_>>(),
+        vec![4, 5],
+        "the saved rows still carry the running clock — the next launch paints it"
+    );
+    assert_eq!(next_id, 5, "an id may never be handed out twice");
+
+    // AND THE STAGE IS TOLD. A browser source on another machine outlives Relay's
+    // own window; without this it keeps rendering the last frame it was sent, so
+    // the clock stays on the preacher's screen after Relay has gone.
+    let frames = kiosk.drain();
+    let timer_frames: Vec<&String> = frames.iter().filter(|f| f.contains("\"timers\"")).collect();
+    assert!(
+        !timer_frames.is_empty(),
+        "the stage was not told its clock had stopped: {frames:?}"
+    );
+    assert!(
+        !timer_frames.last().unwrap().contains("\"Sermon\""),
+        "the stage was told, and the stopped clock was still in the frame: {timer_frames:?}"
+    );
+    assert!(
+        frames.iter().all(|f| !f.contains("content_kind")),
+        "quitting put content on a screen: {frames:?}"
+    );
+    assert_eq!(wall.count(), 0, "quitting put content on the wall");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FOLLOWING THE READER · WHAT LEAVES THE MACHINE (DECISIONS §118)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// The operator's instruction of 2026-09-23, twice and in writing: *"when a
+// scripture is quoted make sure to fire it to screen as its confirmed"* and
+// *"follow the verse whenever a preacher is reading a bible verse."*
+//
+// `router.rs` proves the gate decides correctly and `detection.rs` proves the
+// evidence is what it says it is. This file answers the only question a
+// congregation experiences: what came out.
+
+/// A PREACHER READING A VERSE ALOUD PUTS IT ON THE WALL.
+///
+/// The positive control, and the whole of what was asked for. Nobody says a
+/// reference here and nobody presses anything — the words are simply Romans 8:28,
+/// in order, as the KJV has them.
+#[test]
+fn a_verse_read_aloud_goes_to_the_wall_with_nobody_pressing_anything() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    emit_detections(
+        &h,
+        "all things work together for good to them that love God to them who are the called according to his purpose",
+        0,
+        true,
+        None,
+    );
+    settle();
+
+    let shown = wall.last().expect("a verse read aloud reached nobody");
+    assert_eq!(shown["reference"], "Romans 8:28");
+}
+
+/// A PHRASE TWO VERSES HOLD IS OFFERED, NEVER FIRED.
+///
+/// Judges 1:12 and Joshua 15:16 are word-for-word identical in the KJV, and this
+/// is not a curiosity: reading 1,500 real verses back through `PhraseIndex`
+/// produced 42 wrong verses at a run of eight words and **every one of them was a
+/// pair like this**, never a longer run found elsewhere. Relay is not mishearing
+/// here, it is choosing — and choosing between two verses is a guess about which,
+/// which is rule 10 and RG-178 one door along.
+#[test]
+fn a_phrase_two_verses_share_word_for_word_is_offered_never_fired() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    emit_detections(
+        &h,
+        "and Caleb said he that smiteth Kirjathsepher and taketh it to him will I give Achsah my daughter to wife",
+        0,
+        true,
+        None,
+    );
+    settle();
+
+    assert_eq!(
+        wall.count(),
+        0,
+        "Relay chose between two identical verses and put {:?} up unattended",
+        wall.last().map(|v| v["reference"].clone())
+    );
+}
+
+/// A SHORT QUOTATION IS STILL ONLY A SUGGESTION. The cap moved for one new
+/// method, not for the class.
+///
+/// *"was a good man and a just"* is SEVEN words of Luke 23:50 and it is the
+/// module's own example of the noise a shorter floor produced — a sentence about
+/// somebody who died, spoken at a funeral. One word below `READING_RUN_WORDS`, so
+/// it may be offered and can never be fired. Chosen deliberately over a run of
+/// four, which would test `MIN_RUN_WORDS` and tell us nothing about the floor
+/// this test is named for.
+#[test]
+fn a_short_quotation_still_asks_before_it_shows() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    emit_detections(
+        &h,
+        "Now our brother was a good man and a just, and he served this church faithfully for many years",
+        0,
+        true,
+        None,
+    );
+    settle();
+
+    assert_eq!(
+        wall.count(),
+        0,
+        "a seven-word accidental quotation reached a congregation: {:?}",
+        wall.last().map(|v| v["reference"].clone())
+    );
+}
+
+/// AND THE CHURCH MAY TURN IT OFF, all the way out to the screens.
+///
+/// A switch that changes a setting and not the behaviour is the "Screens cleared"
+/// lie in a different coat (rule 15), so the test is on what came out rather than
+/// on what was stored.
+#[test]
+fn a_church_that_turns_it_off_gets_a_suggestion_instead() {
     let app = app();
     let h = app.handle().clone();
 
-    let programme = start_timer(
+    set_follow_the_reader(h.clone(), app.state::<Db>(), app.state::<Routing>(), false)
+        .expect("the switch refused");
+
+    let wall = Wall::watch(&h);
+    emit_detections(
+        &h,
+        "all things work together for good to them that love God to them who are the called according to his purpose",
+        0,
+        true,
+        None,
+    );
+    settle();
+    assert_eq!(
+        wall.count(),
+        0,
+        "the switch was off and {:?} still reached a wall",
+        wall.last().map(|v| v["reference"].clone())
+    );
+
+    // Back on, and the same words go up — so the test above is about the switch
+    // and not about the path being broken.
+    set_follow_the_reader(h.clone(), app.state::<Db>(), app.state::<Routing>(), true)
+        .expect("the switch refused");
+    let wall = Wall::watch(&h);
+    emit_detections(
+        &h,
+        "all things work together for good to them that love God to them who are the called according to his purpose",
+        60_000,
+        true,
+        None,
+    );
+    settle();
+    assert_eq!(
+        wall.last().expect("nothing came back with the switch on")["reference"],
+        "Romans 8:28"
+    );
+}
+
+/// THE NAMED REFERENCE WINS WHEN A WINDOW HOLDS BOTH.
+///
+/// One window may put at most ONE verse on a wall (rule 29), and a preacher who
+/// says "Romans 8:28" while reading a different verse aloud has told Relay which
+/// one they mean. Naming it is the words saying, and when the words say, the
+/// words win (rule 40).
+#[test]
+fn a_reference_the_preacher_named_beats_one_they_only_read() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    // TWO THINGS HAD TO BE TRUE BEFORE THIS TEST COULD MEAN ANYTHING, and the
+    // first two attempts had neither.
+    //
+    // (1) The reading must OUTSCORE the reference. Romans 8:38 gives a 21-word
+    // run, which `quoted_confidence` caps at 0.95 against the spoken reference's
+    // 0.88 — so a comparator ranking on "may this fire at all" and then on the
+    // number puts the reading first. A seven-word run never becomes a reading and
+    // the test passed with the comparator broken.
+    //
+    // (2) The reading must be in the SAME BOOK. Rule 40 is applied one step
+    // earlier than this: a book the window names RESTRICTS the phrase index, so a
+    // window saying "Romans" can produce no quotation outside Romans at all. A
+    // cross-book version of this test also passed with the comparator broken, and
+    // it was measuring the anchor rather than the ranking.
+    emit_detections(
+        &h,
+        "our text this morning is Romans chapter eight verse twenty eight but first hear this for I am persuaded that neither death nor life nor angels nor principalities nor powers nor things present nor things to come",
+        0,
+        true,
+        None,
+    );
+    settle();
+
+    assert_eq!(
+        wall.last().expect("nothing reached the wall")["reference"],
+        "Romans 8:28",
+        "the verse the preacher read aloud displaced the one they named"
+    );
+    assert_eq!(wall.count(), 1, "one window put two verses on a wall");
+}
+#[test]
+fn dbg_rank() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+    emit_detections(&h, "our text this morning is Romans chapter eight verse twenty eight but first hear this for I am persuaded that neither death nor life nor angels nor principalities nor powers nor things present nor things to come", 0, true, None);
+    settle();
+    println!("WALL count={} last={:?}", wall.count(), wall.last());
+}
+
+// ── SWITCHING TRANSLATION MUST MOVE THE DETECTORS TOO — RG-300 ──────────────
+//
+// `Semantic` and `Phrases` were built exactly ONCE, in `main.rs`'s `setup`, from
+// `db::all_verses` — which scopes itself to the active translation.
+// `set_active_translation` wrote the setting and stopped there, so after an
+// operator switched from the KJV to the BSB both detectors went on scanning the
+// PREVIOUS translation's corpus until the app was relaunched, while every verse
+// READ was correctly scoped to the new one.
+//
+// The console would then show BSB words under a reference the paraphrase
+// detector found using KJV vocabulary, and nothing on any surface would say the
+// two disagreed — because both halves look exactly as they do when they agree.
+// A wrong-verse risk wearing a settings bug's clothes.
+//
+// THE TEST ASKS THE INDEX, not the setting. Asserting that the command wrote
+// `active_translation` is asserting the half that was never broken.
+#[test]
+fn switching_translation_rebuilds_the_indexes_that_read_it() {
+    let app = qa::bare_app();
+    let h = app.handle().clone();
+
+    // Two translations, and the second one's words are NOT the first's. The text
+    // is deliberately unlike anything in the KJV so a hit can only come from the
+    // new corpus.
+    let (other_id, marker) = {
+        let db = h.state::<Db>();
+        let conn = db.0.lock().expect("db");
+        conn.execute(
+            "INSERT INTO translations (name, abbreviation, language, license_type)
+             VALUES ('Test Version', 'TSTV', 'en', 'public_domain')",
+            [],
+        )
+        .expect("insert translation");
+        let tid = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO verses (translation_id, book, chapter, verse, text)
+             VALUES (?1, 'John', 3, 16, 'zarquon vellichor sonder kenopsia liberosis')",
+            rusqlite::params![tid],
+        )
+        .expect("insert verse");
+        (tid, "zarquon vellichor sonder kenopsia liberosis")
+    };
+
+    // BEFORE: the words are in the database and the index has never seen them.
+    {
+        let sem = h.state::<Semantic>();
+        let idx = sem.0.read().expect("semantic");
+        assert!(
+            idx.top_k_explained(marker, 5).is_empty(),
+            "the index already knew a translation nobody has switched to"
+        );
+    }
+
+    set_active_translation(
         h.clone(),
-        20.0,
-        "Sermon".into(),
-        String::new(),
-        "stage".into(),
-        None,
-        None,
-        None,
+        h.state::<Db>(),
+        h.state::<servicelock::ServiceLock>(),
+        other_id,
     )
-    .expect("a programme timer");
+    .expect("set_active_translation");
 
-    // Below a second, which `timers::adjust` refuses rather than substituting five
-    // minutes for — see `TimerError::TooShort`.
-    let err = adjust_timer(h.clone(), programme, Some(0), None)
-        .expect_err("a re-aim to nothing has to be refused");
-    let said = err.to_string();
+    // AFTER: the detectors are reading the corpus the operator chose.
+    let sem = h.state::<Semantic>();
+    let idx = sem.0.read().expect("semantic");
+    let hits = idx.top_k_explained(marker, 5);
     assert!(
-        said.contains("Stage Timer"),
-        "the refusal does not say which instrument it is about: {said}"
-    );
-    assert!(
-        !said.to_lowercase().contains("clear the screens"),
-        "an operator was told to press a panic control that cannot touch this \
-         timer: {said}"
-    );
-    assert!(
-        said.contains("Stop"),
-        "the refusal names no way out, which is the half that makes it actionable: {said}"
-    );
-    // AND IT IS A SENTENCE, NOT A SOURCE LAYOUT. A Rust string split across lines
-    // with `\` strips the newline and the indentation; one written without it
-    // carries the indentation into what a volunteer reads. This caught exactly that,
-    // once, in the fix this test was written for.
-    assert!(
-        !said.contains("  "),
-        "the refusal carries its own source indentation into the booth: {said:?}"
+        !hits.is_empty(),
+        "the paraphrase detector is still scanning the translation that was \
+         switched away from"
     );
 
-    // AND THE CONGREGATION SENTENCE IS UNMOVED. `Clear screens` genuinely is how a
-    // countdown comes off a wall, and losing that instruction would be this fix
-    // making the other half worse.
-    start_timer(
-        h.clone(),
-        5.0,
-        "Service begins in".into(),
-        "Welcome".into(),
-        "both".into(),
-        None,
-        None,
-        None,
-    )
-    .expect("a congregation timer");
-    let err = adjust_countdown(h.clone(), Some(0), None)
-        .expect_err("the same re-aim, on the other scope");
-    let said = err.to_string();
+    let phrases = h.state::<Phrases>();
+    let pidx = phrases.0.read().expect("phrases");
     assert!(
-        said.contains("Clear the screens"),
-        "the congregation refusal lost the instruction that does work: {said}"
+        !pidx.quoted(marker, None, 5).is_empty(),
+        "the quotation detector is still scanning the old translation"
     );
-    assert!(
-        !said.contains("Stage Timer"),
-        "a congregation countdown was described as the preacher's clock: {said}"
+}
+
+/// **THE PASSAGE GUARD ON THE FIRE PATH** — `detection::hold_for_the_passage`.
+///
+/// Field, service 40 of 2026-09-25, 769 s → 780 s. The preacher announced
+/// *"Jeremiah chapter 6 verse 16"*; Relay auto-fired it `Direct` at 0.95. Eleven
+/// seconds later they read the verse aloud, and **Relay put the same verse on the
+/// congregation's screens a second time.** The same morning did it again with
+/// `Hebrews 6:12` and `Romans 15:4`, and service 39 with `Philippians 1:23` and
+/// `Mark 6:2` — six times across three services, at gaps of 11, 17 and 120 seconds
+/// against a ten-second cooldown.
+///
+/// Driven through the real commands rather than the pure rule, because the rule
+/// depends on a fact only the running app has: what the ROUTER says is on the wall,
+/// which is not `ContextMemory` (that survives a blackout on purpose) and not
+/// `fired_at` (that expires in ten seconds).
+#[test]
+fn a_verse_read_aloud_while_it_is_already_on_the_wall_is_not_fired_again() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+    let held: std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = held.clone();
+    h.listen("detection://held", move |e| {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(e.payload()) {
+            sink.lock().unwrap().push(v);
+        }
+    });
+
+    // 769 s: the reference, spoken.
+    emit_detections(&h, "Jeremiah chapter 6 verse 16.", 769_000, true, None);
+    settle();
+    assert_eq!(
+        wall.references(),
+        vec!["Jeremiah 6:16".to_string()],
+        "the spoken reference must still reach the screens"
     );
 
-    // A timer that is not there at all is neither of these, and its sentence does
-    // not depend on a scope nobody can look up.
-    let err = adjust_timer(h.clone(), 9999, Some(60_000), None).expect_err("no such timer");
+    // 780 s: the same verse, read aloud. Eleven seconds — outside the cooldown.
+    emit_detections(
+        &h,
+        "Stand ye in the ways, and see, and ask for the old paths, where is the good way, \
+         and walk therein, and ye shall find rest for your souls.",
+        780_000,
+        true,
+        None,
+    );
+    settle();
+
+    assert_eq!(
+        wall.references(),
+        vec!["Jeremiah 6:16".to_string()],
+        "the verse already on the screens was broadcast a second time: {:?}",
+        wall.references()
+    );
+    let got = held.lock().unwrap();
+    let report = got
+        .iter()
+        .find(|v| v["held"][0]["reference"] == "Jeremiah 6:16")
+        .unwrap_or_else(|| {
+            panic!("Relay held a candidate and said nothing about it (rule 35): {got:?}")
+        });
+    assert_eq!(
+        report["held"][0]["reason"], "already_on_screen",
+        "the report must say WHICH rule held it"
+    );
+}
+
+/// **AND THE RELEASE, ON THE SAME PATH.** The operator clears the screens, the
+/// preacher carries on reading the verse that was up — it comes straight back.
+///
+/// Without `forget_last_fire` clearing the wall, rule B would go on believing the
+/// verse was on screen and would decline to put it back: a screen held blank by a
+/// guard, which is the defect `forget_last_fire` was written for arriving from a new
+/// direction. Watched to fail with that one line removed.
+#[test]
+fn a_verse_read_on_after_the_operator_cleared_the_screens_comes_back() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    emit_detections(&h, "Jeremiah chapter 6 verse 16.", 1_000, true, None);
+    settle();
+    assert_eq!(wall.references(), vec!["Jeremiah 6:16".to_string()]);
+
+    clear_screens(h.clone()).expect("the panic control must work");
+    settle();
+    assert!(wall.cleared());
+
+    // The preacher is still reading it, 20 s on — past the cooldown, which
+    // `forget_last_fire` has dropped anyway.
+    emit_detections(
+        &h,
+        "Stand ye in the ways, and see, and ask for the old paths, where is the good way, \
+         and walk therein, and ye shall find rest for your souls.",
+        21_000,
+        true,
+        None,
+    );
+    settle();
+    assert_eq!(
+        wall.references(),
+        vec!["Jeremiah 6:16".to_string(), "Jeremiah 6:16".to_string()],
+        "a cleared verse the preacher is still reading must come back"
+    );
+}
+
+/// **AND A SPOKEN REFERENCE STILL CUTS THROUGH A READING** — constraint 1, rule 40.
+///
+/// Psalms 23 is on the screens and being read aloud. The preacher says *"turn to
+/// Romans chapter eight verse twenty-eight"*, and it reaches the congregation in the
+/// same window, with nothing held. A guard that could swallow a spoken reference
+/// would be strictly worse than the churn it fixes.
+#[test]
+fn a_spoken_reference_cuts_through_a_reading() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    emit_detections(&h, "Psalms chapter 23 verse 1.", 1_000, true, None);
+    settle();
+    assert_eq!(wall.references(), vec!["Psalms 23:1".to_string()]);
+
+    emit_detections(
+        &h,
+        "The LORD is my shepherd; I shall not want. Now turn to Romans chapter eight \
+         verse twenty eight.",
+        30_000,
+        true,
+        None,
+    );
+    settle();
+    assert_eq!(
+        wall.references().last().map(String::as_str),
+        Some("Romans 8:28"),
+        "a reference the preacher named must reach the screens whatever is being read: {:?}",
+        wall.references()
+    );
+}
+
+/// **A CITATION THE PREACHER'S OWN WORDS CONTRADICT REACHES NOBODY — RG-305.**
+///
+/// FIELD, service 40, 2026-09-25 at 9831 s. *"Acts 8, 12, I wisdom dwell with
+/// prudence and find out the knowledge of witty inventions."* Those fifteen words
+/// are **Proverbs 8:12**, which this same preacher had cited correctly two hours
+/// earlier; whisper heard `Proverbs` as `Acts`. Relay put **Acts 8:12** on a
+/// congregation's screens at 0.55 `Direct`, unattended.
+///
+/// Nothing about that parse is self-contradictory — Acts 8 exists, verse 12 exists,
+/// the confidence is a real parse confidence — so no threshold and no
+/// impossible-chapter rule could have caught it. The only thing that disagreed was
+/// the quotation, and it was in the same window.
+///
+/// **Three things this asserts, and they are the whole of the decision.** Nothing
+/// reaches a wall: not the misheard citation and not the quotation that accused it,
+/// because a run that overrules a spoken reference must not thereby inherit the
+/// wall (rule 10 is applied to one more case and relaxed for none). Both are
+/// OFFERED, so the operator can pick the verse the preacher actually meant. And the
+/// citation says its book is in doubt rather than claiming it was heard.
+///
+/// Watched to fail: with `doubt_from_a_quotation`'s demotions removed it reproduces
+/// `["Acts 8:12"]` on the wall, which is the morning.
+#[test]
+fn a_citation_its_own_window_contradicts_reaches_nobody() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+    let offered: std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = offered.clone();
+    h.listen("detection://match", move |e| {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(e.payload()) {
+            sink.lock().unwrap().push(v);
+        }
+    });
+    let doubts: std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let dsink = doubts.clone();
+    h.listen("detection://held", move |e| {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(e.payload()) {
+            dsink.lock().unwrap().push(v);
+        }
+    });
+
+    emit_detections(
+        &h,
+        "Acts 8, 12, I wisdom dwell with prudence and find out the knowledge of witty inventions.",
+        0,
+        true,
+        None,
+    );
+    settle();
+
     assert!(
-        err.to_string().contains("not running"),
-        "an unknown id must say so plainly: {err}"
+        wall.references().is_empty(),
+        "a disagreement put something on a congregation's screens: {:?}",
+        wall.references()
+    );
+
+    let got = offered.lock().unwrap();
+    let acts = got
+        .iter()
+        .find(|v| v["reference"] == "Acts 8:12")
+        .unwrap_or_else(|| panic!("the misheard citation was not even offered: {got:?}"));
+    assert_eq!(
+        acts["method"], "uncertain_book",
+        "the citation still claimed its book had been heard"
+    );
+    assert_eq!(acts["status"], "suggested");
+    let proverbs = got
+        .iter()
+        .find(|v| v["reference"] == "Proverbs 8:12")
+        .unwrap_or_else(|| {
+            panic!("the verse the preacher was actually reading was never offered: {got:?}")
+        });
+    assert_eq!(
+        proverbs["status"], "suggested",
+        "the accusing run inherited the wall it took from the citation"
+    );
+    // **AND ITS METHOD ON THIS CARD IS `semantic`, WHICH IS NOT THIS RULE'S DOING.**
+    // `Proverbs 8:12` is found twice in this window — as an eight-word verbatim run
+    // and as a paraphrase — and `emit_detections` keeps the `pipeline::better` of the
+    // two for one reference. `unattended_rank` puts `Quoted` and `Semantic` in the
+    // same tier, so the tie falls to `confidence`, and a cosine of 0.72 beats
+    // `quoted_confidence(8)`. That is a PRE-EXISTING gap and it costs the operator the
+    // words (rule 18): the card shows `wisdom · prudence · witty` where it could show
+    // the sentence. It is recorded rather than fixed here because the fix is in
+    // `pipeline::better`, reaches every short quotation in the product, and belongs to
+    // whoever measures it. What this rule owes the operator it pays on the report
+    // below, which carries the run's own words whatever survives the dedup.
+    assert!(
+        matches!(
+            proverbs["method"].as_str(),
+            Some("semantic") | Some("quoted")
+        ),
+        "{proverbs}"
+    );
+
+    // ── AND RELAY SAYS WHAT IT DID (rule 35) ──────────────────────────────────
+    let said = doubts.lock().unwrap();
+    let report = said
+        .last()
+        .unwrap_or_else(|| panic!("nothing was announced: {said:?}"));
+    let list = report["doubted"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the report carried no doubts: {report}"));
+    assert_eq!(list.len(), 2, "{report}");
+    assert_eq!(list[0]["reference"], "Acts 8:12");
+    assert_eq!(list[0]["doubt"], "spoken_book");
+    assert_eq!(list[1]["reference"], "Proverbs 8:12");
+    assert_eq!(list[1]["doubt"], "the_quotation");
+    // THE WORDS, so a person can judge it in the second they have (rule 18).
+    assert!(
+        list[1]["matched_text"]
+            .as_str()
+            .is_some_and(|s| s.contains("wisdom dwell with prudence")),
+        "{report}"
+    );
+}
+
+/// **A CORRECT CITATION BESIDE A READING OF THE NEXT VERSE STILL FIRES — RG-305.**
+///
+/// Watched live on the same day as the eight instances above, and the citation was
+/// RIGHT both times: `John 15:15` read aloud while *"John 15, 14"* was cited one
+/// verse later, and `Hebrews 13:7` cited while he quoted `13:17` from memory —
+/// having interrupted the service earlier to insist on verse 7.
+///
+/// The rule that stops the misheard chapter must not touch these, and the cost of
+/// getting that wrong is a preacher's own reference demoted on the strength of what
+/// he happened to read next. Here through the real commands, the real router and the
+/// real wall, because a pure unit test cannot see the wall.
+#[test]
+fn a_reading_of_the_next_verse_does_not_demote_the_citation() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    emit_detections(
+        &h,
+        "Henceforth I call you not servants, for the servant knoweth not what his lord doeth. \
+         John 15, 14.",
+        0,
+        true,
+        None,
+    );
+    settle();
+    assert!(
+        wall.references().contains(&"John 15:14".to_string()),
+        "the preacher's own reference was demoted because he read the next verse: {:?}",
+        wall.references()
+    );
+}
+
+/// **THE CHURCH'S PARAPHRASE BAR ON THE FIRE PATH** — the setting
+/// `detection.paraphrase_needs_a_run` (DECISIONS §125, RG-311).
+///
+/// Field, service 39 of 2026-09-25 at 64.6 s: the preacher retelling John 15:2, the
+/// decoder producing *"every branch a man that bearer not fruit"* — the verse's own
+/// words with two of them mangled. Relay offered `John 15:2` as a paraphrase and the
+/// operator accepted it, which makes this the one offer in eleven services anybody
+/// can prove was wanted.
+///
+/// Three things are driven end to end here and each is a separate promise:
+///
+///  1. **OFF is what every install runs.** The bar is off on a fresh install, so the
+///     offer arrives exactly as it did on the morning.
+///  2. **ON removes it and SAYS SO.** `detection://held` carries it with
+///     `no_shared_run` — rule 35: a switch that quietly stops offering things is
+///     indistinguishable from a detector that has gone deaf.
+///  3. **NOTHING GAINS OR LOSES A WALL, at either setting.** A paraphrase is capped
+///     at `Suggest` by rule 10 at any score, so this switch can only ever shorten the
+///     operator's own list — and a reference the preacher SPEAKS still fires with the
+///     bar on.
+///
+/// Watched to fail: with `paraphrase_needs_a_run` forced true in
+/// `candidates_for_window`, step 1 fails; with the mask's `Semantic` test removed,
+/// step 3's spoken reference stops reaching the wall.
+#[test]
+fn the_paraphrase_bar_removes_an_offer_only_when_the_church_asked_and_never_a_wall() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+    let offered: std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let held: std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let a = offered.clone();
+    h.listen("detection://match", move |e| {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(e.payload()) {
+            a.lock().unwrap().push(v);
+        }
+    });
+    let b = held.clone();
+    h.listen("detection://held", move |e| {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(e.payload()) {
+            b.lock().unwrap().push(v);
+        }
+    });
+
+    // The preacher's own words, verbatim off the operator's database.
+    const HEARD: &str =
+        "It's every branch responsibility. Every. Every branch a man that bearer not fruit in";
+
+    // ── 1. A FRESH INSTALL IS OFF, and the offer arrives as it did on the morning.
+    assert!(
+        !super::get_paraphrase_needs_a_run(h.clone()).expect("the bridge must answer"),
+        "a fresh install must not have the bar on"
+    );
+    emit_detections(&h, HEARD, 64_000, true, None);
+    settle();
+    {
+        let got = offered.lock().unwrap();
+        let john = got
+            .iter()
+            .find(|v| v["reference"] == "John 15:2")
+            .unwrap_or_else(|| panic!("the offer the operator accepted was not made: {got:?}"));
+        assert_eq!(john["method"], "semantic");
+        assert_eq!(john["status"], "suggested");
+    }
+    assert!(
+        wall.references().is_empty(),
+        "a paraphrase reached a congregation: {:?}",
+        wall.references()
+    );
+    assert!(
+        held.lock().unwrap().is_empty(),
+        "something was held with the bar OFF: {:?}",
+        held.lock().unwrap()
+    );
+
+    // ── 2. THE OPERATOR TURNS IT ON, through the real command.
+    assert!(
+        super::set_paraphrase_needs_a_run(h.clone(), h.state::<Db>(), true)
+            .expect("the operator's own switch must land")
+    );
+    assert!(super::get_paraphrase_needs_a_run(h.clone()).expect("the bridge must answer"));
+    offered.lock().unwrap().clear();
+    // A DIFFERENT SECOND, far outside `DEFAULT_DEBOUNCE_MS`, so "it was held" cannot
+    // be the cooldown wearing the bar's clothes.
+    emit_detections(&h, HEARD, 400_000, true, None);
+    settle();
+    assert!(
+        !offered
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|v| v["reference"] == "John 15:2"),
+        "the bar was on and the paraphrase was still offered: {:?}",
+        offered.lock().unwrap()
+    );
+    {
+        let got = held.lock().unwrap();
+        let report = got
+            .iter()
+            .flat_map(|v| v["held"].as_array().cloned().unwrap_or_default())
+            .find(|c| c["reference"] == "John 15:2")
+            .unwrap_or_else(|| {
+                panic!("Relay held a candidate and said nothing about it (rule 35): {got:?}")
+            });
+        assert_eq!(
+            report["reason"], "no_shared_run",
+            "the report must say WHICH rule held it — this one is a setting the \
+             operator can undo, and the other two are not"
+        );
+        assert_eq!(report["method"], "semantic");
+    }
+
+    // ── 3. AND A REFERENCE THE PREACHER SPOKE STILL REACHES THE SCREENS.
+    emit_detections(
+        &h,
+        "Turn with me to Romans chapter 8 verse 28.",
+        500_000,
+        true,
+        None,
+    );
+    settle();
+    assert_eq!(
+        wall.references(),
+        vec!["Romans 8:28".to_string()],
+        "the paraphrase bar swallowed a spoken reference — it may only ever remove a \
+         paraphrase, and rule 40 says that whatever else happens, when the words say, \
+         the words win"
     );
 }

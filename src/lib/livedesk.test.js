@@ -711,6 +711,40 @@ describe('L2 · the slides head says what it is and what a press does', () => {
   // segment coming back: that changed spacing and type, this changes the width of
   // the picture an operator is reading the words off. `slidesizer.test.js` holds
   // its behaviour, including that it moves the grid track and not `.sg-thumb`.
+  // ── LOAD WHOLE PLAN CAME UP FROM THE DOCK (RG-261) ───────────────────────
+  //
+  // The operator asked for the room the Quick tools head was spending on it:
+  // that card does one job at a time since RG-258 and the picker needs the slot.
+  // It belongs here in any case — it is the one control in the product whose
+  // whole effect is on this grid.
+  //
+  // The four cases that held its behaviour came with it from
+  // `quicktools.test.js`, which now asserts only that the dock does not offer a
+  // second copy. What it does is asserted where it is.
+  it('is offered on the slides head, and NOT inside the view control', async () => {
+    new Live({ target: host, props: {} });
+    await settle();
+    const btn = [...host.querySelectorAll('.sg-head button')].find(
+      (b) => b.textContent.trim() === 'Load whole plan',
+    );
+    expect(btn, 'the button did not arrive with the move').toBeTruthy();
+    // `.view-ctl` is the SIZER plus full screen, and its exact button set is
+    // asserted below. A control that only stages does not belong in it.
+    expect(host.querySelector('.sg-head .view-ctl')?.contains(btn)).toBe(false);
+  });
+
+  it('is disabled, and says why, until the Planner has handed a plan over', async () => {
+    new Live({ target: host, props: {} });
+    await settle();
+    const btn = [...host.querySelectorAll('.sg-head button')].find(
+      (b) => b.textContent.trim() === 'Load whole plan',
+    );
+    // A DISABLED CONTROL OWES A REASON. With nothing chosen it has nothing to
+    // load, and saying so beats looking broken.
+    expect(btn.disabled).toBe(true);
+    expect(btn.getAttribute('title')).toContain('Run in Live');
+  });
+
   it('the full-screen control left the rail and is still reachable', async () => {
     new Live({ target: host, props: {} });
     await settle();

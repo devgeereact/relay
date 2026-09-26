@@ -62,6 +62,7 @@
 // If you add a wrapper, put it in a group deliberately. "It seemed fine" is how a
 // panic key came to do nothing.
 
+import { contentIsExpectedPlanFire } from '../transportmode.js';
 import { writable, derived, get } from 'svelte/store';
 import { parseTemplateOverride } from '../templates.js';
 import { migrateTemplate } from '../templatemodel.js';
@@ -93,7 +94,7 @@ import { setSafeMode, safeMode } from '../boot/boot.js';
  * sidebar and was re-rendering the entire shell dozens of times a second, for
  * data it does not use. Only the Settings meter subscribes here.
  */
-export const meter = writable({ level: 0, isVoice: false });
+export const meter = writable({ level: 0, isVoice: false, peaks: [] });
 
 export const capture = writable({
   available: false, // Tauri backend attached?
@@ -122,7 +123,15 @@ export const capture = writable({
   // from `get_thresholds` on init. Kept in step with Thresholds::default() in
   // router.rs, which IS from_sensitivity(50); it used to say 0.9/0.6, which was
   // the other, contradictory baseline.
-  thresholds: { auto_fire: 0.5, suggest: 0.35 },
+  thresholds: { auto_fire: 0.5, suggest: 0.3 },
+  // THE SAME GATE AS AN OPERATOR READS IT, 0-100 and rising with the dial.
+  //
+  // Derived in Rust (`Thresholds::readiness`) beside the curve it is a question
+  // about, and carried on every door that carries the thresholds — the launch
+  // read, the event, and what confirm/dismiss hand back — so it can never be one
+  // write behind them. `null` until the engine has answered: a `0` here is itself
+  // a setting ("never fire") and would read as one. See gate.js and DECISIONS §117.
+  readiness: null,
   // THE DIAL POSITION, AND WHETHER ANYBODY HAS ACTUALLY ASKED. `sensitivity` is
   // `to_sensitivity(thresholds)` — the one inverse mapping, computed in Rust so
   // the two directions cannot drift — and `sensitivityKnown` is the answer to a
@@ -148,6 +157,14 @@ export const capture = writable({
   // has not drifted, it is simply unread, and claiming otherwise would be
   // inventing the worse of the two facts.
   gateOnDial: true,
+  // IS RELAY FOLLOWING A READER? (DECISIONS §118, the operator's instruction of
+  // 2026-09-23.) The church's one switch over whether a verse Relay heard being
+  // READ goes up by itself. True is the shipped default and what a fresh install
+  // does, so the placeholder is the truth rather than the reassuring answer.
+  followsReader: true,
+  // OFF until the backend says otherwise — the shipped default, so a console that
+  // has not asked yet shows what every install is actually running.
+  paraphraseNeedsRun: false,
 });
 
 // What is currently ON the output screens (last fired content, null = cleared).
@@ -226,15 +243,67 @@ export const transcript = writable({ partial: '', finals: [], finalsAt: [] });
  * Pure on purpose: `at` is passed in rather than read from the clock, so the
  * ordering and alignment can be asserted deterministically.
  */
+/**
+ * THE TIME CODE A TRANSCRIPT LINE CARRIES — RG-263.
+ *
+ * `h:mm:ss` from the position of the audio in the capture, which is what a
+ * recording of the same service shows at the same instant. That is the figure an
+ * operator lines a transcript up against; a wall clock is not, because it says
+ * when a DECODE reached the webview rather than when the words were spoken — up
+ * to eight seconds plus a decode later.
+ *
+ * `TranscriptUpdate.timestamp_ms` has carried this since the module was written
+ * and the console destructured it away: `grep -rn "timestamp_ms" src/` returned
+ * nothing at all before this.
+ *
+ * HOURS, always, because services run past one — the export's own `fmt_secs`
+ * prints `93:31` for ninety-three minutes, a figure that reads as ninety-three
+ * seconds to anybody who has not been told otherwise.
+ *
+ * An absent or unusable position yields `''` rather than `0:00:00`: a line with
+ * no time code is from an older build or a path that never carried one, and a
+ * zero would place it at the start of the service.
+ */
+export function stampOf(ms) {
+  if (!Number.isFinite(ms) || ms < 0) return '';
+  const s = Math.floor(ms / 1000);
+  const hh = Math.floor(s / 3600);
+  const mm = Math.floor((s % 3600) / 60);
+  const ss = s % 60;
+  return `${hh}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
+}
+
 export function applyTranscript(t, { text, is_final }, at) {
   if (!is_final) return { ...t, partial: text };
   return {
     partial: '',
-    finals: [...t.finals, text].slice(-MAX_FINALS),
+    // EVERY CLOSED LINE OF THE SESSION IS KEPT. There is no cap, and there is
+    // no `.slice(-N)` here any more.
+    //
+    // It was 12, briefly 240, and the operator's instruction of 2026-09-20 is
+    // plainer than either: *"I want all transcript to be kept, not just what you
+    // hear before another minute ... keep all, starting from different seconds
+    // and minute and hour."* Each line carries its own wall-clock stamp in
+    // `finalsAt`, so the history reads back by hour, minute and second with
+    // nothing further needed.
+    //
+    // WHY THIS IS SAFE UNBOUNDED, measured rather than assumed: the service of
+    // 2026-09-20 closed 147 utterances over 5611 seconds and 816 rows across the
+    // whole session, under 200 kB of text. The cap existed to protect a surface
+    // that updates several times a minute, and the real cost was never the array
+    // — it was the RENDER, because a keyed `{#each}` lays out every row it is
+    // given. `Dock.svelte`'s `TR_LINES` caps what is PAINTED and grows as the
+    // operator scrolls, so the store holds the service and the card still lays
+    // out a screenful.
+    //
+    // The record is the backend's regardless: `persist_transcript` writes every
+    // final line to `transcripts`, which is what History reads back. This is the
+    // console's working memory for one session, not the archive.
+    finals: [...t.finals, text],
     // `?? []` because a session restored from an older build has no `finalsAt`,
     // and a missing timestamp must degrade to an unlabelled line, never to a crash
     // on the surface an operator is watching to decide whether Relay has gone deaf.
-    finalsAt: [...(t.finalsAt ?? []), at].slice(-MAX_FINALS),
+    finalsAt: [...(t.finalsAt ?? []), at],
   };
 }
 
@@ -274,6 +343,50 @@ export const detections = writable([]);
  * person decide it" is asking about the last few seconds either way.
  */
 export const resolvedDetections = writable([]);
+
+/**
+ * WHAT THE PASSAGE GUARD IS HOLDING BACK, RIGHT NOW — `detection://held`.
+ *
+ * Rule 35, and this store is the whole of why the backend emits that event at
+ * all. While a preacher reads a passage aloud, Relay stops offering verses from
+ * outside it and stops re-firing the verse the screens are already showing
+ * (the passage guard, 2026-09-25). **Doing that silently would be indistinguishable from
+ * detection having gone deaf**, which is the one thing an operator watching a
+ * quiet suggestion list cannot tell from the outside.
+ *
+ * `null` = nothing is being held. Otherwise:
+ *
+ *   `{ passage, reading, held: [{ reference, method, matched_text, reason }] }`
+ *
+ *   `passage`  the book and chapter Relay believes is being read ("Psalms 107"),
+ *              or null when only the already-on-screen rule fired — that one
+ *              needs no passage, because the wall itself is the evidence.
+ *   `reading`  the phrase, verbatim in that passage, that says so. The evidence,
+ *              not a number (rule 18).
+ *   `reason`   `'already_on_screen'`, `'outside_the_reading'` or `'no_shared_run'`.
+ *              Three rules doing very different things, and "3 held" is
+ *              unactionable without knowing which. The third is the church's own
+ *              paraphrase bar (DECISIONS §125) — the only one of the three that is
+ *              a SETTING rather than a rule, so the only one the operator can undo,
+ *              which is exactly why it must be told apart from the other two.
+ *              `detect.js::describeHold` is the one place this becomes words.
+ *
+ * It is replaced, never accumulated: the question is what is being held NOW, and
+ * a growing log of holds would be a second churning list — which is the thing the
+ * guard exists to stop.
+ */
+export const passageHold = writable(null);
+
+/**
+ * How long a hold stays on screen with nothing refreshing it.
+ *
+ * A hold is a fact about the window Relay just heard, so it expires: a reading
+ * that ended leaves no event behind saying so, and a line reading "holding 3"
+ * over a preacher who stopped reading a minute ago is the stale-status failure in
+ * miniature. Shorter than `SUGGESTION_TTL_MS` because a hold is not actionable
+ * and a suggestion is.
+ */
+export const HOLD_TTL_MS = 20_000;
 
 /** How many receipts are kept. Small: this is the last few, not a history. */
 export const MAX_RESOLVED = 4;
@@ -386,6 +499,25 @@ function leavePlan() {
   liveCue.update((c) => (c.onAir ? { ...c, onAir: false } : c));
 }
 
+/**
+ * THE PLAN FIRE THE CONSOLE IS ABOUT TO MAKE (P-1, 2026-09-21).
+ *
+ * An unattended fire — the AI, the phone, spoken nav — reaches this console only
+ * as `output://content`, and until this date that listener left `liveCue.onAir`
+ * alone. A detected verse painted over a song cue and the bar went on saying
+ * SLIDE, so the next `→` fired the next plan slide over the reading.
+ *
+ * The listener cannot simply always leave the plan: a plan fire raises the same
+ * event, and Tauri may deliver it AFTER the command's promise resolves — after
+ * `fireSlide` has marked the cue on air. So a plan fire says what it expects
+ * first, and the listener leaves the plan only for scripture it was not told
+ * about. One slot, last writer wins, which is right: there is one wall.
+ */
+let expectedPlanFire = null;
+function expectPlanFire(reference) {
+  expectedPlanFire = reference ? { reference } : null;
+}
+
 // Narrow slices of `capture`. A component that only needs one flag should
 // subscribe to one flag — `derived` only notifies when the value it selects
 // actually changes, so the app shell no longer re-renders because a device list
@@ -459,7 +591,6 @@ export const liveTemplateOverride = derived([live, templates], ([$l, $tpls]) =>
  *  resolution the real output window uses, so the console program pane matches. */
 export const liveTemplatePinned = derived(live, ($l) => !!$l?.template_pinned);
 
-const MAX_FINALS = 12;
 const MAX_DETECTIONS = 6;
 
 /**
@@ -486,6 +617,8 @@ export function pruneStaleSuggestions(list, now) {
 let unlistenAudio = null;
 let unlistenStt = null;
 let unlistenDetect = null;
+let unlistenHeld = null;
+let holdTimer = null;
 let outputListenersUp = false; // always-on output mirror (set once)
 
 /**
@@ -541,6 +674,17 @@ export async function ping() {
 /** Probe the backend, load devices + STT status. Safe to call on mount.
  *  Resilient: as long as the Tauri bridge is present, `available` is true —
  *  a single failing command (or the event listeners) never disables the app. */
+/** Is a `listening` recovery notice up? (RG-291.)
+ *
+ * DECLARED HERE, ABOVE `initAudio`, and that placement is the fix rather than a
+ * tidy-up: `let` is not initialised until its own line runs, and `initAudio`
+ * attaches the recovery listener during module evaluation. Declared beside the
+ * chunk handler that reads it — a thousand lines further down, which is where it
+ * reads best — the listener threw `recoveryNotice is not defined` the first time
+ * a microphone was lost, on the one path an operator needs when a cable goes.
+ */
+let recoveryNotice = false;
+
 export async function initAudio() {
   let call;
   try {
@@ -550,7 +694,7 @@ export async function initAudio() {
     return;
   }
   // Backend is attached. Load status pieces independently.
-  const [devices, stt, gate, detectionOn, storedDevice] = await Promise.all([
+  const [devices, stt, gate, detectionOn, followsReader, needsRun, storedDevice] = await Promise.all([
     call('list_audio_devices').catch(() => []),
     call('stt_status').catch(() => ({ loaded: false, model: null, language: null })),
     // THE WHOLE READ-OUT, NOT ONLY THE TWO NUMBERS, and it has to be read here
@@ -563,11 +707,42 @@ export async function initAudio() {
     // and `sensitivityKnown` stays false so nothing mistakes it for a reading.
     call('get_thresholds').catch(() => null),
     call('get_detection_enabled').catch(() => true),
+    // FOLLOW THE READER (DECISIONS §118). Read from the ROUTER, which is what
+    // decides, rather than from the row — and defaulted to ON on a failure,
+    // because ON is what the operator asked for and a surface claiming the
+    // feature is off over an engine that is following a reader is the worse of
+    // the two wrong answers.
+    call('get_follow_the_reader').catch(() => true),
+    // THE PARAPHRASE BAR (DECISIONS §125, RG-311). Read from the state the
+    // detection path reads, and defaulted to FALSE on a failure — the mirror of the
+    // line above, inverted because the DEFAULT is inverted: a surface claiming the
+    // bar is on over a detector that is not applying it would promise a quiet list
+    // and deliver the firehose, and a surface claiming it is off is at worst
+    // surprising in the direction of MORE suggestions, which is what the operator
+    // already has.
+    call('get_paraphrase_needs_a_run').catch(() => false),
     // RG-121. Every launch used to start on the system default, whatever was
     // selected last time, and nothing said so.
     call('get_setting', { key: INPUT_DEVICE_KEY }).catch(() => null),
   ]);
-  const chosen = chooseInputDevice({ stored: storedDevice, devices });
+  // A RESOLVED NULL IS NOT A REJECTION (RG-267). `.catch(() => [])` above guards
+  // a THROW and says nothing about the shape of a success — and a backend that
+  // answers `null` (an older build, a renamed command, a read with no answer)
+  // put `null` straight into the store, where the microphone picker's `{#each}`
+  // threw `only works with iterable values` and the crash panel took the whole
+  // console down: *"The console stopped responding."* over a working engine.
+  //
+  // The harm was out of all proportion to the cause. A missing device list
+  // should cost an empty picker; it cost every control in the product.
+  const deviceList = Array.isArray(devices) ? devices : [];
+  // AND THE SAME FOR THE MODEL. `Live.svelte` renders `$capture.stt.loaded`
+  // while it is being constructed, so a `stt_status` that resolved `null` threw
+  // before the run surface existed — the console opened on a crash panel rather
+  // than on a missing-model line. An unknown model reads as "no model"; it does
+  // not read as a product that will not open.
+  const sttStatus =
+    stt && typeof stt === 'object' ? stt : { loaded: false, model: null, language: null };
+  const chosen = chooseInputDevice({ stored: storedDevice, devices: deviceList });
   // `get_thresholds` returns the same four facts `detection://thresholds` carries,
   // deliberately: the event is how a surface hears about a change and this is how
   // it starts out, and a surface that learned two different things from the two
@@ -576,12 +751,15 @@ export async function initAudio() {
   capture.update((s) => ({
     ...s,
     available: true,
-    devices,
-    stt,
+    devices: deviceList,
+    stt: sttStatus,
     thresholds: gate ? { auto_fire: gate.auto_fire, suggest: gate.suggest } : s.thresholds,
+    readiness: readinessOf(gate) ?? s.readiness,
     sensitivity: gateRead ? Number(gate.sensitivity) : s.sensitivity,
     sensitivityKnown: s.sensitivityKnown || gateRead,
     gateOnDial: gateRead ? gate.on_dial !== false : s.gateOnDial,
+    followsReader: followsReader !== false,
+    paraphraseNeedsRun: needsRun === true,
     detectionOn,
     inputDevice: chosen.device,
     inputDeviceMissing: chosen.missing,
@@ -598,7 +776,14 @@ export async function initAudio() {
   if (!outputListenersUp) {
     try {
       const { listen } = await import('@tauri-apps/api/event');
-      await listen('output://content', (e) => { live.set(e.payload); screenBlack.set(false); noteOperatorAction('content', e.payload); });
+      await listen('output://content', (e) => {
+        live.set(e.payload);
+        screenBlack.set(false);
+        noteOperatorAction('content', e.payload);
+        // P-1. Scripture this console did not announce as a plan fire has replaced
+        // the plan slide on the wall. See `expectPlanFire`.
+        if (!contentIsExpectedPlanFire(e.payload, expectedPlanFire)) leavePlan();
+      });
       // `leavePlan()` HERE, not only in the wrappers — this is the half no wrapper
       // can reach. A clear that did not originate in this console still takes plan
       // content off the wall: `/api/clear` from the preacher's phone, the spoken
@@ -679,6 +864,8 @@ export async function initAudio() {
           // know it: answering a broken frame with 50 would put a number on screen
           // that is nobody's setting.
           sensitivity: Number.isFinite(sensitivity) ? sensitivity : s.sensitivity,
+          // Rides on the same announcement, for the same reason `on_dial` does.
+          readiness: readinessOf(p) ?? s.readiness,
           sensitivityKnown: s.sensitivityKnown || Number.isFinite(sensitivity),
           // The gate having MOVED is exactly when this can change, so it rides on
           // the announcement that it moved. A missing field leaves the last answer
@@ -691,6 +878,31 @@ export async function initAudio() {
       await listen('audio://error', (e) =>
         capture.update((s) => ({ ...s, audioError: e.payload, capturing: false }))
       );
+      // ── A MICROPHONE THAT WENT AWAY, AND WHAT IS BEING DONE ABOUT IT ────────
+      //
+      // Three states, kept apart because rule 35 is the whole point of the event
+      // (RG-291, DECISIONS §119): `lost` is an attempt in progress, `listening`
+      // is audio actually arriving again, `gave_up` is the end of the bound.
+      //
+      // `lost` DELIBERATELY LEAVES `capturing` ALONE. `audio://error` clears it,
+      // correctly, because an error is the end of an attempt — but this is the
+      // attempt after it, and Relay is still listening for the device. Clearing
+      // it here would put "Start listening" in front of an operator over a
+      // capture that is about to come back by itself, and they would press it.
+      //
+      // Only `gave_up` stops the capture, because only `gave_up` is a stop.
+      await listen('audio://recovery', (e) => {
+        // A MIRROR, not a second source of truth. The chunk handler runs on the
+        // hot path and writes to `meter` and never to `capture` (see the note
+        // there); reading the store per chunk to find out whether a notice is up
+        // would undo that. This flag is written once per recovery event.
+        recoveryNotice = e.payload?.state === 'listening';
+        capture.update((s) => ({
+          ...s,
+          audioRecovery: e.payload,
+          capturing: e.payload?.state === 'gave_up' ? false : s.capturing,
+        }));
+      });
       // A LAN server failed to bind → every networked output (OBS, kiosk
       // screens, the stage monitor) is dead. This used to be swallowed to
       // stderr, so the operator's only symptom was screens that never came up.
@@ -1084,9 +1296,64 @@ export function chooseInputDevice({ stored, devices } = {}) {
  * GROUP 2: the write never throws at the caller. A setting that would not save must
  * not stop an operator changing microphone thirty seconds before a service.
  */
-export function setInputDevice(name) {
-capture.update((s) => ({ ...s, inputDevice: name || '', inputDeviceMissing: null }));
-void persistInputDevice(name || '');
+export async function setInputDevice(name) {
+const chosen = name || '';
+// Read BEFORE the update, so the answer is "was Relay listening when the operator
+// changed microphone" rather than a fact about the store one line later.
+const wasCapturing = get(capture).capturing;
+capture.update((s) => ({ ...s, inputDevice: chosen, inputDeviceMissing: null }));
+void persistInputDevice(chosen);
+// AND IT REACHES THE ENGINE — RG-291.
+//
+// The operator: *"when audio input switch, continue transcript once audio is
+// dected"*. This function used to end one line up, so the choice took effect at
+// the next `start_capture` and not before: Relay went on capturing from the old
+// device, and if the reason for the switch was that the old one had just died,
+// rule 5 had already stopped the loop and nothing restarted it.
+//
+// Both rendered pickers disable themselves while capturing and say why, so this
+// was never reachable from them — `rooms.js` is the door that is not guarded, and
+// the capability is what was asked for. The service lock is deliberately NOT
+// consulted: `servicelock.rs`'s list is irreversible actions and things that take
+// the speech engine away, and changing microphone mid-service — the desk feed
+// died, plug in a handheld — is the ordinary thing this desk is for (§40, "the
+// operator outranks it, always").
+if (wasCapturing) await moveRunningCapture(chosen);
+}
+
+/**
+ * Stop the capture and reopen it on `name`. Never throws — group 2.
+ *
+ * ORDER IS THE WHOLE OF IT. `stop_capture` takes a lock, and an audio thread that
+ * panicked while holding it leaves the mutex poisoned and the engine RUNNING
+ * (`micstop.test.js`). Starting anyway would put a second capture thread on one
+ * device and deliver every event twice, which is the failure `startCapture`
+ * detaches its listeners to avoid. So a stop that did not stop ends this, loudly:
+ * the microphone has not moved and the operator has to be told, because the one
+ * thing worse than a microphone that did not change is believing it did.
+ */
+async function moveRunningCapture(name) {
+try {
+  await stopCapture();
+} catch (e) {
+  capture.update((s) => ({
+    ...s,
+    capturing: false,
+    audioError: `could not close the current microphone, so it has not been changed: ${
+      e?.message ?? e
+    }`,
+  }));
+  return;
+}
+try {
+  await startCapture(name || null);
+} catch (e) {
+  capture.update((s) => ({
+    ...s,
+    capturing: false,
+    audioError: `could not open ${name || 'the system default microphone'}: ${e?.message ?? e}`,
+  }));
+}
 }
 
 async function persistInputDevice(name) {
@@ -1096,6 +1363,38 @@ try {
 } catch {
   /* no backend, or the write failed. The choice still applies to this run. */
 }
+}
+
+/**
+ * Drop the three capture listeners if they are attached. Safe to call when they
+ * are not. Used by `stopCapture` and, because capture can also end without any
+ * command being issued, by `startCapture` on its way in.
+ */
+function detachCaptureListeners() {
+  if (unlistenAudio) {
+    unlistenAudio();
+    unlistenAudio = null;
+  }
+  if (unlistenStt) {
+    unlistenStt();
+    unlistenStt = null;
+  }
+  if (unlistenDetect) {
+    unlistenDetect();
+    unlistenDetect = null;
+  }
+  if (unlistenHeld) {
+    unlistenHeld();
+    unlistenHeld = null;
+  }
+  // A hold describes the window Relay last heard. Capture has stopped, so there
+  // is no window and nothing is being held — leaving the line up would say Relay
+  // is guarding a reading over a dead microphone.
+  passageHold.set(null);
+  if (holdTimer) {
+    clearTimeout(holdTimer);
+    holdTimer = null;
+  }
 }
 
 /** Start capture from `device` (name string, or null for the default input). */
@@ -1110,16 +1409,38 @@ try {
 }
 await call('start_capture', { device: device ?? null });
 
+// DETACH BEFORE ATTACHING. `stopCapture` is not the only way capture ends: a
+// device that dies mid-service arrives as `audio://error`, which clears
+// `capturing` so the operator can press the microphone again — and it tears
+// nothing down, because it is an event, not a command. Without this, the second
+// Start overwrote three live handles and every transcript event was then
+// delivered TWICE, to two listeners, for the rest of the service. Idempotent, so
+// the ordinary Stop-then-Start path is unchanged.
+detachCaptureListeners();
+
 // Last language pushed to `capture` — guards against re-notifying subscribers
 // on every transcript when the detected language hasn't changed.
 let lastLang = null;
 // The hot path. Goes to `meter`, never to `capture` — see the note on `meter`.
 unlistenAudio = await listen('audio://chunk', (e) => {
-  const { rms, is_voice } = e.payload;
-  meter.set({ level: rms, isVoice: is_voice });
+  // THE NOTICE COMES DOWN WHEN THE AUDIO IS BACK, and audio arriving is the only
+  // thing that proves it (RG-291). One write, guarded by a plain boolean, because
+  // this handler runs several times a second for a whole service — a notice that
+  // stays up after the thing it describes has passed is one an operator learns to
+  // read past, and that costs the next real one its meaning.
+  if (recoveryNotice) {
+    recoveryNotice = false;
+    capture.update((s) => ({ ...s, audioRecovery: null }));
+  }
+  const { rms, is_voice, peaks } = e.payload;
+  // `peaks` is the chunk's own envelope, sixteen readings across its 400 ms
+  // (`audio::CHUNK_PEAKS`). It rides on the event that was already being sent
+  // rather than on one of its own. An older backend sends none, so the console
+  // must still work from `level` alone — hence a default rather than a guard.
+  meter.set({ level: rms, isVoice: is_voice, peaks: Array.isArray(peaks) ? peaks : [] });
 });
 unlistenStt = await listen('stt://transcript', (e) => {
-  const { text, is_final, language, trace_id } = e.payload;
+  const { text, is_final, language, trace_id, timestamp_ms } = e.payload;
   // Only touch `capture` when the detected language actually CHANGES. A Svelte
   // writable notifies every subscriber on every `set`, so updating it on each
   // transcript event re-rendered the whole app shell several times a second for
@@ -1128,7 +1449,12 @@ unlistenStt = await listen('stt://transcript', (e) => {
     lastLang = language;
     capture.update((s) => ({ ...s, detectedLang: language }));
   }
-  const at = new Date().toLocaleTimeString('en-GB');
+  // THE TIME CODE, NOT THE ARRIVAL TIME (RG-263). This was
+  // `new Date().toLocaleTimeString('en-GB')` — the moment the decode reached the
+  // webview, which is up to eight seconds plus a decode after the words were
+  // said, at second resolution and with no date. `timestamp_ms` is the position
+  // of the audio in the capture and was already on the wire.
+  const at = stampOf(timestamp_ms);
   transcript.update((t) => applyTranscript(t, { text, is_final }, at));
   // Tell Rust when this actually reached the operator's eyes. Everything before
   // this point the backend can time itself; the webview's own share of the delay
@@ -1145,6 +1471,19 @@ unlistenStt = await listen('stt://transcript', (e) => {
   });
 });
 capture.update((s) => ({ ...s, audioError: null }));
+// RELAY IS HOLDING SOMETHING BACK, AND THE OPERATOR CAN SEE THAT IT IS.
+// See `passageHold`. One listener, one store, replaced on every event — and a
+// timer, because a reading that ENDS emits nothing and a stale "holding 3" is the
+// rule-35 failure this store exists to prevent, arriving from the other side.
+unlistenHeld = await listen('detection://held', (e) => {
+  passageHold.set(e.payload ?? null);
+  if (holdTimer) clearTimeout(holdTimer);
+  holdTimer = setTimeout(() => {
+    passageHold.set(null);
+    holdTimer = null;
+  }, HOLD_TTL_MS);
+});
+
 unlistenDetect = await listen('detection://match', (e) => {
   const d = e.payload;
   // THE AI ACTED BY ITSELF. This is the only moment that fact exists on the
@@ -1204,23 +1543,12 @@ try {
 // before any local teardown claims the microphone is off.
 if (call) await call('stop_capture');
 
-if (unlistenAudio) {
-  unlistenAudio();
-  unlistenAudio = null;
-}
-if (unlistenStt) {
-  unlistenStt();
-  unlistenStt = null;
-}
-if (unlistenDetect) {
-  unlistenDetect();
-  unlistenDetect = null;
-}
+detachCaptureListeners();
 capture.update((s) => ({ ...s, capturing: false }));
 // The live level lives on the `meter` store, not `capture` — resetting
 // capture.level/isVoice (which nothing reads) left the input bars frozen lit at
 // the last value after Stop. Reset the store that actually drives them.
-meter.set({ level: 0, isVoice: false });
+meter.set({ level: 0, isVoice: false, peaks: [] });
 transcript.update((t) => ({ ...t, partial: '' }));
 }
 
@@ -1240,7 +1568,7 @@ const call = await invoke();
 // Read the claim BEFORE the round trip — the receipt below needs the method and
 // the words, and by the time it is written the card is gone from the list.
 const claim = get(detections).find((d) => d.reference === reference) ?? null;
-const thresholds = await call('confirm_detection', { reference });
+const gate = await call('confirm_detection', { reference });
 // Accepting an AI suggestion also takes us out of the plan — same reason as
 // manualFire.
 leavePlan();
@@ -1249,7 +1577,82 @@ detections.update((list) => list.filter((d) => d.reference !== reference));
 // that threw is rule 15 in another coat, and this function's own doc comment
 // records that exact bug happening to the card itself.
 if (claim) noteResolved(claim, 'accepted');
-capture.update((s) => ({ ...s, thresholds }));
+noteGate(gate);
+}
+
+/** The readiness pair out of any gate payload, or null.
+ *
+ *  `null` is the absence and must stay the absence: `{auto_fire: 0}` would print
+ *  as a real setting ("never fire") over a payload that carried no figure. */
+function readinessOf(p) {
+  const a = Number(p?.readiness?.auto_fire);
+  const b = Number(p?.readiness?.suggest);
+  return Number.isFinite(a) && Number.isFinite(b) ? { auto_fire: a, suggest: b } : null;
+}
+
+/** Take in a whole `GateReadout` — the shape `get_thresholds`, the event and both
+ *  feedback commands all speak.
+ *
+ *  ── WHY THIS IS ONE FUNCTION AND NOT AN INLINE SPREAD ────────────────────────
+ *
+ *  `confirm_detection` and `dismiss_detection` used to return a bare `Thresholds`
+ *  and this store wrote it straight in — so a confirm updated the two numbers and
+ *  left `gateOnDial` alone. That is the one path that can move the gate OFF the
+ *  dial's curve: `record_feedback` is exactly what §96 says makes the dial position
+ *  stop explaining the gate. A belt-and-braces writer carrying three of the four
+ *  facts is the braces quietly holding up less than the belt. Both commands now
+ *  return the whole readout and this is the one place it lands. */
+function noteGate(g) {
+  const a = Number(g?.auto_fire);
+  const b = Number(g?.suggest);
+  const dial = Number(g?.sensitivity);
+  capture.update((s) => ({
+    ...s,
+    thresholds:
+      Number.isFinite(a) && Number.isFinite(b) ? { auto_fire: a, suggest: b } : s.thresholds,
+    readiness: readinessOf(g) ?? s.readiness,
+    sensitivity: Number.isFinite(dial) ? dial : s.sensitivity,
+    sensitivityKnown: s.sensitivityKnown || Number.isFinite(dial),
+    gateOnDial: typeof g?.on_dial === 'boolean' ? g.on_dial : s.gateOnDial,
+  }));
+}
+
+/** Turn "follow the reader" on or off, and apply it now.
+ *
+ *  Throws (group 1). A switch that stores a preference and leaves the engine
+ *  doing the opposite is the "Screens cleared" lie in another coat (rule 15), so
+ *  the store is only updated from what the backend actually landed on — and a
+ *  failure reaches the caller rather than being swallowed into a switch that
+ *  looks like it moved.
+ *
+ *  Behind the service lock: this decides what may reach a congregation's screen
+ *  with nobody pressing anything.
+ */
+export async function setFollowTheReader(on) {
+  const call = await invoke();
+  const landed = await call('set_follow_the_reader', { on: !!on });
+  capture.update((s) => ({ ...s, followsReader: landed !== false }));
+  return landed !== false;
+}
+
+/** Turn the paraphrase bar on or off, and apply it now.
+ *
+ *  Throws (group 1), for `setFollowTheReader`'s reason: a switch that stores a
+ *  preference while the detector goes on doing the opposite is the "Screens cleared"
+ *  lie in another coat (rule 15), so the store is only updated from what the backend
+ *  actually landed on.
+ *
+ *  NOT behind the service lock, unlike its twin above, and the divergence is
+ *  deliberate — see `set_paraphrase_needs_a_run` in `main.rs`. This can only ever
+ *  remove rows from the operator's own list (`Semantic` is capped at Suggest by rule
+ *  10 at any setting), and the operator who most needs it is the one drowning in
+ *  suggestions in the middle of a service.
+ */
+export async function setParaphraseNeedsRun(on) {
+  const call = await invoke();
+  const landed = await call('set_paraphrase_needs_a_run', { on: !!on });
+  capture.update((s) => ({ ...s, paraphraseNeedsRun: landed === true }));
+  return landed === true;
 }
 
 /** Operator dismisses a suggestion → drop it + tighten the gate. */
@@ -1266,8 +1669,8 @@ try {
   // The reference rides to the backend so the rejection lands in the service
   // record as a rejection OF SOMETHING. It was already in this function's
   // signature and was being dropped on the floor at the one line that mattered.
-  const thresholds = await call('dismiss_detection', { reference });
-  capture.update((s) => ({ ...s, thresholds }));
+  const gate = await call('dismiss_detection', { reference });
+  noteGate(gate);
 } catch {
   /* backend absent */
 }
@@ -1293,6 +1696,9 @@ keepPlan = false,
 channels = null,
 ) {
 const call = await invoke();
+// BEFORE the call: the event this fire raises may land before the promise
+// resolves, and the listener must already know it is expected (P-1).
+if (keepPlan) expectPlanFire(reference);
 await call('manual_fire', { reference, stageNote, templateId, channels });
 if (keepPlan) return; // a plan slide fire — stay on the plan (Slide mode holds)
 // A hand-typed verse is not a plan cue. If the arrows still thought we were in
@@ -1537,88 +1943,20 @@ return sequence.map((i) => sections[i]).filter(Boolean);
  *  future). Derived from the mirrored output content, so it clears the moment
  *  the screen is cleared or any other content goes live. */
 export function countdownRunning() {
-return countdownRemaining() !== null;
+// INLINE SINCE 2026-09-21. This read `countdownRemaining()`, a reader the Screen
+// Countdown's transport shared with it; the transport went with the band
+// (DECISIONS §115) and took the reader with it, and this guard is the only thing
+// that still needed the answer. `countdownRemainingMs` distinguishes "finished"
+// (0) from "there is no countdown" (null) because a renderer shows a done message
+// for one and nothing for the other. This question does not care: a countdown
+// that has run out is not one `start_countdown` must refuse to replace.
+const left = countdownRemainingMs(get(live));
+return left != null && left > 0;
 }
 
-/** Is the countdown on the wall being HELD? Through the one reader, so the
- *  transport, the wall and the stage page cannot disagree about it. */
-export function countdownHeld() {
-return countdownIsPaused(get(live));
-}
 
-/** How long the countdown ON THE WALL has left, in ms — or null when there is no
- *  countdown on the wall. The transport reads THIS, never its own clock: one
- *  timer, so the figure in the dock and the figure on the screen cannot drift
- *  (docs/REBRAND.md §7). */
-export function countdownRemaining(atMs = Date.now()) {
-const left = countdownRemainingMs(get(live), atMs);
-// `countdownRemainingMs` distinguishes "finished" (0) from "there is no countdown"
-// (null) because a renderer has to show a done message for one and nothing for the
-// other. The TRANSPORT does not: a countdown that has run out is not something ±1
-// can re-aim, so both are null here.
-return left != null && left > 0 ? left : null;
-}
 
-/**
- * RE-AIM THE RUNNING COUNTDOWN — Reset and ±1 on the transport.
- *
- * Separate from `startCountdown` on purpose. That one REFUSES while a countdown
- * is running, which is right for "Start" (a second countdown over the first is
- * always a mistake) and wrong for every transport press, all of which are about
- * the countdown that is already there. One broadcast per press; the outputs go
- * on ticking locally, so this adds no per-second traffic.
- *
- * THROWS (contract group 1) — it changes what a congregation is looking at.
- *
- * **The carry-over now happens in the engine, not here** (`main::adjust_countdown`).
- * This used to rebuild the whole fire out of `$live` — the label, the done message
- * and the template read back off the event and handed to `start_countdown` again —
- * and it worked exactly as long as every caller remembered every field. A held
- * countdown added one more to forget, and forgetting THAT one restarts a paused
- * timer in front of a congregation from a press of `+1`. The engine keeps the
- * countdown and this asks it to change one thing about it; the guarantees that used
- * to be pinned here (the label does not change, and an UNPINNED template is never
- * re-pinned — DECISIONS §29) are pinned in `e2e.rs` instead, where they now hold for
- * every caller rather than for this one.
- */
-export async function adjustCountdown(ms, keepPlan = true) {
-const remainingMs = Math.round(Number(ms));
-if (!Number.isFinite(remainingMs) || remainingMs <= 0) {
-  throw new Error('A countdown needs a length greater than zero.');
-}
-const call = await invoke();
-await call('adjust_countdown', { remainingMs, paused: null });
-// `keepPlan` DEFAULTS TRUE here, and it is the only wrapper in this file that
-// does. Every other take replaces what is on the wall, so the plan cue that was
-// amber is no longer what anyone is looking at. This one changes a NUMBER on
-// content that is already up: if a plan's countdown cue is on air, it is still on
-// air afterwards, and clearing `onAir` would grey out the correct cue and send
-// the next `→` back to cue 1. A countdown started from the dock already left the
-// plan when it started, so there is nothing left to clear either way.
-if (!keepPlan) leavePlan();
-}
 
-/**
- * HOLD OR RELEASE THE COUNTDOWN ON THE SCREENS — the half of §7's transport that
- * did not exist until the engine had a field for it.
- *
- * Every other press on that row re-aims an absolute instant, which is something
- * `countdown_to` can already say. "Stopped" is not an instant, so it is said by
- * `countdown_paused_ms` instead, and it is said by the engine: a held countdown must
- * stay held through a `+1`, through a screen reconnecting mid-service, and through
- * anything else that re-broadcasts it.
- *
- * THROWS (contract group 1) — it changes what a congregation is looking at. It
- * cannot start a countdown: with nothing counting the engine refuses, in words.
- *
- * `keepPlan` defaults true for the same reason `adjustCountdown`'s does — holding a
- * plan's countdown cue leaves that cue exactly as on-air as it was.
- */
-export async function pauseCountdown(paused, keepPlan = true) {
-const call = await invoke();
-await call('adjust_countdown', { remainingMs: null, paused: !!paused });
-if (!keepPlan) leavePlan();
-}
 
 /** Start a pre-service countdown on every output. Outputs tick MM:SS locally
  *  from the broadcast target; `label` shows above, `doneMsg` replaces it at 0.
@@ -1651,6 +1989,12 @@ templateId = null,
 keepPlan = false,
 warnMs = null,
 untilMs = null,
+// WHICH SCREENS (RG-161). `null` is every screen. The engine stamps it onto the
+// TIMER rather than onto this one broadcast — see `Timer::channels`. It did that
+// because `adjust_countdown` and `show_timer` put the same countdown out again
+// later; both were deleted on 2026-09-21 (DECISIONS §115) and the stamp stays,
+// because the timer is still where a countdown's identity lives.
+channels = null,
 ) {
 if (countdownRunning()) {
   throw new Error('A countdown is already running — clear the screen to start a new one.');
@@ -1659,7 +2003,7 @@ const call = await invoke();
 // `untilMs` is an absolute instant, worked out by `atClockTime` where the
 // machine's timezone and DST rules are actually known. When it is given it wins
 // over `minutes`; the engine stores it so Reset goes back to the appointment.
-await call('start_countdown', { minutes, label, doneMsg, templateId, warnMs, untilMs });
+await call('start_countdown', { minutes, label, doneMsg, templateId, warnMs, untilMs, channels });
 if (!keepPlan) leavePlan();
 }
 
@@ -1841,23 +2185,6 @@ const call = await invoke();
 return call('list_timers');
 }
 
-/**
- * PUT A CONGREGATION TIMER BACK IN FRONT OF PEOPLE — the explicit way back.
- *
- * A timer outlives the content that replaced it now, so after a reading there is
- * something to return to. This is how an operator returns to it, on purpose. It
- * carries whatever the timer says NOW, so what goes back up is the figure in the
- * list rather than the length it started as. A `'stage'` timer is refused by the
- * engine, in words: it has no congregation wire form.
- *
- * THROWS (contract group 1) — it is one of two doors onto a congregation wall, so
- * a failure nobody is told about is an operator believing in a countdown that is
- * not there.
- */
-export async function showTimer(timerId, templateId = null) {
-const call = await invoke();
-await call('show_timer', { timerId, templateId });
-}
 
 /** Fire arbitrary content to the screens. `kind` ('song'|'announce') selects the
  *  content-type default template (per-content-type templates). `stageNote` is an
@@ -2157,6 +2484,25 @@ return guardedRead('listMedia', async (call) => {
     return await call('list_media');
 }, []);
 }
+/** Import a Bible from a JSON file in the KJV's shape (RG-50 option two). Throws. */
+export async function importTranslation({ name, abbreviation, language, licenseType, filename, dataB64 }) {
+const call = await invoke();
+return await call('import_translation', {
+  name,
+  abbreviation,
+  language,
+  licenseType,
+  filename,
+  data: dataB64,
+});
+}
+
+/** Delete an imported Bible. Throws; the bundled two and the active one are refused. */
+export async function deleteTranslation(id) {
+const call = await invoke();
+return await call('delete_translation', { id });
+}
+
 export async function importMedia(kind, filename, dataB64) {
 const call = await invoke();
 return await call('import_media', {
@@ -2172,9 +2518,12 @@ await call('delete_media', { id });
 }
 /** Fire a media asset (image/video) to the output screens as a background.
  *  `templateId`, when set, is the cue's own Planner template override. */
-export async function fireMedia(id, templateId = null, keepPlan = false) {
+export async function fireMedia(id, templateId = null, keepPlan = false, channels = null) {
 const call = await invoke();
-await call('fire_media', { id, templateId });
+// WHICH SCREENS (RG-161). `null` is every screen; `[]` is no screen. This
+// argument was missing while `fireContent`'s and `manualFire`'s were not, so a
+// media cue ignored the `Screens` row the Planner renders for it.
+await call('fire_media', { id, templateId, channels });
 if (!keepPlan) leavePlan();
 }
 
@@ -2587,6 +2936,138 @@ return guardedRead('listOutputChannels', async (call) => {
 export const stageAlert = writable(null);
 
 /**
+ * Is there a ProPresenter library on this computer already?
+ *
+ * Returns `[{ path, songs, truncated }]`, best first, and an empty list when there
+ * is nothing to offer. **It finds and counts; it imports nothing.**
+ *
+ * GROUP 2 (swallows). A scan that failed is not worth interrupting anybody for —
+ * the operator can still import a folder by hand, which is the path this only
+ * shortens. An empty list and a failed scan are deliberately the same answer to
+ * the caller, and the surface says "nothing found" for both, because it cannot
+ * tell them apart and should not pretend to.
+ */
+export async function findProPresenter() {
+  try {
+    const call = await invoke();
+    const found = await call('find_propresenter');
+    return Array.isArray(found) ? found : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * WHAT THE OPERATOR HAS ASKED THE CLIP TO DO — `{ paused, loop }`.
+ *
+ * A mirror of what Relay SENT, and nothing more. **It is not evidence that a
+ * screen obeyed**: the screens report where their clip actually is on the beat,
+ * and `describeMediaClock` reads the effect from that. A control that reported its
+ * own instruction back as an outcome is rule 35 with extra steps, which is exactly
+ * what this store would become if a readout were derived from it.
+ */
+export const mediaTransport = writable({ paused: false, loop: false, volume: 1 });
+
+/**
+ * Hold the clip, loop it, or start it again.
+ *
+ * Each field is a re-aim in `adjust_countdown`'s sense: omit one and it is left
+ * alone, so Pause cannot un-loop and Loop cannot un-pause. An operator presses one
+ * control at a time and the others have to survive it.
+ *
+ * `replay` is an event rather than a state and the engine carries it as a counter,
+ * so pressing it twice on a clip already at its start is two instructions rather
+ * than one frame sent twice.
+ *
+ * GROUP 1 (throws). The congregation can see the difference: a Pause that failed
+ * silently leaves a clip running under an operator who believes they stopped it,
+ * and the next cue goes out over the top of it.
+ */
+export async function setMediaTransport({ paused, loop, replay, seekMs, volume } = {}) {
+  const call = await invoke();
+  const frame = await call('set_media_transport', {
+    paused: paused ?? null,
+    // `looping` across the bridge: the wire says `loop` and Rust cannot.
+    looping: loop ?? null,
+    replay: replay ?? null,
+    // A SCRUB IS AN EVENT (RG-221), the same shape as `replay` and counted apart
+    // from it. `null` means "leave the clip where it is", which is every press
+    // of every other control on the row.
+    seekMs: seekMs ?? null,
+    volume: volume ?? null,
+  });
+  // ── THE FRAME THE SCREENS WERE SENT, VERBATIM (RG-260) ─────────────────────
+  //
+  // This used to rebuild the store out of the arguments it had just passed in —
+  // `{paused, loop, volume}`, three fields where the wire carries seven — and
+  // the two it dropped were the EPOCHS. The console's own programme preview
+  // renders through the same `TemplateRender` and the same `applyMediaTransport`
+  // a projector does, and that rule acts on a replay or a scrub only when it
+  // sees an epoch it has not seen. So Pause and Loop worked everywhere while
+  // Replay and Scrub worked on every screen in the building and did nothing on
+  // the surface the operator was watching to decide whether they had.
+  //
+  // One instruction, one shape. `set_media_transport` returns the frame it
+  // published and this takes it whole; nothing here re-derives a field, so
+  // nothing here can disagree with a screen about what was asked for.
+  //
+  // `looping` → `loop` is the ONE translation, and it exists because Rust cannot
+  // name a field `loop`. It is done here, once, rather than in the player rule:
+  // `applyMediaTransport` is shared with the preacher's page and reads `t.loop`.
+  //
+  // AFTER, NEVER BEFORE. A store written ahead of the call would claim a hold no
+  // screen was ever told about — and it throws, so a failed call leaves the
+  // store exactly as it was.
+  if (frame && typeof frame === 'object') {
+    mediaTransport.set({
+      paused: !!frame.paused,
+      loop: !!frame.looping,
+      replayEpoch: frame.replayEpoch ?? null,
+      seekEpoch: frame.seekEpoch ?? null,
+      seekMs: frame.seekMs ?? 0,
+      volume: frame.volume ?? 1,
+      // THE BASELINE A SCRUB IMPLIES (RG-220). `null` on every frame that
+      // carries no scrub, so a reader cannot mistake an old baseline for a new
+      // one.
+      startedAt: frame.startedAt ?? null,
+    });
+  }
+  return frame;
+}
+
+/**
+ * WHAT THE PREACHER'S OWN SCREEN IS HOLDING — the media id, or `null`.
+ *
+ * A mirror of what Relay SENT, written only after the call resolves, and claiming
+ * nothing more than that. The hub records nothing about who connected
+ * (DECISIONS §35), so this can never be a claim that a screen is painting it.
+ */
+export const stageMedia = writable(null);
+
+/**
+ * Put a slide on the preacher's screen, or take it off (`null`).
+ *
+ * An announcement to read out, or the preacher's own deck. **Not a background**:
+ * `showBackground` puts the church's picture behind the words on every screen,
+ * and this puts one person's reference material on one screen.
+ *
+ * Scripture overrides it on the device and does not remove it, so the slide comes
+ * back when the reading is cleared rather than needing a second push.
+ *
+ * GROUP 1 (throws). Same reasoning as `sendStageAlert` beside it: the operator is
+ * putting something in front of a person and is looking at the result, and a
+ * swallowed failure leaves them believing the preacher can see something they
+ * cannot.
+ */
+export async function sendStageMedia(id) {
+  const call = await invoke();
+  await call('send_stage_media', { id: id ?? null });
+  // After, never before: a failed send must not leave a control claiming a slide
+  // is on the stage screen.
+  stageMedia.set(id ?? null);
+}
+
+/**
  * The Stage Message — one line, the whole stage monitor, and no other
  * screen (docs/REBRAND.md §5). Empty or whitespace clears it.
  *
@@ -2594,9 +3075,9 @@ export const stageAlert = writable(null);
  * at the result; a failure that is swallowed leaves them believing the preacher
  * has been told something they have not.
  */
-export async function sendStageAlert(text) {
+export async function sendStageAlert(text, urgent = false) {
 const call = await invoke();
-await call('send_stage_alert', { text: text ?? null });
+await call('send_stage_alert', { text: text ?? null, urgent: !!urgent });
 // After, never before: a failed send must not leave the dock saying a word is on
 // the preacher's monitor.
 stageAlert.set(text?.trim() ? text.trim() : null);
@@ -2644,6 +3125,16 @@ return guardedRead('chapterVerses', async (call) => {
 }
 
 /** This machine's LAN IP so output URLs work on other devices. Null if offline. */
+/** Which build is running: `<short sha>[+dirty] <date>` (S13). Read-only; '' on failure. */
+export async function getBuildMarker() {
+try {
+  const call = await invoke();
+  return await call('build_marker');
+} catch {
+  return '';
+}
+}
+
 export async function localIp() {
 try {
   const call = await invoke();
@@ -3157,6 +3648,22 @@ async function guardedRead(key, run, fallback, onFail) {
 try {
   const value = await run(await invoke());
   readErrors.update((m) => (m[key] ? { ...m, [key]: null } : m));
+  // A RESOLVED NULL IS NOT A REJECTION — RG-267, and this is the choke point
+  // rather than the third hand-written guard (rule 36).
+  //
+  // The fallback below has always been used on a THROW and never on a
+  // resolution, so a backend that answered `null` — an older build, a renamed
+  // command, a read with genuinely no answer — put `null` where a caller was
+  // about to `.map`, `.some` or `{#each}` it. Three instances were found in one
+  // pass over the built console, and each took the WHOLE console down with
+  // *"The console stopped responding."* over a working engine.
+  //
+  // DELIBERATELY NARROW: only an ARRAY fallback coerces. An array is the one
+  // fallback that states a SHAPE a caller then relies on. `null` means "no
+  // answer" and a null answer is exactly that; an object fallback would need to
+  // know which of its keys matter, which is the call site's business and not
+  // this function's.
+  if (Array.isArray(fallback) && !Array.isArray(value)) return fallback;
   return value;
 } catch (e) {
   readErrors.update((m) => ({ ...m, [key]: e }));
