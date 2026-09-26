@@ -26,6 +26,7 @@ vi.mock('@tauri-apps/api/event', () => ({
 }));
 
 const { passageHold, HOLD_TTL_MS, startCapture, stopCapture } = await import('./stores/capture.js');
+const { describeHold } = await import('./detect.js');
 
 await startCapture(null);
 
@@ -128,5 +129,79 @@ describe('the console can tell a guarded reading from a dead detector', () => {
       get(passageHold),
       'Relay cannot be guarding a reading over a microphone that is not listening',
     ).toBe(null);
+  });
+});
+
+// ── AND THE SENTENCE ITSELF — `detect.js::describeHold` ─────────────────────
+//
+// The line was a ternary in `Dock.svelte` that chose between two sentences by asking
+// whether a passage was present. That held while the only two reasons were the
+// passage guard's own. The church's paraphrase bar (DECISIONS §125) is a third, it
+// carries no passage, and on that branch the old ternary read **"the screens are
+// already showing"** over verses no screen had ever shown — a status line naming the
+// wrong reason, which is worse than one naming none because it looks like
+// information.
+describe('describeHold · the one sentence about what is being withheld', () => {
+  const held = (...reasons) => ({
+    passage: null,
+    reading: null,
+    held: reasons.map((reason, i) => ({ reference: `Psalms 1:${i + 1}`, reason })),
+  });
+
+  it('says nothing at all when nothing is held', () => {
+    expect(describeHold(null)).toBe(null);
+    expect(describeHold({ held: [] })).toBe(null);
+    expect(describeHold({})).toBe(null);
+  });
+
+  it('reads exactly as it read before for the two passage-guard rules', () => {
+    expect(describeHold(held('already_on_screen', 'already_on_screen'))).toBe(
+      'Holding 2 the screens are already showing',
+    );
+    expect(
+      describeHold({ passage: 'Psalms 107', held: [{ reason: 'outside_the_reading' }] }),
+    ).toBe('Holding 1 from outside Psalms 107, while it is being read');
+  });
+
+  // THE DEFECT. Before `describeHold` this payload printed "the screens are already
+  // showing", because the branch was on `passage` and this one has none.
+  it('names the paraphrase bar as itself, and never as the wall', () => {
+    const line = describeHold(held('no_shared_run', 'no_shared_run', 'no_shared_run'));
+    expect(line).toBe('Holding 3 that echo none of the verse’s own words');
+    expect(line).not.toMatch(/already showing/);
+  });
+
+  // A mixture is two facts and the line says both, with its own count each. One of
+  // them standing in for the other is the same lie the ternary told.
+  it('a window held by two rules reports both, with a count each', () => {
+    expect(
+      describeHold({
+        passage: 'Psalms 107',
+        held: [
+          { reason: 'already_on_screen' },
+          { reason: 'no_shared_run' },
+          { reason: 'no_shared_run' },
+        ],
+      }),
+    ).toBe(
+      'Holding 3 — 1 the screens are already showing · 2 that echo none of the verse’s own words',
+    );
+  });
+
+  // An older or newer backend naming a rule this console has never heard of is still
+  // holding something, and "Holding 2" over three held candidates is the same
+  // undercount in miniature. It falls back to the honest total.
+  it('a reason this console does not know still counts toward the total', () => {
+    expect(describeHold(held('no_shared_run', 'some_future_rule'))).toBe('Holding 2');
+    expect(describeHold(held('some_future_rule'))).toBe('Holding 1');
+  });
+
+  // `outside_the_reading` always carries a passage from the real backend. If one ever
+  // arrives without, the sentence still has to be true rather than mention a passage
+  // called `null`.
+  it('the reading rule without a passage says so rather than naming nothing', () => {
+    expect(describeHold(held('outside_the_reading'))).toBe(
+      'Holding 1 from outside the reading',
+    );
   });
 });

@@ -2611,9 +2611,17 @@ pub fn window_states_a_reference(text: &str, anchor: Option<&VerseRef>) -> bool 
     anchor.is_some() || chapter_named(text)
 }
 
-/// Why the passage guard held a candidate back. Reaches the operator verbatim
-/// (`main::PassageHold`), because a guard that goes quiet without saying so is
-/// indistinguishable from a detector that has gone deaf (rule 35).
+/// Why a candidate this window produced was held back. Reaches the operator
+/// verbatim (`main::PassageHold`), because a detector that goes quiet without
+/// saying so is indistinguishable from one that has gone deaf (rule 35).
+///
+/// **Two of the three are the passage guard's and the third is the church's own
+/// switch.** They share this enum and the one event because they are the same kind
+/// of fact — *Relay found this and decided not to offer it, and here is why* — and
+/// a second event name would be a second thing to keep listened-for in both
+/// directions (`ipc.test.js`). They do NOT share a rule: `hold_for_the_passage`
+/// owns the first two and `main::candidates_for_window` applies the third from a
+/// setting, so nothing about one can quietly change the other.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HeldReason {
@@ -2623,6 +2631,14 @@ pub enum HeldReason {
     /// **The preacher is reading the passage on screen and this verse is not in
     /// it.** The words of one verse are the words of several.
     OutsideTheReading,
+    /// **The church asked for paraphrases to echo the verse, and this one does
+    /// not.** A cosine over a bag of words with none of them said in the verse's
+    /// own order — `PARAPHRASE_RUN_WORDS`, off unless an operator turned it on.
+    ///
+    /// The only reason here that is a SETTING rather than a rule, which is why it
+    /// is worth telling apart from the other two: the answer to "why is Relay
+    /// holding these back" is a switch in Settings, and the operator can undo it.
+    NoSharedRun,
 }
 
 /// **THE PASSAGE GUARD.** Which of this window's candidates are held back while
@@ -7557,6 +7573,70 @@ const PHRASE_RARE_FRACTION: f32 = 0.005;
 /// over TEXT, not a law.
 pub const READING_RUN_WORDS: usize = 8;
 
+/// **THE SHORTEST RUN THAT CORROBORATES A PARAPHRASE**, when the church has asked
+/// for one (`main::ParaphraseRun`, `detection.paraphrase_needs_a_run`).
+///
+/// THREE — and the number is far below `MIN_RUN_WORDS` on purpose, because it is
+/// doing a different job. A run of five is what it takes to OFFER a quotation on
+/// the strength of the run alone; three is what it takes to CORROBORATE a cosine
+/// that has already scored above `main::SEMANTIC_FLOOR` against a verse the index
+/// already chose. The evidence is additive here and standalone there, so the two
+/// floors are not comparable and must not be unified.
+///
+/// ── WHAT IT BUYS AND WHAT IT COSTS, MEASURED ──────────────────────────────────
+///
+/// Twelve of the author's own services, 14,478 final transcript lines over 38.7
+/// hours, replayed through the real `main::candidates_for_window` and the real
+/// `Router` (`suggestions::bar::paraphrase_bar`). 85.6% of those windows name
+/// nothing reference-shaped and hold no verbatim run, and 85.9% of all 4,905
+/// paraphrase offers come from them. 150 of that population were read by hand:
+/// 28 answer what was said, 11 are arguable, **111 are noise**.
+///
+/// | policy                     | offers | removed | ALL recall | MODERN recall |
+/// |---|---|---|---|---|
+/// | shipped (this bar OFF)     | 4905   |   0.0%  |    77%     |      41%      |
+/// | `SEMANTIC_FLOOR` 0.40      | 1424   |  71.0%  |    58%     |       6%      |
+/// | `SEMANTIC_FLOOR` 0.45      |  744   |  84.8%  |    51%     |       0%      |
+/// | evidence terms >= 4        | 1133   |  76.9%  |    72%     |      29%      |
+/// | **a run of 3 (this bar)**  | 1293   |  73.6%  |    70%     |      24%      |
+///
+/// It dominates every value of every threshold on all four columns at once, and
+/// DECISIONS §125 records why no value of `SEMANTIC_FLOOR` can substitute for it:
+/// the two populations have the same cosine distribution and the ordering is
+/// inverted at the tails, so a floor high enough to silence *"Hallelujah.
+/// Hallelujah. Praise the Lord."* (`Psalms 146:1`, 0.557) silences *"ten times
+/// better than their colleagues"* (`Daniel 1:20`, 0.327) first.
+///
+/// **AND IT IS A SETTING RATHER THAN A CONSTANT BECAUSE OF WHAT IT COSTS.** It
+/// silences **three** of the 43 labelled retellings in `data/paraphrase_corpus.json`
+/// — `roof-paralytic-modern`, `paul-silas-modern`, `jonah-modern` — and every one is
+/// `vocab: modern`, the narrative case the product's claim rests on.
+/// `suggestions::what_the_bar_silences` names them and ASSERTS the count, so the
+/// price cannot drift into something warmer. That is an operator's trade to make,
+/// not this file's: the switch defaults OFF and a church that never opens Settings
+/// runs exactly the recall it ran yesterday.
+///
+/// **Three, not the five DECISIONS §125 and RG-311 name.** Two of those five —
+/// the prodigal son and Zacchaeus, and the fiery furnace is a third — do not reach
+/// the right passage with this bar OFF either: the paraphrase path already cannot
+/// answer them, so a rule that only removes answers cannot be what lost them. The
+/// same test prints that comparison. Correcting it makes the bar look WORSE-priced
+/// than the register did, not better, which is the direction an honest correction
+/// usually runs.
+///
+/// **And the one operator ACCEPTANCE it costs is not a vocabulary problem at all.**
+/// Service 39 of 2026-09-25: `John 15:2`, accepted by hand, removed here because the
+/// decoder heard *"every branch a man that bearer not fruit"* for *"Every branch in
+/// me that beareth not fruit"* — the words were right and two of them were misheard,
+/// so the run is two. A run test over a transcript is a run test over what the
+/// decoder heard, and word error rate has never been measured in any language
+/// (`docs/LANGUAGES.md`).
+///
+/// Raising it to four costs 18 more points of MODERN recall (24% → 6%) for 13 more
+/// points of volume; lowering it to two is not a run of words at all. Re-run the
+/// sweep before moving it.
+pub const PARAPHRASE_RUN_WORDS: usize = 3;
+
 /// One verse whose words the speaker said, in order.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PhraseHit {
@@ -7820,6 +7900,87 @@ impl PhraseIndex {
         hits.truncate(k);
         hits.into_iter().map(|(h, _)| h).collect()
     }
+
+    /// Where a reference sits in this index, or `None` if the corpus has no such
+    /// verse.
+    ///
+    /// A LINEAR SCAN, deliberately. `refs` is in corpus order, which is canonical
+    /// Bible order and not sortable by book NAME, so a binary search is not
+    /// available and the alternative is a second 31,102-entry table carried for the
+    /// life of the process. The chapter and verse are compared first — two integers
+    /// — so the book string is touched only on a numeric match, and the measured
+    /// cost is in `suggestions::what_the_bar_silences::run_lookup_cost`: **6.4 µs for
+    /// a hit in Proverbs, 11.1 µs for the last verse of Revelation and 11.1 µs for a
+    /// reference the corpus does not hold** (the whole-table cases), on a real
+    /// eight-second window. Nothing on the live path calls this more than
+    /// `SEMANTIC_SUGGESTIONS_MAX` times per window, so the worst case is about 33 µs
+    /// against a decode of 139-600 ms — and it is not called at all unless the church
+    /// turned the bar on.
+    fn verse_index(&self, r: &VerseRef) -> Option<usize> {
+        self.refs.iter().position(|x| {
+            x.chapter == r.chapter && x.verse == r.verse && x.book.eq_ignore_ascii_case(&r.book)
+        })
+    }
+
+    /// **HOW MANY OF THIS VERSE'S OWN WORDS DID THE SPEAKER SAY, IN A ROW?**
+    ///
+    /// The other question about the evidence a cosine is built from. `top_k_explained`
+    /// returns the terms that produced a score and they are a bag of words in no
+    /// order (rule 18) — `lord · shepherd` scores whether the preacher said "the
+    /// LORD is my shepherd" or "the shepherd spoke and the lord was there". This asks
+    /// whether any of them came out in the verse's own order, which is what separates
+    /// a citation from a coincidence and cannot be read off the score at all.
+    ///
+    /// Pure, and DB- and IO-free like everything else in this file: it reads the
+    /// index built at startup from the bundled corpus and nothing else. `0` for a
+    /// verse this index does not hold, which is the same answer as "shares nothing"
+    /// and is the safe one — a reference the corpus cannot confirm is not a
+    /// reference the corpus corroborates.
+    ///
+    /// Not `quoted`, and the difference is the whole reason this exists as its own
+    /// method: `quoted` asks *which verse did the speaker quote* and answers through
+    /// a gram table that deliberately discards any three-word run appearing in more
+    /// than `MAX_GRAM_VERSES` verses, because a gram that common is a phrase of the
+    /// language rather than of a verse. Here the verse is already chosen and the
+    /// question is only whether these particular words touched it, so a common run
+    /// counts: "whom the Lord loveth" is ordinary English and is still three of
+    /// Hebrews 12:6's own words in Hebrews 12:6's own order.
+    pub fn shared_run_with(&self, heard: &str, r: &VerseRef) -> usize {
+        let Some(vi) = self.verse_index(r) else {
+            return 0;
+        };
+        let q: Vec<u32> = phrase_words(heard)
+            .iter()
+            .map(|w| self.ids.get(w).copied().unwrap_or(u32::MAX))
+            .collect();
+        let vw = self.verse_words(vi);
+        let mut best = 0usize;
+        for i in 0..q.len() {
+            // A word this corpus has never seen cannot start a run. `u32::MAX` can
+            // never equal a real id, so this is a fast path rather than a rule.
+            if q[i] == u32::MAX {
+                continue;
+            }
+            // A run already long enough to reach the end of the window cannot be
+            // beaten, and the common case is a long window against a short verse.
+            if q.len() - i <= best {
+                break;
+            }
+            for j in 0..vw.len() {
+                if vw[j] != q[i] {
+                    continue;
+                }
+                let mut n = 0usize;
+                while i + n < q.len() && j + n < vw.len() && q[i + n] == vw[j + n] {
+                    n += 1;
+                }
+                if n > best {
+                    best = n;
+                }
+            }
+        }
+        best
+    }
 }
 
 #[cfg(test)]
@@ -7962,6 +8123,145 @@ mod phrase_tests {
                 3
             )
             .is_empty());
+    }
+}
+
+/// **THE RUN BAR ON A PARAPHRASE** — `PARAPHRASE_RUN_WORDS` and the question it
+/// asks (`PhraseIndex::shared_run_with`).
+///
+/// Pure and DB-free: every case here is built from a seven-verse corpus in this
+/// file, so it reproduces on any machine with no database and no service recording.
+#[cfg(test)]
+mod paraphrase_run_bar {
+    use super::*;
+
+    fn vr(book: &str, chapter: i64, verse: i64) -> VerseRef {
+        VerseRef {
+            book: book.into(),
+            chapter,
+            verse,
+        }
+    }
+
+    fn corpus() -> Vec<(VerseRef, String)> {
+        vec![
+            (
+                vr("Psalms", 23, 1),
+                "[A Psalm of David.] The LORD {is} my shepherd; I shall not want.".into(),
+            ),
+            (
+                vr("Matthew", 6, 33),
+                "But seek ye first the kingdom of God, and his righteousness; and all \
+                 these things shall be added unto you."
+                    .into(),
+            ),
+            (
+                vr("Hebrews", 12, 6),
+                "For whom the Lord loveth he chasteneth, and scourgeth every son whom he \
+                 receiveth."
+                    .into(),
+            ),
+        ]
+    }
+
+    /// **THE DEFECT THE BAR EXISTS FOR, AS A TEST.** The same words in a different
+    /// order score the same cosine and are not a citation. This is the one fact
+    /// `top_k_explained` computes nothing about (rule 18: a cosine is a bag of words
+    /// in no order) and the reason a run is a different instrument from a threshold.
+    #[test]
+    fn the_same_words_out_of_order_share_no_run() {
+        let idx = PhraseIndex::build(&corpus());
+        let r = vr("Psalms", 23, 1);
+        assert!(
+            idx.shared_run_with("the shepherd spoke and the lord was there", &r)
+                < PARAPHRASE_RUN_WORDS,
+            "scattered words must not corroborate a paraphrase"
+        );
+        assert!(
+            idx.shared_run_with("and david said the lord is my shepherd", &r)
+                >= PARAPHRASE_RUN_WORDS,
+            "the verse's own words in the verse's own order must corroborate it"
+        );
+    }
+
+    /// The run is measured in the SPEAKER'S order against the VERSE'S order, and it
+    /// is the longest such run rather than any run — so a window that touches three
+    /// words in one place and two in another answers three.
+    #[test]
+    fn it_answers_the_longest_run_and_counts_words_not_characters() {
+        let idx = PhraseIndex::build(&corpus());
+        assert_eq!(
+            idx.shared_run_with(
+                "he told us to seek ye first the kingdom of god this morning",
+                &vr("Matthew", 6, 33)
+            ),
+            7
+        );
+        // Two words is two words, whatever else is in the sentence.
+        assert_eq!(
+            idx.shared_run_with("seek ye today and all these", &vr("Matthew", 6, 33)),
+            3
+        );
+    }
+
+    /// **A COMMON THREE-WORD RUN STILL COUNTS**, and that is the difference between
+    /// this question and `quoted`'s. `quoted` throws away any gram appearing in more
+    /// than `MAX_GRAM_VERSES` verses because it is asking WHICH verse; here the verse
+    /// is already chosen and the question is only whether these words touched it.
+    ///
+    /// "whom the lord" is ordinary English. It is also three of Hebrews 12:6's own
+    /// words in Hebrews 12:6's own order, and a preacher retelling that verse says
+    /// them.
+    #[test]
+    fn an_ordinary_english_run_still_corroborates_the_verse_that_holds_it() {
+        let idx = PhraseIndex::build(&corpus());
+        assert!(
+            idx.shared_run_with(
+                "god disciplines the ones he loves for whom the lord loveth he chasteneth",
+                &vr("Hebrews", 12, 6)
+            ) >= PARAPHRASE_RUN_WORDS
+        );
+    }
+
+    /// A verse this index does not hold answers ZERO rather than panicking or
+    /// guessing. The safe direction: a reference the corpus cannot confirm is not a
+    /// reference the corpus corroborates.
+    #[test]
+    fn a_verse_the_corpus_does_not_hold_shares_nothing() {
+        let idx = PhraseIndex::build(&corpus());
+        assert_eq!(
+            idx.shared_run_with("the lord is my shepherd", &vr("Psalms", 23, 99)),
+            0
+        );
+        assert_eq!(idx.shared_run_with("", &vr("Psalms", 23, 1)), 0);
+    }
+
+    /// Case and punctuation are not evidence. The index lower-cases and splits on
+    /// non-alphanumerics (`phrase_words`), and the operator's own transcript arrives
+    /// in whatever case whisper produced.
+    #[test]
+    fn case_and_punctuation_do_not_change_the_answer() {
+        let idx = PhraseIndex::build(&corpus());
+        let r = vr("Psalms", 23, 1);
+        assert_eq!(
+            idx.shared_run_with("THE LORD IS MY SHEPHERD!", &r),
+            idx.shared_run_with("the lord, is my shepherd", &r)
+        );
+    }
+
+    /// The book name is matched the way every other reference comparison in this
+    /// file matches it — case-insensitively — so a candidate spelled by one path and
+    /// a corpus entry spelled by another cannot silently share nothing.
+    #[test]
+    fn the_book_is_matched_without_regard_to_case() {
+        let idx = PhraseIndex::build(&corpus());
+        assert_eq!(
+            idx.shared_run_with("the lord is my shepherd", &vr("psalms", 23, 1)),
+            // FIVE, not four: the KJV's `{is}` is a supplied word the translators
+            // italicised and `phrase_words` keeps it, because the preacher says it
+            // out loud. The same reasoning `phrase_tests::corpus` records.
+            5
+        );
     }
 }
 

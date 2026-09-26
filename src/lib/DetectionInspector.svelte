@@ -70,6 +70,11 @@
   // The church's switch, read from the one store. Not asked again here: the
   // engine is what decides and `capture.js` holds its answer.
   $: followsReader = $capture.followsReader !== false;
+  // AND THE CHURCH'S PARAPHRASE BAR (DECISIONS §125), from the same store for the
+  // same reason. It belongs on this panel because this panel exists to answer *why
+  // did Relay say that, or not say it* — and with the bar on, the answer for a whole
+  // class of paraphrase is "because you asked me not to".
+  $: paraphraseNeedsRun = $capture.paraphraseNeedsRun === true;
   $: showPct = showsConfidence(detection);
   $: pct = Math.round((detection?.confidence ?? 0) * 100);
 
@@ -231,6 +236,14 @@
             {/if}
             <dt>Paraphrases</dt>
             <dd>Suggestions only — never auto-fire</dd>
+            <!-- WHAT IS BEING WITHHELD, not only what is capped. With the bar on,
+                 about three quarters of the paraphrase list is never offered — and an
+                 operator asking why the list went quiet has to be able to find that
+                 out from the panel they opened to ask. Rule 35 on a settings
+                 read-out: the row reads differently in the two states or it is not
+                 telling them anything. -->
+            <dt>Paraphrase evidence</dt>
+            <dd>{paraphraseNeedsRun ? 'Must echo the verse’s words in order' : 'Any strong word match'}</dd>
             <!-- AND THE ONE THING THAT CHANGED, beside the thing that did not.
                  A panel that still says only paraphrases are capped, on the day a
                  second method started reaching walls, is a guarantee left standing

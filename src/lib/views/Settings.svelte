@@ -47,6 +47,7 @@
     selectVoiceProfile,
     deleteVoiceProfile,
     setFollowTheReader,
+    setParaphraseNeedsRun,
   } from '../stores/capture.js';
   import {
     listOutputDevices,
@@ -388,6 +389,21 @@
       await setFollowTheReader(!$capture.followsReader);
     } catch (e) {
       followErr = humanError(e);
+    }
+  }
+
+  // THE PARAPHRASE BAR (DECISIONS §125, RG-311). Same shape as the switch above and
+  // the same reasoning: `setParaphraseNeedsRun` is a group-1 wrapper, so a refusal
+  // has to be READ rather than swallowed into a switch that springs back with no
+  // sentence. Its own `let`, not `followErr`: two switches sharing one error line
+  // means the second one's failure erases the first one's explanation.
+  let paraErr = '';
+  async function toggleParaphraseBar() {
+    paraErr = '';
+    try {
+      await setParaphraseNeedsRun(!$capture.paraphraseNeedsRun);
+    } catch (e) {
+      paraErr = humanError(e);
     }
   }
   async function onSensitivity(v) {
@@ -1651,6 +1667,52 @@
         </div>
         {#if followErr}
           <p class="s-alert" role="alert">{followErr}</p>
+        {/if}
+
+        <!-- THE PARAPHRASE BAR (DECISIONS §125, RG-311). The operator, 2026-09-25:
+             *"The preacher paraphrases a lot so I want you to catch that and use the
+             style to work on how the app respond."* Measured over eleven of their own
+             services, 74% of what the paraphrase detector offers on speech that names
+             no scripture is noise — and no value of any threshold cuts it, because
+             the noise and the real citations have the same score distribution and
+             invert at the tails.
+
+             WHAT DOES CUT IT is a different question about the same evidence: did the
+             preacher say some of the verse's words IN ORDER. It removes about three
+             quarters of the list.
+
+             IT IS OFF BY DEFAULT AND THE NOTE SAYS WHAT IT COSTS, because it is a
+             real trade and not a free improvement: a story retold entirely in modern
+             words shares no run with the verse, so Relay stops finding it. That is
+             the case the product's claim rests on, so the person who loses it has to
+             be the one who chose to.
+
+             NO NUMBERS IN THE NOTE. "73.6% of offers, three points of labelled
+             recall" is not something a volunteer can act on in a dark booth; "Relay
+             will miss a story told in modern words" is. The measurements live in
+             `detection::PARAPHRASE_RUN_WORDS`.
+
+             IT SITS UNDER THE DIAL WITH THE OTHER TWO, for the reason the switch
+             above records: all three answer one question — what the AI is allowed to
+             do with what it thinks it heard — and splitting them across screens is
+             how an operator comes to believe they are unrelated. -->
+        <div class="rw-nv">
+          <div class="s-nvtext">
+            <div class="rw-nvk">Paraphrase must echo the verse</div>
+            <p class="rw-nvnote">Only suggest a paraphrase when the preacher said some of the verse’s own words in a row. Far fewer wrong suggestions — and Relay will miss a Bible story retold entirely in modern words. A paraphrase is only ever a suggestion either way; this never changes what reaches a screen.</p>
+          </div>
+          <div class="rw-nvctl s-nvpair">
+            <span class="rw-nvv" class:s-armed={$capture.paraphraseNeedsRun}>{$capture.paraphraseNeedsRun ? 'on' : 'off'}</span>
+            <Switch
+              checked={$capture.paraphraseNeedsRun}
+              label="Paraphrase must echo the verse"
+              disabled={!$capture.available}
+              disabledReason={whyDisabled([!$capture.available, ENGINE_OFF])}
+              on:click={() => toggleParaphraseBar()} />
+          </div>
+        </div>
+        {#if paraErr}
+          <p class="s-alert" role="alert">{paraErr}</p>
         {/if}
 
         <!-- VOICE PROFILES, and the gate above them, are ONE section — which is

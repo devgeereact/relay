@@ -101,6 +101,29 @@ struct Context(Mutex<ContextMemory>);
 /// (it bypasses this entirely — a first-class control, CLAUDE.md).
 struct Detecting(AtomicBool);
 
+/// **MUST A PARAPHRASE ECHO THE VERSE BEFORE RELAY OFFERS IT?**
+///
+/// The church's switch over the paraphrase path: a contiguous run of
+/// `detection::PARAPHRASE_RUN_WORDS` words shared with the verse, in the verse's
+/// own order (DECISIONS §125, RG-311). **Off by default**, so nothing changes for a
+/// church that never opens Settings.
+///
+/// ## Why it lives here and not on the `Router`
+///
+/// `follow_the_reader` is on the router because the router is what DECIDES it, and
+/// `get_follow_the_reader` reads from the router for exactly that reason. This is
+/// decided in `candidates_for_window`, before the gate, so putting it on the router
+/// would mean a surface asking a thing that does not decide — and it would invite
+/// the next reader to consume it inside `Router::decide`, where it would be a
+/// fourth kind of cap over a method rule 10 already caps absolutely. `Detecting` is
+/// the precedent: a persisted-or-not switch over what the detection path surfaces,
+/// read in `emit_detections` and nowhere else.
+///
+/// An `AtomicBool` and not a `Mutex`: it is read once per window on the live path
+/// and written by one command, so it must never be able to contend a lock with
+/// anything the decoder is waiting on (rule 2).
+struct ParaphraseRun(AtomicBool);
+
 /// The in-progress service being recorded to local history, if any.
 struct SessionState {
     id: i64,
@@ -166,6 +189,9 @@ fn main() {
         .manage(Audio::default())
         .manage(Routing::default())
         .manage(Detecting(AtomicBool::new(true)))
+        // OFF until the row says otherwise. Overwritten in `setup` from
+        // `app_settings`, below, before anything can be heard.
+        .manage(ParaphraseRun(AtomicBool::new(false)))
         .manage(channels::Rehearsal::default())
         .manage(channels::CountdownWarnDefault::default())
         .manage(channels::MediaTransport::default())
@@ -496,14 +522,23 @@ fn main() {
             // decoder-bias prompt to STT, calibrated thresholds to the router —
             // so accent calibration is live from the first word, before any UI.
             {
-                let (profile, follow) = {
+                let (profile, follow, needs_a_run) = {
                     let db = app.state::<Db>();
                     let conn = db.0.lock().expect("db lock");
                     (
                         db::active_voice_profile(&conn).ok().flatten(),
                         db::follow_the_reader(&conn),
+                        db::paraphrase_needs_a_run(&conn),
                     )
                 };
+                // THE PARAPHRASE BAR, BEFORE THE FIRST WORD, for the same reason as
+                // the reader switch below: a rule the operator set weeks ago must be
+                // live from the first window, not from whenever a settings page
+                // happens to be opened. Off unless the row says otherwise, so this
+                // line is a no-op on every install that has never touched it.
+                app.state::<ParaphraseRun>()
+                    .0
+                    .store(needs_a_run, Ordering::Relaxed);
                 // THE CHURCH'S SWITCH, BEFORE THE FIRST WORD IS HEARD. It governs
                 // what may reach a wall unattended, so it has to be on the router
                 // by the time anything can be decided — not applied when a settings
@@ -623,6 +658,8 @@ fn main() {
             dismiss_detection,
             set_follow_the_reader,
             get_follow_the_reader,
+            set_paraphrase_needs_a_run,
+            get_paraphrase_needs_a_run,
             get_thresholds,
             get_sensitivity,
             set_sensitivity,
@@ -795,12 +832,71 @@ fn stop_clocks_a_relaunch_would_paint<R: tauri::Runtime>(app: &tauri::AppHandle<
 /// Minimum semantic cosine to even consider a paraphrase candidate. Below this
 /// it's noise; above, the router's suggest/auto thresholds still apply.
 ///
-/// NOTE: this floor, not the length of the suggestion list, is what currently
-/// limits paraphrase recall. `eval::suggestion_policy_scorecard` shows the right
-/// passage sits in the top 5 for 98% of retellings but only 84% survive this
-/// cut. Lowering it would trade that back for noise — and the corpus has no
-/// negative cases yet (transcript that mentions no scripture at all), so the
-/// noise it would cost is currently UNMEASURED. Do not lower it on a hunch.
+/// This floor, not the length of the suggestion list, is what limits paraphrase
+/// recall. Measured rather than remembered — this comment carried **98% and 84%**
+/// from an older, smaller corpus and both were stale: against the 43 cases in
+/// `data/paraphrase_corpus.json` today, `eval::paraphrase_scorecard` puts the right
+/// passage in the top 5 for **100%** of retellings and
+/// `eval::suggestion_policy_scorecard` shows **77%** surviving this cut (41% of the
+/// modern-wording ones). Reproduce both rather than trusting this sentence:
+/// `cargo test --release print_paraphrase_scorecard print_suggestion_policy -- --nocapture`.
+///
+/// ── THE NOISE IT COSTS IS NO LONGER UNMEASURED, AND THE ANSWER WAS NOT A NUMBER ──
+///
+/// This comment said the negative cases did not exist — *"transcript that mentions
+/// no scripture at all"* — and asked that the floor not be lowered on a hunch. The
+/// cases exist now: 14,158 final transcript lines across eleven of the author's own
+/// services, 35.3 hours, of which **85.3% name no reference and hold no verbatim
+/// run**. `suggestions::bar::paraphrase_bar` replays them through this path and the
+/// real `Router`; 150 of those windows were then read by hand and judged.
+///
+/// **The false-positive rate at this floor is 74%** — 111 of 150 offers answer
+/// speech that is not about the verse named, and 28 are plainly right. And the
+/// measurement that decides this constant is not the rate but the ORDERING:
+///
+/// | policy                | offers removed | precision | recall | ALL | MODERN |
+/// |-----------------------|---------------:|----------:|-------:|----:|-------:|
+/// | **0.30 (shipped)**    |         **0%** | **18.7%** | **100%** | **77%** | **41%** |
+/// | 0.40                  |          70.9% |     38.0% |  67.9% | 58% |     6% |
+/// | 0.45                  |          84.8% |     56.7% |  60.7% | 51% |     0% |
+/// | a 3-word shared run   |          73.5% |     50.0% |  78.6% | 70% |    24% |
+///
+/// *precision and recall are over the 150 hand-read windows; ALL and MODERN are
+/// `para_cases()` recall, the retellings this path exists for.*
+///
+/// **RAISING IT IS REFUSED ON THE EVIDENCE, NOT ON CAUTION.** The two populations
+/// have the same distribution — p50 cosine **0.356** in windows that name no
+/// scripture against **0.361** in windows that do — so there is nothing for an
+/// absolute to cut between, which is rule 12's shape one door along. Worse, the
+/// ordering is inverted at both tails: the top-scoring false positives in the whole
+/// sample are stock liturgical formulae (*"Hallelujah. Hallelujah. Praise the
+/// Lord."* → `Psalms 146:1` at **0.557**; *"In the name of Jesus Christ"* four
+/// times → `1 Corinthians 5:4` at **0.580**) and they outscore twenty-six of the
+/// twenty-eight correct offers, whose bottom end is real citation (*"ten times
+/// better than their colleagues"* → `Daniel 1:20` at **0.327**). A floor high
+/// enough to silence the boilerplate silences the citations first. Pinned by
+/// `suggestions::why_the_floor_holds`, which is the one part of that measurement
+/// reproducible from the bundled KJV alone.
+///
+/// **What the data supports is not a bar on this number at all**: a contiguous run of
+/// three words shared with the verse named beats every value of this constant on all
+/// four columns above. **That rule now EXISTS, and it is deliberately not this
+/// constant** — `detection::PARAPHRASE_RUN_WORDS`, applied in
+/// `candidates_for_window`, behind the church's own switch
+/// (`detection.paraphrase_needs_a_run`) and OFF by default.
+///
+/// It is a setting rather than a value of this number for two reasons that both still
+/// hold. It is a different INSTRUMENT — a question about word order, where this is a
+/// bar on a score — so folding it in here would give one gate two owners, which is
+/// §96's whole subject. And it costs recall on exactly the case the product's claim
+/// rests on: three of the 43 labelled retellings, every one `vocab: modern`
+/// (`suggestions::what_the_bar_silences`, which names them and asserts the count).
+/// Spending those is an operator's trade, so the operator makes it.
+///
+/// **This constant did not move and may not.** A church that has never opened that
+/// switch is running the recall it ran before it existed — 77% ALL, 41% MODERN — and
+/// that is what the switch defaulting off is for. So: do not raise it, and do not
+/// lower it either. The number is not the lever.
 const SEMANTIC_FLOOR: f32 = 0.30;
 
 /// Most paraphrase alternatives to offer for one transcript chunk.
@@ -1507,6 +1603,12 @@ fn candidates_for_window(
     phrases: &Phrases,
     context: &ContextMemory,
     on_the_wall: Option<&str>,
+    // **THE CHURCH'S BAR ON A PARAPHRASE** — must the words echo a run of the
+    // verse's own words before Relay offers it? A PARAMETER rather than a read of
+    // the state it comes from, so this function stays pure over its inputs and
+    // `suggestions::bar::paraphrase_bar` can score both settings against the same
+    // corpus through the same code a congregation gets (rule 13).
+    paraphrase_needs_a_run: bool,
 ) -> WindowCandidates {
     // Gather candidates. Each one carries the EVIDENCE for itself — the words
     // that produced it — so the console can show the operator why, and not just
@@ -1793,6 +1895,68 @@ fn candidates_for_window(
         });
     }
 
+    // ── THE RUN BAR ON A PARAPHRASE, off unless the church asked for it ───
+    //
+    // The operator, 2026-09-25: *"The preacher paraphrases a lot so I want you to
+    // catch that and use the style to work on how the app respond."* Measured, that
+    // turned out to be two findings and only one of them is about catching more:
+    // 74% of what the paraphrase path offers on speech naming no scripture is noise
+    // (DECISIONS §125, RG-311), and no value of `SEMANTIC_FLOOR` can cut it because
+    // the two populations share a distribution and invert at the tails.
+    //
+    // What does cut it is a different question about the same evidence: a contiguous
+    // run of `detection::PARAPHRASE_RUN_WORDS` words shared with the verse named. A
+    // cosine is a bag of words in no order (rule 18); this asks whether any of them
+    // were said in the verse's order. It removes 73.5% of offers and takes precision
+    // from 18.7% to 50.0%, dominating every threshold on all four measures at once.
+    //
+    // **IT IS A SETTING AND IT DEFAULTS OFF, and that is the whole design.** It
+    // silences three of the 43 labelled retellings and every one is `vocab: modern` —
+    // the four friends tearing open a roof, Paul and Silas at midnight, Jonah
+    // overboard — which is the narrative case the product's claim rests on. It also
+    // removes the one paraphrase offer anybody can prove the operator wanted, and to
+    // a MISHEARD word rather than to modern wording. Spending those is an operator's
+    // trade, so a church that never opens Settings is offered exactly what it was
+    // offered yesterday. `suggestions::what_the_bar_silences` holds both figures.
+    //
+    // **HERE, over the finished set, and never at the gathering site**, for rule
+    // 36's reason: this is the third window-level rule and it belongs with the other
+    // two, so the answer to *what did Relay decide not to offer, and why* has one
+    // place. It is also why a held paraphrase is REPORTED rather than dropped — a
+    // switch that quietly stops offering things is rule 35 exactly, and
+    // `HeldReason::NoSharedRun` rides the event that already exists for that.
+    //
+    // **ORDER DOES NOT MATTER against the passage guard** and the masks are merged
+    // rather than chained: a `Semantic` candidate arms neither of the guard's rules
+    // (rule A needs `is_a_verbatim_run`, rule B needs the wall), so holding it first
+    // or last cannot change what the guard decides about anything else.
+    //
+    // A POISONED PHRASE INDEX HOLDS, rather than waving everything through. The
+    // operator asked for a bar; a bar that silently stops being applied is the
+    // failure rule 35 is about, and because every hold is announced the operator can
+    // see that this is what happened. Practically unreachable — the only writer is a
+    // translation switch the service lock refuses mid-service.
+    let run_mask: Vec<Option<detection::HeldReason>> = if paraphrase_needs_a_run {
+        let index = phrases.0.read();
+        candidates
+            .iter()
+            .map(|c| {
+                if c.method != DetectionMethod::Semantic {
+                    return None;
+                }
+                let echoes = index.as_ref().is_ok_and(|g| {
+                    g.shared_run_with(text, &c.r) >= detection::PARAPHRASE_RUN_WORDS
+                });
+                (!echoes).then_some(detection::HeldReason::NoSharedRun)
+            })
+            .collect()
+    } else {
+        // NOT `Vec::new()`. Every mask below is indexed in lockstep with
+        // `candidates`, and a short one would silently stop holding at the first
+        // index it ran out at.
+        vec![None; candidates.len()]
+    };
+
     // ── THE PASSAGE GUARD, 2026-09-25 ─────────────────────────────────────
     //
     // The operator, 2026-09-25: *"I dont want suggestion to be changing when a
@@ -1810,12 +1974,27 @@ fn candidates_for_window(
     let on_screen = context.current();
     let view: Vec<(&VerseRef, DetectionMethod)> =
         candidates.iter().map(|c| (&c.r, c.method)).collect();
-    let mask = detection::hold_for_the_passage(
+    // ONE MASK, TWO RULE SETS. `or` keeps the run bar's answer when both fire,
+    // which is the more actionable of the two sentences: "you turned this on" is
+    // something the operator can undo, and "the preacher is reading elsewhere" is
+    // not.
+    let passage_mask = detection::hold_for_the_passage(
         on_screen,
         on_the_wall,
         detection::window_states_a_reference(text, anchor.as_ref()),
         &view,
     );
+    // `zip` TRUNCATES, silently, which is the one way this merge could go wrong: a
+    // mask one short would stop holding at the last index and nothing would say so.
+    // Both are built from `candidates.len()`, so a mismatch is a programming error
+    // rather than a state a church can reach — hence a debug assertion and not a
+    // runtime branch on the fire path.
+    debug_assert_eq!(passage_mask.len(), run_mask.len());
+    let mask: Vec<Option<detection::HeldReason>> = passage_mask
+        .into_iter()
+        .zip(&run_mask)
+        .map(|(passage, run)| run.or(passage))
+        .collect();
     if mask.iter().all(Option::is_none) {
         return WindowCandidates {
             kept: candidates,
@@ -1878,6 +2057,9 @@ fn emit_detections<R: tauri::Runtime>(
     let ctx = handle.state::<Context>();
     let sem = handle.state::<Semantic>();
     let phrases = handle.state::<Phrases>();
+    // THE CHURCH'S PARAPHRASE BAR, read before any lock is taken. See
+    // `ParaphraseRun`; off unless an operator turned it on.
+    let needs_a_run = handle.state::<ParaphraseRun>().0.load(Ordering::Relaxed);
 
     // Compute everything UNDER the locks, but collect the emits/broadcasts and
     // fire them AFTER releasing — never hold a lock across handle.emit /
@@ -1921,6 +2103,9 @@ fn emit_detections<R: tauri::Runtime>(
             // What the screens are actually showing, from the one module that knows
             // — and NOT `context.current()`, which survives a blackout on purpose.
             router.wall(),
+            // READ OUTSIDE THE LOCKS ABOVE, on purpose: an `AtomicBool` read cannot
+            // block and cannot participate in a lock order (rule 6).
+            needs_a_run,
         );
         // ASSIGNED BEFORE THE EARLY EXIT, and that order is the whole point.
         //
@@ -7475,6 +7660,58 @@ fn get_follow_the_reader(routing: tauri::State<'_, Routing>) -> error::Result<bo
     Ok(routing.0.lock()?.follows_the_reader())
 }
 
+/// **MUST A PARAPHRASE ECHO THE VERSE?** The church's one switch over what the
+/// paraphrase detector is allowed to put in front of an operator (DECISIONS §125,
+/// RG-311).
+///
+/// ## Why this is a command and not `set_setting`
+///
+/// The same reason as `set_follow_the_reader`: writing the row alone would change
+/// nothing until the next launch while the switch on screen showed the new
+/// position, so the operator would be told the noise had stopped and it would go on
+/// for the rest of the service. Choosing and applying are one action or the promise
+/// is false (rule 15).
+///
+/// ## Order — the ROW first, the engine second
+///
+/// `set_follow_the_reader`'s order, for `set_stt_language`'s reason (RG-138): a
+/// write that fails must not leave the detector running under a rule nothing
+/// remembers, because the next launch would silently put it back.
+///
+/// ## NOT behind the service lock, and this is a deliberate divergence
+///
+/// Its structural twin `set_follow_the_reader` IS locked, because turning that on
+/// mid-service changes what reaches a CONGREGATION with nobody pressing anything.
+/// This one cannot: `Semantic` is capped at `Suggest` by rule 10 at any score and
+/// any setting, so the switch only ever removes rows from the operator's own list.
+/// `servicelock.rs` protects two things — the irreversible, and anything that takes
+/// the engine away mid-sermon — and this is neither: it is one click each way and it
+/// stops nothing. The nearest precedent is therefore `set_sensitivity`, which the
+/// lock's own module note names as explicitly unprotected, and for the same reason:
+/// **the operator who most needs this is the one drowning in suggestions at 10:31**,
+/// and over-blocking is the more dangerous failure there.
+#[tauri::command]
+fn set_paraphrase_needs_a_run<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    db: tauri::State<'_, Db>,
+    on: bool,
+) -> error::Result<bool> {
+    {
+        let conn = db.0.lock()?;
+        db::set_paraphrase_needs_a_run(&conn, on)?;
+    }
+    app.state::<ParaphraseRun>().0.store(on, Ordering::Relaxed);
+    Ok(on)
+}
+
+/// Is the paraphrase bar on right now? Read from the STATE the detection path
+/// reads, not from the row — the same rule `get_follow_the_reader` follows, so a
+/// surface cannot show a preference that the detector is not applying.
+#[tauri::command]
+fn get_paraphrase_needs_a_run<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> error::Result<bool> {
+    Ok(app.state::<ParaphraseRun>().0.load(Ordering::Relaxed))
+}
+
 /// Bring speech recognition up after a model has just been installed, without a
 /// restart. Re-applies the active voice profile so language + decoder bias are
 /// live from the first word.
@@ -10000,7 +10237,18 @@ mod passage_guard_bench {
                 held,
                 reading_in: _,
                 doubted,
-            } = candidates_for_window(text, true, &sem, &phrases, &context, router.wall());
+            } = candidates_for_window(
+                text,
+                true,
+                &sem,
+                &phrases,
+                &context,
+                router.wall(),
+                // FALSE: this bench measures the passage guard against the SHIPPED
+                // default. What the paraphrase bar costs is measured where it can be
+                // swept on and off — `suggestions::bar::paraphrase_bar`.
+                false,
+            );
             for d in &doubted {
                 out.doubts.push((
                     *at,
@@ -10306,7 +10554,7 @@ mod passage_guard_bench {
         let mut reached = 0usize;
         println!();
         for (id, fired, should_be, text) in FIELD {
-            let w = candidates_for_window(text, true, &sem, &phrases, &context, None);
+            let w = candidates_for_window(text, true, &sem, &phrases, &context, None, false);
             let doubt = w.doubted.iter().find(|d| d.reference == *fired);
             match doubt {
                 Some(d) => {
@@ -10623,5 +10871,206 @@ mod passage_guard_wiring {
     fn the_wall_rule_names_itself_on_the_wire() {
         let json = serde_json::to_string(&detection::HeldReason::AlreadyOnScreen).unwrap();
         assert_eq!(json, "\"already_on_screen\"");
+    }
+}
+
+/// **THE CHURCH'S PARAPHRASE BAR, THROUGH THE ASSEMBLY THAT APPLIES IT** — the
+/// setting `detection.paraphrase_needs_a_run` and `detection::PARAPHRASE_RUN_WORDS`
+/// (DECISIONS §125, RG-311).
+///
+/// `detection::paraphrase_run_bar` holds the run test itself, purely. These hold the
+/// WIRING, and the first thing they hold is the one that matters most: **that the
+/// switch, OFF, reaches nothing at all.**
+///
+/// The corpus is invented on purpose. A cosine is a bag of words in no order, so the
+/// case this bar exists for is a window that shares a verse's whole vocabulary and
+/// none of its order — and with made-up tokens that can be built exactly, at a
+/// cosine of 1.0, with no argument about whether the index "should" have scored it.
+/// Two verses, no database, no service recording, runs in CI.
+#[cfg(test)]
+mod paraphrase_bar_wiring {
+    use super::*;
+    use detection::{HeldReason, PhraseIndex, VerseRef};
+
+    fn vr(book: &str, chapter: i64, verse: i64) -> VerseRef {
+        VerseRef {
+            book: book.into(),
+            chapter,
+            verse,
+        }
+    }
+
+    /// Six invented words per verse. Nothing here parses as a reference, so the only
+    /// candidate a window can produce is a paraphrase — which is the whole surface
+    /// under test.
+    fn corpus() -> Vec<(VerseRef, String)> {
+        vec![
+            (
+                vr("Psalms", 23, 1),
+                "alpha bravo charlie delta echo foxtrot".into(),
+            ),
+            (
+                vr("Romans", 8, 28),
+                "golf hotel india juliett kilo lima".into(),
+            ),
+        ]
+    }
+
+    struct Fixture {
+        sem: Semantic,
+        phrases: Phrases,
+        context: ContextMemory,
+    }
+
+    fn fixture() -> Fixture {
+        let c = corpus();
+        Fixture {
+            sem: Semantic(std::sync::RwLock::new(SemanticIndex::build(&c))),
+            phrases: Phrases(std::sync::RwLock::new(PhraseIndex::build(&c))),
+            context: ContextMemory::default(),
+        }
+    }
+
+    fn window(f: &Fixture, text: &str, needs_a_run: bool) -> WindowCandidates {
+        candidates_for_window(
+            text,
+            true,
+            &f.sem,
+            &f.phrases,
+            &f.context,
+            None,
+            needs_a_run,
+        )
+    }
+
+    /// The same words, out of order — the shape 111 of the 150 hand-read offers had.
+    const SCATTERED: &str = "charlie alpha echo bravo foxtrot delta";
+    /// The same words, three of them in the verse's own order.
+    const ECHOED: &str = "delta alpha bravo charlie foxtrot echo";
+
+    /// **THE FIXTURE IS NOT VACUOUS.** Both windows must reach the gate as
+    /// paraphrases with the switch off, or every assertion below passes over an empty
+    /// list — the failure mode `qa.rs` calls a fixture that is not a first launch.
+    #[test]
+    fn both_windows_are_offered_as_paraphrases_before_anything_is_switched_on() {
+        let f = fixture();
+        for text in [SCATTERED, ECHOED] {
+            let w = window(&f, text, false);
+            assert!(
+                w.kept
+                    .iter()
+                    .any(|c| c.method == DetectionMethod::Semantic && c.r == vr("Psalms", 23, 1)),
+                "{text:?} produced no paraphrase for Psalms 23:1: {:?}",
+                w.kept.iter().map(|c| (&c.r, c.method)).collect::<Vec<_>>()
+            );
+            assert!(
+                w.held.is_empty(),
+                "{text:?} held something with the switch off"
+            );
+        }
+    }
+
+    /// **OFF IS A NO-OP, AND THIS IS THE TEST THAT SAYS SO.**
+    ///
+    /// A church that never opens Settings is offered exactly what it was offered
+    /// yesterday: the bar holds nothing, at any run length, including the window it
+    /// was built to remove.
+    #[test]
+    fn a_church_that_never_opens_the_setting_is_offered_what_it_was_offered_yesterday() {
+        let f = fixture();
+        let w = window(&f, SCATTERED, false);
+        assert!(
+            w.held
+                .iter()
+                .all(|(_, why)| *why != HeldReason::NoSharedRun),
+            "the bar held a candidate with the switch OFF"
+        );
+        assert!(w.kept.iter().any(|c| c.method == DetectionMethod::Semantic));
+    }
+
+    /// And ON it removes exactly the window with no run, reports it with its reason,
+    /// and leaves the one that echoes the verse alone.
+    #[test]
+    fn on_it_holds_the_paraphrase_that_echoes_nothing_and_keeps_the_one_that_does() {
+        let f = fixture();
+        let scattered = window(&f, SCATTERED, true);
+        assert!(
+            !scattered
+                .kept
+                .iter()
+                .any(|c| c.method == DetectionMethod::Semantic),
+            "a paraphrase with no shared run reached the gate with the bar ON"
+        );
+        // REPORTED, NOT DROPPED (rule 35). A switch that quietly stops offering
+        // things is indistinguishable from a detector that has gone deaf.
+        assert!(
+            scattered
+                .held
+                .iter()
+                .any(|(c, why)| *why == HeldReason::NoSharedRun
+                    && c.method == DetectionMethod::Semantic),
+            "the hold was not reported: {:?}",
+            scattered
+                .held
+                .iter()
+                .map(|(c, w)| (&c.r, *w))
+                .collect::<Vec<_>>()
+        );
+        let echoed = window(&f, ECHOED, true);
+        assert!(
+            echoed
+                .kept
+                .iter()
+                .any(|c| c.method == DetectionMethod::Semantic),
+            "a paraphrase sharing {} words in order was held",
+            detection::PARAPHRASE_RUN_WORDS
+        );
+    }
+
+    /// **THE SWITCH CAN REACH NOTHING BUT A PARAPHRASE**, which is the structural
+    /// half of "off is a no-op": whatever the setting, the two runs differ only in
+    /// `Semantic` candidates, so no reference, quotation, reading or bare verse can
+    /// change under it in either direction.
+    ///
+    /// Asserted over a table rather than one window, because the failure this guards
+    /// is a mask applied at the wrong index — which shows up on the SECOND candidate
+    /// and not the first.
+    #[test]
+    fn nothing_but_a_paraphrase_changes_when_the_switch_moves() {
+        let f = fixture();
+        for text in [
+            SCATTERED,
+            ECHOED,
+            // A real spoken reference beside the scattered paraphrase. Nothing
+            // reference-shaped may move.
+            "turn with me to Romans chapter eight verse twenty eight charlie alpha echo bravo",
+            "psalm twenty three verse one",
+            "good morning everybody and welcome",
+            "",
+        ] {
+            let off = window(&f, text, false);
+            let on = window(&f, text, true);
+            let moved: Vec<(&VerseRef, DetectionMethod)> = off
+                .kept
+                .iter()
+                .filter(|c| !on.kept.iter().any(|k| k.r == c.r && k.method == c.method))
+                .map(|c| (&c.r, c.method))
+                .collect();
+            assert!(
+                moved.iter().all(|(_, m)| *m == DetectionMethod::Semantic),
+                "{text:?}: the switch moved something that is not a paraphrase: {moved:?}"
+            );
+            // And it only ever REMOVES. Nothing gains anything from the bar.
+            assert!(
+                on.kept.len() <= off.kept.len(),
+                "{text:?}: the bar added a candidate"
+            );
+            assert!(
+                on.kept
+                    .iter()
+                    .all(|c| off.kept.iter().any(|k| k.r == c.r && k.method == c.method)),
+                "{text:?}: the bar produced a candidate the shipped path did not"
+            );
+        }
     }
 }

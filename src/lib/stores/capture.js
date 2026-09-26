@@ -162,6 +162,9 @@ export const capture = writable({
   // READ goes up by itself. True is the shipped default and what a fresh install
   // does, so the placeholder is the truth rather than the reassuring answer.
   followsReader: true,
+  // OFF until the backend says otherwise — the shipped default, so a console that
+  // has not asked yet shows what every install is actually running.
+  paraphraseNeedsRun: false,
 });
 
 // What is currently ON the output screens (last fired content, null = cleared).
@@ -360,8 +363,13 @@ export const resolvedDetections = writable([]);
  *              needs no passage, because the wall itself is the evidence.
  *   `reading`  the phrase, verbatim in that passage, that says so. The evidence,
  *              not a number (rule 18).
- *   `reason`   `'already_on_screen'` or `'outside_the_reading'`. Two rules doing
- *              very different things, and "3 held" is unactionable without it.
+ *   `reason`   `'already_on_screen'`, `'outside_the_reading'` or `'no_shared_run'`.
+ *              Three rules doing very different things, and "3 held" is
+ *              unactionable without knowing which. The third is the church's own
+ *              paraphrase bar (DECISIONS §125) — the only one of the three that is
+ *              a SETTING rather than a rule, so the only one the operator can undo,
+ *              which is exactly why it must be told apart from the other two.
+ *              `detect.js::describeHold` is the one place this becomes words.
  *
  * It is replaced, never accumulated: the question is what is being held NOW, and
  * a growing log of holds would be a second churning list — which is the thing the
@@ -686,7 +694,7 @@ export async function initAudio() {
     return;
   }
   // Backend is attached. Load status pieces independently.
-  const [devices, stt, gate, detectionOn, followsReader, storedDevice] = await Promise.all([
+  const [devices, stt, gate, detectionOn, followsReader, needsRun, storedDevice] = await Promise.all([
     call('list_audio_devices').catch(() => []),
     call('stt_status').catch(() => ({ loaded: false, model: null, language: null })),
     // THE WHOLE READ-OUT, NOT ONLY THE TWO NUMBERS, and it has to be read here
@@ -705,6 +713,14 @@ export async function initAudio() {
     // feature is off over an engine that is following a reader is the worse of
     // the two wrong answers.
     call('get_follow_the_reader').catch(() => true),
+    // THE PARAPHRASE BAR (DECISIONS §125, RG-311). Read from the state the
+    // detection path reads, and defaulted to FALSE on a failure — the mirror of the
+    // line above, inverted because the DEFAULT is inverted: a surface claiming the
+    // bar is on over a detector that is not applying it would promise a quiet list
+    // and deliver the firehose, and a surface claiming it is off is at worst
+    // surprising in the direction of MORE suggestions, which is what the operator
+    // already has.
+    call('get_paraphrase_needs_a_run').catch(() => false),
     // RG-121. Every launch used to start on the system default, whatever was
     // selected last time, and nothing said so.
     call('get_setting', { key: INPUT_DEVICE_KEY }).catch(() => null),
@@ -743,6 +759,7 @@ export async function initAudio() {
     sensitivityKnown: s.sensitivityKnown || gateRead,
     gateOnDial: gateRead ? gate.on_dial !== false : s.gateOnDial,
     followsReader: followsReader !== false,
+    paraphraseNeedsRun: needsRun === true,
     detectionOn,
     inputDevice: chosen.device,
     inputDeviceMissing: chosen.missing,
@@ -1616,6 +1633,26 @@ export async function setFollowTheReader(on) {
   const landed = await call('set_follow_the_reader', { on: !!on });
   capture.update((s) => ({ ...s, followsReader: landed !== false }));
   return landed !== false;
+}
+
+/** Turn the paraphrase bar on or off, and apply it now.
+ *
+ *  Throws (group 1), for `setFollowTheReader`'s reason: a switch that stores a
+ *  preference while the detector goes on doing the opposite is the "Screens cleared"
+ *  lie in another coat (rule 15), so the store is only updated from what the backend
+ *  actually landed on.
+ *
+ *  NOT behind the service lock, unlike its twin above, and the divergence is
+ *  deliberate — see `set_paraphrase_needs_a_run` in `main.rs`. This can only ever
+ *  remove rows from the operator's own list (`Semantic` is capped at Suggest by rule
+ *  10 at any setting), and the operator who most needs it is the one drowning in
+ *  suggestions in the middle of a service.
+ */
+export async function setParaphraseNeedsRun(on) {
+  const call = await invoke();
+  const landed = await call('set_paraphrase_needs_a_run', { on: !!on });
+  capture.update((s) => ({ ...s, paraphraseNeedsRun: landed === true }));
+  return landed === true;
 }
 
 /** Operator dismisses a suggestion → drop it + tighten the gate. */

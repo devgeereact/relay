@@ -6917,3 +6917,231 @@ rule — never a number (rule 18). **Nothing renders it yet.** The structural ca
 operator-facing sentence is owed, and it belongs with a defect found on the way: `uncertain_number`
 has no frontend case at all, so a candidate whose numbers Relay inferred currently renders as
 *"Heard the reference"* with a confidence bar.
+
+## 124. What the AI offered is part of what happened (2026-09-25)
+
+**The defect was structural, not a bug anybody could have seen.** `persist_fire` sat inside
+`if fire.may_broadcast()`. Rule 10 caps a paraphrase at `Suggest` at any score, `may_broadcast` is
+false for a suggestion, and so **a paraphrase never reached the database**. Across every service
+this machine has recorded, `status = 'suggested'` has never once been written. `detections.status`
+permits it, `db/services.rs` documents all four values and `service_timeline` reads them — two of
+the four were unreachable.
+
+### Why this is not the decision that was already taken
+
+`dismiss_detection`'s own comment argues the other way — *"persisting every suggestion is not the
+fix … hundreds of rows a minute"* — and that argument was accepted, and the operator's acceptances
+and dismissals were moved to `cues` instead, which was right and is untouched.
+
+**What was never done was the measurement the sentence rests on.** It is about **8 a minute**, not
+hundreds: 3,038 offers across 16 hours of finals, ~7,000-8,000 including partials, 9.3 µs and 179
+bytes each, **1.4 MB a service** against the 1.85 MB `perf_samples` already writes. A figure nobody
+had measured was deciding a schema.
+
+### What a suggestion may and may not do
+
+It writes a `detections` row with `status = 'suggested'` and its real method. It does **not** write
+a transcript row, and that is not a judgement about importance: only finals are persisted, the live
+path detects on every partial, and an offer that inserted its own row would put thousands of rows of
+mid-word text into the table every history surface renders. The window rides in `heard_text`, which
+is the column FIELD F-2 added for exactly this.
+
+**Rule 14 is untouched.** The status written is the one the gate reached: `'auto'` is still Relay's
+own initiative, `'manual'` is still a human, and a suggestion is neither.
+
+### The privacy precedent is `heard_text`'s, and the argument is short
+
+`service_events.detail` carries a phrase Relay COMPOSES and must keep carrying nothing else.
+`detections.heard_text` carries what was said, on every fire, and exists so a wrong verse can be
+explained. A suggestion is the same kind of artefact about the same kind of claim — and the decisive
+point is that it **widens nothing**: the window a suggestion was read from is already in
+`transcripts`, verbatim, and `delete_service` erases both together.
+
+### The half that makes the other half worth having
+
+`db_method` collapsed seven variants into `'direct'` and `'semantic'`, so the record could not tell
+a paraphrase from a quotation from a followed reading. That was a filed known gap and a tolerable
+one while every row was a fire. **It is not tolerable in a record built to answer *what did the
+paraphrase detector do*, where 2,325 of 2,790 offers are the ambiguous word.** The v6 rung rebuilds
+the table to the seven `DetectionMethod::wire()` names — the vocabulary the console has spoken since
+§21 — so `detect.js`'s existing helpers become correct on an archive row for the first time.
+Existing rows keep their word: which of the three a legacy `semantic` was cannot be recovered, and
+guessing would invent the evidence this column exists to carry.
+
+### What it does not claim
+
+**Nothing here says a suggestion was right.** Only a person in the room can judge that. What the
+record does show, on its first day, is not flattering: **2,325 paraphrase offers in one service,
+median cosine 0.356 against a 0.30 floor, one acceptance** — roughly one per 2,800. Whether that
+list should be shorter, by an evidentiary bar or a per-window cap like rule 29's, is an operator
+decision and this decision does not take it.
+
+## 125. The paraphrase bar is measured now, and the number is not the lever (2026-09-25)
+
+**Answers the sentence §124 left open**: *"Whether that list should be shorter, by an evidentiary
+bar or a per-window cap like rule 29's, is an operator decision and this decision does not take
+it."*
+
+### What was owed, and what it turned out to say
+
+`SEMANTIC_FLOOR = 0.30` carried its own reason for never moving: *"the corpus has no negative cases
+yet (transcript that mentions no scripture at all), so the noise it would cost is currently
+UNMEASURED. Do not lower it on a hunch."* RG-310 made the offers observable and three services on
+2026-09-25 left the negative cases in `transcripts`. Eleven services, **14,158 final lines over
+35.3 hours**, replayed through the real `candidates_for_window` and the real `Router`. **85.3% of
+windows name nothing reference-shaped and hold no verbatim run**, and **85.7% of all 4,853
+paraphrase offers come from them**.
+
+150 of them were read by hand: **28 answer what was said, 11 are arguable, 111 are noise** — a
+**74% false-positive rate**. Prayer, congregational response, offering liturgy, song lyrics, and
+announcements matched on a member's name (`Esther 7:3`) or the service's own title
+(`1 Timothy 1:17`).
+
+### Why raising it is refused, and the refusal is arithmetic rather than caution
+
+**The two populations have the same distribution.** p50 cosine **0.356** where no scripture is
+named against **0.361** where it is. There is nothing for an absolute to cut between, which is rule
+12's sentence one door along: a signal compared to an absolute level that does not separate
+anything is not a measurement.
+
+**And the ordering is inverted at both tails.** The highest-scoring false positives in the whole
+sample are stock liturgical formulae — *"Hallelujah. Hallelujah. Praise the Lord."* scoring
+`Psalms 146:1` at **0.557**, *"In the name of Jesus Christ"* four times scoring `1 Corinthians 5:4`
+at **0.580** — and they outscore twenty-six of the twenty-eight correct offers, whose bottom end is
+genuine citation: *"ten times better than their colleagues"* → `Daniel 1:20` at **0.327**. A floor
+set high enough to silence the boilerplate silences the citations first. Both matches are also
+lexically CORRECT — those psalms really do say those words — so this is not a defect in the index
+and cannot be fixed by disbelieving the score.
+
+**Every bar that cuts volume materially kills the claim.** `para_cases()` MODERN recall falls
+41% → 6% at a floor of 0.40 and → 0% at 0.45, and the modern-wording retellings are exactly *"the
+preacher paraphrases a lot so I want you to catch that"*. At 0.40, precision rises 18.7% → 38.0%
+while a third of the correct answers die **and the surviving list is still majority noise**.
+
+### What the data does support, and why it is not being built here
+
+A **contiguous run of three words shared with the verse named** beats every value of all three
+constants on all four measurements at once: removes 73.5% of offers against 0.40's 70.9%, precision
+50.0% against 38.0%, labelled recall 78.6% against 67.9%, corpus recall 70%/24% against 58%/6%. An
+offer with no such run is wrong 89% of the time.
+
+It is **not** taken here, for three reasons and each stands alone. It is a new instrument rather
+than a number, so it means `candidates_for_window` asking `PhraseIndex` a question it does not ask
+— a change at the set-level gathering site rule 36 governs, owed its own unit and its own `e2e`
+case. It **silences 5 of the 43 labelled retellings**, every one `vocab: modern`, and they are the
+narrative case the product's claim rests on: four friends tearing open a roof, the prodigal son,
+Zacchaeus up a tree, the furnace, the jail at midnight. And a second instrument added quietly
+beside an existing number is how a gate ends up with two owners, which is §96's whole subject.
+
+### The finding that outranks the bar
+
+The detector produced roughly **224 defensible paraphrase offers in service 40 and the operator
+accepted one.** The gate is not too tight for the right answers — they got through, 224 times, into
+a list of 2,534 that a person has correctly learned to ignore. **That is a surface defect, not a
+threshold defect**, and the measurement says one concrete thing about the surface: it is ordered by
+a number that ranks *"Hallelujah, praise the Lord"* above *"ten times better than their
+colleagues"*, and it shows an unordered bag of words (`terms.join(" · ")`, §21) while discarding the
+one fact that separates a citation from noise — whether any of those words were said in the verse's
+own order. A run length beside the phrase is something a volunteer can judge in the second they
+have. A cosine is not, and §21 already says so.
+
+### What holds it
+
+`suggestions::why_the_floor_holds` — two tests, reproducible from the bundled KJV with no database,
+asserting the inversion. The first was **watched to fail** with its comparison reversed, printing
+`Psalms 146:1 0.557` against `Daniel 1:20 0.327`, the same figures the hand-read sample recorded.
+Its failure message says what its failing would mean: the index has changed, and whether this floor
+can now separate the two populations is worth measuring again. `SEMANTIC_FLOOR`'s comment carries
+the table, and the two recall figures it had been quoting from a smaller corpus — 98% and 84% — are
+corrected to the 100% @5 and 77% the scorecard prints today.
+
+**Nothing about the gate moved.** No constant changed, `Semantic` is still capped at `Suggest` at
+any score by rule 10, and the recall a church is running today is the recall it was running
+yesterday: 77% ALL, 41% MODERN.
+
+## 126. The lever the operator was owed, and the price is theirs to pay (2026-09-26)
+
+### What §125 got right, and what it left undone
+
+§125 proved the number is not the lever, and named the one that is: a contiguous run of three of
+the verse's own words, which beats every value of `SEMANTIC_FLOOR`, `SEMANTIC_RELATIVE_FLOOR` and
+`MIN_EVIDENCE_TERMS` on all four measures at once. Then it declined to build it, on three grounds.
+
+Two of the three were about HOW — a new instrument rather than a constant, needing
+`candidates_for_window` to ask `PhraseIndex` a question it did not ask, owed its own unit and its
+own `e2e` case. That is engineering, and it is now paid.
+
+The third was that it costs the modern-wording retellings the product's claim rests on. **That is
+not a reason not to build it. It is a reason not to DECIDE it.** §125 was right that this belongs
+to an operator and wrong that the operator therefore gets nothing: a church drowning in suggestions
+was left with the measurement and no lever.
+
+### A switch, and the whole design is the default
+
+`app_settings['detection.paraphrase_needs_a_run']`. **Absent means OFF, and only an explicit `1` is
+on**, so an unreadable row lands on the shipped behaviour rather than silently starting to silence
+retellings.
+
+OFF is asserted, not argued: `held_off == 0` over **14,478 real windows**, and
+`nothing_but_a_paraphrase_changes_when_the_switch_moves` shows the switch cannot reach anything
+that is not a paraphrase, in either direction. A church that never opens Settings runs 77% ALL /
+41% MODERN — what it ran yesterday.
+
+### The price, in words on the screen and in numbers in the code
+
+The control says: *"Only suggest a paraphrase when the preacher said some of the verse's own words
+in a row. Far fewer wrong suggestions — and Relay will miss a Bible story retold entirely in modern
+words. A paraphrase is only ever a suggestion either way; this never changes what reaches a
+screen."* The percentages live in `PARAPHRASE_RUN_WORDS`, not in the operator's face. **A switch
+that advertised only "fewer wrong suggestions" would sell a trade as an improvement**, and the
+person paying would not know they had.
+
+ON: 4,905 offers → **1,293** (73.6% removed), recall 77%/41% → **70%/24%**, 3,828 candidates held
+and reported.
+
+### Two corrections to §125, both AGAINST this change
+
+**Three retellings are silenced, not five** — `roof-paralytic-modern`, `paul-silas-modern` and
+`jonah-modern`. §125 named the prodigal, Zacchaeus and the furnace; the paraphrase path does not
+reach those with the bar OFF either, so a rule that only removes answers cannot have lost them, and
+it omitted the one it does lose. The correction makes the bar look **worse**-priced, not better:
+the real cost is concentrated rather than diffuse.
+
+**And the single acceptance it costs is a decoder problem, not a vocabulary one.** `John 15:2` in
+service 39: the preacher *was* saying the verse, and whisper produced *"every branch a man that
+bearer not fruit"* for *"Every branch in me that beareth not fruit"*. Longest run: two. **A run test
+over a transcript is a run test over what the decoder heard**, and WER is unmeasured in every
+language.
+
+### Why not the service lock, and why not the Router
+
+**Not the lock**, though its structural twin `set_follow_the_reader` is behind it: that setting
+changes what reaches a congregation unattended and this one cannot — `Semantic` is capped at
+`Suggest` by rule 10 at any score and any setting, so it only removes rows from the operator's own
+list. The operator who most needs it is the one drowning at 10:31, and over-blocking is the more
+dangerous failure there.
+
+**Not the `Router`**, though `get_follow_the_reader` reads from it: the router reads that one
+because the router decides it. This is decided in `candidates_for_window`, before the gate, so the
+router would be a thing that does not decide — and the next reader would consume it inside
+`Router::decide`, where it would be a fourth cap over a method rule 10 already caps absolutely.
+`Detecting` is the precedent, and an `AtomicBool` can never contend a lock the decoder waits on.
+
+### What this does NOT fix, and it is still §125's closing finding
+
+Even ON, the operator sees roughly thirty offers an hour at about 50% precision. **The bar shortens
+the list; it does not make it ordered or judgeable.** And the run length the bar computes is
+**thrown away** — it is the one fact §125 says a volunteer can act on, and a paraphrase still
+reaches the console as `terms.join(" · ")`, a bag of words in no order that §21 already refuses to
+put a percentage beside.
+
+Carrying the run beside the offer — *"said in order: whom the Lord loveth"*, or *"no words in
+order"* — and ranking by it would improve the list **whether the bar is on or off, and it removes
+nothing**. That is the next piece of work, ahead of any further tuning of any number here.
+
+### And the fourth instance
+
+`eval::print_suggestion_policy` and `print_paraphrase_scorecard` are **byte-identical in both
+states** — demonstrated by forcing the flag, not assumed — because neither calls
+`candidates_for_window`. §122 and §123 record the same blindness for the passage guard and the
+citation-doubt rule. This is the fourth.

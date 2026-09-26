@@ -220,11 +220,16 @@
   } from './stores/capture.js';
   import { rememberMarks, readAloud } from './transcriptmark.js';
   import { passageHold } from './stores/capture.js';
-  import { methodBadgeKey } from './detect.js';
+  import { describeHold, methodBadgeKey } from './detect.js';
   import { t } from './i18n.js';
   import { describeMediaClock, mediaIdFromUrl } from './mediaclock.js';
   import { programmeScreen } from './channelroles.js';
   import { session, setSession } from './session.js';
+
+  // WHAT RELAY IS HOLDING BACK, in one line, decided in one pure place
+  // (`detect.js::describeHold`) so the markup cannot form its own opinion about
+  // which reason to name. `null` when nothing is held.
+  $: holdLine = describeHold($passageHold);
 
   // ── THE CLIP, AND THE ONE SET OF CONTROLS OVER IT (RG-237) ─────────────────
   //
@@ -1145,15 +1150,18 @@
          not scroll away from somebody who is watching the wall rather than the
          card. No percentage — a held candidate's confidence is the least
          trustworthy number in the product, being the score of a claim Relay
-         decided not to act on (rule 18). -->
-    {#if $passageHold?.held?.length}
-      <p class="phold" role="status" aria-live="polite">
-        {#if $passageHold.passage}
-          Holding {$passageHold.held.length} from outside {$passageHold.passage}, while it is being read
-        {:else}
-          Holding {$passageHold.held.length} the screens are already showing
-        {/if}
-      </p>
+         decided not to act on (rule 18).
+
+         THE SENTENCE IS `detect.js::describeHold` AND NOT A TERNARY HERE. There
+         are three reasons now — the two above plus the church's paraphrase bar
+         (DECISIONS §125) — and the ternary this replaced chose between two of
+         them by asking whether a passage was present. The third carries no
+         passage, so it read as "the screens are already showing" over verses no
+         screen had ever shown. Two rules picked a sentence correctly; three
+         cannot, and a status line that names the wrong reason is worse than one
+         that names none. -->
+    {#if holdLine}
+      <p class="phold" role="status" aria-live="polite">{holdLine}</p>
     {/if}
   </div>
 

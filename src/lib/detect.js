@@ -189,3 +189,62 @@ export const inLibrary = (d) => d?.in_library !== false;
  */
 export const evidenceIsASpan = (d) =>
   d?.method === 'direct' || d?.method === 'quoted' || d?.method === 'reading';
+
+/**
+ * **WHAT RELAY IS HOLDING BACK RIGHT NOW, IN ONE LINE** — `detection://held`, the
+ * `passageHold` store, rendered by `Dock.svelte`.
+ *
+ * Rule 35: a detector that stops offering things without saying so is
+ * indistinguishable from one that has gone deaf, and this is the sentence that
+ * distinguishes them. It lives here rather than inline in the markup for the reason
+ * everything else in this module does — it is a decision about how a claim is
+ * PRESENTED and it has to be testable.
+ *
+ * ## Why it is not a ternary any more
+ *
+ * It was. The markup asked whether `passage` was present and picked one of two
+ * sentences from the answer, which held while the two reasons were the passage
+ * guard's own — `outside_the_reading` always carries a passage and
+ * `already_on_screen` never does. `no_shared_run` (the church's paraphrase bar,
+ * DECISIONS §125) carries no passage either, so on that branch the old ternary read
+ * *"the screens are already showing"* over verses no screen has ever shown. A status
+ * line that reports the wrong reason is worse than one that reports none, because it
+ * looks like information.
+ *
+ * So the sentence is built from the reasons that are actually present, one clause
+ * each. One reason reads exactly as it read before; several are listed with their
+ * own counts rather than one of them standing in for the others.
+ *
+ * `null` when nothing is held — there is no sentence for "everything got through",
+ * and printing one would be the permanent "holding 0" this store's TTL exists to
+ * prevent.
+ */
+export function describeHold(hold) {
+  const held = Array.isArray(hold?.held) ? hold.held : [];
+  if (!held.length) return null;
+  const passage = typeof hold?.passage === 'string' && hold.passage ? hold.passage : null;
+  // Ordered, and not by frequency: the operator reads this left to right and the
+  // reassuring fact ("it is already up") belongs before the two that might want a
+  // decision. Frequency ordering would make the line move about between windows.
+  const clauses = [
+    ['already_on_screen', 'the screens are already showing'],
+    [
+      'outside_the_reading',
+      passage ? `from outside ${passage}, while it is being read` : 'from outside the reading',
+    ],
+    // The one reason that is a SETTING rather than a rule, so the words say so: an
+    // operator who did not expect this can find the switch from the sentence.
+    ['no_shared_run', 'that echo none of the verse’s own words'],
+  ]
+    .map(([reason, words]) => [held.filter((h) => h?.reason === reason).length, words])
+    .filter(([n]) => n > 0);
+  // A reason nobody here knows about must not vanish from the count. An older or
+  // newer backend naming a fourth rule is still holding something, and "Holding 2"
+  // over three held candidates is the same lie in miniature.
+  const named = clauses.reduce((a, [n]) => a + n, 0);
+  if (!clauses.length || named < held.length) {
+    return `Holding ${held.length}`;
+  }
+  if (clauses.length === 1) return `Holding ${held.length} ${clauses[0][1]}`;
+  return `Holding ${held.length} — ${clauses.map(([n, w]) => `${n} ${w}`).join(' · ')}`;
+}

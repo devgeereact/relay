@@ -6276,3 +6276,135 @@ fn a_reading_of_the_next_verse_does_not_demote_the_citation() {
         wall.references()
     );
 }
+
+/// **THE CHURCH'S PARAPHRASE BAR ON THE FIRE PATH** — the setting
+/// `detection.paraphrase_needs_a_run` (DECISIONS §125, RG-311).
+///
+/// Field, service 39 of 2026-09-25 at 64.6 s: the preacher retelling John 15:2, the
+/// decoder producing *"every branch a man that bearer not fruit"* — the verse's own
+/// words with two of them mangled. Relay offered `John 15:2` as a paraphrase and the
+/// operator accepted it, which makes this the one offer in eleven services anybody
+/// can prove was wanted.
+///
+/// Three things are driven end to end here and each is a separate promise:
+///
+///  1. **OFF is what every install runs.** The bar is off on a fresh install, so the
+///     offer arrives exactly as it did on the morning.
+///  2. **ON removes it and SAYS SO.** `detection://held` carries it with
+///     `no_shared_run` — rule 35: a switch that quietly stops offering things is
+///     indistinguishable from a detector that has gone deaf.
+///  3. **NOTHING GAINS OR LOSES A WALL, at either setting.** A paraphrase is capped
+///     at `Suggest` by rule 10 at any score, so this switch can only ever shorten the
+///     operator's own list — and a reference the preacher SPEAKS still fires with the
+///     bar on.
+///
+/// Watched to fail: with `paraphrase_needs_a_run` forced true in
+/// `candidates_for_window`, step 1 fails; with the mask's `Semantic` test removed,
+/// step 3's spoken reference stops reaching the wall.
+#[test]
+fn the_paraphrase_bar_removes_an_offer_only_when_the_church_asked_and_never_a_wall() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+    let offered: std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let held: std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let a = offered.clone();
+    h.listen("detection://match", move |e| {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(e.payload()) {
+            a.lock().unwrap().push(v);
+        }
+    });
+    let b = held.clone();
+    h.listen("detection://held", move |e| {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(e.payload()) {
+            b.lock().unwrap().push(v);
+        }
+    });
+
+    // The preacher's own words, verbatim off the operator's database.
+    const HEARD: &str =
+        "It's every branch responsibility. Every. Every branch a man that bearer not fruit in";
+
+    // ── 1. A FRESH INSTALL IS OFF, and the offer arrives as it did on the morning.
+    assert!(
+        !super::get_paraphrase_needs_a_run(h.clone()).expect("the bridge must answer"),
+        "a fresh install must not have the bar on"
+    );
+    emit_detections(&h, HEARD, 64_000, true, None);
+    settle();
+    {
+        let got = offered.lock().unwrap();
+        let john = got
+            .iter()
+            .find(|v| v["reference"] == "John 15:2")
+            .unwrap_or_else(|| panic!("the offer the operator accepted was not made: {got:?}"));
+        assert_eq!(john["method"], "semantic");
+        assert_eq!(john["status"], "suggested");
+    }
+    assert!(
+        wall.references().is_empty(),
+        "a paraphrase reached a congregation: {:?}",
+        wall.references()
+    );
+    assert!(
+        held.lock().unwrap().is_empty(),
+        "something was held with the bar OFF: {:?}",
+        held.lock().unwrap()
+    );
+
+    // ── 2. THE OPERATOR TURNS IT ON, through the real command.
+    assert!(
+        super::set_paraphrase_needs_a_run(h.clone(), h.state::<Db>(), true)
+            .expect("the operator's own switch must land")
+    );
+    assert!(super::get_paraphrase_needs_a_run(h.clone()).expect("the bridge must answer"));
+    offered.lock().unwrap().clear();
+    // A DIFFERENT SECOND, far outside `DEFAULT_DEBOUNCE_MS`, so "it was held" cannot
+    // be the cooldown wearing the bar's clothes.
+    emit_detections(&h, HEARD, 400_000, true, None);
+    settle();
+    assert!(
+        !offered
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|v| v["reference"] == "John 15:2"),
+        "the bar was on and the paraphrase was still offered: {:?}",
+        offered.lock().unwrap()
+    );
+    {
+        let got = held.lock().unwrap();
+        let report = got
+            .iter()
+            .flat_map(|v| v["held"].as_array().cloned().unwrap_or_default())
+            .find(|c| c["reference"] == "John 15:2")
+            .unwrap_or_else(|| {
+                panic!("Relay held a candidate and said nothing about it (rule 35): {got:?}")
+            });
+        assert_eq!(
+            report["reason"], "no_shared_run",
+            "the report must say WHICH rule held it — this one is a setting the \
+             operator can undo, and the other two are not"
+        );
+        assert_eq!(report["method"], "semantic");
+    }
+
+    // ── 3. AND A REFERENCE THE PREACHER SPOKE STILL REACHES THE SCREENS.
+    emit_detections(
+        &h,
+        "Turn with me to Romans chapter 8 verse 28.",
+        500_000,
+        true,
+        None,
+    );
+    settle();
+    assert_eq!(
+        wall.references(),
+        vec!["Romans 8:28".to_string()],
+        "the paraphrase bar swallowed a spoken reference — it may only ever remove a \
+         paraphrase, and rule 40 says that whatever else happens, when the words say, \
+         the words win"
+    );
+}

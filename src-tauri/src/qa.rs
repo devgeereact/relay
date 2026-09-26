@@ -72,6 +72,14 @@ pub(crate) fn bare_app() -> tauri::App<tauri::test::MockRuntime> {
         .manage(Db(Mutex::new(conn)))
         .manage(Routing::default())
         .manage(Detecting(AtomicBool::new(true)))
+        // AND THE CHURCH'S PARAPHRASE BAR, OFF — which is what a fresh install is
+        // (`db::paraphrase_needs_a_run` on a seeded database, DECISIONS §125). A
+        // fixture without it is not a first launch but a panic: `emit_detections`
+        // takes `state::<ParaphraseRun>()` on every window, and an unmanaged state
+        // aborts rather than failing a test with a readable message. Same argument
+        // and same shape of failure as `Phrases` below, which the fixture learned the
+        // hard way.
+        .manage(ParaphraseRun(AtomicBool::new(false)))
         .manage(channels::Rehearsal::default())
         // What the congregation can actually see. `/api/live` reads it, so a test
         // that drives the remote needs it managed or the remote answers "clear".
