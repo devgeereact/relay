@@ -3004,6 +3004,108 @@ pub fn doubt_from_a_quotation(cands: &[Claim<'_>]) -> Vec<Option<Doubt>> {
     out
 }
 
+/// **THE SHORT RUN A NAMED CHAPTER MAKES ADMISSIBLE — RG-313.**
+///
+/// `doubt_from_a_quotation` sources its accusing run from `PhraseIndex::quoted`,
+/// which needs `MIN_RUN_WORDS` (5) because it answers *which verse do these words
+/// belong to* and below five that question has too many answers. Two of the six
+/// wrong references §123 could not reach fail on exactly that floor and nothing
+/// else — measured on the operator's own windows:
+///
+///   * id 818 — *"…the oil of gladness. Now, Isaiah 1 verse 3, it calls it the oil
+///     of joy."* fired `Isaiah 1:3`. The run shared with **`Isaiah 61:3`** is
+///     **4 words**.
+///   * id 861 — *"We have common faith, measure of faith, Romans, 2, 3…"* fired
+///     `Romans 2:3`. The run shared with **`Romans 12:3`** is **3 words**.
+///
+/// **The preacher already named the book and the chapter**, so the question left
+/// is not which verse — it is *did these words touch the verse that is one digit
+/// away from the one he said*. That is answerable from a much shorter run against
+/// ONE named verse, which is what `PhraseIndex::shared_run_with` measures and what
+/// `PARAPHRASE_RUN_WORDS` (3) is the floor for: three words CORROBORATE a
+/// reference that already exists, where five are needed to OFFER a quotation
+/// standing alone.
+///
+/// **This is a probe, not a scan.** The set is the inverse of
+/// `chapter_is_a_decode_slip` — for a one-digit chapter, the nine chapters it
+/// could be a lost leading digit of; for a two-digit one, the substitutions one
+/// digit away. Bounded by the slip test and never by the corpus.
+///
+/// **The bar is relative, not absolute** — see the comment at the comparison. A
+/// three-word floor alone doubted four correct references and cost two auto-fires
+/// over the operator's own services.
+///
+/// Returns the chapter the words point at, or `None`.
+pub fn chapter_the_words_point_at(
+    said: &Claim<'_>,
+    max_chapter: i64,
+    mut shared_run: impl FnMut(&VerseRef) -> usize,
+) -> Option<i64> {
+    // `Direct` alone, exactly as `doubt_from_a_quotation` — the other
+    // reference-shaped methods are already capped and demoting them moves nothing.
+    if said.method != DetectionMethod::Direct {
+        return None;
+    }
+    // A WHOLE CHAPTER NAMES NO VERSE TO PROBE. "Turn to Romans 8" gives this rule
+    // nothing to compare, and guessing a verse would be inventing the evidence.
+    if said.whole_chapter {
+        return None;
+    }
+    // **A SPAN NAMES NO ONE VERSE EITHER, and this cost a correct fire before it was
+    // written.** *"Seek water and there is none and their tongue felleth for thirst.
+    // Isaiah 32 verse 15 to 17"* — the reference is right, the quotation in front of
+    // it belongs to the passage he had just left, and the probe compared three words
+    // of it against verse 15 alone, which is one third of what he asked for. So the
+    // bar it measured was a bar for the wrong verse.
+    //
+    // `doubt_from_a_quotation` refuses a span across books for the same reason and in
+    // the same words: *the verse must be the one he said, exactly, not merely inside a
+    // span he said*. Neither field case is a span, so this costs nothing they need.
+    if said.verse_end.is_some_and(|e| e > said.r.verse) {
+        return None;
+    }
+    // **THE PROBE MUST BEAT THE CLAIM, and this line is the whole rule.**
+    //
+    // Measured over 7,741 real transcript lines, a bare floor of three words made
+    // this rule doubt four references the preacher said CORRECTLY and cost two
+    // auto-fires: *"Proverbs 24 verse 5 A wise man is strong, yea, a man of
+    // knowledge"*, *"Isaiah, chapter 44, and verse 3. I will pour water upon him
+    // that is thirsty"*, `Isaiah 41:15` and `Isaiah 32:15`. Each is right, and each
+    // was accused because three words of the verse he was reading — *behold I
+    // will*, *I will pour* — also appear in a chapter one digit away. Scripture is
+    // full of three-word runs.
+    //
+    // `doubt_from_a_quotation` is safe at three words only because it is
+    // CORROBORATING a reference somebody said out loud; here the run is ACCUSING
+    // one, on behalf of a verse nobody named, and the floor that serves the first
+    // job cannot serve the second. `PhraseIndex::quoted`'s `sole` test is what the
+    // stronger rule has instead, and this rule has no access to it.
+    //
+    // So the bar is RELATIVE: the words must point at the probed verse MORE than at
+    // the verse that was said. That is the question a person would ask — of these
+    // two chapters, which one do the words in this window belong to — and it is the
+    // one the absolute floor never asked. `Isaiah 61:3` (4 words against 0) and
+    // `Romans 12:3` (3 against 0) pass it; every one of the four correct references
+    // fails it, because a man reading a verse aloud shares more with the verse he
+    // named than with any neighbour of it.
+    let own = shared_run(said.r);
+    let bar = PARAPHRASE_RUN_WORDS.max(own + 1);
+    for chapter in 1..=max_chapter {
+        if !chapter_is_a_decode_slip(said.r.chapter, chapter) {
+            continue;
+        }
+        let probe = VerseRef {
+            book: said.r.book.clone(),
+            chapter,
+            verse: said.r.verse,
+        };
+        if shared_run(&probe) >= bar {
+            return Some(chapter);
+        }
+    }
+    None
+}
+
 /// Does this run point at the reference the decoder would have produced had it not
 /// slipped? One coordinate apart, and that coordinate a slip.
 fn the_run_contradicts(said: &Claim<'_>, run: &VerseRef) -> Option<Doubt> {
@@ -9647,5 +9749,370 @@ mod citation_doubt {
             serde_json::to_string(&Doubt::TheQuotation).unwrap(),
             "\"the_quotation\""
         );
+    }
+}
+
+// ── THE SHORT RUN A NAMED CHAPTER MAKES ADMISSIBLE — RG-313 ─────────────────
+//
+// §123 reaches three of the nine wrong references of 2026-09-25. Two of the six
+// it misses fail for ONE reason, and it is a reason that does not have to hold:
+//
+//   id 818  "…the oil of gladness. Now, Isaiah 1 verse 3…"   → fired Isaiah 1:3
+//           "the oil of joy" is Isaiah 61:3 and is FOUR words
+//   id 861  "…measure of faith, Romans, 2, 3"                → fired Romans 2:3
+//           "the measure of faith" is Romans 12:3 and is THREE words
+//
+// `MIN_RUN_WORDS` is 5 because `PhraseIndex::quoted` answers *which verse do
+// these words belong to*, and below five words that question has too many
+// answers. **But the preacher already named the book and the chapter.** The
+// question left is not which verse — it is *did these words touch the verse that
+// is one digit away from the one he said*, and that is answerable from a much
+// shorter run against ONE named verse.
+//
+// `shared_run_with` (RG-312) is exactly that predicate, and
+// `PARAPHRASE_RUN_WORDS` = 3 is its floor, chosen because three is what it takes
+// to CORROBORATE a score that already exists rather than to OFFER a quotation
+// standing alone. The same reasoning transfers here unchanged.
+//
+// **The probe is bounded by the slip test, not by the corpus.** For a one-digit
+// chapter there are nine un-slipped chapters (`7` → 17, 27 … 97); for a
+// two-digit one, the substitutions one digit away. Nothing is scanned.
+#[cfg(test)]
+mod short_run_doubt {
+    use super::*;
+
+    /// Every chapter the decoder could have slipped FROM to produce `said`.
+    ///
+    /// The inverse of `chapter_is_a_decode_slip`, enumerated rather than searched:
+    /// a lost leading digit means `said` is a suffix of the original, and a
+    /// substitution means the same length with one digit different.
+    fn chapters_it_could_have_been(said: i64, max: i64) -> Vec<i64> {
+        let mut out = Vec::new();
+        for c in 1..=max {
+            if chapter_is_a_decode_slip(said, c) {
+                out.push(c);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn the_inverse_of_the_slip_test_is_the_set_the_probe_walks() {
+        // "7" could have been 17, 27 … 97 — the lost-leading-digit shape.
+        let from7 = chapters_it_could_have_been(7, 150);
+        assert!(
+            from7.contains(&87),
+            "Psalm 87 is not reachable from a heard 7"
+        );
+        assert!(from7.contains(&17));
+        assert!(!from7.contains(&7), "a chapter is not a slip of itself");
+        // "2" could have been 12 — RG-305 (7), Romans 12:3.
+        assert!(chapters_it_could_have_been(2, 150).contains(&12));
+        // "1" could have been 61 — RG-305 (6), Isaiah 61:3.
+        assert!(chapters_it_could_have_been(1, 150).contains(&61));
+        // And the set stays small: this is a probe, never a scan.
+        assert!(from7.len() < 20, "the probe walks {} chapters", from7.len());
+    }
+
+    #[test]
+    fn a_two_digit_substitution_is_in_the_set_too() {
+        // RG-305 (8): "Psalm 35 verse 5" for Psalms 34:5.
+        assert!(chapters_it_could_have_been(35, 150).contains(&34));
+    }
+
+    /// THE FIELD CASES, by the words the decoder actually produced.
+    ///
+    /// Both are `#[ignore]`d rather than unit-sized because they need the bundled
+    /// KJV; `cargo test short_run_doubt -- --ignored --nocapture` runs them.
+    #[test]
+    #[ignore]
+    fn the_two_short_run_field_cases_are_reachable_from_a_three_word_run() {
+        let kjv: serde_json::Value =
+            serde_json::from_str(include_str!("../data/kjv.json").trim_start_matches('\u{feff}'))
+                .expect("kjv");
+        let mut corpus: Vec<(VerseRef, String)> = Vec::new();
+        for book in kjv.as_array().expect("books") {
+            let abbrev = book["abbrev"].as_str().unwrap_or("?").to_string();
+            for (ci, chapter) in book["chapters"].as_array().expect("ch").iter().enumerate() {
+                for (vi, verse) in chapter.as_array().expect("v").iter().enumerate() {
+                    corpus.push((
+                        VerseRef {
+                            book: abbrev.clone(),
+                            chapter: ci as i64 + 1,
+                            verse: vi as i64 + 1,
+                        },
+                        verse.as_str().unwrap_or("").to_string(),
+                    ));
+                }
+            }
+        }
+        let idx = PhraseIndex::build(&corpus);
+
+        // id 818 — the window that fired Isaiah 1:3.
+        // THE REAL WINDOW, verbatim from `detections.heard_text` id 818. My first
+        // draft reconstructed it from memory and appended "for mourning", which
+        // the decoder never produced — and that lengthened the run from 4 to 6 and
+        // would have made this test claim the case was reachable by a rule that
+        // cannot reach it.
+        let heard818 = "Verse 5 and verse 7 and 8, the oil of gladness. Now, Isaiah 1 verse 3, it calls it the oil of joy.";
+        // THE BOOK KEY IS THE CORPUS'S OWN. `kjv.json` stores `"is"` and `"rm"`,
+        // not full names — the shipped index is built from `db::all_verses`, which
+        // returns what the DATABASE holds. A test that invents a spelling the
+        // corpus does not use measures nothing and answers 0, which is what this
+        // one did on its first run.
+        let target818 = VerseRef {
+            book: "is".into(),
+            chapter: 61,
+            verse: 3,
+        };
+        let run818 = idx.shared_run_with(heard818, &target818);
+        println!("818  Isaiah 61:3  shared run = {run818} words");
+
+        // id 861 — the window that fired Romans 2:3.
+        let heard861 =
+            "We have common faith, measure of faith, Romans, 2, 3 We have little faith, Matthew, 2";
+        let target861 = VerseRef {
+            book: "rm".into(),
+            chapter: 12,
+            verse: 3,
+        };
+        let run861 = idx.shared_run_with(heard861, &target861);
+        println!("861  Romans 12:3  shared run = {run861} words");
+
+        // THE CLAIM: both clear the corroboration floor, and NEITHER clears the
+        // standalone floor — which is precisely why §123 could not see them.
+        assert!(
+            run818 >= PARAPHRASE_RUN_WORDS,
+            "Isaiah 61:3 is unreachable even from a short run: {run818}"
+        );
+        assert!(
+            run861 >= PARAPHRASE_RUN_WORDS,
+            "Romans 12:3 is unreachable even from a short run: {run861}"
+        );
+        assert!(
+            run818 < MIN_RUN_WORDS && run861 < MIN_RUN_WORDS,
+            "these would already have been reachable; {run818} and {run861}"
+        );
+    }
+
+    /// A claim, with the one coordinate each case is about.
+    fn said(chapter: i64, verse: i64) -> VerseRef {
+        VerseRef {
+            book: "rm".into(),
+            chapter,
+            verse,
+        }
+    }
+
+    #[test]
+    fn a_short_run_on_a_chapter_one_digit_away_is_doubt() {
+        let r = said(2, 3);
+        let claim = Claim {
+            r: &r,
+            method: DetectionMethod::Direct,
+            verse_end: None,
+            whole_chapter: false,
+            run: None,
+        };
+        // The probe answers a long run for Romans 12:3 and nothing anywhere else.
+        let found = chapter_the_words_point_at(&claim, 150, |p| {
+            if p.chapter == 12 && p.verse == 3 {
+                PARAPHRASE_RUN_WORDS
+            } else {
+                0
+            }
+        });
+        assert_eq!(found, Some(12));
+    }
+
+    #[test]
+    fn a_run_one_word_short_of_the_floor_is_not_doubt() {
+        let r = said(2, 3);
+        let claim = Claim {
+            r: &r,
+            method: DetectionMethod::Direct,
+            verse_end: None,
+            whole_chapter: false,
+            run: None,
+        };
+        let found = chapter_the_words_point_at(&claim, 150, |_| PARAPHRASE_RUN_WORDS - 1);
+        assert_eq!(found, None, "the floor is the floor");
+    }
+
+    #[test]
+    fn a_man_reading_the_verse_he_named_is_never_doubted() {
+        // `Isaiah 41 and verse 15, Behold, I will make thee a` — right, verbatim,
+        // and doubted by an absolute three-word floor because *behold I will* is in
+        // a chapter one digit away as well. Both auto-fires an earlier draft of this
+        // rule cost had exactly this shape.
+        let r = said(41, 15);
+        let claim = Claim {
+            r: &r,
+            method: DetectionMethod::Direct,
+            verse_end: None,
+            whole_chapter: false,
+            run: None,
+        };
+        let found = chapter_the_words_point_at(&claim, 150, |p| {
+            // The verse he NAMED holds six of these words; a neighbour holds three.
+            if p.chapter == 41 {
+                6
+            } else {
+                PARAPHRASE_RUN_WORDS
+            }
+        });
+        assert_eq!(
+            found, None,
+            "the words point at the verse he said, so nothing is in doubt"
+        );
+    }
+
+    #[test]
+    fn the_probe_must_beat_the_claim_not_merely_tie_it() {
+        // A tie is not evidence: it says the words fit both chapters equally, which
+        // is what a short run does everywhere in scripture.
+        let r = said(2, 3);
+        let claim = Claim {
+            r: &r,
+            method: DetectionMethod::Direct,
+            verse_end: None,
+            whole_chapter: false,
+            run: None,
+        };
+        let tie = chapter_the_words_point_at(&claim, 150, |_| 4);
+        assert_eq!(tie, None, "a tie doubted the claim");
+        // One word more, and the same window is evidence.
+        let beat = chapter_the_words_point_at(&claim, 150, |p| if p.chapter == 12 { 5 } else { 4 });
+        assert_eq!(beat, Some(12));
+    }
+
+    #[test]
+    fn a_spoken_span_names_no_one_verse_to_probe() {
+        // `Isaiah 32 verse 15 to 17` — right, and doubted by a draft that compared
+        // the window against verse 15 alone. The run answers generously for a
+        // neighbour and the span must still refuse it.
+        let r = said(32, 15);
+        let claim = Claim {
+            r: &r,
+            method: DetectionMethod::Direct,
+            verse_end: Some(17),
+            whole_chapter: false,
+            run: None,
+        };
+        assert_eq!(chapter_the_words_point_at(&claim, 150, |_| 99), None);
+        // A `verse_end` equal to the verse is not a span — one verse, stated twice.
+        let one = Claim {
+            r: &r,
+            method: DetectionMethod::Direct,
+            verse_end: Some(15),
+            whole_chapter: false,
+            run: None,
+        };
+        assert_eq!(
+            chapter_the_words_point_at(&one, 150, |p| if p.chapter == 12 { 9 } else { 0 }),
+            Some(12),
+            "a single verse was treated as a span"
+        );
+    }
+
+    #[test]
+    fn a_whole_chapter_names_no_verse_to_probe() {
+        // "Turn to Romans 2" gives this rule nothing to compare, and inventing a
+        // verse to probe would be inventing the evidence. A run answering
+        // generously must still produce nothing.
+        let r = said(2, 1);
+        let claim = Claim {
+            r: &r,
+            method: DetectionMethod::Direct,
+            verse_end: None,
+            whole_chapter: true,
+            run: None,
+        };
+        let found = chapter_the_words_point_at(&claim, 150, |_| 99);
+        assert_eq!(found, None);
+    }
+
+    #[test]
+    fn only_a_direct_claim_is_probed() {
+        // The other reference-shaped methods are already capped at Suggest, so
+        // demoting them moves nothing and would only cost index lookups.
+        for method in [
+            DetectionMethod::Semantic,
+            DetectionMethod::Quoted,
+            DetectionMethod::Reading,
+            DetectionMethod::Ambiguous,
+            DetectionMethod::UncertainBook,
+            DetectionMethod::UncertainNumber,
+        ] {
+            let r = said(2, 3);
+            let claim = Claim {
+                r: &r,
+                method,
+                verse_end: None,
+                whole_chapter: false,
+                run: None,
+            };
+            let found = chapter_the_words_point_at(&claim, 150, |_| 99);
+            assert_eq!(found, None, "{method:?} was probed");
+        }
+    }
+
+    #[test]
+    fn the_chapter_that_was_said_is_asked_about_once_and_is_never_the_answer() {
+        // A preacher moving about inside the chapter he named is what a preacher
+        // does, so that chapter can never be the doubt — `chapter_is_a_decode_slip`
+        // refuses equality and this is the test that holds it at THIS call site.
+        //
+        // It IS asked about, exactly once, because it is the bar: the relative test
+        // needs to know how much of the window belongs to the verse he said. An
+        // earlier draft of this test asserted it was never asked at all, which was
+        // true of the absolute floor and became false the moment the floor stopped
+        // being absolute.
+        let r = said(12, 3);
+        let claim = Claim {
+            r: &r,
+            method: DetectionMethod::Direct,
+            verse_end: None,
+            whole_chapter: false,
+            run: None,
+        };
+        let mut asked: Vec<i64> = Vec::new();
+        let found = chapter_the_words_point_at(&claim, 150, |p| {
+            asked.push(p.chapter);
+            // Generous, so only the equality refusal can keep 12 out of the answer.
+            99
+        });
+        assert_eq!(
+            asked.iter().filter(|c| **c == 12).count(),
+            1,
+            "the chapter he said was asked about {} times, not once as the bar",
+            asked.iter().filter(|c| **c == 12).count()
+        );
+        assert_ne!(
+            found,
+            Some(12),
+            "the chapter he said was returned as the doubt"
+        );
+        assert!(asked.len() > 1, "the probe asked about nothing but the bar");
+    }
+
+    #[test]
+    fn the_probe_keeps_the_book_and_the_verse_it_was_given() {
+        // Only the CHAPTER moves. A probe that wandered across books would be the
+        // cross-book carve-out this rule deliberately does not touch, and one that
+        // moved the verse would be guessing at two coordinates at once.
+        let r = said(2, 3);
+        let claim = Claim {
+            r: &r,
+            method: DetectionMethod::Direct,
+            verse_end: None,
+            whole_chapter: false,
+            run: None,
+        };
+        let _ = chapter_the_words_point_at(&claim, 150, |p| {
+            assert_eq!(p.book, "rm");
+            assert_eq!(p.verse, 3);
+            0
+        });
     }
 }

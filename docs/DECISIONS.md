@@ -7145,3 +7145,92 @@ nothing**. That is the next piece of work, ahead of any further tuning of any nu
 states** — demonstrated by forcing the flag, not assumed — because neither calls
 `candidates_for_window`. §122 and §123 record the same blindness for the passage guard and the
 citation-doubt rule. This is the fourth.
+
+## 127. A short run can corroborate a reference or accuse one, and the same floor cannot do both (2026-09-26)
+
+§123 built the citation-doubt rule and measured its own ceiling honestly: of the nine wrong verses
+of 2026-09-25, it reaches **three**. This section takes that to **five** and records what the two
+extra ones cost, because the cost is the interesting half.
+
+### Why six were out of reach, and why only two of them had to be
+
+`doubt_from_a_quotation` sources its accusing run from `PhraseIndex::quoted`, which needs
+`MIN_RUN_WORDS` (5) because it answers *which verse do these words belong to* and below five words
+that question has too many answers. Two of the six fail on that floor and on nothing else, measured
+on the operator's own windows rather than imagined:
+
+| `detections.id` | fired | should have been | run shared with the right verse |
+|---|---|---|---|
+| 818 | `Isaiah 1:3` | `Isaiah 61:3` | **4 words** |
+| 861 | `Romans 2:3` | `Romans 12:3` | **3 words** |
+
+Both preachers had already said the book and the chapter out loud. That leaves a narrower question
+than the one `quoted` answers — *did these words touch the verse one digit away from the one he
+said* — and a narrower question can be answered from a shorter run against **one named verse**,
+which is what `PhraseIndex::shared_run_with` measures. `PARAPHRASE_RUN_WORDS` (3) is already the
+floor for exactly that shape of evidence in the paraphrase bar (§126).
+
+`detection::chapter_the_words_point_at` is the rule. The chapters it asks about are the inverse of
+`chapter_is_a_decode_slip` — nine for a one-digit chapter, a handful of substitutions above that —
+so it is **a probe, not a scan**: bounded by the slip test and never by the corpus. It can only ever
+return `Doubt::SpokenChapter`, so the cross-book carve-out that protects `John 15:14` and
+`Hebrews 13:7` is untouched, and it runs second, only on candidates the stronger rule left alone.
+
+### The first draft was wrong, and the measurement is what said so
+
+Built with a flat three-word floor, this rule **doubted four references the preacher had said
+correctly and cost two auto-fires** over 7,741 real transcript lines:
+
+- *"Proverbs 24 verse 5 A wise man is strong, yea, a man of knowledge"* — that **is** Proverbs 24:5.
+- *"Isaiah, chapter 44, and verse 3. I will pour water upon him that is thirsty"* — that is Isaiah 44:3.
+- `Isaiah 41:15`, *"Behold, I will make thee a"* — right, and the fire was lost and returned 10 s late.
+- `Isaiah 32:15` — right, and the fire was lost.
+
+Every one was accused because three words of the verse he was reading — *behold I will*, *I will
+pour* — also occur in a chapter one digit away. **Scripture is full of three-word runs.** Three words
+is safe in §126 because it CORROBORATES a reference somebody said out loud; here the run ACCUSES one,
+on behalf of a verse nobody named, and the floor that serves the first job cannot serve the second.
+`quoted`'s `sole` test is what the stronger rule has instead and this rule has no access to it.
+
+**So the bar is relative: the words must point at the probed verse MORE than at the verse that was
+said.** That is the question a person would ask of two chapters, and the absolute floor never asked
+it. It costs one extra `shared_run_with`, for the claim itself, and it removed three of the four.
+
+**The fourth needed a second guard: a span names no one verse.** *"Seek water and there is none and
+their tongue felleth for thirst. Isaiah 32 verse 15 to 17"* — the reference is right, the quotation in
+front of it belongs to the passage he had just left, and the probe compared it against verse 15 alone.
+`doubt_from_a_quotation` already refuses a span across books in the same words, for the same reason.
+Neither field case is a span, so the guard costs nothing they need.
+
+### What it is worth, stated with the part that is not good news
+
+**It reaches five of the nine instead of three**, and the two it adds are the two the table above
+names. Over the same 7,741 lines the whole rule now removes **5 broadcasts and gains 1**, against
+**3 and 0** for §123 alone — so this section is worth exactly **two removals**, and they are `Isaiah
+1:3` and `Romans 2:3`, the two cases it was built for. **No correct fire is lost**, and that is the
+number that decided whether to ship it: the first draft lost two, and the answer was to fix the rule
+rather than to quote the reach.
+
+**The cost is 8.0 µs per window** — 7,741 windows, 467 probed candidates, 6,785 index lookups,
+133 µs per probed candidate — on `relay-detect`, inside a 144 ms budget.
+`main::passage_guard_bench::what_the_short_run_probe_costs` is the rig, because rule 31's lesson is
+that this path is measured and not reasoned about.
+
+**It is not a clean win in one of the two.** With `Isaiah 1:3` demoted, `Isaiah 1:5` ranks first in
+the same window and fires — the preacher had said *"Verse 5 and verse 7 and 8"* — so the congregation
+still sees a wrong verse there, just a different one. `Romans 2:3` is a clean removal with nothing
+behind it. A rule that stops one wrong verse and lets another through in the same breath is worth
+having and is not worth overstating.
+
+**The four still out of reach carry no evidence any window-local rule can use**, and §123's paragraph
+on that stands unchanged: three windows are the reference and nothing else, one points at a verse he
+was referring back to, and in four of the six the quotation arrived 6 to 16 seconds LATER, in a
+separate window, after the wrong verse was already on the wall.
+
+### And the fifth instance
+
+Both eval scorecards are unchanged by this rule, because `eval.rs` assembles its own candidate set and
+never calls `candidates_for_window`. §122, §123 and §126 record the same blindness for the passage
+guard, the citation-doubt rule and the paraphrase bar. **This is the fifth, and one root cause**: the
+scorecard is a third copy of the window assembly. Fixing that is a larger change than any of the five
+rules it cannot see, and it is now the thing most worth doing to the detection instruments.

@@ -1895,6 +1895,87 @@ fn candidates_for_window(
         });
     }
 
+    // ── THE SHORT RUN A NAMED CHAPTER MAKES ADMISSIBLE, RG-313 ───────────
+    //
+    // The rule above sources its accusing run from `PhraseIndex::quoted`, which
+    // needs `MIN_RUN_WORDS` (5) because it answers *which verse do these words
+    // belong to* and below five that question has too many answers. Two of the six
+    // wrong references it could not reach fail on that floor and nothing else —
+    // `Isaiah 61:3` at 4 words, `Romans 12:3` at 3 — and both had already named
+    // their book and their chapter out loud. That leaves a narrower question, which
+    // a shorter run can answer: *did these words touch the verse one digit away
+    // from the one he said*. `PhraseIndex::shared_run_with` measures exactly that,
+    // against ONE named verse, and `PARAPHRASE_RUN_WORDS` (3) is the floor already
+    // in use for corroborating a reference that exists rather than offering one
+    // standing alone.
+    //
+    // **A PROBE, NOT A SCAN.** The set is the inverse of the same slip test the
+    // rule above applies — nine chapters for a one-digit chapter, a handful of
+    // substitutions above that — so this asks the index a bounded number of
+    // questions about a single book and never walks the corpus.
+    //
+    // **It reaches for a verse and never for a book**: only `SpokenChapter` can
+    // come out of it, so the cross-book carve-out above, which is the one that
+    // protects `John 15:14` and `Hebrews 13:7`, is untouched.
+    //
+    // Runs SECOND and only on what the first rule left alone, so a candidate the
+    // stronger evidence already doubted keeps the doubt that evidence gave it.
+    {
+        // Psalms has 150 and nothing has more. A chapter this book does not have
+        // resolves to no verse and `shared_run_with` answers 0, so the bound is a
+        // cost ceiling rather than a rule about scripture.
+        const MAX_CHAPTER: i64 = 150;
+        // KEYED BY REFERENCE, and it grows as the probe reports. Two candidates in
+        // one window can carry the same reference — a bare verse resolved against an
+        // anchor beside the same reference parsed outright — and the first draft
+        // reported both, so `detection://doubted` printed `Isaiah 1:3` twice in a row
+        // to an operator who saw one claim.
+        let mut already: std::collections::HashSet<String> =
+            doubted.iter().map(|d| d.reference.clone()).collect();
+        let idx = phrases.0.read();
+        let probes: Vec<(usize, i64)> = match idx.as_ref() {
+            Ok(idx) => candidates
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| !already.contains(&Fire::key_for(&c.r)))
+                .filter_map(|(i, c)| {
+                    let claim = detection::Claim {
+                        r: &c.r,
+                        method: c.method,
+                        verse_end: c.verse_end,
+                        whole_chapter: c.whole_chapter,
+                        run: None,
+                    };
+                    detection::chapter_the_words_point_at(&claim, MAX_CHAPTER, |probe| {
+                        idx.shared_run_with(text, probe)
+                    })
+                    .map(|ch| (i, ch))
+                })
+                .collect(),
+            Err(_) => Vec::new(),
+        };
+        drop(idx);
+        for (i, _chapter) in probes {
+            let c = &mut candidates[i];
+            let key = Fire::key_for(&c.r);
+            if !already.insert(key.clone()) {
+                // Demote it all the same — the cap is what protects the wall — and
+                // report it once.
+                c.method = DetectionMethod::UncertainNumber;
+                continue;
+            }
+            let was = c.method;
+            c.method = DetectionMethod::UncertainNumber;
+            doubted.push(Doubted {
+                reference: key,
+                method: c.method,
+                was,
+                matched_text: c.matched.clone(),
+                doubt: detection::Doubt::SpokenChapter,
+            });
+        }
+    }
+
     // ── THE RUN BAR ON A PARAPHRASE, off unless the church asked for it ───
     //
     // The operator, 2026-09-25: *"The preacher paraphrases a lot so I want you to
@@ -10517,19 +10598,30 @@ mod passage_guard_bench {
     /// `detections.id` beside it, run through the real `PhraseIndex` and the real
     /// rule.
     ///
-    /// **It reaches three.** The other six carry no verbatim run long enough to be
-    /// evidence in the window that fired: three windows are the reference and nothing
-    /// else, two carry runs of four and three words (below `MIN_RUN_WORDS`, so not
-    /// offerable and not admissible), and one — `Jude 1:7` — carries a run pointing at
-    /// a verse he was referring BACK to rather than at a slip of the reference.
+    /// **It reaches five.** It reached THREE until 2026-09-26, and the two it gained
+    /// are the two that failed on a word count and nothing else: `Isaiah 61:3` at a
+    /// four-word run and `Romans 12:3` at three, both below `MIN_RUN_WORDS`, both in
+    /// windows where the preacher had already named the book and the chapter out
+    /// loud. `detection::chapter_the_words_point_at` asks the narrower question that
+    /// leaves (RG-313, DECISIONS §127).
     ///
-    /// **In four of the six the quotation arrived 6 to 16 seconds LATER**, in a
-    /// separate window, and corrected the record after the wrong verse was already on
-    /// the wall. No window-local rule can reach those, and reversing a fire already on
-    /// a congregation's screen is a different decision with a different cost.
+    /// **The remaining four carry no verbatim run that can be evidence in the window
+    /// that fired**: three windows are the reference and nothing else, and one —
+    /// `Jude 1:7` — carries a run pointing at a verse he was referring BACK to rather
+    /// than at a slip of the reference.
+    ///
+    /// **In four of the six originally out of reach the quotation arrived 6 to 16
+    /// seconds LATER**, in a separate window, and corrected the record after the wrong
+    /// verse was already on the wall. No window-local rule can reach those, and
+    /// reversing a fire already on a congregation's screen is a different decision
+    /// with a different cost.
     ///
     /// This exists so the claim cannot drift. A later reader who widens the rule
-    /// should see the ceiling first: the limit is the EVIDENCE, not the predicate.
+    /// should see the ceiling first: the limit is the EVIDENCE, not the predicate —
+    /// **and widening it is not free.** The first draft of §127's rule took this
+    /// number to five and cost two auto-fires of references the preacher said
+    /// correctly, which `what_the_citation_doubt_rule_costs` is what caught. Raise
+    /// this assertion only beside that bench's output.
     #[test]
     #[ignore]
     fn which_field_instances_this_rule_can_reach() {
@@ -10569,7 +10661,7 @@ mod passage_guard_bench {
         }
         println!("\n  {reached} of {} reached\n", FIELD.len());
         assert_eq!(
-            reached, 3,
+            reached, 5,
             "the reachable set changed — if a rule was widened, say so and measure \
              what it costs in correct fires before quoting this number"
         );
@@ -10630,6 +10722,65 @@ mod passage_guard_bench {
             "  the extra one:                 {:?} total · {:?} per window that takes it\n",
             unrestricted,
             unrestricted / extra.max(1) as u32
+        );
+    }
+
+    /// **WHAT THE SHORT-RUN PROBE COSTS PER WINDOW** (RG-313).
+    ///
+    /// `RELAY_SERVICE_CORPUS=<file> cargo test --release what_the_short_run_probe_costs
+    /// -- --ignored --nocapture`
+    ///
+    /// The probe is bounded by the slip test rather than by the corpus, but bounded
+    /// is not free: it is one `shared_run_with` for the bar plus one per candidate
+    /// chapter, on `relay-detect`, once per decode pass. Rule 31's whole lesson is
+    /// that this path is measured and not reasoned about, and the reasoning here
+    /// would be especially easy to get wrong — `shared_run_with` walks the window
+    /// against a verse, so its cost grows with how much the preacher said.
+    #[test]
+    #[ignore]
+    fn what_the_short_run_probe_costs() {
+        let Ok(path) = std::env::var("RELAY_SERVICE_CORPUS") else {
+            println!("set RELAY_SERVICE_CORPUS");
+            return;
+        };
+        let body = std::fs::read_to_string(&path).expect("corpus unreadable");
+        let corpus = kjv_corpus();
+        let idx = detection::PhraseIndex::build(&corpus);
+        let mut windows = 0usize;
+        let mut probed = 0usize;
+        let mut lookups = 0usize;
+        let mut spent = std::time::Duration::ZERO;
+        for line in body
+            .lines()
+            .filter_map(|l| l.split_once('\t'))
+            .map(|(_, t)| t)
+        {
+            windows += 1;
+            for m in detection::detect_direct(line) {
+                if m.method != DetectionMethod::Direct || m.whole_chapter {
+                    continue;
+                }
+                probed += 1;
+                let claim = detection::Claim {
+                    r: &m.reference,
+                    method: m.method,
+                    verse_end: m.verse_end,
+                    whole_chapter: m.whole_chapter,
+                    run: None,
+                };
+                let t = std::time::Instant::now();
+                let _ = detection::chapter_the_words_point_at(&claim, 150, |probe| {
+                    lookups += 1;
+                    idx.shared_run_with(line, probe)
+                });
+                spent += t.elapsed();
+            }
+        }
+        println!(
+            "\n  {windows} windows · {probed} probed candidates · {lookups} index \
+             lookups\n  {spent:?} total · {:?} per probed candidate · {:?} per window\n",
+            spent / probed.max(1) as u32,
+            spent / windows.max(1) as u32
         );
     }
 

@@ -1275,6 +1275,18 @@ a different cost. Twice, Relay resolved the identical sentence correctly when no
 spoken at all. The ceiling is asserted, not described:
 `main::passage_guard_bench::which_field_instances_this_rule_can_reach` fails if it moves.
 
+**MOVED TO FIVE, 2026-09-26 (RG-313, DECISIONS §127).** The two runs of four and three words above
+were out of reach for one reason: `MIN_RUN_WORDS` is 5 because `PhraseIndex::quoted` answers *which
+verse do these words belong to*, and both of those preachers had already named the book and the
+chapter, which is a narrower question. `detection::chapter_the_words_point_at` asks it against one
+named verse, so `Isaiah 61:3` and `Romans 12:3` are now reached and the assertion in that test reads
+5. **The audit's own figure for this paragraph is therefore three windows that are the reference and
+nothing else, and one pointing at a verse he referred back to — four, not six.** The sentence about
+the four that arrive 6 to 16 seconds later stands, because two of those four are among the same
+windows. **Nothing here says the rule is free**: its first draft doubted four references these
+preachers said CORRECTLY and cost two auto-fires, and the shipped shape costs none — §127 carries
+both figures and how the bar was changed to get there.
+
 **Two are a self-corrected reference** where Relay kept the discarded half (RG-301): *"Micah
 chapter 2 chapter 4 verse 1"* → Micah 2:2; *"Luke chapter 5, chapter 15, number 7"* → Luke 5:1.
 
