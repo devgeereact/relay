@@ -1895,6 +1895,40 @@ fn candidates_for_window(
         });
     }
 
+    // ── A DOUBT IS A FACT ABOUT A REFERENCE, NOT ABOUT ONE CANDIDATE ─────
+    //
+    // `doubt_from_a_quotation` returns one verdict per candidate INDEX, and the loop
+    // above applied each verdict to that index alone. A window can name the same
+    // reference twice — service 40, 2026-09-25 at 4691.7 s produced `Psalms 27:1`
+    // both from the range parse (`Direct` 0.95) and from the bare *"verse 1"*
+    // anchored on it (`Direct` 0.88) — and the demotion reached the first while the
+    // duplicate went to the wall still firable. The rule had already concluded the
+    // reference was in doubt and the conclusion was being thrown away.
+    //
+    // Found by printing a candidate set rather than reasoning about one, which is
+    // also how the anchor fix's apparent regressions turned out to be this.
+    {
+        let doubted_keys: std::collections::HashMap<String, detection::Doubt> = doubted
+            .iter()
+            .map(|d| (d.reference.clone(), d.doubt))
+            .collect();
+        for c in candidates.iter_mut() {
+            // Only a candidate that could still reach a wall needs taking down; the
+            // rest are already capped and re-labelling them would say nothing.
+            if c.method.unattended_rank() == 0 {
+                continue;
+            }
+            let Some(doubt) = doubted_keys.get(&Fire::key_for(&c.r)) else {
+                continue;
+            };
+            c.method = match doubt {
+                detection::Doubt::SpokenChapter => DetectionMethod::UncertainNumber,
+                detection::Doubt::SpokenBook => DetectionMethod::UncertainBook,
+                detection::Doubt::TheQuotation => DetectionMethod::Quoted,
+            };
+        }
+    }
+
     // ── THE SHORT RUN A NAMED CHAPTER MAKES ADMISSIBLE, RG-313 ───────────
     //
     // The rule above sources its accusing run from `PhraseIndex::quoted`, which
@@ -10722,6 +10756,423 @@ mod passage_guard_bench {
             "  the extra one:                 {:?} total · {:?} per window that takes it\n",
             unrestricted,
             unrestricted / extra.max(1) as u32
+        );
+    }
+
+    /// **WHY THE CITATION-DOUBT RULE DID NOT REACH A DROPPED ORDINAL** — service 41,
+    /// 2026-09-26, `detections.id = 1678`. **A wrong verse reached a congregation.**
+    ///
+    /// `cargo test --release why_the_carve_out_missed_1_john -- --ignored --nocapture`
+    ///
+    /// *"John 5, 3 This is the love of God that will keep His commandments."* fired
+    /// **John 5:3** — *"In these lay a great multitude of impotent folk"* — at 0.55
+    /// `Direct`. He said **1 John 5:3**, *"For this is the love of God, that we keep
+    /// his commandments"*, and whisper dropped the ordinal. The next window settles it
+    /// beyond argument: *"The commandments are not grievous"* is that verse's second
+    /// half.
+    ///
+    /// **§123's cross-book carve-out is written for exactly this shape and did not
+    /// fire.** It admits a quotation hit from another book when it sits at the EXACT
+    /// chapter and verse a spoken reference in the window named — citation `John 5:3`,
+    /// quotation `1 John 5:3`, chapter 5 and verse 3 both matching, different book.
+    /// Measured against the bundled KJV, the runs are not close:
+    ///
+    /// | verse | contiguous run with what he said |
+    /// |---|---|
+    /// | `1 John 5:3` | **7 words** — *"this is the love of god that"* |
+    /// | `John 5:3` (fired) | **1 word** — *"the"* |
+    ///
+    /// Seven clears `MIN_RUN_WORDS`, so `PhraseIndex::quoted` should have returned it.
+    /// Relay plainly FOUND the verse — `1 John 5:3` was offered three times as
+    /// `Semantic` at 0.60 — but semantic offers are not what the carve-out inspects.
+    ///
+    /// This prints each stage separately so the missing link is named rather than
+    /// guessed: the restricted `quoted`, the unrestricted `quoted`, what the carve-out
+    /// admits, and what the whole window rule concludes.
+    /// **STATUS 2026-09-26: the carve-out is INNOCENT and this is still open.**
+    ///
+    /// Running it answered the question and killed my first two theories. For
+    /// *"John 5, 3 This is the love of God that will keep His commandments."*:
+    ///
+    /// ```text
+    ///   -- quoted RESTRICTED to the named book:   (nothing)
+    ///   -- quoted UNRESTRICTED:                   (nothing)
+    /// ```
+    ///
+    /// `PhraseIndex::quoted` returns **nothing at all**, even unrestricted, so the
+    /// cross-book carve-out never had an input to weigh and cannot be at fault.
+    /// `1 John 5:3` reached the set only as `Semantic` 0.53.
+    ///
+    /// **What does not add up yet.** The contiguous run between that window and
+    /// `1 John 5:3` is **7 words** — *"this is the love of god that"* — measured
+    /// against the bundled KJV. `quoted`'s gate is
+    /// `n >= MIN_RUN_WORDS && (n >= SELF_EVIDENT_RUN || has_a_rare_word(..))`, and
+    /// `SELF_EVIDENT_RUN` is 7, so a 7-word run should qualify on the first clause
+    /// alone. Either the run `quoted` computes is shorter than the one a plain
+    /// longest-common-run gives, or something after the gate drops it.
+    ///
+    /// The next step is to print `n` and `sole` from inside `quoted` for this window
+    /// rather than to reason about it further — twice now reasoning gave a confident
+    /// wrong answer here.
+    #[test]
+    #[ignore]
+    fn why_the_carve_out_missed_1_john() {
+        // TWO INSTANCES, same service, different books and different evidence —
+        // which is what rules out the first explanation I reached for.
+        //
+        //   * `John 5, 3 …` → fired John 5:3; right verse `1 John 5:3` appeared as
+        //     `Semantic` at 0.60. I guessed the carve-out missed it because the
+        //     evidence was not a `Quoted` run.
+        //   * `Romans 1, 8, My son, hear the instruction of thy father.` → fired
+        //     **Romans 1:8** (`detections.id` at 9613.5 s); the right verse
+        //     `Proverbs 1:8` appeared as **`Quoted` at 0.69**. Same chapter, same
+        //     verse, different book — the carve-out's exact condition — and the doubt
+        //     still did not fire. So the guess above is WRONG and the fault is in the
+        //     wiring or the conditions, not in how the evidence is classified.
+        for heard in [
+            "John 5, 3 This is the love of God that will keep His commandments.",
+            "We heard these words here, Romans 1, 8 My son, hear the instruction of thy father.",
+        ] {
+            probe_the_carve_out(heard);
+        }
+    }
+
+    /// One window, every stage printed. Shared by both instances above.
+    #[cfg(test)]
+    fn probe_the_carve_out(heard: &str) {
+        let corpus = kjv_corpus();
+        let idx = detection::PhraseIndex::build(&corpus);
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        let context = ContextMemory::default();
+        println!("\n  “{heard}”");
+        let anchor = detection::anchor_for_bare_verses(heard);
+        println!("  anchor: {anchor:?}");
+        let named = anchor.as_ref().map(|r| r.book.clone());
+        println!("  quoted_in (the restriction): {named:?}");
+        println!("  -- quoted RESTRICTED to the named book:");
+        for h in idx.quoted(heard, named.as_deref(), QUOTED_SUGGESTIONS_MAX) {
+            println!(
+                "     {} {}:{}  run={} sole={}",
+                h.r.book, h.r.chapter, h.r.verse, h.run, h.sole
+            );
+        }
+        println!("  -- quoted UNRESTRICTED (what the carve-out draws from):");
+        for h in idx.quoted(heard, None, QUOTED_SUGGESTIONS_MAX) {
+            println!(
+                "     {} {}:{}  run={} sole={}",
+                h.r.book, h.r.chapter, h.r.verse, h.run, h.sole
+            );
+        }
+        println!("  -- the shipped window rule:");
+        let w = candidates_for_window(heard, true, &sem, &phrases, &context, None, false);
+        for c in &w.kept {
+            println!(
+                "     KEPT  {} {}:{}  {:?}  {:.2}",
+                c.r.book, c.r.chapter, c.r.verse, c.method, c.conf
+            );
+        }
+        for d in &w.doubted {
+            println!(
+                "     DOUBT {}  {:?}  {:?} -> {:?}",
+                d.reference, d.doubt, d.was, d.method
+            );
+        }
+        // THE CLAIM: the verse he actually cited must not reach the wall unattended
+        // while a seven-word run in the same window names a different one.
+        let firable: Vec<_> = w
+            .kept
+            .iter()
+            .filter(|c| c.method == DetectionMethod::Direct)
+            .map(|c| (detection::reference_key(&c.r), c.conf))
+            .collect();
+        assert!(
+            firable.is_empty(),
+            "John 5:3 still reaches the wall against a 7-word run for 1 John 5:3: {firable:?}"
+        );
+    }
+
+    /// **WHY A VERSE READ ALOUD, VERBATIM, DID NOT REACH THE WALL** — service 41,
+    /// 2026-09-26, watched live.
+    ///
+    /// `cargo test --release why_psalm_121_6_never_fired -- --ignored --nocapture`
+    ///
+    /// The preacher read Psalms 121 straight through, calling the verse numbers out
+    /// loud. Verses 2, 4 and 5 auto-fired as `Reading`. **Verses 3 and 6 did not, and
+    /// the operator fired 7 and 8 by hand.** Verse 6 is the interesting one: its
+    /// window holds the verse almost word for word, and the only thing Relay produced
+    /// was an `UncertainBook` answer from memory, which rule 40's third half caps at
+    /// Suggest for ever.
+    ///
+    /// This prints, for each real window off the operator's own database: what
+    /// `PhraseIndex::quoted` returns on its own, and what the whole window rule
+    /// produces. It is a diagnosis, not an assertion — it exists to find out which
+    /// stage dropped the verse, because reading the code three ways gave three
+    /// answers.
+    #[test]
+    #[ignore]
+    fn why_psalm_121_6_never_fired() {
+        // Verbatim from `transcripts`, service 41, in order.
+        const WINDOWS: &[(f32, &str)] = &[
+            (93.1, "my food to be moved will not slumber"),
+            (98.9, "Behold, he that keepeth Israel shall neither slumber nor sleep."),
+            (100.1, "Behold, he that keepeth Israel shall neither slumber nor sleep. Verse 5."),
+            (104.8, "The Lord is thy keeper. The Lord is thy keeper. The Lord is thy keeper."),
+            (107.2, "The Lord is thy keeper. The Lord is thy shield upon thy right arm."),
+            (115.0, "Luke, verse 6 The sun shall not smite thee by the day, nor the moon by the night."),
+            // ── THE SECOND SERVICE, same psalm, 2026-09-26 at 6359.5 s ──────────
+            //
+            // He read Psalms 121 again in the second service and verse 6 failed AGAIN
+            // — for a DIFFERENT reason, which is why it is not one bug: this time he
+            // said "by day" correctly and whisper heard "smile" for "smite", cutting
+            // the run to 4. Only the morning failure (run 6, "by the day") is
+            // reachable by anything but a better decoder.
+            //
+            // **Verse 7 is the case worth chasing.** The same window carries "The Lord
+            // shall preserve thee from all evil" — 8 words verbatim, EXACTLY
+            // `READING_RUN_WORDS` — and four other verses sat at exactly 8 that day
+            // and every one of them fired. This one did not. Rule 29 is the suspect:
+            // one window may put at most one verse on a wall, and this window also
+            // holds the mangled verse 6.
+            (6359.5, "The sun shall not smile thee by day or the moon by night. The Lord shall preserve thee from all evil."),
+            (6372.2, "He shall preserve thy soul. The loudest now verse 8 want to go. The Lord shall preserve"),
+        ];
+        let corpus = kjv_corpus();
+        let idx = detection::PhraseIndex::build(&corpus);
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        let mut context = ContextMemory::default();
+        // THE WALL AS IT WAS: Psalms 121:5 had been put up by the reading path.
+        context.note(&detection::VerseRef {
+            book: "ps".into(),
+            chapter: 121,
+            verse: 5,
+        });
+        println!();
+        for (at, text) in WINDOWS {
+            println!("── {at}s  “{text}”");
+            println!("   anchor: {:?}", detection::anchor_for_bare_verses(text));
+            let raw = idx.quoted(text, None, QUOTED_SUGGESTIONS_MAX);
+            if raw.is_empty() {
+                println!("   quoted(unrestricted): NOTHING");
+            }
+            for h in &raw {
+                println!(
+                    "   quoted(unrestricted): {} {}:{}  run={} sole={}",
+                    h.r.book, h.r.chapter, h.r.verse, h.run, h.sole
+                );
+            }
+            // And what the shipped window rule makes of it.
+            let w = candidates_for_window(text, true, &sem, &phrases, &context, None, false);
+            for c in &w.kept {
+                println!(
+                    "   KEPT  {} {}:{}  {:?}  {:.2}",
+                    c.r.book, c.r.chapter, c.r.verse, c.method, c.conf
+                );
+            }
+            for (c, why) in &w.held {
+                println!(
+                    "   HELD  {} {}:{}  {:?}",
+                    c.r.book, c.r.chapter, c.r.verse, why
+                );
+            }
+            for d in &w.doubted {
+                println!("   DOUBT {}  {:?}", d.reference, d.doubt);
+            }
+        }
+        println!();
+    }
+
+    /// **A DOUBT MUST REACH EVERY CANDIDATE CARRYING THAT REFERENCE** — found
+    /// 2026-09-26 while measuring the anchor fix, by printing a window's candidate
+    /// set instead of reasoning about it.
+    ///
+    /// Service 40, 2026-09-25 at 4691.7 s: *"…all my springs are in thee. Psalm 27
+    /// verse 1 to 7."* Those words are **Psalms 87:7**; he said Psalm 27. The window
+    /// produces the reference TWICE —
+    ///
+    /// | candidate | from |
+    /// |---|---|
+    /// | `Psalms 27:1` `Direct` 0.95 | the range parse, `detect_direct` |
+    /// | `Psalms 27:1` `Direct` 0.88 | the bare *"verse 1"*, anchored on that parse |
+    ///
+    /// — and `doubt_from_a_quotation` demotes by INDEX, so it caught the first and
+    /// the duplicate went to the wall still `Direct`. The doubt rule was working and
+    /// its conclusion was being discarded.
+    ///
+    /// This is the shape CLAUDE.md records four times over: *a guarantee is only kept
+    /// on the doors you checked*. The doubt is a fact about a REFERENCE, not about one
+    /// candidate that happens to name it.
+    #[test]
+    #[ignore]
+    fn a_doubt_reaches_every_candidate_naming_that_reference() {
+        const HEARD: &str =
+            "And this one was born there, that one was born there, all my springs are in thee. Psalm 27 verse 1 to 7.";
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        let context = ContextMemory::default();
+        let w = candidates_for_window(HEARD, true, &sem, &phrases, &context, None, false);
+        for c in &w.kept {
+            println!(
+                "   {} {}:{}  {:?}  {:.2}  rank={}",
+                c.r.book,
+                c.r.chapter,
+                c.r.verse,
+                c.method,
+                c.conf,
+                c.method.unattended_rank()
+            );
+        }
+        let doubted: std::collections::HashSet<String> =
+            w.doubted.iter().map(|d| d.reference.clone()).collect();
+        let escaped: Vec<_> = w
+            .kept
+            .iter()
+            .filter(|c| doubted.contains(&Fire::key_for(&c.r)))
+            .filter(|c| c.method.unattended_rank() > 0)
+            .map(|c| (Fire::key_for(&c.r), c.method, c.conf))
+            .collect();
+        assert!(
+            escaped.is_empty(),
+            "a doubted reference still has a firable candidate: {escaped:?}"
+        );
+    }
+
+    /// **EXPLAIN ONE WINDOW: every stage, every candidate, every doubt.**
+    ///
+    /// `RELAY_EXPLAIN_WINDOW="<text>" cargo test --release explain_one_window --
+    /// --ignored --nocapture`
+    ///
+    /// Built 2026-09-26 after the anchor fix moved fires in ways reading the code
+    /// could not account for, and after two rounds of guessing at why. Printing the
+    /// set is faster than reasoning about it and it cannot be wrong.
+    ///
+    /// **TWO LIMITS, both learned by being misled by them.** It starts from an EMPTY
+    /// `ContextMemory` and an empty wall, so it cannot reproduce a fire that depended
+    /// on the passage already on screen — a replay difference this cannot explain may
+    /// simply be memory. And `print_every_auto_fire` replays a corpus through the real
+    /// `Router`, which self-calibrates on feedback, so the run is globally coupled:
+    /// one changed candidate set shifts thresholds for everything after it. **Aggregate
+    /// counts and presence checks from that instrument are sound; per-verse attribution
+    /// is not.**
+    #[test]
+    #[ignore]
+    fn explain_one_window() {
+        let Ok(text) = std::env::var("RELAY_EXPLAIN_WINDOW") else {
+            println!("set RELAY_EXPLAIN_WINDOW");
+            return;
+        };
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        let context = ContextMemory::default();
+        println!("\n  “{text}”");
+        println!(
+            "  anchor (firable only): {:?}",
+            detection::anchor_for_bare_verses(&text)
+        );
+        println!("  bare verses: {:?}", detection::detect_bare_verses(&text));
+        println!("  -- detect_direct:");
+        for m in detection::detect_direct(&text) {
+            println!(
+                "     {} {}:{}  {:?}  {:.2}  whole={}  end={:?}",
+                m.reference.book,
+                m.reference.chapter,
+                m.reference.verse,
+                m.method,
+                m.confidence,
+                m.whole_chapter,
+                m.verse_end
+            );
+        }
+        let w = candidates_for_window(&text, true, &sem, &phrases, &context, None, false);
+        println!("  -- KEPT:");
+        for c in &w.kept {
+            println!(
+                "     {} {}:{}  {:?}  {:.2}",
+                c.r.book, c.r.chapter, c.r.verse, c.method, c.conf
+            );
+        }
+        for (c, why) in &w.held {
+            println!(
+                "  HELD  {} {}:{}  {:?}",
+                c.r.book, c.r.chapter, c.r.verse, why
+            );
+        }
+        for d in &w.doubted {
+            println!(
+                "  DOUBT {}  {:?}  {:?} -> {:?}",
+                d.reference, d.doubt, d.was, d.method
+            );
+        }
+        println!("  -- rank_for_wall order:");
+        let mut ranked: Vec<&Cand> = w.kept.iter().collect();
+        ranked.sort_by(|a, b| {
+            if pipeline::better(a, b) {
+                std::cmp::Ordering::Less
+            } else {
+                std::cmp::Ordering::Greater
+            }
+        });
+        for c in ranked {
+            println!(
+                "     {} {}:{}  {:?}  {:.2}",
+                c.r.book, c.r.chapter, c.r.verse, c.method, c.conf
+            );
+        }
+        println!();
+    }
+
+    /// **EVERY AUTO-FIRE A CORPUS PRODUCES, ONE PER LINE** — the instrument for
+    /// comparing two revisions of the detection path against real speech.
+    ///
+    /// `RELAY_SERVICE_CORPUS=<file> cargo test --release print_every_auto_fire
+    /// -- --ignored --nocapture > after.txt`, then the same on the other revision,
+    /// then `diff`. The citation-doubt bench only ever compares ITS rule on against
+    /// off inside one binary, so it cannot answer *what did this change cost*, which
+    /// is the only question rule 13 accepts. Built 2026-09-26, when the anchor fix
+    /// (RG-301) moved 11 auto-fires to the suggestion list and nothing existed to say
+    /// which 11.
+    ///
+    /// Output is `<seconds>\t<reference>` and nothing else, so a diff is readable.
+    ///
+    /// **The replay is globally coupled and a line-by-line diff will lie to you.** The
+    /// `Router` self-calibrates on feedback, so a single changed candidate set moves
+    /// thresholds for every later window: verses appear and disappear far from the
+    /// change that caused them. Use this for TOTALS and for "does reference X fire at
+    /// all", and use `explain_one_window` plus a unit test for anything causal. Two
+    /// apparent regressions on 2026-09-26 were chased this way before the real cause
+    /// turned out to be a duplicate candidate escaping a doubt.
+    #[test]
+    #[ignore]
+    fn print_every_auto_fire() {
+        let Ok(path) = std::env::var("RELAY_SERVICE_CORPUS") else {
+            println!("set RELAY_SERVICE_CORPUS");
+            return;
+        };
+        let body = std::fs::read_to_string(&path).expect("corpus unreadable");
+        let lines: Vec<(f32, String)> = body
+            .lines()
+            .filter_map(|l| l.split_once('\t'))
+            .filter_map(|(t, x)| t.parse::<f32>().ok().map(|t| (t, x.to_string())))
+            .collect();
+        let run = replay(&lines, true, true);
+        for (at, key, _) in &run.fired {
+            println!("{at:.1}\t{key}");
+        }
+        eprintln!(
+            "{} auto-fires from {} windows",
+            run.fired.len(),
+            lines.len()
         );
     }
 

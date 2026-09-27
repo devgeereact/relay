@@ -1657,12 +1657,51 @@ fn parse_reference_inner(
             DetectionMethod::uncertain_number(&mut m);
             return Some((m, after_ch));
         }
-        let base = if used_kw { 0.88 } else { 0.45 };
+        // ── A CHAPTER AT THE VERY EDGE OF THE WINDOW IS A REFERENCE IN FLIGHT ──
+        //
+        // Service 41, 2026-09-26 at 11816.4 s. The preacher said *"In John chapter
+        // 12, verse 35 and 36, the word says…"* in one breath and the chunker cut it
+        // between the chapter and the verse:
+        //
+        //     11816.4  "…In John chapter 12,"             → fired John 12:1 at 0.88
+        //     11821.1  "verse 35 and 36 the word says"    → the verse, 4.7 s late
+        //
+        // So a verse nobody asked for went to the congregation, and the operator
+        // fired John 12:35 by hand. This is the same principle the dangling-marker
+        // guard above states — A PARTIAL HEARING OF A REFERENCE MUST NEVER OUTRANK A
+        // FULL ONE — one step further out: there the marker was the last token, here
+        // the NUMBER is, and in both the sentence plainly has not finished.
+        //
+        // **Only the keyword form needs this.** A keyword-less "Romans 8" is already
+        // 0.45 and already asks a human; the keyword is what buys 0.88, and at the
+        // edge of a window that keyword is evidence a verse is coming rather than
+        // evidence the speaker meant the whole chapter.
+        //
+        // The cost is a genuine whole-chapter citation that happens to land on the
+        // last token of a window: it becomes a suggestion one click away instead of a
+        // fire, and the next window carries the same words with the sentence
+        // finished. That is the trade the dangling-marker guard already accepted.
+        // AND there must be something BEFORE the reference. A window that is only
+        // "psalm chapter 23" is a complete citation, not a sentence cut off — and
+        // `whole_chapter_with_keyword_is_more_confident` and
+        // `r4_05b_an_unreviewed_yoruba_numeral_is_offered_never_fired` both say so,
+        // the second by going silent at a cautious dial rather than offering. The
+        // live failure was a reference trailing sixteen words of sermon that stopped
+        // mid-flow, which is what "in flight" means.
+        let at_the_edge = used_kw && after_ch >= tokens.len() && book_start > 0;
+        let base = if used_kw && !at_the_edge { 0.88 } else { 0.45 };
         let mut m = make_match(
             canonical, chapter, 1, tokens, book_start, after_ch, base, false, phonetic, book_ev,
         );
-        if !used_kw {
+        if !used_kw || at_the_edge {
             // "Matthew, one of the twelve disciples" — the VERSE was supplied.
+            //
+            // AND `at_the_edge`, for the reason above: a lower confidence alone is not
+            // a cap. `from_sensitivity(100)` puts the auto-fire bar at 0.30, so 0.45
+            // still fires unattended — measured on the operator's own dial setting,
+            // which is where 22 bare pairs auto-fired in one service. Only the METHOD
+            // is refused at any score (rule 10), so a demotion that must hold has to
+            // be a method.
             DetectionMethod::uncertain_number(&mut m);
         }
         m.whole_chapter = true;
@@ -2506,6 +2545,58 @@ pub fn detect_clear(text: &str) -> bool {
 /// two moves forward through them: "we were in Romans 8, now turn to Luke 10,
 /// verse 32" means Luke.
 pub fn anchor_for_bare_verses(text: &str) -> Option<VerseRef> {
+    // **AN OPEN DEFECT LIVES HERE — RG-301, mechanism identified 2026-09-26, NOT
+    // FIXED.** Read this before changing the line below; the obvious fix is wrong and
+    // was tried.
+    //
+    // This returns the last parse of ANY method, so a candidate rule 10 deliberately
+    // capped can still supply the book and chapter a bare verse hangs on — and a bare
+    // verse resolved against a window anchor is stamped `Direct` at 0.88 by
+    // `DetectionMethod::for_bare_verse`. The cap is laundered:
+    //
+    //   * Service 41, 2026-09-26 at 1197.6 s: *"…from Jude 28 and verse 7 to 28…"*
+    //     parses as `Jude 1:28` `UncertainNumber` 0.45 — 28 read as the VERSE, because
+    //     Jude has one chapter and the chapter 1 was SUPPLIED by Relay, not heard —
+    //     and `verse 7` then hung on it and put **Jude 1:7** on a congregation screen.
+    //     He was reading Job 28.
+    //   * The same shape put `Deuteronomy 28:1` up from an `UncertainBook` repair of
+    //     *"Deuteronomia"*. That one was right, which is how it went unnoticed.
+    //
+    // **Filtering to `unattended_rank() > 0` is the obvious fix and it breaks rule
+    // 40's primary case.** FIELD F-1 is *"going through in Luke 10. If you read from
+    // verse 32"*: `Luke 10` is a keyword-less whole chapter, so it parses
+    // `UncertainNumber` 0.45, and filtering it out leaves the bare verse with no
+    // anchor at all — which is the wrong verse this function was written to prevent.
+    // `field_a_bare_verse_belongs_to_the_book_this_sentence_names` and
+    // `a_verse_hung_on_a_book_named_in_this_breath_is_heard` both fail on it.
+    //
+    // The real distinction is not *may this parse fire* but **was the CHAPTER heard
+    // or supplied**: `Luke 10` heard its chapter, `Jude 1:28` had chapter 1 invented
+    // for it. Nothing in `RefMatch` records that today, which is why this is still
+    // open rather than fixed.
+    //
+    // This took the last parse of ANY kind and ignored its method, which laundered
+    // rule 10's cap: `UncertainNumber` and `UncertainBook` are refused by
+    // `Router::decide` at any score, but a bare verse hung on one is stamped
+    // `Direct` at 0.88 by `DetectionMethod::for_bare_verse` and fires unattended.
+    //
+    // Service 41, 2026-09-26: *"…from Jude 28 and verse 7 to 28…"* parses as
+    // `Jude 1:28` `UncertainNumber` 0.45 — 28 read as the VERSE, because Jude has
+    // one chapter — and `verse 7` then hung on it and put **Jude 1:7** on a
+    // congregation's screen. He was reading Job 28. The same window shape put
+    // `Deuteronomy 28:1` up from an `UncertainBook` repair of *"Deuteronomia"*; that
+    // one was right, which is why the mechanism went unnoticed.
+    //
+    // `unattended_rank() > 0` is the question, not `== Direct`: it is the same test
+    // `pipeline::better` uses for what may reach a wall, so the two cannot drift, and
+    // it admits `Reading` — a verse Relay HEARD being read is a sound anchor for the
+    // verse number spoken beside it.
+    //
+    // A window with no firable parse falls through to the next authority in
+    // `resolve_bare_verse_with_source` exactly as if nothing had parsed: a stated
+    // chapter resolves to nothing (rule 40's second half), and memory answers only
+    // when the words do not say — labelled `UncertainBook`, so it is offered and
+    // never fired (rule 40's third half).
     detect_direct(text)
         .into_iter()
         .next_back()
@@ -9777,6 +9868,338 @@ mod citation_doubt {
 // **The probe is bounded by the slip test, not by the corpus.** For a one-digit
 // chapter there are nine un-slipped chapters (`7` → 17, 27 … 97); for a
 // two-digit one, the substitutions one digit away. Nothing is scanned.
+#[cfg(test)]
+/// **A BARE CHAPTER AT THE END OF A WINDOW IS NOT YET A REFERENCE** — service 41,
+/// 2026-09-26 at 11816.4 s, watched live. **A verse nobody asked for reached the
+/// wall.**
+///
+/// The preacher said *"In John chapter 12, verse 35 and 36, the word says…"* in one
+/// breath. The chunker cut it between the chapter and the verse:
+///
+/// | window | text | what Relay did |
+/// |---|---|---|
+/// | 11816.4 s | *"…In John chapter 12,"* | fired **John 12:1** at 0.88 |
+/// | 11821.1 s | *"verse 35 and 36 the word says"* | the verse, 4.7 s late |
+///
+/// Whole-chapter-means-verse-1 is right for *"turn to Romans 8"*. It is wrong for a
+/// chapter that is the LAST thing in the window, because the sentence has not
+/// finished and the number that completes it is already on its way. The operator
+/// fired `John 12:35` by hand 4.7 s later.
+///
+/// **This is not the corroboration rule's case.** Rule 28 holds a reference from a
+/// PARTIAL window until a second pass agrees; this window was FINAL, so nothing held
+/// it. The distinguishing fact is positional, not provisional: the chapter sits at
+/// the end of the text with no verse keyword and no number after it.
+///
+/// The operator asked for exactly this in 2026-09 in different words — *"wait to hear
+/// the next couple sentences"* — and here waiting one cadence step would have cost
+/// nothing and been right.
+/// **A CAPPED PARSE MAY NOT BECOME THE AUTHORITY FOR A BARE VERSE** — RG-301's real
+/// mechanism, found 2026-09-26 by running the field window through `detect_direct`
+/// and discovering it does NOT produce the verse that fired.
+///
+/// `anchor_for_bare_verses` took the LAST reference `detect_direct` returned and
+/// ignored its method. Rule 10 caps `UncertainNumber` and `UncertainBook` at Suggest
+/// at any score, so those parses can never reach a wall themselves — but they could
+/// become the anchor a bare verse hangs on, and a bare verse resolved against a
+/// window anchor is stamped `Direct` at 0.88 by `DetectionMethod::for_bare_verse`.
+/// The cap was laundered.
+///
+/// Both live instances, service 41, 2026-09-26:
+///
+/// | window | parsed as | anchor | the bare verse fired |
+/// |---|---|---|---|
+/// | *"…from Jude 28 and verse 7 to 28…"* | `Jude 1:28` **UncertainNumber 0.45** | Jude 1 | **`Jude 1:7` Direct 0.88, WRONG** |
+/// | *"…Deuteronomia, 28 verse 1…"* | `Deuteronomy 28:1` **UncertainBook 0.89** | Deut 28 | `Deuteronomy 28:1` Direct 0.88 |
+///
+/// The first put a verse nobody asked for on a congregation's screen. The second
+/// happened to be right, which is how the mechanism survived unnoticed.
+///
+/// **RG-301's row described this as "the impossible chapter was discarded and the
+/// verse kept". That is not what the code does** — 28 is read as Jude's VERSE
+/// (single-chapter book), correctly demoted, and then the demoted parse supplies the
+/// book and chapter for `verse 7`. The register row is corrected to match.
+#[cfg(test)]
+mod the_anchor_may_not_launder_a_cap {
+    use super::*;
+
+    /// The real window, verbatim from `transcripts`, service 41 at 1197.6 s.
+    const JUDE: &str =
+        "Look at that from Jude 28 and verse 7 to 28 that such wisdom is not found in the land of the living.";
+    /// service 41 at 3066.6 s.
+    const DEUT: &str =
+        "And I saw in my Bible, Deuteronomia, 28 verse 1 If you were dealing with my voice and was able to do what I commanded,";
+
+    #[test]
+    #[ignore = "RG-301 is OPEN: the obvious filter breaks rule 40's FIELD F-1. See \
+                anchor_for_bare_verses for why, and what a real fix needs."]
+    fn a_window_whose_only_parse_is_capped_offers_no_anchor() {
+        for (label, heard) in [("Jude", JUDE), ("Deuteronomia", DEUT)] {
+            let parses: Vec<_> = detect_direct(heard)
+                .into_iter()
+                .map(|m| (reference_key(&m.reference), m.method, m.confidence))
+                .collect();
+            println!("  {label}: {parses:?}");
+            assert_eq!(
+                anchor_for_bare_verses(heard),
+                None,
+                "{label}: a capped parse is still supplying the anchor"
+            );
+        }
+    }
+
+    #[test]
+    fn a_direct_parse_still_anchors_exactly_as_before() {
+        // THE OPPOSITE MISTAKE, and the case rule 40 exists for: a clean reference
+        // in the window must still anchor a bare verse that follows it.
+        let a = anchor_for_bare_verses("Romans chapter 8 verse 28 and then verse 32");
+        assert!(
+            a.as_ref().is_some_and(|r| r.chapter == 8),
+            "a clean reference stopped anchoring: {a:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "RG-301 is OPEN — see the sibling test and anchor_for_bare_verses."]
+    fn the_last_firable_parse_wins_not_the_last_parse_of_any_kind() {
+        // A window can hold both. "Romans 8 verse 28 ... Jude 28" must anchor on
+        // Romans, not on the capped Jude that comes after it.
+        let a = anchor_for_bare_verses("Romans chapter 8 verse 28, and also Jude 28");
+        assert!(
+            a.as_ref()
+                .is_some_and(|r| r.chapter == 8 && r.book == "Romans"),
+            "the capped later parse won: {a:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod chapter_at_the_edge {
+    use super::*;
+
+    #[test]
+    fn a_chapter_that_ends_the_window_should_not_fire_verse_one() {
+        const HEARD: &str = "on the sheet of faith. You quench all the fiery dust of the devil. In John chapter 12,";
+        let got = detect_direct(HEARD);
+        for m in &got {
+            println!(
+                "  {} {}:{}  {:?}  {:.2}  whole_chapter={}",
+                m.reference.book,
+                m.reference.chapter,
+                m.reference.verse,
+                m.method,
+                m.confidence,
+                m.whole_chapter
+            );
+        }
+        let firable: Vec<_> = got
+            .iter()
+            .filter(|m| m.method == DetectionMethod::Direct)
+            .map(|m| (m.reference.chapter, m.reference.verse))
+            .collect();
+        assert!(
+            firable.is_empty(),
+            "a chapter with nothing after it still reaches the wall: {firable:?}"
+        );
+    }
+
+    #[test]
+    fn a_chapter_with_words_after_it_is_still_an_ordinary_whole_chapter() {
+        // THE OPPOSITE MISTAKE, and my first draft of this test had the premise
+        // wrong: a KEYWORD-LESS "Romans 8" is already `UncertainNumber` 0.45 and
+        // already asks a human, so it was never the case at risk. The case at risk
+        // is the KEYWORD form with the sentence continuing past it, which states
+        // referential intent and must keep its 0.88.
+        let got = detect_direct("Turn with me to Romans chapter 8 and let us read together");
+        assert!(
+            got.iter()
+                .any(|m| m.method == DetectionMethod::Direct && m.whole_chapter),
+            "an ordinary whole-chapter reference stopped firing: {:?}",
+            got.iter()
+                .map(|m| (m.reference.chapter, m.reference.verse, m.method))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_keywordless_chapter_at_the_edge_was_already_asking_a_human() {
+        // Stated so the split is on the record: the demotion below only has to
+        // cover the keyword form, because the bare form is already covered.
+        let got = detect_direct("and then we went to Romans 8");
+        assert!(
+            got.iter().all(|m| m.method != DetectionMethod::Direct),
+            "a bare chapter at the edge reaches the wall: {:?}",
+            got.iter()
+                .map(|m| (m.reference.chapter, m.method))
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
+/// **AN IMPOSSIBLE CHAPTER IS EVIDENCE, NOT NOISE — RG-301.**
+///
+/// Two live services, same preacher, same sentence shape, same substitution
+/// (`Job` heard as `Jude`):
+///
+///   * 2026-09-25, `detections.id = 588`: *"We have tried to look at that from Jude
+///     28 and verse 7 to 28."* → **Jude 1:7 at 0.88, auto-fired.** He meant
+///     Romans 11:33, which he had quoted four seconds earlier.
+///   * 2026-09-26, `detections.id = 1235`: *"Look at that from Jude 28 and verse 7 to
+///     28 that such wisdom is not found in the land of the living."* → **Jude 1:7 at
+///     0.88, auto-fired OVER THE TOP of a correct `Job 28:7`** that had fired 2.4 s
+///     earlier from the same sentence decoded correctly.
+///
+/// **Jude has ONE chapter and 25 verses**, so a stated chapter of 28 cannot exist in
+/// the book that was named. Relay dropped the impossible chapter, kept `verse 7`, and
+/// repaired a self-contradicting reference into a valid one — which is rule 10's own
+/// sentence: the number was heard and the book was not.
+///
+/// **The check needs no corpus.** `SINGLE_CHAPTER_BOOKS` is already here, so for those
+/// five books any stated chapter other than 1 is impossible on its face. Those five
+/// are also where the risk concentrates, because each collides acoustically with
+/// something longer: `Jude`/`Job`, `Philemon`/`Philippians`, `2 John`/`2 Chronicles`.
+///
+/// This test is written to FAIL against the current parser, and prints what it
+/// actually produces so the branch responsible is named rather than guessed at.
+#[cfg(test)]
+mod impossible_chapter {
+    use super::*;
+
+    /// The real window, verbatim from `transcripts`, service 41, 2026-09-26.
+    const HEARD: &str =
+        "Look at that from Jude 28 and verse 7 to 28 that such wisdom is not found in the land of the living.";
+
+    #[test]
+    fn a_chapter_a_single_chapter_book_cannot_have_may_not_auto_fire() {
+        let got = detect_direct(HEARD);
+        for m in &got {
+            println!(
+                "  {} {}:{}  {:?}  {:.2}  whole_chapter={}  verse_end={:?}",
+                m.reference.book,
+                m.reference.chapter,
+                m.reference.verse,
+                m.method,
+                m.confidence,
+                m.whole_chapter,
+                m.verse_end
+            );
+        }
+        // THE CLAIM: nothing in this window may carry a method that can reach a wall
+        // unattended. `Direct` is the only one that can (rule 10), so a Jude
+        // candidate must not be `Direct`.
+        let firable: Vec<&RefMatch> = got
+            .iter()
+            .filter(|m| m.method == DetectionMethod::Direct && m.reference.book == "Jude")
+            .collect();
+        assert!(
+            firable.is_empty(),
+            "a chapter Jude cannot have still reaches the wall: {:?}",
+            firable
+                .iter()
+                .map(|m| (m.reference.chapter, m.reference.verse, m.confidence))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// **WHICH DOOR LET `Deuteronomia` THROUGH AS `Direct`** — service 41,
+    /// 2026-09-26, `detections.id = 1628`.
+    ///
+    /// Whisper gave four books for one sentence across successive windows — `2
+    /// Timothy`, `Deuteronomy`, `2 Timothy`, `Deuteronomia` — and the one that
+    /// auto-fired was the last, at **0.88 `Direct`**. The verse was RIGHT
+    /// (Deuteronomy 28:1) and the corroboration rule behaved correctly, which is how
+    /// this class of thing hides.
+    ///
+    /// `Deuteronomia` is in neither `CANONICAL_BOOKS` nor `book_aliases.json` — the
+    /// only near neighbour is the Yorùbá `Deuteronomi` — and `alias_map` generates no
+    /// such variant. So it was matched by something, and whatever that was did NOT
+    /// set `BookEvidence::Repaired`, because that maps to `UncertainBook` and would
+    /// have been capped at Suggest by rule 10.
+    ///
+    /// **This test asserts nothing about what is right.** It prints the evidence so
+    /// the door can be named. Rule 10's own lesson is that a guarantee is only kept
+    /// on the doors somebody checked, and 0.88 is neither the 0.95 of a clean parse
+    /// nor the shape of a repair.
+    #[test]
+    fn which_door_accepted_a_book_spelling_that_does_not_exist() {
+        for heard in [
+            "And I saw in my Bible, Deuteronomia, 28 verse 1",
+            "And I saw in my Bible, Deuteronomy 28 verse 1",
+            "And I saw in my Bible, Deuteronomi 28 verse 1",
+        ] {
+            println!("  “{heard}”");
+            for m in detect_direct(heard) {
+                println!(
+                    "     {} {}:{}  {:?}  {:.2}",
+                    m.reference.book,
+                    m.reference.chapter,
+                    m.reference.verse,
+                    m.method,
+                    m.confidence
+                );
+            }
+        }
+        // The one thing that IS a rule: a book spelling nothing in the corpus knows
+        // must not carry the method that may reach a wall unattended. If this fails,
+        // it names a second door into rule 10's P0.
+        let fired: Vec<_> = detect_direct("And I saw in my Bible, Deuteronomia, 28 verse 1")
+            .into_iter()
+            .filter(|m| m.method == DetectionMethod::Direct)
+            .map(|m| (m.reference.book.clone(), m.confidence))
+            .collect();
+        assert!(
+            fired.is_empty(),
+            "a book spelling that exists nowhere reached `Direct`: {fired:?}"
+        );
+    }
+
+    #[test]
+    fn the_other_four_single_chapter_books_are_held_to_the_same_rule() {
+        // Same shape, one per book, so a fix that special-cases Jude fails here.
+        for book in ["Obadiah", "Philemon", "2 John", "3 John"] {
+            let heard = format!("look at that from {book} 28 and verse 7");
+            let got = detect_direct(&heard);
+            let firable: Vec<_> = got
+                .iter()
+                .filter(|m| m.method == DetectionMethod::Direct)
+                .map(|m| {
+                    (
+                        m.reference.book.clone(),
+                        m.reference.chapter,
+                        m.reference.verse,
+                    )
+                })
+                .collect();
+            assert!(
+                firable.is_empty(),
+                "{book} chapter 28 still reaches the wall: {firable:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn chapter_one_stated_outright_is_still_perfectly_ordinary() {
+        // THE OPPOSITE MISTAKE. "Jude chapter 1 verse 7" is a correct reference and
+        // must keep firing; so must a bare "Jude 7", which is what CLAUDE.md's
+        // single-chapter rule exists for.
+        for heard in ["Jude chapter 1 verse 7", "Jude verse 7", "Jude 1:7"] {
+            let got = detect_direct(heard);
+            assert!(
+                got.iter().any(|m| m.method == DetectionMethod::Direct
+                    && m.reference.chapter == 1
+                    && m.reference.verse == 7),
+                "a legitimate reference stopped firing: {heard:?} gave {:?}",
+                got.iter()
+                    .map(|m| (m.reference.chapter, m.reference.verse, m.method))
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+}
+
+// `#[cfg(test)]` — it was missing when this module landed on 2026-09-26, so its
+// helpers were compiled into the shipping binary and clippy's dead-code pass is what
+// noticed. Every other test module here carries the attribute.
 #[cfg(test)]
 mod short_run_doubt {
     use super::*;

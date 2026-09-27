@@ -7234,3 +7234,93 @@ never calls `candidates_for_window`. §122, §123 and §126 record the same blin
 guard, the citation-doubt rule and the paraphrase bar. **This is the fifth, and one root cause**: the
 scorecard is a third copy of the window assembly. Fixing that is a larger change than any of the five
 rules it cannot see, and it is now the thing most worth doing to the detection instruments.
+
+## 128. A doubt is a fact about a reference, and a chapter at the edge of a window is a reference in flight (2026-09-27)
+
+Service 41 on 2026-09-26 ran four hours across two services under one record: **108 auto-fires,
+four wrong verses.** Two of the four are fixed here. The other two are recorded as open with their
+mechanisms named, because in both cases the obvious fix was tried, measured, and turned out to be
+wrong — which is the more useful result.
+
+### What was fixed, and how the second one was found
+
+**A doubt reaches every candidate naming that reference.** `doubt_from_a_quotation` returns one
+verdict per candidate INDEX and the verdicts were applied per index. A window can name the same
+reference twice: service 40 at 4691.7 s — *"…all my springs are in thee. Psalm 27 verse 1 to 7"*,
+whose words are **Psalms 87:7** — produced `Psalms 27:1` from the range parse at `Direct` 0.95 AND
+from the bare *"verse 1"* anchored on it at `Direct` 0.88. The rule demoted the first; the duplicate
+went to the wall still firable. **The rule was working and its conclusion was being discarded.**
+This is the shape CLAUDE.md records four times over — a guarantee kept on the doors somebody
+checked — and the fix is to key the demotion on the reference rather than the index.
+
+**A chapter at the very edge of a window is a reference in flight.** At 11816.4 s the preacher said
+*"In John chapter 12, verse 35 and 36, the word says…"* in one breath and the chunker cut it between
+the chapter and the verse:
+
+```
+11816.4  "…In John chapter 12,"            → fired John 12:1 at 0.88
+11821.1  "verse 35 and 36 the word says"   → the verse, 4.7 s late
+```
+
+A verse nobody asked for reached the congregation and the operator fired `John 12:35` by hand. The
+parser already refuses a dangling verse MARKER for exactly this reason — *"A PARTIAL HEARING OF A
+REFERENCE MUST NEVER OUTRANK A FULL ONE"* — and this is the same rule one step out, where the
+NUMBER is the last token. Only the keyword form needs it: a bare *"Romans 8"* is already 0.45 and
+already asks a human, and the keyword is what buys 0.88.
+
+**The demotion is a METHOD, not a lower score, and that distinction was measured.** At the
+operator's dial `from_sensitivity(100)` puts the auto-fire bar at **0.30**, so 0.45 still fires
+unattended — which is how 22 bare pairs auto-fired in one service. Only the method is refused at any
+score (rule 10). A demotion that must hold cannot be a number.
+
+**It needed one refinement, and two existing tests are what supplied it.** The first version keyed
+only on "the chapter is the last token", which silenced *"psalm chapter 23"* and the Yorùbá
+*"Sáàmù orí ogún"* — a window that is ONLY a reference is a complete citation, not a sentence cut
+off. `book_start > 0` is the difference, and `whole_chapter_with_keyword_is_more_confident` and
+`r4_05b_an_unreviewed_yoruba_numeral_is_offered_never_fired` are what said so.
+
+### Two instruments, and the limits that had to be learned the hard way
+
+`main::passage_guard_bench::print_every_auto_fire` dumps every auto-fire a corpus produces, one per
+line, so two revisions can be diffed. `explain_one_window` prints one window's every stage. Both
+were built because reading the code gave three different confident answers about the same behaviour.
+
+**Their limits are now written into them, because both misled me first.** The replay runs the real
+`Router`, which self-calibrates on feedback, so a single changed candidate set moves thresholds for
+every later window — **a line-by-line diff of two runs will show verses appearing and disappearing
+far from the change that caused them.** Chasing two such apparent regressions is what led to the
+duplicate-escape above, so the instrument earned its keep by lying informatively. Aggregate counts
+and *does reference X fire at all* are sound; per-verse attribution is not. And
+`explain_one_window` starts from an empty `ContextMemory`, so it cannot reproduce a fire that
+depended on the passage already on screen.
+
+Over 7,741 real transcript lines the two fixes take auto-fires from **433 to 429**, and the two
+known-wrong `Psalms 27:1` and `Psalms 7:1` from one occurrence each to none.
+
+### The two that are NOT fixed, and why the obvious fix was wrong
+
+**RG-301's real mechanism is not what its row said, and the obvious repair breaks rule 40.**
+`anchor_for_bare_verses` returns the last parse of ANY method, so a candidate rule 10 capped can
+still supply the book and chapter a bare verse hangs on — and a bare verse resolved against a window
+anchor is stamped `Direct` 0.88. *"…from Jude 28 and verse 7 to 28…"* parses as `Jude 1:28`
+`UncertainNumber` 0.45, because Jude has one chapter and that chapter was **supplied by Relay, not
+heard**, and `verse 7` then hung on it and put **Jude 1:7** on a screen while he read Job 28.
+
+Filtering the anchor to parses that may fire is the obvious fix. **It breaks FIELD F-1**: *"going
+through in Luke 10. If you read from verse 32"* — `Luke 10` is a keyword-less whole chapter, so it
+parses `UncertainNumber` too, and filtering it leaves the bare verse with no anchor, which is the
+wrong verse that function exists to prevent. Two field regression tests fail on it. **The real
+distinction is whether the CHAPTER was heard or supplied**, and nothing in `RefMatch` records that,
+so this stays open with the mechanism documented at the call site and the reverted tests left
+`#[ignore]`d as its reproduction.
+
+**The citation-doubt carve-out is innocent of the other two wrong verses.** *"John 5, 3 This is the
+love of God that will keep His commandments"* fired `John 5:3` where he said **1 John 5:3**, and
+*"Romans 1, 8 My son, hear the instruction of thy father"* fired `Romans 1:8` where he said
+**Proverbs 1:8**. Both look exactly like the cross-book case §123 was built for. Running the probe
+shows `PhraseIndex::quoted` returns **nothing at all for those windows, even unrestricted** — so the
+carve-out never had an input and cannot be at fault. The right verse arrived only as `Semantic`.
+What does not add up: the run between the first window and `1 John 5:3` is **7 words**, and
+`quoted`'s gate passes anything at `SELF_EVIDENT_RUN` (7) without needing a rare word. The next step
+is to print `n` and `sole` from inside `quoted` rather than reason about it, because reasoning has
+now produced two confident wrong answers on this one.
