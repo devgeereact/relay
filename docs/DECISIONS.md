@@ -7320,7 +7320,25 @@ love of God that will keep His commandments"* fired `John 5:3` where he said **1
 **Proverbs 1:8**. Both look exactly like the cross-book case §123 was built for. Running the probe
 shows `PhraseIndex::quoted` returns **nothing at all for those windows, even unrestricted** — so the
 carve-out never had an input and cannot be at fault. The right verse arrived only as `Semantic`.
-What does not add up: the run between the first window and `1 John 5:3` is **7 words**, and
-`quoted`'s gate passes anything at `SELF_EVIDENT_RUN` (7) without needing a rare word. The next step
-is to print `n` and `sole` from inside `quoted` rather than reason about it, because reasoning has
-now produced two confident wrong answers on this one.
+**Both causes were then found, and they are different — so the sentence above, written earlier the
+same day, is half wrong and is kept here because the correction is the point.** The carve-out is
+innocent of one and not the other.
+
+**`Romans 1:8` — the rule works and it races the decode.** Given the whole sentence the carve-out
+fires exactly as designed: `Romans 1:8` `SpokenBook` → `UncertainBook`, `Proverbs 1:8`
+`TheQuotation` → `Quoted`. Live, the citation and the quotation were in DIFFERENT windows —
+*"…Romans 1, 8, My son."* at 9613.5 s fired, and *"…My son, hear the instruction of thy father."*
+arrived 3.6 s later. Nothing contradicted it yet; by the time something did, the wrong verse was on
+the wall and debounced. **This is RG-315's shape at the level of the doubt rule: the reference fires
+before its evidence arrives.** Rule 28 holds a PARTIAL window for a second pass and exempts a FINAL
+one because *no next pass is coming* — which is not true of a rolling window that keeps producing
+finals, and that exemption is now the thing to re-examine.
+
+**`John 5:3` — the run is undiscoverable, whatever its length.** A direct scan measures a **7-word**
+run against `1 John 5:3`; `PhraseIndex::quoted` returns nothing. `quoted` can only discover a run
+that starts from an indexed 3-gram, and `verses_with` returns an empty bucket for any gram in more
+than `MAX_GRAM_VERSES` (8) verses, as *too common to be evidence*. Every 3-gram in *"this is the love
+of god that"* is far commoner than that, so a verbatim seven-word quotation is invisible. **The
+pruning is per-gram; the evidence is per-run.** Raising the cap is not the fix — it widens every
+lookup. Seeding from the rarest gram in the window, or admitting one common seed when the extended
+run is long, are the candidates, and both need measuring through `print_every_auto_fire` first.

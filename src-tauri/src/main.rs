@@ -10789,7 +10789,83 @@ mod passage_guard_bench {
     /// This prints each stage separately so the missing link is named rather than
     /// guessed: the restricted `quoted`, the unrestricted `quoted`, what the carve-out
     /// admits, and what the whole window rule concludes.
-    /// **STATUS 2026-09-26: the carve-out is INNOCENT and this is still open.**
+    /// One-off: what does the index actually see for the two windows RG-309's rule
+    /// could not reach? Prints the run `PhraseIndex` itself measures, not a run
+    /// computed some other way — the discrepancy between those two is the open
+    /// question.
+    #[test]
+    #[ignore]
+    fn what_the_index_sees_for_the_two_missed_windows() {
+        let corpus = kjv_corpus();
+        let idx = detection::PhraseIndex::build(&corpus);
+        let cases = [
+            ("John 5, 3 This is the love of God that will keep His commandments.", "1 John", 5, 3),
+            ("We heard these words here, Romans 1, 8 My son, hear the instruction of thy father.", "Proverbs", 1, 8),
+        ];
+        for (heard, book, ch, vs) in cases {
+            let r = detection::VerseRef {
+                book: book.into(),
+                chapter: ch,
+                verse: vs,
+            };
+            println!("\n  “{heard}”");
+            println!(
+                "     shared_run_with({book} {ch}:{vs}) = {}",
+                idx.shared_run_with(heard, &r)
+            );
+            println!(
+                "     MIN_RUN_WORDS={} SELF_EVIDENT_RUN(7) PARAPHRASE_RUN_WORDS={}",
+                detection::MIN_RUN_WORDS,
+                detection::PARAPHRASE_RUN_WORDS
+            );
+            let hits = idx.quoted(heard, None, 8);
+            if hits.is_empty() {
+                println!("     quoted(None, 8): NOTHING");
+            }
+            for h in hits {
+                println!(
+                    "     quoted: {} {}:{} run={} sole={} “{}”",
+                    h.r.book, h.r.chapter, h.r.verse, h.run, h.sole, h.phrase
+                );
+            }
+        }
+        println!();
+    }
+
+    /// **STATUS 2026-09-27: BOTH CAUSES FOUND, and they are different. Neither is
+    /// the carve-out's conditions, and my first two theories were both wrong.**
+    ///
+    /// `what_the_index_sees_for_the_two_missed_windows` and `explain_one_window` gave
+    /// the answers that reading the code three times did not.
+    ///
+    /// **`Romans 1:8` — the rule works and it races the decode.** Given the WHOLE
+    /// sentence the carve-out fires exactly as designed:
+    ///
+    /// ```text
+    ///   DOUBT  Romans 1:8    SpokenBook    Direct -> UncertainBook
+    ///   DOUBT  Proverbs 1:8  TheQuotation  Reading -> Quoted
+    /// ```
+    ///
+    /// Live, the citation and the quotation were in DIFFERENT windows — *"…Romans 1,
+    /// 8, My son."* at 9613.5 s fired, and *"…My son, hear the instruction of thy
+    /// father."* arrived at 9617.1 s, 3.6 s later. There was nothing to contradict it
+    /// yet, and by the time there was, the wrong verse was on the wall and debounced.
+    /// Same shape as RG-315: **the reference fires before its evidence arrives.**
+    /// Rule 28 holds a PARTIAL window for a second pass and exempts a FINAL one
+    /// because *no next pass is coming* — which is not true of a rolling window that
+    /// keeps producing finals.
+    ///
+    /// **`John 5:3` — the run is undiscoverable, whatever its length.** A direct scan
+    /// measures 7 words against `1 John 5:3`, and `PhraseIndex::quoted` finds nothing.
+    /// `quoted` can only discover a run that starts from an INDEXED 3-gram, and
+    /// `verses_with` returns an empty bucket for any gram in more than
+    /// `MAX_GRAM_VERSES` (8) verses as *too common to be evidence*. Every 3-gram in
+    /// *"this is the love of god that"* is far commoner than that, so a 7-word
+    /// verbatim run is invisible. **The pruning is per-gram; the evidence is
+    /// per-run.** Raising `MAX_GRAM_VERSES` is not the fix — it would widen every
+    /// lookup — and seeding from the rarest gram in the window, or admitting one
+    /// common seed when the extended run is long, are the candidates. Both need
+    /// measuring against `print_every_auto_fire` before either ships.
     ///
     /// Running it answered the question and killed my first two theories. For
     /// *"John 5, 3 This is the love of God that will keep His commandments."*:
