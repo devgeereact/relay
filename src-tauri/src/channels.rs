@@ -438,7 +438,7 @@ pub fn channel_id_of(label: &str) -> Option<i64> {
 /// Channel ids that currently have a native output window open. This is a fact
 /// about the running app, not a stored flag — `output_channels.status` is written
 /// once at insert and never updated, so it has always read `offline`.
-pub fn open_channel_ids(app: &tauri::AppHandle) -> Vec<i64> {
+pub fn open_channel_ids<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Vec<i64> {
     app.webview_windows()
         .into_keys()
         .filter_map(|k| channel_id_of(&k))
@@ -864,6 +864,29 @@ pub struct OutputHealth {
     /// Cleared the moment the channel detaches, so a window reopened later starts
     /// its grace again rather than inheriting one from an hour ago.
     first_seen: Arc<Mutex<HashMap<i64, std::time::Instant>>>,
+    /// THE GAP OFF THE BEAT THAT ENDED A SILENCE, kept until another silence
+    /// replaces it (RG-119, 2026-09-28).
+    ///
+    /// **The instrument built to answer this row could lose the answer to a race
+    /// with its own poll.** `BeatGap` is stored on the beat and overwritten by the
+    /// next one, and a running page beats every `BEAT_INTERVAL_MS` — so the number
+    /// that says how long the page was really quiet survives only until the beat
+    /// two seconds behind it, while `channel_status` (the only edge detector, on
+    /// its own 2 s `setInterval`) may not have noticed the recovery yet. Lose that
+    /// race and the recovery is logged with the gap of an ORDINARY beat, which is
+    /// *one interval* — and *one interval* is exactly the reading this row treats
+    /// as evidence that the page kept ticking and Relay lost the beats.
+    ///
+    /// So the artefact is indistinguishable from the finding it corrupts, which is
+    /// rule 35's own shape one level down: an instrument whose failure looks
+    /// identical to its success. Service 21 (2026-09-14) recorded seven
+    /// Main-screen recoveries, three of them *"silent 2s, never hidden"* — and a
+    /// beat that lost this race says precisely that whatever the page measured.
+    ///
+    /// Kept rather than consumed: a recovery is always preceded by the beat that
+    /// ended its silence, so the retained value is always the right one for the
+    /// most recent outage, and there is nothing for a consuming read to protect.
+    silence_ended: Arc<Mutex<HashMap<i64, BeatGap>>>,
 }
 
 impl OutputHealth {
@@ -881,24 +904,55 @@ impl OutputHealth {
         if channel_id <= 0 {
             return;
         }
-        if let Ok(mut m) = self.beats.lock() {
-            m.insert(
-                channel_id,
-                Beat {
-                    at: std::time::Instant::now(),
-                    state,
-                    transport,
-                    gap,
-                    media,
-                },
-            );
+        // Did this beat END A SILENCE? Answered from Relay's own clock, because
+        // that is the same condition under which `transition` will report a
+        // recovery, so the gap kept below always pairs with the entry it is written
+        // into. A channel's FIRST beat is deliberately not a silence ending: there
+        // was no outage to account for, and `transition` never reports one.
+        // One lock at a time — see `transition`.
+        let ended_a_silence = match self.beats.lock() {
+            Ok(mut m) => {
+                let was_stale = m
+                    .get(&channel_id)
+                    .map(|b| b.at.elapsed().as_millis() as u64 > BEAT_STALE_MS)
+                    .unwrap_or(false);
+                m.insert(
+                    channel_id,
+                    Beat {
+                        at: std::time::Instant::now(),
+                        state,
+                        transport,
+                        gap,
+                        media,
+                    },
+                );
+                was_stale
+            }
+            Err(_) => false,
+        };
+        if ended_a_silence {
+            if let Ok(mut m) = self.silence_ended.lock() {
+                m.insert(channel_id, gap);
+            }
         }
     }
 
-    /// What the screen's own clock said about the silence before its last beat.
+    /// What the screen's own clock said about the silence it last came back from.
     /// `None` for a channel that has never beaten, which is an absence and not a
     /// zero gap. See `BeatGap`, and RG-119 for why it is recorded at all.
+    ///
+    /// **The beat that ends a silence is preferred over the latest beat** (RG-119,
+    /// 2026-09-28). Both are "what the screen said", and only one of them is about
+    /// the outage: a page that comes back beats again two seconds later with an
+    /// ordinary one-interval gap, and `channel_status` polls on its own 2 s timer,
+    /// so the number this row exists to read was a coin toss against the poll. See
+    /// `silence_ended` for what that cost the row's own evidence.
     pub fn last_gap(&self, channel_id: i64) -> Option<BeatGap> {
+        if let Ok(m) = self.silence_ended.lock() {
+            if let Some(g) = m.get(&channel_id) {
+                return Some(*g);
+            }
+        }
         let m = self.beats.lock().ok()?;
         Some(m.get(&channel_id)?.gap)
     }
@@ -984,6 +1038,12 @@ impl OutputHealth {
     /// one that would read as freshly silent.
     pub fn forget(&self, channel_id: i64) {
         if let Ok(mut m) = self.beats.lock() {
+            m.remove(&channel_id);
+        }
+        // And the silence it last came back from. A window the operator closed and
+        // reopened is a new screen's worth of evidence; quoting an outage from
+        // before it existed would be the same lie as inheriting its stale beat.
+        if let Ok(mut m) = self.silence_ended.lock() {
             m.remove(&channel_id);
         }
         self.forget_transition(channel_id);
@@ -9328,6 +9388,84 @@ mod rehearsal_tests {
         assert_eq!(
             h.last_gap(9).and_then(|g| g.describe()).as_deref(),
             Some("screen's own clock: silent 2s, never hidden")
+        );
+    }
+
+    /// THE BEAT THAT ENDS A SILENCE IS THE ONE WITH THE ANSWER ON IT (RG-119).
+    ///
+    /// A page that comes back beats again every `BEAT_INTERVAL_MS`, and each of
+    /// those says *one interval* because that is what it measured. `channel_status`
+    /// — the only edge detector — polls on its own 2 s timer, so the beat carrying
+    /// the outage survived only until the next one, and whether the recovery entry
+    /// got it was a race.
+    ///
+    /// **Lose that race and the record reads *"silent 2s, never hidden"*, which is
+    /// precisely the reading RG-119 treats as evidence that the page kept ticking
+    /// and Relay lost the beats.** Service 21 has seven Main-screen recoveries and
+    /// three of them say exactly that. An artefact that is indistinguishable from
+    /// the finding it corrupts is rule 35 one level down.
+    ///
+    /// Put the defect back by deleting the `silence_ended` branch from `last_gap`
+    /// and this fails with "silent 2s" over a page that reported 24 seconds.
+    #[test]
+    fn the_gap_that_ended_a_silence_survives_the_beats_that_follow_it() {
+        let h = OutputHealth::default();
+        // A screen beating normally.
+        h.beat(
+            9,
+            PaintState::Content,
+            "window",
+            BeatGap::clamped(Some(2_000), Some(0)),
+            None,
+        );
+        // It goes quiet long enough for Relay to notice.
+        {
+            let mut m = h.beats.lock().expect("lock");
+            let b = m.get_mut(&9).expect("beat");
+            b.at = std::time::Instant::now() - std::time::Duration::from_millis(BEAT_STALE_MS * 2);
+        }
+        assert_eq!(h.transition(9), Some(false), "the loss is noticed");
+
+        // It comes back and says how long it was really silent — then goes on
+        // beating, twice, before the 2 s poll notices the recovery.
+        h.beat(
+            9,
+            PaintState::Content,
+            "window",
+            BeatGap::clamped(Some(24_000), Some(0)),
+            None,
+        );
+        for _ in 0..2 {
+            h.beat(
+                9,
+                PaintState::Content,
+                "window",
+                BeatGap::clamped(Some(2_000), Some(0)),
+                None,
+            );
+        }
+        assert_eq!(h.transition(9), Some(true), "the recovery is noticed");
+        assert_eq!(
+            h.last_gap(9).and_then(|g| g.describe()).as_deref(),
+            Some("screen's own clock: silent 24s, never hidden"),
+            "the recovery was logged with an ordinary beat's gap, so the record says \
+             the page was quiet for one interval when it said twenty-four seconds"
+        );
+
+        // AND IT DOES NOT OUTLIVE ITS SCREEN. A window the operator closed and
+        // reopened must not be quoted an outage from before it existed.
+        h.forget(9);
+        h.beat(
+            9,
+            PaintState::Content,
+            "window",
+            BeatGap::clamped(Some(2_000), Some(0)),
+            None,
+        );
+        assert_eq!(
+            h.last_gap(9).and_then(|g| g.describe()).as_deref(),
+            Some("screen's own clock: silent 2s, never hidden"),
+            "a reopened window inherited the last window's outage"
         );
     }
 

@@ -109,6 +109,10 @@ pub(crate) fn bare_app() -> tauri::App<tauri::test::MockRuntime> {
         .manage(channels::MediaTransport::default())
         .manage(channels::ScreensDown::default())
         .manage(servicelock::ServiceLock::default())
+        // AND THE ONE-LOAD-AT-A-TIME FLAG (RG-299). `load_stt_model` and
+        // `select_stt_model` both read it, and an unmanaged state PANICS rather
+        // than failing with a readable message — the same trap as `Phrases` below.
+        .manage(crate::ModelLoad::default())
         // AND THE PHRASE INDEX. A fresh install builds both from the same
         // corpus in `setup`, so a fixture with one and not the other is an app in
         // a state no church could be in — and `emit_detections` takes
