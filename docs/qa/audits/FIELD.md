@@ -1347,3 +1347,149 @@ twice, which is as close to a controlled comparison as a church will ever hand a
 
 RG-301 (two mechanisms), RG-305 (eight instances), RG-307 (two), RG-308 (two) — all OPEN. RG-306
 closed the same day and its guard is measured above against the whole day rather than a replay.
+
+---
+
+# FIELD-2026-09-27 — one service, six hours, and the recording that cannot be read
+
+**Watched live, fire by fire, from the session that launched the app.** The second audit written
+while the service was happening. Its most important finding is not about detection at all: the
+audio kept on 2026-09-25 and the audio kept tonight are both unreadable past two and a half hours,
+and have been since the day each was written.
+
+## 0. What this day produced
+
+| | |
+|---|---|
+| Services | **1** — a full Sunday service, hymns through benediction |
+| Capture | **58,505.9 s — 16 h 15 m** of app uptime, of which the service is **23,135 s (6 h 25 m)** |
+| Transcript | **3,161 lines**, longest gap with no line **316.6 s** |
+| Auto-fires | **118** — 78 from spoken references, 40 from readings |
+| Manual fires | **14** |
+| **Wrong verses** | **5 — a 4.2% wrong-verse rate**, under SPEC's 5% bar |
+| Offers | **4,997**, of which 4,144 semantic. **0 dismissed** |
+| Build | `9f3d7a464 2026-09-27`, `ggml-large-v3-turbo`, sensitivity 100 |
+| Recording | `~/Documents/relay-recordings/monitor-2026-09-27.wav`, **10.3 GB — and it declares 2.73 h** |
+
+## 1. The recording is corrupt in both copies that exist
+
+`write_wav_f32` computes its two RIFF size fields as `(samples.len() * 4) as u32`. That is a
+silent truncating cast, and above 4 GiB it wraps. Tonight's file holds 10,320,433,920 bytes of
+audio and declares 1,730,499,328 — exactly two wraps of 2³², confirmed by arithmetic rather than
+inferred. Every standard reader honours the declared length, so the file opens as **2.73 hours of
+a 16.25 hour recording**, and the service does not begin inside the readable part.
+
+The same is true of `service-2026-09-25.wav`: 10,178,423,040 bytes of audio declaring
+1,588,488,448 — 16.03 h readable as 2.50 h. That is the file the FIELD-2026-09-25 audit calls
+*"the first with the audio kept"*, and the file every claim about measuring word error rate has
+been resting on for four days. Nobody noticed because nobody has opened it.
+
+The ceiling is a property of the format, not of the bug: a 32-bit size field cannot describe more
+than 4 GiB, which at 44.1 kHz mono float is **6 h 46 m** and at 48 kHz **6 h 12 m**. A service plus
+the time either side of it now routinely exceeds that. So the fix is not a wider cast — WAV has
+nowhere to put the number. It is RF64, or rolling to a second file at the boundary, or refusing to
+start a recording that will outgrow the format. All three are decisions; none is a threshold.
+
+Two aggravating details. The success line prints the **true** duration — `audio: wrote 58505.9s` —
+while the file says 9810.1 s, so the operator is reassured by a number the artefact contradicts,
+which is rule 35 on the one path that produces evidence. And
+`the_debug_recorder_writes_a_wav_that_can_be_read_back` passes, because it writes a short buffer;
+the test pins the field layout and cannot see the only input that breaks it.
+
+## 2. Five wrong verses, and one of them had its own contradiction in hand
+
+`1 Corinthians 2:7`, `Romans 11:28`, `1 Timothy 1:6`, `Matthew 1:7`, `Psalms 119:39`.
+
+The last is the instructive one. At 19730.1 s the window carried both the misheard citation and the
+words it contradicts:
+
+| detection | reference | method | conf | status |
+|---|---|---|---|---|
+| 15396 | Psalms 89:34 | `quoted` | 0.63 | suggested |
+| 15398 | Psalms 119:39 | `direct` | 0.95 | suggested |
+| 15399 | Psalms 119:39 | `direct` | 0.95 | **auto** |
+
+The preacher was reading Psalms 89:34 — *"My covenant will I not break, nor alter the thing that is
+gone out of my lips"* — and the decoder rendered the spoken numbers as 119:39. `Psalms 89:34` sat
+in the same window at a run of six exact words, same book, different chapter: precisely what
+`chapter_the_words_point_at` exists to catch, and the relative bar would have cleared easily since
+`Psalms 119:39`'s own run is nil.
+
+It missed because the pass that **fired** was a later window than the pass that **could see the
+contradiction**. By 19737.1 s the phrase *"my covenant will I not break"* had rolled out; only
+*"the comfort of my lips"* remained. The doubt was computable on the suggesting pass and absent on
+the firing pass. Same mechanism as `Romans 1:8` earlier in the day, and this one reached a screen.
+
+## 3. The reading bar is right and the run measurement is wrong
+
+Every one of the 40 reading fires cleared `READING_RUN_WORDS = 8` at a run of 8 to 10. None
+cleared comfortably. Four correct verbatim readings were withheld in the same service, all at runs
+of 5 to 7, and all broken at the same class of word:
+
+| ref | heard | verse | run |
+|---|---|---|---|
+| Psalms 104:24 | *how manifold are **they** works* | *…are **thy** works* | 3 |
+| Psalms 104:24 | *the earth is full of **their** riches* | *…of **thy** riches* | 5 |
+| Proverbs 4:7 | *with all **your** getting* | *with all **thy** getting* | 6 |
+| Proverbs 4:8 | *promote **things** … **that does** embrace* | *promote **thee** … **thou dost** embrace* | — |
+| Proverbs 14:28 | *the king's **honor*** | *the king's **honour*** | 7 |
+| Isaiah 33:6 | *stability of **your** times* | *…of **thy** times* | **8 — fired** |
+
+`phrase_words` lowercases and splits and does nothing else, so `shared_run_with` compares exact
+word ids. Two substitution classes account for all of it, and both are properties of the shipped
+corpus rather than of one preacher:
+
+- **Archaic forms.** `thy` 4,764 · `thou` 5,583 · `thee` 3,945 · `ye` 4,057 · `thine` 981 ·
+  `hath` 2,335 · `shalt` 1,645 · `saith` 1,268 · `doth` 219 · `dost` 56 · `unto` 9,092 —
+  **33,945 occurrences across 31,102 verses**, more than one per verse.
+- **US/UK spelling.** The bundled KJV is British throughout, with no American variant anywhere:
+  `honour` 156/`honor` 0, `neighbour` 143/0, `labour` 95/0, `favour` 77/0, `saviour` 41/0.
+  Whisper emits the American form, so all 512 are guaranteed run breaks when read aloud.
+
+`Isaiah 33:6` cleared by one word. The bar is correctly placed; what it measures is not.
+
+## 4. What else the service showed, none of it filed before tonight
+
+- **Two verses on the wall 2.5 s apart.** `Daniel 9:2` at 21760.4 s, `Hebrews 13:7` at 21762.9 s,
+  both correct, both cited in consecutive breaths. Rule 29 limits one *window* to one wall and the
+  debounce is keyed per *reference*, so nothing in Relay limits how fast the wall may change.
+- **A citation that lands in exactly one window can never fire.** `Matthew 6:33` at 21608.4 s,
+  `direct` 0.55, one row, no second pass, held at Suggest for ever. Across the service, **63
+  distinct references auto-fired through `Direct` and 34 more were parsed as `Direct`, offered, and
+  never fired at all** — a third of what the parser was confident about. Not all 34 are this
+  mechanism; some are doubt downgrades and some are parses that *should* have been refused. Which
+  is which needs the per-row walk, which is replay work rather than live-service work.
+- **A reference whose verse cannot exist reaches the operator blank.** *"Job 29 verse 4 to 17"* was
+  heard as *"Jude 29"*; `fuzzy_book` repaired `June`→`Jude`, Jude has one chapter, so `verse_id` is
+  NULL and three rows rendered with no reference at all. The impossibility is evidence against the
+  repair, and `chapter_count` already knows it — its only caller is the digit-run splitter.
+- **A citation split across a window boundary loses its anchor**, three times. *"Ecclesiastes 10"*
+  then *"And verse 15"* resolved against `Matthew 7` from memory five minutes stale, correctly
+  labelled `UncertainBook` and correctly refused — RG-179 earning its keep — while the right verse
+  sat below it at `semantic` 0.38.
+- **The offer list mis-ranks the right verse below the wrong one**, by two different routes:
+  `Quoted` 0.60 for `Jeremiah 6:16` above `Semantic` 0.48 for `Matthew 11:29` where a mishearing
+  destroyed the distinguishing clause; and `UncertainBook` 0.88 above `Semantic` 0.38 where both
+  tiers rank 0 and `resolve_bare_verse`'s hardcoded 0.88 wins on confidence.
+- **Genuine ties are handled correctly** and any ranking fix must keep them: `Proverbs 9:10` and
+  `Psalms 111:10` are word-for-word identical and both offered at 0.60; `Mark 2:20` and
+  `Luke 5:35` likewise.
+- **4,997 offers against 118 fires, and 0 dismissals.** The loudest single stretch produced **40
+  offers in 50 seconds of benediction containing no citation and no quotation** — twenty distinct
+  thanksgiving verses pulled in by *"we thank you"* and *"blessed be your holy name"*. The offer
+  list is at its noisiest exactly where there is least to say.
+- **Operator disagreement is visible in the data and unread.** `John 7:36` fired by hand 72 s
+  after `John 7:37` auto-fired; `Matthew 6:4` by hand 75 s after `Matthew 6:3`. A manual fire
+  adjacent to a recent auto-fire is the clearest signal of an operator moving the wall off Relay's
+  choice, and `record_feedback` learns from confirms and dismisses only.
+
+## 5. What this audit does NOT change
+
+The release decision, which lives in RELAY_GAP §24. Word error rate, still unmeasured in every
+language — and now known to be harder to measure than believed, because both recordings need
+repairing before they can be transcribed. The five wrong verses are 4.2% of 118, under SPEC's bar,
+on one service watched by the person who wrote the software.
+
+## 6. Register entries
+
+RG-316 … RG-325, all filed OPEN on 2026-09-27. Nothing in this audit was fixed the same night.

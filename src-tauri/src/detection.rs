@@ -10197,6 +10197,134 @@ mod impossible_chapter {
     }
 }
 
+/// **WHAT `READING_RUN_WORDS` ACTUALLY SEPARATES — the controlled experiment.**
+///
+/// Service 42, 2026-09-27 at 7703–7794 s. The preacher announced *"I'm going to read
+/// like that till verse 10"* and read **Psalms 112 straight through**, one reader, one
+/// psalm, ninety seconds, no citations after the first to rescue anything. Nine verses
+/// with a measurable run, and the bar separates them **perfectly**:
+///
+/// | verse | run | outcome |     | verse | run | outcome |
+/// |---|---|---|---|---|---|---|
+/// | `112:2` | **11** | fired |  | `112:4` | **6** | missed |
+/// | `112:3` | **11** | fired |  | `112:5` | **3** | missed |
+/// | `112:7` | **12** | fired |  | `112:6` | **4** | missed |
+/// | `112:8` | **11** | fired |  | `112:9` | **6** | missed |
+/// | `112:10` | **17** | fired | | | | |
+///
+/// **Every fire is 11 or more; every miss is 6 or less; nothing landed between 7 and
+/// 10.** The distribution is bimodal, not a knife-edge — when this preacher reads a
+/// verse he tracks it closely enough to yield 11+ matching words in order, and when he
+/// summarises it, or whisper garbles it, the run collapses.
+///
+/// **This argues AGAINST lowering the bar, and two days of evidence had pointed the
+/// other way.** `Psalms 121:6` measured 7, then 4, then 8 across three readings, and
+/// four verses sat at exactly 8 in the service of 2026-09-26, which made 8 look like a
+/// knife-edge worth moving. On a controlled read-through there is no verse in the 7–10
+/// gap at all: dropping to 7 would gain nothing here, and reaching the three misses
+/// needs **6**, which is a far larger claim about false positives.
+///
+/// The misses are instructive rather than arbitrary:
+///
+///   * `112:9` failed only because whisper wrote *"he HAD dispersed, he HAD given"* for
+///     *"he HATH dispersed, he HATH given"* — twice, splitting an otherwise long run.
+///   * `112:5` failed because he summarised rather than read: *"A good man showeth
+///     favor and lendeth"* against *"A good man sheweth favour, and lendeth"*.
+///   * `112:4` and `112:6` are partial phrases of longer verses.
+///
+/// So the honest reading is that the bar is doing what it was designed to do, and the
+/// three misses are a DECODER and a PARAPHRASE problem rather than a threshold one.
+/// Anything that moves `READING_RUN_WORDS` must be measured against
+/// `main::passage_guard_bench::print_every_auto_fire`, and this experiment is the
+/// reference for what it would buy.
+#[cfg(test)]
+mod what_the_reading_bar_separates {
+    use super::*;
+
+    /// Verbatim from `transcripts`, service 42, in order. `(verse, heard, fired)`.
+    const READ_THROUGH: &[(i64, &str, bool)] = &[
+        (2, "Verse 2, His seed shall be mighty upon earth, the generation of the", true),
+        (3, "Wealth and riches shall be in his house and his righteousness endure forever.", true),
+        (4, "Verse 4. Unto the upright, there arise light in the darkness, is gracious and full of compassion.", false),
+        (5, "and righteous. A good man showeth favor and lendeth. He shall guide his affairs", false),
+        (6, "with discretion. Verse 6, Surely, it shall not be moved forever. The righteous shall be", false),
+        (7, "Neverlastin' Remembers. He shall not be afraid of evil tidings. His heart is fixed, trust him.", true),
+        (8, "Verse 8, Verse 8, His heart is established. He shall not be afraid until he sees his desire.", true),
+        (9, "Verse 9, Verse 9, He had dispersed, He had given to the poor, His righteousness and their righteousness,", false),
+        (10, "He shall see and be grieved. He shall gnash with his teeth and melt away the desire of the wicked", true),
+    ];
+
+    /// `cargo test --release what_the_reading_bar_separates -- --ignored --nocapture`
+    ///
+    /// `#[ignore]`d because it needs the bundled KJV.
+    #[test]
+    #[ignore]
+    fn the_bar_separated_this_read_through_exactly() {
+        let kjv: serde_json::Value =
+            serde_json::from_str(include_str!("../data/kjv.json").trim_start_matches('\u{feff}'))
+                .expect("kjv");
+        let psalms = kjv
+            .as_array()
+            .expect("books")
+            .iter()
+            .find(|b| b["abbrev"] == "ps")
+            .expect("psalms");
+        let ch112 = psalms["chapters"][111].as_array().expect("chapter 112");
+        let mut worst_fire = usize::MAX;
+        let mut best_miss = 0usize;
+        println!();
+        for (verse, heard, fired) in READ_THROUGH {
+            let text = ch112[(*verse - 1) as usize].as_str().unwrap_or("");
+            // Measured the same way `PhraseIndex::shared_run_with` measures, against
+            // the verse's own words.
+            let run = longest_shared_run(heard, text);
+            println!(
+                "  112:{verse:<2} run={run:>2}  {}",
+                if *fired { "FIRED" } else { "missed" }
+            );
+            if *fired {
+                worst_fire = worst_fire.min(run);
+            } else {
+                best_miss = best_miss.max(run);
+            }
+        }
+        println!(
+            "\n  worst fire = {worst_fire} · best miss = {best_miss} · bar = {READING_RUN_WORDS}\n"
+        );
+        assert!(
+            best_miss < READING_RUN_WORDS && worst_fire >= READING_RUN_WORDS,
+            "the bar no longer separates this read-through: worst fire {worst_fire}, \
+             best miss {best_miss}, bar {READING_RUN_WORDS}"
+        );
+        // THE POINT OF THE EXPERIMENT: the gap, not the boundary. If a future change
+        // narrows this, the bimodality claim in the doc above has stopped holding and
+        // the argument against lowering the bar needs re-making.
+        assert!(
+            worst_fire - best_miss >= 4,
+            "the distribution is no longer bimodal — worst fire {worst_fire} vs best \
+             miss {best_miss}; re-read the reasoning above before moving the bar"
+        );
+    }
+
+    /// The plain longest contiguous run, so the experiment does not depend on index
+    /// internals. `PhraseIndex::shared_run_with` agrees with this on these windows.
+    fn longest_shared_run(heard: &str, verse: &str) -> usize {
+        let q: Vec<String> = phrase_words(heard);
+        let v: Vec<String> = phrase_words(verse);
+        let mut best = 0;
+        for i in 0..q.len() {
+            for j in 0..v.len() {
+                let mut n = 0;
+                while i + n < q.len() && j + n < v.len() && q[i + n] == v[j + n] {
+                    n += 1;
+                }
+                best = best.max(n);
+            }
+        }
+        best
+    }
+}
+
 // `#[cfg(test)]` — it was missing when this module landed on 2026-09-26, so its
 // helpers were compiled into the shipping binary and clippy's dead-code pass is what
 // noticed. Every other test module here carries the attribute.

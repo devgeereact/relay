@@ -11121,6 +11121,183 @@ mod passage_guard_bench {
         );
     }
 
+    /// **A MISHEARD "VERSE" INVENTS A BOOK AND HIJACKS THE QUOTATION RESTRICTION**
+    /// — service 42, 2026-09-27 at 3795.5 s, watched live. **A correct verse, read
+    /// word for word, was withheld.**
+    ///
+    /// `cargo test --release a_spurious_trailing_book_hijacks_the_restriction --
+    /// --ignored --nocapture`
+    ///
+    /// He said *"From Psalm 19 VERSE 7, the word says, the law of the Lord is perfect,
+    /// converting the soul"* and whisper heard *"Psalm 19, NUMBERS 7"*. That single
+    /// mishearing did two things:
+    ///
+    /// ```text
+    ///   detect_direct:  Psalms 19:1  UncertainNumber 0.45  (whole chapter)
+    ///                   Numbers 7:1  UncertainNumber 0.45  (whole chapter)
+    ///   anchor:         Numbers 7:1   ← the LAST parse wins
+    ///   quoted_in:      "Numbers"
+    /// ```
+    ///
+    /// `PhraseIndex::quoted` was restricted to **Numbers** while he was reading
+    /// **Psalms 19:7**, so the quotation could not be found at all; the verse surfaced
+    /// only through the semantic path at 0.49 and stayed a suggestion. *"The law of the
+    /// Lord is perfect, converting the soul"* is that verse verbatim.
+    ///
+    /// **This is RG-305's restriction in mirror image.** There it discarded the right
+    /// verse because the window "named" `Acts` where the preacher said `Proverbs`; here
+    /// it discards the right verse because a misheard *"verse"* appended a spurious book
+    /// AFTER the real one, and the anchor takes the last parse rather than the best one.
+    /// RG-305's cross-book carve-out exists for exactly this and cannot run: it requires
+    /// a `Direct` chapter-and-verse in `said_pairs`, and both parses here are
+    /// `UncertainNumber` whole-chapters.
+    ///
+    /// Not fixed. Two candidate shapes, neither measured yet: prefer the FIRST book a
+    /// window names over the last when both are whole-chapter guesses, or let the
+    /// restriction admit any book the window named rather than only the final one. The
+    /// second is closer to what RG-305 actually argues — the restriction exists because
+    /// a quotation from a book nobody named is a coincidence, and `Psalms` WAS named.
+    #[test]
+    #[ignore]
+    fn a_spurious_trailing_book_hijacks_the_restriction() {
+        const HEARD: &str =
+            "From Psalm 19, Numbers 7 The word says, The law of the Lord is perfect, converting the soul,";
+        let corpus = kjv_corpus();
+        let idx = detection::PhraseIndex::build(&corpus);
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        let context = ContextMemory::default();
+        println!("\n  “{HEARD}”");
+        println!("  anchor: {:?}", detection::anchor_for_bare_verses(HEARD));
+        let r = detection::VerseRef {
+            book: "Psalms".into(),
+            chapter: 19,
+            verse: 7,
+        };
+        println!(
+            "  shared_run_with(Psalms 19:7) = {}",
+            idx.shared_run_with(HEARD, &r)
+        );
+        println!("  -- quoted restricted to Numbers:");
+        for h in idx.quoted(HEARD, Some("Numbers"), QUOTED_SUGGESTIONS_MAX) {
+            println!(
+                "     {} {}:{} run={} sole={}",
+                h.r.book, h.r.chapter, h.r.verse, h.run, h.sole
+            );
+        }
+        println!("  -- quoted restricted to Psalms (the book he NAMED FIRST):");
+        for h in idx.quoted(HEARD, Some("Psalms"), QUOTED_SUGGESTIONS_MAX) {
+            println!(
+                "     {} {}:{} run={} sole={}",
+                h.r.book, h.r.chapter, h.r.verse, h.run, h.sole
+            );
+        }
+        let w = candidates_for_window(HEARD, true, &sem, &phrases, &context, None, false);
+        for c in &w.kept {
+            println!(
+                "  KEPT  {} {}:{}  {:?}  {:.2}",
+                c.r.book, c.r.chapter, c.r.verse, c.method, c.conf
+            );
+        }
+        // THE CLAIM: a verse cited by chapter and verse AND read verbatim should be
+        // able to reach the wall. Today it cannot, because the restriction followed a
+        // mishearing.
+        let firable = w.kept.iter().any(|c| {
+            c.r.book == "Psalms"
+                && c.r.chapter == 19
+                && c.r.verse == 7
+                && c.method.unattended_rank() > 0
+        });
+        assert!(
+            firable,
+            "Psalms 19:7 was read word for word and cannot reach the wall; the \
+             quotation search was locked to Numbers by a misheard \"verse\""
+        );
+    }
+
+    /// **A CITATION SPLIT ACROSS TWO WINDOWS LOSES ITS BOOK — service 42,
+    /// 2026-09-27 at 2072.8 s, watched live. The constructive half of RG-315.**
+    ///
+    /// `cargo test --release a_citation_split_across_windows -- --ignored --nocapture`
+    ///
+    /// The offering reading, verbatim from `transcripts`:
+    ///
+    /// ```text
+    ///   2072.8  "Let's read from God's Word before we give Genesis chapter 8 and verse"
+    ///   2081.2  "Verse 22. This is God's commandment. It says, While the earth remained,"
+    ///   2098.5  → the operator fired Genesis 8:22 BY HAND
+    /// ```
+    ///
+    /// **Every existing guard worked and the operator still did the work.** The first
+    /// window ends on a dangling verse MARKER, which `parse_reference` refuses
+    /// outright, so no `Genesis 8:1` went up — correct. The second window holds a bare
+    /// *"Verse 22"* with no book, so `resolve_bare_verse_with_source` fell through to
+    /// memory, which still held `Ephesians 5:20` from **eighteen minutes earlier**, and
+    /// offered `Ephesians 5:22` at 0.88 `UncertainBook` — capped, never fired, also
+    /// correct (rule 40's third half, RG-179).
+    ///
+    /// **`Genesis 8:22` was never offered at all.** Relay held both halves of the
+    /// reference eight seconds apart and cannot join them, because the anchor is
+    /// window-local: memory reached back eighteen minutes to the wrong book while the
+    /// right chapter sat in the previous window, unremembered.
+    ///
+    /// RG-315 stops a truncated citation putting verse 1 on a wall. This is the same
+    /// mechanism in the other direction: **a chapter stated at a window's edge should
+    /// survive one window, so the next window's bare verse can complete it.** Rule 40's
+    /// ordering already says a book named in this breath beats memory; a book named one
+    /// breath ago should also beat memory from eighteen minutes ago.
+    ///
+    /// Not fixed: it needs state that `candidates_for_window` does not have today, and
+    /// the cost — a stale chapter completing an unrelated later verse — has to be
+    /// measured through `print_every_auto_fire` before it ships.
+    #[test]
+    #[ignore]
+    fn a_citation_split_across_windows_loses_its_book() {
+        const W1: &str = "Let's read from God's Word before we give Genesis chapter 8 and verse";
+        const W2: &str = "Verse 22. This is God's commandment. It says, While the earth remained,";
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        // MEMORY AS IT WAS: Ephesians 5:20 fired at 1003.1 s and was still the passage.
+        let mut context = ContextMemory::default();
+        context.note(&detection::VerseRef {
+            book: "Ephesians".into(),
+            chapter: 5,
+            verse: 20,
+        });
+        for (label, text) in [("window 1", W1), ("window 2", W2)] {
+            println!("\n  {label}: “{text}”");
+            println!("     anchor: {:?}", detection::anchor_for_bare_verses(text));
+            println!(
+                "     bare verses: {:?}",
+                detection::detect_bare_verses(text)
+            );
+            let w = candidates_for_window(text, true, &sem, &phrases, &context, None, false);
+            for c in &w.kept {
+                println!(
+                    "     KEPT  {} {}:{}  {:?}  {:.2}",
+                    c.r.book, c.r.chapter, c.r.verse, c.method, c.conf
+                );
+            }
+        }
+        // THE CLAIM, and it fails today: the verse he actually read should be reachable
+        // from the second window, because the first window named its book and chapter.
+        let w2 = candidates_for_window(W2, true, &sem, &phrases, &context, None, false);
+        let found = w2
+            .kept
+            .iter()
+            .any(|c| c.r.book == "Genesis" && c.r.chapter == 8 && c.r.verse == 22);
+        assert!(
+            found,
+            "Genesis 8:22 is not reachable from the second window; the operator fired \
+             it by hand while memory offered Ephesians 5:22 from eighteen minutes before"
+        );
+    }
+
     /// **EXPLAIN ONE WINDOW: every stage, every candidate, every doubt.**
     ///
     /// `RELAY_EXPLAIN_WINDOW="<text>" cargo test --release explain_one_window --
