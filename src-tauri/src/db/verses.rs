@@ -1854,6 +1854,36 @@ mod imported_translation {
         c
     }
 
+    /// WHAT IMPORTING A WHOLE BIBLE COSTS THE MAIN RUN LOOP — RG-299.
+    ///
+    /// `import_translation` is a `#[tauri::command]`, so on macOS it ran on the
+    /// window's run loop and this whole cost was a frozen app. It is
+    /// `#[tauri::command(async)]` now; the `Db` lock is still held across the parse
+    /// and the insert, which is the part that is not fixed and is recorded as such.
+    ///
+    /// Measured against a real bundled Bible rather than a synthetic corpus — the
+    /// KJV is 4.5 MB of JSON and 31,102 verses, which is what an operator
+    /// actually hands it.
+    ///
+    /// Reports, asserts nothing about the clock.
+    #[test]
+    #[ignore = "measures this machine against the bundled BSB"]
+    fn what_importing_a_whole_bible_costs() {
+        // Read at run time rather than `include_str!`d: this is a bench, and a second
+        // 4.5 MB literal in the binary to measure a parse would be a poor trade.
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/data/kjv.json");
+        let json = std::fs::read_to_string(path).unwrap();
+        let c = conn();
+        let t = std::time::Instant::now();
+        let r = import_translation(&c, "Cost Bench", "cb", "en", "licensed", &json).unwrap();
+        println!(
+            "  import_translation  {} verses from {:.1} MB of JSON  {} ms",
+            r.verses,
+            json.len() as f64 / 1_048_576.0,
+            t.elapsed().as_millis()
+        );
+    }
+
     /// Sixty-six books, one chapter each, `n` verses per chapter.
     fn corpus(books: usize, verses: usize) -> String {
         let book = serde_json::json!({ "chapters": [ (0..verses).map(|v| format!("Verse {}", v + 1)).collect::<Vec<_>>() ] });

@@ -562,12 +562,48 @@ pub fn install_from_file(source: &std::path::Path) -> Result<String, String> {
 
     // Same atomic dance as the download: copy to `.part`, then rename. A copy
     // interrupted half way must never leave a file whisper would try to load.
-    let part = dir.join(format!("{}.part", model.filename));
-    let _ = std::fs::remove_file(&part);
-    std::fs::copy(&src, &part).map_err(|e| format!("Could not copy the model: {e}"))?;
+    //
+    // THE SCRATCH NAME IS UNIQUE PER ATTEMPT — RG-299. It used to be
+    // `<filename>.part`, one path for every invocation, which was safe only because
+    // a synchronous `#[tauri::command]` runs on the macOS main run loop and is
+    // therefore serialised by it. That serialisation was the guarantee, and nothing
+    // said so: the price of it was a 7-second frozen window on a 1.6 GB model
+    // (`tests::what_the_model_flow_costs`), and the moment the command is allowed off
+    // that thread two installs would copy into the same file and `rename` whichever
+    // finished first — a model that passed its checksum as two interleaved halves.
+    //
+    // A unique name removes the dependency instead of documenting it. The `remove_file`
+    // that used to clear the shared path is gone with it: there is nothing to clear,
+    // and it was the line that made a concurrent attempt destructive rather than
+    // merely wasteful.
+    let part = dir.join(format!(
+        "{}.{}-{}.part",
+        model.filename,
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    // AND EVERY EXIT PATH CLEANS IT UP. With one shared name, the next attempt's
+    // `remove_file` was the cleanup; with a unique one there is no next attempt to do
+    // it, so each failure removes its own scratch file. A crash or a kill mid-copy
+    // still leaves one behind, exactly as the download path does, and it is harmless:
+    // `stt::resolve_model` looks for catalogue filenames and `scan_for_models` matches
+    // on the exact byte count, which a partial copy does not have.
+    if let Err(e) = std::fs::copy(&src, &part) {
+        let _ = std::fs::remove_file(&part);
+        return Err(format!("Could not copy the model: {e}"));
+    }
     // Re-hashed at the destination, because the thing that gets loaded is the copy,
     // and a failing USB stick can produce a good read followed by a bad one.
-    let landed = sha256_file(&part)?;
+    let landed = match sha256_file(&part) {
+        Ok(h) => h,
+        Err(e) => {
+            let _ = std::fs::remove_file(&part);
+            return Err(e);
+        }
+    };
     if !landed.eq_ignore_ascii_case(model.sha256) {
         let _ = std::fs::remove_file(&part);
         return Err(
@@ -576,8 +612,10 @@ pub fn install_from_file(source: &std::path::Path) -> Result<String, String> {
                 .into(),
         );
     }
-    std::fs::rename(&part, &final_path)
-        .map_err(|e| format!("Could not finish installing the model: {e}"))?;
+    if let Err(e) = std::fs::rename(&part, &final_path) {
+        let _ = std::fs::remove_file(&part);
+        return Err(format!("Could not finish installing the model: {e}"));
+    }
     println!("models: installed {} from a file", final_path.display());
     Ok(model.id.to_string())
 }
@@ -673,6 +711,78 @@ fn sha256_file(path: &PathBuf) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// HOW LONG DOES THE MODEL FLOW HOLD THE MAIN RUN LOOP — RG-299.
+    ///
+    /// `find_model_files` and `install_model_file` were `#[tauri::command]`s with no
+    /// `async`, so on macOS they ran on the window's run loop: while they worked the
+    /// app was frozen, and no browser harness can see that. `find_model_files` hashes
+    /// any file whose SIZE matches a catalogue entry, and the catalogue's largest
+    /// entry is 1.6 GB; `install_model_file` hashes the source, copies it, and hashes
+    /// the copy.
+    ///
+    /// These are the numbers on this machine rather than a claim about them. Both
+    /// commands are `#[tauri::command(async)]` now, so the cost is a wait and not a
+    /// freeze — the cost itself is unchanged, and a slower disk or a USB stick makes
+    /// it worse.
+    ///
+    /// Reports and asserts nothing about the clock: a bench that failed on a busy
+    /// machine would be deleted within a month.
+    #[test]
+    #[ignore = "measures this machine's disk; needs at least one installed model"]
+    fn what_the_model_flow_costs() {
+        let dir = crate::stt::model_install_dir();
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            eprintln!("no model folder at {} — nothing to measure", dir.display());
+            return;
+        };
+        let mut biggest: Option<(PathBuf, u64, u128)> = None;
+        let mut scan_total = 0u128;
+        for entry in rd.flatten() {
+            let path = entry.path();
+            let Ok(meta) = entry.metadata() else { continue };
+            if !meta.is_file() || meta.len() < 1_000_000 {
+                continue;
+            }
+            let t = std::time::Instant::now();
+            let _ = sha256_file(&path);
+            let ms = t.elapsed().as_millis();
+            scan_total += ms;
+            let mb = meta.len() as f64 / 1_048_576.0;
+            println!(
+                "  sha256 {:<28} {:>8.0} MB  {:>6} ms  ({:.0} MB/s)",
+                path.file_name().unwrap_or_default().to_string_lossy(),
+                mb,
+                ms,
+                mb / (ms as f64 / 1000.0).max(0.001),
+            );
+            if biggest.as_ref().is_none_or(|(_, n, _)| meta.len() > *n) {
+                biggest = Some((path, meta.len(), ms));
+            }
+        }
+        let Some((big, bytes, hash_ms)) = biggest else {
+            eprintln!("no model files in {} — nothing to measure", dir.display());
+            return;
+        };
+        println!("  find_model_files, every size-match present: {scan_total} ms");
+        // The third cost in `install_from_file`, between the two hashes.
+        let tmp = std::env::temp_dir().join(format!("relay-model-copy-{}", std::process::id()));
+        let t = std::time::Instant::now();
+        let copied = std::fs::copy(&big, &tmp).is_ok();
+        let copy_ms = t.elapsed().as_millis();
+        let _ = std::fs::remove_file(&tmp);
+        if copied {
+            println!(
+                "  fs::copy {:>8.0} MB  {copy_ms} ms",
+                bytes as f64 / 1_048_576.0
+            );
+            println!(
+                "  install_model_file for it = hash {hash_ms} + copy {copy_ms} + hash \
+                 {hash_ms} = {} ms",
+                hash_ms * 2 + copy_ms
+            );
+        }
+    }
 
     /// A FILE IS IDENTIFIED BY ITS CONTENT, NOT ITS NAME.
     ///

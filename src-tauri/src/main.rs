@@ -7889,7 +7889,20 @@ async fn download_model(app: tauri::AppHandle, id: String) -> error::Result<()> 
 /// Held back during a service like every other model change (§40): copying 148 MB
 /// and reloading whisper is exactly as disruptive from a USB stick as from the
 /// internet.
-#[tauri::command]
+///
+/// **OFF THE MAIN RUN LOOP — RG-299.** `#[tauri::command(async)]` on a synchronous
+/// function is Tauri's own way of saying "do not run this on the window's thread",
+/// and it keeps `State<'_, T>` working where an `async fn` would not. Measured on
+/// this machine (`models::tests::what_the_model_flow_costs`): **7,086 ms** for
+/// `ggml-large-v3-turbo` — hash the source, copy it, hash the copy — and the copy
+/// itself was free only because APFS cloned it on the same volume. From the USB
+/// stick this feature exists for it is minutes. Every one of those milliseconds was
+/// a frozen window with no spinner, no progress and nothing in any log.
+///
+/// What the main thread was silently providing was MUTUAL EXCLUSION, and that is
+/// paid for properly now: `models::install_from_file` copies to a scratch name
+/// unique per attempt, so two installs cannot interleave into one file.
+#[tauri::command(async)]
 fn install_model_file(
     lock: tauri::State<'_, servicelock::ServiceLock>,
     path: String,
@@ -7900,11 +7913,98 @@ fn install_model_file(
 
 /// Model files already sitting on this machine, waiting to be installed.
 ///
-/// Read-only and cheap: three folders, no recursion, size as a pre-filter before
-/// anything is hashed.
-#[tauri::command]
+/// Three folders, no recursion, size as a pre-filter before anything is hashed.
+///
+/// **IT IS NOT CHEAP, AND THIS DOC COMMENT SAID IT WAS** (RG-299). The size filter
+/// decides what gets hashed, not whether anything does: a file whose length matches a
+/// catalogue entry is SHA-256'd in full, and the catalogue's largest entry is 1.6 GB.
+/// Measured on this machine by `models::tests::what_the_model_flow_costs`: **3,543 ms**
+/// for that one file at 437 MB/s, and **5,025 ms** with all three installed models
+/// present. As a plain `#[tauri::command]` every one of those milliseconds was the
+/// macOS window's run loop, held by a screen whose whole job is to look for a file —
+/// an app that appears to have hung, five seconds after a click, under a doc comment
+/// asserting the opposite.
+///
+/// `#[tauri::command(async)]` moves a SYNCHRONOUS command off that thread, which is
+/// the small lever this needed: no `async fn`, so `State<'_, T>` keeps working. It is
+/// safe off the main thread because it is a read — it opens files, hashes them and
+/// returns; two concurrent scans agree, and neither writes anything.
+#[tauri::command(async)]
 fn find_model_files() -> Vec<models::FoundModel> {
     models::scan_for_models()
+}
+
+/// THE COMMANDS THAT MAY NOT GO BACK ON THE MACOS RUN LOOP — RG-299.
+///
+/// Tauri v2 runs a command that is neither `async fn` nor `#[tauri::command(async)]`
+/// on the main thread, and on macOS that thread IS the window's run loop. Most of
+/// Relay's 169 commands are a SQLite read and belong there: sync commands are
+/// serialised by that thread, which is a real guarantee, and spending it buys
+/// nothing on a one-millisecond query.
+///
+/// These two are the ones that were measured and found to matter. Nothing about the
+/// attribute looks load-bearing, and `cargo fmt` will not restore it — so a tidy-up
+/// that deletes `(async)` puts a **five-second frozen app** back, silently, on the
+/// screen a church uses to install speech recognition from a USB stick.
+///
+/// Deliberately a list of two and not a rule about all of them. A scanner that
+/// guessed which command is "slow" would fail on legitimate code, be weakened, and
+/// take these with it. The measurement lives in
+/// `models::tests::what_the_model_flow_costs`; the survey of what the rest cost is
+/// in RELAY_GAP's RG-299 row.
+#[cfg(test)]
+mod main_loop_tests {
+    /// Every command named here does hundreds of milliseconds or more of file I/O,
+    /// measured, and must stay off the main thread.
+    const OFF_THE_RUN_LOOP: [&str; 2] = ["find_model_files", "install_model_file"];
+
+    fn source() -> String {
+        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs"))
+            .expect("read main.rs")
+    }
+
+    /// The attribute line directly above a command's DEFINITION.
+    ///
+    /// Line-by-line, and anchored at the start of a line, because the name also
+    /// appears in this module as a string literal and in the doc comments above the
+    /// commands themselves — a `str::find` for `fn <name>(` matched one of those and
+    /// returned `.find("`, which is a scanner reading its own source.
+    fn attribute_above(src: &str, name: &str) -> Option<String> {
+        let signature = format!("fn {name}(");
+        let lines: Vec<&str> = src.lines().collect();
+        lines.iter().enumerate().find_map(|(i, l)| {
+            (l.starts_with(&signature) && i > 0).then(|| lines[i - 1].trim().to_string())
+        })
+    }
+
+    #[test]
+    fn the_commands_measured_to_freeze_the_window_stay_off_the_main_thread() {
+        let src = source();
+        for name in OFF_THE_RUN_LOOP {
+            let attr = attribute_above(&src, name)
+                .unwrap_or_else(|| panic!("{name} is gone — update this list or remove it"));
+            assert_eq!(
+                attr, "#[tauri::command(async)]",
+                "{name} is `{attr}` — it was measured at seconds of file I/O, and a plain \
+                 `#[tauri::command]` runs it on the macOS window's run loop (RG-299). Put \
+                 `#[tauri::command(async)]` back, or take it out of OFF_THE_RUN_LOOP with a \
+                 measurement that says why."
+            );
+        }
+    }
+
+    /// And the scanner can still see a plain command, so it is checking something.
+    /// A source scanner that quietly stops matching passes everything.
+    #[test]
+    fn the_scanner_can_tell_the_two_attributes_apart() {
+        let src = source();
+        assert_eq!(
+            attribute_above(&src, "cancel_model_download").as_deref(),
+            Some("#[tauri::command]"),
+            "the scanner no longer finds a plain command above its signature, so the test \
+             above is passing on a pattern that has stopped matching"
+        );
+    }
 }
 
 /// Cancel an in-flight model download.
@@ -10065,6 +10165,43 @@ mod import_guard_tests {
 
     fn b64(bytes: &[u8]) -> String {
         base64::engine::general_purpose::STANDARD.encode(bytes)
+    }
+
+    /// WHAT AN IMPORT AT THE CAP COSTS THE MAIN RUN LOOP — RG-299.
+    ///
+    /// `import_media` and `import_translation` are `#[tauri::command]`s, so on macOS
+    /// they ran on the window's run loop: the decode and the write happened with the
+    /// app frozen, and no browser harness can see that. They are
+    /// `#[tauri::command(async)]` now, and this is what was being paid for.
+    ///
+    /// Measures, asserts nothing about the clock. A bench that failed on a busy
+    /// machine would be deleted within a month.
+    #[test]
+    #[ignore = "allocates ~600 MB and measures this machine"]
+    fn what_an_import_at_the_cap_costs() {
+        // Just under the cap: the guard estimates the decoded size from the base64
+        // length, and `len/4*3` rounds a payload of EXACTLY the cap over it.
+        let payload = vec![0x5Au8; MAX_IMPORT_BYTES - 4096];
+        let t = std::time::Instant::now();
+        let encoded = b64(&payload);
+        println!(
+            "  base64 encode (the webview's half)  {:>6} ms",
+            t.elapsed().as_millis()
+        );
+        let t = std::time::Instant::now();
+        let decoded = decode_import("clip.mov", &encoded).expect("at the cap");
+        println!(
+            "  decode_import                       {:>6} ms",
+            t.elapsed().as_millis()
+        );
+        let path = std::env::temp_dir().join(format!("relay-import-cost-{}", std::process::id()));
+        let t = std::time::Instant::now();
+        std::fs::write(&path, &decoded).expect("write");
+        println!(
+            "  fs::write 256 MiB                   {:>6} ms",
+            t.elapsed().as_millis()
+        );
+        let _ = std::fs::remove_file(&path);
     }
 
     /// An ordinary file still imports. The guard must not be a limit nobody can
