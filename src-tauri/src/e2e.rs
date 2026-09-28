@@ -6969,3 +6969,112 @@ fn a_reference_whose_verse_cannot_exist_is_not_offered_to_the_operator() {
         wall.references()
     );
 }
+
+/// **THE OPERATOR'S OWN WORKFLOW, END TO END** (RG-328, RG-329, DECISIONS §133).
+///
+/// The unit tests prove the PARSE — that *"Romans 1 and we will be reading from verse
+/// 6 all the way to 8"* yields `Romans 1:6-8` rather than staging verse 1 of the
+/// chapter. They prove nothing about the thing the operator actually does with it, and
+/// this repository's own rule is that a guarantee is only kept on the doors you
+/// checked: `NavResult` was built so nav could never silently do nothing, and
+/// `remote_api` threw it away with `Ok(_)` on the second door.
+///
+/// So this drives the real commands. Announce the range conversationally, accept it
+/// the way an operator accepts a suggestion, and walk it — asserting on the events
+/// that actually leave the machine.
+#[test]
+fn a_conversationally_announced_range_stages_and_walks_to_the_end_the_preacher_gave() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    // 1. The announcement reaches the operator as a claim naming BOTH ends. It is a
+    //    suggestion and not a fire, deliberately — `normalize` strips the full stop,
+    //    so this parser cannot tell one announcement from a chapter and a verse in
+    //    two sentences (FIELD F-1). What must not happen is verse 1 of the chapter.
+    let claims: std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = claims.clone();
+    h.listen("detection://match", move |e| {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(e.payload()) {
+            sink.lock().unwrap().push(v);
+        }
+    });
+    emit_detections(
+        &h,
+        "Romans 1 and we will be reading from verse 6 all the way to 8",
+        0,
+        true,
+        None,
+    );
+    settle();
+    {
+        let got = claims.lock().unwrap();
+        let offered = got
+            .iter()
+            .find(|v| v["reference"] == "Romans 1:6")
+            .unwrap_or_else(|| {
+                panic!("the verse the preacher announced never reached the operator: {got:?}")
+            });
+        assert_eq!(
+            offered["passage_end"], 8,
+            "the operator was not told how far the reading goes: {offered}"
+        );
+        assert!(
+            !got.iter().any(|v| v["reference"] == "Romans 1:1"),
+            "verse 1 of the chapter was staged over the verse he asked for: {got:?}"
+        );
+    }
+
+    // 2. The operator accepts it. That is what `manual_fire` is, and the span has to
+    //    survive the acceptance or the walk below has nothing to bound it.
+    manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "Romans 1:6-8".into(),
+        None,
+        None,
+        None,
+    )
+    .expect("an operator must be able to accept the passage he was offered");
+    settle();
+    assert_eq!(
+        wall.references().last().map(String::as_str),
+        Some("Romans 1:6"),
+        "accepting the passage did not put its first verse on the screens: {:?}",
+        wall.references()
+    );
+
+    // 3. `→` walks INSIDE the announced passage …
+    for want in ["Romans 1:7", "Romans 1:8"] {
+        match nav(h.clone(), "next".into()).expect("nav next") {
+            NavResult::Fired { .. } => {}
+            _ => panic!("the transport would not walk to {want}"),
+        }
+        settle();
+        assert_eq!(
+            wall.references().last().map(String::as_str),
+            Some(want),
+            "the walk left the passage: {:?}",
+            wall.references()
+        );
+    }
+
+    // 4. … and STOPS at the end he gave. Verse 9 was never announced, and walking
+    //    past the end is how a congregation ends up reading something nobody asked
+    //    for — the same harm in a quieter costume.
+    assert!(
+        matches!(
+            nav(h.clone(), "next".into()).expect("nav next"),
+            NavResult::EndOfPassage
+        ),
+        "the walk went past the end the preacher announced: {:?}",
+        wall.references()
+    );
+    assert_eq!(
+        wall.references().last().map(String::as_str),
+        Some("Romans 1:8"),
+        "the wall moved past the announced end: {:?}",
+        wall.references()
+    );
+}

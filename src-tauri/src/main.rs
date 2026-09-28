@@ -2068,6 +2068,40 @@ fn candidates_for_window(
         }
     }
 
+    // ── A SPAN IS A FACT ABOUT THE REFERENCE, NOT ABOUT ONE CANDIDATE (RG-328) ──
+    //
+    // Found by `e2e::a_conversationally_announced_range_stages_and_walks_to_the_end_the_preacher_gave`,
+    // which is the first test to drive the operator's whole workflow rather than the
+    // parse: announce *"Romans 1 and we will be reading from verse 6 all the way to
+    // 8"* and the verse reaches the wall — but at `direct` 0.88 with **no
+    // `passage_end`**, so *"all the way to 8"* is thrown away.
+    //
+    // Two paths answer that window. The full parse yields `Romans 1:6-8`, and
+    // `detect_bare_verses` independently resolves the bare *"verse 6"* against the
+    // window's own anchor (`resolve_bare_verse`, the hardcoded 0.88) and yields
+    // `Romans 1:6` with no span at all. The anchor candidate is the one that can
+    // fire, so the span vanished behind the stronger claim.
+    //
+    // The same shape as the doubt fix above and the same lesson: the span belongs to
+    // the REFERENCE, so every candidate naming it carries it. Copied rather than
+    // ranked, because whichever candidate survives should stage the passage the
+    // preacher announced — and copied ONLY onto a candidate that has no span of its
+    // own, so an explicit range can never be widened by another one.
+    {
+        let spans: std::collections::HashMap<String, i64> = candidates
+            .iter()
+            .filter_map(|c| c.verse_end.map(|e| (Fire::key_for(&c.r), e)))
+            .collect();
+        for c in candidates.iter_mut() {
+            if c.verse_end.is_some() || c.whole_chapter {
+                continue;
+            }
+            if let Some(end) = spans.get(&Fire::key_for(&c.r)) {
+                c.verse_end = Some(*end);
+            }
+        }
+    }
+
     // ── FOLLOWING THE PREACHER THROUGH A PASSAGE HE ANNOUNCED (2026-09-28) ──
     //
     // The operator's report: *"even if the preacher paraphrases some section of the

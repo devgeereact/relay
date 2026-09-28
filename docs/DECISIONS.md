@@ -7551,6 +7551,16 @@ chapter; strictly forward and no further than the end, so a retelling that brush
 earlier verse cannot walk the wall backwards; and the candidate must come from the
 verse's own words, never from a doubt about which reference it is.
 
+**A span belongs to the reference, not to the candidate that carried it.** Driving the
+whole workflow end to end — announce, accept, walk, stop — found what the parse tests
+could not: the verse reached the wall at `direct` 0.88 with no `passage_end` at all.
+Two paths answer that window, the full parse (`Romans 1:6-8`) and `detect_bare_verses`
+resolving the bare *"verse 6"* against the window anchor with no span, and the anchor
+candidate is the one that can fire — so the span vanished behind the stronger claim.
+Every candidate naming a reference now carries its span, copied only onto one that has
+none of its own, so an explicit range can never be widened by another. That is RG-314's
+lesson a second time: *a guarantee is only kept on the doors you checked*.
+
 **What this does not do.** Replayed over service 42's 3,161 lines it changes nothing —
 153 auto-fires before and after, none gained, none lost — because that replay feeds
 finals only and the shapes are rarer than the report suggests: five instances in that
