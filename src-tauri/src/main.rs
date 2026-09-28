@@ -10606,7 +10606,10 @@ mod passage_guard_bench {
                             chapter: ci as i64 + 1,
                             verse: vi as i64 + 1,
                         },
-                        verse.as_str().unwrap_or("").to_string(),
+                        // THROUGH `db::clean_verse` (RG-324): the raw file keeps the
+                        // KJV's editorial apparatus, braces and all, and a bench
+                        // that indexes it is measuring a corpus no install has.
+                        crate::db::clean_verse(verse.as_str().unwrap_or("")),
                     ));
                 }
             }
@@ -11928,11 +11931,27 @@ mod passage_guard_bench {
         );
         // AND IT STILL MAY NOT FIRE — the book was heard in a window this one cannot
         // see, so rule 10's cap holds exactly as it does for a memory answer.
-        assert!(
-            got.iter()
-                .all(|(k, m)| k != "Ecclesiastes 10:15" || *m == DetectionMethod::UncertainBook),
-            "a carried chapter reached a firable method: {got:?}"
-        );
+        //
+        // **Asserted on FIRABILITY, not on a method name** (corrected 2026-09-28).
+        // This read `*m == DetectionMethod::UncertainBook` and broke the moment the
+        // bench corpus was routed through `db::clean_verse` (RG-324): on the corpus
+        // the product actually ships, this window offers `Ecclesiastes 10:15` TWICE —
+        // once as the carried chapter and once as a `Semantic` from the words he was
+        // reading — and the second one is a candidate this test never saw because the
+        // editorial apparatus had been changing the scores. Both have
+        // `unattended_rank() == 0`, so the guarantee this test exists for held the
+        // whole time; the assertion was narrower than its own comment. A test that
+        // names one permitted method fails on a new candidate that is equally
+        // incapable of reaching a wall, and the next person weakens it.
+        for (k, m) in &got {
+            if k == "Ecclesiastes 10:15" {
+                assert_eq!(
+                    m.unattended_rank(),
+                    0,
+                    "a carried chapter reached a firable method: {got:?}"
+                );
+            }
+        }
     }
 
     /// **THE TWO SHAPES `chapter_in_flight` ANSWERS, AND THE ONES IT MUST NOT** —

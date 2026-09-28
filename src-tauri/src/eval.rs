@@ -803,7 +803,14 @@ pub fn kjv_corpus() -> Vec<(detection::VerseRef, String)> {
                         chapter: ci as i64 + 1,
                         verse: vi as i64 + 1,
                     },
-                    text.replace(['{', '}'], ""),
+                    // THROUGH `db::clean_verse`, which is what the shipped index is
+                    // built from (RG-324, and RG-317 was measured before this was
+                    // true). `replace(['{', '}'])` kept the KJV's editorial
+                    // apparatus as ordinary words — `{make: Heb. turn}` became the
+                    // tokens `make`, `heb`, `turn`, none of which any shipped verse
+                    // contains — so every bench built on this corpus was scoring a
+                    // Bible the product does not ship.
+                    crate::db::clean_verse(text),
                 ));
             }
         }

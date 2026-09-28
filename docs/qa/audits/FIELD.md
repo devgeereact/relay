@@ -1481,6 +1481,16 @@ wrong**, six of them verses this audit never flagged:
 Three of those come from the archaic VERB forms — `shalt`, `wilt`, `ye` — which this audit did not
 mention at all, having looked only at the pronouns and the spellings it happened to see.
 
+**Every number in this section was re-measured on 2026-09-28 and every one of them moved.** The
+benches this audit quoted built their index straight from `data/kjv.json`, which carries the KJV's
+editorial apparatus that `db::clean_verse` strips before a verse reaches `verses` — so
+`{make: Heb. turn}` contributed `make`, `heb` and `turn` as ordinary run tokens and the figures
+described a Bible no install holds. Corrected: the gain is **+7, not +8**; the runs are
+`Proverbs 4:7` **10**, `Proverbs 14:28` **9**, `Isaiah 33:6` **9**, `Proverbs 4:8` **7**; and the
+corpus carries **25,547 archaic forms and 851 British spellings across 11,560 of 31,102 verses**,
+not the 33,945 and 512 counted here with a regex over the raw file. The direction of every finding
+survived; none of its arithmetic did.
+
 ## 4. What else the service showed, none of it filed before tonight
 
 - **Two verses on the wall 2.5 s apart.** `Daniel 9:2` at 21760.4 s, `Hebrews 13:7` at 21762.9 s,

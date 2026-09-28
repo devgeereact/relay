@@ -11818,3 +11818,58 @@ mod field_2026_09_25_range {
         );
     }
 }
+
+/// **HOW MUCH OF THE CORPUS THE REGISTER GAP ACTUALLY TOUCHES** (RG-317, corrected
+/// 2026-09-28).
+///
+/// The figures first published for this — 33,945 archaic forms and 512 British
+/// spellings — were counted over `data/kjv.json` with a regex, which counts the
+/// KJV's editorial apparatus as though it were scripture. `db::clean_verse` strips
+/// the glosses before a verse reaches `verses`, so those numbers described text no
+/// install holds. This counts the same thing over the corpus the product ships.
+#[cfg(test)]
+mod what_the_register_gap_covers {
+    use super::*;
+
+    #[test]
+    #[ignore]
+    fn print_how_much_of_the_shipped_corpus_carries_it() {
+        let corpus = crate::eval::kjv_corpus();
+        let archaic = [
+            "thy", "thine", "thou", "thee", "ye", "hath", "hast", "doth", "dost", "shalt", "wilt",
+            "saith",
+        ];
+        let mut counts: Vec<(&str, usize)> = archaic.iter().map(|w| (*w, 0)).collect();
+        let mut british = 0usize;
+        let mut verses_touched = 0usize;
+        for (_, text) in &corpus {
+            let words = raw_phrase_words(text);
+            let mut touched = false;
+            for w in &words {
+                if let Some(slot) = counts.iter_mut().find(|(a, _)| a == w) {
+                    slot.1 += 1;
+                    touched = true;
+                }
+                if BRITISH_OUR_STEMS.iter().any(|s| w.starts_with(s)) {
+                    british += 1;
+                    touched = true;
+                }
+            }
+            if touched {
+                verses_touched += 1;
+            }
+        }
+        counts.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+        let archaic_total: usize = counts.iter().map(|(_, n)| n).sum();
+        println!("\n  over {} shipped verses:", corpus.len());
+        for (w, n) in &counts {
+            println!("    {w:<7} {n:>6}");
+        }
+        println!("    ── archaic total {archaic_total}");
+        println!("    british -our    {british}");
+        println!(
+            "    verses touched  {verses_touched} ({:.1}%)\n",
+            verses_touched as f64 * 100.0 / corpus.len() as f64
+        );
+    }
+}
