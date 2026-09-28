@@ -366,9 +366,26 @@
   // The box style for a positioned layer (percent geometry of the 16:9 stage).
   const boxStyle = (L) =>
     `left:${L.x}%; top:${L.y}%; width:${L.w}%; height:${L.h}%;`;
-  // A background layer's paint (fill or image), and its dim scrim opacity.
+  // A background layer's paint (fill AND image), and its dim scrim opacity.
+  //
+  // THE FILL GOES UNDER THE PICTURE, ALWAYS (RG-157). This was
+  // `L.image ? url(...) : L.fill` — an image with no background-colour beneath it —
+  // so a picture that did not load painted NOTHING and let whatever was behind the
+  // stage through: on a keyed channel the camera, on an opaque one the stage's own
+  // ground. RG-157's own impact cell promised a church the opposite (*"the layer
+  // falls back to its fill colour rather than blanking the screen"*) and that was
+  // read off the source rather than measured; the fill was in the template and not
+  // in the declaration.
+  //
+  // It costs nothing when the picture loads — the image covers the colour — and it
+  // is the fallback for EVERY reason a picture can fail, not only a pre-wave-5
+  // `/assets/<hash>` path: a renamed file, a deleted `media_assets` row, a CSP
+  // refusal. `staleimagepath.test.js` holds it, from the shorthand and from a
+  // mounted template with a stale path in it.
   const bgPaint = (L) =>
-    L.image ? `url("${L.image}") center / cover no-repeat` : L.fill || 'transparent';
+    L.image
+      ? `${L.fill || 'transparent'} url("${L.image}") center / cover no-repeat`
+      : L.fill || 'transparent';
   // Line transform (ProPresenter-style): reshape the text before it is laid out.
   function lineTransform(text, mode) {
     if (!text || !mode || mode === 'none') return text || '';
@@ -3174,10 +3191,25 @@
      screen; `.lalert` above does both, and that distinction is the operator's
      own (§116). A message pulses its text; an alarm flashes its panel.
 
-     OCHRE, because rule 18 leaves it the only free ink: amber means ON AIR, cyan
-     means the AI guessed, amethyst means a rehearsal, and red is the alarm's.
-     None of those promises is true of a quiet word to a preacher.
-     `colourlaw.test.js` carries `.lmsg` in its caution sweep. */
+     RED, and this paragraph argued OCHRE for a day after it stopped being true
+     (RG-290 — the row was a second report of RG-295, filed before the ink
+     landed). What it used to say, and why it was reasonable: rule 18 left ochre
+     the only free ink, because amber means ON AIR, cyan means the AI guessed,
+     amethyst means a rehearsal and red was the alarm's. **The operator overruled
+     it about the one surface they are the sole judge of** — the person the
+     message is FOR said the ochre was still not catching their eye — and
+     DECISIONS §120 amends §116 to record the reversal and what it cost. Red was
+     never a PROMISE colour (rule 18 spends it on destructive and on failure),
+     which is why the request could be granted at all; §116's note-versus-alarm
+     line now rests entirely on the SHAPE described above.
+
+     So `.lmsg` is NOT in `colourlaw.test.js`'s caution sweep any more — this
+     line said it was, which would have sent a reader looking for the guarantee
+     to the one place that no longer holds it. The two stage messages have their
+     own block there, which keeps them red, keeps both promise colours off them,
+     and holds this surface and the phone TOGETHER: both or neither, because
+     RG-268 exists precisely because the phone had an ink the big screen did not
+     for two days. */
   .lmsg {
     position: absolute;
     left: 4cqw;
@@ -3189,9 +3221,9 @@
     background: rgba(0, 0, 0, 0.62);
     /* A RULE, NOT A HAIRLINE. Sized in `cqw` like everything else here, so it is
        the same share of the screen on a 24" monitor and on a projector. */
-    /* RED, ON THE OPERATOR'S INSTRUCTION OF 2026-09-23 (RG-295, DECISIONS §116
-       amended). See the note above `.lmsg-v` for what that cost and what now
-       carries the note/alarm line instead. */
+    /* RED, ON THE OPERATOR'S INSTRUCTION OF 2026-09-23 (RG-295 and RG-290, the
+       same report filed twice; DECISIONS §120 amends §116). See the note above
+       `.lmsg-v` for what that cost and what now carries the note/alarm line. */
     border-left: 0.9cqw solid var(--v-red, #f4515b);
     box-shadow: 0 0 0 0.12cqw var(--v-red-line, rgba(244, 81, 91, 0.42));
     font-size: 3.2cqw;
@@ -3223,7 +3255,7 @@
     50% { color: var(--v-red, #f4515b); }
   }
   /* AND REDUCED MOTION GETS AN EQUIVALENT, NOT A QUIETER STATE: the words rest
-     AT the caution ink rather than pulsing to it, so a viewer who asked for no
+     AT the red rather than pulsing to it, so a viewer who asked for no
      animation still reads a coloured message rather than a plain one. Nothing
      here animates, filters or fades — a brightness pulse under another word
      would be the setting ignored. */
@@ -3252,8 +3284,8 @@
      the screen's own content beside it, an alarm (`.lalert`) takes the whole
      screen in a solid red field and pulses the panel rather than the text.
      Those are still unmistakably different from the back of a room, which is
-     the test that matters. §116 is amended to say so; it is not overruled by
-     this comment. */
+     the test that matters. DECISIONS §120 amends §116 to say so; a comment is
+     not where a decision is reversed, and this one only points at the record. */
   .lmsg.fills {
     right: auto;
     bottom: auto;

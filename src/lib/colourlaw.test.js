@@ -668,6 +668,30 @@ describe('the colour law — caution has its own ink, and it is neither promise'
     expect(r, `${sel} does not paint the red the operator asked for`).toMatch(/var\(--v-red/);
     expect(r, `${sel} paints the tally light`).not.toMatch(/var\(--v-amber/);
     expect(r, `${sel} paints the rehearsal colour`).not.toMatch(/var\(--v-amethyst/);
+    // AND NOT BOTH. A rule that paints the red the operator asked for AND keeps a
+    // caution declaration beside it is half-reverted, which reads as done from
+    // either end. Neither surface may hold the ink this block moved away from.
+    expect(r, `${sel} still holds a caution declaration`).not.toMatch(/var\(--v-caution/);
+  });
+
+  it.each(STAGE_MESSAGES)('%s %s — and its reasoning still names the decision', (f, sel) => {
+    // RG-290. THE PROSE DRIFTED WHERE THE CSS DID NOT, and for this repository
+    // that is the more expensive half: both stylesheets went on arguing *"OCHRE,
+    // because rule 18 leaves it the only free ink"* directly above a rule painting
+    // `--v-red`, and the `TemplateRender` one also said `colourlaw.test.js` carried
+    // `.lmsg` in its caution sweep — which would have sent the next reader looking
+    // for this guarantee to the one block that no longer holds it. A comment that
+    // asserts the colour law the file breaks is worse than no comment: it reads as
+    // the authority, and it is three days out of date.
+    //
+    // So the ink and its AUTHORITY are checked together. Red on a message is
+    // lawful only because DECISIONS §120 amends §116, on the operator's own
+    // instruction; a file that paints it must cite the decision that permits it.
+    // `crossrefs.test.js` separately proves §120 resolves to a real heading, so
+    // this cannot be satisfied with a number nobody wrote down.
+    expect(read(f), `${f} paints ${sel} red without citing the decision that allows it`).toMatch(
+      /§120/,
+    );
   });
 
   it('and the ALARM is still a different thing from across a room', () => {

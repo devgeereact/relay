@@ -358,6 +358,26 @@
   }
   $: panelRows = panelOrderOf(layers);
   $: sel = layers.find((l) => l.id === selId) || null;
+  /**
+   * A STORED BACKGROUND PICTURE RELAY CANNOT SHOW ANY MORE (RG-157).
+   *
+   * A background chosen before wave 5 was saved as the hashed URL Vite produced
+   * (`/assets/<stem>-<hash>.<ext>`); Track I (DECISIONS §90) moved those files to a
+   * stable `backgrounds/<file>` so a Rust seed could name them, and the old path
+   * resolves to nothing. The picker highlights the tile whose `url` matches, so a
+   * stale path highlighted nothing and read exactly like "no picture chosen".
+   *
+   * IT ONLY ACCUSES A PATH THAT CLAIMS TO BE A BUNDLED FILE. A `data:` URL, an
+   * `http(s)://` one or a `/media/<id>` row may be perfectly good and this surface
+   * cannot tell from here — saying "Relay cannot show this" about a picture that
+   * loads would be the same defect pointing the other way, and one this repository
+   * has made before. So the test is narrow: it looks like something we bundle, and
+   * it is not one of the things we bundle.
+   */
+  $: staleImage =
+    !!sel?.image &&
+    /^\/?(assets|backgrounds)\//.test(String(sel.image)) &&
+    !BACKGROUNDS.some((b) => b.url === sel.image);
   /** The icon for a kind, from the ONE register (`LAYER_TYPES`). The list drew
    *  its own four-way guess and answered `T` for a band, a region AND a timer —
    *  three different kinds wearing the text icon in the one place an operator
@@ -1881,6 +1901,25 @@
             <p class="te-fnote">Dim lays black over the background so text stays readable on bright images.</p>
             <div class="r-lbl te-sublbl">Image library</div>
             {#if BACKGROUNDS.length}
+              <!-- A PICTURE RELAY CANNOT SHOW, NAMED (RG-157, DECISIONS §90).
+                   The grid highlights the tile whose `url` matches `sel.image`, so
+                   a path no longer in the bundle highlights nothing — which reads
+                   exactly like "no picture chosen", on the one surface where
+                   choosing it again IS the whole repair. A background picked
+                   before wave 5 was stored as a hashed `/assets/<stem>-<hash>`
+                   URL; those files now emit at a stable `backgrounds/<file>`,
+                   because a Rust seed cannot know a Vite content hash, so the
+                   stored path resolves to nothing and the layer falls back to its
+                   fill. Nothing said why, which is why the row was filed.
+                   Ochre, not red: the template still renders and the screen still
+                   has a background (rule 18 — a caution promises nothing about a
+                   screen and this one takes nothing off air). -->
+              {#if staleImage}
+                <p class="te-fnote te-stale" role="status">
+                  This layer’s picture is not one Relay can show any more —
+                  <code>{sel.image}</code>. Choose it again below and save.
+                </p>
+              {/if}
               <div class="te-bglib">
                 {#if sel.image}<button class="te-bgtile te-bgnone" on:click={() => set('image', null)} title="No image">✕</button>{/if}
                 {#each BACKGROUNDS as b (b.file)}
@@ -2725,6 +2764,13 @@
   .te-fk{ font-size:var(--v-fs-b2); color:var(--v-dim); }
   .te-fv{ min-width:0; }
   .te-fnote{ font-size:var(--v-fs-cap); color:var(--v-faint); margin:0; line-height:1.5; }
+  /* A PICTURE RELAY CANNOT SHOW (RG-157). Ochre, per rule 18 and DECISIONS §111:
+     it warns and promises nothing about a screen. Not red — nothing is destroyed
+     and nothing is off air; the layer still paints its fill, and the words are
+     still on the wall. `code` wraps, because a stored path can be long and this
+     panel is narrow, and the operator needs to read which picture it is. */
+  .te-fnote.te-stale{ color:var(--v-caution); }
+  .te-fnote.te-stale code{ overflow-wrap:anywhere; }
   .te-emptyhint{ color:var(--v-dim); }
   /* CONVERTED — B2. "Use all computer fonts" was a mono, letter-spaced text
      link sitting directly under a `.r-select` in a column of `.te-frow`s. That

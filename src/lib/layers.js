@@ -1294,11 +1294,21 @@ export function regionsToLayers(template) {
       makeLayer('shape', {
         name: 'Ticker bar',
         x: 0, y, w: 100, h: CRAWL_H,
+        // THE LAST TERM MATTERS AND IT USED TO DISAGREE (RG-140). This block's
+        // comment above claims the same precedence as `TemplateRender::tickerBg`
+        // "so the two cannot drift", and the final fallback did drift: the renderer
+        // ends at `rgba(0,0,0,0.82)` — a SCRIM — and this ended at `#0a0a0a`,
+        // opaque. A styled template never reaches that term, which is why it went
+        // unnoticed; a church that cleared its accent does, and on a keyed
+        // lower-third channel the difference is the camera showing through the
+        // notice or being blacked out by it. Same template, two renderings, which
+        // is RG-140's own sentence. `noticecrawl.test.js` now holds the two
+        // expressions together at every term rather than a comment claiming it.
         fill:
           style.tickerBg ||
           (style.background && style.background !== 'transparent'
             ? style.background
-            : style.accent || '#0a0a0a'),
+            : style.accent || 'rgba(0,0,0,0.82)'),
         opacity: 1,
         radius: 0,
       }),
@@ -1310,7 +1320,16 @@ export function regionsToLayers(template) {
       ? makeLayer('text', {
           name: 'Reference', bind: 'reference', x: 3, y, w: 26, h: CRAWL_H,
           font: style.refFont || STYLE_DEFAULTS.refFont,
-          color: style.refColor || style.verseColor || '#f4e4c8',
+          // THE LABEL'S COLOUR IS THE RENDERER'S `refColor`, TERM FOR TERM (RG-140).
+          // This was `refColor || verseColor || '#f4e4c8'`, which is the BAND rule
+          // applied to every shape: on a full-frame notice the region path paints
+          // the label in the ACCENT, so the shipped `Classic · Announcement`
+          // (`accent #4fa8c9`, `verseColor #ffffff`) had a cyan label before the
+          // Templates tab was opened and a white one afterwards. Same notice, two
+          // labels, decided by whether anybody had looked at a workspace.
+          color:
+            style.refColor ||
+            (band ? style.verseColor || '#1c1224' : style.accent || '#ffffff'),
           size: Number(style.refSize) || 1.6,
           align: 'left', valign: 'middle',
           transform: style.refTransform || 'none', lineHeight: 1.2,
