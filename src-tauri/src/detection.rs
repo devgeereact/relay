@@ -243,8 +243,15 @@ impl DetectionMethod {
     /// church's switch is applied in `Router::decide`, the one gate every
     /// candidate passes through, rather than here — so a second construction site
     /// for quoted candidates could not slip past it (rule 36).
-    pub fn for_quotation(run: usize, sole: bool) -> Self {
-        if run >= READING_RUN_WORDS && sole {
+    /// **THREE conditions since RG-307, and the third is not a length.** A run may
+    /// be long, and held by exactly one verse, and still be nothing but stock
+    /// liturgical formula — *"of us in the name of the lord"*, eight words, sole,
+    /// and it put **1 Samuel 20:42** on a congregation's screen for a preacher who
+    /// was not reading anything. `PhraseHit::rare` has the finding. Uniqueness of a
+    /// token string is not evidence about WHICH verse; a word the corpus almost
+    /// never uses is.
+    pub fn for_quotation(run: usize, sole: bool, rare: bool) -> Self {
+        if run >= READING_RUN_WORDS && sole && rare {
             DetectionMethod::Reading
         } else {
             DetectionMethod::Quoted
@@ -258,6 +265,10 @@ impl DetectionMethod {
     pub fn for_bare_verse(source: BareVerseSource) -> Self {
         match source {
             BareVerseSource::Anchor => DetectionMethod::Direct,
+            // RG-318. The words did say it, and they said it in a window this one
+            // cannot see, so it is offered and never fired — see
+            // `BareVerseSource::InFlight`.
+            BareVerseSource::InFlight => DetectionMethod::UncertainBook,
             BareVerseSource::Memory => DetectionMethod::UncertainBook,
         }
     }
@@ -400,6 +411,32 @@ pub struct RefMatch {
     /// decision: an operator can tell in a glance whether Relay heard "John three
     /// sixteen" or misheard "gone free sixty".
     pub matched_text: String,
+    /// **WAS THE CHAPTER HEARD, OR SUPPLIED BY RELAY?** RG-301.
+    ///
+    /// True for every parse that took its chapter from a number somebody said.
+    /// False for the two single-chapter-book forms — *"Jude 4"*, *"Jude verse
+    /// four"* — where the 1 is Relay's own knowledge of the book rather than
+    /// anything in the audio.
+    ///
+    /// **It exists because `anchor_for_bare_verses` needed a discriminator the
+    /// method could not give it.** Service 41, 2026-09-26: *"…from Jude 28 and
+    /// verse 7 to 28…"* parses as `Jude 1:28` `UncertainNumber` 0.45 — 28 read as
+    /// the VERSE, chapter 1 invented — and the bare *"verse 7"* hung on that anchor
+    /// was stamped `Direct` 0.88 and put **Jude 1:7** on a congregation's screen.
+    /// He was reading Job 28.
+    ///
+    /// Filtering the anchor on `unattended_rank() > 0` was the obvious fix and was
+    /// measured and rejected: FIELD F-1's *"going through in Luke 10. If you read
+    /// from verse 32"* is a keyword-less whole chapter and parses `UncertainNumber`
+    /// too, so that filter leaves the bare verse with no anchor at all — the wrong
+    /// verse the anchor exists to prevent. `Luke 10` HEARD its chapter; `Jude 1:28`
+    /// did not. That is the difference, and it is a fact about the parse rather
+    /// than about its confidence.
+    ///
+    /// Not a substitute for the method. `anchor_for_bare_verses` asks both — a
+    /// chapter that was heard AND a book that was heard — because *"Deuteronomia,
+    /// 28 verse 1"* heard its chapter and had its BOOK repaired.
+    pub chapter_heard: bool,
     /// This match ran to the LAST WORD of the text it was parsed from — nothing
     /// followed it.
     ///
@@ -1069,7 +1106,41 @@ pub fn detect_direct(text: &str) -> Vec<RefMatch> {
                 // partial transcript that means the next word might still belong to
                 // it — see `RefMatch::at_tail`.
                 m.at_tail = next >= tokens.len();
-                out.push(m);
+                // ── AN IMPOSSIBILITY REFUTES THE REPAIR THAT MADE IT (RG-322) ────
+                //
+                // Service 42 at 20525.4 s: *"Job 29 verse 4 to 17"* came through as
+                // *"June 29"*, `fuzzy_book` repaired `june` to **Jude**, and Jude has
+                // ONE chapter — so there is no 29 for a verse 4 to be in, `verse_id`
+                // came back NULL, and the row rendered on the operator's list with no
+                // reference in it at all.
+                //
+                // **`Job 29` is valid and `Jude 29` is not, and the right book was one
+                // edit away.** The repair was discarding that. `chapter_count` and
+                // `verse_count` have been in this file all along; the digit-run
+                // splitter was their only reader, and nothing asked the same question
+                // about an ordinary parse.
+                //
+                // **Only a REPAIRED book, and that scope is the whole of the care
+                // here.** A book somebody plainly said, with an impossible number
+                // after it, is Relay overruling what it heard if it refuses to parse —
+                // and it is already capped, already unable to resolve to any text, and
+                // already stopped from reaching the operator by the verse-exists check
+                // in `emit_detections`. A guess about the acoustics is the one thing an
+                // impossible number is allowed to be evidence *about*. Same family as
+                // the `hymn number three sixteen` → `Numbers 3:16` P0 in rule 10: a
+                // repair that only the grammar supports, and here the arithmetic
+                // contradicts it outright.
+                //
+                // `i = next` all the same. The tokens were consumed by something
+                // reference-shaped, and re-scanning from inside them would only find a
+                // bare number.
+                let refuted = book_ev == BookEvidence::Repaired
+                    && (m.reference.chapter as usize > chapter_count(canonical)
+                        || m.reference.verse as usize
+                            > verse_count(canonical, m.reference.chapter));
+                if !refuted {
+                    out.push(m);
+                }
                 i = next;
                 continue;
             }
@@ -1416,12 +1487,12 @@ fn parse_reference_inner(
         }
         if used_v {
             let (verse, after, ph) = parse_number(tokens, j)?;
-            return Some((
-                make_match(
-                    canonical, 1, verse, tokens, book_start, after, 0.95, true, ph, book_ev,
-                ),
-                after,
-            ));
+            let mut m = make_match(
+                canonical, 1, verse, tokens, book_start, after, 0.95, true, ph, book_ev,
+            );
+            // THE CHAPTER IS RELAY'S, NOT THE SPEAKER'S — `RefMatch::chapter_heard`.
+            m.chapter_heard = false;
+            return Some((m, after));
         }
         let (n1, after1, ph1) = parse_number(tokens, i)?;
         let mut k = after1;
@@ -1512,6 +1583,10 @@ fn parse_reference_inner(
         let mut m = make_match(
             canonical, 1, n1, tokens, book_start, after1, base, used_kw, ph1, book_ev,
         );
+        // THE CHAPTER IS RELAY'S, NOT THE SPEAKER'S — `RefMatch::chapter_heard`. This
+        // is the line RG-301's wall event came through: *"from Jude 28"* reaches here,
+        // 28 becomes the VERSE, and the 1 is the book's own arithmetic.
+        m.chapter_heard = false;
         if !used_kw {
             // "jude four men came in" — the CHAPTER was supplied by Relay, not
             // heard. Every single-chapter book is also an ordinary English word.
@@ -1822,6 +1897,13 @@ fn make_match(
             _ => DetectionMethod::Direct,
         },
         matched_text: tokens[book_start..end].join(" "),
+        // TRUE here and cleared at the two sites that supply it, rather than passed
+        // in as a tenth argument: every other caller took its chapter from a number
+        // in the transcript, so the default is the common case. A future parse path
+        // that forgets this field claims the chapter was heard — which is only wrong
+        // if that path invents one, and there are exactly two such paths, both in
+        // the single-chapter branch below, both named at the line that clears it.
+        chapter_heard: true,
         // Set by `detect_direct`, which is the only place that knows where the
         // scan actually stopped once ranges have been absorbed.
         at_tail: false,
@@ -2298,12 +2380,41 @@ fn classify_num_word(w: &str) -> Option<NumWord> {
 /// Tracks the current on-screen verse so a bare "verse 4" resolves against the
 /// last book+chapter, and "next"/"back" step from it. Pure state — no IO. Fed
 /// by whatever verse actually fires.
+/// **HOW LONG A CITATION MAY STAY IN FLIGHT** — RG-318.
+///
+/// The field gap is 8.4 s (2072.8 s → 2081.2 s), and the completing window is then
+/// re-decoded several times as the rolling window grows, so the budget has to cover
+/// one STT window plus its partials rather than the gap alone. Fifteen seconds is
+/// `router::DEFAULT_DEBOUNCE_MS` (10 s) plus half again.
+///
+/// **It is a ceiling, not a lifetime.** Any window that leaves its own citation
+/// unfinished replaces the entry, and the only thing the entry can ever do is give
+/// an `UncertainBook` answer to a bare verse — so an entry that lingers costs a row
+/// on the operator's list and can never cost a wall. That is what makes a number
+/// here acceptable at all; if it could fire, it would need to be a fact rather than
+/// a budget.
+const IN_FLIGHT_MS: u64 = 15_000;
+
 #[derive(Debug, Clone, Default)]
 pub struct ContextMemory {
     current: Option<VerseRef>,
     /// Inclusive last verse of the passage being walked, if the current verse is
     /// part of a multi-verse range or whole chapter. `next` stops here.
     span_end: Option<i64>,
+    /// **A CITATION THE CHUNKER CUT IN HALF, and when it was heard** (RG-318).
+    ///
+    /// Not a second `current` and not a passage: nothing walks it, nothing is on a
+    /// screen because of it, and the only question it answers is *which book and
+    /// chapter does the bare verse at the start of THIS window belong to*. See
+    /// `chapter_in_flight` for the two shapes that produce one, and
+    /// `BareVerseSource::InFlight` for the field service.
+    ///
+    /// It lives here rather than beside the router's clocks because
+    /// `candidates_for_window` already receives this struct and nothing else it
+    /// receives is allowed to be stateful — and because it is the same kind of fact
+    /// as `current`: something Relay heard a moment ago, offered to a window that
+    /// cannot see it.
+    in_flight: Option<(VerseRef, u64)>,
 }
 
 impl ContextMemory {
@@ -2360,6 +2471,34 @@ impl ContextMemory {
 
     pub fn current(&self) -> Option<&VerseRef> {
         self.current.as_ref()
+    }
+
+    /// **RECORD WHAT THIS WINDOW LEFT UNFINISHED, AND EXPIRE WHAT THE LAST ONE
+    /// DID** — RG-318. Called once per window, after the window has been read.
+    ///
+    /// The expiry is HERE because this is the one place on the path with a clock:
+    /// `candidates_for_window` is pure over its inputs and must stay that way, so
+    /// giving it a stale entry to ignore would put the rule in two places. A window
+    /// that leaves nothing in flight does not clear the slot outright — the rolling
+    /// window is re-decoded several times a second and the first partial of the
+    /// completing window would otherwise throw the chapter away before the final
+    /// arrived — it lets it age out instead.
+    pub fn note_in_flight(&mut self, found: Option<VerseRef>, now_ms: u64) {
+        if let Some(r) = found {
+            self.in_flight = Some((r, now_ms));
+            return;
+        }
+        if let Some((_, at)) = &self.in_flight {
+            if now_ms.saturating_sub(*at) > IN_FLIGHT_MS {
+                self.in_flight = None;
+            }
+        }
+    }
+
+    /// The book and chapter a citation cut off by the chunker was in, if one is
+    /// still live. See `note_in_flight`.
+    pub fn in_flight(&self) -> Option<&VerseRef> {
+        self.in_flight.as_ref().map(|(r, _)| r)
     }
 
     /// The next verse in the passage (verse + 1), if a current exists and we
@@ -2555,61 +2694,50 @@ pub fn detect_clear(text: &str) -> bool {
 /// two moves forward through them: "we were in Romans 8, now turn to Luke 10,
 /// verse 32" means Luke.
 pub fn anchor_for_bare_verses(text: &str) -> Option<VerseRef> {
-    // **AN OPEN DEFECT LIVES HERE — RG-301, mechanism identified 2026-09-26, NOT
-    // FIXED.** Read this before changing the line below; the obvious fix is wrong and
-    // was tried.
+    // **AN ANCHOR MAY NOT LAUNDER RULE 10'S CAP — RG-301, closed 2026-09-28.**
     //
-    // This returns the last parse of ANY method, so a candidate rule 10 deliberately
-    // capped can still supply the book and chapter a bare verse hangs on — and a bare
-    // verse resolved against a window anchor is stamped `Direct` at 0.88 by
-    // `DetectionMethod::for_bare_verse`. The cap is laundered:
+    // This used to return the last parse of ANY kind and ignore everything about it,
+    // so a candidate rule 10 deliberately capped could still supply the book and
+    // chapter a bare verse hangs on — and a bare verse resolved against a window
+    // anchor is stamped `Direct` at 0.88 by `DetectionMethod::for_bare_verse`.
     //
     //   * Service 41, 2026-09-26 at 1197.6 s: *"…from Jude 28 and verse 7 to 28…"*
     //     parses as `Jude 1:28` `UncertainNumber` 0.45 — 28 read as the VERSE, because
     //     Jude has one chapter and the chapter 1 was SUPPLIED by Relay, not heard —
-    //     and `verse 7` then hung on it and put **Jude 1:7** on a congregation screen.
-    //     He was reading Job 28.
-    //   * The same shape put `Deuteronomy 28:1` up from an `UncertainBook` repair of
-    //     *"Deuteronomia"*. That one was right, which is how it went unnoticed.
+    //     and `verse 7` then hung on it and put **Jude 1:7** on a congregation screen,
+    //     over the top of a correct `Job 28:7` from the same sentence 2.4 s earlier.
+    //   * Service 41 at 3066.6 s put `Deuteronomy 28:1` up from an `UncertainBook`
+    //     repair of *"Deuteronomia"*. That one was right, which is how it went
+    //     unnoticed for a service.
     //
-    // **Filtering to `unattended_rank() > 0` is the obvious fix and it breaks rule
-    // 40's primary case.** FIELD F-1 is *"going through in Luke 10. If you read from
-    // verse 32"*: `Luke 10` is a keyword-less whole chapter, so it parses
-    // `UncertainNumber` 0.45, and filtering it out leaves the bare verse with no
-    // anchor at all — which is the wrong verse this function was written to prevent.
-    // `field_a_bare_verse_belongs_to_the_book_this_sentence_names` and
-    // `a_verse_hung_on_a_book_named_in_this_breath_is_heard` both fail on it.
+    // **TWO QUESTIONS, AND THE FIRST ONE IS NOT ABOUT CONFIDENCE.** Filtering to
+    // `unattended_rank() > 0` was the obvious fix, was tried, and was reverted: FIELD
+    // F-1 is *"going through in Luke 10. If you read from verse 32"*, and `Luke 10` is
+    // a keyword-less whole chapter that parses `UncertainNumber` 0.45 too. Filtering
+    // on the method leaves that bare verse with no anchor at all, which is the wrong
+    // verse this function exists to prevent — `Proverbs 3:32` on a wall.
     //
-    // The real distinction is not *may this parse fire* but **was the CHAPTER heard
-    // or supplied**: `Luke 10` heard its chapter, `Jude 1:28` had chapter 1 invented
-    // for it. Nothing in `RefMatch` records that today, which is why this is still
-    // open rather than fixed.
+    //   1. **THE CHAPTER MUST HAVE BEEN HEARD** (`RefMatch::chapter_heard`). That is
+    //      what separates the two: `Luke 10` heard its chapter, `Jude 1:28` had
+    //      chapter 1 invented out of the book's own arithmetic. It is a fact about
+    //      the parse, not a judgement about it, so a cautious dial cannot erase it
+    //      and the calibrator cannot drift it.
+    //   2. **THE BOOK MUST HAVE BEEN HEARD.** `UncertainBook` is that sentence
+    //      already (DECISIONS §106) — a phonetic repair, or an ordinary English word
+    //      that is also a one-token alias with no keyword to rescue it. Both are
+    //      guesses about the acoustics, and a guess may not become the authority a
+    //      second guess hangs on. `UncertainNumber` is deliberately NOT refused here,
+    //      because that is F-1 and F-1 is the case the anchor is for.
     //
-    // This took the last parse of ANY kind and ignored its method, which laundered
-    // rule 10's cap: `UncertainNumber` and `UncertainBook` are refused by
-    // `Router::decide` at any score, but a bare verse hung on one is stamped
-    // `Direct` at 0.88 by `DetectionMethod::for_bare_verse` and fires unattended.
-    //
-    // Service 41, 2026-09-26: *"…from Jude 28 and verse 7 to 28…"* parses as
-    // `Jude 1:28` `UncertainNumber` 0.45 — 28 read as the VERSE, because Jude has
-    // one chapter — and `verse 7` then hung on it and put **Jude 1:7** on a
-    // congregation's screen. He was reading Job 28. The same window shape put
-    // `Deuteronomy 28:1` up from an `UncertainBook` repair of *"Deuteronomia"*; that
-    // one was right, which is why the mechanism went unnoticed.
-    //
-    // `unattended_rank() > 0` is the question, not `== Direct`: it is the same test
-    // `pipeline::better` uses for what may reach a wall, so the two cannot drift, and
-    // it admits `Reading` — a verse Relay HEARD being read is a sound anchor for the
-    // verse number spoken beside it.
-    //
-    // A window with no firable parse falls through to the next authority in
+    // A window left with no admissible parse falls through to the next authority in
     // `resolve_bare_verse_with_source` exactly as if nothing had parsed: a stated
     // chapter resolves to nothing (rule 40's second half), and memory answers only
     // when the words do not say — labelled `UncertainBook`, so it is offered and
-    // never fired (rule 40's third half).
+    // never fired (rule 40's third half). That is the Jude window's new outcome, and
+    // it is the outcome RG-301's second instance asked for: it must not reach a wall.
     detect_direct(text)
         .into_iter()
-        .next_back()
+        .rfind(|m| m.chapter_heard && m.method != DetectionMethod::UncertainBook)
         .map(|m| m.reference)
 }
 
@@ -2660,6 +2788,25 @@ pub fn chapter_named(text: &str) -> bool {
 pub enum BareVerseSource {
     /// A reference named in this window: "Luke 10 … verse 32". The book was said.
     Anchor,
+    /// **A citation the CHUNKER cut in half** — the book and chapter were said one
+    /// window ago and the sentence plainly had not finished. RG-318.
+    ///
+    /// Service 42, 2026-09-27, the offering reading: *"…before we give Genesis
+    /// chapter 8 and verse"* at 2072.8 s, then *"Verse 22. This is God's
+    /// commandment…"* at 2081.2 s, and the operator fired `Genesis 8:22` by hand at
+    /// 2098.5 s. Relay held both halves eight seconds apart and could not join them,
+    /// because the anchor is window-local: memory reached back EIGHTEEN MINUTES to
+    /// `Ephesians 5:20` while the right chapter sat in the previous window.
+    ///
+    /// Rule 40's ordering already implies this — a book named one breath ago beats
+    /// memory from eighteen minutes ago — so it sits between the two. It is
+    /// deliberately NOT `Direct`: the words did say it, but they said it in a window
+    /// this one cannot see, and `chapter_in_flight` is a judgement about where a
+    /// sentence stopped rather than a parse of a complete one. `for_bare_verse`
+    /// labels it `UncertainBook`, so it is offered and can never reach a wall — which
+    /// is all three field instances asked for, since all three were correctly refused
+    /// and the cost was that the right verse was never on the list at all.
+    InFlight,
     /// The passage already on the screen: "and verse eighteen". The book was not
     /// said in this breath; Relay assumed it.
     Memory,
@@ -2677,22 +2824,147 @@ pub fn resolve_bare_verse_with_source(
     text: &str,
     n: i64,
     anchor: Option<&VerseRef>,
+    in_flight: Option<&VerseRef>,
     memory: Option<&VerseRef>,
 ) -> Option<(VerseRef, BareVerseSource)> {
-    if let Some(a) = anchor {
-        return Some((
+    let hang = |r: &VerseRef, src| {
+        Some((
             VerseRef {
-                book: a.book.clone(),
-                chapter: a.chapter,
+                book: r.book.clone(),
+                chapter: r.chapter,
                 verse: n,
             },
-            BareVerseSource::Anchor,
-        ));
+            src,
+        ))
+    };
+    if let Some(a) = anchor {
+        return hang(a, BareVerseSource::Anchor);
+    }
+    // ── A CITATION THE CHUNKER CUT IN HALF (RG-318) ───────────────────────────
+    //
+    // BEFORE the stated-chapter refusal below, and the order is the point. Rule
+    // 40's second half declines when the window STATES a chapter that no parsed
+    // reference accounts for, because pairing a heard chapter with a REMEMBERED
+    // book is a lie. This is not that: the book and the chapter were both heard, in
+    // the same sentence, one window ago — the chunker is what separated them from
+    // the verse. `BareVerseSource::InFlight` has the field evidence, and the label
+    // caps it at Suggest, so nothing this rule answers can reach a wall.
+    if let Some(f) = in_flight {
+        return hang(f, BareVerseSource::InFlight);
     }
     if chapter_named(text) {
         return None;
     }
     memory.cloned().map(|m| (m, BareVerseSource::Memory))
+}
+
+/// **A CITATION THIS WINDOW PLAINLY DID NOT FINISH — RG-318.**
+///
+/// The book and chapter of a reference that runs off the END of the window with the
+/// sentence still open, so the verse number is already on its way in the next
+/// window. `None` for everything else, which is nearly every window.
+///
+/// Service 42, 2026-09-27, the offering reading, verbatim from `transcripts`:
+///
+/// ```text
+///   2072.8  "Let's read from God's Word before we give Genesis chapter 8 and verse"
+///   2081.2  "Verse 22. This is God's commandment. It says, While the earth remained,"
+///   2098.5  → the operator fired Genesis 8:22 BY HAND
+/// ```
+///
+/// Every existing guard worked. `parse_reference` refuses a dangling verse marker
+/// outright (RG-315), so no `Genesis 8:1` went up; the second window's bare
+/// *"Verse 22"* fell through to memory, which still held `Ephesians 5:20` from
+/// eighteen minutes earlier, and was capped at Suggest per rule 40's third half.
+/// **`Genesis 8:22` was never offered at all**, three times in one service.
+///
+/// ── THE TWO SHAPES ────────────────────────────────────────────────────────────
+///
+///  * **A DANGLING VERSE MARKER.** *"Genesis chapter 8 and verse"* — the marker was
+///    consumed and the number never came. `parse_reference` returns `None`.
+///  * **THE CHAPTER NUMBER IS THE LAST THING SAID.** *"In John chapter 12,"*,
+///    *"…is wisdom. Ecclesiastes 10."* — `parse_reference` gives 0.45
+///    `UncertainNumber` rather than firing verse 1 (RG-315, from the other side).
+///
+/// **The second shape was NARROWER for one commit, and widening it is measured
+/// rather than reasoned.** It required the chapter KEYWORD, on the argument that
+/// *"and then we went to Romans 8"* is an ordinary thing to say about a chapter and
+/// promises no verse. RG-320's second instance is the counter-evidence: service 42 at
+/// 20079.8 s, *"Knowing how to do it is wisdom. Ecclesiastes 10."* — no keyword —
+/// then *"And verse 15. It said, the labor of the foolish…"* at 20088.0 s, and the
+/// right verse `Ecclesiastes 10:15` was not on the operator's list at all while
+/// memory's `Matthew 7:15` sat at the top of it.
+///
+/// What the wider rule costs, over service 42's 3,161 lines: **8 windows end
+/// mid-citation instead of 3, auto-fires unchanged at 153, and four of the five extra
+/// windows are never consulted at all** — the next window names its own reference in
+/// three of them (`Psalm 112`, `Job 22`, `Matthew 1 verse 7`) and carries no bare
+/// verse in the fourth. The fifth is the RG-320 window. The carry is read only where
+/// a bare verse has no anchor of its own, so the surface it can be wrong on is much
+/// smaller than the set it fires on.
+///
+/// A book the parser had to REPAIR is excluded: a guess about the acoustics may not
+/// survive the window that made it, which is `anchor_for_bare_verses`' second
+/// question said about a different clock.
+///
+/// The LAST such citation in the window wins, for the same reason the anchor takes
+/// the last parse: it is the one the sentence was still in.
+pub fn chapter_in_flight(text: &str) -> Option<VerseRef> {
+    let norm = normalize(text);
+    let tokens: Vec<&str> = norm.split_whitespace().collect();
+    let mut found: Option<VerseRef> = None;
+    let mut i = 0;
+    while i < tokens.len() {
+        let Some((canonical, book_end, book_ev)) = match_book(&tokens, i) else {
+            i += 1;
+            continue;
+        };
+        i = book_end;
+        if book_ev == BookEvidence::Repaired {
+            continue;
+        }
+        let mut j = book_end;
+        if tokens.get(j).is_some_and(|t| is_chapter_word(t)) {
+            j += 1;
+            j = skip_linkers(&tokens, j);
+        }
+        let Some((chapter, after, _phonetic)) = parse_number(&tokens, j) else {
+            continue;
+        };
+        i = after;
+        // A chapter the book cannot have is not a citation in flight; it is a
+        // misparse, and RG-322's reasoning says an impossibility is evidence rather
+        // than something to carry forward.
+        if chapter < 1 || chapter as usize > chapter_count(canonical) {
+            continue;
+        }
+        // Everything between the chapter and the end of the window must be glue —
+        // a connector ("and", ","), a linker, or a verse marker. One real word and
+        // the sentence moved on to something else.
+        let mut k = after;
+        let mut verse_marker = false;
+        while let Some(t) = tokens.get(k) {
+            if is_verse_word(t) {
+                verse_marker = true;
+            } else if !(is_ref_connector(t) || numerals().linkers.contains(*t)) {
+                break;
+            }
+            k += 1;
+        }
+        if k < tokens.len() {
+            continue;
+        }
+        // Either shape: a dangling verse MARKER anywhere before the end, or the
+        // chapter NUMBER itself being the last thing said.
+        if verse_marker || after >= tokens.len() {
+            found = Some(VerseRef {
+                book: canonical.to_string(),
+                chapter,
+                verse: 1,
+            });
+        }
+    }
+    found
 }
 
 /// Did this window say a reference of its own?
@@ -6440,7 +6712,7 @@ mod r4_audit {
             verse: 10,
         };
         assert_eq!(
-            resolve_bare_verse_with_source(heard, 10, None, Some(&memory)),
+            resolve_bare_verse_with_source(heard, 10, None, None, Some(&memory)),
             None,
             "FIELD F-8 reproduced: a verse was resolved against a chapter the \
              preacher did not say, while naming a different one out loud"
@@ -6462,7 +6734,7 @@ mod r4_audit {
             verse: 18,
         };
         assert_eq!(
-            resolve_bare_verse_with_source(heard, 18, None, Some(&memory)),
+            resolve_bare_verse_with_source(heard, 18, None, None, Some(&memory)),
             Some((memory.clone(), BareVerseSource::Memory)),
             "mid-passage 'verse eighteen' must still resolve against the passage on screen"
         );
@@ -6480,7 +6752,7 @@ mod r4_audit {
             chapter: 92,
             verse: 10,
         };
-        let got = resolve_bare_verse_with_source(heard, 10, Some(&anchor), Some(&memory))
+        let got = resolve_bare_verse_with_source(heard, 10, Some(&anchor), None, Some(&memory))
             .map(|(r, _)| r)
             .expect("the window names a book, so it resolves");
         assert_eq!(got.reference_book_chapter_verse(), "1 Peter 5:10");
@@ -7727,6 +7999,62 @@ const SELF_EVIDENT_RUN: usize = 7;
 /// "wisdom is the principal thing" and "a solitary place and there".
 const PHRASE_RARE_FRACTION: f32 = 0.005;
 
+/// **THE SAME QUESTION, ASKED FOR A WALL INSTEAD OF FOR A LIST — RG-307.**
+///
+/// A run may reach `READING_RUN_WORDS`, be held by exactly one verse, and still be
+/// nothing but stock liturgical formula. Service 40, 2026-09-25 at 15806 s:
+/// *"…any one of us. In the name of the Lord"* shares eight words with
+/// **1 Samuel 20:42**, `sole` is satisfied, and that verse went to a congregation
+/// at 0.69 for a preacher who was not reading anything.
+///
+/// ── WHY THIS IS NOT `PHRASE_RARE_FRACTION`, MEASURED ──────────────────────────
+///
+/// Reusing 0.005 (a cap of 155 verses) was the obvious fix and it is far too
+/// tight. `print_every_auto_fire` over service 42's 3,161 real transcript lines:
+/// **153 auto-fires → 146**, and SIX of the seven removed are verses the preacher
+/// was reading aloud, word for word — `Job 22:22`, `Psalms 41:2`,
+/// `Deuteronomy 28:1`, `2 Timothy 1:7`, `John 7:37`, `1 Corinthians 2:13`. Reading
+/// the bundled KJV back through `quoted` lost 25 of 1,510 readings the same way.
+/// **Scripture prose is made of ordinary words**; one rare word per eight is a
+/// property of poetry, not of narrative.
+///
+/// ── WHERE THE LINE ACTUALLY IS ────────────────────────────────────────────────
+///
+/// `can_a_rarity_bar_separate_a_formula_from_a_reading` prints the document
+/// frequency of every word of all eight runs. The rarest word of each:
+///
+/// | run | rarest word's df |
+/// |---|---|
+/// | the FORMULA (`1 Samuel 20:42`) | **867** (`name`) |
+/// | `Genesis 28:14` | 168 (`families`) |
+/// | `Job 22:22` | 169 (`receive`) |
+/// | `John 7:37` | 201 (`cried`) |
+/// | `Deuteronomy 28:1` | 217 (`above`) |
+/// | `2 Timothy 1:7` | 267 (`power`) |
+/// | `Psalms 41:2` | 291 (`blessed`) |
+/// | `1 Corinthians 2:13` | **487** (`speak`) |
+///
+/// So the populations do separate, and anywhere from **488 to 866** divides them.
+/// **0.02 is 622 of 31,102.**
+///
+/// **`1 Corinthians 2:13` is the row that decides it, and the first draft of that
+/// table had it wrong.** Its run is *"which things also we speak not in the"* — the
+/// preacher said *"man's wisdom teaches"* where the KJV has *"words which man's
+/// wisdom teacheth"*, so the run BREAKS at `wisdom` and never reaches the rare word
+/// a reader would assume is in it. Guessing the longer phrase put the row at 226,
+/// which made 0.015 look correct; at 0.015 the replay lost that fire. **The run the
+/// index measures is the only run there is** — print it (`explain_one_window`) and
+/// never reconstruct it.
+///
+/// **Eight runs is eight runs.** Two instruments are what make this more than that,
+/// and at 0.02 both are unmoved: `print_every_auto_fire` over service 42 gives
+/// **153 auto-fires before and after, 0 gained, 0 lost**, and
+/// `read_the_bible_back_and_count_wrong_verses` gives **1,510 correct before and
+/// after, 0 wrong**. The bar is paid for by the one wrong verse it was written for
+/// and by nothing else either instrument can see. Anybody moving it should re-run
+/// both before quoting a number.
+const READING_RARE_FRACTION: f32 = 0.02;
+
 /// The shortest run that may be treated as the preacher READING the verse, and
 /// so put on a wall without anybody pressing anything.
 ///
@@ -7886,6 +8214,25 @@ pub struct PhraseHit {
     /// is still OFFERED: John 3:15 is a perfectly reasonable thing for the
     /// operator to want, and a silent discard is a different lie.
     pub sole: bool,
+    /// **Does this run contain a word rare enough to name a verse?** RG-307.
+    ///
+    /// `has_a_rare_word` against `PHRASE_RARE_FRACTION` — present in at most 0.5%
+    /// of verses, about 155 of the bundled KJV.
+    ///
+    /// `quoted` has always asked this BELOW `SELF_EVIDENT_RUN`, on the reasoning
+    /// that a long run is its own corroboration. Service 40, 2026-09-25 at 15806 s
+    /// says that reasoning is true of OFFERING and false of FIRING: *"…any one of
+    /// us. In the name of the Lord"* shares an eight-word run with
+    /// **1 Samuel 20:42**, the run is `sole`, and Relay put that verse on a screen
+    /// unattended at 0.69. The only overlap is the formula, which appears in
+    /// hundreds of verses and identifies none of them. **Uniqueness of a token
+    /// string is not evidence that this verse is being read aloud.**
+    ///
+    /// So the answer is computed for every hit and carried, and
+    /// `for_quotation` asks it before promoting anything to `Reading`. One
+    /// computation, two readers, so the two uses cannot drift — and a hit that
+    /// fails it is still offered exactly as before.
+    pub rare_for_a_wall: bool,
 }
 
 /// Every contiguous word-run the KJV shares with a sentence, found by a sorted
@@ -8093,9 +8440,51 @@ impl PhraseIndex {
         }
     }
 
-    /// Is any word of this run rare enough to stand as evidence on its own?
-    fn has_a_rare_word(&self, run: &[u32]) -> bool {
-        let cap = ((self.refs.len() as f32 * PHRASE_RARE_FRACTION) as u32).max(1);
+    /// **HOW MANY VERSES EACH OF THESE WORDS APPEARS IN**, in the order they were
+    /// said, and `0` for a word this corpus does not have.
+    ///
+    /// Built for RG-307, where the question *"is this run rare enough to be a verse
+    /// being read"* had to be answered with numbers rather than intuition. Every
+    /// rarity rule in this module is a fraction of `refs.len()` compared against
+    /// these figures, so this is the one thing that makes such a rule arguable —
+    /// and it is what showed that **no fraction separates** a stock formula from
+    /// six real readings, because the formula's rarest word is commoner than
+    /// theirs in only some of the six.
+    /// `#[cfg(test)]`, not `#[allow(dead_code)]`: this reads the index and changes
+    /// nothing, so a shipped binary that cannot call it is strictly better, and
+    /// unlike `Doubted::was` it is not a field the live path fills.
+    #[cfg(test)]
+    pub fn document_frequencies(&self, phrase: &str) -> Vec<(String, u32)> {
+        phrase_words(phrase)
+            .into_iter()
+            .map(|w| {
+                let df = self
+                    .ids
+                    .get(&w)
+                    .and_then(|id| self.df.get(*id as usize))
+                    .copied()
+                    .unwrap_or(0);
+                (w, df)
+            })
+            .collect()
+    }
+
+    /// How many verses this index holds — the denominator every rarity fraction is
+    /// taken against.
+    #[cfg(test)]
+    pub fn verse_count(&self) -> usize {
+        self.refs.len()
+    }
+
+    /// Is any word of this run present in at most `fraction` of the corpus?
+    ///
+    /// `fraction` is a PARAMETER since RG-307, because the same question is asked
+    /// twice for two different jobs and the right answer is not the same number.
+    /// `PHRASE_RARE_FRACTION` decides whether a short run may be OFFERED at all;
+    /// `READING_RARE_FRACTION` decides whether a long run may reach a WALL. Both
+    /// caps are named where they are defined and both were measured.
+    fn has_a_rare_word(&self, run: &[u32], fraction: f32) -> bool {
+        let cap = ((self.refs.len() as f32 * fraction) as u32).max(1);
         run.iter().any(|id| {
             self.df
                 .get(*id as usize)
@@ -8168,7 +8557,8 @@ impl PhraseIndex {
             .into_iter()
             .filter(|(_, (n, i))| {
                 *n >= MIN_RUN_WORDS
-                    && (*n >= SELF_EVIDENT_RUN || self.has_a_rare_word(&q[*i..*i + *n]))
+                    && (*n >= SELF_EVIDENT_RUN
+                        || self.has_a_rare_word(&q[*i..*i + *n], PHRASE_RARE_FRACTION))
             })
             .map(|(vi, (n, i))| {
                 (
@@ -8176,6 +8566,12 @@ impl PhraseIndex {
                         r: self.refs[vi as usize].clone(),
                         run: n,
                         phrase: spoken[i..i + n].join(" "),
+                        // RG-307. Computed for EVERY hit, not only the short ones
+                        // the filter above needed it for: `for_quotation` asks the
+                        // same question before promoting a run to a wall, and a
+                        // second computation is a second place for the answer to
+                        // drift. See `PhraseHit::rare`.
+                        rare_for_a_wall: self.has_a_rare_word(&q[i..i + n], READING_RARE_FRACTION),
                         // Filled in below, once the whole set is known.
                         sole: false,
                     },
@@ -8686,7 +9082,7 @@ mod phrase_bench {
                 continue;
             }
             for h in idx.quoted(text, None, 3) {
-                let method = DetectionMethod::for_quotation(h.run, h.sole);
+                let method = DetectionMethod::for_quotation(h.run, h.sole, h.rare_for_a_wall);
                 if method != DetectionMethod::Reading {
                     if h.run >= READING_RUN_WORDS && &h.r != r {
                         ties_refused += 1;
@@ -8834,7 +9230,7 @@ mod field_2026_09_20 {
             verse: 1,
             ..on_the_wall()
         };
-        let got = resolve_bare_verse_with_source(HEARD, 1, None, Some(&memory));
+        let got = resolve_bare_verse_with_source(HEARD, 1, None, None, Some(&memory));
         assert_eq!(
             got,
             Some((
@@ -8853,7 +9249,8 @@ mod field_2026_09_20 {
     fn a_verse_hung_on_a_book_named_in_this_breath_is_heard() {
         let heard = "going through in Luke 10. If you read from verse 32";
         let anchor = anchor_for_bare_verses(heard).expect("Luke 10 parses");
-        let got = resolve_bare_verse_with_source(heard, 32, Some(&anchor), Some(&on_the_wall()));
+        let got =
+            resolve_bare_verse_with_source(heard, 32, Some(&anchor), None, Some(&on_the_wall()));
         assert_eq!(got.map(|(_, s)| s), Some(BareVerseSource::Anchor));
     }
 
@@ -8951,22 +9348,29 @@ mod reading_tests {
     fn only_a_long_sole_run_is_a_reading() {
         // Long enough and held by one verse → Relay heard the verse being read.
         assert_eq!(
-            DetectionMethod::for_quotation(READING_RUN_WORDS, true),
+            DetectionMethod::for_quotation(READING_RUN_WORDS, true, true),
             DetectionMethod::Reading
         );
         assert_eq!(
-            DetectionMethod::for_quotation(30, true),
+            DetectionMethod::for_quotation(30, true, true),
             DetectionMethod::Reading
         );
         // One word short of the floor → still a quotation, still capped.
         assert_eq!(
-            DetectionMethod::for_quotation(READING_RUN_WORDS - 1, true),
+            DetectionMethod::for_quotation(READING_RUN_WORDS - 1, true, true),
             DetectionMethod::Quoted
         );
         // Long, but two verses hold the same words → Relay would be choosing
         // between them, which is a guess about which and not a hearing.
         assert_eq!(
-            DetectionMethod::for_quotation(30, false),
+            DetectionMethod::for_quotation(30, false, true),
+            DetectionMethod::Quoted
+        );
+        // Long, sole, and made entirely of words the corpus uses everywhere → a
+        // formula, not a reading (RG-307). `a_formula_is_not_a_reading` holds the
+        // field window this came from; this states the rule on its own.
+        assert_eq!(
+            DetectionMethod::for_quotation(30, true, false),
             DetectionMethod::Quoted
         );
         // And the floor is above the length at which a run stands on its own as a
@@ -9055,7 +9459,7 @@ mod reading_tests {
         let sixteen = hits.iter().find(|h| h.r.verse == 16).expect("John 3:16");
         assert!(sixteen.sole, "the verse actually read was not sole");
         assert_eq!(
-            DetectionMethod::for_quotation(sixteen.run, sixteen.sole),
+            DetectionMethod::for_quotation(sixteen.run, sixteen.sole, sixteen.rare_for_a_wall),
             DetectionMethod::Reading
         );
         if let Some(fifteen) = hits.iter().find(|h| h.r.verse == 15) {
@@ -9066,7 +9470,7 @@ mod reading_tests {
             // Still OFFERED. A silent discard is a different lie, and the operator
             // may genuinely want the neighbouring verse.
             assert_eq!(
-                DetectionMethod::for_quotation(fifteen.run, fifteen.sole),
+                DetectionMethod::for_quotation(fifteen.run, fifteen.sole, fifteen.rare_for_a_wall),
                 DetectionMethod::Quoted
             );
         }
@@ -9540,7 +9944,7 @@ mod citation_doubt {
     fn run<'a>(r: &'a VerseRef, words: usize) -> Claim<'a> {
         Claim {
             r,
-            method: DetectionMethod::for_quotation(words, true),
+            method: DetectionMethod::for_quotation(words, true, true),
             verse_end: None,
             whole_chapter: false,
             run: Some((words, true)),
@@ -9861,7 +10265,7 @@ mod citation_doubt {
             said(&spoken),
             Claim {
                 r: &quoted,
-                method: DetectionMethod::for_quotation(20, false),
+                method: DetectionMethod::for_quotation(20, false, true),
                 verse_end: None,
                 whole_chapter: false,
                 run: Some((20, false)),
@@ -10076,8 +10480,6 @@ mod the_anchor_may_not_launder_a_cap {
         "And I saw in my Bible, Deuteronomia, 28 verse 1 If you were dealing with my voice and was able to do what I commanded,";
 
     #[test]
-    #[ignore = "RG-301 is OPEN: the obvious filter breaks rule 40's FIELD F-1. See \
-                anchor_for_bare_verses for why, and what a real fix needs."]
     fn a_window_whose_only_parse_is_capped_offers_no_anchor() {
         for (label, heard) in [("Jude", JUDE), ("Deuteronomia", DEUT)] {
             let parses: Vec<_> = detect_direct(heard)
@@ -10105,7 +10507,6 @@ mod the_anchor_may_not_launder_a_cap {
     }
 
     #[test]
-    #[ignore = "RG-301 is OPEN — see the sibling test and anchor_for_bare_verses."]
     fn the_last_firable_parse_wins_not_the_last_parse_of_any_kind() {
         // A window can hold both. "Romans 8 verse 28 ... Jude 28" must anchor on
         // Romans, not on the capped Jude that comes after it.
@@ -10114,6 +10515,304 @@ mod the_anchor_may_not_launder_a_cap {
             a.as_ref()
                 .is_some_and(|r| r.chapter == 8 && r.book == "Romans"),
             "the capped later parse won: {a:?}"
+        );
+    }
+}
+
+/// **AN IMPOSSIBILITY IS EVIDENCE AGAINST THE REPAIR THAT MADE IT — RG-322.**
+///
+/// Service 42, 2026-09-27 at 20525.4 s, watched live. The preacher said *"Job 29
+/// verse 4 to 17"* and whisper gave it twice, both wrong: *"June 29"* and
+/// *"Jude 29"*. `fuzzy_book` repaired `june` to **Jude** — which has ONE chapter,
+/// so there is no 29 to have a verse 4 in, `verse_id` came back NULL, and three
+/// rows rendered on the operator's list with no reference in them at all.
+///
+/// **`Job 29` is valid and `Jude 29` is not, and the correct book was one edit
+/// away.** That is a discriminator the repair was throwing on the floor. Nothing
+/// in this file checked the bound on an ordinary parsed reference: `chapter_count`
+/// and `verse_count` are both here, and `split_run_into_chapter_verse` was their
+/// only caller.
+///
+/// The check is scoped to a REPAIRED book on purpose. A book somebody plainly said
+/// with an impossible number after it is a different claim — Relay heard the book,
+/// and refusing to parse it at all would be Relay deciding it knows better. That
+/// half is handled where the corpus is, by not offering a row whose verse does not
+/// resolve (`main::emit_detections`), which is also what stops the blank.
+/// **A RUN MADE ENTIRELY OF LITURGICAL FORMULA IS NOT A VERSE BEING READ —
+/// RG-307.**
+///
+/// Service 40, 2026-09-25 at 15806 s, watched live. The preacher said *"because of
+/// that, evil will befall them. Evil will not befall any one of us. In the name of
+/// the Lord"* and Relay auto-fired **1 Samuel 20:42** — *"And Jonathan said to
+/// David, Go in peace, forasmuch as we have sworn both of us in the name of the
+/// LORD…"* — as a `Reading`, at 0.69, unattended.
+///
+/// The shared run is **eight words**, *"of us in the name of the lord"*, and it is
+/// `sole`: that exact sequence really does occur in one verse of the bundled KJV.
+/// Every guard was satisfied and the answer was still nonsense, because **the
+/// uniqueness of a token string is not evidence that this verse is being read
+/// aloud.** A run of pure formula carries no information about WHICH verse,
+/// however unique the exact sequence happens to be.
+///
+/// The confidence is what identifies the window: `quoted_confidence` is
+/// `0.60 + 0.03 × (run − 5)`, so 0.69 is a run of exactly eight, which is how the
+/// field text below was reconstructed from the register's ellipsis and then
+/// verified to reproduce the fire.
+///
+/// **`PHRASE_RARE_FRACTION` was already the answer and was being asked one
+/// question too early.** `quoted` applies it only BELOW `SELF_EVIDENT_RUN`, on the
+/// theory that a long run is its own corroboration — which is true of *offering*
+/// and, this window says, false of *firing*. The rarity test now also gates the
+/// promotion to `Reading`, and `PhraseHit::rare` carries the answer so the two
+/// uses cannot drift apart.
+///
+/// It can only ever REMOVE a promotion, never add one, so no verse gains a wall.
+#[cfg(test)]
+mod a_formula_is_not_a_reading {
+    use super::*;
+
+    /// Reconstructed from the register's quote plus its 0.69, then verified to
+    /// reproduce `1 Samuel 20:42 Reading` against the bundled KJV.
+    const HEARD: &str = "because of that, evil will befall them. Evil will not befall \
+                         any one of us. In the name of the Lord";
+
+    fn index() -> PhraseIndex {
+        PhraseIndex::build(&crate::eval::kjv_corpus())
+    }
+
+    #[test]
+    fn the_field_run_is_still_found_and_is_still_sole() {
+        // PRECONDITION. If this stops holding, the test below passes for a reason
+        // that has nothing to do with the rule, which is how a guard quietly
+        // becomes decoration.
+        let hits = index().quoted(HEARD, None, crate::QUOTED_SUGGESTIONS_MAX);
+        let h = hits
+            .iter()
+            .find(|h| h.r.book == "1 Samuel" && h.r.chapter == 20 && h.r.verse == 42)
+            .unwrap_or_else(|| {
+                panic!("the field run is gone, so nothing below is a test: {hits:?}")
+            });
+        assert_eq!(
+            h.run, 8,
+            "the run length is what makes 0.69 the field figure"
+        );
+        assert!(h.sole, "the sole rule was satisfied — that is the finding");
+    }
+
+    #[test]
+    fn a_formula_run_may_be_offered_and_may_never_reach_a_wall() {
+        let hits = index().quoted(HEARD, None, crate::QUOTED_SUGGESTIONS_MAX);
+        let h = hits
+            .iter()
+            .find(|h| h.r.book == "1 Samuel")
+            .expect("precondition: the run is found");
+        assert!(
+            !h.rare_for_a_wall,
+            "“of us in the name of the lord” has no word rare enough to name a verse"
+        );
+        let method = DetectionMethod::for_quotation(h.run, h.sole, h.rare_for_a_wall);
+        assert_eq!(
+            method,
+            DetectionMethod::Quoted,
+            "a stock formula reached a congregation unattended"
+        );
+        assert_eq!(
+            method.unattended_rank(),
+            0,
+            "the whole point is that it cannot reach a wall"
+        );
+    }
+
+    /// **CAN ANY RARITY BAR SEPARATE A FORMULA FROM A READING?** The measurement
+    /// that decided RG-307, printed rather than argued.
+    ///
+    /// `cargo test --release can_a_rarity_bar_separate_a_formula_from_a_reading --
+    /// --ignored --nocapture`
+    ///
+    /// The left column is the eight-word formula run that put `1 Samuel 20:42` on a
+    /// congregation's screen. The rest are the SEVEN auto-fires that a rarity gate
+    /// on `Reading` removed from one real service (service 42, `print_every_auto_fire`,
+    /// 153 → 146) — and six of the seven are verses the preacher was genuinely
+    /// reading aloud, verbatim.
+    ///
+    /// A rarity bar can only work if the formula's rarest word is commoner than
+    /// every reading's rarest word. This prints both so the overlap is a fact.
+    #[test]
+    #[ignore]
+    fn can_a_rarity_bar_separate_a_formula_from_a_reading() {
+        let idx = index();
+        println!("\n  {} verses in the index", idx.verse_count());
+        println!(
+            "  PHRASE_RARE_FRACTION = {PHRASE_RARE_FRACTION} → cap {}",
+            ((idx.verse_count() as f32 * PHRASE_RARE_FRACTION) as u32).max(1)
+        );
+        // (what it is, the run as the index measured it) — the formula first, then
+        // the readings the gate removed from service 42.
+        const RUNS: &[(&str, &str)] = &[
+            ("FORMULA  1 Samuel 20:42", "of us in the name of the lord"),
+            (
+                "reading  Job 22:22",
+                "receive i pray thee the law from his mouth",
+            ),
+            (
+                "reading  Psalms 41:2",
+                "and he shall be blessed upon the earth",
+            ),
+            (
+                "reading  Genesis 28:14",
+                "and in thy seed shall all the families of",
+            ),
+            (
+                "reading  Deuteronomy 28:1",
+                "on high above all nations of the earth",
+            ),
+            (
+                "reading  2 Timothy 1:7",
+                "of fear of power and of love and of a",
+            ),
+            (
+                "reading  John 7:37",
+                "jesus stood and cried saying if any man",
+            ),
+            // THE RUN THE INDEX MEASURES, not the longer one a reader would guess
+            // at: the preacher said *"man's wisdom teaches"* where the KJV has
+            // *"words which man's wisdom teacheth"*, so the run BREAKS at `wisdom`.
+            // The first draft of this table guessed the longer phrase, which made
+            // this row look 226-rare when the real run carries no rare word at all —
+            // and that row is the one that decides the answer.
+            (
+                "reading  1 Corinthians 2:13",
+                "which things also we speak not in the",
+            ),
+        ];
+        for (label, run) in RUNS {
+            let dfs = idx.document_frequencies(run);
+            let rarest = dfs.iter().filter(|(_, d)| *d > 0).map(|(_, d)| *d).min();
+            println!("\n  {label}  rarest df = {rarest:?}");
+            println!("     {dfs:?}");
+        }
+        println!();
+    }
+
+    #[test]
+    fn a_verse_actually_being_read_still_reaches_the_wall() {
+        // THE OPPOSITE MISTAKE, and the reason this rule has to be measured rather
+        // than reasoned: a reading whose words are all ordinary would be silenced
+        // too. These are real verses read back verbatim, chosen because their
+        // wording is plain.
+        // NOT Psalms 23:1 — *"The Lord is my shepherd; I shall not want"* normalises
+        // to SEVEN words, one short of `READING_RUN_WORDS`, so it was never a
+        // reading and asserting that it is one would be a test that had never
+        // passed. Found by writing it and watching it fail for the wrong reason.
+        for (heard, book, chapter, verse) in [
+            (
+                "He maketh me to lie down in green pastures: he leadeth me beside the \
+                 still waters.",
+                "Psalms",
+                23,
+                2,
+            ),
+            (
+                "For God so loved the world, that he gave his only begotten Son",
+                "John",
+                3,
+                16,
+            ),
+            (
+                "The Lord shall preserve thee from all evil: he shall preserve thy soul.",
+                "Psalms",
+                121,
+                7,
+            ),
+        ] {
+            let idx = index();
+            let hits = idx.quoted(heard, None, crate::QUOTED_SUGGESTIONS_MAX);
+            let h = hits
+                .iter()
+                .find(|h| h.r.book == book && h.r.chapter == chapter && h.r.verse == verse)
+                .unwrap_or_else(|| {
+                    panic!("{book} {chapter}:{verse} was not found at all: {hits:?}")
+                });
+            assert_eq!(
+                DetectionMethod::for_quotation(h.run, h.sole, h.rare_for_a_wall),
+                DetectionMethod::Reading,
+                "a verse read aloud verbatim stopped reaching the wall: {book} \
+                 {chapter}:{verse} run={} sole={} rare={}",
+                h.run,
+                h.sole,
+                h.rare_for_a_wall
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod an_impossibility_refutes_the_repair {
+    use super::*;
+
+    /// Verbatim from `transcripts`, with the book as whisper first gave it.
+    const JUNE: &str = "The secret conveyed, June 29, verse 4 to 17.";
+
+    #[test]
+    fn a_repaired_book_that_cannot_have_this_chapter_yields_nothing() {
+        let got = detect_direct(JUNE);
+        for m in &got {
+            println!(
+                "  {} {}:{}  {:?}  {:.2}",
+                m.reference.book, m.reference.chapter, m.reference.verse, m.method, m.confidence
+            );
+        }
+        assert!(
+            got.is_empty(),
+            "a repair the numbers refute still produced a reference: {:?}",
+            got.iter()
+                .map(|m| (reference_key(&m.reference), m.method))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_repaired_book_the_numbers_agree_with_still_parses() {
+        // THE OPPOSITE MISTAKE. `sam` → Psalms is the ASR mishear the alias table
+        // was built for, and 23:1 is real, so nothing here may touch it.
+        let got = detect_direct("turn with me to sam 23 verse 1");
+        assert!(
+            got.iter()
+                .any(|m| m.reference.chapter == 23 && m.reference.verse == 1),
+            "a sound repair stopped parsing: {:?}",
+            got.iter()
+                .map(|m| (reference_key(&m.reference), m.method))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_verse_the_repaired_chapter_cannot_have_is_refuted_too() {
+        // The chapter is real and the VERSE is not: Jude 1 has 25 verses. Same
+        // evidence, one coordinate over, so a fix that only looked at chapters
+        // fails here. The number has to follow the book immediately — `fuzzy_book`
+        // only runs where the sentence is already reference-shaped — so this is
+        // *"June 1 verse 40"* and not a bare *"June verse 40"*, which repairs
+        // nothing and would make the test vacuous.
+        let got = detect_direct("the secret conveyed, June 1 verse 40");
+        assert!(
+            !got.iter().any(|m| m.reference.book == "Jude"),
+            "a repair whose verse cannot exist still produced a reference: {:?}",
+            got.iter()
+                .map(|m| (reference_key(&m.reference), m.method))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_book_somebody_plainly_said_is_still_parsed_whatever_the_number() {
+        // Deliberately NOT refuted here. Relay heard "Jude"; the number is the
+        // operator's problem to see, and `emit_detections` is what stops the blank
+        // row. A refusal here would be Relay overruling what it heard.
+        let got = detect_direct("The secret conveyed, Jude 29, 4 to 17.");
+        assert!(
+            got.iter().any(|m| m.reference.book == "Jude"),
+            "a plainly-named book stopped parsing: {got:?}"
         );
     }
 }
@@ -10822,7 +11521,7 @@ mod short_run_doubt {
 /// justified by a miscount is a normalisation that fixes the wrong thing.
 ///
 /// This prints, for each pair, the run the REAL bundled index measures and
-/// whether any other verse matches it as long. `for_quotation(run, sole)` needs
+/// whether any other verse matches it as long. `for_quotation(run, sole, rare)` needs
 /// BOTH, so a run at the bar is not on its own a reading.
 #[cfg(test)]
 mod what_the_field_readings_measured {
@@ -10879,7 +11578,8 @@ mod what_the_field_readings_measured {
             // than whatever I would reason it to be.
             let hits = idx.quoted(heard, None, 3);
             let mine = hits.iter().find(|h| h.r == r);
-            let method = mine.map(|h| DetectionMethod::for_quotation(h.run, h.sole));
+            let method =
+                mine.map(|h| DetectionMethod::for_quotation(h.run, h.sole, h.rare_for_a_wall));
             println!(
                 "  {label:<26} scan_run={run:>2}  hit_run={:>2}  sole={}  method={:?}",
                 mine.map(|h| h.run as i64).unwrap_or(-1),
@@ -11017,7 +11717,7 @@ mod archaic_and_spelling_normalisation {
                     )
                 });
             assert_eq!(
-                DetectionMethod::for_quotation(hit.run, hit.sole),
+                DetectionMethod::for_quotation(hit.run, hit.sole, hit.rare_for_a_wall),
                 DetectionMethod::Reading,
                 "{} {}:{} still not a reading at run {} (sole {})",
                 r.book,
@@ -11045,7 +11745,7 @@ mod archaic_and_spelling_normalisation {
                 .quoted(heard, None, 3)
                 .into_iter()
                 .find(|h| h.r == r)
-                .map(|h| DetectionMethod::for_quotation(h.run, h.sole));
+                .map(|h| DetectionMethod::for_quotation(h.run, h.sole, h.rare_for_a_wall));
             assert_ne!(
                 method,
                 Some(DetectionMethod::Reading),
@@ -11072,7 +11772,7 @@ mod archaic_and_spelling_normalisation {
             .expect("Isaiah 33:6 offered");
         assert!(hit.run >= READING_RUN_WORDS, "run fell to {}", hit.run);
         assert_eq!(
-            DetectionMethod::for_quotation(hit.run, hit.sole),
+            DetectionMethod::for_quotation(hit.run, hit.sole, hit.rare_for_a_wall),
             DetectionMethod::Reading
         );
     }
