@@ -1814,10 +1814,11 @@ fn candidates_for_window(
             // instruction of 2026-09-23 is that a verse being READ should go
             // up without being asked for (DECISIONS §118). `for_quotation` is
             // the one place that is decided and it decides from the evidence
-            // alone — the run length and whether one verse holds it. The
-            // church's switch over it is in `Router::decide`, the door every
-            // candidate passes through, so it cannot be skipped here.
-            DetectionMethod::for_quotation(h.run, h.sole),
+            // alone — the run length, whether one verse holds it, and since
+            // RG-307 whether any word in it is rare enough to name a verse at
+            // all. The church's switch over it is in `Router::decide`, the door
+            // every candidate passes through, so it cannot be skipped here.
+            DetectionMethod::for_quotation(h.run, h.sole, h.rare_for_a_wall),
             // THE PHRASE, not a word list. The whole point.
             Some(h.phrase),
         ));
@@ -11351,6 +11352,24 @@ mod passage_guard_bench {
             detection::anchor_for_bare_verses(&text)
         );
         println!("  bare verses: {:?}", detection::detect_bare_verses(&text));
+        // THE RAW INDEX ANSWER, before anything in this crate has an opinion about
+        // it. Added while chasing RG-320: two verses that share a run are one
+        // `quoted` call away from being visibly two rows or visibly one, and the
+        // candidate list above cannot tell those apart. `run` and `sole` are the two
+        // facts `DetectionMethod` throws away on its way to `for_quotation`.
+        println!("  -- quoted (unrestricted, run/sole as the index measures them):");
+        if let Ok(g) = phrases.0.read() {
+            let hits = g.quoted(&text, None, QUOTED_SUGGESTIONS_MAX);
+            if hits.is_empty() {
+                println!("     NOTHING");
+            }
+            for h in hits {
+                println!(
+                    "     {} {}:{}  run={} sole={}  “{}”",
+                    h.r.book, h.r.chapter, h.r.verse, h.run, h.sole, h.phrase
+                );
+            }
+        }
         println!("  -- detect_direct:");
         for m in detection::detect_direct(&text) {
             println!(

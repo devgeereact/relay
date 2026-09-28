@@ -243,8 +243,15 @@ impl DetectionMethod {
     /// church's switch is applied in `Router::decide`, the one gate every
     /// candidate passes through, rather than here — so a second construction site
     /// for quoted candidates could not slip past it (rule 36).
-    pub fn for_quotation(run: usize, sole: bool) -> Self {
-        if run >= READING_RUN_WORDS && sole {
+    /// **THREE conditions since RG-307, and the third is not a length.** A run may
+    /// be long, and held by exactly one verse, and still be nothing but stock
+    /// liturgical formula — *"of us in the name of the lord"*, eight words, sole,
+    /// and it put **1 Samuel 20:42** on a congregation's screen for a preacher who
+    /// was not reading anything. `PhraseHit::rare` has the finding. Uniqueness of a
+    /// token string is not evidence about WHICH verse; a word the corpus almost
+    /// never uses is.
+    pub fn for_quotation(run: usize, sole: bool, rare: bool) -> Self {
+        if run >= READING_RUN_WORDS && sole && rare {
             DetectionMethod::Reading
         } else {
             DetectionMethod::Quoted
@@ -7777,6 +7784,62 @@ const SELF_EVIDENT_RUN: usize = 7;
 /// "wisdom is the principal thing" and "a solitary place and there".
 const PHRASE_RARE_FRACTION: f32 = 0.005;
 
+/// **THE SAME QUESTION, ASKED FOR A WALL INSTEAD OF FOR A LIST — RG-307.**
+///
+/// A run may reach `READING_RUN_WORDS`, be held by exactly one verse, and still be
+/// nothing but stock liturgical formula. Service 40, 2026-09-25 at 15806 s:
+/// *"…any one of us. In the name of the Lord"* shares eight words with
+/// **1 Samuel 20:42**, `sole` is satisfied, and that verse went to a congregation
+/// at 0.69 for a preacher who was not reading anything.
+///
+/// ── WHY THIS IS NOT `PHRASE_RARE_FRACTION`, MEASURED ──────────────────────────
+///
+/// Reusing 0.005 (a cap of 155 verses) was the obvious fix and it is far too
+/// tight. `print_every_auto_fire` over service 42's 3,161 real transcript lines:
+/// **153 auto-fires → 146**, and SIX of the seven removed are verses the preacher
+/// was reading aloud, word for word — `Job 22:22`, `Psalms 41:2`,
+/// `Deuteronomy 28:1`, `2 Timothy 1:7`, `John 7:37`, `1 Corinthians 2:13`. Reading
+/// the bundled KJV back through `quoted` lost 25 of 1,510 readings the same way.
+/// **Scripture prose is made of ordinary words**; one rare word per eight is a
+/// property of poetry, not of narrative.
+///
+/// ── WHERE THE LINE ACTUALLY IS ────────────────────────────────────────────────
+///
+/// `can_a_rarity_bar_separate_a_formula_from_a_reading` prints the document
+/// frequency of every word of all eight runs. The rarest word of each:
+///
+/// | run | rarest word's df |
+/// |---|---|
+/// | the FORMULA (`1 Samuel 20:42`) | **867** (`name`) |
+/// | `Genesis 28:14` | 168 (`families`) |
+/// | `Job 22:22` | 169 (`receive`) |
+/// | `John 7:37` | 201 (`cried`) |
+/// | `Deuteronomy 28:1` | 217 (`above`) |
+/// | `2 Timothy 1:7` | 267 (`power`) |
+/// | `Psalms 41:2` | 291 (`blessed`) |
+/// | `1 Corinthians 2:13` | **487** (`speak`) |
+///
+/// So the populations do separate, and anywhere from **488 to 866** divides them.
+/// **0.02 is 622 of 31,102.**
+///
+/// **`1 Corinthians 2:13` is the row that decides it, and the first draft of that
+/// table had it wrong.** Its run is *"which things also we speak not in the"* — the
+/// preacher said *"man's wisdom teaches"* where the KJV has *"words which man's
+/// wisdom teacheth"*, so the run BREAKS at `wisdom` and never reaches the rare word
+/// a reader would assume is in it. Guessing the longer phrase put the row at 226,
+/// which made 0.015 look correct; at 0.015 the replay lost that fire. **The run the
+/// index measures is the only run there is** — print it (`explain_one_window`) and
+/// never reconstruct it.
+///
+/// **Eight runs is eight runs.** Two instruments are what make this more than that,
+/// and at 0.02 both are unmoved: `print_every_auto_fire` over service 42 gives
+/// **153 auto-fires before and after, 0 gained, 0 lost**, and
+/// `read_the_bible_back_and_count_wrong_verses` gives **1,510 correct before and
+/// after, 0 wrong**. The bar is paid for by the one wrong verse it was written for
+/// and by nothing else either instrument can see. Anybody moving it should re-run
+/// both before quoting a number.
+const READING_RARE_FRACTION: f32 = 0.02;
+
 /// The shortest run that may be treated as the preacher READING the verse, and
 /// so put on a wall without anybody pressing anything.
 ///
@@ -7936,6 +7999,25 @@ pub struct PhraseHit {
     /// is still OFFERED: John 3:15 is a perfectly reasonable thing for the
     /// operator to want, and a silent discard is a different lie.
     pub sole: bool,
+    /// **Does this run contain a word rare enough to name a verse?** RG-307.
+    ///
+    /// `has_a_rare_word` against `PHRASE_RARE_FRACTION` — present in at most 0.5%
+    /// of verses, about 155 of the bundled KJV.
+    ///
+    /// `quoted` has always asked this BELOW `SELF_EVIDENT_RUN`, on the reasoning
+    /// that a long run is its own corroboration. Service 40, 2026-09-25 at 15806 s
+    /// says that reasoning is true of OFFERING and false of FIRING: *"…any one of
+    /// us. In the name of the Lord"* shares an eight-word run with
+    /// **1 Samuel 20:42**, the run is `sole`, and Relay put that verse on a screen
+    /// unattended at 0.69. The only overlap is the formula, which appears in
+    /// hundreds of verses and identifies none of them. **Uniqueness of a token
+    /// string is not evidence that this verse is being read aloud.**
+    ///
+    /// So the answer is computed for every hit and carried, and
+    /// `for_quotation` asks it before promoting anything to `Reading`. One
+    /// computation, two readers, so the two uses cannot drift — and a hit that
+    /// fails it is still offered exactly as before.
+    pub rare_for_a_wall: bool,
 }
 
 /// Every contiguous word-run the KJV shares with a sentence, found by a sorted
@@ -8143,9 +8225,51 @@ impl PhraseIndex {
         }
     }
 
-    /// Is any word of this run rare enough to stand as evidence on its own?
-    fn has_a_rare_word(&self, run: &[u32]) -> bool {
-        let cap = ((self.refs.len() as f32 * PHRASE_RARE_FRACTION) as u32).max(1);
+    /// **HOW MANY VERSES EACH OF THESE WORDS APPEARS IN**, in the order they were
+    /// said, and `0` for a word this corpus does not have.
+    ///
+    /// Built for RG-307, where the question *"is this run rare enough to be a verse
+    /// being read"* had to be answered with numbers rather than intuition. Every
+    /// rarity rule in this module is a fraction of `refs.len()` compared against
+    /// these figures, so this is the one thing that makes such a rule arguable —
+    /// and it is what showed that **no fraction separates** a stock formula from
+    /// six real readings, because the formula's rarest word is commoner than
+    /// theirs in only some of the six.
+    /// `#[cfg(test)]`, not `#[allow(dead_code)]`: this reads the index and changes
+    /// nothing, so a shipped binary that cannot call it is strictly better, and
+    /// unlike `Doubted::was` it is not a field the live path fills.
+    #[cfg(test)]
+    pub fn document_frequencies(&self, phrase: &str) -> Vec<(String, u32)> {
+        phrase_words(phrase)
+            .into_iter()
+            .map(|w| {
+                let df = self
+                    .ids
+                    .get(&w)
+                    .and_then(|id| self.df.get(*id as usize))
+                    .copied()
+                    .unwrap_or(0);
+                (w, df)
+            })
+            .collect()
+    }
+
+    /// How many verses this index holds — the denominator every rarity fraction is
+    /// taken against.
+    #[cfg(test)]
+    pub fn verse_count(&self) -> usize {
+        self.refs.len()
+    }
+
+    /// Is any word of this run present in at most `fraction` of the corpus?
+    ///
+    /// `fraction` is a PARAMETER since RG-307, because the same question is asked
+    /// twice for two different jobs and the right answer is not the same number.
+    /// `PHRASE_RARE_FRACTION` decides whether a short run may be OFFERED at all;
+    /// `READING_RARE_FRACTION` decides whether a long run may reach a WALL. Both
+    /// caps are named where they are defined and both were measured.
+    fn has_a_rare_word(&self, run: &[u32], fraction: f32) -> bool {
+        let cap = ((self.refs.len() as f32 * fraction) as u32).max(1);
         run.iter().any(|id| {
             self.df
                 .get(*id as usize)
@@ -8218,7 +8342,8 @@ impl PhraseIndex {
             .into_iter()
             .filter(|(_, (n, i))| {
                 *n >= MIN_RUN_WORDS
-                    && (*n >= SELF_EVIDENT_RUN || self.has_a_rare_word(&q[*i..*i + *n]))
+                    && (*n >= SELF_EVIDENT_RUN
+                        || self.has_a_rare_word(&q[*i..*i + *n], PHRASE_RARE_FRACTION))
             })
             .map(|(vi, (n, i))| {
                 (
@@ -8226,6 +8351,12 @@ impl PhraseIndex {
                         r: self.refs[vi as usize].clone(),
                         run: n,
                         phrase: spoken[i..i + n].join(" "),
+                        // RG-307. Computed for EVERY hit, not only the short ones
+                        // the filter above needed it for: `for_quotation` asks the
+                        // same question before promoting a run to a wall, and a
+                        // second computation is a second place for the answer to
+                        // drift. See `PhraseHit::rare`.
+                        rare_for_a_wall: self.has_a_rare_word(&q[i..i + n], READING_RARE_FRACTION),
                         // Filled in below, once the whole set is known.
                         sole: false,
                     },
@@ -8736,7 +8867,7 @@ mod phrase_bench {
                 continue;
             }
             for h in idx.quoted(text, None, 3) {
-                let method = DetectionMethod::for_quotation(h.run, h.sole);
+                let method = DetectionMethod::for_quotation(h.run, h.sole, h.rare_for_a_wall);
                 if method != DetectionMethod::Reading {
                     if h.run >= READING_RUN_WORDS && &h.r != r {
                         ties_refused += 1;
@@ -9001,22 +9132,29 @@ mod reading_tests {
     fn only_a_long_sole_run_is_a_reading() {
         // Long enough and held by one verse → Relay heard the verse being read.
         assert_eq!(
-            DetectionMethod::for_quotation(READING_RUN_WORDS, true),
+            DetectionMethod::for_quotation(READING_RUN_WORDS, true, true),
             DetectionMethod::Reading
         );
         assert_eq!(
-            DetectionMethod::for_quotation(30, true),
+            DetectionMethod::for_quotation(30, true, true),
             DetectionMethod::Reading
         );
         // One word short of the floor → still a quotation, still capped.
         assert_eq!(
-            DetectionMethod::for_quotation(READING_RUN_WORDS - 1, true),
+            DetectionMethod::for_quotation(READING_RUN_WORDS - 1, true, true),
             DetectionMethod::Quoted
         );
         // Long, but two verses hold the same words → Relay would be choosing
         // between them, which is a guess about which and not a hearing.
         assert_eq!(
-            DetectionMethod::for_quotation(30, false),
+            DetectionMethod::for_quotation(30, false, true),
+            DetectionMethod::Quoted
+        );
+        // Long, sole, and made entirely of words the corpus uses everywhere → a
+        // formula, not a reading (RG-307). `a_formula_is_not_a_reading` holds the
+        // field window this came from; this states the rule on its own.
+        assert_eq!(
+            DetectionMethod::for_quotation(30, true, false),
             DetectionMethod::Quoted
         );
         // And the floor is above the length at which a run stands on its own as a
@@ -9105,7 +9243,7 @@ mod reading_tests {
         let sixteen = hits.iter().find(|h| h.r.verse == 16).expect("John 3:16");
         assert!(sixteen.sole, "the verse actually read was not sole");
         assert_eq!(
-            DetectionMethod::for_quotation(sixteen.run, sixteen.sole),
+            DetectionMethod::for_quotation(sixteen.run, sixteen.sole, sixteen.rare_for_a_wall),
             DetectionMethod::Reading
         );
         if let Some(fifteen) = hits.iter().find(|h| h.r.verse == 15) {
@@ -9116,7 +9254,7 @@ mod reading_tests {
             // Still OFFERED. A silent discard is a different lie, and the operator
             // may genuinely want the neighbouring verse.
             assert_eq!(
-                DetectionMethod::for_quotation(fifteen.run, fifteen.sole),
+                DetectionMethod::for_quotation(fifteen.run, fifteen.sole, fifteen.rare_for_a_wall),
                 DetectionMethod::Quoted
             );
         }
@@ -9590,7 +9728,7 @@ mod citation_doubt {
     fn run<'a>(r: &'a VerseRef, words: usize) -> Claim<'a> {
         Claim {
             r,
-            method: DetectionMethod::for_quotation(words, true),
+            method: DetectionMethod::for_quotation(words, true, true),
             verse_end: None,
             whole_chapter: false,
             run: Some((words, true)),
@@ -9911,7 +10049,7 @@ mod citation_doubt {
             said(&spoken),
             Claim {
                 r: &quoted,
-                method: DetectionMethod::for_quotation(20, false),
+                method: DetectionMethod::for_quotation(20, false, true),
                 verse_end: None,
                 whole_chapter: false,
                 run: Some((20, false)),
@@ -10184,6 +10322,214 @@ mod the_anchor_may_not_launder_a_cap {
 /// and refusing to parse it at all would be Relay deciding it knows better. That
 /// half is handled where the corpus is, by not offering a row whose verse does not
 /// resolve (`main::emit_detections`), which is also what stops the blank.
+/// **A RUN MADE ENTIRELY OF LITURGICAL FORMULA IS NOT A VERSE BEING READ —
+/// RG-307.**
+///
+/// Service 40, 2026-09-25 at 15806 s, watched live. The preacher said *"because of
+/// that, evil will befall them. Evil will not befall any one of us. In the name of
+/// the Lord"* and Relay auto-fired **1 Samuel 20:42** — *"And Jonathan said to
+/// David, Go in peace, forasmuch as we have sworn both of us in the name of the
+/// LORD…"* — as a `Reading`, at 0.69, unattended.
+///
+/// The shared run is **eight words**, *"of us in the name of the lord"*, and it is
+/// `sole`: that exact sequence really does occur in one verse of the bundled KJV.
+/// Every guard was satisfied and the answer was still nonsense, because **the
+/// uniqueness of a token string is not evidence that this verse is being read
+/// aloud.** A run of pure formula carries no information about WHICH verse,
+/// however unique the exact sequence happens to be.
+///
+/// The confidence is what identifies the window: `quoted_confidence` is
+/// `0.60 + 0.03 × (run − 5)`, so 0.69 is a run of exactly eight, which is how the
+/// field text below was reconstructed from the register's ellipsis and then
+/// verified to reproduce the fire.
+///
+/// **`PHRASE_RARE_FRACTION` was already the answer and was being asked one
+/// question too early.** `quoted` applies it only BELOW `SELF_EVIDENT_RUN`, on the
+/// theory that a long run is its own corroboration — which is true of *offering*
+/// and, this window says, false of *firing*. The rarity test now also gates the
+/// promotion to `Reading`, and `PhraseHit::rare` carries the answer so the two
+/// uses cannot drift apart.
+///
+/// It can only ever REMOVE a promotion, never add one, so no verse gains a wall.
+#[cfg(test)]
+mod a_formula_is_not_a_reading {
+    use super::*;
+
+    /// Reconstructed from the register's quote plus its 0.69, then verified to
+    /// reproduce `1 Samuel 20:42 Reading` against the bundled KJV.
+    const HEARD: &str = "because of that, evil will befall them. Evil will not befall \
+                         any one of us. In the name of the Lord";
+
+    fn index() -> PhraseIndex {
+        PhraseIndex::build(&crate::eval::kjv_corpus())
+    }
+
+    #[test]
+    fn the_field_run_is_still_found_and_is_still_sole() {
+        // PRECONDITION. If this stops holding, the test below passes for a reason
+        // that has nothing to do with the rule, which is how a guard quietly
+        // becomes decoration.
+        let hits = index().quoted(HEARD, None, crate::QUOTED_SUGGESTIONS_MAX);
+        let h = hits
+            .iter()
+            .find(|h| h.r.book == "1 Samuel" && h.r.chapter == 20 && h.r.verse == 42)
+            .unwrap_or_else(|| {
+                panic!("the field run is gone, so nothing below is a test: {hits:?}")
+            });
+        assert_eq!(
+            h.run, 8,
+            "the run length is what makes 0.69 the field figure"
+        );
+        assert!(h.sole, "the sole rule was satisfied — that is the finding");
+    }
+
+    #[test]
+    fn a_formula_run_may_be_offered_and_may_never_reach_a_wall() {
+        let hits = index().quoted(HEARD, None, crate::QUOTED_SUGGESTIONS_MAX);
+        let h = hits
+            .iter()
+            .find(|h| h.r.book == "1 Samuel")
+            .expect("precondition: the run is found");
+        assert!(
+            !h.rare_for_a_wall,
+            "“of us in the name of the lord” has no word rare enough to name a verse"
+        );
+        let method = DetectionMethod::for_quotation(h.run, h.sole, h.rare_for_a_wall);
+        assert_eq!(
+            method,
+            DetectionMethod::Quoted,
+            "a stock formula reached a congregation unattended"
+        );
+        assert_eq!(
+            method.unattended_rank(),
+            0,
+            "the whole point is that it cannot reach a wall"
+        );
+    }
+
+    /// **CAN ANY RARITY BAR SEPARATE A FORMULA FROM A READING?** The measurement
+    /// that decided RG-307, printed rather than argued.
+    ///
+    /// `cargo test --release can_a_rarity_bar_separate_a_formula_from_a_reading --
+    /// --ignored --nocapture`
+    ///
+    /// The left column is the eight-word formula run that put `1 Samuel 20:42` on a
+    /// congregation's screen. The rest are the SEVEN auto-fires that a rarity gate
+    /// on `Reading` removed from one real service (service 42, `print_every_auto_fire`,
+    /// 153 → 146) — and six of the seven are verses the preacher was genuinely
+    /// reading aloud, verbatim.
+    ///
+    /// A rarity bar can only work if the formula's rarest word is commoner than
+    /// every reading's rarest word. This prints both so the overlap is a fact.
+    #[test]
+    #[ignore]
+    fn can_a_rarity_bar_separate_a_formula_from_a_reading() {
+        let idx = index();
+        println!("\n  {} verses in the index", idx.verse_count());
+        println!(
+            "  PHRASE_RARE_FRACTION = {PHRASE_RARE_FRACTION} → cap {}",
+            ((idx.verse_count() as f32 * PHRASE_RARE_FRACTION) as u32).max(1)
+        );
+        // (what it is, the run as the index measured it) — the formula first, then
+        // the readings the gate removed from service 42.
+        const RUNS: &[(&str, &str)] = &[
+            ("FORMULA  1 Samuel 20:42", "of us in the name of the lord"),
+            (
+                "reading  Job 22:22",
+                "receive i pray thee the law from his mouth",
+            ),
+            (
+                "reading  Psalms 41:2",
+                "and he shall be blessed upon the earth",
+            ),
+            (
+                "reading  Genesis 28:14",
+                "and in thy seed shall all the families of",
+            ),
+            (
+                "reading  Deuteronomy 28:1",
+                "on high above all nations of the earth",
+            ),
+            (
+                "reading  2 Timothy 1:7",
+                "of fear of power and of love and of a",
+            ),
+            (
+                "reading  John 7:37",
+                "jesus stood and cried saying if any man",
+            ),
+            // THE RUN THE INDEX MEASURES, not the longer one a reader would guess
+            // at: the preacher said *"man's wisdom teaches"* where the KJV has
+            // *"words which man's wisdom teacheth"*, so the run BREAKS at `wisdom`.
+            // The first draft of this table guessed the longer phrase, which made
+            // this row look 226-rare when the real run carries no rare word at all —
+            // and that row is the one that decides the answer.
+            (
+                "reading  1 Corinthians 2:13",
+                "which things also we speak not in the",
+            ),
+        ];
+        for (label, run) in RUNS {
+            let dfs = idx.document_frequencies(run);
+            let rarest = dfs.iter().filter(|(_, d)| *d > 0).map(|(_, d)| *d).min();
+            println!("\n  {label}  rarest df = {rarest:?}");
+            println!("     {dfs:?}");
+        }
+        println!();
+    }
+
+    #[test]
+    fn a_verse_actually_being_read_still_reaches_the_wall() {
+        // THE OPPOSITE MISTAKE, and the reason this rule has to be measured rather
+        // than reasoned: a reading whose words are all ordinary would be silenced
+        // too. These are real verses read back verbatim, chosen because their
+        // wording is plain.
+        // NOT Psalms 23:1 — *"The Lord is my shepherd; I shall not want"* normalises
+        // to SEVEN words, one short of `READING_RUN_WORDS`, so it was never a
+        // reading and asserting that it is one would be a test that had never
+        // passed. Found by writing it and watching it fail for the wrong reason.
+        for (heard, book, chapter, verse) in [
+            (
+                "He maketh me to lie down in green pastures: he leadeth me beside the \
+                 still waters.",
+                "Psalms",
+                23,
+                2,
+            ),
+            (
+                "For God so loved the world, that he gave his only begotten Son",
+                "John",
+                3,
+                16,
+            ),
+            (
+                "The Lord shall preserve thee from all evil: he shall preserve thy soul.",
+                "Psalms",
+                121,
+                7,
+            ),
+        ] {
+            let idx = index();
+            let hits = idx.quoted(heard, None, crate::QUOTED_SUGGESTIONS_MAX);
+            let h = hits
+                .iter()
+                .find(|h| h.r.book == book && h.r.chapter == chapter && h.r.verse == verse)
+                .unwrap_or_else(|| {
+                    panic!("{book} {chapter}:{verse} was not found at all: {hits:?}")
+                });
+            assert_eq!(
+                DetectionMethod::for_quotation(h.run, h.sole, h.rare_for_a_wall),
+                DetectionMethod::Reading,
+                "a verse read aloud verbatim stopped reaching the wall: {book} \
+                 {chapter}:{verse} run={} sole={} rare={}",
+                h.run,
+                h.sole,
+                h.rare_for_a_wall
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod an_impossibility_refutes_the_repair {
     use super::*;
@@ -10959,7 +11305,7 @@ mod short_run_doubt {
 /// justified by a miscount is a normalisation that fixes the wrong thing.
 ///
 /// This prints, for each pair, the run the REAL bundled index measures and
-/// whether any other verse matches it as long. `for_quotation(run, sole)` needs
+/// whether any other verse matches it as long. `for_quotation(run, sole, rare)` needs
 /// BOTH, so a run at the bar is not on its own a reading.
 #[cfg(test)]
 mod what_the_field_readings_measured {
@@ -11016,7 +11362,8 @@ mod what_the_field_readings_measured {
             // than whatever I would reason it to be.
             let hits = idx.quoted(heard, None, 3);
             let mine = hits.iter().find(|h| h.r == r);
-            let method = mine.map(|h| DetectionMethod::for_quotation(h.run, h.sole));
+            let method =
+                mine.map(|h| DetectionMethod::for_quotation(h.run, h.sole, h.rare_for_a_wall));
             println!(
                 "  {label:<26} scan_run={run:>2}  hit_run={:>2}  sole={}  method={:?}",
                 mine.map(|h| h.run as i64).unwrap_or(-1),
@@ -11154,7 +11501,7 @@ mod archaic_and_spelling_normalisation {
                     )
                 });
             assert_eq!(
-                DetectionMethod::for_quotation(hit.run, hit.sole),
+                DetectionMethod::for_quotation(hit.run, hit.sole, hit.rare_for_a_wall),
                 DetectionMethod::Reading,
                 "{} {}:{} still not a reading at run {} (sole {})",
                 r.book,
@@ -11182,7 +11529,7 @@ mod archaic_and_spelling_normalisation {
                 .quoted(heard, None, 3)
                 .into_iter()
                 .find(|h| h.r == r)
-                .map(|h| DetectionMethod::for_quotation(h.run, h.sole));
+                .map(|h| DetectionMethod::for_quotation(h.run, h.sole, h.rare_for_a_wall));
             assert_ne!(
                 method,
                 Some(DetectionMethod::Reading),
@@ -11209,7 +11556,7 @@ mod archaic_and_spelling_normalisation {
             .expect("Isaiah 33:6 offered");
         assert!(hit.run >= READING_RUN_WORDS, "run fell to {}", hit.run);
         assert_eq!(
-            DetectionMethod::for_quotation(hit.run, hit.sole),
+            DetectionMethod::for_quotation(hit.run, hit.sole, hit.rare_for_a_wall),
             DetectionMethod::Reading
         );
     }

@@ -140,7 +140,7 @@ fn run(case: &Case) -> Outcome {
     // displaced by a right one — again the harder case.
     for h in phrases().quoted(&case.text, None, 3) {
         let key = format!("{} {}:{}", h.r.book, h.r.chapter, h.r.verse);
-        let method = DetectionMethod::for_quotation(h.run, h.sole);
+        let method = DetectionMethod::for_quotation(h.run, h.sole, h.rare_for_a_wall);
         let conf = (0.60 + 0.03 * h.run.saturating_sub(detection::MIN_RUN_WORDS) as f32).min(0.95);
         match router.decide(&key, conf, method, 0) {
             RouteDecision::AutoFire => auto_fired.push(key),
@@ -386,7 +386,7 @@ mod tests {
         for case in corpus.cases.iter().filter(|c| c.must_not_fire) {
             for h in phrases().quoted(&case.text, None, 5) {
                 assert_ne!(
-                    DetectionMethod::for_quotation(h.run, h.sole),
+                    DetectionMethod::for_quotation(h.run, h.sole, h.rare_for_a_wall),
                     DetectionMethod::Reading,
                     "[{}] is labelled a paraphrase and holds {} words of {} {}:{} verbatim: {:?}",
                     case.id,
@@ -421,7 +421,8 @@ mod tests {
                 !c.expect.is_empty()
                     && detection::detect_direct(&c.text).is_empty()
                     && phrases().quoted(&c.text, None, 5).iter().any(|h| {
-                        DetectionMethod::for_quotation(h.run, h.sole) == DetectionMethod::Reading
+                        DetectionMethod::for_quotation(h.run, h.sole, h.rare_for_a_wall)
+                            == DetectionMethod::Reading
                     })
             })
             .collect();
