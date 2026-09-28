@@ -1822,12 +1822,24 @@ fn candidates_for_window(
             // with the psalm already up, and `Direct` at 0.88 auto-fired it.
             // A book Relay assumed is `UncertainBook` — the router offers it and
             // fires nothing. A book named in this breath is still heard.
-            candidates.push(Cand::single(
+            let mut c = Cand::single(
                 r,
                 0.88,
                 DetectionMethod::for_bare_verse(source),
                 Some(format!("verse {n}")),
-            ));
+            );
+            // HOW FAR HE SAID HE WAS GOING, when the chunker cut the announcement in
+            // two and this bare verse is all the second window has (RG-328). *"verse 6
+            // all the way to 8"* carried the 6 and dropped the 8, so the operator was
+            // shown one verse of a three-verse reading with nothing saying there were
+            // two more — `detect_bare_verses` answers numbers, not spans, and nothing
+            // else on this path was looking.
+            if let Some((v, end)) = detection::bare_verse_span(text) {
+                if v == n {
+                    c.verse_end = Some(end);
+                }
+            }
+            candidates.push(c);
         }
     }
     // Paraphrase alternatives. Only ONE was ever offered, which threw away
@@ -11064,7 +11076,7 @@ mod passage_guard_bench {
     use super::*;
     use detection::VerseRef;
 
-    fn kjv_corpus() -> Vec<(VerseRef, String)> {
+    pub(super) fn kjv_corpus() -> Vec<(VerseRef, String)> {
         let kjv: serde_json::Value =
             serde_json::from_str(include_str!("../data/kjv.json").trim_start_matches('\u{feff}'))
                 .expect("kjv");
@@ -12598,6 +12610,23 @@ mod passage_guard_bench {
         assert_eq!(f("Genesis chapter 80 and verse"), None);
         // No book at all.
         assert_eq!(f("and verse"), None);
+        // ── THE OPERATOR'S PAUSE, AND THE LINE IT SITS ON (RG-328) ────────────
+        // A run of ordinary words after the chapter carries the citation ONLY when
+        // the window ends on a word that cannot end a sentence. Both of these are
+        // ordinary words running out the window; only one was cut off mid-phrase.
+        assert_eq!(
+            f("we are in Romans 1 and we will be reading from"),
+            Some("Romans 1".into()),
+            "the operator's own phrasing, cut off by the chunker mid-announcement"
+        );
+        assert_eq!(
+            f("let us turn to Psalm 23 and we will be reading from"),
+            Some("Psalms 23".into())
+        );
+        // …and a finished clause is still the sentence moving on. This is the case a
+        // generic filler run got wrong on its first draft, caught by this test.
+        assert_eq!(f("Genesis chapter 8 tells us what happened"), None);
+        assert_eq!(f("Romans 1 explains the gospel to everyone"), None);
     }
 
     /// **EXPLAIN ONE WINDOW: every stage, every candidate, every doubt.**
@@ -13818,6 +13847,129 @@ mod paraphrase_bar_wiring {
                     .all(|c| off.kept.iter().any(|k| k.r == c.r && k.method == c.method)),
                 "{text:?}: the bar produced a candidate the shipped path did not"
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod a_pause_between_the_chapter_and_the_verse {
+    use super::passage_guard_bench::kjv_corpus;
+    use super::*;
+
+    /// **THE OTHER HALF OF THE OPERATOR'S REPORT**: *"there might be a pause before
+    /// the chapter and verse is called and this leads to failing or not rendering the
+    /// verse at all."*
+    ///
+    /// A pause is not filler — it is the CHUNKER cutting the announcement in two, so
+    /// no single window ever holds both the chapter and the verse. RG-315 and RG-318
+    /// built the carry for exactly this (`chapter_in_flight` / `note_in_flight`, 15 s
+    /// ceiling). This asks whether it reaches the operator's own phrasing, which is
+    /// longer than the citations those rows were written from.
+    /// The operator's report, as assertions: **a pause between the chapter and the
+    /// verse must not lose the reference.** Before this, *"we are in Romans 1 and we
+    /// will be reading from"* | *"verse 6 all the way to 8"* produced **nothing at
+    /// all** in the second window — literally *"not rendering the verse at all"* — and
+    /// where the carry did work the span was dropped, leaving one verse of a
+    /// three-verse reading with nothing saying there were two more.
+    ///
+    /// Still `UncertainBook`, and that is right: the book came from a window this one
+    /// cannot see, which is exactly what that method means (rule 40, RG-318). The
+    /// operator gets the whole reference, one action away.
+    #[test]
+    fn a_pause_mid_announcement_keeps_the_reference_and_its_span() {
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        for (w1, w2, want) in [
+            (
+                "we are in Romans 1 and we will be reading from",
+                "verse 6 all the way to 8",
+                ("Romans 1:6", Some(8)),
+            ),
+            (
+                "let us turn to Psalm 23 and we will be reading from",
+                "verse 1 through to number 6",
+                ("Psalms 23:1", Some(6)),
+            ),
+            (
+                "turn with me to Job 22",
+                "verse 21 to 25",
+                ("Job 22:21", Some(25)),
+            ),
+        ] {
+            let mut context = ContextMemory::default();
+            let _ = candidates_for_window(w1, true, &sem, &phrases, &context, None, false);
+            context.note_in_flight(detection::chapter_in_flight(w1), 0);
+            let after = candidates_for_window(w2, true, &sem, &phrases, &context, None, false);
+            let got = after
+                .kept
+                .iter()
+                .find(|c| Fire::key_for(&c.r) == want.0)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "{w1:?} then {w2:?}: the verse he announced reached nobody: {:?}",
+                        after
+                            .kept
+                            .iter()
+                            .map(|c| Fire::key_for(&c.r))
+                            .collect::<Vec<_>>()
+                    )
+                });
+            assert_eq!(
+                got.verse_end, want.1,
+                "{w2:?}: the operator was not told how far the reading goes"
+            );
+            // Never unattended: the book came from a window this one cannot see.
+            assert_eq!(got.method.unattended_rank(), 0, "{w2:?} became firable");
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn print_what_survives_a_pause() {
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        for (w1, w2) in [
+            (
+                "let us turn to Psalm 23 and we will be reading from",
+                "verse 1 through to number 6",
+            ),
+            (
+                "we are in Romans 1 and we will be reading from",
+                "verse 6 all the way to 8",
+            ),
+            (
+                "open your Bibles to Romans 1",
+                "and we will be reading from verse 6 all the way to 8",
+            ),
+            ("turn with me to Job 22", "verse 21 to 25"),
+        ] {
+            let mut context = ContextMemory::default();
+            // Window one, then the chunker's cut.
+            let a = candidates_for_window(w1, true, &sem, &phrases, &context, None, false);
+            context.note_in_flight(detection::chapter_in_flight(w1), 0);
+            // Window two, 1.2 s later — what the operator sees for the verse called.
+            let b = candidates_for_window(w2, true, &sem, &phrases, &context, None, false);
+            let show = |w: &WindowCandidates| -> Vec<String> {
+                w.kept
+                    .iter()
+                    .map(|c| {
+                        format!(
+                            "{}{} {:?}",
+                            Fire::key_for(&c.r),
+                            c.verse_end.map(|e| format!("-{e}")).unwrap_or_default(),
+                            c.method
+                        )
+                    })
+                    .collect()
+            };
+            println!("  {w1:?}\n      {:?}", show(&a));
+            println!("  …{w2:?}\n      {:?}\n", show(&b));
         }
     }
 }

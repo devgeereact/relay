@@ -3060,12 +3060,37 @@ pub fn chapter_in_flight(text: &str) -> Option<VerseRef> {
         // Everything between the chapter and the end of the window must be glue —
         // a connector ("and", ","), a linker, or a verse marker. One real word and
         // the sentence moved on to something else.
+        //
+        // ── AND A RUN OF ORDINARY WORDS IS ALSO GLUE, IF IT RUNS OUT THE WINDOW ──
+        //
+        // The operator's report, 2026-09-28: *"there might be a pause before the
+        // chapter and verse is called and this leads to failing or not rendering the
+        // verse at all."* A pause is the chunker cutting the announcement in two, and
+        // *"we are in Romans 1 AND WE WILL BE READING FROM"* | *"verse 6 all the way
+        // to 8"* lost the chapter here — five real words after it, so the carry was
+        // refused and the second window produced **nothing at all**. Measured, with
+        // `print_what_survives_a_pause`, on the operator's own phrasings.
+        //
+        // Safe for the reason the original glue rule is safe, kept intact: the run
+        // must reach the END of the window, so nothing was said after it that this
+        // could be mistaken for. It is bounded, and it stops dead at a number, a book
+        // alias or a chapter word — the things that would mean the sentence moved on
+        // to another reference rather than pausing inside this one.
         let mut k = after;
         let mut verse_marker = false;
+        let mut filler = 0usize;
         while let Some(t) = tokens.get(k) {
             if is_verse_word(t) {
                 verse_marker = true;
-            } else if !(is_ref_connector(t) || numerals().linkers.contains(*t)) {
+            } else if is_ref_connector(t) || numerals().linkers.contains(*t) {
+                // glue, as before
+            } else if filler < MAX_REF_FILLER
+                && parse_number(&tokens, k).is_none()
+                && !alias_map().contains_key(*t)
+                && !is_chapter_word(t)
+            {
+                filler += 1;
+            } else {
                 break;
             }
             k += 1;
@@ -3073,9 +3098,36 @@ pub fn chapter_in_flight(text: &str) -> Option<VerseRef> {
         if k < tokens.len() {
             continue;
         }
-        // Either shape: a dangling verse MARKER anywhere before the end, or the
-        // chapter NUMBER itself being the last thing said.
-        if verse_marker || after >= tokens.len() {
+        // Either shape: a dangling verse MARKER anywhere before the end, the chapter
+        // NUMBER itself being the last thing said, or — the operator's case — the
+        // chapter followed by a run of ordinary words that runs out the window, which
+        // is what *"we are in Romans 1 and we will be reading from"* is.
+        // A filler run only counts when the window ends ON A WORD THAT CANNOT END A
+        // SENTENCE — a dangling preposition. *"and we will be reading FROM"* was cut
+        // off mid-phrase; *"tells us what happened"* is a finished clause and the
+        // sentence moved on, which is what `only_a_sentence_that_plainly_stopped_mid_
+        // citation_is_in_flight` protects and what a generic filler run got wrong on
+        // its first draft. Same idea as the dangling verse MARKER this function
+        // already accepts: something that demands a continuation.
+        let dangling = filler > 0
+            && k >= tokens.len()
+            && tokens.last().is_some_and(|t| {
+                matches!(
+                    *t,
+                    "from"
+                        | "to"
+                        | "at"
+                        | "in"
+                        | "into"
+                        | "unto"
+                        | "through"
+                        | "on"
+                        | "of"
+                        | "with"
+                        | "and"
+                )
+            });
+        if verse_marker || after >= tokens.len() || dangling {
             found = Some(VerseRef {
                 book: canonical.to_string(),
                 chapter,
@@ -3706,6 +3758,40 @@ pub fn detect_bare_verses(text: &str) -> Vec<i64> {
         i += 1;
     }
     out
+}
+
+/// **HOW FAR A BARE VERSE SAID IT WAS GOING** — the span the bare-verse path used to
+/// throw away (RG-328, the operator's report of a pause mid-announcement).
+///
+/// `detect_bare_verses` answers *which verses were named* and deliberately returns
+/// plain numbers; six tests and the nav path depend on that shape. But when the
+/// chunker cuts *"Romans 1 and we will be reading from"* | *"verse 6 all the way to
+/// 8"* in two, the second window has no book and no chapter, so the whole reference is
+/// rebuilt from the carried chapter plus this bare verse — and `all the way to 8` was
+/// dropped on the floor, leaving the operator one verse of a three-verse reading with
+/// nothing saying there were two more. Measured with `print_what_survives_a_pause`.
+///
+/// Answers the end for the FIRST bare verse that carries one, using the same
+/// `parse_range_end` the full parser uses, so *"to"*, *"through"*, *"down to"* and
+/// *"all the way to"* mean here exactly what they mean there.
+pub fn bare_verse_span(text: &str) -> Option<(i64, i64)> {
+    let norm = normalize(text);
+    let tokens: Vec<&str> = norm.split_whitespace().collect();
+    for i in 0..tokens.len() {
+        if !is_verse_word(tokens[i]) {
+            continue;
+        }
+        let j = skip_linkers(&tokens, i + 1);
+        let Some((verse, after, _)) = parse_number(&tokens, j) else {
+            continue;
+        };
+        if let Some((end, _)) = parse_range_end(&tokens, after, verse) {
+            if end > verse {
+                return Some((verse, end));
+            }
+        }
+    }
+    None
 }
 
 /// A spoken jump WITHIN the current book — chapter and/or verse, no book name.
@@ -12144,6 +12230,24 @@ mod conversational_ranges {
                     shown.join(" · ")
                 }
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod in_flight_probe {
+    use super::*;
+    #[test]
+    #[ignore]
+    fn print_chapter_in_flight() {
+        for t in [
+            "we are in Romans 1 and we will be reading from",
+            "let us turn to Psalm 23 and we will be reading from",
+            "open your Bibles to Romans 1",
+            "turn with me to Job 22",
+            "Romans 1 and verse",
+        ] {
+            println!("  {t:?} -> {:?}", chapter_in_flight(t));
         }
     }
 }
