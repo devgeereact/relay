@@ -790,6 +790,38 @@ pub fn transcript_handed_off(id: u64, us: u64) {
     }
 }
 
+/// WHISPER RAN. Record what it cost, whether or not anything came out of it.
+///
+/// **RG-137, and this is the hole the residual was computed through.** `stt_decode`
+/// is folded at `retire` from `Trace::decode_us`, and `decode_us` had exactly one
+/// writer: `transcript_emitted`, which a pass that produced no text never calls.
+/// Whisper answers `[BLANK_AUDIO]`, or the script guard refuses a hallucination —
+/// the decode happened, it cost whatever it cost, and the distribution left it out.
+/// **Service 16 printed 4,416 passes and recorded 4,046 `stt_decode` samples**
+/// (`audits/FIELD.md` §4, `audits/PERF.md`), so 370 of them were outside the
+/// metric altogether, and the row's *"at least 11,651 ms of one pass went
+/// somewhere"* was arithmetic against a 20,977 ms LAG over all 4,416 bounded by a
+/// 9,326 ms worst decode over 4,046. Two populations, one subtraction. Worse, the
+/// excluded population is exactly the one most likely to be slow: a decode that
+/// returns nothing is a decode of noise.
+///
+/// This is `latency.rs`'s own rule in a new costume. *A stage never reached is an
+/// absence, not a zero* stopped a silent pass reporting 0 ms, and then the measured
+/// cost of the decode that really did run was dropped with it.
+///
+/// Called from the ONE place where the decode has returned and its outcome is not
+/// yet known (rule 36), so `transcript_emitted` sets the same field a second time
+/// with the same value on the path that does produce text. That is deliberate: a
+/// second writer on one branch is how this was missed, and one unconditional call
+/// at the choke point is cheaper to keep true than two branches that agree.
+pub fn decode_finished(id: u64, decode_us: u64, window_ms: u64, drained: usize) {
+    with_open(id, |t| {
+        t.decode_us = decode_us;
+        t.window_ms = window_ms;
+        t.drained = drained;
+    });
+}
+
 /// An utterance ENDED without a transcript coming out of it.
 ///
 /// RG-137, and the half of RG-118 that was missed. The cadence guard asks two
@@ -1593,6 +1625,56 @@ mod tests {
             wait.mean_ms,
             decode.mean_ms,
             total.mean_ms,
+        );
+    }
+
+    /// RG-137 — **THE DECODE THAT SAID NOTHING IS STILL A DECODE.**
+    ///
+    /// `decode_us` had one writer, `transcript_emitted`, which a pass whose decode
+    /// returned no text never calls. So `stt_decode`'s distribution silently
+    /// excluded them: service 16 printed 4,416 passes and recorded 4,046 samples,
+    /// and 370 passes — the ones most likely to be slow, because a decode returning
+    /// nothing is a decode of noise — were outside the metric. The residual that
+    /// kept this row open was a LAG over all of them minus a worst decode over
+    /// 4,046 of them.
+    ///
+    /// **Put the defect back by deleting the `decode_finished` call in `stt.rs`'s
+    /// worker and this fails**: the silent pass contributes no sample and the
+    /// distribution reads as though only the passes that spoke ever cost anything.
+    #[test]
+    fn a_decode_that_produced_no_transcript_is_still_counted() {
+        let _l = guard();
+        // A pass that spoke, and a pass that decoded for four times as long and
+        // came back with nothing. Both ran whisper; both cost what they cost.
+        let spoke = begin_pass(Some(now_us()), None);
+        decode_finished(spoke, 1_000, 8_000, 1);
+        transcript_emitted(spoke, 1_000, 8_000, 1, true, 1);
+        close(spoke);
+
+        let silent = begin_pass(Some(now_us()), None);
+        decode_finished(silent, 4_000, 8_000, 1);
+        close(silent);
+
+        let r = report(4);
+        let decode = metric(&r, "stt_decode");
+        assert_eq!(
+            decode.samples, 2,
+            "a decode that returned no text was left out of the distribution its \
+             own worst case is quoted from"
+        );
+        assert_eq!(
+            decode.worst_ms,
+            Some(4.0),
+            "the slow pass is the silent one, and it is the one that has to be in \
+             there — bounding a LAG by a worst case that excludes it is how RG-137 \
+             manufactured 11,651 ms of unexplained residual"
+        );
+        // And nothing else was invented for it: no transcript was emitted, so there
+        // is no partial-transcript span and no cadence sample from that pass.
+        assert_eq!(
+            metric(&r, "audio_to_partial_transcript").samples,
+            1,
+            "a pass with no transcript must not gain a transcript span"
         );
     }
 

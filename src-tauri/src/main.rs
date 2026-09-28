@@ -124,6 +124,53 @@ struct Detecting(AtomicBool);
 /// anything the decoder is waiting on (rule 2).
 struct ParaphraseRun(AtomicBool);
 
+/// ONE SPEECH MODEL LOAD AT A TIME — RG-299.
+///
+/// `load_stt_model` costs **1,097 ms warm and about 3.6 s on a cold 1.6 GB read**
+/// (`models::tests::what_the_model_flow_costs`), and until it carried this it ran
+/// on the macOS window's run loop — which is a freeze an operator feels, and, per
+/// rule 2, a run loop the STT worker's own `stt://transcript` emit can end up
+/// waiting on.
+///
+/// **What the main thread was silently providing was mutual exclusion**, and that
+/// is the whole reason this had to exist before `#[tauri::command(async)]` could:
+/// two concurrent calls would each build a whisper context — **3.2 GB of resident
+/// memory for two copies of `large-v3-turbo`** — and both would then write the same
+/// `Stt` slot, so the engine the church ends up listening through is whichever race
+/// finished second while the other 1.6 GB is dropped. The same objection settled
+/// `install_model_file`'s shared `.part` path, and it is not an argument for leaving
+/// it on the run loop; it is a thing to pay for first.
+///
+/// A second caller is REFUSED with a sentence, not queued: queueing would hide a
+/// double-click behind a second full load, and the honest answer to "load it again
+/// while it is loading" is that it is already loading.
+///
+/// `AtomicBool` with an RAII guard, following `models::RunningGuard` and the lesson
+/// written above it: a bare `store(false)` on the way out leaves the flag stuck
+/// `true` for the life of the process if the path is ever left early, and a stuck
+/// flag turns one bad load into a feature that is dead until Relay is restarted.
+#[derive(Default)]
+struct ModelLoad(AtomicBool);
+
+/// Clears `ModelLoad` however the load is left, including a panic.
+struct ModelLoadGuard<'a>(&'a AtomicBool);
+
+impl Drop for ModelLoadGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
+impl ModelLoad {
+    /// Claim the slot, or `None` if a load is already in flight.
+    fn begin(&self) -> Option<ModelLoadGuard<'_>> {
+        self.0
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .ok()
+            .map(|_| ModelLoadGuard(&self.0))
+    }
+}
+
 /// The in-progress service being recorded to local history, if any.
 struct SessionState {
     id: i64,
@@ -228,6 +275,7 @@ fn main() {
         .manage(servicelock::ServiceLock::default())
         .manage(Session::default())
         .manage(models::DownloadState::default())
+        .manage(ModelLoad::default())
         .setup(|app| {
             // THE CLOCKS COME BACK BEFORE ANYTHING ELSE CAN TOUCH THEM (F28,
             // DECISIONS §112). Restored, not re-aired: nothing here reaches a
@@ -4262,7 +4310,19 @@ struct ReviewSong {
 /// Parse a lyric file (ProPresenter / playlist / text) into songs WITHOUT
 /// saving — the operator reviews and edits before committing (avoids the
 /// import-then-fix-then-replace cycle). Offline.
-#[tauri::command]
+///
+/// **OFF THE MAIN RUN LOOP — RG-299, and for the cap rather than for Tuesday.**
+/// `import_guard_tests::what_parsing_a_lyric_import_costs`: a realistic 2 MiB
+/// playlist parses in **27 ms**, which is nothing; a text file at
+/// `MAX_IMPORT_BYTES` parses in **2,285 ms**, which is a freeze. The guard permits
+/// the second, and no church has such a file, so this is not a fix for anything
+/// anybody has hit — it is the same trade `import_media` (169 ms at its cap)
+/// already took, at ten times the cost, and there is nothing to pay for it with:
+/// this command takes no `State` and no handle, so it is a pure function of two
+/// strings and two of them running at once share nothing. Also unlike
+/// `load_stt_model`, there was no mutual exclusion here for the main thread to
+/// have been quietly providing.
+#[tauri::command(async)]
 fn parse_import(filename: String, data: String) -> error::Result<Vec<ReviewSong>> {
     let bytes = decode_import(&filename, &data)?;
     let ext = filename.rsplit('.').next().unwrap_or("").to_lowercase();
@@ -5909,8 +5969,17 @@ fn migration_status(db: tauri::State<'_, Db>) -> error::Result<MigrationStatus> 
 /// every transcript, verse, lyric, announcement, service title, plan name, song
 /// name, template name and media filename — and the home directory, which names a
 /// person.
+///
+/// ## Generic over the runtime, for rule 24's own reason
+///
+/// It was welded to `AppHandle<Wry>`, so the one artefact in Relay that is expected
+/// to leave the building could not be driven by a test without a window — which is
+/// exactly the argument rule 24 makes about the fire path. `channels::open_channel_ids`
+/// came with it, because it is the only concrete thing on this path.
+/// `diagnostic_bundle_tests::what_the_diagnostic_bundle_costs` is what that bought
+/// (RG-299): the command timed whole rather than its pieces added up.
 #[tauri::command]
-fn export_diagnostics(app: tauri::AppHandle) -> error::Result<String> {
+fn export_diagnostics<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> error::Result<String> {
     use diagnostics::Fact;
     // Eight pieces of state, reached through the handle rather than taken as eight
     // parameters. A report ABOUT the whole app legitimately needs to see most of it,
@@ -6191,6 +6260,71 @@ fn export_diagnostics(app: tauri::AppHandle) -> error::Result<String> {
 mod diagnostic_bundle_tests {
     use super::*;
     use crate::diagnostics::{compose, Fact};
+
+    /// WHAT THE DIAGNOSTIC BUNDLE COSTS THE MAIN RUN LOOP — RG-299.
+    ///
+    /// One of the two commands on that row's own list that had never been timed.
+    /// It was on the list because it does real work — `sysprobe::read` refreshes
+    /// the disk list, `latency::report(0)` walks the histograms, four database
+    /// reads, and a file write — and the row will not say a command is fine until
+    /// somebody has put a number on it. The whole command, not its pieces: a bench
+    /// of the parts is how a slow whole goes unnoticed.
+    ///
+    /// `Stt(None)` is what `build_stt` returns on a machine with no model
+    /// downloaded, which is the one the bundle is most often exported from — a
+    /// church that cannot get Relay listening. There is no whisper in this harness
+    /// to make it anything else.
+    ///
+    /// Reports, asserts nothing about a clock.
+    #[test]
+    #[ignore = "a bench: measures this machine"]
+    fn what_the_diagnostic_bundle_costs() {
+        let app = qa::bare_app();
+        app.handle().manage(Stt(Mutex::new(None)));
+        // And a hub. `bare_app` manages none on purpose — that is its "no LAN" case
+        // — and the bundle reports the kiosk client count, so without one this
+        // panics rather than measuring anything.
+        app.handle().manage(channels::KioskHub::default());
+
+        // THE COMMAND FIRST, and twice. The first export in a process pays for the
+        // OS disk enumeration `sysprobe::read` does, and that is the one an operator
+        // actually waits through — measuring the pieces first would warm it and
+        // report the second export as if it were the first.
+        for pass in ["cold", "warm"] {
+            let t = std::time::Instant::now();
+            let out = export_diagnostics(app.handle().clone());
+            println!(
+                "  export_diagnostics ({pass:<4})           {:>6} ms   {}",
+                t.elapsed().as_millis(),
+                match &out {
+                    Ok(p) => format!(
+                        "wrote {} bytes",
+                        std::fs::metadata(p).map(|m| m.len()).unwrap_or(0)
+                    ),
+                    Err(e) => format!("refused: {}", e.message()),
+                }
+            );
+            if let Ok(p) = out {
+                let _ = std::fs::remove_file(p);
+            }
+        }
+        // Then the two pieces with any reason to be slow, so a number that moves
+        // can be attributed without re-deriving this. Warm by now, deliberately:
+        // the cold cost is in the line above, where it belongs.
+        let t = std::time::Instant::now();
+        let _hw = sysprobe::read(&db::app_data_dir());
+        println!(
+            "  sysprobe::read (memory + disk list) {:>6} ms   (warm)",
+            t.elapsed().as_millis()
+        );
+        let t = std::time::Instant::now();
+        let _r = latency::report(0);
+        println!(
+            "  latency::report(0)                  {:>6} ms",
+            t.elapsed().as_millis()
+        );
+        println!();
+    }
 
     /// THE BUNDLE MAY NOT CARRY ANYTHING THAT BELONGS TO THE CHURCH.
     ///
@@ -7912,7 +8046,14 @@ fn stt_model_setting(conn: &rusqlite::Connection) -> Option<String> {
 /// the new model as selected — so the operator would be told they had switched,
 /// and be running the old model for the rest of the service. Choosing a model and
 /// loading it are one action or the promise is false (see rule 15).
-#[tauri::command]
+///
+/// **AND THEREFORE OFF THE MAIN RUN LOOP AS WELL — RG-299.** This is the door an
+/// operator actually presses in `Settings → Speech`; `load_stt_model` is the one
+/// the model-installation flow calls. They cost the same 1,097 ms-to-3.6 s, because
+/// the second is the last line of the first. A guarantee kept on one of two doors
+/// is this repository's most-repeated bug, and here it would mean the window
+/// freezing on the path a person uses and not on the path a wizard does.
+#[tauri::command(async)]
 fn select_stt_model(app: tauri::AppHandle, filename: Option<String>) -> error::Result<bool> {
     app.state::<servicelock::ServiceLock>()
         .guard("select_stt_model")?;
@@ -8030,12 +8171,30 @@ fn get_paraphrase_needs_a_run<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> er
 /// Bring speech recognition up after a model has just been installed, without a
 /// restart. Re-applies the active voice profile so language + decoder bias are
 /// live from the first word.
-#[tauri::command]
+///
+/// **OFF THE MAIN RUN LOOP, AND ONLY BECAUSE OF THE GUARD — RG-299.** 1,097 ms warm
+/// and about 3.6 s on a cold 1.6 GB read is a freeze on the window's thread, and a
+/// run loop the decoder's own emit can wait on (rule 2). What the main thread was
+/// providing was mutual exclusion, so `ModelLoad` has to hold that before
+/// `#[tauri::command(async)]` may take it away — see `ModelLoad` for the 3.2 GB
+/// two concurrent builds would hold while racing to write one slot. Faster by less
+/// safe is rule 34; this is faster, having paid for it.
+#[tauri::command(async)]
 fn load_stt_model(app: tauri::AppHandle) -> error::Result<bool> {
     // Rebuilding the engine takes the ears away for as long as whisper takes to
     // load, which on a big model is most of a paragraph.
     app.state::<servicelock::ServiceLock>()
         .guard("load_stt_model")?;
+    // Held for the whole load, released however this returns. The refusal is a
+    // sentence an operator can act on, not a fault: nothing is broken, the thing
+    // they asked for is already happening.
+    // Bound, not chained: `State` is a temporary and the guard borrows from it.
+    let one_at_a_time = app.state::<ModelLoad>();
+    let Some(_in_flight) = one_at_a_time.begin() else {
+        return Err(error::Error::refused(
+            "A speech model is already loading. Wait for it to finish.",
+        ));
+    };
     let engine = build_stt(&app);
     let loaded = engine.is_some();
     {
@@ -8154,9 +8313,38 @@ fn find_model_files() -> Vec<models::FoundModel> {
 /// in RELAY_GAP's RG-299 row.
 #[cfg(test)]
 mod main_loop_tests {
-    /// Every command named here does hundreds of milliseconds or more of file I/O,
-    /// measured, and must stay off the main thread.
-    const OFF_THE_RUN_LOOP: [&str; 2] = ["find_model_files", "install_model_file"];
+    /// Every command named here has been MEASURED at hundreds of milliseconds or
+    /// more, and must stay off the main thread. A list, not a rule about the 160
+    /// that stay on it: nothing about `(async)` looks load-bearing, `cargo fmt` will
+    /// not restore it, and a one-millisecond SQLite read gains nothing from a thread
+    /// hop.
+    ///
+    /// The measurements, all RG-299, each with the bench that produced it:
+    ///
+    /// * `find_model_files` — 3,543 ms for one 1.6 GB file, 5,025 ms with three
+    ///   installed. The only one of these a service lock does not hold back.
+    /// * `install_model_file` — 7,086 ms for `large-v3-turbo`.
+    ///   (`models::tests::what_the_model_flow_costs`)
+    /// * `load_stt_model` — 1,097 ms warm, ~3.6 s on a cold 1.6 GB read. It needed
+    ///   `ModelLoad` first: the main thread was providing mutual exclusion, and two
+    ///   builds at once would hold 3.2 GB while racing to write one `Stt` slot.
+    /// * `select_stt_model` — the same cost by definition; it ends by calling
+    ///   `load_stt_model`. Its twin, and a guarantee kept on one of two doors is
+    ///   this repository's most-repeated bug.
+    /// * `parse_import` — 2,285 ms at `MAX_IMPORT_BYTES`, 27 ms for a realistic
+    ///   2 MiB playlist. (`import_guard_tests::what_parsing_a_lyric_import_costs`)
+    ///
+    /// **`export_diagnostics` is deliberately NOT here.** It was the other command
+    /// this row named as never timed, and it is **16 ms** end to end
+    /// (`diagnostic_bundle_tests::what_the_diagnostic_bundle_costs`). Measuring
+    /// returned a no, which is a result.
+    const OFF_THE_RUN_LOOP: [&str; 5] = [
+        "find_model_files",
+        "install_model_file",
+        "load_stt_model",
+        "select_stt_model",
+        "parse_import",
+    ];
 
     fn source() -> String {
         std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs"))
@@ -8191,6 +8379,32 @@ mod main_loop_tests {
                  measurement that says why."
             );
         }
+    }
+
+    /// **THE GUARD THAT PAID FOR `load_stt_model` GOING ASYNC — RG-299.**
+    ///
+    /// Two concurrent loads would each build a whisper context (3.2 GB for two
+    /// `large-v3-turbo`) and both write the same `Stt` slot, and the reason that
+    /// could not happen before is that the main run loop was serialising them.
+    /// Taking the serialisation away and not replacing it is rule 34.
+    ///
+    /// Put the defect back by returning `Some(ModelLoadGuard(&self.0))`
+    /// unconditionally from `begin` and this fails.
+    #[test]
+    fn only_one_model_load_may_be_in_flight() {
+        let load = super::ModelLoad::default();
+        let first = load.begin().expect("the first caller gets the slot");
+        assert!(
+            load.begin().is_none(),
+            "a second load started while the first was still building — two whisper \
+             contexts, 3.2 GB, both writing one slot"
+        );
+        drop(first);
+        assert!(
+            load.begin().is_some(),
+            "the slot was not released, so one bad load kills the feature until \
+             Relay is restarted — `models::RunningGuard` learned this the hard way"
+        );
     }
 
     /// And the scanner can still see a plain command, so it is checking something.
@@ -10403,6 +10617,56 @@ mod import_guard_tests {
             t.elapsed().as_millis()
         );
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// WHAT PARSING A LYRIC IMPORT COSTS THE MAIN RUN LOOP — RG-299.
+    ///
+    /// The other command on that row's list with no measurement. `parse_import` does
+    /// no file I/O — the webview reads the file and hands over base64 — so its cost
+    /// is `decode_import` plus a parse, and the parse is the half nothing had
+    /// priced: `MAX_IMPORT_BYTES` lets a **256 MiB text file** through to
+    /// `songs::parse_song`, which is a great deal more work than the 81 ms decode
+    /// `what_an_import_at_the_cap_costs` already measured.
+    ///
+    /// Both ends: the cap, because that is what the guard permits, and a realistic
+    /// playlist, because that is what a church actually imports. A number for the
+    /// worst case alone would say nothing about Tuesday.
+    ///
+    /// Reports, asserts nothing about a clock.
+    #[test]
+    #[ignore = "allocates ~1 GB and measures this machine"]
+    fn what_parsing_a_lyric_import_costs() {
+        // Realistic lyric text rather than one repeated byte: `parse_song` splits on
+        // blank lines and reads section tags, so a file with no structure in it would
+        // measure the wrong thing.
+        let verse = "Verse 1\nAmazing grace how sweet the sound\nThat saved a wretch \
+                     like me\n\nChorus\nI once was lost but now am found\nWas blind but \
+                     now I see\n\n";
+        for (label, target) in [
+            ("a real playlist (2 MiB)", 2 * 1024 * 1024usize),
+            ("at the cap (256 MiB)", MAX_IMPORT_BYTES - 8192),
+        ] {
+            let mut text = String::with_capacity(target + verse.len());
+            while text.len() < target {
+                text.push_str(verse);
+            }
+            let encoded = b64(text.as_bytes());
+            let t = std::time::Instant::now();
+            let out = parse_import("songs.txt".into(), encoded);
+            println!(
+                "  parse_import {label:<24} {:>6} ms   {}",
+                t.elapsed().as_millis(),
+                match &out {
+                    Ok(v) => format!(
+                        "{} song(s), {} section(s)",
+                        v.len(),
+                        v.iter().map(|s| s.sections.len()).sum::<usize>()
+                    ),
+                    Err(e) => format!("refused: {}", e.message()),
+                }
+            );
+        }
+        println!();
     }
 
     /// An ordinary file still imports. The guard must not be a limit nobody can

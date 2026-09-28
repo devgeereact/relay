@@ -775,25 +775,33 @@ fn worker<F>(
         if window.len() >= MIN_SAMPLES {
             let lang_opt = lang.lock().ok().and_then(|g| g.clone());
             let prompt_opt = prompt.lock().ok().and_then(|g| g.clone());
-            if let Some((text, detected)) = transcribe(
+            let said = transcribe(
                 &mut state,
                 &window,
                 threads,
                 lang_opt.as_deref(),
                 prompt_opt.as_deref(),
                 DECODE,
-            ) {
+            );
+            // ── EVERY DECODE IS COUNTED, INCLUDING THE ONES THAT SAID NOTHING ──
+            //
+            // RG-137. One call, at the choke point, before the outcome is branched
+            // on (rule 36). `decode_us` used to be written only inside the arm
+            // below, so a pass whose decode returned `[BLANK_AUDIO]` — or whose
+            // text the script guard refused — contributed no `stt_decode` sample
+            // at all. Service 16 printed 4,416 passes and recorded 4,046, and the
+            // 11,651 ms this row has been chasing was a 20,977 ms LAG over all
+            // 4,416 minus a 9,326 ms worst decode over 4,046 of them.
+            let decode_us = started.elapsed().as_micros() as u64;
+            crate::latency::decode_finished(trace, decode_us, window_ms, drained);
+            if let Some((text, detected)) = said {
                 // Stamp BEFORE handing the text on. `on_update` is the whole
                 // downstream pipeline — detection, the router, the wall — and a
                 // transcript stamp taken after it would fold every one of those
                 // costs into "how long whisper took", which is the exact
                 // misattribution this module exists to end.
                 crate::latency::transcript_emitted(
-                    trace,
-                    started.elapsed().as_micros() as u64,
-                    window_ms,
-                    drained,
-                    is_final,
+                    trace, decode_us, window_ms, drained, is_final,
                     // RG-118. The worker's own voiced count decides whether the gap
                     // this pass closes was speech or a pause: silent chunks are
                     // appended to a window that has not closed (see the comment
@@ -3409,6 +3417,73 @@ mod adaptive_cadence {
         samples as u64 * 1000 / TARGET_RATE as u64
     }
 
+    /// WHAT THE DRAIN LOOP COSTS WHEN THE QUEUE IS AS DEEP AS IT CAN GET — RG-137.
+    ///
+    /// The row named two candidates for the ~11.6 s of service 16's worst pass that
+    /// the decode could not account for: *"the drain loop (a resample and a memcpy
+    /// per chunk) or the hand-off"*. This is the first of the two, priced.
+    ///
+    /// `LAG` is stamped when `rx.recv()` returns the batch's first chunk and read
+    /// after the decode, so `LAG - decode` is the drain loop and nothing else. On
+    /// 300 s of real church preaching replayed at wall-clock pace through the real
+    /// worker on `large-v3-turbo` (2026-09-28), the worst `LAG - decode` over 98
+    /// logged passes was **1 ms**, with `drained` 5–7 per pass. A field service
+    /// drains 1–16 (`audits/FIELD.md` §4), so this asks the extreme question the
+    /// replay could not: a **full** `STT_QUEUE`, drained in one batch.
+    ///
+    /// Reports rather than asserts a clock — a bench that fails on a busy machine
+    /// gets deleted within a month — but what it reports settles an arithmetic
+    /// question, and an answer in single-digit milliseconds against 11,651 ms is
+    /// not a close call.
+    #[test]
+    #[ignore = "a bench: reports what the deepest possible drain costs"]
+    fn what_the_deepest_drain_costs() {
+        // A real chunker's worth of 48 kHz audio, resampled on the way in exactly
+        // as the worker does it: the live path's chunks are 48 kHz off the device
+        // and `resample_linear` is the per-chunk cost this is about.
+        let secs = STT_QUEUE as f32 * crate::audio::HOP_MS as f32 / 1000.0 + 1.0;
+        let n = (48_000.0 * secs) as usize;
+        let tone: Vec<f32> = (0..n)
+            .map(|i| (i as f32 * 0.02).sin() * 0.2 + (i as f32 * 0.31).sin() * 0.05)
+            .collect();
+        let chunks = crate::audio::chunks_as_captured(&tone, 48_000);
+        let chunks: Vec<_> = chunks.into_iter().take(STT_QUEUE).collect();
+        assert_eq!(
+            chunks.len(),
+            STT_QUEUE,
+            "not enough audio to fill the queue — the bench, not the loop"
+        );
+
+        let mut deoverlap = Deoverlap::default();
+        let mut window: Vec<f32> = Vec::new();
+        let at = std::time::Instant::now();
+        let mut samples = 0usize;
+        for chunk in &chunks {
+            let new_slice = deoverlap.tail(chunk);
+            if new_slice.is_empty() {
+                continue;
+            }
+            let resampled = resample_linear(new_slice, chunk.sample_rate, TARGET_RATE);
+            samples += resampled.len();
+            window.extend_from_slice(&resampled);
+            // The live loop never lets the window past the cap; draining a full
+            // queue therefore recycles it rather than growing without bound.
+            if window.len() > WINDOW_SECS * TARGET_RATE as usize {
+                window.clear();
+            }
+        }
+        let cost = at.elapsed();
+        println!(
+            "\n  drain loop, {} chunks (a FULL STT_QUEUE = {:.1}s of audio):\n    \
+             {:.3} ms total, {} samples resampled\n    \
+             service 16's unexplained residual was 11,651 ms\n",
+            chunks.len(),
+            chunks.len() as f32 * crate::audio::HOP_MS as f32 / 1000.0,
+            cost.as_secs_f64() * 1000.0,
+            samples,
+        );
+    }
+
     /// A fast pairing must not be held to the old fixed second.
     ///
     /// `ggml-base` decodes the window in ~59ms on an M4 Pro with Metal. Waiting a
@@ -3673,7 +3748,27 @@ mod realtime {
     /// Replay one file through the real worker at wall-clock pace and hand back the
     /// report, so a bench that PRINTS and a test that ASSERTS cannot drift into
     /// describing two different rigs.
+    /// TWO REPLAYS MAY NOT RUN AT ONCE, AND THE DOCUMENTED COMMAND RUNS BOTH.
+    ///
+    /// `latency.rs`'s recorder is one global, and `replay` starts with
+    /// `latency::reset()`. `cargo test --release realtime -- --ignored` — the
+    /// command both tests in this module tell you to use — runs them on separate
+    /// threads, so each reset the other's histograms mid-flight and each loaded its
+    /// own 1.6 GB whisper and competed with it for the GPU. Measured 2026-09-28 on
+    /// one 400 s slice of real church audio: run together, `stt_decode` p50 doubled
+    /// to 2192 ms, one pass logged a 15,476 ms decode that the distribution's own
+    /// 7,408 ms worst says never happened (it was the other run's), and
+    /// `a_silence_is_not_audio_waiting_for_the_decoder` FAILED at 20,749 ms against
+    /// its 15,608 ms ceiling. Run alone, the same worker's worst decode on 300 s of
+    /// the same service is 1,371 ms.
+    ///
+    /// A table that is two runs mixed together looks exactly like a table of one,
+    /// and the test it broke is the one pinning RG-137's stamping artefact — an
+    /// instrument that cries wolf gets its assertion loosened, and then it is not an
+    /// instrument. The unit tests in `latency.rs` already serialise on
+    /// `test_lock()`; these are the two that did not.
     fn replay(wav: &std::ffi::OsString) -> (crate::latency::Report, f32, usize) {
+        let _one_at_a_time = crate::latency::test_lock();
         let model = default_model_path().expect("no STT model found");
         let pcm = load_f32(&wav.to_string_lossy());
         let secs = pcm.len() as f32 / TARGET_RATE as f32;
