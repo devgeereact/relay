@@ -2019,7 +2019,7 @@ fn a_verse_that_reaches_the_wall_carries_the_pass_that_heard_it() {
     let h = app.handle().clone();
     let wall = Wall::watch(&h);
 
-    let trace = crate::latency::begin_pass(crate::latency::now_us(), None);
+    let trace = crate::latency::begin_pass(Some(crate::latency::now_us()), None);
     super::emit_detections(
         &h,
         "turn with me to John chapter three verse sixteen",
@@ -2093,7 +2093,7 @@ fn the_fire_half_of_the_chain_is_measured_on_its_own() {
     let h = app.handle().clone();
     let _wall = Wall::watch(&h);
 
-    let trace = crate::latency::begin_pass(crate::latency::now_us(), None);
+    let trace = crate::latency::begin_pass(Some(crate::latency::now_us()), None);
     crate::latency::transcript_emitted(trace, 1_000, 8_000, 1, true, 1);
     super::emit_detections(
         &h,
@@ -2144,7 +2144,7 @@ fn one_auto_fire_that_reached_a_screen_is_one_end_to_end_sample() {
     let h = app.handle().clone();
     let _wall = Wall::watch(&h);
 
-    let trace = crate::latency::begin_pass(crate::latency::now_us(), None);
+    let trace = crate::latency::begin_pass(Some(crate::latency::now_us()), None);
     crate::latency::transcript_emitted(trace, 1_000, 8_000, 1, true, 1);
     super::emit_detections(
         &h,
@@ -2192,7 +2192,7 @@ fn a_second_screen_painting_the_same_verse_does_not_double_count() {
     let h = app.handle().clone();
     let _wall = Wall::watch(&h);
 
-    let trace = crate::latency::begin_pass(crate::latency::now_us(), None);
+    let trace = crate::latency::begin_pass(Some(crate::latency::now_us()), None);
     crate::latency::transcript_emitted(trace, 1_000, 8_000, 1, true, 1);
     super::emit_detections(
         &h,
@@ -2243,7 +2243,7 @@ fn a_verse_that_no_screen_painted_is_counted_rather_than_silently_absent() {
     let h = app.handle().clone();
     let _wall = Wall::watch(&h);
 
-    let trace = crate::latency::begin_pass(crate::latency::now_us(), None);
+    let trace = crate::latency::begin_pass(Some(crate::latency::now_us()), None);
     crate::latency::transcript_emitted(trace, 1_000, 8_000, 1, true, 1);
     super::emit_detections(
         &h,

@@ -569,7 +569,12 @@ fn worker<F>(
     // nothing about the word at the front of the batch, which waited longer and is
     // the one the operator is looking for. A latency report should describe the
     // word that waited longest, not the one that waited least.
+    // In a window, and undecoded. RG-137: audio that never enters a window is never
+    // transcribed, so it was never waiting for anything — see the stamping site.
     let mut oldest_pending_us: Option<u64> = None;
+    // The same question for the audio held back in `carry`, which is waiting for the
+    // NEXT window and must not have its stamp reset by this window's decode.
+    let mut carry_oldest_us: Option<u64> = None;
     let mut voice_opened_us: Option<u64> = None;
 
     // How far behind real time we have been running. Only used to warn.
@@ -614,9 +619,6 @@ fn worker<F>(
         for chunk in std::iter::once(first).chain(rx.try_iter()) {
             drained += 1;
             last_ts_ms = chunk.timestamp_ms;
-            if oldest_pending_us.is_none() {
-                oldest_pending_us = Some(chunk.received_at_us);
-            }
 
             if chunk.is_voice {
                 // The gate opening on an empty window IS the start of an
@@ -701,10 +703,33 @@ fn worker<F>(
             // the audio that will not fit is held back and starts the next one,
             // so the text of what has already been heard is emitted and kept
             // instead of falling off the front unsaid.
+            // ── WHEN THIS CHUNK STARTED WAITING FOR THE DECODER (RG-137) ──────
+            //
+            // Here, and nowhere earlier, because here is where the audio actually
+            // enters something whisper will read. The stamp used to be taken from
+            // the first chunk of the batch, before both `continue`s above — so room
+            // tone skipped for arriving at an empty window set it, and then survived
+            // every batch that produced no decode, which in a quiet church is all of
+            // them. Measured through the real worker on real church audio: the stamp
+            // was **107,801 ms** old on a pass whose window held 1,000 ms of audio.
+            // Nothing had waited 107 seconds; the audio it named was never
+            // transcribed at all. Rule 31's own fourth honesty rule — a gap with no
+            // voiced audio in it is silence, not cadence — applied to the cadence
+            // metric and to nothing else, and this is the same mistake one stage
+            // upstream.
             if window_is_full(window.len(), resampled.len(), max_window) {
                 force_close = true;
+                // Audio that will not fit is still waiting, in `carry`, and it starts
+                // the next window (RG-262) — so its stamp has to survive this
+                // window's decode rather than being reset with the rest.
+                if carry.is_empty() {
+                    carry_oldest_us = Some(chunk.received_at_us);
+                }
                 carry.extend_from_slice(&resampled);
             } else {
+                if oldest_pending_us.is_none() {
+                    oldest_pending_us = Some(chunk.received_at_us);
+                }
                 window.extend_from_slice(&resampled);
             }
             new_since_step += resampled.len();
@@ -734,12 +759,19 @@ fn worker<F>(
         let continued = force_close && !want_final;
         let started = std::time::Instant::now();
         let window_ms = window.len() as u64 * 1000 / TARGET_RATE as u64;
-        let trace = crate::latency::begin_pass(
-            oldest_pending_us.unwrap_or_else(crate::latency::now_us),
-            voice_opened_us,
-        );
+        // How long the oldest undecoded audio in this window waited for the decoder.
+        // Reported beside the decode rather than added to it: `audio_to_partial` is
+        // the sum of the two and a sum cannot say which addend moved (RG-137).
+        //
+        // `None` when this pass re-decodes a window nothing new went into — every
+        // sample in it has been through whisper before, so there is no waiting audio
+        // to report and the recorder is told that rather than being handed a zero.
+        let wait_ms =
+            oldest_pending_us.map(|us| crate::latency::now_us().saturating_sub(us) / 1000);
+        let trace = crate::latency::begin_pass(oldest_pending_us, voice_opened_us);
 
         let mut emitted = false;
+        let mut handoff_ms = 0u64;
         if window.len() >= MIN_SAMPLES {
             let lang_opt = lang.lock().ok().and_then(|g| g.clone());
             let prompt_opt = prompt.lock().ok().and_then(|g| g.clone());
@@ -774,6 +806,13 @@ fn worker<F>(
                 // pause arriving in the very next chunk is judged against words
                 // that have actually been decoded.
                 tail_may_be_unfinished = tail_may_be_an_unfinished_reference(&text);
+                // RG-137. Rule 33 allows exactly one thing on this thread besides the
+                // decode — the `stt://transcript` emit inside `on_update` — and until
+                // now nothing measured it. It is the only part of a pass that could
+                // block for seconds with every latency metric reading normal, because
+                // `transcript_emitted` is stamped deliberately BEFORE it. A decoder
+                // held here is a decoder that is not decoding.
+                let handed = std::time::Instant::now();
                 on_update(TranscriptUpdate {
                     text,
                     language: detected,
@@ -782,6 +821,9 @@ fn worker<F>(
                     timestamp_ms: last_ts_ms,
                     trace_id: trace,
                 });
+                let handoff_us = handed.elapsed().as_micros() as u64;
+                handoff_ms = handoff_us / 1000;
+                crate::latency::transcript_handed_off(trace, handoff_us);
             }
         }
         // A pass that produced no text reaches no further stage. Retire it now, so
@@ -789,6 +831,17 @@ fn worker<F>(
         // evicts it.
         if !emitted {
             crate::latency::close(trace);
+            // AND IF IT ALSO CLOSED THE WINDOW, THE UTTERANCE IS OVER AND ONLY THE
+            // WORKER KNOWS (RG-137, completing RG-118). `transcript_emitted` is the
+            // only writer of the cadence guard's two answers, and it is not called on
+            // a pass whose decode returned nothing — a blank window, a hallucination
+            // the script guard refused, or a closing window under `MIN_SAMPLES` that
+            // is never decoded at all. The recorder then went on believing the
+            // pipeline was mid-utterance, and timed the silence that followed as
+            // cadence, however long it was.
+            if is_final && !continued {
+                crate::latency::utterance_closed(voiced);
+            }
         }
         new_since_step = 0;
         oldest_pending_us = None;
@@ -807,6 +860,10 @@ fn worker<F>(
             if !carry.is_empty() {
                 window.extend_from_slice(&carry);
                 carry.clear();
+                // It has been waiting since it arrived, not since this line. Taking
+                // the stamp with the samples is the difference between a reported
+                // wait and a reported nothing (RG-137).
+                oldest_pending_us = carry_oldest_us.take();
             }
             // A FORCED CLOSE DOES NOT END THE UTTERANCE. The preacher is still
             // speaking; only the window ended, so the voice stays open and the
@@ -876,12 +933,24 @@ fn worker<F>(
             // Wall time from the newest chunk landing in this worker to the transcript
             // being emitted. `gap` is the cadence — how long the operator waits between
             // one transcript update and the next, which is the thing they actually feel.
+            //
+            // `wait` and `handoff` are the two pieces of LAG that are not the decode,
+            // and they are printed because LAG alone could not say which it was:
+            // service 16's log held a **20,977 ms** LAG against a **9,326 ms** worst
+            // decode, so at least 11,651 ms of one pass was spent somewhere this line
+            // did not name (RG-137).
             let lag_ms = batch_at.elapsed().as_millis() as u64;
             let gap_ms = last_emit.elapsed().as_millis() as u64;
+            // `none` rather than `0`: this pass had no audio waiting for the decoder,
+            // which is not the same fact as audio that waited no time at all.
+            let wait = match wait_ms {
+                Some(ms) => format!("{ms}ms"),
+                None => "none".to_string(),
+            };
             eprintln!(
                 "stt: LAG={lag_ms}ms decode={decode_ms}ms gap_since_last_emit={gap_ms}ms \
                  window={window_ms}ms drained={drained} voiced={voiced} silent={silent} \
-                 final={is_final}"
+                 final={is_final} wait={wait} handoff={handoff_ms}ms emitted={emitted}"
             );
         }
         last_emit = std::time::Instant::now();
@@ -3601,13 +3670,10 @@ mod realtime {
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
-    #[test]
-    #[ignore = "needs RELAY_BENCH_WAV and an installed model"]
-    fn live_transcript_latency() {
-        let Some(wav) = std::env::var_os("RELAY_BENCH_WAV") else {
-            eprintln!("set RELAY_BENCH_WAV to a raw/RIFF f32 mono 16k file");
-            return;
-        };
+    /// Replay one file through the real worker at wall-clock pace and hand back the
+    /// report, so a bench that PRINTS and a test that ASSERTS cannot drift into
+    /// describing two different rigs.
+    fn replay(wav: &std::ffi::OsString) -> (crate::latency::Report, f32, usize) {
         let model = default_model_path().expect("no STT model found");
         let pcm = load_f32(&wav.to_string_lossy());
         let secs = pcm.len() as f32 / TARGET_RATE as f32;
@@ -3619,10 +3685,6 @@ mod realtime {
         crate::latency::reset();
         crate::latency::set_enabled(true);
 
-        // Collect what the worker emits, and stamp the render the way the console
-        // does — this rig stands in for the webview, so `audio_to_visible` here is
-        // "audio in the worker → a consumer was handed the text", with no webview
-        // paint in it. The shipped console reports its own paint on top.
         let seen: Arc<Mutex<Vec<(u128, bool)>>> = Arc::new(Mutex::new(Vec::new()));
         let sink = seen.clone();
         let t0 = Instant::now();
@@ -3643,32 +3705,94 @@ mod realtime {
         .expect("load model");
         let tx = engine.sender();
 
-        // The REAL chunker and the REAL voice gate — not a hand-rolled hop. See
-        // `audio::chunks_as_captured`, which exists so a bench cannot drift from
-        // the pipeline it claims to describe.
         let chunks = crate::audio::chunks_as_captured(&pcm, TARGET_RATE);
         let hop = Duration::from_millis(crate::audio::CHUNK_MS as u64 / 2);
         let feed = Instant::now();
         for (i, mut c) in chunks.into_iter().enumerate() {
-            // Wall-clock pacing. Without this the rig hands the worker the whole
-            // sermon at once and measures a queue no room can produce.
             let due = hop * i as u32;
             if let Some(wait) = due.checked_sub(feed.elapsed()) {
                 std::thread::sleep(wait);
             }
-            // Re-stamp: `chunks_as_captured` builds them all up front, so their
-            // arrival times would otherwise all be "when the test started".
             c.received_at_us = crate::latency::now_us();
             if tx.send(c).is_err() {
                 break;
             }
         }
-        // Let the tail drain — the last window still has a decode and a finalize
-        // in front of it.
         std::thread::sleep(Duration::from_secs(3));
         drop(engine);
+        let n = seen.lock().map(|g| g.len()).unwrap_or(0);
+        (crate::latency::report(0), secs, n)
+    }
 
-        let report = crate::latency::report(0);
+    /// AUDIO NOBODY IS WAITING FOR IS NOT LATENCY — RG-137.
+    ///
+    /// `audio_waiting_for_decoder` is the queue in FRONT of whisper, so it is bounded
+    /// by the window the worker is filling: eight seconds of audio, plus whatever the
+    /// last decode cost. It can never legitimately be a minute, because the worker
+    /// never holds a minute of undecoded audio — the 8 s cap makes that impossible.
+    ///
+    /// It used to be. `oldest_pending_us` was stamped from the first chunk of the
+    /// first batch after a decode, before the two `continue`s that skip room tone at
+    /// an empty window and a fully-overlapping chunk, and it then survived every
+    /// batch that produced no decode — which in a quiet church is all of them.
+    /// Measured against the pre-fix worker on 140 s cut from a real service
+    /// (`service-2026-09-25`, a 109 s gap at t=5273 s followed by preaching):
+    /// **107,801 ms** on a pass whose window held 1,000 ms of audio and whose decode
+    /// took 797 ms, and **38,401 ms** on the 40 s gap at t=20472 s. Whether that
+    /// reaches the report at all depends only on whether that particular decode
+    /// returns text, which is the worst property an instrument can have: the same
+    /// silence is a 107-second latency or nothing, by luck.
+    ///
+    /// Give it a file with a long quiet stretch in it. A file of continuous speech
+    /// cannot fail this test, and that is exactly why the two replays in
+    /// `audits/PERF.md` found nothing.
+    #[test]
+    #[ignore = "needs RELAY_BENCH_WAV (include a long silence) and an installed model"]
+    fn a_silence_is_not_audio_waiting_for_the_decoder() {
+        let Some(wav) = std::env::var_os("RELAY_BENCH_WAV") else {
+            eprintln!("set RELAY_BENCH_WAV to a raw/RIFF f32 mono 16k file with a silence in it");
+            return;
+        };
+        let (report, _secs, _n) = replay(&wav);
+        let wait = report
+            .metrics
+            .iter()
+            .find(|m| m.metric == "audio_waiting_for_decoder")
+            .expect("metric");
+        let decode_worst = report
+            .metrics
+            .iter()
+            .find(|m| m.metric == "stt_decode")
+            .and_then(|m| m.worst_ms)
+            .unwrap_or(0.0);
+        assert!(
+            wait.samples > 0,
+            "nothing was measured — is the file silent?"
+        );
+        // The window cap plus one decode plus one chunker hop of slack. Nothing the
+        // worker can legitimately be holding is older than that.
+        let ceiling = (WINDOW_SECS as f64 * 1000.0) + decode_worst + crate::audio::HOP_MS as f64;
+        println!(
+            "  audio_waiting_for_decoder: n={} p50={:?} worst={:?}  ceiling={ceiling:.0}ms",
+            wait.samples, wait.p50_ms, wait.worst_ms
+        );
+        assert!(
+            wait.worst_ms.unwrap_or(0.0) <= ceiling,
+            "the oldest audio waiting for the decoder was reported as {:?} ms, and the \
+             worker cannot hold more than {ceiling:.0} ms of undecoded audio — this is a \
+             silence being counted as a latency (RG-137)",
+            wait.worst_ms
+        );
+    }
+
+    #[test]
+    #[ignore = "needs RELAY_BENCH_WAV and an installed model"]
+    fn live_transcript_latency() {
+        let Some(wav) = std::env::var_os("RELAY_BENCH_WAV") else {
+            eprintln!("set RELAY_BENCH_WAV to a raw/RIFF f32 mono 16k file");
+            return;
+        };
+        let (report, secs, n) = replay(&wav);
         println!(
             "  {:<38} {:>7} {:>8} {:>8} {:>8}",
             "", "n", "p50", "p95", "worst"
@@ -3698,7 +3822,6 @@ mod realtime {
                 println!("  {} per minute: {:?}", m.metric, m.per_minute_mean_ms);
             }
         }
-        let n = seen.lock().map(|g| g.len()).unwrap_or(0);
         println!("\n  {n} transcript updates over {secs:.1}s of audio\n");
     }
 }
