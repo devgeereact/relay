@@ -2068,6 +2068,58 @@ fn candidates_for_window(
         }
     }
 
+    // ── FOLLOWING THE PREACHER THROUGH A PASSAGE HE ANNOUNCED (2026-09-28) ──
+    //
+    // The operator's report: *"even if the preacher paraphrases some section of the
+    // scripture, follow the preacher to know when to move to the next verse."*
+    //
+    // Reading verse 7 of a staged passage aloud already works — a verbatim run is
+    // `Reading` and `Reading` may fire (40 of service 42's 118 auto-fires were
+    // exactly that). What did not work is the preacher RETELLING verse 7, which is
+    // `Semantic`, and rule 10 caps a paraphrase at `Suggest` at any score.
+    //
+    // **That cap is not weakened here, and this is the argument for why this is a
+    // different act.** Rule 10 exists so the AI cannot put an ARBITRARY verse on a
+    // wall from a bag of words — a cosine is not a probability, and the harm is a
+    // verse nobody asked for. Inside an EXPLICIT span the set of possible outcomes is
+    // not arbitrary: it is the verses the preacher named out loud, bounded at both
+    // ends, and Relay is choosing WHERE IN THAT PASSAGE he is rather than which verse
+    // he means. `router::corroboration_never_promotes_a_paraphrase` still holds,
+    // because corroboration still promotes nothing; the bound is the announcement.
+    //
+    // Four conditions, all necessary:
+    //   * an EXPLICIT range is staged (`span_end`) — a whole chapter is not an
+    //     announcement of how far he intends to read, and 150 verses of Psalms is
+    //     back to arbitrary;
+    //   * the candidate is the SAME book and chapter as what is on the screen;
+    //   * it is FORWARD of the current verse and no further than the range end —
+    //     forward-only, so a retelling that brushes an earlier verse cannot walk the
+    //     wall backwards or oscillate;
+    //   * it came from the VERSE'S OWN WORDS. `Semantic` and `Quoted` qualify;
+    //     `UncertainBook`/`UncertainNumber` never do, because those are doubts about
+    //     which reference this is and that is the question a span cannot answer.
+    //
+    // The dwell floor (rule 45) still applies, so following cannot flash past a
+    // congregation, and the whole thing is inert until a passage is staged.
+    if let (Some(cur), Some(end)) = (context.current(), context.span_end()) {
+        for c in candidates.iter_mut() {
+            if c.method.unattended_rank() != 0 {
+                continue; // already able to reach the wall on its own evidence
+            }
+            let words_only = matches!(
+                c.method,
+                DetectionMethod::Semantic | DetectionMethod::Quoted
+            );
+            let in_passage = c.r.book == cur.book
+                && c.r.chapter == cur.chapter
+                && c.r.verse > cur.verse
+                && c.r.verse <= end;
+            if words_only && in_passage {
+                c.method = DetectionMethod::Reading;
+            }
+        }
+    }
+
     // ── THE SHORT RUN A NAMED CHAPTER MAKES ADMISSIBLE, RG-313 ───────────
     //
     // The rule above sources its accusing run from `PhraseIndex::quoted`, which
@@ -11999,6 +12051,135 @@ mod passage_guard_bench {
     /// its conclusion was being discarded.
     ///
     /// This is the shape CLAUDE.md records four times over: *a guarantee is only kept
+    /// Scratch probe: which wording of Romans 1:8 is a `Semantic` candidate without
+    /// already being a `Reading`? Used to build the test below honestly rather than
+    /// guessing at a paraphrase.
+    #[test]
+    #[ignore]
+    fn print_candidate_methods_for_retellings() {
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        let ctx = ContextMemory::default();
+        for t in [
+            "your faith is spoken of throughout the whole world",
+            "I thank my God through Jesus Christ for you all",
+            "he thanks God for them because their faith is spoken of everywhere",
+            "he gives thanks to God for them all because their faith is known everywhere",
+            "first he thanks his God for all of them because their faith is talked about",
+        ] {
+            let w = candidates_for_window(t, true, &sem, &phrases, &ctx, None, false);
+            let rows: Vec<String> = w
+                .kept
+                .iter()
+                .map(|c| format!("{} {:?} {:.2}", Fire::key_for(&c.r), c.method, c.conf))
+                .collect();
+            println!("  {t:?}\n      {rows:?}\n");
+        }
+    }
+
+    /// **FOLLOWING THE PREACHER THROUGH A PASSAGE HE ANNOUNCED**, and the four
+    /// boundaries that keep it from becoming rule 10's own failure.
+    ///
+    /// The operator's report: a preacher announces *"Romans 1 … verse 6 all the way to
+    /// 8"* and then RETELLS the verses rather than reading them word for word. A
+    /// retelling is `Semantic`, rule 10 caps it at `Suggest` at any score, so the wall
+    /// stayed on the verse he started from. Inside an explicit span the answer is
+    /// bounded to verses he named out loud, which is what makes this a different act
+    /// from choosing a verse out of 31,102.
+    ///
+    /// Not `#[ignore]`d: it builds the real 31k index once, like its neighbours, and
+    /// the four refusals are the whole value.
+    #[test]
+    #[ignore]
+    fn a_retelling_follows_the_preacher_only_inside_a_passage_he_announced() {
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+
+        // Romans 1:6-8 announced, wall on verse 6. A retelling of verse 8.
+        // A genuine RETELLING of Romans 1:8, not a reading of it: no run of the
+        // verse's own words long enough to be a `Reading` on its own merits. The
+        // first draft of this test used wording close to the KJV and was a `Reading`
+        // with no span at all, which would have made boundary 2 vacuous.
+        // A genuine RETELLING of Romans 1:8 and not a reading of it: `Semantic` 0.47
+        // with NO `Reading` beside it. Chosen with
+        // `print_candidate_methods_for_retellings` rather than guessed — the first
+        // draft used wording close to the KJV, which came out `Reading 0.72` on its
+        // own merits and would have made boundary 2 vacuous, and the second draft was
+        // so loose it was not a candidate at all and made boundary 1 vacuous.
+        const RETELL: &str = "he thanks God for them because their faith is spoken of everywhere";
+        let staged = |verse: i64, end: Option<i64>| {
+            let mut c = ContextMemory::default();
+            c.note_passage(
+                &detection::VerseRef {
+                    book: "Romans".into(),
+                    chapter: 1,
+                    verse,
+                },
+                end,
+            );
+            c
+        };
+        let firable = |ctx: &ContextMemory| -> Vec<String> {
+            candidates_for_window(RETELL, true, &sem, &phrases, ctx, None, false)
+                .kept
+                .iter()
+                .filter(|c| c.method.unattended_rank() > 0)
+                .map(|c| format!("{} {:?}", Fire::key_for(&c.r), c.method))
+                .collect()
+        };
+
+        // 1. With the span announced, a retelling of a LATER verse may follow.
+        let inside = firable(&staged(6, Some(8)));
+        println!("  inside an announced span: {inside:?}");
+        assert!(
+            inside.iter().any(|r| r.starts_with("Romans 1:8")),
+            "a retelling of verse 8 did not follow the preacher inside Romans 1:6-8: {inside:?}"
+        );
+
+        // 2. NO span — the same words, the same wall, nothing may fire. This is the
+        //    boundary that keeps rule 10 intact: a whole chapter is not an
+        //    announcement of how far he means to read.
+        assert!(
+            firable(&staged(6, None)).is_empty(),
+            "a retelling reached the wall with no announced range: {:?}",
+            firable(&staged(6, None))
+        );
+
+        // 3. BACKWARDS is refused — forward-only, so a retelling that brushes an
+        //    earlier verse cannot walk the wall back or oscillate.
+        assert!(
+            firable(&staged(8, Some(8))).is_empty(),
+            "a retelling moved the wall backwards inside a passage"
+        );
+
+        // 4. PAST THE END is refused: verse 9 is outside what he announced.
+        let past = candidates_for_window(
+            RETELL,
+            true,
+            &sem,
+            &phrases,
+            &staged(6, Some(7)),
+            None,
+            false,
+        );
+        assert!(
+            past.kept
+                .iter()
+                .all(|c| c.method.unattended_rank() == 0 || c.r.verse <= 7),
+            "a verse past the announced end became firable: {:?}",
+            past.kept
+                .iter()
+                .map(|c| (Fire::key_for(&c.r), c.method))
+                .collect::<Vec<_>>()
+        );
+    }
+
     /// on the doors you checked*. The doubt is a fact about a REFERENCE, not about one
     /// candidate that happens to name it.
     #[test]

@@ -1629,7 +1629,25 @@ fn parse_reference_inner(
     //
     // Skipped ONLY when a verse word actually follows. "Hebrews 12 and 13" is two
     // chapters and must stay two chapters; "and" before a digit is left alone.
-    if tokens.get(i).is_some_and(|t| is_ref_connector(t))
+    //
+    // ── AND THE SAME RULE FOR A RUN OF THEM (2026-09-28) ──
+    //
+    // A preacher does not say "and verse six"; they say "AND WE WILL BE READING FROM
+    // verse six all the way to eight". Measured on the operator's own phrasings,
+    // every one of those reached the wall as whole-chapter verse 1 with the verse
+    // called discarded — the identical harm rule 30 was written for, one clause
+    // wider. `verse_word_after_filler` keeps the guard that makes it safe: the run is
+    // skipped only when a verse keyword is what it leads to.
+    // More than one word between the chapter and its verse keyword. Tracked because
+    // a reference assembled across a gap this wide cannot be allowed to fire
+    // unattended — see the demotion below.
+    let mut crossed_filler = false;
+    if let Some(v) = verse_word_after_filler(tokens, i) {
+        if v > i + 1 {
+            crossed_filler = true;
+        }
+        i = v;
+    } else if tokens.get(i).is_some_and(|t| is_ref_connector(t))
         && tokens.get(i + 1).is_some_and(|t| is_verse_word(t))
     {
         i += 1;
@@ -1842,6 +1860,31 @@ fn parse_reference_inner(
     if garbled {
         DetectionMethod::uncertain_number(&mut m);
     }
+    // ── A VERSE REACHED ACROSS A RUN OF WORDS IS OFFERED, NEVER FIRED ──
+    //
+    // The run recovers the reference the preacher actually called — *"Romans 1 and we
+    // will be reading from verse 6 all the way to 8"* used to stage Romans 1:1 and
+    // throw the 6 away — but it may not fire unattended, and the reason is a fact
+    // about the tokeniser rather than a caution: **`normalize` turns `.` into a
+    // separator**, so a sentence boundary never reaches this parser. FIELD F-1 is the
+    // proof. *"…going through in Luke 10. If you read from verse 32, 37."* is two
+    // sentences, and across the filler run it reads exactly like one announcement —
+    // `eval`'s `field-luke-10-not-proverbs` negative case caught this within minutes
+    // of the run being added, auto-firing `Luke 10:32`.
+    //
+    // Luke 10:32 may even be the verse he meant. That is not the point: Relay cannot
+    // SEE the full stop, so it cannot tell that case from a chapter and a verse in one
+    // breath, and rule 10's answer to "confident about something nobody said" is a
+    // method, not a score. `from_sensitivity(100)` puts the auto-fire bar at 0.30, so
+    // a lower number here would fire anyway.
+    //
+    // What the operator gets is the right reference WITH its span, one action away,
+    // instead of verse 1 of the chapter on the wall. Promoting this to `Direct` needs
+    // sentence boundaries surviving `normalize`, which is a change to every parse in
+    // the file and wants its own measurement.
+    if crossed_filler {
+        DetectionMethod::uncertain_number(&mut m);
+    }
     if let Some((e, _)) = range {
         m.verse_end = Some(e);
     }
@@ -1917,9 +1960,34 @@ fn make_match(
 fn parse_range_end(tokens: &[&str], idx: usize, start: i64) -> Option<(i64, usize)> {
     let mut j = idx;
     let mut connector = false;
+    // ── "ALL THE WAY TO 8", "THROUGH TO NUMBER 6", "DOWN TO VERSE 6" (2026-09-28) ──
+    //
+    // How the operator's congregation announces a span. The allow-list is
+    // deliberately TIGHT rather than "any ordinary word": with arbitrary filler,
+    // "Romans 8 verse 28 … and we give it all to 30 people" would read 28-30 and
+    // stage three verses nobody asked for. Every word here only ever appears inside
+    // a spoken range, and a connector is still REQUIRED — filler alone is not a
+    // range, which is what keeps an adjacent number from becoming one.
+    let mut span = 0usize;
     while let Some(t) = tokens.get(j) {
         if matches!(*t, "to" | "through" | "thru" | "til" | "until") {
             connector = true;
+            j += 1;
+        } else if matches!(
+            *t,
+            "all"
+                | "the"
+                | "way"
+                | "right"
+                | "down"
+                | "straight"
+                | "verse"
+                | "verses"
+                | "number"
+                | "numbers"
+        ) && span < 4
+        {
+            span += 1;
             j += 1;
         } else {
             break;
@@ -2095,6 +2163,57 @@ fn is_chapter_word(t: &str) -> bool {
 /// verse word, so it cannot swallow a connector that joins two numbers.
 fn is_ref_connector(t: &str) -> bool {
     matches!(t, "and" | "," | "&")
+}
+
+/// The most words that may sit between a chapter and the verse keyword that belongs
+/// to it. *"and we will be reading from"* is six; *"and we are reading"* is four.
+/// Bounded because the bound is the safety: an unbounded skip would bind a verse
+/// announced for a book named later in the sentence.
+const MAX_REF_FILLER: usize = 8;
+
+/// **HOW A REFERENCE IS ACTUALLY ANNOUNCED** (the operator's report, 2026-09-28):
+/// *"Psalm 23 and we will be reading from verse 1 through to number 6"*, *"Romans 1
+/// and we will be reading from verse 6 all the way to 8"*. Rule 30 already fixed the
+/// one-word version of this — *"chapter nine AND verse twenty-four"* — and the
+/// measured harm was identical: the verse called was thrown away and **verse 1 of the
+/// chapter reached the wall at 0.88, unattended**. A congregation heard 1 Corinthians
+/// 9:1, 2 Chronicles 15:1 and 26:1, Proverbs 3:1, Isaiah 61:1, Hebrews 6:1, Genesis
+/// 12:1 and Psalms 23:1 in one sitting from that shape.
+///
+/// This is the same rule for a RUN of ordinary words rather than one connector, and
+/// it keeps rule 30's guard exactly: **the run is skipped only when a verse keyword
+/// actually follows it.** So *"Hebrews 12 and 13"* is still two chapters, because a
+/// digit is not a verse word and nothing opens the run.
+///
+/// Returns the index OF the verse word, or `None` if the run is not filler all the
+/// way to one. A filler token is an ordinary word: not a number, not a book alias,
+/// not a chapter or verse keyword. Stopping at a book alias is what stops
+/// *"Romans 8 and then later Galatians 5 verse 22"* handing Romans the 22.
+fn verse_word_after_filler(tokens: &[&str], from: usize) -> Option<usize> {
+    let aliases = alias_map();
+    for step in 0..=MAX_REF_FILLER {
+        let j = from + step;
+        let t = *tokens.get(j)?;
+        if is_verse_word(t) {
+            // A run of nothing is the plain case the loop below already handles; it
+            // is still correct to answer it here.
+            return Some(j);
+        }
+        // Anything that could begin or continue another reference ends the run.
+        if t.parse::<i64>().is_ok()
+            || parse_number(tokens, j).is_some()
+            || aliases.contains_key(t)
+            || is_chapter_word(t)
+            || t == ":"
+        {
+            return None;
+        }
+        // Punctuation that ends a clause ends the run: a new sentence is a new claim.
+        if matches!(t, "." | "!" | "?" | ";") {
+            return None;
+        }
+    }
+    None
 }
 
 /// "verse" in any tier-1 language: Swahili "mstari"/"aya", Hausa "aya".
@@ -11871,5 +11990,160 @@ mod what_the_register_gap_covers {
             "    verses touched  {verses_touched} ({:.1}%)\n",
             verses_touched as f64 * 100.0 / corpus.len() as f64
         );
+    }
+}
+
+/// **WHAT A CONVERSATIONAL RANGE CITATION PARSES AS TODAY** — the operator's own
+/// report, 2026-09-28: *"Psalm 23 and we will be reading from verse 1 through to
+/// number 6"*, *"Romans 1 and we will be reading from Verse 6 all the way to 8"*.
+/// The words between the chapter and the verse are the normal case in this
+/// congregation and the report is that the verse called is the one that does NOT
+/// reach a screen.
+#[cfg(test)]
+mod conversational_ranges {
+    use super::*;
+
+    const SAID: &[&str] = &[
+        "Psalm 23 and we will be reading from verse 1 through to number 6",
+        "Romans 1 and we will be reading from verse 6 all the way to 8",
+        "Let us look at Romans chapter 1 and we will be reading from verse 6 all the way to 8",
+        "turn with me to Psalm 23 we will read from verse 1 down to verse 6",
+        "Job 22 and we are reading verse 21 to 25",
+        "we will be in Isaiah 41 and we will take verse 17 right through to 20",
+        "open your Bibles to Matthew 5 and we will read verses 3 through 10",
+        // Controls that already work, to prove a change does not break them.
+        "Romans 8 verse 28",
+        "Job 22 verse 23",
+        "Isaiah 11 verse 1 to 3",
+        // Rule 30's trap: a bare chapter pair must stay two chapters.
+        "Hebrews 12 and 13",
+    ];
+
+    /// **THE OPERATOR'S REPORT, AS ASSERTIONS.** Each of these is how a reference is
+    /// actually announced in this congregation, and every one of them used to reach
+    /// the wall as WHOLE-CHAPTER VERSE 1 — the verse called was the one thrown away.
+    ///
+    /// The guard that makes the filler safe is the VERSE KEYWORD: the run between the
+    /// chapter and the verse is skipped only when `verse`/`verses` actually follows
+    /// it. That is rule 30's reasoning — *"skipped ONLY when a verse word actually
+    /// follows"* — extended from one connector to a bounded run of them, because a
+    /// preacher says *"and we will be reading from verse 6"* and not *"and verse 6"*.
+    #[test]
+    fn a_verse_announced_conversationally_is_the_verse_that_reaches_the_wall() {
+        for (said, book, chapter, verse, end) in [
+            ("Psalm 23 and we will be reading from verse 1 through to number 6",
+             "Psalms", 23, 1, Some(6)),
+            ("Romans 1 and we will be reading from verse 6 all the way to 8",
+             "Romans", 1, 6, Some(8)),
+            ("Let us look at Romans chapter 1 and we will be reading from verse 6 all the way to 8",
+             "Romans", 1, 6, Some(8)),
+            ("turn with me to Psalm 23 we will read from verse 1 down to verse 6",
+             "Psalms", 23, 1, Some(6)),
+            ("Job 22 and we are reading verse 21 to 25", "Job", 22, 21, Some(25)),
+            ("we will be in Isaiah 41 and we will take verse 17 right through to 20",
+             "Isaiah", 41, 17, Some(20)),
+            ("open your Bibles to Matthew 5 and we will read verses 3 through 10",
+             "Matthew", 5, 3, Some(10)),
+        ] {
+            let got = detect_direct(said);
+            let m = got
+                .iter()
+                .find(|m| m.reference.book == book && m.reference.chapter == chapter)
+                .unwrap_or_else(|| panic!("nothing parsed for {book} {chapter} in {said:?}: {got:?}"));
+            assert_eq!(
+                (m.reference.verse, m.verse_end, m.whole_chapter),
+                (verse, end, false),
+                "{said:?} must name the verse the preacher called, not verse 1 of the chapter"
+            );
+            // Offered, never fired — `normalize` strips the full stop, so this parser
+            // cannot tell one announcement from a chapter and a verse in two
+            // sentences (FIELD F-1). Rule 10: the demotion is a method, not a score.
+            assert_eq!(
+                m.method.unattended_rank(),
+                0,
+                "{said:?} reached a firable method across a filler run"
+            );
+        }
+    }
+
+    /// The forms that already worked must keep working, and the one that must NOT
+    /// become a verse. Rule 30's own trap: a bare chapter pair stays two chapters,
+    /// because `and` before a DIGIT is left alone and only a verse keyword opens the
+    /// filler run.
+    #[test]
+    fn the_shapes_this_change_must_not_touch() {
+        for (said, want) in [
+            ("Romans 8 verse 28", Some((8, 28, None))),
+            ("Job 22 verse 23", Some((22, 23, None))),
+            ("Isaiah 11 verse 1 to 3", Some((11, 1, Some(3)))),
+        ] {
+            let got = detect_direct(said);
+            let m = got
+                .first()
+                .unwrap_or_else(|| panic!("nothing for {said:?}"));
+            assert_eq!(
+                Some((m.reference.chapter, m.reference.verse, m.verse_end)),
+                want,
+                "{said:?}"
+            );
+        }
+        // "Hebrews 12 and 13" is two chapters. It must never become 12:13.
+        let got = detect_direct("Hebrews 12 and 13");
+        assert!(
+            got.iter()
+                .all(|m| m.verse_end.is_none() && m.reference.verse == 1),
+            "a bare chapter pair became a verse range: {got:?}"
+        );
+    }
+
+    /// **A filler run may not cross into another reference.** The bound is what keeps
+    /// this from binding a verse belonging to a book named later in the sentence.
+    #[test]
+    fn a_filler_run_stops_at_a_book_or_a_number() {
+        // The verse keyword here belongs to Galatians, not to Romans.
+        let got = detect_direct("Romans 8 and then later Galatians 5 verse 22");
+        let romans = got.iter().find(|m| m.reference.book == "Romans");
+        assert!(
+            romans.is_none_or(|m| m.reference.verse == 1 && m.whole_chapter),
+            "Romans took a verse announced for Galatians: {got:?}"
+        );
+        assert!(
+            got.iter().any(|m| m.reference.book == "Galatians"
+                && m.reference.chapter == 5
+                && m.reference.verse == 22),
+            "Galatians 5:22 was lost: {got:?}"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn print_what_each_phrasing_parses_as() {
+        println!();
+        for said in SAID {
+            let got = detect_direct(said);
+            let shown: Vec<String> = got
+                .iter()
+                .map(|m| {
+                    format!(
+                        "{} {}:{}{} [{:?} {:.2}{}]",
+                        m.reference.book,
+                        m.reference.chapter,
+                        m.reference.verse,
+                        m.verse_end.map(|e| format!("-{e}")).unwrap_or_default(),
+                        m.method,
+                        m.confidence,
+                        if m.whole_chapter { " WHOLE" } else { "" }
+                    )
+                })
+                .collect();
+            println!(
+                "  {said}\n      -> {}\n",
+                if shown.is_empty() {
+                    "NOTHING".into()
+                } else {
+                    shown.join(" · ")
+                }
+            );
+        }
     }
 }

@@ -10,6 +10,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+### The verse you announce is the verse Relay finds
+
+If you say *"Psalm 23 and we will be reading from verse 1 through to number 6"*, or *"Romans 1 and we will be reading from verse 6 all the way to 8"*, Relay used to throw away the verse you named and stage **verse 1 of the chapter** instead — and *"number 6"* could even conjure up a reference in Numbers. It now reads the whole announcement the way you said it, including spans phrased as *all the way to*, *down to* and *right through to*, and offers the passage with both ends set so one keypress walks it.
+
+These come up as a suggestion to accept rather than going straight to the screens. That is deliberate: Relay cannot hear a full stop, so *"…in Luke 10. If you read from verse 32"* — two separate sentences — looks identical to one announcement, and putting a verse on a wall from a guess about that is the one thing it must not do.
+
+### Relay follows you through a passage you announced, even when you paraphrase
+
+Reading a verse aloud already moved the screens. Retelling it in your own words did not, so a passage announced as verses 6 to 8 left the congregation looking at verse 6 while you talked through 7 and 8. Relay now follows within the passage you named — forward only, never past the end you gave, and only when you announced an actual range. Outside a passage you announced, a paraphrase still only ever offers a suggestion; nothing about that has been loosened.
+
 ### A verse stays up long enough to read
 
 Two verses could reach the screens two and a half seconds apart — both correct, both named by the preacher in consecutive breaths — and the second erased the first before anybody in the room could finish it. A verse now holds the screen for four seconds before another may replace it. Nothing is thrown away: the next verse goes up by itself the moment the four seconds are over, and if the preacher corrects a reference they just misread — *"1 Corinthians 2:7… 12:7"* — the correction goes straight up without waiting. **Clear screens** and **Blackout** are not delayed by this and never will be.

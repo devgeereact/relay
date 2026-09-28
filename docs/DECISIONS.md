@@ -7488,3 +7488,74 @@ writes 2,048 samples, so it pins the field layout and cannot see the only input 
 new tests take the limit as a parameter, because 4 GiB is not allocatable in a unit test, and
 `the_cast_that_shipped_reproduces_the_field_figures` asserts the wrap against the two real byte counts
 so the defect itself is pinned rather than only its absence.
+
+## 133. A reference is announced in a sentence, not in a citation (2026-09-28)
+
+**Extends §37 and rule 30.** The operator's report, from services rather than from a
+test: *"Psalm 23 and we will be reading from verse 1 through to number 6"*, *"Romans 1
+and we will be reading from Verse 6 all the way to 8"*, and — the part that made it
+urgent — *"this happens loads of times in the service and it keeps picking the words
+in between and leaves the verse that was called."*
+
+Measured on those exact phrasings before changing anything, and it was worse than the
+report:
+
+| said | parsed as |
+|---|---|
+| Psalm 23 … verse 1 through to number 6 | `Psalms 23:1` WHOLE **+ a spurious `Numbers 6:1`** |
+| Romans 1 … verse 6 all the way to 8 | `Psalms`→`Romans 1:1` WHOLE — the 6 discarded |
+| Job 22 and we are reading verse 21 to 25 | `Job 22:1` WHOLE |
+| Matthew 5 … verses 3 through 10 | `Matthew 5:1` WHOLE |
+
+**Two faults, and rule 30 had already diagnosed the first one in its narrow form.**
+Rule 30 fixed *"chapter nine AND verse twenty-four"* by skipping ONE connector when a
+verse word follows; a preacher does not say *"and verse six"*, they say *"and we will
+be reading from verse six"*. `verse_word_after_filler` skips a bounded run (8 tokens)
+and keeps rule 30's guard exactly — **the run is skipped only when a verse keyword is
+what it leads to**, so *"Hebrews 12 and 13"* is still two chapters. The run stops at a
+number, a book alias or a chapter word, which is what stops *"Romans 8 and then later
+Galatians 5 verse 22"* handing Romans the 22. The second fault was the range
+connectors: *"all the way to"*, *"down to"*, *"right through to"* were not connectors
+at all. The allow-list there is deliberately TIGHT rather than "any ordinary word",
+because with arbitrary filler *"…and we give it all to 30 people"* would read 28-30.
+
+**It is OFFERED, never fired, and the reason is a fact about the tokeniser.**
+`normalize` turns `.` into a separator, so a sentence boundary never reaches this
+parser. FIELD F-1 is the proof and `eval`'s own negative case caught it within minutes
+of the run being added: *"…going through in Luke 10. If you read from verse 32, 37."*
+is two sentences, and across a filler run it reads exactly like one announcement — it
+auto-fired `Luke 10:32`. That verse may even be the one he meant; the point is that
+Relay cannot SEE the full stop, so it cannot tell that case from a chapter and a verse
+in one breath. Rule 10's answer to a confident claim about something nobody said is a
+METHOD, not a score, so the filler path is `UncertainNumber`: the right reference with
+its span, one action away, instead of verse 1 of the chapter on a wall. Promoting it
+needs sentence boundaries surviving `normalize`, which changes every parse in the file
+and wants its own measurement.
+
+**Following the preacher through the passage is a different act from choosing a
+verse.** The second half of the report: *"even if the preacher paraphrases some
+section of the scripture, follow the preacher to know when to move to the next
+verse."* Reading verse 7 of a staged passage aloud already worked — a verbatim run is
+`Reading` and 40 of service 42's 118 auto-fires were exactly that. A RETELLING is
+`Semantic`, and rule 10 caps it at `Suggest` at any score.
+
+That cap is not weakened. Rule 10 exists so the AI cannot put an ARBITRARY verse on a
+wall from a bag of words, and inside an **explicitly announced** span the outcome is
+not arbitrary: it is bounded to the verses the preacher named out loud, and Relay is
+deciding *where in that passage he is* rather than *which verse he means*.
+`router::corroboration_never_promotes_a_paraphrase` still holds, because corroboration
+still promotes nothing — the bound is the announcement. Four conditions, each with its
+own refusal test: an explicit `span_end` (a whole chapter is not a statement of how far
+he intends to read, and 150 verses of Psalms is arbitrary again); same book and
+chapter; strictly forward and no further than the end, so a retelling that brushes an
+earlier verse cannot walk the wall backwards; and the candidate must come from the
+verse's own words, never from a doubt about which reference it is.
+
+**What this does not do.** Replayed over service 42's 3,161 lines it changes nothing —
+153 auto-fires before and after, none gained, none lost — because that replay feeds
+finals only and the shapes are rarer than the report suggests: five instances in that
+service (`Psalm 112, I read verse 1` twice, and three `down to` ranges including
+`1 Samuel 12, verse 3 down to verse 5`, which previously armed no span at all). So the
+evidence for this change is the operator's report and the parse table above, not a
+measured improvement in wall accuracy, and the honest expectation is fewer wrong
+verse-1 stagings rather than more correct fires.
