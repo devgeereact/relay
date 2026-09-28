@@ -1996,6 +1996,169 @@ fn two_references_in_one_window_put_one_verse_on_the_wall() {
     );
 }
 
+// ── RG-321 · HOW FAST THE WALL MAY CHANGE ─────────────────────────────────────
+//
+// Rule 29 above answers ONE WINDOW. These answer the gap BETWEEN two windows,
+// which is where service 42 put two correct verses on a congregation screen 2.5
+// seconds apart. The router's own tests (`router::the_dwell_floor`) pin the
+// decision; these three pin what leaves the machine, because the decision and the
+// wall have disagreed before — `note_wall` exists because the first version of the
+// passage guard recorded a verse the gate approved and rule 29 never showed.
+//
+// The clock: `emit_detections` is handed `router_clock_ms()` in production and the
+// content door stamps the wall with the same function, so these tests rebase the
+// field timestamps onto this process's clock rather than starting from zero. Two
+// clocks here would be measuring skew instead of a floor.
+
+/// **THE FIELD PAIR, end to end.** `Daniel 9:2` at 21760.4 s and `Hebrews 13:7` at
+/// 21762.9 s, service 42, 2026-09-27. Both correct, both cited in consecutive
+/// breaths, and the second erased the first before anybody could read it.
+///
+/// Held, never dropped: the third window is the same sentence a moment later, and
+/// the verse reaches the wall by itself with no operator involved.
+///
+/// Watched to fail by removing the `wall_is_too_fresh` branch from
+/// `Router::decide_live`, which reproduces the field wall — two references, 2.5 s
+/// apart, in `wall.references()`.
+#[test]
+fn two_verses_in_consecutive_breaths_reach_the_wall_no_closer_than_the_floor() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    let t0 = router_clock_ms();
+    emit_detections(
+        &h,
+        "let us read from Daniel chapter 9 verse 2",
+        t0,
+        true,
+        None,
+    );
+    settle();
+    assert_eq!(
+        wall.references(),
+        vec!["Daniel 9:2".to_string()],
+        "the first verse never reached the wall, so nothing below tests a floor"
+    );
+
+    // 2.5 seconds later — the measured gap.
+    emit_detections(
+        &h,
+        "and again in Hebrews chapter 13 verse 7",
+        t0 + 2_500,
+        true,
+        None,
+    );
+    settle();
+    assert_eq!(
+        wall.references(),
+        vec!["Daniel 9:2".to_string()],
+        "a second verse replaced the wall 2.5 s after the first: {:?}",
+        wall.references()
+    );
+
+    // Past the floor, the same sentence still in the rolling window. Nobody has
+    // touched a control.
+    emit_detections(
+        &h,
+        "and again in Hebrews chapter 13 verse 7",
+        t0 + 6_000,
+        true,
+        None,
+    );
+    settle();
+    assert_eq!(
+        wall.references(),
+        vec!["Daniel 9:2".to_string(), "Hebrews 13:7".to_string()],
+        "the held verse never reached the wall at all, which is a drop and not a hold"
+    );
+}
+
+/// **A PANIC CONTROL IS NOT BEHIND THE FLOOR — IT TAKES IT AWAY.**
+///
+/// The dwell floor protects what a congregation is looking at. After a clear they
+/// are looking at nothing, so the next verse the preacher reads goes up at once.
+/// The failure this rules out is quiet and would only ever be seen in a room: the
+/// operator clears the wall, the preacher reads the next verse immediately, and
+/// Relay holds it back for four seconds for a screen that is already blank.
+///
+/// Watched to fail by dropping `wall_changed_at = None` from
+/// `Router::forget_last_fire`.
+#[test]
+fn a_cleared_wall_puts_no_floor_in_front_of_the_next_verse() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    let t0 = router_clock_ms();
+    emit_detections(
+        &h,
+        "let us read from Daniel chapter 9 verse 2",
+        t0,
+        true,
+        None,
+    );
+    settle();
+    assert_eq!(wall.references(), vec!["Daniel 9:2".to_string()]);
+
+    clear_screens(h.clone()).expect("clear must report success");
+    settle();
+    assert!(wall.cleared(), "the screens never cleared");
+
+    // A tenth of a second after the clear — far inside the floor.
+    emit_detections(
+        &h,
+        "and again in Hebrews chapter 13 verse 7",
+        t0 + 100,
+        true,
+        None,
+    );
+    settle();
+    assert_eq!(
+        wall.references(),
+        vec!["Daniel 9:2".to_string(), "Hebrews 13:7".to_string()],
+        "a cleared wall still held the next verse back"
+    );
+}
+
+/// **THE OPERATOR IS NEVER HELD.** Override is a first-class control and must
+/// always win (CLAUDE.md), so the floor gates the unattended fire and nothing else.
+/// `manual_fire` does not consult the gate at all, and this is the test that keeps
+/// it that way as the floor gains callers.
+#[test]
+fn the_floor_never_delays_a_fire_the_operator_made() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    let t0 = router_clock_ms();
+    emit_detections(
+        &h,
+        "let us read from Daniel chapter 9 verse 2",
+        t0,
+        true,
+        None,
+    );
+    settle();
+    assert_eq!(wall.references(), vec!["Daniel 9:2".to_string()]);
+
+    manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "Hebrews 13:7".into(),
+        None,
+        None,
+        None,
+    )
+    .expect("an operator's own fire must never be held");
+    settle();
+    assert_eq!(
+        wall.references(),
+        vec!["Daniel 9:2".to_string(), "Hebrews 13:7".to_string()],
+        "the operator's own fire was held behind the dwell floor"
+    );
+}
+
 // ── THE INSTRUMENT ITSELF ─────────────────────────────────────────────────────
 //
 // A latency report is only as true as its wiring, and wiring is exactly the class

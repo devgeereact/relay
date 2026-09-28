@@ -1152,14 +1152,22 @@ fn broadcast_with_clock<R: tauri::Runtime>(
         // A SEPARATE `if let`, after the one above has dropped its guard: two locks
         // held at once on a path that also emits is how the Start-listening freeze
         // happened (rule 2, rule 6). Neither lock is needed while the other is.
+        //
+        // …AND THE WALL JUST CHANGED, WHICH IS A THIRD FACT (RG-321). Both branches
+        // below stamp `router_clock_ms()`, because "how long has a congregation had
+        // this screen to itself" is a question about a room and does not care what
+        // kind of content is on it. It is stamped HERE, at the one door, for rule
+        // 36's reason and for one more: the clock must start when the content
+        // actually left, not when the gate decided, or a verse demoted by rule 29
+        // would hold the wall it never reached.
         if let Some(routing) = handle.try_state::<Routing>() {
             if let Ok(mut r) = routing.0.lock() {
-                r.forget_wall();
+                r.forget_wall(router_clock_ms());
             }
         }
     } else if let Some(routing) = handle.try_state::<Routing>() {
         if let Ok(mut r) = routing.0.lock() {
-            r.note_wall(&content.reference);
+            r.note_wall(&content.reference, router_clock_ms());
         }
     }
 
@@ -10438,7 +10446,7 @@ mod passage_guard_bench {
                         // router about rank 1 would measure a product nobody ships —
                         // and that mistake is exactly what this bench caught in the
                         // first design of the guard.
-                        router.note_wall(&key);
+                        router.note_wall(&key, now_ms);
                     }
                     RouteDecision::AutoFire | RouteDecision::Suggest => out.offered += 1,
                     RouteDecision::Drop => {}
