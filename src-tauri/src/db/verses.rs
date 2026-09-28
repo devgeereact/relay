@@ -684,7 +684,12 @@ fn fts_match(conn: &Connection, match_q: &str, limit: i64) -> rusqlite::Result<V
 /// marginal glosses (NOT verse text: `{green...: Heb. pastures of tender grass}`).
 /// Keep the supplied words (drop only the braces); drop the glosses entirely;
 /// then collapse the whitespace the removed glosses leave behind.
-pub(super) fn clean_verse(text: &str) -> String {
+///
+/// **`pub(crate)`, not `pub(super)`, since RG-324.** It was private to `db` for as
+/// long as importing was the only thing that needed it — and every measurement
+/// harness in the crate was therefore building its corpus straight out of
+/// `data/kjv.json`, apparatus and all. `suggestions::kjv_corpus` says what that cost.
+pub(crate) fn clean_verse(text: &str) -> String {
     let without_subscription = strip_subscriptions(text);
     let text = without_subscription.as_str();
     let mut out = String::with_capacity(text.len());

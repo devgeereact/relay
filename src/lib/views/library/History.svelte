@@ -442,6 +442,13 @@
             <div class="lib-rep-cell"><b>{num(report.suggestionsAccepted)}</b><span>suggestions taken</span></div>
             <div class="lib-rep-cell"><b>{num(report.suggestionsRejected)}</b><span>suggestions rejected</span></div>
             <div class="lib-rep-cell"><b>{pct(report.suggestionUptake)}</b><span>of the ones you answered</span></div>
+            <!-- RG-325. Two cells, never one: a step BACK from Relay's own verse is the
+                 closest thing the record holds to the operator disagreeing, and a step
+                 FORWARD is how a reading continues. `report.js::wallMovedOff` says why
+                 they may not be added together, and neither is styled `bad` — this is
+                 not a fault count, and nothing here knows whether Relay was wrong. -->
+            <div class="lib-rep-cell"><b>{num(report.wallSteppedBack)}</b><span>moved back off Relay's verse</span></div>
+            <div class="lib-rep-cell"><b>{num(report.wallReadOn)}</b><span>stepped on to the next verse</span></div>
             <div class="lib-rep-cell" class:bad={report.panicFailures > 0}>
               <b>{num(report.panicFailures)}</b><span>panic controls that failed</span>
             </div>

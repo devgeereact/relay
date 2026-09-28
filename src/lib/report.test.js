@@ -15,6 +15,7 @@ import path from 'node:path';
 import {
   splitDetections,
   sundayReport,
+  wallMovedOff,
   latencySummary,
   replayAt,
   fmtMs,
@@ -410,5 +411,162 @@ describe('splitDetections — what reached a screen vs what was merely offered',
   it('survives a missing or malformed list', () => {
     expect(splitDetections(null)).toEqual({ fired: [], offered: [] });
     expect(splitDetections(undefined).fired).toEqual([]);
+  });
+});
+
+// ── RG-325 — OPERATOR DISAGREEMENT IS IN THE DATA AND NOTHING READ IT ────────
+//
+// The fixture below is not invented. It is service 42 (2026-09-27), the whole of it
+// that matters here: every one of its 14 `manual` detections, the 6 `auto` fires that
+// land in the same chapter as one of them, and all 9 `manual_override` /
+// `suggestion_accepted` cues — read out of the author's own `relay.db` and written
+// down, so the numbers these tests assert are the ones a real Sunday produced.
+//
+// **The row's premise needed one correction and it is the whole reason a direction and
+// a `how` exist.** RG-325 reads `John 7:36` fired by hand 72 s after `John 7:37`
+// auto-fired as *"the operator moved the wall off Relay's choice"*. It is a manual
+// detection row, correctly (rule 14) — but `handle_nav` fires through `fire_manual`
+// too, so **the transport writes the same row a typed reference does**, and `cues` is
+// the only thing that tells them apart. Both of the row's examples turn out to be
+// transport steps, and they are not the same event as each other: one is `←` landing
+// on the verse BEFORE Relay's choice, the other is `→` reading on past it.
+const SVC42_MANUAL = [
+  ['Genesis 8:22', 2_098_500, 'manual_override'],
+  ['Exodus 23:26', 3_355_800, null],
+  ['Matthew 17:21', 4_240_700, 'suggestion_accepted'],
+  ['Matthew 7:8', 4_321_400, 'suggestion_accepted'],
+  ['Daniel 9:2', 4_417_800, 'suggestion_accepted'],
+  ['Proverbs 1:5', 4_530_500, 'manual_override'],
+  ['Psalms 16:11', 4_544_900, 'suggestion_accepted'],
+  ['1 Corinthians 10:10', 4_616_600, 'manual_override'],
+  ['John 10:10', 4_649_100, 'suggestion_accepted'],
+  ['John 1:12', 4_909_400, 'manual_override'],
+  ['Psalms 71:8', 6_970_200, null],
+  ['Genesis 8:21', 18_741_900, null],
+  ['John 7:36', 21_258_000, null],
+  ['Matthew 6:4', 21_992_000, null],
+];
+
+// The auto-fires that share a chapter with one of those, and no others.
+const SVC42_AUTO = [
+  ['Exodus 23:25', 3_345_900],
+  ['Matthew 17:19', 4_236_000],
+  ['Psalms 71:7', 6_908_000],
+  ['Genesis 8:22', 18_264_600],
+  ['John 7:37', 21_185_800],
+  ['Matthew 6:3', 21_916_600],
+];
+
+const SERVICE_42 = [
+  ...SVC42_AUTO.map(([ref, at]) => det(at, 'auto', ref)),
+  ...SVC42_MANUAL.flatMap(([ref, at, how]) => [
+    det(at, 'manual', ref),
+    ...(how ? [cue(at, how, ref)] : []),
+  ]),
+].sort((a, b) => a.at_ms - b.at_ms);
+
+describe('RG-325 — how often the operator moved the wall off what Relay chose', () => {
+  const moved = wallMovedOff(SERVICE_42);
+
+  it('finds the two adjacencies the register filed, and both are transport steps', () => {
+    // `John 7:36` after `John 7:37` — one verse BACK, 72.2 s later.
+    expect(moved.back.map((m) => m.reference)).toContain('John 7:36');
+    const back = moved.back.find((m) => m.reference === 'John 7:36');
+    expect(back.from).toBe('John 7:37');
+    expect(Math.round(back.gapMs / 1000)).toBe(72);
+    // `Matthew 6:4` after `Matthew 6:3` — one verse FORWARD, 75.4 s later. The row
+    // treats it as the same event and it is not: forward is what the transport is
+    // FOR, so it cannot be told from a reading continuing.
+    expect(moved.readOn.map((m) => m.reference)).toContain('Matthew 6:4');
+    // Neither carries a cue, so neither was typed or accepted — both are `→`/`←`.
+    expect(back.how).toBe('transport');
+    expect(moved.readOn.every((m) => m.how === 'transport')).toBe(true);
+  });
+
+  it('counts one step back and three read on, out of 14 manual fires', () => {
+    expect(moved.back).toHaveLength(1);
+    expect(moved.readOn.map((m) => m.reference).sort()).toEqual([
+      'Exodus 23:26',
+      'Matthew 6:4',
+      'Psalms 71:8',
+    ]);
+  });
+
+  it('NOT ONE of them was a reference typed by hand — which is the finding', () => {
+    // All four of service 42's `manual_override` cues fired into a chapter Relay had
+    // never auto-fired in. So the clearest disagreement signal available — a human
+    // going and naming a different verse over Relay's own — occurred ZERO times, and
+    // a metric that lumped the transport in with it would have reported four.
+    expect([...moved.back, ...moved.readOn].filter((m) => m.how === 'typed')).toEqual([]);
+  });
+
+  it('never counts an accepted suggestion as disagreement', () => {
+    // `confirm_detection` fires through `fire_manual`, so accepting Relay's own offer
+    // writes `'manual'` too. It is agreement by definition and must never appear here,
+    // whatever it happens to be adjacent to.
+    const timeline = [
+      det(0, 'auto', 'Romans 8:27'),
+      det(30_000, 'manual', 'Romans 8:28'),
+      cue(30_000, 'suggestion_accepted', 'Romans 8:28'),
+    ];
+    expect(wallMovedOff(timeline)).toEqual({ back: [], readOn: [], windowMs: 90_000 });
+  });
+
+  it('is adjacency in the same chapter, one verse, after the auto-fire, inside the window', () => {
+    const near = (ref, at) => [det(0, 'auto', 'Luke 6:38'), det(at, 'manual', ref)];
+    // Two verses away is a jump, not a correction.
+    expect(wallMovedOff(near('Luke 6:36', 30_000)).back).toHaveLength(0);
+    // Another chapter is another reading.
+    expect(wallMovedOff(near('Luke 7:37', 30_000)).back).toHaveLength(0);
+    // Another book is not adjacent however close the numbers are.
+    expect(wallMovedOff(near('John 6:37', 30_000)).back).toHaveLength(0);
+    // BEFORE the auto-fire is not a response to it.
+    expect(wallMovedOff([det(30_000, 'auto', 'Luke 6:38'), det(0, 'manual', 'Luke 6:37')]).back)
+      .toHaveLength(0);
+    // And a step is a step.
+    expect(wallMovedOff(near('Luke 6:37', 30_000)).back).toHaveLength(1);
+  });
+
+  it('the window is 90 s because the field cases are at 72 s and 75 s, and 120 s says the same', () => {
+    // A minute misses both of the register's own examples. 90 s and 120 s return the
+    // identical answer on all five recorded services, so the number sits on a plateau
+    // rather than on a cliff — which is the only defence a window like this has.
+    expect(wallMovedOff(SERVICE_42, { windowMs: 60_000 }).back).toHaveLength(0);
+    const wider = wallMovedOff(SERVICE_42, { windowMs: 120_000 });
+    expect(wider.back).toEqual(moved.back);
+    expect(wider.readOn).toEqual(moved.readOn);
+  });
+
+  it('survives a timeline with no references, no cues and no rows at all', () => {
+    expect(wallMovedOff(null)).toEqual({ back: [], readOn: [], windowMs: 90_000 });
+    expect(wallMovedOff([det(0, 'auto', null), det(10_000, 'manual', null)]).back).toEqual([]);
+    expect(wallMovedOff([det(0, 'auto', 'not a reference')]).readOn).toEqual([]);
+  });
+});
+
+describe('RG-325 — and what the Sunday report is allowed to say about it', () => {
+  it('names the two separately, because conflating them is the register\'s own mistake', () => {
+    const r = sundayReport(SERVICE_42, [], { transcripts: [], detections: [] });
+    expect(r.wallSteppedBack).toBe(1);
+    expect(r.wallReadOn).toBe(3);
+  });
+
+  it('is null, never 0, when there was nothing to compare', () => {
+    // 0 out of no auto-fires reads as "the operator never disagreed with Relay",
+    // which is a claim; the honest answer is that nothing was measured. Same rule the
+    // rest of this file keeps.
+    const noAuto = sundayReport([det(0, 'manual', 'John 3:16')], [], null);
+    expect(noAuto.wallSteppedBack).toBeNull();
+    expect(noAuto.wallReadOn).toBeNull();
+    const noManual = sundayReport([det(0, 'auto', 'John 3:16')], [], null);
+    expect(noManual.wallSteppedBack).toBeNull();
+    // …and 0 IS a measurement once both exist.
+    const both = sundayReport([det(0, 'auto', 'John 3:16'), det(10_000, 'manual', 'Acts 1:8')], [], null);
+    expect(both.wallSteppedBack).toBe(0);
+  });
+
+  it('says out loud that it cannot tell a correction from a reading continuing', () => {
+    const r = sundayReport(SERVICE_42, [], null);
+    expect(r.notMeasured.join(' ')).toMatch(/moved the wall|off Relay's choice|next verse/i);
   });
 });

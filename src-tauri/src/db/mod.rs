@@ -55,8 +55,12 @@ use templates::{
     ensure_templates_name_real_families, ensure_themes_are_inlined, reset_builtin_templates,
     seed_templates,
 };
+// Re-exported rather than merely imported: `suggestions::kjv_corpus` builds every
+// bench corpus in this crate through it, because the raw `data/kjv.json` is the KJV
+// WITH its editorial apparatus and is not what any index the product builds contains
+// (RG-324).
 #[cfg(test)]
-use verses::clean_verse;
+pub(crate) use verses::clean_verse;
 use verses::{rebuild_verses_fts, reimport_full_kjv, seed};
 
 /// The canonical schema, baked into the binary at compile time.

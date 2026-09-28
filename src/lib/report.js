@@ -98,6 +98,15 @@ export function sundayReport(timeline = [], perf = [], detail = null) {
   const offered = splitDetections(detail?.detections).offered.length;
   const suggestionsOffered = offered || null;
 
+  // ── AND WHERE THE OPERATOR PUT THE WALL INSTEAD (RG-325) ────────────────────
+  //
+  // `null` rather than 0 unless BOTH an auto-fire and a manual fire happened: "the
+  // operator never moved the wall off Relay's choice" is a claim, and a service in
+  // which Relay never chose anything cannot support it. Once both exist, 0 is a real
+  // measurement and is printed as one.
+  const adjacency = wallMovedOff(rows);
+  const comparable = autoFired > 0 && manualFired > 0;
+
   // What went wrong. These have no other home — before `service_events` existed, a
   // panic control that did not reach the screens left no trace once the operator
   // dismissed the banner.
@@ -128,6 +137,12 @@ export function sundayReport(timeline = [], perf = [], detail = null) {
     // 16-hour service of 2026-09-25 it is one acceptance against roughly 8,000
     // offers, and that number is the finding rather than a rounding error.
     suggestionsAnswered: suggestionsOffered ? actedOn / suggestionsOffered : null,
+    // How often a human put the wall on the verse immediately BEFORE the one Relay
+    // chose — the clearest disagreement signal the record holds — and, kept
+    // deliberately apart, how often they moved it to the verse immediately AFTER,
+    // which is what the transport is for and says nothing about agreement. RG-325.
+    wallSteppedBack: comparable ? adjacency.back.length : null,
+    wallReadOn: comparable ? adjacency.readOn.length : null,
     panicFailures,
     outputsLost,
     outputsRecovered,
@@ -139,8 +154,117 @@ export function sundayReport(timeline = [], perf = [], detail = null) {
       'Whether a suggestion you never answered was RIGHT — the offers are recorded now, with the words behind each one, but nothing here judges them and only a person who was in the room can',
       'Word error rate, in any language',
       'Whether the app crashed — crashes are recorded per launch, not per service, and guessing which service one belonged to would be a fabrication',
+      'Whether a verse the operator moved the wall onto was a CORRECTION — a step to the next verse is also how a reading continues, so the two figures are reported apart and neither is a verdict on Relay',
     ],
   };
+}
+
+/// The interval in which a manual fire can still be a response to an auto-fire.
+///
+/// **90 s, and the number is the field cases rather than a round one.** RG-325's two
+/// recorded adjacencies are at 72.2 s (`John 7:36` after `John 7:37`) and 75.4 s
+/// (`Matthew 6:4` after `Matthew 6:3`), so a minute misses both. Swept over the five
+/// services this machine has recorded — 65 manual fires against 811 auto-fires — 90 s
+/// and 120 s return the identical count and 180 s does not, so 90 sits on a plateau.
+/// A window like this has no other defence.
+const ADJACENT_WINDOW_MS = 90_000;
+
+/** `Book C:V` → `{ book, chapter, verse }`, or null for anything else. */
+function parseRef(ref) {
+  const m = /^(.+) (\d+):(\d+)$/.exec(String(ref ?? '').trim());
+  return m ? { book: m[1], chapter: Number(m[2]), verse: Number(m[3]) } : null;
+}
+
+/**
+ * WHERE THE OPERATOR PUT THE WALL INSTEAD OF WHERE RELAY PUT IT — RG-325.
+ *
+ * ## The signal, and the confound that shapes the whole function
+ *
+ * `record_feedback` moves the auto-fire gate from confirms and dismisses. Service 42
+ * produced **zero dismissals in 6.4 hours**, against 118 auto-fires and 14 manual
+ * ones, so the one signal the router is designed to learn from was never once
+ * produced — while the record held something adjacent to it and nothing read it.
+ *
+ * **Every `manual` row looks the same and three different things write it.** Rule 14
+ * is kept exactly: `fire_manual` stamps `'manual'` for a human. But its callers are
+ * the typed reference box (`manual_fire`), accepting an AI suggestion
+ * (`confirm_detection`) and **the transport** (`handle_nav`, which is `→`/`←` and the
+ * spoken "next"/"back"). Only `cues` separates them — `manual_override`,
+ * `suggestion_accepted`, and nothing at all for a transport step — and reading
+ * `detections` alone is how RG-325 came to file two different events as one.
+ *
+ * So:
+ *   * an **accepted suggestion is excluded outright**. It is Relay's own choice taken
+ *     by a human, which is agreement, whatever it happens to sit next to;
+ *   * a step to the verse **before** Relay's choice is `back`, the closest thing to
+ *     disagreement the record can show;
+ *   * a step to the verse **after** it is `readOn`, and is reported apart because
+ *     advancing a passage is precisely what the transport exists for — it is
+ *     indistinguishable from a reading continuing, and counting it as disagreement
+ *     would teach that Relay was wrong every time it was right.
+ *
+ * ## Why this does not go to `record_feedback`
+ *
+ * It is not fed to the router, deliberately (rules 34 and 35). Measured across all
+ * five recorded services, **every adjacency is a transport step and not one is a typed
+ * reference**, and three fifths of them are forward — so a signal wired into
+ * self-calibration would move the gate that decides what the AI may put on a wall
+ * unattended, mostly on evidence that Relay had chosen correctly and the preacher read
+ * on. A wrong signal there is worse than no signal. This is a figure for a person.
+ *
+ * Pure, and given the same timeline `sundayReport` gets, so it can be checked without
+ * a database.
+ *
+ * @returns `{ back, readOn, windowMs }` — each entry
+ *   `{ at_ms, reference, from, gapMs, how }`, `how` being `'typed'` or `'transport'`.
+ */
+export function wallMovedOff(timeline = [], { windowMs = ADJACENT_WINDOW_MS } = {}) {
+  const rows = Array.isArray(timeline) ? timeline : [];
+  const dets = rows.filter((r) => r.source === 'detection');
+  const autos = dets
+    .filter((r) => r.kind === 'auto')
+    .map((r) => ({ at_ms: r.at_ms, ref: parseRef(r.detail), detail: r.detail }))
+    .filter((a) => a.ref);
+  const cues = rows.filter((r) => r.source === 'cue');
+
+  const out = { back: [], readOn: [], windowMs };
+  for (const row of dets) {
+    if (row.kind !== 'manual') continue;
+    const ref = parseRef(row.detail);
+    if (!ref) continue;
+
+    // WHICH DOOR THIS FIRE CAME THROUGH. A cue is written in the same breath as the
+    // fire, so the match is on the reference plus a second of slack rather than on an
+    // exact timestamp — `persist_cue` and `persist_fire` are two writes.
+    const named = (c) =>
+      Math.abs(c.at_ms - row.at_ms) <= 1000 && String(c.detail ?? '').includes(row.detail);
+    if (cues.some((c) => c.kind === 'suggestion_accepted' && named(c))) continue;
+    const how = cues.some((c) => c.kind === 'manual_override' && named(c))
+      ? 'typed'
+      : 'transport';
+
+    // The LATEST qualifying auto-fire, because a chapter walked twice in a service
+    // should be answered by the fire the operator was actually looking at.
+    let best = null;
+    for (const a of autos) {
+      const gap = row.at_ms - a.at_ms;
+      if (gap < 0 || gap > windowMs) continue;
+      if (a.ref.book !== ref.book || a.ref.chapter !== ref.chapter) continue;
+      if (Math.abs(a.ref.verse - ref.verse) !== 1) continue;
+      if (!best || a.at_ms > best.at_ms) best = a;
+    }
+    if (!best) continue;
+
+    const entry = {
+      at_ms: row.at_ms,
+      reference: row.detail,
+      from: best.detail,
+      gapMs: row.at_ms - best.at_ms,
+      how,
+    };
+    (ref.verse < best.ref.verse ? out.back : out.readOn).push(entry);
+  }
+  return out;
 }
 
 /**
