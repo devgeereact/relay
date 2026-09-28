@@ -36,8 +36,34 @@
 use super::*;
 use detection::{DetectionMethod, VerseRef};
 
-/// The KJV as `(ref, text)`, canonical book names — the same corpus the live
-/// indexes are built from, built the same way `passage_guard_bench` builds it.
+/// The KJV as `(ref, text)`, canonical book names — **the corpus the live indexes
+/// are really built from**, which is not the same thing as the contents of
+/// `data/kjv.json`.
+///
+/// ## The apparatus, and why this now goes through `db::clean_verse` (RG-324)
+///
+/// The bundled file is the KJV *with its editorial apparatus*: `{ }` marks both
+/// supplied-word italics (`{was}` — real text, braces only) and translator marginal
+/// glosses (`{firmament: Heb. expansion}` — not text at all). `db::verses` has a
+/// careful, heavily-tested pass that keeps the first and drops the second, and every
+/// row in `verses` has been through it since RG-100. Nothing built a bench corpus
+/// through it, so **17,365 of 31,102 verses carried tokens the product never sees** —
+/// `heb`, `expansion`, `or`, `between` — into the IDF of every `SemanticIndex` this
+/// file builds.
+///
+/// It is not a rounding error. Replaying one real window of service 42 — *"Go to
+/// bless the name of God. Give Jesus a big, big hand of praise."* — the raw file
+/// answers `Psalms 66:8` at **0.179** and the shipped corpus answers `Psalms 145:2`
+/// at **0.399**: a different verse first, at more than twice the score, and on the
+/// raw corpus three of the stretch's windows fall under `SEMANTIC_FLOOR` and offer
+/// nothing at all. Built through `clean_verse`, this reproduces the service's own
+/// recorded cosines to four decimal places (0.3987 / 0.3869 / 0.3782, and 0.8082 for
+/// the `Isaiah 55:8` paraphrase), which is what makes anything measured here a claim
+/// about Relay rather than about a text file.
+///
+/// **A bench corpus that is not the shipped corpus is the same failure as a status
+/// line that cannot detect its own failure** (rule 35): it produces a plausible
+/// number for a thing nobody ran. `the_bench_corpus_is_the_shipped_corpus` holds it.
 fn kjv_corpus() -> Vec<(VerseRef, String)> {
     let kjv: serde_json::Value =
         serde_json::from_str(include_str!("../data/kjv.json").trim_start_matches('\u{feff}'))
@@ -53,12 +79,51 @@ fn kjv_corpus() -> Vec<(VerseRef, String)> {
                         chapter: ci as i64 + 1,
                         verse: vi as i64 + 1,
                     },
-                    verse.as_str().unwrap_or("").to_string(),
+                    db::clean_verse(verse.as_str().unwrap_or("")),
                 ));
             }
         }
     }
     corpus
+}
+
+/// **THE BENCH CORPUS IS THE SHIPPED CORPUS, ASSERTED RATHER THAN ASSUMED.**
+///
+/// Both halves, because each on its own is satisfiable by the wrong thing: the
+/// apparatus really is in the file (so the cleaning is doing work and is not a no-op
+/// somebody could delete), and none of it survives into what the benches score.
+#[test]
+fn the_bench_corpus_is_the_shipped_corpus() {
+    const RAW: &str = include_str!("../data/kjv.json");
+    let file: serde_json::Value =
+        serde_json::from_str(RAW.trim_start_matches('\u{feff}')).expect("kjv.json parses");
+    let mut apparatus = 0usize;
+    for book in file.as_array().expect("books") {
+        for chapter in book["chapters"].as_array().expect("ch") {
+            for verse in chapter.as_array().expect("vs") {
+                if verse.as_str().unwrap_or("").contains('{') {
+                    apparatus += 1;
+                }
+            }
+        }
+    }
+    assert!(
+        apparatus > 10_000,
+        "the bundled KJV no longer carries brace apparatus ({apparatus} verses) — \
+         if the file was replaced, re-measure everything in this module"
+    );
+    let corpus = kjv_corpus();
+    assert_eq!(corpus.len(), 31_102);
+    let dirty: Vec<String> = corpus
+        .iter()
+        .filter(|(_, t)| t.contains('{') || t.contains('}') || t.contains("Heb."))
+        .take(3)
+        .map(|(r, t)| format!("{} — {t}", Fire::key_for(r)))
+        .collect();
+    assert!(
+        dirty.is_empty(),
+        "a bench corpus verse still carries the KJV's editorial apparatus: {dirty:#?}"
+    );
 }
 
 #[derive(Default)]
@@ -1561,9 +1626,25 @@ mod bar {
 /// 2026-09-25): the highest-scoring false positives in the whole sample are stock
 /// liturgical formulae, and they outscore all but two of the twenty-eight offers a
 /// person judged correct. So there is no value of `SEMANTIC_FLOOR` that keeps the
-/// citations and drops the boilerplate — a floor set high enough to silence
-/// *"Hallelujah, praise the Lord"* silences *"ten times better than their
-/// colleagues"* first, and that is arithmetic rather than tuning.
+/// citations and drops the boilerplate — a floor set high enough to silence a shout
+/// of praise silences *"ten times better than their colleagues"* first, and that is
+/// arithmetic rather than tuning.
+///
+/// **THE WINDOW THIS TEST USED TO NAME WAS ONE THE PRODUCT CANNOT OFFER FOR, and
+/// finding that out is RG-324's second correction.** It was *"Hallelujah.
+/// Hallelujah. Praise the Lord."*, which scored `Psalms 146:1` at 0.557 — against a
+/// bench corpus built straight from `data/kjv.json`. **`hallelujah` appears in zero
+/// verses of the corpus Relay actually indexes**; in the bundled file it survives
+/// only inside a translator's marginal note (*"Praise ye the LORD: Heb.
+/// Hallelujah"*), which `db::clean_verse` drops before a single row reaches `verses`.
+/// On the shipped corpus that window clears `MIN_EVIDENCE_TERMS` with two words and
+/// is offered **nothing at all**, on either index, and the test passed for as long as
+/// the bench corpus was the wrong corpus. See `kjv_corpus`.
+///
+/// The claim survives and is now made on a window the record proves was offered for:
+/// service 42, 2026-09-27, a woman at the microphone stating her name. It is better
+/// evidence than the old constant — a real offer, from a real service, at a HIGHER
+/// score than the one it replaces.
 ///
 /// **If this test ever fails, the index has changed and the floor is worth
 /// revisiting.** That is the only thing it is for. It asserts nothing about
@@ -1573,9 +1654,10 @@ mod why_the_floor_holds {
     use super::*;
     use detection::SemanticIndex;
 
-    /// Verbatim from the sample, transcript spelling included, because a cleaned-up
-    /// paraphrase of a window is not the window.
-    const BOILERPLATE: &str = "Hallelujah. Hallelujah. Praise the Lord.";
+    /// Verbatim from `detections.heard_text`, service 42 at 777.5 s, decoder spelling
+    /// included, because a cleaned-up paraphrase of a window is not the window. The
+    /// service recorded `Psalms 135:1` at 0.8028 against it.
+    const BOILERPLATE: &str = "Praise the Lord. My name is Ms.";
     const A_REAL_CITATION: &str =
         "Those three brothers who are ten times better than their colleagues understand that they are";
 
@@ -1597,8 +1679,9 @@ mod why_the_floor_holds {
             "both windows must clear the shipped floor for this to be about ordering: \
              {noise_ref} {noise:.3} · {cite_ref} {cite:.3}"
         );
-        // THE FINDING. Five words of congregational response beat a retelling of
-        // Daniel 1:20 that names the distinctive phrase of the verse.
+        // THE FINDING. Six words of a woman introducing herself beat a retelling of
+        // Daniel 1:20 that names the distinctive phrase of the verse — by more than
+        // two to one, 0.803 against 0.326.
         assert!(
             noise > cite,
             "the cosine no longer ranks liturgical boilerplate above a real \
@@ -1701,17 +1784,26 @@ mod what_the_bar_silences {
             m_on as f32 * 100.0 / m_n as f32
         );
 
-        // ── AND WHY IT IS THREE AND NOT THE FIVE §125 NAMED ──────────────────
+        // ── AND WHY IT IS TWO AND NOT THE FIVE §125 NAMED ────────────────────
         //
         // DECISIONS §125 and RG-311 record this bar as silencing *"5 of the 43
         // labelled retellings"* and name them: the four friends tearing open a roof,
         // the prodigal son, Zacchaeus up a tree, the fiery furnace, Paul and Silas at
-        // midnight. Measured through the shipped filter chain it is THREE, and the
-        // difference is not a disagreement about the bar — it is that two of the five
+        // midnight. Measured through the shipped filter chain it is TWO, and the
+        // difference is not a disagreement about the bar — it is that three of the five
         // never reached the right passage in the first place. A case the paraphrase
         // path already could not answer cannot be a casualty of a rule that only
         // removes answers, and counting it as one prices the bar in a currency it
         // does not spend.
+        //
+        // **IT WAS THREE UNTIL RG-324, AND THE THIRD WAS A CORPUS ARTEFACT.**
+        // `jonah-modern` was counted as silenced for as long as `kjv_corpus` built the
+        // bench index from the raw `data/kjv.json` — the KJV *with* its editorial
+        // apparatus, which `db::clean_verse` strips before a row ever reaches `verses`.
+        // On the corpus the product actually indexes it clears the run bar and is not
+        // a casualty at all, so the bar is one retelling CHEAPER than RG-311 and
+        // RG-312 priced it. Nothing about the rule changed; the corpus it was weighed
+        // against did. `kjv_corpus` has the mechanism and the measurement.
         //
         // Printed rather than asserted, because it is a fact about the INDEX and will
         // move when the index does.
@@ -1755,11 +1847,14 @@ mod what_the_bar_silences {
         // this path should be shown the price before they quote a number for it.
         assert_eq!(
             silenced.len(),
-            3,
+            2,
             "the set of retellings this bar silences changed: {silenced:?}"
         );
-        assert_eq!((off, on), (33, 30), "corpus recall moved");
-        assert_eq!((m_off, m_on), (7, 4), "modern recall moved");
+        // OFF is unchanged by the corpus correction (33 and 7 either way) — what the
+        // paraphrase path reaches with no bar never depended on the apparatus. Only the
+        // ON column moved, 30 → 31 and 4 → 5.
+        assert_eq!((off, on), (33, 31), "corpus recall moved");
+        assert_eq!((m_off, m_on), (7, 5), "modern recall moved");
     }
 
     /// **WHAT THE RULE COSTS THE DECODER'S BUDGET.** `PhraseIndex::verse_index` is a
@@ -1856,5 +1951,368 @@ mod what_the_bar_silences {
             phrases.shared_run_with("every branch in me that beareth not fruit", &r)
                 >= detection::PARAPHRASE_RUN_WORDS
         );
+    }
+}
+
+/// **THE OFFER LIST IS LOUDEST WHERE THERE IS LEAST TO SAY — RG-324. NO FLOOR CUTS
+/// IT; THE SWITCH THE OPERATOR ALREADY OWNS CUTS MOST OF IT.**
+///
+/// Service 42 (2026-09-27, 6.4 h, build `9f3d7a4`) put **4,144 paraphrase offers** in
+/// front of one operator against 118 auto-fires, and nothing was dismissed all
+/// service. RG-324 filed the loudest stretch as *"40 offers in 50 s of benediction"*
+/// and proposed a floor for windows that name no reference and hold no run. This
+/// module is the measurement that row was owed. It returns a **no** on the floor, a
+/// priced **yes** on `detection.paraphrase_needs_a_run`, and two corrections to the
+/// row itself:
+///
+///   * The loudest fifty seconds of that service is **71 offers naming 28 distinct
+///     verses**, not 40, and it is **not a benediction**. It is testimonies at the
+///     microphone: *"Praise the Lord. My name is Mrs …"*, over and over.
+///   * **A floor cannot be the lever, and the two scores say why in one line.**
+///     `Isaiah 55:8` — the one paraphrase in the service anybody has pointed at as
+///     genuine — was answered at **0.808**. *"Praise the Lord. My name is Ms."*
+///     answered `Psalms 135:1` at **0.803**, five thousandths below it. Any floor that
+///     keeps the first keeps the second. That is RG-311's inverted-ordering finding in
+///     a sharper instance than the one it was written from, inside a single service,
+///     on its own record.
+///
+/// **What the run bar does, on the offers this service really made** (4,144 rows of
+/// `detections`, partials included, through the shipped `shared_run_with` —
+/// `the_offers_a_real_service_made`): **2,965 removed, 71.5%**; the loudest fifty
+/// seconds **71 → 25**; and at the top of the list it removes `Psalms 135:1` (0.803)
+/// and `Psalms 113:1` (0.797) while keeping `Isaiah 55:8` (0.808). **No paraphrase
+/// anybody has identified in service 42 is lost.** It succeeds on exactly the pair no
+/// threshold can separate, which is the whole argument for a rule about word ORDER
+/// rather than about score.
+///
+/// **And what it does not do: silence the stretch.** 25 offers survive those fifty
+/// seconds, and what survives is the praise register's own verse wording — *"bless the
+/// name of the Lord"* is four contiguous words of `Psalms 118:26` and nobody was
+/// quoting it. That residue is not reachable by either axis Relay can measure, and it
+/// is what keeps this finding real after the switch is on.
+///
+/// **What this cannot claim.** Every window is verbatim from `detections.heard_text`,
+/// so it is what the decoder heard rather than what was said. Nobody in the room
+/// judged these offers; what makes them noise here is a fact rather than a reading —
+/// a woman is stating her name, and the verse Relay named is not being quoted or
+/// retold. And nothing here touches the other methods in RG-324's evidence column
+/// (`Job 9:2` from the common noun *job*, `Numbers N:1` from announcement numbering):
+/// those are `uncertain_book`, a different detector, and no paraphrase bar sees them.
+#[cfg(test)]
+mod loudest {
+    use super::*;
+    use detection::{PhraseIndex, SemanticIndex};
+
+    /// The distinct windows of service 42's loudest fifty seconds — 777.5 s to
+    /// 827.5 s — exactly as `detections.heard_text` stored them, decoder spelling and
+    /// mangled names included. Every one of them offered a paraphrase on the day.
+    const THE_LOUDEST_FIFTY_SECONDS: [&str; 25] = [
+        "Please come forward. Your name and what God has done. Your name first.",
+        "Praise the Lord. My name is Ms.",
+        "Praise the Lord. My name is Mrs. Sivanu Sadele,",
+        "Praise the Lord. My name is Mrs. Sivanus Adelaia.",
+        "Praise the Lord. My name is Mrs. Sivanus Adelaia. I want to bless the name of the Lord.",
+        "Praise the Lord. My name is Mrs. Sivanu Sadelaya. I want to bless the name of the Lord. I join this congregation.",
+        "Praise the Lord. My name is Mrs. Sivanu Sadelaya. I want to bless the name of the Lord. I join this commission, MedoGrito,",
+        "In 15, 15 God said to me that with a stone piece to my home. He said, I serve the Lord's",
+        "In 15, God said to me that with a stone piece to my home, He said, accept the Lord build the house,",
+        "Matthew, 15, God said to me that I will restore peace to my home. He said, I saved the Lord, build the house. Since that time, I have been restored.",
+        "Genesis 15, God said to me that I will restore peace to my home. He said, I saved the Lord, build the house. Since that time I have experienced peace in my life.",
+        "I hope and I want to bless the name of the Lord.",
+        "I hope and I want to bless the name of the Lord. I seek God's faithfulness.",
+        "And I want to bless the name of the Lord. I'll seek God faithfulness over my children.",
+        "I hope and I want to bless the name of the Lord. I'll seek God faithfulness over my children. My children are",
+        "I hope and I want to bless the name of the Lord. I'll seek God faithfulness over my children. My children are half for graded.",
+        "And I want to bless the name of the Lord. I'll seek God faithfulness over my children. My children are half foregraded by the children.",
+        "The reason of our servants, nobody know about God's",
+        "The reason of our service, nobody know, but God see us, and God bless my children. We four graduate, two grandchildren.",
+        "Go to bless the name of God. Give Jesus a big, big hand of praise.",
+        "God to bless the name of God. Give Jesus a big, big hand of praise.",
+        "Your name, our brother's daughter. Praise the Lord.",
+        "Your name, our brother's daughter. Praise the Lord. My name is",
+        "Your name, our brother's daughter. Praise the Lord. My name is Evelyn Abano.",
+        "Your name, our brother's daughter. Praise the Lord. My name is Evelyn Abano. I was worshiping",
+    ];
+
+    /// **THE THING THE OFFER LIST EXISTS FOR, from the same service.** The one
+    /// paraphrase in service 42 that anybody has pointed at as genuine: the preacher
+    /// retelling Isaiah 55:8 with the clauses swapped. Verbatim from `heard_text`, and
+    /// the cosine recorded against it was 0.808.
+    const A_REAL_PARAPHRASE: &str =
+        "My ways are not your ways, but neither my thoughts are your thoughts.";
+
+    /// The loudest window, named on its own because it is the one that decides the
+    /// row: it outscores the real paraphrase.
+    const THE_LOUDEST_WINDOW: &str = "Praise the Lord. My name is Ms.";
+
+    fn isaiah_55_8() -> detection::VerseRef {
+        detection::VerseRef {
+            book: "Isaiah".into(),
+            chapter: 55,
+            verse: 8,
+        }
+    }
+
+    /// What the shipped gate offers for one window, paraphrase path only: the same
+    /// `top_k_explained` → `worth_suggesting` pair `detect_semantic` uses, so the
+    /// numbers here are the product's and not this file's.
+    fn offers(idx: &SemanticIndex, text: &str) -> Vec<(detection::VerseRef, f32)> {
+        worth_suggesting(idx.top_k_explained(text, SEMANTIC_SUGGESTIONS_MAX))
+            .into_iter()
+            .map(|(r, s, _)| (r, s))
+            .collect()
+    }
+
+    /// **THE VOLUME IS REAL AND THE TOP OF IT IS NOT A MARGINAL SCORE.** Asserted
+    /// first, because the two tests after it say nothing if this stretch has quietly
+    /// stopped offering anything.
+    #[test]
+    fn the_loudest_fifty_seconds_of_a_real_service_is_all_paraphrase() {
+        let idx = SemanticIndex::build(&kjv_corpus());
+        let mut total = 0usize;
+        let mut silent: Vec<&str> = Vec::new();
+        for w in THE_LOUDEST_FIFTY_SECONDS {
+            let n = offers(&idx, w).len();
+            if n == 0 {
+                silent.push(w);
+            }
+            total += n;
+        }
+        assert!(
+            silent.is_empty(),
+            "these windows offered a paraphrase in the real service and offer none \
+             now — the index or the corpus has changed: {silent:#?}"
+        );
+        // 71 on the day. Finals-and-partials, and this replay is one pass per distinct
+        // window text, so it is a floor on the same stretch rather than the same count.
+        assert!(
+            total >= 60,
+            "fifty seconds of a woman stating her name used to produce 71 offers; now {total}"
+        );
+    }
+
+    /// **NO FLOOR SEPARATES THE TWO POPULATIONS, AND THIS IS THE ARITHMETIC.** RG-324
+    /// proposed a floor for bare windows. The loudest bare window in the service
+    /// outscores the service's one genuine paraphrase, so a floor that silences the
+    /// first has already silenced the second.
+    #[test]
+    fn a_woman_saying_her_name_outscores_the_one_real_paraphrase() {
+        let idx = SemanticIndex::build(&kjv_corpus());
+        let noise = offers(&idx, THE_LOUDEST_WINDOW)
+            .first()
+            .map(|(r, s)| (Fire::key_for(r), *s))
+            .expect("the loudest window must still offer something");
+        let real = offers(&idx, A_REAL_PARAPHRASE)
+            .iter()
+            .find(|(r, _)| Fire::key_for(r) == "Isaiah 55:8")
+            .map(|(_, s)| *s)
+            .expect("Isaiah 55:8 must still be offered for the window that produced it");
+        assert!(
+            noise.1 > 0.70 && real > 0.70,
+            "both must be high for this to be about ordering: {} {:.3} vs {real:.3}",
+            noise.0,
+            noise.1
+        );
+        assert!(
+            noise.1 < real,
+            "the ordering has changed ({} {:.3} vs Isaiah 55:8 {real:.3}) — whether a \
+             floor can now separate the praise register from a paraphrase is worth \
+             re-measuring with `bar::paraphrase_bar`",
+            noise.0,
+            noise.1
+        );
+        // THE POINT: the two are five thousandths apart. Any floor with the real one
+        // above it keeps the noise, and any floor with the noise below it loses the
+        // real one. RG-311 measured this on 150 hand-read windows; this is the same
+        // fact inside a single service, on its own record.
+        assert!(
+            real - noise.1 < 0.02,
+            "the two are no longer adjacent ({:.3} vs {real:.3}); a floor between them \
+             may now exist and RG-324 is worth reopening on that basis",
+            noise.1
+        );
+    }
+
+    /// **THE RUN BAR IS THE LEVER AND IT IS NOT A CURE — both halves, in one test.**
+    ///
+    /// It removes most of this stretch and, crucially, it removes the top of it while
+    /// keeping the genuine paraphrase: that is the pair no value of `SEMANTIC_FLOOR`
+    /// can separate, and it is the whole case for asking about word ORDER instead.
+    ///
+    /// What it leaves is about a quarter, and RG-324 assumed there would be nothing
+    /// there: the row named `PARAPHRASE_RUN_WORDS` as the bar its proposed floor would
+    /// sit above, on the reading that a window with no run is where the noise lives.
+    /// The praise register is verse wording — *"bless the name of the Lord"* is four
+    /// contiguous words of `Psalms 118:26`, said by somebody quoting nothing — so the
+    /// residue is real offers with real runs, and no axis Relay can measure sees it.
+    #[test]
+    fn the_run_bar_keeps_a_quarter_of_the_noise_because_praise_is_verse_wording() {
+        let idx = SemanticIndex::build(&kjv_corpus());
+        let phrases = PhraseIndex::build(&kjv_corpus());
+        let (mut kept, mut total) = (0usize, 0usize);
+        for w in THE_LOUDEST_FIFTY_SECONDS {
+            for (r, _) in offers(&idx, w) {
+                total += 1;
+                if phrases.shared_run_with(w, &r) >= detection::PARAPHRASE_RUN_WORDS {
+                    kept += 1;
+                }
+            }
+        }
+        // 25 of 68 on this replay — 36.8%, and 25 of 71 on the service's own record.
+        // The assertions are on the SHAPE rather than the figure: the switch is a real
+        // reduction and it is nowhere near a silence.
+        assert!(
+            kept >= 15,
+            "the run bar now removes almost all of this stretch ({kept} of {total} kept) \
+             — if that is real, RG-324 is answerable by turning the existing switch on \
+             and this row should be reopened saying so"
+        );
+        assert!(
+            kept * 2 < total,
+            "the run bar keeps most of the stretch ({kept} of {total}) — it was a \
+             quarter; re-measure before quoting either figure"
+        );
+        // ── THE PAIR THAT DECIDES THE ROW ────────────────────────────────────
+        //
+        // 0.803 out, 0.808 in, five thousandths apart. No floor can do this and the
+        // run bar does it without looking at either score.
+        assert!(
+            phrases.shared_run_with(A_REAL_PARAPHRASE, &isaiah_55_8())
+                >= detection::PARAPHRASE_RUN_WORDS,
+            "the run bar now removes the one genuine paraphrase of service 42 — \
+             RG-312's cost figure is measured on the assumption that it does not"
+        );
+        let loudest = offers(&idx, THE_LOUDEST_WINDOW)
+            .first()
+            .map(|(r, s)| (r.clone(), *s))
+            .expect("the loudest window must still offer something");
+        assert!(
+            phrases.shared_run_with(THE_LOUDEST_WINDOW, &loudest.0)
+                < detection::PARAPHRASE_RUN_WORDS,
+            "the run bar now KEEPS the loudest noise offer in the service ({} {:.3}) — \
+             it was the one thing separating it from the 0.808 paraphrase, and RG-324 \
+             should be reopened",
+            Fire::key_for(&loudest.0),
+            loudest.1
+        );
+    }
+
+    /// **WHAT THE BAR WOULD HAVE DONE TO THE WHOLE SERVICE, from its own record.**
+    ///
+    /// `bar::paraphrase_bar` replays a transcript and is therefore FINALS ONLY; on
+    /// service 42 it sees 944 of the 4,144 offers that really happened, because the
+    /// live path detects on every partial. This takes the other road and reads the
+    /// offers themselves — one row per gate decision, partials included, exactly what
+    /// the operator was shown — and applies the shipped run test to each.
+    ///
+    /// ```text
+    /// sqlite3 -readonly relay.db -noheader -separator $'\t' \
+    ///   "select v.book||' '||v.chapter||':'||v.verse, round(d.confidence,4),
+    ///           round(t.timestamp,1),
+    ///           replace(replace(coalesce(d.heard_text,''),char(10),' '),char(9),' ')
+    ///      from detections d join transcripts t on t.id = d.transcript_id
+    ///                        join verses v on v.id = d.verse_id
+    ///     where t.service_id = 42 and d.method = 'semantic' and d.status = 'suggested'
+    ///     order by d.id;" > offers42.tsv
+    ///
+    /// RELAY_OFFERS=offers42.tsv cargo test --release the_offers_a_real_service_made \
+    ///   -- --ignored --nocapture
+    /// ```
+    ///
+    /// **It cannot say an offer was wrong** — same limit as everything else here. What
+    /// it can say is how many of them a rule the church already owns would have
+    /// removed, on the service that produced the complaint.
+    #[test]
+    #[ignore]
+    fn the_offers_a_real_service_made() {
+        let Ok(path) = std::env::var("RELAY_OFFERS") else {
+            println!("set RELAY_OFFERS to `<ref>\\t<cosine>\\t<seconds>\\t<heard_text>` lines");
+            return;
+        };
+        let body = std::fs::read_to_string(&path).expect("offers unreadable");
+        // FOUR fields, `splitn` so the last one is taken WHOLE: a window can contain
+        // anything, and the benches above split on the first tab only — a trap this
+        // repository has already recorded once (`bar::paraphrase_bar`'s corpus reader).
+        let mut rows: Vec<(detection::VerseRef, f32, f32, String)> = Vec::new();
+        for line in body.lines() {
+            let mut f = line.splitn(4, '\t');
+            let (Some(r), Some(c), Some(t), Some(h)) = (f.next(), f.next(), f.next(), f.next())
+            else {
+                continue;
+            };
+            let Some((book, cv)) = r.trim().rsplit_once(' ') else {
+                continue;
+            };
+            let Some((ch, v)) = cv.split_once(':') else {
+                continue;
+            };
+            rows.push((
+                detection::VerseRef {
+                    book: book.to_string(),
+                    chapter: ch.parse().unwrap_or(0),
+                    verse: v.parse().unwrap_or(0),
+                },
+                c.trim().parse().unwrap_or(0.0),
+                t.trim().parse().unwrap_or(0.0),
+                h.to_string(),
+            ));
+        }
+        let phrases = PhraseIndex::build(&kjv_corpus());
+        let kept: Vec<bool> = rows
+            .iter()
+            .map(|(r, _, _, h)| phrases.shared_run_with(h, r) >= detection::PARAPHRASE_RUN_WORDS)
+            .collect();
+        let n = rows.len().max(1);
+        let k = kept.iter().filter(|b| **b).count();
+        println!(
+            "\n  {} paraphrase offers as the service recorded them (partials included)",
+            rows.len()
+        );
+        println!(
+            "  the shipped run bar keeps {k} ({:.1}%) and removes {} ({:.1}%)",
+            k as f32 * 100.0 / n as f32,
+            rows.len() - k,
+            (rows.len() - k) as f32 * 100.0 / n as f32
+        );
+
+        // THE LOUDEST FIFTY SECONDS, both ways — the figure RG-324 is filed on.
+        let mut loudest = (0usize, 0usize, 0.0f32);
+        for i in 0..rows.len() {
+            let (t0, mut off, mut on) = (rows[i].2, 0usize, 0usize);
+            let mut j = i;
+            while j < rows.len() && rows[j].2 - t0 <= 50.0 {
+                off += 1;
+                on += usize::from(kept[j]);
+                j += 1;
+            }
+            if off > loudest.0 {
+                loudest = (off, on, t0);
+            }
+        }
+        println!(
+            "  loudest 50 s: {} offers from {:.1} s  ->  {} with the bar on",
+            loudest.0, loudest.2, loudest.1
+        );
+
+        // AND THE TOP OF THE LIST, because a percentage says nothing about whether the
+        // survivors are the ones worth keeping.
+        let mut top: Vec<usize> = (0..rows.len()).collect();
+        top.sort_by(|a, b| {
+            rows[*b]
+                .1
+                .partial_cmp(&rows[*a].1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        println!("\n  the twelve highest-scoring offers of the service, and their fate:");
+        for i in top.into_iter().take(12) {
+            let (r, c, t, h) = &rows[i];
+            println!(
+                "    {:>8.1} s  {:<22} {c:.3}  {}  :: {}",
+                t,
+                Fire::key_for(r),
+                if kept[i] { "KEPT   " } else { "removed" },
+                h.chars().take(80).collect::<String>()
+            );
+        }
     }
 }
