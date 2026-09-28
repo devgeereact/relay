@@ -26,6 +26,10 @@ Six more ways a wrong verse could reach a congregation are closed. The ones wort
 
 When a preacher reads from the King James Bible, Relay compares what it heard against the verse word for word. It was failing on the words that make the King James the King James: *thy* heard as *your*, *ye* as *you*, *thou shalt* as *you shall*, and *honour* against *honor*. Seven more verses reached the screens on one real service with nothing wrong added, including several read aloud with no reference spoken at all.
 
+### An older installation can be upgraded again
+
+A database from an early build of Relay failed to open at all after updating — the app stopped before any window appeared, so there was nowhere to tell you why. Nothing had ever tested that path, and it is the path every existing install takes. Three tests now walk it, including one that rebuilds what a released build actually leaves behind and checks a verse your service fired still resolves afterwards.
+
 ### Choosing a speech model now tells you what it costs
 
 The model picker said *"a bigger model hears more accurately but needs a faster computer"* — two things nobody had measured, on the screen that decides how well Relay hears your preacher. Each model now shows what is actually known: how often the transcript updates (the largest model updates about four times more slowly, which nothing used to tell you), which models have been scored for accuracy on real services, and — for the three that have never been scored — that they never have been. **Word error rate has still never been measured in any language**, and the cards say so rather than implying otherwise.
