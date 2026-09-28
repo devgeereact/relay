@@ -1188,3 +1188,37 @@ describe('the detection inspector acts on the claim that was opened', () => {
     expect(dropped[0][1].reference).toBe('Psalms 23:1');
   });
 });
+
+// ── RG-302 · THE CARD MUST SAY THERE IS A PASSAGE TO WALK ───────────────────
+//
+// `passageSpan` being right is not the claim; the claim is that the operator READS
+// it. A pure helper with five green tests and nothing rendering it is the
+// `PreviewProgram.svelte` mistake, and this repository has made it once already.
+//
+// Service 40, 2026-09-25 at 945 s: "Proverbs 7, 1 to 5" auto-fired Proverbs 7:1 and
+// this card showed one verse with nothing about the other four.
+describe('a passage asked for — RG-302', () => {
+  it('a range names how far it goes and what → is for', async () => {
+    cap.detections.set([claim({ reference: 'Proverbs 7:1', verse: 1, passage_end: 5 })]);
+    new Live({ target: host, props: {} });
+    await settle();
+    const card = host.querySelector('.clm');
+    const line = card.querySelector('.claim-span');
+    expect(line).not.toBeNull();
+    // The three facts an operator acts on: how much was asked for, where it ends,
+    // and that the transport is the way to get there.
+    expect(line.textContent).toContain('5 verses');
+    expect(line.textContent).toContain('verse 5');
+    expect(line.textContent).toContain('4 still to come');
+    expect(line.textContent).toContain('→');
+  });
+
+  it('an ordinary single verse gets no such line', async () => {
+    // Most claims are one verse. A note on every card is a note nobody reads, and
+    // this card is where the operator judges whether the AI got it right.
+    cap.detections.set([claim({ reference: 'Romans 8:28', verse: 28 })]);
+    new Live({ target: host, props: {} });
+    await settle();
+    expect(host.querySelector('.clm .claim-span')).toBeNull();
+  });
+});

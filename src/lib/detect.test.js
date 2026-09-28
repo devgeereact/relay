@@ -9,7 +9,7 @@
 // whole time; Live.svelte rendered both kinds as "AI suggestion — 92% match". The
 // human in the loop was shown nothing to be a human in the loop WITH.
 import { describe, it, expect } from 'vitest';
-import { heard, methodKey, methodBadgeKey, methodNoteKey, showsConfidence, inLibrary, evidenceIsASpan, orderClaims } from './detect.js';
+import { heard, methodKey, methodBadgeKey, methodNoteKey, showsConfidence, inLibrary, evidenceIsASpan, orderClaims, passageSpan } from './detect.js';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { codeOnly } from './codeonly.js';
@@ -325,5 +325,57 @@ describe('a reading', () => {
 
   it('carries a contiguous span of speech, so it may be quoted', () => {
     expect(evidenceIsASpan(reading)).toBe(true);
+  });
+});
+
+// ── RG-302 · A PASSAGE THE OPERATOR WAS NEVER TOLD ABOUT ────────────────────
+//
+// Service 40, 2026-09-25, at 945 s: "…hold my commandments with you. Proverbs 7,
+// 1 to 5." Relay auto-fired Proverbs 7:1 and the claim card said nothing about the
+// other four. `→` walks them and always could; the whole defect was that nothing on
+// the operator's surface said there was anything to walk, so the congregation reads
+// verse 1 while the preacher reads 2 to 5 and it looks like Relay falling behind.
+//
+// The over-reporting half matters as much as the under-reporting one. A line that
+// appears on every claim is a line an operator stops reading, and the claim card is
+// where they are being asked to judge whether the AI got it right.
+describe('passageSpan — RG-302', () => {
+  it('the field case: five verses asked for, one on screen', () => {
+    // Exactly the wire shape `pipeline::DetectionEvent` sends for that window.
+    const span = passageSpan({ reference: 'Proverbs 7:1', verse: 1, passage_end: 5 });
+    expect(span).toEqual({ first: 1, last: 5, count: 5, more: 4 });
+  });
+
+  it('a single verse says nothing at all', () => {
+    // `passage_end` is `skip_serializing_if = "Option::is_none"`, so the key is
+    // ABSENT rather than null on the ordinary claim — which is most of them.
+    expect(passageSpan({ reference: 'John 3:16', verse: 16 })).toBe(null);
+    expect(passageSpan({ reference: 'John 3:16', verse: 16, passage_end: null })).toBe(null);
+  });
+
+  it('a span that does not go past the verse in hand is not a passage', () => {
+    // "verse 5 to 5", and a one-verse chapter fired at its only verse. Both are
+    // `Some(end)` in Rust and neither gives the operator anything to walk.
+    expect(passageSpan({ verse: 5, passage_end: 5 })).toBe(null);
+    expect(passageSpan({ verse: 5, passage_end: 4 })).toBe(null);
+  });
+
+  it('mid-reading: the operator three verses in still sees where it ends', () => {
+    // `→` has stepped to verse 3 of 1–5. The span is still the fact they need, and
+    // `more` must count what is LEFT rather than restating the whole reading.
+    expect(passageSpan({ verse: 3, passage_end: 5 })).toEqual({
+      first: 3,
+      last: 5,
+      count: 3,
+      more: 2,
+    });
+  });
+
+  it('refuses rubbish rather than rendering it', () => {
+    // A claim card is not the place to find out that a field arrived as a string.
+    expect(passageSpan(null)).toBe(null);
+    expect(passageSpan({})).toBe(null);
+    expect(passageSpan({ verse: 1, passage_end: 'five' })).toBe(null);
+    expect(passageSpan({ verse: 1, passage_end: 5.5 })).toBe(null);
   });
 });

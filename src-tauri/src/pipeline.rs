@@ -92,6 +92,21 @@ pub struct Fire {
     /// or when the following verse is not in the corpus.
     pub next_reference: Option<String>,
     pub next_text: Option<String>,
+    /// **HOW FAR THE WORDS ASKED FOR — RG-302.** The inclusive last verse of the
+    /// passage this claim names, and `None` when the claim is one verse.
+    ///
+    /// Distinct from `next_reference`, which answers *"what is the verse after this
+    /// one"* and is filled only for something that reached a screen. This answers
+    /// *"how much was asked for"*, and it is the fact that went missing: service 40
+    /// at 945 s heard *"Proverbs 7, 1 to 5"*, auto-fired **Proverbs 7:1**, and the
+    /// operator was shown one verse with no sign that four more had been asked for.
+    /// The parser kept the span the whole time (`detection::field_2026_09_25_range`
+    /// pins that) and `DetectionEvent` dropped it at the bridge.
+    ///
+    /// **It is never equal to the anchor verse.** `span_to_report` is the one place
+    /// that decides what counts as a span worth reporting, so a range restated as
+    /// its own start ("verse 5 to 5") cannot arrive here as a passage.
+    pub passage_end: Option<i64>,
     /// The per-content-type scripture template. EVERY fire path must carry this;
     /// forgetting it is the bug this module exists to make impossible.
     pub template_id: Option<i64>,
@@ -182,6 +197,7 @@ impl Fire {
             matched_text: self.matched_text.clone(),
             trace_id: self.trace_id,
             named_translation_missing: self.named_translation_missing.clone(),
+            passage_end: self.passage_end,
         }
     }
 }
@@ -396,6 +412,13 @@ pub struct DetectionEvent {
     /// rendered as one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub named_translation_missing: Option<String>,
+    /// **HOW MUCH WAS ASKED FOR — RG-302.** See `Fire::passage_end`. Absent from the
+    /// wire when the claim is one verse, which is the ordinary case; present, and
+    /// greater than `verse`, when the words named a passage. The console turns it
+    /// into a sentence (`detect.js::passageSpan`) so an operator is told there is
+    /// something for `→` to walk instead of having to know.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub passage_end: Option<i64>,
 }
 
 /// A gate candidate: the anchor verse plus how it should route, and whether it is
@@ -476,6 +499,7 @@ mod tests {
             stage_note: None,
             next_reference: None,
             next_text: None,
+            passage_end: None,
             template_id: Some(7),
             template_json: Some(r#"{"style":{}}"#.into()),
             template_pinned: false,
