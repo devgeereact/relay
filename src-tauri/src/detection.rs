@@ -2339,6 +2339,16 @@ impl ContextMemory {
         self.span_end = None;
     }
 
+    /// The inclusive last verse of the passage currently being walked, if any.
+    ///
+    /// RG-302. `next_verse` already honours this bound and has since ranges
+    /// existed; nothing could ask what the bound WAS, so no surface could tell an
+    /// operator how far a reading goes. Read-only: the walk's behaviour is
+    /// unchanged and this only makes the fact reportable.
+    pub fn span_end(&self) -> Option<i64> {
+        self.span_end
+    }
+
     /// Resolve a bare verse number against the current passage, if any.
     pub fn resolve_bare_verse(&self, verse: i64) -> Option<VerseRef> {
         self.current.as_ref().map(|c| VerseRef {
@@ -11064,6 +11074,47 @@ mod archaic_and_spelling_normalisation {
         assert_eq!(
             DetectionMethod::for_quotation(hit.run, hit.sole),
             DetectionMethod::Reading
+        );
+    }
+}
+
+/// **RG-302 · A SPOKEN RANGE MUST SURVIVE THE PARSE — service 40, 2026-09-25.**
+///
+/// The window, verbatim: *"…hold my commandments with you. Proverbs 7, 1 to 5."*
+/// Relay auto-fired **Proverbs 7:1** and said nothing about the other four. The row
+/// was filed `NOT TESTED as a defect` — whether the parser dropped the range or the
+/// pipeline did had never been traced. This is the parser half of that trace.
+#[cfg(test)]
+mod field_2026_09_25_range {
+    use super::*;
+
+    const HEARD: &str = "hold my commandments with you. Proverbs 7, 1 to 5.";
+
+    #[test]
+    fn the_range_reaches_the_candidate() {
+        let got = detect_direct(HEARD);
+        for m in &got {
+            println!(
+                "  {} {}:{}  {:?}  {:.2}  whole_chapter={}  verse_end={:?}",
+                m.reference.book,
+                m.reference.chapter,
+                m.reference.verse,
+                m.method,
+                m.confidence,
+                m.whole_chapter,
+                m.verse_end
+            );
+        }
+        let pr = got
+            .iter()
+            .find(|m| m.reference.book == "Proverbs")
+            .unwrap_or_else(|| panic!("nothing parsed at all: {got:?}"));
+        assert_eq!(pr.reference.chapter, 7);
+        assert_eq!(pr.reference.verse, 1);
+        assert_eq!(
+            pr.verse_end,
+            Some(5),
+            "the preacher asked for five verses and the parse kept one"
         );
     }
 }

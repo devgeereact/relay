@@ -19,6 +19,10 @@
     installModelFile,
     readErrors,
   } from './stores/capture.js';
+  // RG-116. The price of a model, in the two currencies a church spends: update
+  // rate and wrong verses. Pure, and every figure comes from the Rust catalogue with
+  // its own provenance attached — see `modelprice.js` for why prose was not enough.
+  import { describeSpeed, describeAccuracy } from './modelprice.js';
   import ErrorState from './ui/ErrorState.svelte';
   import Button from './ui/Button.svelte';
   import { whyDisabled, SERVICE_LOCKED, BUSY } from './ui/whydisabled.js';
@@ -177,8 +181,21 @@
     </div>
     <p class="ms-sub">
       {#if installed}
-        A bigger model hears more accurately but needs a faster computer. Relay uses
-        the one marked <b>In use</b>.
+        <!-- RG-116 · THIS SENTENCE USED TO BE THE FINDING.
+             It read "A bigger model hears more accurately but needs a faster
+             computer", which is two unmeasured claims in one line on the screen
+             where a church decides how well Relay will hear their preacher. Nobody
+             had measured accuracy for any model in any language, and the cost is
+             not "a faster computer" — it is the transcript UPDATE RATE, which is
+             what an operator feels and what a church that chose the largest model
+             gave three quarters of away without being told.
+
+             What replaced it says only what is known and sends the operator to the
+             per-model evidence, which carries its own provenance. -->
+        A bigger model is not automatically a better one here. Each one below says
+        what it costs in update rate and what is actually known about the verses it
+        gets wrong — and for three of them the honest answer is <b>nothing</b>. Relay
+        uses the one marked <b>In use</b>.
       {:else}
         It needs a speech model — a one-time download. Everything else already works:
         you can put any verse on screen by typing its reference.
@@ -210,6 +227,10 @@
 
     {#each models as m}
       {@const active = m.installed && m.filename === activeFile}
+      <!-- RG-116. Declared here rather than beside the markup that uses them,
+           because `{@const}` must be the immediate child of the block. -->
+      {@const speed = describeSpeed(m, models)}
+      {@const acc = describeAccuracy(m)}
       <div class="ms-opt">
         <div class="ms-opt-t">
           <b>{m.label}</b>
@@ -217,6 +238,25 @@
           {#if active}<span class="ms-live">In use</span>{/if}
         </div>
         <div class="ms-opt-d">{m.detail}</div>
+
+        <!-- ── RG-116 · THE PRICE, WHERE THE CHOICE IS MADE ──────────────────
+             The P0. On 2026-09-06 an operator followed Relay's own printed advice,
+             switched model mid-service, and four wrong verses followed — 5 of 9
+             auto-fires correct against a 5-in-100 bar. The advice named three
+             millisecond figures and said nothing about accuracy, and this panel
+             said nothing about either. Both halves of the trade are now here.
+
+             The accuracy line is shown for EVERY model, including the three that
+             have never been measured. A row that simply had no line would read as
+             "nothing to worry about", which is the reading this finding is about —
+             so the absence is stated in words. It is not a `caution`: a caution
+             says something is probably wrong on this machine, and "nobody has
+             checked" is a different sentence that deserves its own. -->
+        {#if speed}<p class="ms-price">{speed}</p>{/if}
+        <p class="ms-price" class:unknown={!acc.measured}>
+          <b>Wrong verses:</b> {acc.text}
+        </p>
+
         {#if m.caution}
           <!-- Not an error: nothing has gone wrong, and the operator may still
                have good reason to pick it. It must be readable BEFORE the
@@ -377,6 +417,20 @@
      than invent one; §111 paid that gap with `--v-caution`, which promises
      nothing about a screen. This panel was always a caution, and it was
      wearing the one colour it was not allowed to wear. */
+  /* RG-116 · the price. Quiet, factual type — this is evidence, not a warning, and
+     it must NOT wear a law colour: amber means on air, cyan means a guess, amethyst
+     means rehearsal, and ochre (`--v-caution`) means Relay thinks something is
+     probably wrong on this machine (rule 18, DECISIONS §111). "This model got 5 of 9
+     right" is none of those; it is a number a person weighs.
+
+     `.unknown` is the never-measured case and it reads one step DIMMER rather than
+     louder. An admission dressed as a warning invites an operator to treat the two
+     measured rows as the safe ones, and two of five measured is not that story. */
+  .ms-price {
+    font-size: var(--v-fs-cap); line-height: 1.55; margin: 0 0 6px;
+    color: var(--v-dim);
+  }
+  .ms-price.unknown { color: var(--v-faint); }
   .ms-caution {
     font-size:var(--v-fs-b1); line-height: 1.55; margin: 0 0 8px;
     padding: 7px 9px; border-radius: 7px;

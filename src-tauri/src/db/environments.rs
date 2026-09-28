@@ -129,13 +129,39 @@ pub fn save_environment(
 }
 
 /// Mark one room as the one in use. Exactly one, or none.
+///
+/// ── ATOMIC, BECAUSE THE FAILURE IS SILENT AND NOTHING REPAIRS IT (RG-113(3)) ──
+///
+/// This was two unguarded `UPDATE`s outside a transaction. The first clears every
+/// `is_active`, the second sets one — and an id naming no row matches nothing and
+/// returns `Ok`, so the church was left with **no active room at all**. A room is
+/// where the screen assignments and the recognition language come from, so the next
+/// launch comes up with nobody's settings and nothing anywhere saying why. It
+/// needed no I/O failure to reach: deleting a room on one window while another
+/// still lists it, or pressing a room from a stale list, is enough.
+///
+/// **The fix is atomicity and not a repair.** `profiles.rs` repairs the same shape
+/// by promoting `MIN(id)`, which silently moves the preacher to a different voice
+/// profile and with it a different auto-fire threshold — the filed row calls that
+/// the worse half of the finding. Leaving the previous room exactly where it was
+/// invents nothing, and the one caller (`main::use_environment`) already reads the
+/// active room BACK and refuses when it is not the one asked for, so the operator
+/// is still told. Returning `Ok` here and letting that read-back speak is
+/// deliberate: it keeps one sentence for one situation in one place.
+///
+/// The `Transaction` rolls back on drop, so the early return undoes the clear.
+/// Pinned by `a_room_that_is_gone_cannot_take_the_active_room_with_it`.
 pub fn set_active_environment(conn: &Connection, id: i64) -> rusqlite::Result<()> {
-    conn.execute("UPDATE environment_profiles SET is_active = 0", [])?;
-    conn.execute(
+    let tx = conn.unchecked_transaction()?;
+    tx.execute("UPDATE environment_profiles SET is_active = 0", [])?;
+    let switched = tx.execute(
         "UPDATE environment_profiles SET is_active = 1 WHERE id = ?1",
         [id],
     )?;
-    Ok(())
+    if switched == 0 {
+        return Ok(()); // dropped un-committed: the previous room is still active
+    }
+    tx.commit()
 }
 
 pub fn delete_environment(conn: &Connection, id: i64) -> rusqlite::Result<()> {
@@ -201,6 +227,68 @@ mod tests {
         let b = save_environment(&conn, "Youth room", "{}", "", "").unwrap();
         set_active_environment(&conn, a).unwrap();
         assert_eq!(active_environment(&conn).unwrap().unwrap().id, a);
+        set_active_environment(&conn, b).unwrap();
+        assert_eq!(active_environment(&conn).unwrap().unwrap().id, b);
+        assert_eq!(
+            list_environments(&conn)
+                .unwrap()
+                .iter()
+                .filter(|e| e.is_active)
+                .count(),
+            1
+        );
+    }
+
+    /// **RG-113(3) · SWITCHING TO A ROOM THAT IS NOT THERE MUST NOT LOSE THE ONE
+    /// THAT IS.**
+    ///
+    /// `set_active_environment` was two unguarded `UPDATE`s outside a transaction.
+    /// The first clears every `is_active`; the second sets one. If the id names no
+    /// row the second matches nothing and returns `Ok`, so the church is left with
+    /// **no active room at all** — and unlike `voice_profiles`, nothing here repairs
+    /// it. A room holds the screen assignments and the recognition language a
+    /// service runs on, so the next launch comes up with nobody's settings and
+    /// nothing anywhere saying why.
+    ///
+    /// Reachable without any I/O failure at all: delete a room on one window while
+    /// another still lists it, or press a room from a stale list. That is what makes
+    /// this testable rather than needing the two-process rig the row asks for.
+    ///
+    /// The fix is atomicity, not a repair. `profiles.rs` repairs by promoting
+    /// `MIN(id)`, which silently moves the preacher to a different profile and a
+    /// different auto-fire threshold — the row files that as the worse half of the
+    /// same finding. Leaving the previous room exactly where it was is the answer
+    /// that invents nothing.
+    #[test]
+    fn a_room_that_is_gone_cannot_take_the_active_room_with_it() {
+        let conn = db();
+        let a = save_environment(&conn, "Main hall", "{}", "", "").unwrap();
+        save_environment(&conn, "Youth room", "{}", "", "").unwrap();
+        set_active_environment(&conn, a).unwrap();
+        assert_eq!(active_environment(&conn).unwrap().unwrap().id, a);
+
+        // A room the list still shows and the table no longer holds.
+        set_active_environment(&conn, 9_999).unwrap();
+
+        let still = active_environment(&conn)
+            .unwrap()
+            .expect("the church has no active room at all after pressing a stale one");
+        assert_eq!(
+            still.id, a,
+            "the previous room must be exactly where it was — it is where the screen \
+             assignments and the recognition language come from"
+        );
+    }
+
+    /// The other side of the same guarantee: an id that IS there still switches, and
+    /// still leaves exactly one active. A fix that made the failure safe by making
+    /// the success not happen would pass the test above.
+    #[test]
+    fn switching_to_a_real_room_still_switches() {
+        let conn = db();
+        let a = save_environment(&conn, "Main hall", "{}", "", "").unwrap();
+        let b = save_environment(&conn, "Youth room", "{}", "", "").unwrap();
+        set_active_environment(&conn, a).unwrap();
         set_active_environment(&conn, b).unwrap();
         assert_eq!(active_environment(&conn).unwrap().unwrap().id, b);
         assert_eq!(

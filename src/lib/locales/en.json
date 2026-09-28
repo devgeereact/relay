@@ -76,6 +76,7 @@
   "live.now_live": "Now live: {reference}",
   "live.not_in_bible": "{reference} is not in your Bible — Relay parsed that reference but no such verse exists, which usually means it misheard a number. Nothing was sent.",
   "live.translation_not_installed": "The preacher named the {named} and Relay does not have it, so the screen is showing {shown}. The reference is right; the wording is not the wording being read aloud.",
+  "live.passage_span": "A passage of {count} verses was asked for — through verse {last}. {more} still to come: press → to walk them.",
   "live.screens_cleared": "Screens cleared",
   "live.rehearsal_on": "Rehearsal — nothing reaches the screens",
   "live.rehearsal_off": "Live. Screens cleared.",

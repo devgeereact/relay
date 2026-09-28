@@ -248,3 +248,32 @@ export function describeHold(hold) {
   if (clauses.length === 1) return `Holding ${held.length} ${clauses[0][1]}`;
   return `Holding ${held.length} — ${clauses.map(([n, w]) => `${n} ${w}`).join(' · ')}`;
 }
+
+/**
+ * **HOW MUCH WAS ASKED FOR, AND WHETHER TO SAY SO — RG-302.**
+ *
+ * Service 40 at 945 s: *"…hold my commandments with you. Proverbs 7, 1 to 5."*
+ * Relay auto-fired **Proverbs 7:1** and the console showed one verse. Four more had
+ * been asked for, `→` would have walked them, and nothing on the surface the
+ * operator reads said there was anything to walk. The congregation reads verse 1
+ * while the preacher reads 2 to 5, and it looks like Relay falling behind rather
+ * than like a feature nobody reached for.
+ *
+ * Pure, and it returns `null` rather than an empty object for the one-verse case,
+ * because the caller's question is "is there anything to say here" and a truthy
+ * object with zeroes in it answers yes. `passage_end` is absent from the wire
+ * unless the backend found a real span (`span_to_report` is the one place that
+ * decides), so this is a second guard rather than the only one — a span equal to or
+ * behind the anchor is still refused here, since a line that appears on every claim
+ * is a line an operator learns to skip.
+ *
+ * `count` is inclusive of the verse on screen: "verses 1 to 5" is five, not four.
+ * `more` is what is left to walk, which is the number the operator is actually
+ * being asked to act on.
+ */
+export function passageSpan(d) {
+  const first = Number(d?.verse);
+  const last = Number(d?.passage_end);
+  if (!Number.isInteger(first) || !Number.isInteger(last) || last <= first) return null;
+  return { first, last, count: last - first + 1, more: last - first };
+}

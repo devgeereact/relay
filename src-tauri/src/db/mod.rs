@@ -565,15 +565,29 @@ pub fn active_translation_id(conn: &Connection) -> rusqlite::Result<i64> {
 /// that do not exist — `media` (it is `media_assets`) and `template_active`
 /// (it is a COLUMN, `templates.console_active`). The screen would have reported
 /// them as applied regardless, which is precisely the failure being fixed.
+/// **AND IT NAMES EVERY TABLE THE SCHEMA CREATES — RG-113(7).** It named eighteen
+/// of twenty-six, and `schema_report` can only report what it is asked about, so the
+/// screen drew a full set of ticks whether or not the other eight existed. The filed
+/// row named four; the test that replaced the hand-list found **eight**, and the
+/// worst is `verses_fts` — the whole of scripture search — over which this screen
+/// would have read green. Completeness is now pinned by
+/// `the_migration_screen_asks_about_every_table_the_schema_creates`, which reads
+/// `schema.sql` rather than a list somebody remembered, because a list checked
+/// against the names we happened to think of is this same bug one size smaller.
 pub const MIGRATION_TABLES: &[(&str, &str)] = &[
     ("Core tables", "detections"),
     ("Detection evidence", "detections.heard_text"),
     ("Service history", "services"),
     ("Transcripts", "transcripts"),
+    ("Translations", "translations"),
     ("Scripture", "verses"),
+    ("Scripture search index", "verses_fts"),
     ("Templates", "templates"),
     ("Console-active templates", "templates.console_active"),
     ("Output channels", "output_channels"),
+    ("Per-screen content looks", "channel_looks"),
+    ("Stage layouts", "stage_layouts"),
+    ("Programme timers", "timers"),
     ("Voice profiles", "voice_profiles"),
     ("App settings", "app_settings"),
     ("Service plans", "service_plans"),
@@ -581,13 +595,16 @@ pub const MIGRATION_TABLES: &[(&str, &str)] = &[
     ("Plan sections", "plan_items.section_title"),
     ("Plan running times", "plan_items.duration_sec"),
     ("Songs", "songs"),
+    ("Song sections", "song_sections"),
     ("Song arrangements", "song_arrangements"),
     ("Saved scripture", "saved_scripture"),
     ("Media", "media_assets"),
     ("Announcements", "announcements"),
+    ("Operator action log", "cues"),
     ("Service timeline", "service_events"),
     ("Latency history", "perf_samples"),
     ("Room profiles", "environment_profiles"),
+    ("Demo content ledger", "demo_content"),
 ];
 
 /// Does a table — or a `table.column` — exist right now?
@@ -731,6 +748,16 @@ fn ensure_manual_detection_status(conn: &Connection) -> rusqlite::Result<()> {
              SELECT id, transcript_id, verse_id, method, confidence, status, fired_at FROM detections;
          DROP TABLE detections;
          ALTER TABLE detections_new RENAME TO detections;
+         -- RG-113(1). THE INDEXES BELONG TO THE TABLE BEING DROPPED, so they go
+         -- with it — and `ensure_history_indexes` has already run by the time this
+         -- rung does (`ensure_tables` calls it; this is called after), so nothing
+         -- puts them back. Every history query, the replay, the timeline merge and
+         -- `delete_service` then full-scan the two tables that grow without limit
+         -- for as long as a church keeps using Relay, for the rest of that boot,
+         -- silently, returning on the next one. `IF NOT EXISTS` keeps the batch
+         -- retryable per rule 25, and the definitions are `schema.sql`'s own.
+         CREATE INDEX IF NOT EXISTS idx_detections_transcript ON detections(transcript_id);
+         CREATE INDEX IF NOT EXISTS idx_detections_verse ON detections(verse_id);
          COMMIT;",
     );
 
@@ -796,8 +823,11 @@ fn ensure_manual_detection_status(conn: &Connection) -> rusqlite::Result<()> {
 /// **And it recreates the two indexes, which is RG-113 item 1.** A rebuild takes
 /// `idx_detections_transcript` and `idx_detections_verse` with the old table;
 /// `ensure_history_indexes` has already run by then, so without this the indexes
-/// every history query walks are missing for the rest of that boot. Stated here
-/// because the same omission in `ensure_manual_detection_status` is a filed finding.
+/// every history query walks are missing for the rest of that boot.
+/// `ensure_manual_detection_status` had the same omission and it was a filed
+/// finding; it recreates them too now, pinned by
+/// `the_detections_rebuild_puts_its_indexes_back`. **Any future rebuild of this
+/// table must do the same** — the rule belongs to the shape, not to either rung.
 fn ensure_detection_method_names_its_detector(conn: &Connection) -> rusqlite::Result<()> {
     let ddl: Option<String> = conn
         .query_row(
@@ -1022,6 +1052,134 @@ mod tests {
         );
     }
 
+    /// **RG-113(7) · THE MIGRATION SCREEN MUST NOT BE GREEN OVER A MISSING TABLE.**
+    ///
+    /// `MIGRATION_TABLES` named eighteen of the schema's twenty-six tables, and
+    /// `schema_report` can only report what it is asked about — so the Database
+    /// Migration screen drew a full set of ticks whether or not the other eight
+    /// existed. The filed row names four and the worst of them is `verses_fts`,
+    /// which is the whole of scripture search: a database missing it reads GREEN on
+    /// the one screen whose job is to say the upgrade landed.
+    ///
+    /// **This test is on the LIST and not on the four**, because a list checked
+    /// against the names we happened to think of is the failure being fixed one size
+    /// smaller. `schema.sql` IS the shipped baseline (it is `include_str!`d), so it
+    /// is the authority, and anything it creates that the screen does not ask about
+    /// fails here. The exemption set is deliberately EMPTY: if a future table has a
+    /// reason not to be reported, the reason goes in here where somebody has to
+    /// write it down.
+    #[test]
+    fn the_migration_screen_asks_about_every_table_the_schema_creates() {
+        // Tables and virtual tables, straight out of the baseline the binary ships.
+        let mut in_schema: Vec<&str> = SCHEMA
+            .lines()
+            .filter_map(|l| {
+                let l = l.trim_start();
+                let rest = l
+                    .strip_prefix("CREATE TABLE ")
+                    .or_else(|| l.strip_prefix("CREATE VIRTUAL TABLE "))?;
+                rest.split_whitespace()
+                    .next()
+                    .map(|n| n.trim_end_matches('('))
+            })
+            .collect();
+        in_schema.sort_unstable();
+        in_schema.dedup();
+        assert!(
+            in_schema.len() > 20,
+            "the scanner stopped seeing the schema ({} tables) — a scanner that \
+             quietly narrows passes everything",
+            in_schema.len()
+        );
+
+        // A table the screen deliberately does not report, each with its reason.
+        // Empty on purpose. Adding one is a decision, not a tidy-up.
+        const EXEMPT: &[(&str, &str)] = &[];
+
+        let asked: Vec<&str> = MIGRATION_TABLES
+            .iter()
+            .map(|(_, object)| object.split('.').next().unwrap_or(object))
+            .collect();
+        let missing: Vec<&str> = in_schema
+            .iter()
+            .copied()
+            .filter(|t| !asked.contains(t) && !EXEMPT.iter().any(|(e, _)| e == t))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "the Database Migration screen would read green over these: {missing:?}"
+        );
+    }
+
+    /// **AND EVERY ONE OF THEM ARRIVES ON A DATABASE THAT PREDATES IT — RG-113(7).**
+    ///
+    /// The other half, and the half that makes widening `MIGRATION_TABLES` safe
+    /// rather than reckless. `updates::preflight` reads the same list, so naming a
+    /// table that a fresh install creates and an UPGRADE does not would turn a blind
+    /// screen into one that reports a fault on every machine that has run an older
+    /// build — and, on the schema check, could refuse the very update that fixes it.
+    ///
+    /// Same shape as `every_column_an_upgrade_adds_reaches_a_database_that_predates_it`:
+    /// make a fresh install OLD by removing what the upgrade path is responsible for,
+    /// then run the upgrade and see what comes back.
+    #[test]
+    fn every_table_the_screen_names_reaches_a_database_that_predates_it() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn, true).expect("fresh install");
+
+        // Make it old — in the eight places this row widened the list. The other
+        // eighteen were already being reported and are covered by
+        // `schema_report_finds_every_table_on_a_fresh_database`; removing THEM makes
+        // a database no upgrade path claims to accept (`migrate(_, false)` upgrades a
+        // real old schema, it does not rebuild a gutted one), which would be testing
+        // a state no church can be in.
+        //
+        // A table SQLite refuses to drop is skipped rather than counted as tested, so
+        // the assertion is over what was ACTUALLY removed.
+        // Six of the eight. `translations` and `cues` are in `schema-baseline.sql` —
+        // they have existed since the first schema Relay ever had, so every database
+        // it can open already has them and nothing needs to create them. The other
+        // six arrived later and must therefore arrive by `ensure_*`.
+        const WIDENED: &[&str] = &[
+            "verses_fts",
+            "channel_looks",
+            "stage_layouts",
+            "timers",
+            "song_sections",
+            "demo_content",
+        ];
+        let mut dropped = Vec::new();
+        for t in WIDENED {
+            if conn
+                .execute_batch(&format!("DROP TABLE IF EXISTS {t}"))
+                .is_ok()
+            {
+                dropped.push(*t);
+            }
+        }
+        assert!(
+            dropped.len() >= WIDENED.len() - 1,
+            "only {:?} of the widened tables could be removed, so this test proves \
+             almost nothing",
+            dropped
+        );
+        set_user_version(&conn, 0).unwrap();
+
+        migrate(&conn, false).expect("upgrade an old database");
+
+        let (_, _, rows) = schema_report(&conn).unwrap();
+        let missing: Vec<&str> = rows
+            .iter()
+            .filter(|(label, t, present)| !present && dropped.contains(t) && !label.is_empty())
+            .map(|(_, t, _)| *t)
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "the migration screen would report these missing on every machine that \
+             has run an older build: {missing:?}"
+        );
+    }
+
     #[test]
     fn schema_report_notices_a_missing_column() {
         // `templates.console_active` is a COLUMN rung, not a table one. Naming it
@@ -1158,6 +1316,55 @@ mod tests {
             .expect("a crashed previous attempt must be retryable");
 
         assert!(manual_is_allowed(&conn));
+    }
+
+    /// **RG-113(1) · A REBUILD TAKES THE INDEXES WITH IT.**
+    ///
+    /// `ensure_manual_detection_status` drops `detections` and renames the scratch
+    /// table over it. `idx_detections_transcript` and `idx_detections_verse` belong
+    /// to the table being dropped, so they go with it — and `ensure_history_indexes`
+    /// has already run by the time this rung does (`ensure_tables` calls it; this
+    /// runs after), so nothing puts them back. Every history query, the replay, the
+    /// timeline merge and `delete_service` then full-scan **the two tables that grow
+    /// without limit for as long as a church keeps using Relay**, for the rest of
+    /// that boot, silently, returning on the next one.
+    ///
+    /// The v6 rung modelled on this one already recreates them
+    /// (`the_v6_rebuild_is_retryable_and_widens_the_vocabulary`) and its doc comment
+    /// names this omission as a filed finding. This is that finding.
+    #[test]
+    fn the_detections_rebuild_puts_its_indexes_back() {
+        let conn = db_with_old_detections();
+        // The state a real boot is in when this rung runs: `ensure_history_indexes`
+        // has been and gone, so the indexes exist and nothing will create them again.
+        crate::db::services::ensure_history_indexes(&conn).unwrap();
+        for idx in ["idx_detections_transcript", "idx_detections_verse"] {
+            assert_eq!(
+                index_count(&conn, idx),
+                1,
+                "{idx} should exist before the rebuild"
+            );
+        }
+
+        ensure_manual_detection_status(&conn).unwrap();
+
+        for idx in ["idx_detections_transcript", "idx_detections_verse"] {
+            assert_eq!(
+                index_count(&conn, idx),
+                1,
+                "{idx} did not survive the rebuild — every history query full-scans \
+                 for the rest of this boot and nothing says so"
+            );
+        }
+    }
+
+    fn index_count(conn: &Connection, name: &str) -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?1",
+            [name],
+            |r| r.get(0),
+        )
+        .unwrap()
     }
 
     /// RG-113(2) — the two pragmas that decide what happens when two things want

@@ -138,7 +138,32 @@ struct SessionState {
     /// mid-service does not retro-move the current service's target.
     target_ms: i64,
     last_transcript: Option<i64>,
+    /// **THE LANGUAGE THE DECODER REPORTED FOR THE WINDOW BEING HANDLED — RG-113(5).**
+    ///
+    /// `persist_fire` writes an evidence transcript row when the detection came out
+    /// of a window the last FINAL does not contain (the FIELD F-2 fix), and that
+    /// insert carried a hardcoded `"en"` — on the product whose Tier-1 languages are
+    /// Yorùbá, Swahili and Hausa and where code-switching is the normal case. Every
+    /// one of those rows asserted English about speech nobody had established was
+    /// English, and `service_transcripts` hands them to the replay.
+    ///
+    /// It lives beside `last_transcript` because it is the same kind of fact about
+    /// the same row, and because a PARTIAL window never reaches
+    /// `persist_transcript` at all — so the Session is the only thing that can carry
+    /// its language to the one place that needs it. `handle_transcript` is the ONE
+    /// writer, on `relay-detect`, in order, and it sets this from the same
+    /// `TranscriptUpdate` it then hands to `emit_detections`.
+    ///
+    /// `"und"` (ISO 639-3, *undetermined*) until a decoder has said otherwise, and
+    /// that is not a placeholder: a manual fire's evidence row is a reference the
+    /// operator typed, and no language was spoken for it. Whisper never returns
+    /// `und`, so a real answer and an absent one stay separable — which is the whole
+    /// complaint against the `"en"` this replaces.
+    last_language: String,
 }
+
+/// ISO 639-3 for *undetermined*. See `SessionState::last_language`.
+const LANGUAGE_UNDETERMINED: &str = "und";
 
 /// Current wall-clock time in epoch milliseconds. `0` before the UNIX epoch
 /// (never happens in practice), so callers never handle an error.
@@ -948,6 +973,25 @@ fn passage_end(conn: &Connection, c: &Cand) -> Option<i64> {
     }
 }
 
+/// **WHAT COUNTS AS A PASSAGE WORTH TELLING THE OPERATOR ABOUT — RG-302.**
+///
+/// The ONE place that decision is made, called by every path that has a passage
+/// end in its hand. Service 40 at 945 s: *"Proverbs 7, 1 to 5."* auto-fired
+/// **Proverbs 7:1** and the console showed one verse with nothing to say that four
+/// more had been asked for. `→` would have walked them, if anybody had known to
+/// press it — which is the whole defect: an absence, not a wrong verse.
+///
+/// A span is reported only when it is LONGER than the anchor. `passage_end`
+/// already answers `Some(end)` for a whole chapter and for an explicit range, and
+/// both can legitimately land on the anchor itself — "Psalm 117" is a two-verse
+/// chapter fired at verse 1, but "verse 5 to 5" and a one-verse chapter are not
+/// passages and must not be announced as though the operator had something to
+/// walk. Saying "there is more" when there is not is the same class of lie as a
+/// status badge that cannot fail (rule 35), in the other direction.
+fn span_to_report(anchor_verse: i64, end: Option<i64>) -> Option<i64> {
+    end.filter(|e| *e > anchor_verse)
+}
+
 /// Look up a verse and its scripture template, and assemble the `Fire` that
 /// describes what the screens will show.
 ///
@@ -994,6 +1038,11 @@ fn resolve_fire(
         stage_note,
         next_reference: None,
         next_text: None,
+        // RG-302. Filled in by the caller, like `trace_id` and
+        // `named_translation_missing` and for the same reason: how much was asked
+        // for is a fact about the WINDOW (or about the operator's own typed
+        // reference), not about the anchor verse this builder is handed.
+        passage_end: None,
         template_id,
         template_json,
         template_pinned,
@@ -1253,6 +1302,14 @@ fn fire_manual<R: tauri::Runtime>(
             // The passage now reflects this fire, so "up next" is the bounded
             // next verse (None at a range end). Computed here, under both locks.
             attach_next_verse(&conn, &context, &mut f);
+            // RG-302, and it is taken from the CONTEXT here rather than from the
+            // `PassageUpdate` on purpose. `Note(end)` is only one of three arrivals:
+            // a nav step is `Advance`, which keeps the span it is walking inside, so
+            // an operator three verses into a five-verse reading must still be told
+            // what they are inside of. Reading the staged span answers all three
+            // with one line, and `Jump` correctly answers `None` because `note`
+            // clears the span.
+            f.passage_end = span_to_report(f.reference.verse, context.span_end());
         }
         if let Ok(mut router) = handle.state::<Routing>().0.lock() {
             // The same wall clock the AI path uses. This was a literal `0`, which
@@ -2332,6 +2389,13 @@ fn emit_detections<R: tauri::Runtime>(
             // every output so the last leg — pixels on a projector — can be timed
             // rather than assumed.
             fire.trace_id = trace;
+            // RG-302. Set HERE, before the `may_broadcast` branch below, so a
+            // passage that is only OFFERED carries its span too — the operator
+            // deciding whether to accept "Proverbs 7:1" is exactly the person who
+            // needs to know five verses were asked for. It comes from the candidate
+            // rather than from `ContextMemory`, because nothing is staged for a
+            // suggestion and the staged span would then be the PREVIOUS reading's.
+            fire.passage_end = span_to_report(fire.reference.verse, end);
             // RG-135. Did the speaker NAME a translation, and is it one Relay does
             // not have? The detector is pure and lives in `detection`; whether the
             // named one is installed is a database question, so it is asked here,
@@ -2791,7 +2855,17 @@ fn persist_fire(
         // `Provenance`. No final yet means no row, which is honest.
         Some(t) if provenance == Provenance::Offered => t,
         None if provenance == Provenance::Offered => return,
-        _ => match db::insert_transcript(conn, st.id, ts, window_text, "en", None) {
+        // RG-113(5). The language the decoder reported for THIS window, not a
+        // hardcoded `"en"`. See `SessionState::last_language`: a bare clone rather
+        // than a borrow because `st` is borrowed mutably on the success arm.
+        _ => match db::insert_transcript(
+            conn,
+            st.id,
+            ts,
+            window_text,
+            &st.last_language.clone(),
+            None,
+        ) {
             Ok(t) => {
                 st.last_transcript = Some(t);
                 t
@@ -7489,11 +7563,31 @@ const DETECT_QUEUE: usize = 8;
 /// Order is still exact: one consumer thread, one queue, so a final can never
 /// overtake the partial before it and a spoken "next" cannot be applied out of
 /// sequence.
-fn handle_transcript(
-    handle: &tauri::AppHandle,
+/// **Generic over the runtime, per rule 24.** Everything it calls already is —
+/// `persist_transcript`, `handle_nav`, `handle_passage_nav`, `clear_or_report`,
+/// `emit_detections` — and it was the one concrete link in that chain, which is
+/// what made the whole window-handling step undrivable from `e2e.rs`: a fact this
+/// function records about a window could only be checked by reading it. RG-113(5)
+/// is exactly such a fact.
+fn handle_transcript<R: tauri::Runtime>(
+    handle: &tauri::AppHandle<R>,
     lang_stability: &Mutex<stt::LanguageStability>,
     update: stt::TranscriptUpdate,
 ) {
+    // **RG-113(5) · THE ONE WRITER, AND IT RUNS FOR A PARTIAL TOO.** Everything
+    // below this line — including `emit_detections` and the `persist_fire` inside it
+    // — is about THIS window, so the language is recorded before any of it. It has
+    // to be here rather than in `persist_transcript`, which only ever sees finals:
+    // the evidence row `persist_fire` writes exists precisely because the window was
+    // a partial the last final does not contain. Taken and released on its own, as
+    // rule 2 requires, and it holds no other lock.
+    if let Ok(mut sess) = handle.state::<Session>().0.lock() {
+        if let Some(st) = sess.as_mut() {
+            if st.last_language != update.language {
+                st.last_language = update.language.clone();
+            }
+        }
+    }
     if update.is_final {
         // CONTENT-FREE. `stt.rs` states the rule a hundred lines away in this same
         // pipeline — "The transcript is sermon data and must never be logged" — and
@@ -9528,6 +9622,7 @@ fn start_service<R: tauri::Runtime>(
         started_at_ms: now_epoch_ms(),
         target_ms,
         last_transcript: None,
+        last_language: LANGUAGE_UNDETERMINED.to_string(),
     });
     // First row of the timeline, at 0 ms, written while both locks are already
     // held rather than through `log_event` — which would deadlock on them.
@@ -10184,6 +10279,7 @@ mod named_translation_gap_tests {
             stage_note: None,
             next_reference: None,
             next_text: None,
+            passage_end: None,
             template_id: None,
             template_json: None,
             template_pinned: false,

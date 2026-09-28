@@ -6408,3 +6408,260 @@ fn the_paraphrase_bar_removes_an_offer_only_when_the_church_asked_and_never_a_wa
          the words win"
     );
 }
+
+/// **RG-302 · A SPOKEN RANGE MUST SAY HOW FAR IT GOES — service 40, 2026-09-25.**
+///
+/// Live, at 945 s: *"…hold my commandments with you. Proverbs 7, 1 to 5."* Relay
+/// auto-fired **Proverbs 7:1** and stopped. The wall was right; the operator had no
+/// indication that four more verses had been asked for, and `→` walks them only if
+/// somebody knows to press it.
+///
+/// The row was filed `NOT TESTED as a defect` — *"whether the parser drops the range
+/// or the pipeline does has not been traced"*. It is traced now, and it was neither
+/// the parser nor the walk: `detection::field_2026_09_25_range` shows the candidate
+/// carrying `verse_end = Some(5)`, and `main::passage_end` hands the same 5 to
+/// `ContextMemory::note_passage`. **`DetectionEvent` dropped it at the bridge**, so
+/// the one surface the operator reads was the only thing that never learned.
+///
+/// Asserted on the event that leaves the machine rather than on a struct field,
+/// because the defect was entirely at that boundary.
+#[test]
+fn a_spoken_range_tells_the_operator_how_far_it_goes() {
+    let app = app();
+    let h = app.handle().clone();
+    let claims: std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = claims.clone();
+    h.listen("detection://match", move |e| {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(e.payload()) {
+            sink.lock().unwrap().push(v);
+        }
+    });
+
+    emit_detections(
+        &h,
+        "hold my commandments with you. Proverbs 7, 1 to 5.",
+        0,
+        true,
+        None,
+    );
+    settle();
+
+    let got = claims.lock().unwrap();
+    let pr = got
+        .iter()
+        .find(|v| v["reference"] == "Proverbs 7:1")
+        .unwrap_or_else(|| panic!("the reading did not reach the operator at all: {got:?}"));
+    assert_eq!(
+        pr["passage_end"], 5,
+        "the operator was shown one verse of a five-verse reading with nothing \
+         saying there were four more: {pr}"
+    );
+}
+
+/// The other half of RG-302, and the half that keeps it from becoming noise: a
+/// reference that names ONE verse must carry no span at all.
+///
+/// A line that appears on every claim is a line an operator stops reading, and the
+/// field defect was an absence rather than a wrong verse — so over-reporting would
+/// trade one failure for a worse one. `span_to_report` is the single place that
+/// decides, and the field is `skip_serializing_if = "Option::is_none"`, so the key
+/// must be ABSENT rather than null.
+#[test]
+fn a_single_verse_claims_no_passage() {
+    let app = app();
+    let h = app.handle().clone();
+    let claims: std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = claims.clone();
+    h.listen("detection://match", move |e| {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(e.payload()) {
+            sink.lock().unwrap().push(v);
+        }
+    });
+
+    manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "John 3:16".into(),
+        None,
+        None,
+        None,
+    )
+    .expect("the operator's own fire");
+    settle();
+
+    let got = claims.lock().unwrap();
+    let john = got
+        .iter()
+        .find(|v| v["reference"] == "John 3:16")
+        .unwrap_or_else(|| panic!("the fire did not reach the operator: {got:?}"));
+    assert!(
+        john.get("passage_end").is_none(),
+        "one verse was announced as a passage, which is how an operator learns to \
+         stop reading the line that matters: {john}"
+    );
+}
+
+/// A range the OPERATOR typed is the same question asked by a different door, and
+/// this repository's most-repeated bug is a guarantee kept on one door and skipped
+/// on its twin. The manual path takes its span from `ContextMemory` rather than
+/// from the candidate, so it is genuinely a second implementation and needs its own
+/// test — and it also covers the case the AI path cannot reach: after `→` steps
+/// into the middle of the reading, the span must still be reported, because an
+/// operator at verse 3 of 1–5 is exactly the person who needs to know where it ends.
+#[test]
+fn a_typed_range_keeps_its_span_across_a_nav_step() {
+    let app = app();
+    let h = app.handle().clone();
+    let claims: std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = claims.clone();
+    h.listen("detection://match", move |e| {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(e.payload()) {
+            sink.lock().unwrap().push(v);
+        }
+    });
+
+    manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "Proverbs 7:1-5".into(),
+        None,
+        None,
+        None,
+    )
+    .expect("the operator's own range");
+    settle();
+    nav(h.clone(), "next".into()).expect("the transport walks the reading");
+    settle();
+
+    let got = claims.lock().unwrap();
+    let first = got
+        .iter()
+        .find(|v| v["reference"] == "Proverbs 7:1")
+        .unwrap_or_else(|| panic!("the typed range did not reach the operator: {got:?}"));
+    assert_eq!(
+        first["passage_end"], 5,
+        "a typed range lost its span: {first}"
+    );
+    let second = got
+        .iter()
+        .find(|v| v["reference"] == "Proverbs 7:2")
+        .unwrap_or_else(|| panic!("the nav step did not reach the operator: {got:?}"));
+    assert_eq!(
+        second["passage_end"], 5,
+        "one step into the reading and the operator can no longer see where it \
+         ends: {second}"
+    );
+}
+
+/// **RG-113(5) · THE SERVICE RECORD MUST NOT ASSERT ENGLISH ABOUT A YORÙBÁ SERMON.**
+///
+/// `persist_fire` writes an evidence transcript row when the detection came out of a
+/// window the last FINAL does not contain — the FIELD F-2 fix, about six rows in a
+/// fifty-minute service — and that insert carried a hardcoded `"en"`. On the product
+/// whose Tier-1 languages are Yorùbá, Swahili and Hausa, and where code-switching is
+/// the normal case rather than an edge case, every one of those rows asserted a
+/// language nobody had established. `service_transcripts` hands them to the replay
+/// and the Sunday report, so a church reading its own record is told the sermon was
+/// in English.
+///
+/// Driven through `handle_transcript`, which is the ONE writer of
+/// `SessionState::last_language` — the point being that the evidence row and the
+/// window it is evidence OF agree. Asserting on the database rather than on the
+/// field, because the field is not the claim.
+#[test]
+fn an_evidence_row_records_the_language_the_decoder_reported() {
+    let app = app();
+    let h = app.handle().clone();
+    let svc = start_service(
+        h.clone(),
+        h.state::<Session>(),
+        h.state::<Db>(),
+        h.state::<channels::Rehearsal>(),
+        h.state::<servicelock::ServiceLock>(),
+        "Ìsìn Àárọ̀".into(),
+        "2026-09-28".into(),
+    )
+    .expect("start");
+
+    // A PARTIAL window, which is the case the evidence row exists for: nothing
+    // persists a partial's text, so `persist_fire` writes it in its own right.
+    // `is_final: false` also means rule 28 holds the reference at `Suggest` until a
+    // second pass agrees — and a suggestion is persisted too since RG-309, which is
+    // exactly the row being checked.
+    let update = |text: &str, lang: &str| stt::TranscriptUpdate {
+        text: text.into(),
+        language: lang.into(),
+        is_final: false,
+        continued: false,
+        timestamp_ms: 0,
+        trace_id: 0,
+    };
+    let stability = std::sync::Mutex::new(stt::LanguageStability::default());
+    // Twice: rule 28 holds a partial's reference until a second pass agrees, and
+    // both passes are the same language, which is what a real window looks like.
+    handle_transcript(&h, &stability, update("Sáàmù 23 ẹsẹ 1", "yo"));
+    handle_transcript(&h, &stability, update("Sáàmù 23 ẹsẹ 1", "yo"));
+    settle();
+
+    let db = h.state::<Db>();
+    let conn = db.0.lock().expect("db");
+    let rows = db::service_transcripts(&conn, svc).expect("transcripts");
+    assert!(
+        !rows.is_empty(),
+        "no evidence row was written at all, so this test proves nothing"
+    );
+    for r in &rows {
+        assert_eq!(
+            r.language, "yo",
+            "the service record says the sermon was in {:?} — the decoder said `yo`",
+            r.language
+        );
+    }
+}
+
+/// The other half, and the reason the default is `und` rather than `en`: a manual
+/// fire's evidence row is a reference the OPERATOR typed and no language was spoken
+/// for it. Saying `en` there is the same lie in a quieter place, and saying `yo`
+/// would be worse. ISO 639-3 `und` means *undetermined*, whisper never returns it,
+/// so a real answer and an absent one stay separable in the record.
+#[test]
+fn a_typed_reference_claims_no_spoken_language() {
+    let app = app();
+    let h = app.handle().clone();
+    let svc = start_service(
+        h.clone(),
+        h.state::<Session>(),
+        h.state::<Db>(),
+        h.state::<channels::Rehearsal>(),
+        h.state::<servicelock::ServiceLock>(),
+        "Sunday Service".into(),
+        "2026-09-28".into(),
+    )
+    .expect("start");
+
+    manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "John 3:16".into(),
+        None,
+        None,
+        None,
+    )
+    .expect("the operator's own fire");
+    settle();
+
+    let db = h.state::<Db>();
+    let conn = db.0.lock().expect("db");
+    let rows = db::service_transcripts(&conn, svc).expect("transcripts");
+    assert!(!rows.is_empty(), "a manual fire wrote no evidence row");
+    for r in &rows {
+        assert_eq!(
+            r.language, "und",
+            "a reference the operator typed was recorded as spoken {:?}",
+            r.language
+        );
+    }
+}

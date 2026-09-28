@@ -177,7 +177,7 @@
   import EmptyState from '../ui/EmptyState.svelte';
   import ErrorState from '../ui/ErrorState.svelte';
   import Loading from '../ui/Loading.svelte';
-  import { heard, methodBadgeKey, methodNoteKey, inLibrary, evidenceIsASpan, orderClaims } from '../detect.js';
+  import { heard, methodBadgeKey, methodNoteKey, inLibrary, evidenceIsASpan, orderClaims, passageSpan } from '../detect.js';
   import DetectionInspector from '../DetectionInspector.svelte';
   import { humanError as humanErrorBase } from '../errors.js';
   import { typeOf, payloadOf, slidesOf, slideAccent, cueSub, nextOf, stepFrom, staleNote } from '../plan.js';
@@ -3109,6 +3109,12 @@
 
           {#each claimCards as card, i (card.key)}
             {@const d = card.d}
+            <!-- RG-302. Declared HERE, beside `d`, because `{@const}` must be the
+                 immediate child of the block — inside the `{#if}` below it would
+                 have to call `passageSpan` twice to be legal, and one impure-looking
+                 double call is exactly the kind of thing that gets "tidied" into a
+                 difference between the test and the card. -->
+            {@const span = passageSpan(d)}
             <!-- HEARD vs GUESSED. Not two flavours of one thing, and they must not
                  look like it. A direct hit's number is a real parse confidence. A
                  paraphrase is a TF-IDF cosine — a distance, NOT a probability
@@ -3178,6 +3184,30 @@
                    verse rather than above it, because the verse is still the
                    answer. The backend sets the field only when it can tell the
                    operator something they do not already know. -->
+              <!-- RG-302 · A PASSAGE WAS ASKED FOR AND ONE VERSE IS ON SCREEN.
+                   Service 40, 2026-09-25: "Proverbs 7, 1 to 5" auto-fired
+                   Proverbs 7:1 and this card said nothing about the other four.
+                   `→` walks them — the transport has always been able to — so the
+                   whole defect was that nobody was told there was anything to
+                   walk, and the failure mode is a congregation reading verse 1
+                   while the preacher reads 2 to 5.
+
+                   It is a CAVEAT, like the translation line above it and for the
+                   same reason: nothing is wrong, the verse on screen is correct,
+                   and a law colour would promise something about a screen that
+                   this sentence is not about. It appears only when the span is
+                   genuinely longer than the verse in hand (`passageSpan`), because
+                   a line on every claim is a line nobody reads. -->
+              {#if span}
+                <p class="claim-span">
+                  {$t('live.passage_span', {
+                    count: span.count,
+                    last: span.last,
+                    more: span.more,
+                  })}
+                </p>
+              {/if}
+
               {#if d.named_translation_missing}
                 <p class="claim-tx">
                   {$t('live.translation_not_installed', {
@@ -4034,6 +4064,11 @@
      faint ink, because this is the quietest thing on the card: the verse is right
      and the operator is being told one extra fact about it. No law colour. */
   .claim-tx{margin:0; font-size:var(--v-fs-cap); line-height:1.5; color:var(--v-faint);}
+  /* RG-302. The same quiet register as `.claim-tx`, deliberately: both are notes
+     about a correct verse, and neither may borrow amber (on air), cyan (a guess)
+     or amethyst (rehearsal) — rule 18. This one is an INSTRUCTION rather than a
+     caveat, so it sits one step brighter than `--v-faint` and no further. */
+  .claim-span{margin:0; font-size:var(--v-fs-cap); line-height:1.5; color:var(--v-dim);}
   .claim-absent{margin:0; font-size:var(--v-fs-cap); line-height:1.5;
     color:var(--v-rose)}
   .cacts{display:grid; grid-template-columns:1fr 1fr; gap:6px}
