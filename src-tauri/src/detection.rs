@@ -400,6 +400,32 @@ pub struct RefMatch {
     /// decision: an operator can tell in a glance whether Relay heard "John three
     /// sixteen" or misheard "gone free sixty".
     pub matched_text: String,
+    /// **WAS THE CHAPTER HEARD, OR SUPPLIED BY RELAY?** RG-301.
+    ///
+    /// True for every parse that took its chapter from a number somebody said.
+    /// False for the two single-chapter-book forms — *"Jude 4"*, *"Jude verse
+    /// four"* — where the 1 is Relay's own knowledge of the book rather than
+    /// anything in the audio.
+    ///
+    /// **It exists because `anchor_for_bare_verses` needed a discriminator the
+    /// method could not give it.** Service 41, 2026-09-26: *"…from Jude 28 and
+    /// verse 7 to 28…"* parses as `Jude 1:28` `UncertainNumber` 0.45 — 28 read as
+    /// the VERSE, chapter 1 invented — and the bare *"verse 7"* hung on that anchor
+    /// was stamped `Direct` 0.88 and put **Jude 1:7** on a congregation's screen.
+    /// He was reading Job 28.
+    ///
+    /// Filtering the anchor on `unattended_rank() > 0` was the obvious fix and was
+    /// measured and rejected: FIELD F-1's *"going through in Luke 10. If you read
+    /// from verse 32"* is a keyword-less whole chapter and parses `UncertainNumber`
+    /// too, so that filter leaves the bare verse with no anchor at all — the wrong
+    /// verse the anchor exists to prevent. `Luke 10` HEARD its chapter; `Jude 1:28`
+    /// did not. That is the difference, and it is a fact about the parse rather
+    /// than about its confidence.
+    ///
+    /// Not a substitute for the method. `anchor_for_bare_verses` asks both — a
+    /// chapter that was heard AND a book that was heard — because *"Deuteronomia,
+    /// 28 verse 1"* heard its chapter and had its BOOK repaired.
+    pub chapter_heard: bool,
     /// This match ran to the LAST WORD of the text it was parsed from — nothing
     /// followed it.
     ///
@@ -1416,12 +1442,12 @@ fn parse_reference_inner(
         }
         if used_v {
             let (verse, after, ph) = parse_number(tokens, j)?;
-            return Some((
-                make_match(
-                    canonical, 1, verse, tokens, book_start, after, 0.95, true, ph, book_ev,
-                ),
-                after,
-            ));
+            let mut m = make_match(
+                canonical, 1, verse, tokens, book_start, after, 0.95, true, ph, book_ev,
+            );
+            // THE CHAPTER IS RELAY'S, NOT THE SPEAKER'S — `RefMatch::chapter_heard`.
+            m.chapter_heard = false;
+            return Some((m, after));
         }
         let (n1, after1, ph1) = parse_number(tokens, i)?;
         let mut k = after1;
@@ -1512,6 +1538,10 @@ fn parse_reference_inner(
         let mut m = make_match(
             canonical, 1, n1, tokens, book_start, after1, base, used_kw, ph1, book_ev,
         );
+        // THE CHAPTER IS RELAY'S, NOT THE SPEAKER'S — `RefMatch::chapter_heard`. This
+        // is the line RG-301's wall event came through: *"from Jude 28"* reaches here,
+        // 28 becomes the VERSE, and the 1 is the book's own arithmetic.
+        m.chapter_heard = false;
         if !used_kw {
             // "jude four men came in" — the CHAPTER was supplied by Relay, not
             // heard. Every single-chapter book is also an ordinary English word.
@@ -1822,6 +1852,13 @@ fn make_match(
             _ => DetectionMethod::Direct,
         },
         matched_text: tokens[book_start..end].join(" "),
+        // TRUE here and cleared at the two sites that supply it, rather than passed
+        // in as a tenth argument: every other caller took its chapter from a number
+        // in the transcript, so the default is the common case. A future parse path
+        // that forgets this field claims the chapter was heard — which is only wrong
+        // if that path invents one, and there are exactly two such paths, both in
+        // the single-chapter branch below, both named at the line that clears it.
+        chapter_heard: true,
         // Set by `detect_direct`, which is the only place that knows where the
         // scan actually stopped once ranges have been absorbed.
         at_tail: false,
@@ -2545,61 +2582,50 @@ pub fn detect_clear(text: &str) -> bool {
 /// two moves forward through them: "we were in Romans 8, now turn to Luke 10,
 /// verse 32" means Luke.
 pub fn anchor_for_bare_verses(text: &str) -> Option<VerseRef> {
-    // **AN OPEN DEFECT LIVES HERE — RG-301, mechanism identified 2026-09-26, NOT
-    // FIXED.** Read this before changing the line below; the obvious fix is wrong and
-    // was tried.
+    // **AN ANCHOR MAY NOT LAUNDER RULE 10'S CAP — RG-301, closed 2026-09-28.**
     //
-    // This returns the last parse of ANY method, so a candidate rule 10 deliberately
-    // capped can still supply the book and chapter a bare verse hangs on — and a bare
-    // verse resolved against a window anchor is stamped `Direct` at 0.88 by
-    // `DetectionMethod::for_bare_verse`. The cap is laundered:
+    // This used to return the last parse of ANY kind and ignore everything about it,
+    // so a candidate rule 10 deliberately capped could still supply the book and
+    // chapter a bare verse hangs on — and a bare verse resolved against a window
+    // anchor is stamped `Direct` at 0.88 by `DetectionMethod::for_bare_verse`.
     //
     //   * Service 41, 2026-09-26 at 1197.6 s: *"…from Jude 28 and verse 7 to 28…"*
     //     parses as `Jude 1:28` `UncertainNumber` 0.45 — 28 read as the VERSE, because
     //     Jude has one chapter and the chapter 1 was SUPPLIED by Relay, not heard —
-    //     and `verse 7` then hung on it and put **Jude 1:7** on a congregation screen.
-    //     He was reading Job 28.
-    //   * The same shape put `Deuteronomy 28:1` up from an `UncertainBook` repair of
-    //     *"Deuteronomia"*. That one was right, which is how it went unnoticed.
+    //     and `verse 7` then hung on it and put **Jude 1:7** on a congregation screen,
+    //     over the top of a correct `Job 28:7` from the same sentence 2.4 s earlier.
+    //   * Service 41 at 3066.6 s put `Deuteronomy 28:1` up from an `UncertainBook`
+    //     repair of *"Deuteronomia"*. That one was right, which is how it went
+    //     unnoticed for a service.
     //
-    // **Filtering to `unattended_rank() > 0` is the obvious fix and it breaks rule
-    // 40's primary case.** FIELD F-1 is *"going through in Luke 10. If you read from
-    // verse 32"*: `Luke 10` is a keyword-less whole chapter, so it parses
-    // `UncertainNumber` 0.45, and filtering it out leaves the bare verse with no
-    // anchor at all — which is the wrong verse this function was written to prevent.
-    // `field_a_bare_verse_belongs_to_the_book_this_sentence_names` and
-    // `a_verse_hung_on_a_book_named_in_this_breath_is_heard` both fail on it.
+    // **TWO QUESTIONS, AND THE FIRST ONE IS NOT ABOUT CONFIDENCE.** Filtering to
+    // `unattended_rank() > 0` was the obvious fix, was tried, and was reverted: FIELD
+    // F-1 is *"going through in Luke 10. If you read from verse 32"*, and `Luke 10` is
+    // a keyword-less whole chapter that parses `UncertainNumber` 0.45 too. Filtering
+    // on the method leaves that bare verse with no anchor at all, which is the wrong
+    // verse this function exists to prevent — `Proverbs 3:32` on a wall.
     //
-    // The real distinction is not *may this parse fire* but **was the CHAPTER heard
-    // or supplied**: `Luke 10` heard its chapter, `Jude 1:28` had chapter 1 invented
-    // for it. Nothing in `RefMatch` records that today, which is why this is still
-    // open rather than fixed.
+    //   1. **THE CHAPTER MUST HAVE BEEN HEARD** (`RefMatch::chapter_heard`). That is
+    //      what separates the two: `Luke 10` heard its chapter, `Jude 1:28` had
+    //      chapter 1 invented out of the book's own arithmetic. It is a fact about
+    //      the parse, not a judgement about it, so a cautious dial cannot erase it
+    //      and the calibrator cannot drift it.
+    //   2. **THE BOOK MUST HAVE BEEN HEARD.** `UncertainBook` is that sentence
+    //      already (DECISIONS §106) — a phonetic repair, or an ordinary English word
+    //      that is also a one-token alias with no keyword to rescue it. Both are
+    //      guesses about the acoustics, and a guess may not become the authority a
+    //      second guess hangs on. `UncertainNumber` is deliberately NOT refused here,
+    //      because that is F-1 and F-1 is the case the anchor is for.
     //
-    // This took the last parse of ANY kind and ignored its method, which laundered
-    // rule 10's cap: `UncertainNumber` and `UncertainBook` are refused by
-    // `Router::decide` at any score, but a bare verse hung on one is stamped
-    // `Direct` at 0.88 by `DetectionMethod::for_bare_verse` and fires unattended.
-    //
-    // Service 41, 2026-09-26: *"…from Jude 28 and verse 7 to 28…"* parses as
-    // `Jude 1:28` `UncertainNumber` 0.45 — 28 read as the VERSE, because Jude has
-    // one chapter — and `verse 7` then hung on it and put **Jude 1:7** on a
-    // congregation's screen. He was reading Job 28. The same window shape put
-    // `Deuteronomy 28:1` up from an `UncertainBook` repair of *"Deuteronomia"*; that
-    // one was right, which is why the mechanism went unnoticed.
-    //
-    // `unattended_rank() > 0` is the question, not `== Direct`: it is the same test
-    // `pipeline::better` uses for what may reach a wall, so the two cannot drift, and
-    // it admits `Reading` — a verse Relay HEARD being read is a sound anchor for the
-    // verse number spoken beside it.
-    //
-    // A window with no firable parse falls through to the next authority in
+    // A window left with no admissible parse falls through to the next authority in
     // `resolve_bare_verse_with_source` exactly as if nothing had parsed: a stated
     // chapter resolves to nothing (rule 40's second half), and memory answers only
     // when the words do not say — labelled `UncertainBook`, so it is offered and
-    // never fired (rule 40's third half).
+    // never fired (rule 40's third half). That is the Jude window's new outcome, and
+    // it is the outcome RG-301's second instance asked for: it must not reach a wall.
     detect_direct(text)
         .into_iter()
-        .next_back()
+        .rfind(|m| m.chapter_heard && m.method != DetectionMethod::UncertainBook)
         .map(|m| m.reference)
 }
 
@@ -10066,8 +10092,6 @@ mod the_anchor_may_not_launder_a_cap {
         "And I saw in my Bible, Deuteronomia, 28 verse 1 If you were dealing with my voice and was able to do what I commanded,";
 
     #[test]
-    #[ignore = "RG-301 is OPEN: the obvious filter breaks rule 40's FIELD F-1. See \
-                anchor_for_bare_verses for why, and what a real fix needs."]
     fn a_window_whose_only_parse_is_capped_offers_no_anchor() {
         for (label, heard) in [("Jude", JUDE), ("Deuteronomia", DEUT)] {
             let parses: Vec<_> = detect_direct(heard)
@@ -10095,7 +10119,6 @@ mod the_anchor_may_not_launder_a_cap {
     }
 
     #[test]
-    #[ignore = "RG-301 is OPEN — see the sibling test and anchor_for_bare_verses."]
     fn the_last_firable_parse_wins_not_the_last_parse_of_any_kind() {
         // A window can hold both. "Romans 8 verse 28 ... Jude 28" must anchor on
         // Romans, not on the capped Jude that comes after it.
