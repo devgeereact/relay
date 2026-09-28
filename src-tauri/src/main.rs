@@ -12536,11 +12536,173 @@ mod passage_guard_bench {
             .iter()
             .filter(|(_, t)| detection::chapter_in_flight(t).is_some())
             .count();
+        // **AND HOW MANY OF THEM A LIVE INSTALL WOULD NEVER SHOW — RG-323.** This
+        // replay has no database, so it cannot ask the one question `emit_detections`
+        // asks before anything is broadcast: did the reference resolve to a verse?
+        // `if fire.verse_id.is_none() { continue; }` drops an impossible reference
+        // before an operator sees a row, let alone a congregation a screen.
+        //
+        // Service 42 produces two — `Psalms 1:97` at 3893.2 s and `Psalms 14:14` at
+        // 17789.3 s, Psalm 1 having six verses and Psalm 14 seven — so the totals this
+        // bench prints are two higher than what a church would have watched. **Stated
+        // here because a diff is the whole purpose of this instrument**: a change that
+        // removes one of those reads as a lost auto-fire and is not one, and the
+        // opposite mistake was already made once in this register, where the count of
+        // references in a confidence BAND was read as the count of references the field
+        // never fired.
+        let real: std::collections::BTreeSet<String> =
+            kjv_corpus().iter().map(|(r, _)| Fire::key_for(r)).collect();
+        let unshowable: Vec<&String> = run
+            .fired
+            .iter()
+            .map(|(_, key, _)| key)
+            .filter(|key| !real.contains(*key))
+            .collect();
         eprintln!(
-            "{} auto-fires from {} windows · {} windows end mid-citation (RG-318)",
+            "{} auto-fires from {} windows · {} windows end mid-citation (RG-318) · \
+             {} name a verse the bundled Bible does not have and a live install drops \
+             them at emit_detections' verse-exists check: {:?}",
             run.fired.len(),
             lines.len(),
-            in_flight
+            in_flight,
+            unshowable.len(),
+            unshowable
+        );
+    }
+
+    /// **EVERY WINDOW A CROSS-WINDOW CONTINUITY RULE WOULD REORDER — RG-320,
+    /// measured 2026-09-28.**
+    ///
+    /// `RELAY_SERVICE_CORPUS=<file> cargo test --release
+    /// what_a_continuity_tie_break_would_reorder -- --ignored --nocapture`
+    ///
+    /// RG-320's route 1 is `Jeremiah 6:16` `Quoted` 0.60 offered above
+    /// `Matthew 11:29` `Semantic` 0.48 at 19178.0 s. The index is right — *"find rest
+    /// for your souls"* is `sole` in Jeremiah 6:16, because Matthew reads *"rest UNTO
+    /// your souls"* — so the only verbatim evidence in that window genuinely names
+    /// Jeremiah. The evidence that names Matthew is in the window BEFORE it, where
+    /// *"Come unto me. I'll give you rest"* offered `Matthew 11:28` `Semantic` 0.36 as
+    /// its top row, and nothing in Relay joins the two.
+    ///
+    /// **The rule this bench measures is the narrowest thing that would join them**:
+    /// among the candidates that may only be OFFERED (`unattended_rank() == 0`), prefer
+    /// one whose book and chapter a candidate of the previous window already named. It
+    /// cannot touch a congregation's screen — every candidate it compares is already
+    /// capped at `Suggest` by rule 10, and `rank_for_wall` puts the firable tiers ahead
+    /// of all of them — so the whole of its effect is which row an operator reads
+    /// first.
+    ///
+    /// ── WHY THIS IS A BENCH AND NOT THE RULE ─────────────────────────────────────
+    ///
+    /// **14 windows of 3,161 reorder, and reading them is a human's job, not this
+    /// machine's.** Rule 13 is explicit that a detection change is scored by *which
+    /// verse would Relay put on a screen* and never by reading the transcript, and
+    /// there is no labelled corpus anywhere in this repository for *which offered row
+    /// should be first*. So the 14 are printed rather than counted, and the reading
+    /// below is recorded as a reading.
+    ///
+    /// On 2026-09-28 the author's own reading of the printed 14 was **12 better, 2
+    /// worse**. The two it gets wrong are the same shape as each other — a first row
+    /// that is verbatim and correct, losing to a chapter carried from a window the
+    /// preacher has left:
+    ///
+    /// ```text
+    ///   3349.5  "You shall serve the Lord your God and He shall bless"
+    ///           Exodus 23:25 is right; Joshua 24:15 would rise
+    ///   5653.4  "The Lord here in the day of trouble, the name of the God of Jacob"
+    ///           Psalms 20:1 is right; Deuteronomy 29:15 would rise
+    /// ```
+    ///
+    /// **And two of the twelve are the exact case RG-320's hard constraint is about.**
+    /// `Psalms 111:4`/`Psalms 112:4` at 7736.0 s and `Proverbs 6:10`/`Proverbs 24:33`
+    /// at 11933.4 s are word-for-word identical and tie on confidence, so today the
+    /// order between them is arbitrary. Continuity separates both correctly and **both
+    /// rows are still offered** — the constraint is about not DROPPING a row, and
+    /// nothing here drops one. That is the strongest single argument for the rule and
+    /// it is why this measurement is worth keeping rather than discarding with the
+    /// experiment.
+    ///
+    /// Nothing is changed by running this. The next reader needs the 14 windows and a
+    /// person who knows what the preacher meant, and that person is the operator.
+    #[test]
+    #[ignore]
+    fn what_a_continuity_tie_break_would_reorder() {
+        let Ok(path) = std::env::var("RELAY_SERVICE_CORPUS") else {
+            println!("set RELAY_SERVICE_CORPUS");
+            return;
+        };
+        let body = std::fs::read_to_string(&path).expect("corpus unreadable");
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        // EMPTY AND LEFT EMPTY, like `explain_one_window`: the reorder this measures is
+        // between two offered rows, and nothing on the wall is allowed to decide that
+        // (rule 40 — memory only ever re-ranks a quotation, and this bench must not
+        // quietly reproduce that rule and call it this one).
+        let context = ContextMemory::default();
+        let lines: Vec<(f32, String)> = body
+            .lines()
+            .filter_map(|l| l.split_once('\t'))
+            .filter_map(|(t, x)| t.parse::<f32>().ok().map(|t| (t, x.to_string())))
+            .collect();
+        // The book and chapter of every offered candidate of the PREVIOUS window. One
+        // window back and no further: `ContextMemory::in_flight` is the precedent for a
+        // carry on this path and it is a single slot with a ceiling, because a carry
+        // that lingers is a carry that starts answering for a passage the preacher has
+        // left — which is exactly the failure the two regressions above are.
+        let mut prev: Vec<(String, i64)> = Vec::new();
+        let mut reorders = 0usize;
+        println!();
+        for (at, text) in &lines {
+            let w = candidates_for_window(text, true, &sem, &phrases, &context, None, false);
+            let offered_now: Vec<&Cand> = w
+                .kept
+                .iter()
+                .filter(|c| c.method.unattended_rank() == 0)
+                .collect();
+            let mut offered = offered_now.clone();
+            // The order an operator reads today: `pipeline::better` inside one tier is
+            // confidence alone, which is RG-320's diagnosis — a run length and a cosine
+            // compared as though they were one scale.
+            offered.sort_by(|a, b| {
+                b.conf
+                    .partial_cmp(&a.conf)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            let continues = |c: &Cand| {
+                prev.iter()
+                    .any(|(b, ch)| *b == c.r.book && *ch == c.r.chapter)
+            };
+            if offered.len() >= 2 && !continues(offered[0]) {
+                if let Some(c) = offered.iter().skip(1).find(|c| continues(c)) {
+                    reorders += 1;
+                    println!(
+                        "  {at:.1}\n     reads first  {} {}:{}  {:?} {:.2}\n     would rise   \
+                         {} {}:{}  {:?} {:.2}\n     “{}”",
+                        offered[0].r.book,
+                        offered[0].r.chapter,
+                        offered[0].r.verse,
+                        offered[0].method,
+                        offered[0].conf,
+                        c.r.book,
+                        c.r.chapter,
+                        c.r.verse,
+                        c.method,
+                        c.conf,
+                        text.chars().take(90).collect::<String>()
+                    );
+                }
+            }
+            prev = offered_now
+                .iter()
+                .map(|c| (c.r.book.clone(), c.r.chapter))
+                .collect();
+        }
+        println!(
+            "\n  {reorders} of {} windows reorder. Read them; do not count them.\n",
+            lines.len()
         );
     }
 
@@ -12619,6 +12781,167 @@ mod passage_guard_bench {
         println!(
             "\n  the two refusals, stated: verse 34 is not inside “verse 39”, and \
              chapter 89 is not a decode slip of 119\n"
+        );
+    }
+
+    /// **WHY A RUN CARRIED ACROSS A WINDOW CANNOT REACH `Psalms 119:39` EITHER —
+    /// RG-319, measured 2026-09-28 by building the rule and replaying it.**
+    ///
+    /// `why_no_doubt_was_available_for_psalms_119_39` shows the window-local rule had
+    /// nothing to carry. The obvious next move is the one the row nominates: carry the
+    /// RUN forward a window, and admit a disagreement where BOTH coordinates differ —
+    /// same book, a different chapter, whatever the verse. That reaches the wall.
+    /// **It was built, gated, and replayed over service 42's 3,161 windows: auto-fires
+    /// 153 → 148.** `Psalms 119:39` went, and so did `Psalms 41:1`,
+    /// `1 Corinthians 12:7` and `Matthew 6:33`, all three correct, plus a duplicate
+    /// `Isaiah 11:1` and a 2.8 s delay to `Luke 11:49`.
+    ///
+    /// **The register refused this rule on evidence that does not apply to it, and
+    /// that correction is half the point of this test.** RG-319 cites `John 15:15`
+    /// read while *"John 15, 14"* was cited, and `Hebrews 13:17` quoted while 13:7 was
+    /// insisted on. Both are ONE book, ONE chapter, a different verse — the
+    /// same-chapter escape in `the_run_contradicts` refuses them on its own, and a
+    /// rule about differing CHAPTERS never touches either. The refusal was right; its
+    /// stated reason was not.
+    ///
+    /// **The reason that holds is in this test, and it is four windows of one
+    /// service.** Three correct auto-fires have the identical shape to the wrong one:
+    ///
+    /// ```text
+    ///   Psalms 20:3          6 words, sole  →  "Now Psalm 41 verse 1."        RIGHT
+    ///   1 Corinthians 2:16   7 words, sole  →  "1 Corinthians 12, verse 7"    RIGHT
+    ///   Matthew 13:44        5 words, sole  →  "hidden in Matthew 6, 33."     RIGHT
+    ///   Psalms 89:34         6 words, sole  →  "Psalm 119, verse 39."         WRONG
+    /// ```
+    ///
+    /// A preacher quoting one chapter and then citing another chapter of the same book
+    /// is the ordinary thing, and a decoder that drops a digit leaves exactly the same
+    /// trace. **No length bar separates them**: the wrong one's run is neither the
+    /// longest nor the shortest of the four, which the second assertion holds.
+    ///
+    /// **And waiting a window for the cited chapter to be confirmed does not separate
+    /// them either.** Only `1 Corinthians 12:7` is read aloud verbatim in the window
+    /// after its citation; `Psalms 41:1` and `Matthew 6:33` are not, so a
+    /// hold-until-agreed rule withholds the wall AND two correct fires. The third
+    /// assertion holds that, so the idea cannot be re-proposed without this test
+    /// failing.
+    ///
+    /// Not `#[ignore]`d: it is four windows against the bundled index, and it is the
+    /// only thing standing between the next reader and re-measuring all of this.
+    #[test]
+    fn a_carried_run_cannot_tell_a_misheard_chapter_from_the_next_one_he_cites() {
+        /// The longest run in this window that exactly one verse holds — the only
+        /// evidence `doubt_from_a_quotation` accepts, and so the only thing a carry
+        /// could carry.
+        fn sole_run(idx: &detection::PhraseIndex, text: &str) -> Option<(VerseRef, usize)> {
+            idx.quoted(text, None, QUOTED_SUGGESTIONS_MAX)
+                .into_iter()
+                .filter(|h| h.sole && h.run >= detection::MIN_RUN_WORDS)
+                .max_by_key(|h| h.run)
+                .map(|h| (h.r, h.run))
+        }
+        let idx = detection::PhraseIndex::build(&kjv_corpus());
+
+        // (the window that carries the run, the window that cites, what it cites,
+        //  the window AFTER the citation, whether the citation was CORRECT)
+        let field: [(&str, &str, &str, &str, bool); 4] = [
+            (
+                "And, as I said, I am strengthening thee out of Zion. Remember all thy \
+                 offerings and accept their bond sacrifices.",
+                "That's what your offering does among others. It delivers in the day of \
+                 trouble. Now Psalm 41 verse 1.",
+                "Psalms 41:1",
+                "Blessed is the man that considerate the poor",
+                true,
+            ),
+            (
+                "He said, but we have the mind of Christ and because this is endowed",
+                "1 Corinthians 12, verse 7 The Bible tells us,",
+                "1 Corinthians 12:7",
+                "us this, he says that the manifestation of the spirit, as he spoke about \
+                 the gifts of the spirit, he said he's giving",
+                true,
+            ),
+            (
+                "The kingdom of heaven is like unto treasure, eat in the field, which any \
+                 man has found.",
+                "You cannot discover the treasure hidden in Matthew 6, 33.",
+                "Matthew 6:33",
+                "And not by, in to you, with utmost delight, with utmost delight.",
+                true,
+            ),
+            (
+                "What is this? It becomes finding on God to affirm. For my covenant will I \
+                 not break.",
+                "The author does send the comfort of my lips. Psalm 119, verse 39. If you \
+                 cannot bring my covenant of the",
+                "Psalms 119:39",
+                "The end of the night. Then don't try it. You can't break my covenant with \
+                 my servant David.",
+                false,
+            ),
+        ];
+
+        let mut right: Vec<usize> = Vec::new();
+        let mut wrong: Vec<usize> = Vec::new();
+        let mut confirmed_next_window = 0;
+        for (carries, cites, reference, after, correct) in field {
+            let (run_at, words) =
+                sole_run(&idx, carries).unwrap_or_else(|| panic!("no sole run in “{carries}”"));
+            let cited = detection::detect_direct(cites)
+                .into_iter()
+                .find(|m| m.method == DetectionMethod::Direct)
+                .unwrap_or_else(|| panic!("nothing Direct in “{cites}”"));
+            assert_eq!(
+                Fire::key_for(&cited.reference),
+                reference,
+                "the citation this window makes has changed"
+            );
+            // THE WHOLE POINT: the four are indistinguishable to the widened rule.
+            assert_eq!(
+                run_at.book, cited.reference.book,
+                "{reference}: the carried run left the book, so the rule under test \
+                 would not have reached this window at all"
+            );
+            assert_ne!(
+                run_at.chapter, cited.reference.chapter,
+                "{reference}: same chapter is already escaped by `the_run_contradicts`"
+            );
+            if sole_run(&idx, after).is_some_and(|(r, _)| {
+                r.book == cited.reference.book && r.chapter == cited.reference.chapter
+            }) {
+                confirmed_next_window += 1;
+            }
+            if correct {
+                right.push(words);
+            } else {
+                wrong.push(words);
+            }
+        }
+
+        // NO LENGTH BAR SEPARATES THEM. The one wrong citation's run sits inside the
+        // spread of the three correct ones, so every bar either keeps all four or
+        // takes the wall away along with a correct fire.
+        let (lo, hi) = (
+            *right.iter().min().expect("right"),
+            *right.iter().max().expect("right"),
+        );
+        for w in &wrong {
+            assert!(
+                (lo..=hi).contains(w),
+                "the wrong citation's run is {w} words and the correct ones span \
+                 {lo}..={hi} — if that has changed, a length bar may now separate them \
+                 and RG-319 is worth reopening"
+            );
+        }
+
+        // AND NEITHER DOES WAITING A WINDOW. Exactly one of the four is read aloud
+        // verbatim in the window after its citation, and it is a CORRECT one — so a
+        // hold-until-agreed rule costs two correct fires to withhold one wall.
+        assert_eq!(
+            confirmed_next_window, 1,
+            "a hold-until-the-next-window-agrees rule is only worth proposing if more \
+             than one of these citations is confirmed by the window after it"
         );
     }
 
@@ -12707,6 +13030,73 @@ mod passage_guard_bench {
                 best.len()
             );
         }
+        // ── WHICH OF THEM NEVER REACHED A WALL, AND WHETHER THEY COULD HAVE ──────
+        //
+        // RG-323's owed classification, as far as it can be taken without the WAV.
+        // The row asks which of the never-fired references are *refusals working
+        // correctly*, and one class of that answer is a fact about scripture rather
+        // than about the audio: **a reference to a verse the bundled Bible does not
+        // have was never going to be right.** `Psalms 1:97` is the row's own example,
+        // and Psalm 1 has six verses.
+        //
+        // The distinction matters because the only lever the row's diagnosis offers is
+        // a LOWER auto-fire bar (rule 10 in its plainest form), and a reader has to
+        // know that the band such a bar would sweep contains references that must stay
+        // refused. An impossible one cannot be rescued by any number: it resolves to no
+        // text, so `emit_detections`' verse-exists check drops it before an operator
+        // ever sees it, and it is refused for the right reason already.
+        //
+        // The fired set comes from the SAME `replay` every other bench here uses, not
+        // from a second scan — two scans of one service that disagreed about the
+        // router's clock would be worse than no measurement (the reason this module
+        // has one `replay` and switches rather than a bench per rule).
+        let lines: Vec<(f32, String)> = body
+            .lines()
+            .filter_map(|l| l.split_once('\t'))
+            .filter_map(|(t, x)| t.parse::<f32>().ok().map(|t| (t, x.to_string())))
+            .collect();
+        let fired: std::collections::BTreeSet<String> = replay(&lines, true, true)
+            .fired
+            .into_iter()
+            .map(|(_, key, _)| key)
+            .collect();
+        let real: std::collections::BTreeSet<String> =
+            corpus.iter().map(|(r, _)| Fire::key_for(r)).collect();
+        let never: Vec<(&String, &f32)> =
+            best.iter().filter(|(k, _)| !fired.contains(*k)).collect();
+        println!(
+            "\n  {} distinct references reached a wall in this replay · {} parsed as \
+             Direct and NEVER did:",
+            fired.len(),
+            never.len()
+        );
+        for (key, conf) in &never {
+            println!("    {conf:.2}  {key}");
+        }
+        // **THE REPLAY'S NEVER-FIRED SET IS NOT THE FIELD'S, AND THE COUNTS MUST NOT BE
+        // READ AS THOUGH IT WERE.** The row counts 34 references the OPERATOR'S service
+        // parsed as `Direct` and never put on a wall; this replay withholds far fewer,
+        // for the two structural reasons above. They are different sets and the
+        // agreement of any two totals between them is a coincidence.
+        //
+        // What IS transferable is impossibility. A reference to a verse the bundled
+        // Bible does not have was never going to be right, whatever the bar — it
+        // resolves to no text, so `emit_detections`' verse-exists check drops it before
+        // an operator sees it. Those are the row's *"refusals working correctly"*, and
+        // they are a fact about scripture rather than about the audio, so this machine
+        // can name them without the WAV.
+        let cannot_be_right: Vec<(&String, &f32)> =
+            best.iter().filter(|(k, _)| !real.contains(*k)).collect();
+        println!(
+            "\n  {} of the {} parsed references NAME A VERSE THE BUNDLED BIBLE DOES NOT \
+             HAVE — these must stay refused at any bar:",
+            cannot_be_right.len(),
+            best.len()
+        );
+        for (key, conf) in &cannot_be_right {
+            println!("    {conf:.2}  {key}");
+        }
+
         println!("\n  EVERY DISTINCT REFERENCE, WITH ITS BEST CONFIDENCE:");
         let mut rows: Vec<(&String, &f32)> = best.iter().collect();
         rows.sort_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal));
