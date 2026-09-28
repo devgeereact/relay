@@ -2868,23 +2868,33 @@ pub fn resolve_bare_verse_with_source(
 /// eighteen minutes earlier, and was capped at Suggest per rule 40's third half.
 /// **`Genesis 8:22` was never offered at all**, three times in one service.
 ///
-/// ── THE TWO SHAPES, AND WHY ONLY THESE TWO ────────────────────────────────────
-///
-/// Both are shapes `parse_reference` ALREADY treats as an unfinished sentence, which
-/// is what makes them safe to carry rather than a new guess:
+/// ── THE TWO SHAPES ────────────────────────────────────────────────────────────
 ///
 ///  * **A DANGLING VERSE MARKER.** *"Genesis chapter 8 and verse"* — the marker was
 ///    consumed and the number never came. `parse_reference` returns `None`.
-///  * **A CHAPTER KEYWORD AT THE VERY EDGE.** *"In John chapter 12,"* — the number
-///    is the last token. `parse_reference` demotes it to `UncertainNumber` 0.45
-///    rather than firing verse 1 (RG-315 again, from the other side).
+///  * **THE CHAPTER NUMBER IS THE LAST THING SAID.** *"In John chapter 12,"*,
+///    *"…is wisdom. Ecclesiastes 10."* — `parse_reference` gives 0.45
+///    `UncertainNumber` rather than firing verse 1 (RG-315, from the other side).
 ///
-/// A keyword-less chapter at the edge is deliberately excluded. *"and then we went to
-/// Romans 8"* is an ordinary thing to say about a chapter, and nothing in it says a
-/// verse is coming.
+/// **The second shape was NARROWER for one commit, and widening it is measured
+/// rather than reasoned.** It required the chapter KEYWORD, on the argument that
+/// *"and then we went to Romans 8"* is an ordinary thing to say about a chapter and
+/// promises no verse. RG-320's second instance is the counter-evidence: service 42 at
+/// 20079.8 s, *"Knowing how to do it is wisdom. Ecclesiastes 10."* — no keyword —
+/// then *"And verse 15. It said, the labor of the foolish…"* at 20088.0 s, and the
+/// right verse `Ecclesiastes 10:15` was not on the operator's list at all while
+/// memory's `Matthew 7:15` sat at the top of it.
 ///
-/// A book the parser had to REPAIR is excluded too: a guess about the acoustics may
-/// not survive the window that made it, which is `anchor_for_bare_verses`' second
+/// What the wider rule costs, over service 42's 3,161 lines: **8 windows end
+/// mid-citation instead of 3, auto-fires unchanged at 153, and four of the five extra
+/// windows are never consulted at all** — the next window names its own reference in
+/// three of them (`Psalm 112`, `Job 22`, `Matthew 1 verse 7`) and carries no bare
+/// verse in the fourth. The fifth is the RG-320 window. The carry is read only where
+/// a bare verse has no anchor of its own, so the surface it can be wrong on is much
+/// smaller than the set it fires on.
+///
+/// A book the parser had to REPAIR is excluded: a guess about the acoustics may not
+/// survive the window that made it, which is `anchor_for_bare_verses`' second
 /// question said about a different clock.
 ///
 /// The LAST such citation in the window wins, for the same reason the anchor takes
@@ -2904,9 +2914,7 @@ pub fn chapter_in_flight(text: &str) -> Option<VerseRef> {
             continue;
         }
         let mut j = book_end;
-        let mut chapter_kw = false;
         if tokens.get(j).is_some_and(|t| is_chapter_word(t)) {
-            chapter_kw = true;
             j += 1;
             j = skip_linkers(&tokens, j);
         }
@@ -2936,8 +2944,9 @@ pub fn chapter_in_flight(text: &str) -> Option<VerseRef> {
         if k < tokens.len() {
             continue;
         }
-        // One of the two shapes, and nothing else.
-        if verse_marker || (chapter_kw && after >= tokens.len()) {
+        // Either shape: a dangling verse MARKER anywhere before the end, or the
+        // chapter NUMBER itself being the last thing said.
+        if verse_marker || after >= tokens.len() {
             found = Some(VerseRef {
                 book: canonical.to_string(),
                 chapter,

@@ -11101,6 +11101,202 @@ mod passage_guard_bench {
         println!();
     }
 
+    /// **A READING MAY NOT WALK OFF THE PASSAGE IT WAS CITED IN ONTO A SYNOPTIC
+    /// PARALLEL — RG-308.**
+    ///
+    /// Twice in one day, both watched live in the operator's own services,
+    /// 2026-09-25:
+    ///
+    ///  * 16389 s / 16414 s — he cited **Micah 4** and read verse 2 aloud.
+    ///    *"out of Zion shall go forth the law"* is in **Micah 4:2 AND Isaiah 2:3**,
+    ///    and Relay fired Isaiah.
+    ///  * 44725 s / 44741 s — he cited **Mark 4:11** and Relay put it up; sixteen
+    ///    seconds later the reading of those same words fired **Luke 8:10**, because
+    ///    *"unto you it is given to know the mysteries of the kingdom of God"* is in
+    ///    both almost verbatim.
+    ///
+    /// In each case the wall LEFT the passage the preacher had NAMED while he was
+    /// still reading it, and the cost is not a nonsense verse — it is the right words
+    /// under the wrong reference, which is harder for an operator to spot.
+    ///
+    /// **The `sole` rule cannot help**, and that is the finding rather than a gap: it
+    /// asks whether the exact token run belongs to one verse, and between parallels
+    /// the wording differs by a word or two, so each run genuinely IS unique to its
+    /// own verse. Uniqueness is satisfied and the choice is still wrong.
+    ///
+    /// **Nor could the passage guard, and the reason is its ARMING condition.** Rule A
+    /// holds anything that came from the verse text and sits outside the passage on
+    /// screen — Luke 8 is outside Mark 4, so the hold itself was always right. But it
+    /// arms only on an in-passage verbatim CANDIDATE, and `PhraseIndex::quoted`
+    /// returns the parallel rather than the passage precisely because the parallel's
+    /// run is the longer one. The evidence that the preacher is reading the passage on
+    /// screen existed and was not being asked for.
+    ///
+    /// This prints what the index measures against BOTH verses, so the arming fact is
+    /// a number rather than a belief.
+    #[test]
+    #[ignore]
+    fn what_the_index_measures_against_the_passage_on_screen() {
+        let corpus = kjv_corpus();
+        let idx = detection::PhraseIndex::build(&corpus);
+        let cases = [
+            (
+                "And he said unto them, Unto you it is given to know the mysteries of \
+                 the kingdom of God, but unto them that are without",
+                ("Mark", 4, 11),
+                ("Luke", 8, 10),
+            ),
+            (
+                "he will teach us of his ways, and we will walk in his paths, for out \
+                 of Zion shall go forth the law, and the word of the Lord from Jerusalem",
+                ("Micah", 4, 2),
+                ("Isaiah", 2, 3),
+            ),
+        ];
+        println!();
+        for (heard, on_screen, parallel) in cases {
+            let cited = detection::VerseRef {
+                book: on_screen.0.into(),
+                chapter: on_screen.1,
+                verse: on_screen.2,
+            };
+            let other = detection::VerseRef {
+                book: parallel.0.into(),
+                chapter: parallel.1,
+                verse: parallel.2,
+            };
+            println!("  “{heard}”");
+            println!(
+                "     shared_run_with(ON SCREEN {} {}:{}) = {}",
+                cited.book,
+                cited.chapter,
+                cited.verse,
+                idx.shared_run_with(heard, &cited)
+            );
+            println!(
+                "     shared_run_with(PARALLEL {} {}:{}) = {}",
+                other.book,
+                other.chapter,
+                other.verse,
+                idx.shared_run_with(heard, &other)
+            );
+            println!("     -- what quoted() returns:");
+            for h in idx.quoted(heard, None, QUOTED_SUGGESTIONS_MAX) {
+                println!(
+                    "        {} {}:{}  run={} sole={} rare={}",
+                    h.r.book, h.r.chapter, h.r.verse, h.run, h.sole, h.rare_for_a_wall
+                );
+            }
+        }
+        println!();
+    }
+
+    /// **THE PASSAGE ON SCREEN HOLDS ITS OWN SYNOPTIC PARALLEL — RG-308, and the
+    /// register's account of WHY it did not was wrong.**
+    ///
+    /// The row says *"RG-306's guard does not apply by construction — a parallel is a
+    /// different book and chapter, so neither the wall rule nor the chapter rule
+    /// reaches it."* That has rule A backwards. Rule A holds every candidate that
+    /// `came_from_the_verse_text` and is NOT inside the passage on screen, so being a
+    /// different book and chapter is precisely the condition it holds on. What it
+    /// needs is ARMING: an in-passage verbatim run in the same window.
+    ///
+    /// `what_the_index_measures_against_the_passage_on_screen` shows the arming
+    /// evidence is there in both field cases — `quoted` returns the cited verse
+    /// alongside the parallel, at a shorter run (`Mark 4:11` at 10 against
+    /// `Luke 8:10` at 13; `Micah 4:2` at 15 against `Isaiah 2:3` at 31). So the guard
+    /// arms, and the parallel is held.
+    ///
+    /// Both field instances predate the guard: it landed on 2026-09-25, the same day,
+    /// and this test is what settles which side of it those services were on. The
+    /// assertion is on the wall, not on the offer list — the parallel is still
+    /// OFFERED, which is right, because a preacher who genuinely moved to the parallel
+    /// is one click away.
+    #[test]
+    fn a_reading_may_not_walk_off_the_cited_passage_onto_its_parallel() {
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        let cases = [
+            (
+                "And he said unto them, Unto you it is given to know the mysteries of \
+                 the kingdom of God, but unto them that are without",
+                ("Mark", 4, 11),
+                ("Luke", 8, 10),
+            ),
+            (
+                "he will teach us of his ways, and we will walk in his paths, for out \
+                 of Zion shall go forth the law, and the word of the Lord from Jerusalem",
+                ("Micah", 4, 2),
+                ("Isaiah", 2, 3),
+            ),
+        ];
+        for (heard, cited, parallel) in cases {
+            // THE WALL AS IT WAS: the verse he cited, put up sixteen seconds earlier.
+            let mut context = ContextMemory::default();
+            let on_screen = detection::VerseRef {
+                book: cited.0.into(),
+                chapter: cited.1,
+                verse: cited.2,
+            };
+            context.note(&on_screen);
+            let wall = Fire::key_for(&on_screen);
+            let w = candidates_for_window(
+                heard,
+                true,
+                &sem,
+                &phrases,
+                &context,
+                Some(wall.as_str()),
+                false,
+            );
+            for c in &w.kept {
+                println!(
+                    "   KEPT  {} {}:{}  {:?}  {:.2}",
+                    c.r.book, c.r.chapter, c.r.verse, c.method, c.conf
+                );
+            }
+            for (c, why) in &w.held {
+                println!(
+                    "   HELD  {} {}:{}  {:?}",
+                    c.r.book, c.r.chapter, c.r.verse, why
+                );
+            }
+            // PRECONDITION: the parallel really is found, so the assertion is not
+            // vacuous. Its absence would mean the index changed, not that the guard
+            // worked.
+            let found_anywhere = w
+                .kept
+                .iter()
+                .map(|c| &c.r)
+                .chain(w.held.iter().map(|(c, _)| &c.r))
+                .any(|r| r.book == parallel.0 && r.chapter == parallel.1);
+            assert!(
+                found_anywhere,
+                "precondition: {} {}:{} must still be found for this to be a test",
+                parallel.0, parallel.1, parallel.2
+            );
+            // THE CLAIM: the parallel may not reach the wall while the cited passage
+            // is on it and the preacher is still reading that passage.
+            let firable: Vec<_> = w
+                .kept
+                .iter()
+                .filter(|c| c.r.book == parallel.0 && c.method.unattended_rank() > 0)
+                .map(|c| (Fire::key_for(&c.r), c.method, c.conf))
+                .collect();
+            assert!(
+                firable.is_empty(),
+                "the wall left {} {}:{} for its parallel while he was still reading \
+                 it: {firable:?}",
+                cited.0,
+                cited.1,
+                cited.2
+            );
+        }
+    }
+
     /// **A DOUBT MUST REACH EVERY CANDIDATE CARRYING THAT REFERENCE** — found
     /// 2026-09-26 while measuring the anchor fix, by printing a window's candidate
     /// set instead of reasoning about it.
@@ -11381,6 +11577,74 @@ mod passage_guard_bench {
         }
     }
 
+    /// **THE OFFER LIST'S TOP ROW WHEN THE CHAPTER WAS SAID ONE WINDOW AGO** —
+    /// RG-320's second route, service 42 at 20079.8 s → 20088.0 s, watched live.
+    ///
+    /// *"Knowing how to do it is wisdom. Ecclesiastes 10."* then *"And verse 15. It
+    /// said, the labor of the foolish…"* — those words are **Ecclesiastes 10:15**. On
+    /// the morning, the bare *"verse 15"* had no anchor, memory answered with the
+    /// passage on the wall (`Matthew 7:24`, fired at 19797.6 s) at the hardcoded 0.88,
+    /// and the right verse reached the list only as a `Semantic` 0.38 — BELOW it,
+    /// because both are `unattended_rank() == 0` and `pipeline::better` then falls to
+    /// confidence, comparing a constant against a cosine.
+    ///
+    /// **The fix is not a reordering.** RG-318's carry makes the right answer
+    /// available at all: the chapter was said one window ago, so `verse 15` hangs on
+    /// `Ecclesiastes 10` and the wrong row is not produced in the first place. Nothing
+    /// in `pipeline::better` changed, and the hardcoded 0.88 rule 40 calls *"still a
+    /// lie"* is still there — it just no longer answers this window.
+    ///
+    /// RG-320's FIRST route is not reached by this and is not reached by any ordering:
+    /// see the row.
+    #[test]
+    fn a_chapter_from_the_previous_window_answers_the_bare_verse_memory_would_have() {
+        const W1: &str =
+            "Knowing what to do is knowledge. Knowing how to do it is wisdom. Ecclesiastes 10.";
+        const W2: &str =
+            "And verse 15. It said, the labor of the foolish willis every one of them because";
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        // THE WALL AS IT WAS: Matthew 7:24 fired at 19797.6 s and was still the
+        // passage, which is what memory answered with.
+        let mut context = ContextMemory::default();
+        context.note(&detection::VerseRef {
+            book: "Matthew".into(),
+            chapter: 7,
+            verse: 24,
+        });
+        let mut got: Vec<(String, DetectionMethod)> = Vec::new();
+        for (at_ms, text) in [(20_079_800u64, W1), (20_088_000, W2)] {
+            let w = candidates_for_window(text, true, &sem, &phrases, &context, None, false);
+            if text == W2 {
+                got = w
+                    .kept
+                    .iter()
+                    .map(|c| (Fire::key_for(&c.r), c.method))
+                    .collect();
+            }
+            context.note_in_flight(detection::chapter_in_flight(text), at_ms);
+        }
+        println!("  second window: {got:?}");
+        assert!(
+            got.iter().any(|(k, _)| k == "Ecclesiastes 10:15"),
+            "the verse he was reading is still not on the list: {got:?}"
+        );
+        assert!(
+            !got.iter().any(|(k, _)| k == "Matthew 7:15"),
+            "memory still answered over a chapter said one window ago: {got:?}"
+        );
+        // AND IT STILL MAY NOT FIRE — the book was heard in a window this one cannot
+        // see, so rule 10's cap holds exactly as it does for a memory answer.
+        assert!(
+            got.iter()
+                .all(|(k, m)| k != "Ecclesiastes 10:15" || *m == DetectionMethod::UncertainBook),
+            "a carried chapter reached a firable method: {got:?}"
+        );
+    }
+
     /// **THE TWO SHAPES `chapter_in_flight` ANSWERS, AND THE ONES IT MUST NOT** —
     /// RG-318. Pure, so it needs no corpus and no index.
     #[test]
@@ -11392,16 +11656,22 @@ mod passage_guard_bench {
             f("Let's read from God's Word before we give Genesis chapter 8 and verse"),
             Some("Genesis 8".into())
         );
-        // A chapter KEYWORD at the very edge — RG-315's own window, from the other
-        // side.
+        // The CHAPTER NUMBER as the last thing said — RG-315's own window, from the
+        // other side.
         assert_eq!(
             f("on the sheet of faith. In John chapter 12,"),
             Some("John 12".into())
         );
+        // WITHOUT the chapter keyword, which is RG-320's second instance: "Knowing
+        // how to do it is wisdom. Ecclesiastes 10." then "And verse 15" in the next
+        // window. This shape was excluded for one commit and the measurement put it
+        // back — see `chapter_in_flight`.
+        assert_eq!(
+            f("Knowing what to do is knowledge. Knowing how to do it is wisdom. Ecclesiastes 10."),
+            Some("Ecclesiastes 10".into())
+        );
+        assert_eq!(f("and then we went to Romans 8"), Some("Romans 8".into()));
         // ── AND THE ONES THAT MUST STAY None ──────────────────────────────────
-        // A keyword-less chapter at the edge. "we went to Romans 8" is an ordinary
-        // thing to say ABOUT a chapter and promises no verse.
-        assert_eq!(f("and then we went to Romans 8"), None);
         // A finished citation.
         assert_eq!(f("Genesis chapter 8 and verse 22 says"), None);
         // A finished citation at the very edge.
