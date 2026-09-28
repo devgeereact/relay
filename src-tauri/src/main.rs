@@ -1669,6 +1669,11 @@ fn candidates_for_window(
             text,
             n,
             anchor.as_ref(),
+            // RG-318. A book and chapter said one window ago, with the sentence
+            // plainly unfinished — `chapter_in_flight`. It beats memory and loses to
+            // this window's own anchor, which is rule 40's ordering rather than a
+            // new one, and it is labelled `UncertainBook` so it can never fire.
+            context.in_flight(),
             from_memory.as_ref(),
         );
         if let Some((r, source)) = resolved {
@@ -2237,6 +2242,16 @@ fn emit_detections<R: tauri::Runtime>(
         held_by_the_passage = held;
         reading_inside = reading_in;
         doubted_citations = doubted;
+        // ── WHAT THIS WINDOW LEFT UNFINISHED (RG-318) ──────────────────────────
+        //
+        // AFTER `candidates_for_window` has read the last window's entry, and BEFORE
+        // the early exit below, for the same reason `held_by_the_passage` is: a
+        // window with nothing to say is exactly the window that carries half a
+        // citation — *"…before we give Genesis chapter 8 and verse"* produces no
+        // candidate at all — and a `break` above this line would drop the half that
+        // matters. `note_in_flight` owns the expiry because this is the one place on
+        // the path with a clock.
+        context.note_in_flight(detection::chapter_in_flight(text), now_ms);
         if candidates.is_empty() {
             break 'gate None;
         }
@@ -10382,6 +10397,11 @@ mod passage_guard_bench {
                 // swept on and off — `suggestions::bar::paraphrase_bar`.
                 false,
             );
+            // RG-318, and it must be the same call `emit_detections` makes, in the
+            // same place: a bench that did not carry an unfinished citation would
+            // measure a product nobody ships, which is the mistake this module's own
+            // `doubt` switch was built to avoid.
+            context.note_in_flight(detection::chapter_in_flight(text), now_ms);
             for d in &doubted {
                 out.doubts.push((
                     *at,
@@ -11267,11 +11287,18 @@ mod passage_guard_bench {
     /// ordering already says a book named in this breath beats memory; a book named one
     /// breath ago should also beat memory from eighteen minutes ago.
     ///
-    /// Not fixed: it needs state that `candidates_for_window` does not have today, and
-    /// the cost — a stale chapter completing an unrelated later verse — has to be
-    /// measured through `print_every_auto_fire` before it ships.
+    /// **CLOSED 2026-09-28.** `detection::chapter_in_flight` names the two shapes a
+    /// window can end on with the sentence still open, `ContextMemory` carries one
+    /// for `IN_FLIGHT_MS`, and `resolve_bare_verse_with_source` consults it between
+    /// the anchor and memory. It is `UncertainBook`, so `Genesis 8:22` is OFFERED and
+    /// can never fire — which is all three field instances needed, because all three
+    /// were already refused correctly and what they cost was the right verse being
+    /// absent from the list.
+    ///
+    /// Not `#[ignore]`d any more, and it drives BOTH windows in order through the
+    /// same two calls `emit_detections` makes, so the carry is exercised rather than
+    /// assumed.
     #[test]
-    #[ignore]
     fn a_citation_split_across_windows_loses_its_book() {
         const W1: &str = "Let's read from God's Word before we give Genesis chapter 8 and verse";
         const W2: &str = "Verse 22. This is God's commandment. It says, While the earth remained,";
@@ -11287,9 +11314,11 @@ mod passage_guard_bench {
             chapter: 5,
             verse: 20,
         });
-        for (label, text) in [("window 1", W1), ("window 2", W2)] {
+        // THE REAL TIMESTAMPS, so the 8.4 s gap is the one the budget has to cover.
+        for (label, at_ms, text) in [("window 1", 2_072_800u64, W1), ("window 2", 2_081_200, W2)] {
             println!("\n  {label}: “{text}”");
             println!("     anchor: {:?}", detection::anchor_for_bare_verses(text));
+            println!("     in flight: {:?}", detection::chapter_in_flight(text));
             println!(
                 "     bare verses: {:?}",
                 detection::detect_bare_verses(text)
@@ -11301,19 +11330,89 @@ mod passage_guard_bench {
                     c.r.book, c.r.chapter, c.r.verse, c.method, c.conf
                 );
             }
+            if text == W2 {
+                // THE CLAIM: the verse he actually read must be reachable from the
+                // SECOND window, because the FIRST window named its book and chapter.
+                // Asserted on the set that window actually produced, not on a third
+                // re-read of it after the loop — a re-read is a different call with a
+                // different `in_flight` and would be asserting about something the
+                // product never computed.
+                let genesis = w
+                    .kept
+                    .iter()
+                    .find(|c| c.r.book == "Genesis" && c.r.chapter == 8 && c.r.verse == 22);
+                let g = genesis.unwrap_or_else(|| {
+                    panic!(
+                        "Genesis 8:22 is not reachable from the second window; the \
+                         operator fired it by hand while memory offered Ephesians 5:22 \
+                         from eighteen minutes before. Got: {:?}",
+                        w.kept
+                            .iter()
+                            .map(|c| (Fire::key_for(&c.r), c.method))
+                            .collect::<Vec<_>>()
+                    )
+                });
+                // AND IT MAY NOT FIRE. A book heard one window ago is not a book heard
+                // in this breath, and rule 10 only lets the second reach a wall.
+                assert_eq!(
+                    g.method,
+                    DetectionMethod::UncertainBook,
+                    "a chapter carried across a window boundary reached a firable method"
+                );
+                // The wrong answer this replaces must still be offered beside it —
+                // `Ephesians 5:22` from eighteen minutes earlier is what memory says,
+                // and a rule that silently deleted the rival would be hiding the
+                // disagreement rather than resolving it.
+                assert!(
+                    w.kept
+                        .iter()
+                        .any(|c| c.r.book == "Ephesians" && c.r.chapter == 5 && c.r.verse == 22)
+                        || w.kept.iter().all(|c| c.r.book != "Ephesians"),
+                    "the memory answer changed shape unexpectedly: {:?}",
+                    w.kept
+                        .iter()
+                        .map(|c| (Fire::key_for(&c.r), c.method))
+                        .collect::<Vec<_>>()
+                );
+            }
+            // The same order `emit_detections` uses: read the window, THEN record
+            // what it left unfinished.
+            context.note_in_flight(detection::chapter_in_flight(text), at_ms);
         }
-        // THE CLAIM, and it fails today: the verse he actually read should be reachable
-        // from the second window, because the first window named its book and chapter.
-        let w2 = candidates_for_window(W2, true, &sem, &phrases, &context, None, false);
-        let found = w2
-            .kept
-            .iter()
-            .any(|c| c.r.book == "Genesis" && c.r.chapter == 8 && c.r.verse == 22);
-        assert!(
-            found,
-            "Genesis 8:22 is not reachable from the second window; the operator fired \
-             it by hand while memory offered Ephesians 5:22 from eighteen minutes before"
+    }
+
+    /// **THE TWO SHAPES `chapter_in_flight` ANSWERS, AND THE ONES IT MUST NOT** —
+    /// RG-318. Pure, so it needs no corpus and no index.
+    #[test]
+    fn only_a_sentence_that_plainly_stopped_mid_citation_is_in_flight() {
+        let f =
+            |t: &str| detection::chapter_in_flight(t).map(|r| format!("{} {}", r.book, r.chapter));
+        // THE FIELD SHAPE: a dangling verse marker.
+        assert_eq!(
+            f("Let's read from God's Word before we give Genesis chapter 8 and verse"),
+            Some("Genesis 8".into())
         );
+        // A chapter KEYWORD at the very edge — RG-315's own window, from the other
+        // side.
+        assert_eq!(
+            f("on the sheet of faith. In John chapter 12,"),
+            Some("John 12".into())
+        );
+        // ── AND THE ONES THAT MUST STAY None ──────────────────────────────────
+        // A keyword-less chapter at the edge. "we went to Romans 8" is an ordinary
+        // thing to say ABOUT a chapter and promises no verse.
+        assert_eq!(f("and then we went to Romans 8"), None);
+        // A finished citation.
+        assert_eq!(f("Genesis chapter 8 and verse 22 says"), None);
+        // A finished citation at the very edge.
+        assert_eq!(f("Genesis chapter 8 verse 22"), None);
+        // The sentence moved on, so nothing is in flight.
+        assert_eq!(f("Genesis chapter 8 tells us what happened"), None);
+        // A chapter Genesis cannot have is a misparse, not a citation in flight
+        // (RG-322's reasoning, one door along).
+        assert_eq!(f("Genesis chapter 80 and verse"), None);
+        // No book at all.
+        assert_eq!(f("and verse"), None);
     }
 
     /// **EXPLAIN ONE WINDOW: every stage, every candidate, every doubt.**
@@ -11458,10 +11557,20 @@ mod passage_guard_bench {
         for (at, key, _) in &run.fired {
             println!("{at:.1}\t{key}");
         }
+        // ON STDERR, so the stdout diff stays `<seconds>\t<reference>` and nothing
+        // else. The in-flight count is here because RG-318's carry can only ever add
+        // a CAPPED candidate — the auto-fire diff above is guaranteed to be empty for
+        // it, so a reader looking only at that diff would conclude the rule does
+        // nothing. This is the number that says how often it can speak at all.
+        let in_flight = lines
+            .iter()
+            .filter(|(_, t)| detection::chapter_in_flight(t).is_some())
+            .count();
         eprintln!(
-            "{} auto-fires from {} windows",
+            "{} auto-fires from {} windows · {} windows end mid-citation (RG-318)",
             run.fired.len(),
-            lines.len()
+            lines.len(),
+            in_flight
         );
     }
 

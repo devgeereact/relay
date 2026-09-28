@@ -265,6 +265,10 @@ impl DetectionMethod {
     pub fn for_bare_verse(source: BareVerseSource) -> Self {
         match source {
             BareVerseSource::Anchor => DetectionMethod::Direct,
+            // RG-318. The words did say it, and they said it in a window this one
+            // cannot see, so it is offered and never fired — see
+            // `BareVerseSource::InFlight`.
+            BareVerseSource::InFlight => DetectionMethod::UncertainBook,
             BareVerseSource::Memory => DetectionMethod::UncertainBook,
         }
     }
@@ -2376,12 +2380,41 @@ fn classify_num_word(w: &str) -> Option<NumWord> {
 /// Tracks the current on-screen verse so a bare "verse 4" resolves against the
 /// last book+chapter, and "next"/"back" step from it. Pure state — no IO. Fed
 /// by whatever verse actually fires.
+/// **HOW LONG A CITATION MAY STAY IN FLIGHT** — RG-318.
+///
+/// The field gap is 8.4 s (2072.8 s → 2081.2 s), and the completing window is then
+/// re-decoded several times as the rolling window grows, so the budget has to cover
+/// one STT window plus its partials rather than the gap alone. Fifteen seconds is
+/// `router::DEFAULT_DEBOUNCE_MS` (10 s) plus half again.
+///
+/// **It is a ceiling, not a lifetime.** Any window that leaves its own citation
+/// unfinished replaces the entry, and the only thing the entry can ever do is give
+/// an `UncertainBook` answer to a bare verse — so an entry that lingers costs a row
+/// on the operator's list and can never cost a wall. That is what makes a number
+/// here acceptable at all; if it could fire, it would need to be a fact rather than
+/// a budget.
+const IN_FLIGHT_MS: u64 = 15_000;
+
 #[derive(Debug, Clone, Default)]
 pub struct ContextMemory {
     current: Option<VerseRef>,
     /// Inclusive last verse of the passage being walked, if the current verse is
     /// part of a multi-verse range or whole chapter. `next` stops here.
     span_end: Option<i64>,
+    /// **A CITATION THE CHUNKER CUT IN HALF, and when it was heard** (RG-318).
+    ///
+    /// Not a second `current` and not a passage: nothing walks it, nothing is on a
+    /// screen because of it, and the only question it answers is *which book and
+    /// chapter does the bare verse at the start of THIS window belong to*. See
+    /// `chapter_in_flight` for the two shapes that produce one, and
+    /// `BareVerseSource::InFlight` for the field service.
+    ///
+    /// It lives here rather than beside the router's clocks because
+    /// `candidates_for_window` already receives this struct and nothing else it
+    /// receives is allowed to be stateful — and because it is the same kind of fact
+    /// as `current`: something Relay heard a moment ago, offered to a window that
+    /// cannot see it.
+    in_flight: Option<(VerseRef, u64)>,
 }
 
 impl ContextMemory {
@@ -2428,6 +2461,34 @@ impl ContextMemory {
 
     pub fn current(&self) -> Option<&VerseRef> {
         self.current.as_ref()
+    }
+
+    /// **RECORD WHAT THIS WINDOW LEFT UNFINISHED, AND EXPIRE WHAT THE LAST ONE
+    /// DID** — RG-318. Called once per window, after the window has been read.
+    ///
+    /// The expiry is HERE because this is the one place on the path with a clock:
+    /// `candidates_for_window` is pure over its inputs and must stay that way, so
+    /// giving it a stale entry to ignore would put the rule in two places. A window
+    /// that leaves nothing in flight does not clear the slot outright — the rolling
+    /// window is re-decoded several times a second and the first partial of the
+    /// completing window would otherwise throw the chapter away before the final
+    /// arrived — it lets it age out instead.
+    pub fn note_in_flight(&mut self, found: Option<VerseRef>, now_ms: u64) {
+        if let Some(r) = found {
+            self.in_flight = Some((r, now_ms));
+            return;
+        }
+        if let Some((_, at)) = &self.in_flight {
+            if now_ms.saturating_sub(*at) > IN_FLIGHT_MS {
+                self.in_flight = None;
+            }
+        }
+    }
+
+    /// The book and chapter a citation cut off by the chunker was in, if one is
+    /// still live. See `note_in_flight`.
+    pub fn in_flight(&self) -> Option<&VerseRef> {
+        self.in_flight.as_ref().map(|(r, _)| r)
     }
 
     /// The next verse in the passage (verse + 1), if a current exists and we
@@ -2717,6 +2778,25 @@ pub fn chapter_named(text: &str) -> bool {
 pub enum BareVerseSource {
     /// A reference named in this window: "Luke 10 … verse 32". The book was said.
     Anchor,
+    /// **A citation the CHUNKER cut in half** — the book and chapter were said one
+    /// window ago and the sentence plainly had not finished. RG-318.
+    ///
+    /// Service 42, 2026-09-27, the offering reading: *"…before we give Genesis
+    /// chapter 8 and verse"* at 2072.8 s, then *"Verse 22. This is God's
+    /// commandment…"* at 2081.2 s, and the operator fired `Genesis 8:22` by hand at
+    /// 2098.5 s. Relay held both halves eight seconds apart and could not join them,
+    /// because the anchor is window-local: memory reached back EIGHTEEN MINUTES to
+    /// `Ephesians 5:20` while the right chapter sat in the previous window.
+    ///
+    /// Rule 40's ordering already implies this — a book named one breath ago beats
+    /// memory from eighteen minutes ago — so it sits between the two. It is
+    /// deliberately NOT `Direct`: the words did say it, but they said it in a window
+    /// this one cannot see, and `chapter_in_flight` is a judgement about where a
+    /// sentence stopped rather than a parse of a complete one. `for_bare_verse`
+    /// labels it `UncertainBook`, so it is offered and can never reach a wall — which
+    /// is all three field instances asked for, since all three were correctly refused
+    /// and the cost was that the right verse was never on the list at all.
+    InFlight,
     /// The passage already on the screen: "and verse eighteen". The book was not
     /// said in this breath; Relay assumed it.
     Memory,
@@ -2734,22 +2814,138 @@ pub fn resolve_bare_verse_with_source(
     text: &str,
     n: i64,
     anchor: Option<&VerseRef>,
+    in_flight: Option<&VerseRef>,
     memory: Option<&VerseRef>,
 ) -> Option<(VerseRef, BareVerseSource)> {
-    if let Some(a) = anchor {
-        return Some((
+    let hang = |r: &VerseRef, src| {
+        Some((
             VerseRef {
-                book: a.book.clone(),
-                chapter: a.chapter,
+                book: r.book.clone(),
+                chapter: r.chapter,
                 verse: n,
             },
-            BareVerseSource::Anchor,
-        ));
+            src,
+        ))
+    };
+    if let Some(a) = anchor {
+        return hang(a, BareVerseSource::Anchor);
+    }
+    // ── A CITATION THE CHUNKER CUT IN HALF (RG-318) ───────────────────────────
+    //
+    // BEFORE the stated-chapter refusal below, and the order is the point. Rule
+    // 40's second half declines when the window STATES a chapter that no parsed
+    // reference accounts for, because pairing a heard chapter with a REMEMBERED
+    // book is a lie. This is not that: the book and the chapter were both heard, in
+    // the same sentence, one window ago — the chunker is what separated them from
+    // the verse. `BareVerseSource::InFlight` has the field evidence, and the label
+    // caps it at Suggest, so nothing this rule answers can reach a wall.
+    if let Some(f) = in_flight {
+        return hang(f, BareVerseSource::InFlight);
     }
     if chapter_named(text) {
         return None;
     }
     memory.cloned().map(|m| (m, BareVerseSource::Memory))
+}
+
+/// **A CITATION THIS WINDOW PLAINLY DID NOT FINISH — RG-318.**
+///
+/// The book and chapter of a reference that runs off the END of the window with the
+/// sentence still open, so the verse number is already on its way in the next
+/// window. `None` for everything else, which is nearly every window.
+///
+/// Service 42, 2026-09-27, the offering reading, verbatim from `transcripts`:
+///
+/// ```text
+///   2072.8  "Let's read from God's Word before we give Genesis chapter 8 and verse"
+///   2081.2  "Verse 22. This is God's commandment. It says, While the earth remained,"
+///   2098.5  → the operator fired Genesis 8:22 BY HAND
+/// ```
+///
+/// Every existing guard worked. `parse_reference` refuses a dangling verse marker
+/// outright (RG-315), so no `Genesis 8:1` went up; the second window's bare
+/// *"Verse 22"* fell through to memory, which still held `Ephesians 5:20` from
+/// eighteen minutes earlier, and was capped at Suggest per rule 40's third half.
+/// **`Genesis 8:22` was never offered at all**, three times in one service.
+///
+/// ── THE TWO SHAPES, AND WHY ONLY THESE TWO ────────────────────────────────────
+///
+/// Both are shapes `parse_reference` ALREADY treats as an unfinished sentence, which
+/// is what makes them safe to carry rather than a new guess:
+///
+///  * **A DANGLING VERSE MARKER.** *"Genesis chapter 8 and verse"* — the marker was
+///    consumed and the number never came. `parse_reference` returns `None`.
+///  * **A CHAPTER KEYWORD AT THE VERY EDGE.** *"In John chapter 12,"* — the number
+///    is the last token. `parse_reference` demotes it to `UncertainNumber` 0.45
+///    rather than firing verse 1 (RG-315 again, from the other side).
+///
+/// A keyword-less chapter at the edge is deliberately excluded. *"and then we went to
+/// Romans 8"* is an ordinary thing to say about a chapter, and nothing in it says a
+/// verse is coming.
+///
+/// A book the parser had to REPAIR is excluded too: a guess about the acoustics may
+/// not survive the window that made it, which is `anchor_for_bare_verses`' second
+/// question said about a different clock.
+///
+/// The LAST such citation in the window wins, for the same reason the anchor takes
+/// the last parse: it is the one the sentence was still in.
+pub fn chapter_in_flight(text: &str) -> Option<VerseRef> {
+    let norm = normalize(text);
+    let tokens: Vec<&str> = norm.split_whitespace().collect();
+    let mut found: Option<VerseRef> = None;
+    let mut i = 0;
+    while i < tokens.len() {
+        let Some((canonical, book_end, book_ev)) = match_book(&tokens, i) else {
+            i += 1;
+            continue;
+        };
+        i = book_end;
+        if book_ev == BookEvidence::Repaired {
+            continue;
+        }
+        let mut j = book_end;
+        let mut chapter_kw = false;
+        if tokens.get(j).is_some_and(|t| is_chapter_word(t)) {
+            chapter_kw = true;
+            j += 1;
+            j = skip_linkers(&tokens, j);
+        }
+        let Some((chapter, after, _phonetic)) = parse_number(&tokens, j) else {
+            continue;
+        };
+        i = after;
+        // A chapter the book cannot have is not a citation in flight; it is a
+        // misparse, and RG-322's reasoning says an impossibility is evidence rather
+        // than something to carry forward.
+        if chapter < 1 || chapter as usize > chapter_count(canonical) {
+            continue;
+        }
+        // Everything between the chapter and the end of the window must be glue —
+        // a connector ("and", ","), a linker, or a verse marker. One real word and
+        // the sentence moved on to something else.
+        let mut k = after;
+        let mut verse_marker = false;
+        while let Some(t) = tokens.get(k) {
+            if is_verse_word(t) {
+                verse_marker = true;
+            } else if !(is_ref_connector(t) || numerals().linkers.contains(*t)) {
+                break;
+            }
+            k += 1;
+        }
+        if k < tokens.len() {
+            continue;
+        }
+        // One of the two shapes, and nothing else.
+        if verse_marker || (chapter_kw && after >= tokens.len()) {
+            found = Some(VerseRef {
+                book: canonical.to_string(),
+                chapter,
+                verse: 1,
+            });
+        }
+    }
+    found
 }
 
 /// Did this window say a reference of its own?
@@ -6497,7 +6693,7 @@ mod r4_audit {
             verse: 10,
         };
         assert_eq!(
-            resolve_bare_verse_with_source(heard, 10, None, Some(&memory)),
+            resolve_bare_verse_with_source(heard, 10, None, None, Some(&memory)),
             None,
             "FIELD F-8 reproduced: a verse was resolved against a chapter the \
              preacher did not say, while naming a different one out loud"
@@ -6519,7 +6715,7 @@ mod r4_audit {
             verse: 18,
         };
         assert_eq!(
-            resolve_bare_verse_with_source(heard, 18, None, Some(&memory)),
+            resolve_bare_verse_with_source(heard, 18, None, None, Some(&memory)),
             Some((memory.clone(), BareVerseSource::Memory)),
             "mid-passage 'verse eighteen' must still resolve against the passage on screen"
         );
@@ -6537,7 +6733,7 @@ mod r4_audit {
             chapter: 92,
             verse: 10,
         };
-        let got = resolve_bare_verse_with_source(heard, 10, Some(&anchor), Some(&memory))
+        let got = resolve_bare_verse_with_source(heard, 10, Some(&anchor), None, Some(&memory))
             .map(|(r, _)| r)
             .expect("the window names a book, so it resolves");
         assert_eq!(got.reference_book_chapter_verse(), "1 Peter 5:10");
@@ -9015,7 +9211,7 @@ mod field_2026_09_20 {
             verse: 1,
             ..on_the_wall()
         };
-        let got = resolve_bare_verse_with_source(HEARD, 1, None, Some(&memory));
+        let got = resolve_bare_verse_with_source(HEARD, 1, None, None, Some(&memory));
         assert_eq!(
             got,
             Some((
@@ -9034,7 +9230,8 @@ mod field_2026_09_20 {
     fn a_verse_hung_on_a_book_named_in_this_breath_is_heard() {
         let heard = "going through in Luke 10. If you read from verse 32";
         let anchor = anchor_for_bare_verses(heard).expect("Luke 10 parses");
-        let got = resolve_bare_verse_with_source(heard, 32, Some(&anchor), Some(&on_the_wall()));
+        let got =
+            resolve_bare_verse_with_source(heard, 32, Some(&anchor), None, Some(&on_the_wall()));
         assert_eq!(got.map(|(_, s)| s), Some(BareVerseSource::Anchor));
     }
 
