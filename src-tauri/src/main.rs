@@ -10716,22 +10716,45 @@ mod passage_guard_bench {
         let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
         let context = ContextMemory::default();
         let mut reached = 0usize;
+        let mut still_firable = 0usize;
         println!();
         for (id, fired, should_be, text) in FIELD {
             let w = candidates_for_window(text, true, &sem, &phrases, &context, None, false);
             let doubt = w.doubted.iter().find(|d| d.reference == *fired);
+            // ── AND THE QUESTION RULE 13 ACTUALLY ASKS (added 2026-09-28) ────────
+            //
+            // *Which verse would Relay put on a screen.* This test only ever asked
+            // whether THIS rule reaches a window, which made "out of reach" read as
+            // "still fires" — and after the RG-301 anchor fix that is no longer true
+            // of `Jude 1:7`, whose wrong verse is now refused by a different rule
+            // entirely. A ceiling stated for one rule is not a ceiling on the
+            // product.
+            let firable = w
+                .kept
+                .iter()
+                .any(|c| Fire::key_for(&c.r) == *fired && c.method.unattended_rank() > 0);
+            if firable {
+                still_firable += 1;
+            }
+            let wall = if firable { "CAN STILL FIRE" } else { "refused" };
             match doubt {
                 Some(d) => {
                     reached += 1;
                     println!(
-                        "  id {id:<4} REACHED   {fired:<15} → {:?} (should be {should_be})",
+                        "  id {id:<4} REACHED   {fired:<15} → {:?}  [{wall}] (should be {should_be})",
                         d.doubt
                     );
                 }
-                None => println!("  id {id:<4} out of reach  {fired:<15} (should be {should_be})"),
+                None => println!(
+                    "  id {id:<4} out of reach  {fired:<15}  [{wall}] (should be {should_be})"
+                ),
             }
         }
-        println!("\n  {reached} of {} reached\n", FIELD.len());
+        println!(
+            "\n  {reached} of {} reached by THIS rule · {still_firable} of {} can still reach a wall by ANY route\n",
+            FIELD.len(),
+            FIELD.len()
+        );
         assert_eq!(
             reached, 5,
             "the reachable set changed — if a rule was widened, say so and measure \
@@ -11842,6 +11865,178 @@ mod passage_guard_bench {
             lines.len(),
             in_flight
         );
+    }
+
+    /// **WHY THE DOUBT RULE NEVER HAD A DOUBT TO CARRY — RG-319, measured
+    /// 2026-09-28. A WRONG VERSE REACHED A CONGREGATION and the register's account of
+    /// the mechanism does not reproduce.**
+    ///
+    /// `cargo test --release why_no_doubt_was_available_for_psalms_119_39 -- --ignored
+    /// --nocapture`
+    ///
+    /// Service 42, verbatim from `transcripts`:
+    ///
+    /// ```text
+    ///   19730.1  "What is this? … For my covenant will I not break."   → offered Psalms 89:34
+    ///   19737.1  "… the comfort of my lips. Psalm 119, verse 39. …"    → FIRED Psalms 119:39
+    /// ```
+    ///
+    /// The row says a doubt *"was computable one pass earlier"* and that the first
+    /// window held *"everything `chapter_the_words_point_at` needs"*. It did not.
+    /// Given the two windows JOINED — which is what a rolling window would have
+    /// produced, and the most generous reading of the claim — the rule produces **no
+    /// doubt at all**, and `the_run_contradicts` refuses it twice over:
+    ///
+    ///  * the run's verse is **34** and the spoken reference says **39**, so
+    ///    `verse_inside_what_was_said` is false. That is the rule's most deliberate
+    ///    line — *a verse-only difference is never a disagreement, at any distance* —
+    ///    and it is what protects `John 15:14` cited while 15:15 is read.
+    ///  * **89 is not a decode slip of 119.** `chapter_is_a_decode_slip` needs either
+    ///    a lost leading digit (119 does not end in 89) or one substitution at equal
+    ///    length (two digits against three).
+    ///
+    /// So neither a doubt carried forward nor a RUN carried forward reaches this
+    /// window. Reaching it means admitting a disagreement where both coordinates
+    /// differ, and `doubt_from_a_quotation` records what that costs.
+    ///
+    /// This is kept as a bench rather than an assertion **because there is nothing
+    /// here to assert yet.** It prints the set so the next reader starts from the
+    /// measurement instead of from the row.
+    #[test]
+    #[ignore]
+    fn why_no_doubt_was_available_for_psalms_119_39() {
+        const W1: &str =
+            "What is this? It becomes finding on God to affirm. For my covenant will I not break.";
+        const W2: &str = "The author does send the comfort of my lips. Psalm 119, verse 39. If you cannot bring my covenant of the";
+        const JOINED: &str = "For my covenant will I not break. The author does send the comfort of my lips. Psalm 119, verse 39.";
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        let context = ContextMemory::default();
+        println!();
+        for (label, text) in [
+            ("19730.1 (offered only)", W1),
+            ("19737.1 (FIRED)", W2),
+            ("both windows JOINED", JOINED),
+        ] {
+            println!("  ── {label}: “{text}”");
+            let w = candidates_for_window(text, true, &sem, &phrases, &context, None, false);
+            for c in &w.kept {
+                println!(
+                    "     KEPT  {} {}:{}  {:?}  {:.2}",
+                    c.r.book, c.r.chapter, c.r.verse, c.method, c.conf
+                );
+            }
+            for d in &w.doubted {
+                println!(
+                    "     DOUBT {}  {:?}  {:?} -> {:?}",
+                    d.reference, d.doubt, d.was, d.method
+                );
+            }
+            if w.doubted.is_empty() {
+                println!("     DOUBT none");
+            }
+        }
+        println!(
+            "\n  the two refusals, stated: verse 34 is not inside “verse 39”, and \
+             chapter 89 is not a decode slip of 119\n"
+        );
+    }
+
+    /// **WHICH SPOKEN REFERENCES A MOVING BAR WITHHOLDS** — RG-323.
+    ///
+    /// `RELAY_SERVICE_CORPUS=<file> cargo test --release what_the_bar_withholds --
+    /// --ignored --nocapture`
+    ///
+    /// RG-323 says 34 references were parsed as `Direct` and never fired, and blames
+    /// the corroboration rule: *"corroboration accepts agreement only from a LATER
+    /// window"*. **That cannot be the mechanism for its own example, and the proof is
+    /// in the code rather than in a replay.** `Router::decide_live` exempts a FINAL
+    /// window from corroboration — there is no next pass coming — and
+    /// `persist_transcript` is called inside `if update.is_final`, so a row in
+    /// `transcripts` at 21608.4 s IS a final window carrying those words. Corroboration
+    /// was not consulted.
+    ///
+    /// What is left is the numeric gate. *"…hidden in Matthew 6, 33."* parses at
+    /// **0.55**, which is `parse_reference`'s `bare_digits` value: a pair of bare
+    /// digits with no chapter or verse keyword, deliberately scored just above the
+    /// DEFAULT `auto_fire` of 0.50 and left dial-controllable. `record_feedback` moves
+    /// that bar on every confirm and dismiss, so **one dismissal of anything scoring
+    /// 0.55 or more puts the bar above every bare-digit citation for the rest of the
+    /// service.**
+    ///
+    /// **THIS BENCH CANNOT CLASSIFY THE 34, AND THAT IS WHY THE ROW ASKS FOR THE
+    /// WAV.** It feeds every line as a final, so corroboration never holds anything;
+    /// and its `Router` never receives feedback, so the bar never moves. It has
+    /// neither of the two mechanisms that can withhold a `Direct` — `Matthew 6:33`
+    /// fires here at 21608.4 s, which is the opposite of the field outcome.
+    ///
+    /// What it CAN do is bound the class: print every distinct `Direct` reference by
+    /// the best confidence the service ever gave it, so a reader can see how many sit
+    /// in the band a moved bar sweeps. **No threshold is changed by any of this**
+    /// (rule 10): the point is to know which references are one dismissal away from
+    /// silence, not to lower the gate that protects a congregation.
+    #[test]
+    #[ignore]
+    fn what_the_bar_withholds() {
+        let Ok(path) = std::env::var("RELAY_SERVICE_CORPUS") else {
+            println!("set RELAY_SERVICE_CORPUS");
+            return;
+        };
+        let body = std::fs::read_to_string(&path).expect("corpus unreadable");
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        let context = ContextMemory::default();
+        // reference → the BEST confidence any window ever gave it as a firable
+        // candidate. Best, not last: the question is whether the service ever had
+        // evidence strong enough for the gate.
+        let mut best: std::collections::BTreeMap<String, f32> = std::collections::BTreeMap::new();
+        let mut windows = 0usize;
+        for line in body
+            .lines()
+            .filter_map(|l| l.split_once('\t'))
+            .map(|(_, t)| t)
+            .filter(|t| !t.trim().is_empty())
+        {
+            windows += 1;
+            let w = candidates_for_window(line, true, &sem, &phrases, &context, None, false);
+            for c in w
+                .kept
+                .iter()
+                .filter(|c| c.method == DetectionMethod::Direct)
+            {
+                let e = best.entry(Fire::key_for(&c.r)).or_insert(0.0);
+                if c.conf > *e {
+                    *e = c.conf;
+                }
+            }
+        }
+        // The bands that matter, read off `Thresholds::from_sensitivity`: 0.50 is the
+        // default bar, 0.90 the most cautious dial and 0.30 the most eager.
+        const BARS: &[f32] = &[0.30, 0.50, 0.55, 0.60, 0.70, 0.90];
+        println!(
+            "\n  {windows} windows · {} distinct Direct references\n",
+            best.len()
+        );
+        for bar in BARS {
+            let withheld = best.values().filter(|c| **c < *bar).count();
+            println!(
+                "  auto_fire {bar:.2} → {withheld:>3} of {} withheld",
+                best.len()
+            );
+        }
+        println!("\n  EVERY DISTINCT REFERENCE, WITH ITS BEST CONFIDENCE:");
+        let mut rows: Vec<(&String, &f32)> = best.iter().collect();
+        rows.sort_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal));
+        for (key, conf) in rows {
+            println!("    {conf:.2}  {key}");
+        }
+        println!();
     }
 
     /// **WHAT THE SHORT-RUN PROBE COSTS PER WINDOW** (RG-313).
