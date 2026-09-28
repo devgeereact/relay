@@ -285,6 +285,27 @@ const DEFAULT_DEBOUNCE_MS: u64 = (crate::stt::WINDOW_SECS as u64 + 2) * 1_000;
 /// DECISIONS §37 explicitly protects — a preacher walking "verse 5 … verse 6 …
 /// verse 10" is three references and three fires, and that is correct behaviour.
 const WALL_DWELL_MS: u64 = 4_000;
+
+/// Two spellings of ONE number that differ by a single LEADING digit — `"2"` and
+/// `"12"`, `"7"` and `"17"`.
+///
+/// The measured failure is a clipped leading digit (`Router::repairs_the_wall` has
+/// the service-42 transcript), and it is the shape a dropped or absorbed spoken
+/// token leaves: "twelve" heard as "two", or the `1` of "1 Corinthians" migrating
+/// onto the chapter. A trailing or middle difference is a different number, not a
+/// clipped one — `2` and `3`, or `12` and `13`, are two citations.
+///
+/// Symmetric, because which of the two is the repair is not knowable from the
+/// strings. Empty strings and anything non-numeric answer `false`: these come from a
+/// parsed `VerseRef` today, which is the moment to write the guard rather than the
+/// reason not to.
+fn clipped_leading_digit(a: &str, b: &str) -> bool {
+    let (short, long) = if a.len() < b.len() { (a, b) } else { (b, a) };
+    !short.is_empty()
+        && long.len() == short.len() + 1
+        && long.ends_with(short)
+        && long.bytes().all(|c| c.is_ascii_digit())
+}
 /// How far a single operator decision moves the gate toward what that decision
 /// implies. Deliberately gradual — one surprising verse shouldn't reshape the
 /// gate, but a consistent pattern over a service should.
@@ -504,7 +525,15 @@ impl Router {
         // reason its own comment gives: this must hold a FIRE, never invent a
         // suggestion out of something that was going to be dropped, and never
         // restate the gate it guards.
+        //
+        // ── AND THE FLOOR ASKS ONE QUESTION: IS THIS NEW CONTENT? ────────────────
+        //
+        // A re-hearing of the citation already on the wall is not. The first version
+        // of this floor did not ask, and it cost a correct verse in the corpus it was
+        // measured against — see `repairs_the_wall`, which is the whole of the
+        // exemption and is deliberately narrow.
         if self.wall_is_too_fresh(now_ms)
+            && !self.repairs_the_wall(key)
             && self.may_reach_a_wall(method)
             && self.clears_the_bar(confidence, method)
         {
@@ -518,6 +547,95 @@ impl Router {
     fn wall_is_too_fresh(&self, now_ms: u64) -> bool {
         self.wall_changed_at
             .is_some_and(|t| now_ms.saturating_sub(t) < WALL_DWELL_MS)
+    }
+
+    /// **IS THIS THE CITATION ALREADY ON THE WALL, HEARD AGAIN WITH A DIGIT
+    /// REPAIRED?** The one thing RG-321's dwell floor stands aside for.
+    ///
+    /// ── The measurement that forced it ──────────────────────────────────────────
+    ///
+    /// Service 42, 2026-09-27, two consecutive windows 1.2 s apart:
+    ///
+    /// ```text
+    /// 3657.2  1 Corinthians, 2, 7.                              -> 1 Corinthians 2:7
+    /// 3658.4  1 Corinthians, 12, 7 What do you manifest in the  -> 1 Corinthians 12:7
+    /// ```
+    ///
+    /// `2:7` is one of that service's five WRONG verses — the decoder dropped the
+    /// leading `1` of `12`, which in a numbered book is the book's own `1` sitting
+    /// right beside the chapter. `12:7` is what the preacher cited. Before the floor
+    /// existed both fired and the congregation was left looking at the right one;
+    /// with the floor and without this exemption the mishear arrived first, was
+    /// protected for four seconds, and **the correction was silently withheld** —
+    /// measured on the real corpus as the single auto-fire lost, 156 -> 155. A floor
+    /// that makes a misheard citation self-shielding is strictly worse than the 2.5 s
+    /// harm it was written for.
+    ///
+    /// ── Why this shape, and why not a wider one ─────────────────────────────────
+    ///
+    /// The floor asks ONE question: is this new content competing for a
+    /// congregation's reading time? A second reading of the same citation is not, so
+    /// the floor has nothing to say about it and what happens next is `decide`'s
+    /// business — **exactly as it was before the floor existed**. That is the safety
+    /// argument and it is worth stating plainly: whatever this exemption lets
+    /// through is what shipped at the revision before the floor, narrowed to a
+    /// one-digit repair. It cannot reopen the 2.5 s harm, because `Daniel 9:2` and
+    /// `Hebrews 13:7` are two citations however confident either is.
+    ///
+    /// It is emphatically NOT "anything better may replace". No threshold moves and
+    /// no method gains power (rule 10): the caller still asks `may_reach_a_wall` and
+    /// `clears_the_bar`, so this only skips the WAIT, the way `is_final` skips the
+    /// corroboration wait. And it sits after the corroboration check, never before,
+    /// so a reference out of a PARTIAL window still has to be heard twice before it
+    /// may reach a wall (rule 34).
+    ///
+    /// A different BOOK is refused here on purpose. That case already has a rule —
+    /// `decide`'s `heard_another_way`, the `Numbers 10:29` / `Genesis 10:29` pair of
+    /// 2026-09-20 — and it deliberately OFFERS rather than fires, because with the
+    /// chapter and verse agreeing and the book not, nothing here can tell which
+    /// reading is right. Two rules answering one question is how they come to
+    /// disagree.
+    ///
+    /// **Symmetric, deliberately.** Which of the two readings is the repair is not
+    /// knowable from here: a clipped "twelve" and a `1` migrating off the book name
+    /// are both real, and nothing has measured which way round it goes. So this does
+    /// not claim to know — it answers only whether the two are one citation heard
+    /// twice. The cost is that a mishear arriving second may replace a correct
+    /// reading inside the floor; that is what shipped before the floor, it is not a
+    /// regression, and it is RG-305/RG-319's job to stop a contradicted mishear
+    /// firing at all. This one cannot and must not pretend to.
+    ///
+    /// Bounded without needing to count: the per-reference cooldown means each of the
+    /// two readings may fire at most once per `debounce_ms`, so a pair can swap over
+    /// at most once inside a floor rather than flickering.
+    fn repairs_the_wall(&self, key: &str) -> bool {
+        let Some(wall) = self.last_wall.as_deref() else {
+            return false;
+        };
+        // The SAME reference is not a repair of itself — that is the cooldown's
+        // question, and answering it here would hand a repeat verse a second fire.
+        if wall == key {
+            return false;
+        }
+        // `rsplit_once(' ')` because a book name has spaces in it ("1 Corinthians",
+        // "Song of Solomon"); the same split `decide` already uses on these keys.
+        let (Some((wall_book, wall_ref)), Some((book, reference))) =
+            (wall.rsplit_once(' '), key.rsplit_once(' '))
+        else {
+            return false;
+        };
+        if wall_book != book {
+            return false;
+        }
+        let (Some((wall_ch, wall_v)), Some((ch, v))) =
+            (wall_ref.split_once(':'), reference.split_once(':'))
+        else {
+            return false;
+        };
+        // EXACTLY ONE of the two numbers may differ. Both differing is a different
+        // citation however neatly the digits line up.
+        (wall_ch == ch) != (wall_v == v)
+            && (clipped_leading_digit(wall_ch, ch) || clipped_leading_digit(wall_v, v))
     }
 
     /// Record that `key` was read out of the current window. Returns whether it had
@@ -2239,5 +2357,141 @@ mod the_dwell_floor {
             r.decide_live("Hebrews 13:7", 0.95, DIRECT, 0, true),
             RouteDecision::AutoFire
         );
+    }
+
+    // ── THE ONE EXEMPTION, AND ITS EDGES ────────────────────────────────────────
+    //
+    // `Router::repairs_the_wall` carries the measurement and the reasoning. These
+    // hold its boundary, because the way an exemption like this fails is by widening
+    // one case at a time until the floor means nothing.
+
+    /// **THE FIELD CASE.** `1 Corinthians 2:7` on the wall, `1 Corinthians 12:7`
+    /// heard 1.2 s later: one citation heard twice, so the floor stands aside.
+    #[test]
+    fn a_rehearing_of_the_citation_on_the_wall_is_not_held() {
+        let mut r = Router::default();
+        r.note_wall("1 Corinthians 2:7", 0);
+        assert_eq!(
+            r.decide_live("1 Corinthians 12:7", 0.95, DIRECT, 1_200, true),
+            RouteDecision::AutoFire,
+            "a misheard citation shielded itself against its own correction"
+        );
+    }
+
+    /// …and the mirror, because the exemption is symmetric and does not claim to
+    /// know which reading is the repair.
+    #[test]
+    fn the_rehearing_is_recognised_in_both_directions() {
+        let mut r = Router::default();
+        r.note_wall("1 Corinthians 12:7", 0);
+        assert_eq!(
+            r.decide_live("1 Corinthians 2:7", 0.95, DIRECT, 1_200, true),
+            RouteDecision::AutoFire
+        );
+    }
+
+    /// A repaired VERSE is the same case as a repaired chapter.
+    #[test]
+    fn a_verse_that_lost_its_leading_digit_is_a_rehearing_too() {
+        let mut r = Router::default();
+        r.note_wall("Psalms 119:5", 0);
+        assert_eq!(
+            r.decide_live("Psalms 119:15", 0.95, DIRECT, 1_200, true),
+            RouteDecision::AutoFire
+        );
+    }
+
+    /// **THE EXEMPTION IS NOT "ANYTHING BETTER MAY REPLACE".** An adjacent chapter is
+    /// a second citation, not a second hearing of the first, and it waits.
+    #[test]
+    fn a_neighbouring_chapter_is_a_second_citation_and_still_waits() {
+        let mut r = Router::default();
+        r.note_wall("1 Corinthians 2:7", 0);
+        assert_eq!(
+            r.decide_live("1 Corinthians 3:7", 0.95, DIRECT, 1_200, true),
+            RouteDecision::Suggest
+        );
+        // Neither does a number that differs at the END rather than the front.
+        assert_eq!(
+            r.decide_live("1 Corinthians 21:7", 0.95, DIRECT, 1_300, true),
+            RouteDecision::Suggest,
+            "`21` is not `2` with a digit in front of it"
+        );
+    }
+
+    /// Both numbers differing is a different citation however neatly the digits line
+    /// up.
+    #[test]
+    fn both_numbers_differing_is_never_a_rehearing() {
+        let mut r = Router::default();
+        r.note_wall("1 Corinthians 2:7", 0);
+        assert_eq!(
+            r.decide_live("1 Corinthians 12:17", 0.95, DIRECT, 1_200, true),
+            RouteDecision::Suggest
+        );
+    }
+
+    /// **A DIFFERENT BOOK IS NOT THIS RULE'S QUESTION.** `decide`'s
+    /// `heard_another_way` already owns the `Numbers 10:29` / `Genesis 10:29` pair and
+    /// deliberately OFFERS rather than fires, because nothing can tell which reading
+    /// is right. Answering it here as well is how two rules come to disagree.
+    #[test]
+    fn a_different_book_is_left_to_the_rule_that_already_owns_it() {
+        let mut r = Router::default();
+        r.note_wall("Numbers 10:29", 0);
+        assert_eq!(
+            r.decide_live("Genesis 10:29", 0.88, DIRECT, 1_200, true),
+            RouteDecision::Suggest
+        );
+    }
+
+    /// **THE EXEMPTION MAY NOT REACH PAST THE CORROBORATION RULE (rule 34).** It
+    /// skips the dwell WAIT and nothing else, so a repair read out of a PARTIAL
+    /// window still has to be heard twice before it may reach a wall.
+    #[test]
+    fn a_rehearing_out_of_a_partial_window_still_waits_for_a_second_pass() {
+        let mut r = Router::default();
+        r.note_wall("1 Corinthians 2:7", 0);
+        assert_eq!(
+            r.decide_live("1 Corinthians 12:7", 0.95, DIRECT, 1_200, false),
+            RouteDecision::Suggest,
+            "a partial window's repair fired on first sight"
+        );
+        assert_eq!(
+            r.decide_live("1 Corinthians 12:7", 0.95, DIRECT, 1_400, false),
+            RouteDecision::AutoFire
+        );
+    }
+
+    /// And it promotes nothing: below the bar is still a drop, exempt or not.
+    #[test]
+    fn a_rehearing_below_the_bar_is_still_dropped() {
+        let mut r = Router::default();
+        r.note_wall("1 Corinthians 2:7", 0);
+        assert_eq!(
+            r.decide_live("1 Corinthians 12:7", 0.10, DIRECT, 1_200, true),
+            RouteDecision::Drop
+        );
+    }
+
+    /// The digit test itself, at its edges — the predicate the whole exemption rests
+    /// on, so it is asserted rather than inferred from the cases above.
+    #[test]
+    fn the_digit_test_accepts_only_a_single_leading_digit() {
+        assert!(clipped_leading_digit("2", "12"));
+        assert!(clipped_leading_digit("12", "2"));
+        assert!(clipped_leading_digit("5", "15"));
+        assert!(!clipped_leading_digit("2", "2"), "equal is not a repair");
+        assert!(!clipped_leading_digit("2", "3"), "a different digit");
+        assert!(
+            !clipped_leading_digit("2", "21"),
+            "the digit went on the END"
+        );
+        assert!(!clipped_leading_digit("2", "112"), "two digits, not one");
+        assert!(
+            !clipped_leading_digit("", "1"),
+            "an empty number is not a number"
+        );
+        assert!(!clipped_leading_digit("x", "1x"), "not a number at all");
     }
 }

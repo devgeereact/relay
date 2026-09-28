@@ -2159,6 +2159,70 @@ fn the_floor_never_delays_a_fire_the_operator_made() {
     );
 }
 
+/// **A MISHEARD CITATION MAY NOT SHIELD ITSELF AGAINST ITS OWN CORRECTION.**
+///
+/// Service 42, 2026-09-27, verbatim from `transcripts` — two consecutive windows,
+/// 1.2 s apart:
+///
+/// ```text
+/// 3657.2  1 Corinthians, 2, 7.
+/// 3658.4  1 Corinthians, 12, 7 What do you manifest in the
+/// ```
+///
+/// `1 Corinthians 2:7` is **one of the five wrong verses of that service**: the
+/// decoder dropped the leading `1` of `12`, which in a numbered book is the book's
+/// own `1` sitting right next to the chapter. `1 Corinthians 12:7` is what the
+/// preacher cited, and its words are in the very same window (*"what do you
+/// manifest"* against *"the manifestation of the Spirit is given to every man to
+/// profit withal"*).
+///
+/// The first version of the dwell floor made this **worse than the 2.5 s harm it
+/// was written for**: the mishear arrived first, the floor protected it for four
+/// seconds, and the correction was silently withheld — measured on the real corpus
+/// as the one auto-fire lost, 156 → 155.
+///
+/// So the floor asks whether a candidate is NEW CONTENT competing for reading time,
+/// and a re-hearing of the citation already on the wall is not. See
+/// `Router::repairs_the_wall` for how narrowly that is defined and why it may not
+/// become "anything better may replace".
+///
+/// **It deliberately does not assert that the mishear fired.** RG-305 and RG-319 are
+/// about exactly this window — a misheard chapter firing at 0.95 with the
+/// contradiction in the same breath — and a fix there may legitimately stop
+/// `1 Corinthians 2:7` reaching a screen at all. The claim here is the one the floor
+/// owns: **whatever else happens, the corrected verse is what the congregation is
+/// left looking at.** That fails on the pre-fix branch, where the wall ends on the
+/// mishear.
+#[test]
+fn a_misheard_chapter_corrected_in_the_next_breath_still_reaches_the_wall() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    let t0 = router_clock_ms();
+    emit_detections(&h, "1 Corinthians, 2, 7.", t0, true, None);
+    settle();
+    emit_detections(
+        &h,
+        "1 Corinthians, 12, 7 What do you manifest in the",
+        t0 + 1_200,
+        true,
+        None,
+    );
+    settle();
+
+    let shown = wall.references();
+    assert!(
+        shown.contains(&"1 Corinthians 12:7".to_string()),
+        "the verse the preacher cited never reached the wall: {shown:?}"
+    );
+    assert_eq!(
+        shown.last().map(String::as_str),
+        Some("1 Corinthians 12:7"),
+        "the congregation was left looking at the mishear: {shown:?}"
+    );
+}
+
 // ── THE INSTRUMENT ITSELF ─────────────────────────────────────────────────────
 //
 // A latency report is only as true as its wiring, and wiring is exactly the class
