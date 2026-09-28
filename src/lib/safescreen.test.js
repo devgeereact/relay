@@ -139,7 +139,13 @@ describe('the gate is at the one door, not at the callers', () => {
     // That would be the console reporting a success it did not achieve, in a new
     // place (DECISIONS §20).
     const main = read('src-tauri/src/main.rs');
-    expect(main).toMatch(/broadcast_with_clock\(handle, fire\.output\(\)\)\.is_err\(\)/);
+    // The ARGUMENT LIST is not the claim. This pinned the arity as well, so adding
+    // `gate_clock_ms` to the door (RG-321 — one clock, see `hardrules.test.js`) broke
+    // it while the guarantee it is about was untouched. A scan that fails on a
+    // signature change teaches the next person to loosen it, and the one after that
+    // to delete it. What must hold is that THIS call, on the manual path, is the one
+    // guarded by `is_err()` before any `detection://match` goes out.
+    expect(main).toMatch(/broadcast_with_clock\(handle, fire\.output\(\)(?:,[^)]*)?\)\.is_err\(\)/);
   });
 
   it('the panic controls do not pass through it at all', () => {

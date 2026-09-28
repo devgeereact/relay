@@ -544,9 +544,17 @@ impl Router {
 
     /// Has something reached the screens too recently for anything to replace it
     /// unattended? `false` when the wall is empty — there is nothing to protect.
+    ///
+    /// **`now_ms >= t` is load-bearing and is not a defensive nicety.** Both readings
+    /// have to be on one clock for their difference to be an age at all, and
+    /// `saturating_sub` hides the case where they are not: it answers **0**, which
+    /// reads as *"the wall changed this instant"* — the strongest possible hold — for a
+    /// pair of numbers that cannot be compared. Rule 31 records the same mistake in the
+    /// latency report: a stage never reached is an absence, never a zero. See
+    /// `the_dwell_floor::a_clock_reading_that_precedes_the_stamp_is_not_an_age`.
     fn wall_is_too_fresh(&self, now_ms: u64) -> bool {
         self.wall_changed_at
-            .is_some_and(|t| now_ms.saturating_sub(t) < WALL_DWELL_MS)
+            .is_some_and(|t| now_ms >= t && now_ms - t < WALL_DWELL_MS)
     }
 
     /// **IS THIS THE CITATION ALREADY ON THE WALL, HEARD AGAIN WITH A DIGIT
@@ -2345,6 +2353,35 @@ mod the_dwell_floor {
         assert_eq!(
             r.decide_live("Hebrews 13:7", 0.99, DetectionMethod::Semantic, 1_000, true),
             RouteDecision::Suggest
+        );
+    }
+
+    /// **AN AGE IS ONLY AN AGE WHEN BOTH READINGS ARE ON ONE CLOCK**, and this is the
+    /// bug that nearly shipped inside the fix above.
+    ///
+    /// The floor's first version stamped the wall with `router_clock_ms()` read at the
+    /// content door while the gate was handed whatever `now_ms` its caller injected.
+    /// In production those are the same function, so it was correct — and every other
+    /// timed rule in this module (`fired_at`, `sighted_at`) measures on the INJECTED
+    /// clock, so the floor was the one rule reading a clock of its own. Anywhere the
+    /// two readings differed, `saturating_sub` turned an incomparable pair into **0**
+    /// — *"the wall changed this instant"* — and held a verse the preacher had named
+    /// half a minute later. That is rule 31's lesson in a new costume: a value nobody
+    /// can compute is an ABSENCE, not a zero.
+    ///
+    /// The clock is threaded to the door now, so this cannot arise from Relay's own
+    /// paths. The guard stays anyway, because it is the honest reading of the
+    /// comparison rather than a workaround for one caller: a reading that precedes the
+    /// stamp says nothing about how long the wall has been up, and the floor must then
+    /// hold nothing rather than hold everything.
+    #[test]
+    fn a_clock_reading_that_precedes_the_stamp_is_not_an_age() {
+        let mut r = Router::default();
+        r.note_wall("Psalms 23:1", 40_000);
+        assert_eq!(
+            r.decide_live("Romans 8:28", 0.95, DIRECT, 30_000, true),
+            RouteDecision::AutoFire,
+            "a reading behind the stamp was read as 'the wall changed this instant'"
         );
     }
 

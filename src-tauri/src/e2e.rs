@@ -182,7 +182,7 @@ fn a_cue_carrying_a_broken_template_does_not_reach_the_wall() {
         ..Default::default()
     };
     assert!(
-        broadcast_with_clock(&h, bad).is_err(),
+        broadcast_with_clock(&h, bad, router_clock_ms()).is_err(),
         "a template the output page cannot parse must not go out"
     );
     settle();
@@ -1661,6 +1661,7 @@ fn r2_a_payload_that_forgot_its_kind_still_disarms_the_passage() {
             text: Some("The hall is open after the service".into()),
             ..Default::default()
         },
+        router_clock_ms(),
     )
     .expect("a payload with a reference and text is not an empty screen");
     settle();
@@ -2005,10 +2006,13 @@ fn two_references_in_one_window_put_one_verse_on_the_wall() {
 // wall have disagreed before — `note_wall` exists because the first version of the
 // passage guard recorded a verse the gate approved and rule 29 never showed.
 //
-// The clock: `emit_detections` is handed `router_clock_ms()` in production and the
-// content door stamps the wall with the same function, so these tests rebase the
-// field timestamps onto this process's clock rather than starting from zero. Two
-// clocks here would be measuring skew instead of a floor.
+// The clock: `emit_detections` hands the gate its `now_ms` and `broadcast_with_clock`
+// is handed the SAME reading (`gate_clock_ms`), so these tests can state a plain
+// timeline in milliseconds and mean it. An earlier version of the floor took its own
+// reading of `router_clock_ms()` at the door, which made every one of these tests —
+// and one pre-existing test that had nothing to do with the floor — depend on how
+// long the fixture happened to take and on which other tests had already run. See
+// `router::the_dwell_floor::a_clock_reading_that_precedes_the_stamp_is_not_an_age`.
 
 /// **THE FIELD PAIR, end to end.** `Daniel 9:2` at 21760.4 s and `Hebrews 13:7` at
 /// 21762.9 s, service 42, 2026-09-27. Both correct, both cited in consecutive
@@ -2026,7 +2030,10 @@ fn two_verses_in_consecutive_breaths_reach_the_wall_no_closer_than_the_floor() {
     let h = app.handle().clone();
     let wall = Wall::watch(&h);
 
-    let t0 = router_clock_ms();
+    // Plain numbers on ONE clock: `emit_detections` is handed this timeline and the
+    // content door is handed the same reading (`gate_clock_ms`), so the floor measures
+    // what this test says it measures rather than however long the fixture took.
+    let t0 = 0u64;
     emit_detections(
         &h,
         "let us read from Daniel chapter 9 verse 2",
@@ -2090,7 +2097,10 @@ fn a_cleared_wall_puts_no_floor_in_front_of_the_next_verse() {
     let h = app.handle().clone();
     let wall = Wall::watch(&h);
 
-    let t0 = router_clock_ms();
+    // Plain numbers on ONE clock: `emit_detections` is handed this timeline and the
+    // content door is handed the same reading (`gate_clock_ms`), so the floor measures
+    // what this test says it measures rather than however long the fixture took.
+    let t0 = 0u64;
     emit_detections(
         &h,
         "let us read from Daniel chapter 9 verse 2",
@@ -2131,7 +2141,10 @@ fn the_floor_never_delays_a_fire_the_operator_made() {
     let h = app.handle().clone();
     let wall = Wall::watch(&h);
 
-    let t0 = router_clock_ms();
+    // Plain numbers on ONE clock: `emit_detections` is handed this timeline and the
+    // content door is handed the same reading (`gate_clock_ms`), so the floor measures
+    // what this test says it measures rather than however long the fixture took.
+    let t0 = 0u64;
     emit_detections(
         &h,
         "let us read from Daniel chapter 9 verse 2",
@@ -2199,7 +2212,10 @@ fn a_misheard_chapter_corrected_in_the_next_breath_still_reaches_the_wall() {
     let h = app.handle().clone();
     let wall = Wall::watch(&h);
 
-    let t0 = router_clock_ms();
+    // Plain numbers on ONE clock: `emit_detections` is handed this timeline and the
+    // content door is handed the same reading (`gate_clock_ms`), so the floor measures
+    // what this test says it measures rather than however long the fixture took.
+    let t0 = 0u64;
     emit_detections(&h, "1 Corinthians, 2, 7.", t0, true, None);
     settle();
     emit_detections(
