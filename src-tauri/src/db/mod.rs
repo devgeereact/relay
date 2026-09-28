@@ -3429,6 +3429,329 @@ mod tests {
         assert!(object_present(&conn, "detections.heard_text").unwrap());
     }
 
+    /// **RG-326 · A DATABASE BUILT FROM THE OLDEST SCHEMA RELAY CLAIMS TO
+    /// UPGRADE FROM MUST ACTUALLY UPGRADE.**
+    ///
+    /// The two tests above both start from `init_fresh` — today's `schema.sql` —
+    /// and then make it *look* old, either by dropping the columns an `ALTER` is
+    /// responsible for or by re-creating one table by hand. That is a simulation
+    /// of an old database, and a good one, but it can only ever remove what
+    /// somebody thought to name. It cannot notice a SEED in
+    /// `baseline_forward_fill` that writes a column the real old schema never
+    /// had, because the simulated database still carries every other column of
+    /// today's.
+    ///
+    /// `docs/data/schema-baseline.sql` is the real thing, and until this test
+    /// existed **nothing anywhere ran `migrate` against it**. Its first run failed
+    /// inside `seed_channels` with `table output_channels has no column named
+    /// role` — a hard error out of `migrate`, before the window is shown, on the
+    /// one path a church already running Relay takes. The app would not start, and
+    /// there would be no screen on which to say why.
+    ///
+    /// This is also the §27 launch-gate row *"a database from a released build
+    /// survives the corpus repair"*, which had never been done.
+    fn baseline_db() -> Connection {
+        const BASELINE: &str = include_str!("../../../docs/data/schema-baseline.sql");
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(BASELINE).unwrap();
+        // A pre-versioning database is v0 BY DEFINITION — SQLite's default for a
+        // file nothing has stamped. Asserted rather than set, so this fixture
+        // cannot drift into exercising the `else` arm of `migrate` by accident.
+        assert_eq!(
+            user_version(&conn).unwrap(),
+            0,
+            "the baseline must take the v0 arm of `migrate`"
+        );
+        conn
+    }
+
+    fn table_names(conn: &Connection) -> Vec<String> {
+        let mut v: Vec<String> = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn a_database_from_the_oldest_schema_upgrades_instead_of_failing_at_boot() {
+        let conn = baseline_db();
+
+        // Preconditions, stated rather than assumed: this is what "old" means.
+        assert!(
+            !object_present(&conn, "output_channels.role").unwrap(),
+            "precondition: the baseline has no output_channels.role"
+        );
+        let seeded: i64 = conn
+            .query_row("SELECT COUNT(*) FROM output_channels", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(seeded, 0, "precondition: the baseline seeds no channels");
+
+        // THE REAL BOOT PATH. `open()` differs from this only by the file.
+        migrate(&conn, false).expect(
+            "a pre-versioning database must upgrade — this is the boot path every \
+             existing install takes, and a failure here is an app that does not start",
+        );
+
+        assert_eq!(
+            user_version(&conn).unwrap(),
+            SCHEMA_VERSION,
+            "an upgraded database must be stamped, or it re-runs the v0 sniffs for ever"
+        );
+
+        // The seed DID happen, and the column it wanted is there carrying the
+        // roles a fresh install would have. Either candidate fix has to satisfy
+        // both halves: a seed that silently wrote no rows passes a column check
+        // on its own.
+        let names: Vec<String> = conn
+            .prepare("SELECT name FROM output_channels ORDER BY id")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(
+            names,
+            vec![
+                "Main screen".to_string(),
+                "Stage display".to_string(),
+                "Streaming".to_string(),
+                "Lobby screen".to_string(),
+            ],
+            "the four default screens must reach an upgraded install"
+        );
+        let main: Option<String> = conn
+            .query_row(
+                "SELECT role FROM output_channels WHERE name = 'Main screen'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            main.as_deref(),
+            Some("main"),
+            "an upgraded install must know which screen is the wall"
+        );
+        let stage: Option<String> = conn
+            .query_row(
+                "SELECT role FROM output_channels WHERE name = 'Stage display'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(stage.as_deref(), Some("stage"));
+        let roled: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM output_channels WHERE role IS NOT NULL",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(roled, 2, "Streaming and the lobby TV carry no role");
+
+        // Every object the Database Migration screen advertises, on the oldest
+        // database there is — not only the ones a hand-written list remembered.
+        let (_, _, rows) = schema_report(&conn).unwrap();
+        let missing: Vec<&str> = rows
+            .iter()
+            .filter(|(_, _, present)| !present)
+            .map(|(_, t, _)| *t)
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "upgrading the oldest database leaves these objects absent: {missing:?}"
+        );
+    }
+
+    /// …AND IT IS RETRYABLE (rule 25). A migration that only works on a database
+    /// nothing has half-migrated is not retryable, and the scar this rule is named
+    /// for — a leftover `detections_new` that failed every subsequent boot, for
+    /// ever, before the window was shown — came from exactly that.
+    #[test]
+    fn upgrading_the_oldest_database_is_retryable_and_idempotent() {
+        let conn = baseline_db();
+        migrate(&conn, false).expect("first upgrade");
+        let after_first = table_names(&conn);
+
+        // A second boot of an already-upgraded database is a no-op, not an error,
+        // and must not double-seed.
+        migrate(&conn, false).expect("re-booting an upgraded database");
+        let channels: i64 = conn
+            .query_row("SELECT COUNT(*) FROM output_channels", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(channels, 4, "the second boot re-seeded the screens");
+        assert_eq!(
+            after_first,
+            table_names(&conn),
+            "the second boot changed the schema"
+        );
+
+        // AND THE INTERRUPTED CASE. A boot that died after the v0 sniffs ran but
+        // before the version was stamped comes back as v0 with the work already
+        // done. It must take the whole v0 path again rather than fail on what is
+        // already there.
+        set_user_version(&conn, 0).unwrap();
+        migrate(&conn, false).expect(
+            "a database whose first upgrade died before the version was stamped must \
+             be able to take the whole v0 path again",
+        );
+        let channels: i64 = conn
+            .query_row("SELECT COUNT(*) FROM output_channels", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(channels, 4, "the retry re-seeded the screens");
+        assert!(
+            !table_names(&conn).iter().any(|t| t.ends_with("_new")),
+            "a scratch table survived a retry — rule 25's exact failure"
+        );
+    }
+
+    /// **§27 · A DATABASE FROM A RELEASED BUILD SURVIVES THE CORPUS REPAIR.**
+    ///
+    /// The launch-gate row, and the reason the two tests above are not enough on
+    /// their own: an EMPTY baseline takes the *seed* branch of every sniff in
+    /// `baseline_forward_fill`, and a church's database takes the *other* branch of
+    /// each one. `kjv_id` returns `None` on an empty database, so the corpus repair
+    /// — the single most destructive thing in the whole function, a `DELETE FROM
+    /// verses` and a 31,102-row re-import — is skipped entirely and never once
+    /// exercised against the oldest schema.
+    ///
+    /// So this builds what a released build actually left behind: the baseline
+    /// schema, a KJV, verses in the old short numbering, the four screens already
+    /// present with no `role`, the built-in templates in the pre-cqw `vw` format,
+    /// and one recorded service whose detection points at a verse. Every sniff
+    /// therefore takes its non-empty branch, `ensure_channel_role` reaches its
+    /// BACK-FILL rather than the seed, and the service record has something to
+    /// lose.
+    #[test]
+    fn a_released_build_database_survives_the_corpus_repair() {
+        let conn = baseline_db();
+
+        // A KJV with the old, short, WRONGLY-NUMBERED corpus. Two verses is
+        // enough: the sniff is `count != 31_102`, so any number but that one takes
+        // the repair branch.
+        conn.execute(
+            "INSERT INTO translations (id, name, abbreviation, language, license_type)
+             VALUES (1, 'King James Version', 'KJV', 'en', 'public domain')",
+            [],
+        )
+        .unwrap();
+        conn.execute_batch(
+            "INSERT INTO verses (id, translation_id, book, chapter, verse, text)
+               VALUES (1, 1, 'John', 3, 16, 'the words that used to be here'),
+                      (2, 1, 'Romans', 8, 28, 'and these');
+             INSERT INTO services (id, date, title) VALUES (1, '2026-01-04', 'Morning');
+             INSERT INTO transcripts (id, service_id, timestamp, text, language)
+               VALUES (1, 1, 12.5, 'for god so loved the world', 'en');
+             INSERT INTO detections (id, transcript_id, verse_id, method, confidence, status, fired_at)
+               VALUES (1, 1, 1, 'direct', 0.91, 'auto', 13.0);",
+        )
+        .unwrap();
+
+        // The built-in templates as the old seed wrote them — sizes in `vw`, which
+        // is what `reset_builtin_templates` exists to correct, and the four screens
+        // already pointing at them with NO role column at all.
+        conn.execute_batch(
+            "INSERT INTO templates (id, name, region_config_json, style_json) VALUES
+               (1, 'Full Screen', '{\"regions\":[\"verse_text\",\"reference\"]}', '{\"verseSize\":\"4.6vw\"}'),
+               (2, 'Lower Third', '{\"regions\":[\"verse_text\",\"reference\"],\"align\":\"left\",\"lowerThird\":true}', '{\"verseSize\":\"3.0vw\"}'),
+               (3, 'Stage', '{\"regions\":[\"verse_text\"]}', '{\"verseSize\":\"5.0vw\"}'),
+               (4, 'Lobby Warm', '{\"regions\":[\"verse_text\"]}', '{\"verseSize\":\"4.0vw\"}');
+             INSERT INTO output_channels (id, name, render_target, template_id, display_target, status) VALUES
+               (1, 'Main screen',   'native_window',  1, '0',  'offline'),
+               (2, 'Stage display', 'network_client', 2, NULL, 'offline'),
+               (3, 'Streaming',     'network_client', 3, NULL, 'offline'),
+               (4, 'Lobby screen',  'network_client', 4, NULL, 'offline');",
+        )
+        .unwrap();
+
+        migrate(&conn, false).expect(
+            "a database from a released build must survive the whole v0 path — §27's \
+             launch-gate row, and the one shape no test reached",
+        );
+
+        // The corpus repair ran, and it ran to completion.
+        let verses: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM verses WHERE translation_id = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(verses, 31_102, "the corpus repair did not complete");
+
+        // …and the service record kept its reference across the re-import. Nulling
+        // `verse_id` is how the DELETE gets past the foreign key; leaving it null
+        // is silent loss of every reference in every service ever recorded.
+        let restored: Option<String> = conn
+            .query_row(
+                "SELECT v.book || ' ' || v.chapter || ':' || v.verse
+                   FROM detections d JOIN verses v ON v.id = d.verse_id WHERE d.id = 1",
+                [],
+                |r| r.get(0),
+            )
+            .optional()
+            .unwrap();
+        assert_eq!(
+            restored.as_deref(),
+            Some("John 3:16"),
+            "the repair lost what a past service fired"
+        );
+
+        // The BACK-FILL branch of `ensure_channel_role`, not the seed: the rows
+        // were already there, so the column was added under them and the two
+        // roles recognised by name.
+        let roles: Vec<(String, Option<String>)> = conn
+            .prepare("SELECT name, role FROM output_channels ORDER BY id")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(
+            roles,
+            vec![
+                ("Main screen".to_string(), Some("main".to_string())),
+                ("Stage display".to_string(), Some("stage".to_string())),
+                ("Streaming".to_string(), None),
+                ("Lobby screen".to_string(), None),
+            ],
+            "an upgraded install must know which screen is the wall and which is the platform"
+        );
+        let channels: i64 = conn
+            .query_row("SELECT COUNT(*) FROM output_channels", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(channels, 4, "the upgrade seeded a second set of screens");
+
+        // Nothing the migration screen advertises is absent, and the file is
+        // stamped so none of the above runs a second time.
+        let (_, _, rows) = schema_report(&conn).unwrap();
+        let missing: Vec<&str> = rows
+            .iter()
+            .filter(|(_, _, present)| !present)
+            .map(|(_, t, _)| *t)
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "objects absent after upgrading: {missing:?}"
+        );
+        assert_eq!(user_version(&conn).unwrap(), SCHEMA_VERSION);
+
+        // And booting it again is a no-op.
+        migrate(&conn, false).expect("second boot");
+        let verses: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM verses WHERE translation_id = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(verses, 31_102);
+    }
+
     /// Every object the Database Migration screen claims must actually be
     /// reachable by the migration path an existing install takes. A rung added to
     /// the v0-only branch passes every other test in this file and ships broken.
