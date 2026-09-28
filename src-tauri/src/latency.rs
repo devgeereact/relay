@@ -132,6 +132,16 @@ pub enum Stage {
     /// The OLDEST audio still waiting to be transcribed reached the STT worker.
     /// Not the newest — see the STT worker, which explains why measuring from the
     /// freshest chunk in a batch describes the word that waited least.
+    ///
+    /// **"Still waiting to be transcribed" means it is in a window** (RG-137). Audio
+    /// that never enters one is never transcribed, so it was never waiting for
+    /// anything: room tone before anybody speaks is skipped outright, and the
+    /// overlapping half of every chunk is already in the window. The worker used to
+    /// stamp this from the first chunk of the first batch after a decode, whichever
+    /// of those it was, and that stamp then survived every batch that produced no
+    /// decode — so a quiet church pinned it to the start of the silence. Measured on
+    /// real church audio through the real worker: **107,801 ms** on a pass whose
+    /// window held 1,000 ms of audio and whose decode took 797 ms. Nothing waited.
     AudioReceived,
     /// The voice gate opened the utterance this pass belongs to.
     VoiceDetected,
@@ -184,6 +194,17 @@ impl Stage {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Metric {
+    /// Audio in the worker → whisper's decode BEGAN. The queue in front of the
+    /// decoder, and nothing else.
+    ///
+    /// RG-137. `audio_to_partial_transcript` is this plus `stt_decode`, and for a
+    /// year the report carried the sum and both addends were not separable: a
+    /// 28,650 ms worst case sat beside a 9,326 ms worst decode and no number said
+    /// which of the two it was, so the finding cost two full replays and was still
+    /// open. Whatever holds the worker between one decode and the next — a slow
+    /// hand-off, a blocked queue, a machine that went away — arrives here, on the
+    /// NEXT pass, because the worker cannot start a decode while it is held.
+    AudioToStt,
     /// Audio in the worker → transcript emitted by Rust.
     AudioToPartial,
     /// Audio in the worker → transcript painted on the console.
@@ -196,6 +217,20 @@ pub enum Metric {
     SpeechToScripture,
     /// How long whisper's blocking decode took.
     Decode,
+    /// How long the worker spent HANDING THE TRANSCRIPT ON before it could look at
+    /// the microphone again — the `stt://transcript` emit and the hand-off to the
+    /// detection queue, measured on the decoder's own thread.
+    ///
+    /// RG-137. Rule 33 says the decoder decodes and nothing else runs on its
+    /// thread, with one named exception: that emit. The exception is deliberate and
+    /// it is also the one piece of the pass that no latency metric could see —
+    /// `partial_transcript` is stamped BEFORE it, on purpose (rule 31: a transcript
+    /// stamp taken after the downstream work folds that work into "how long whisper
+    /// took"), so the cost landed in the NEXT pass's queue wait and was
+    /// indistinguishable there from a slow microphone. A hand-off that blocks is a
+    /// decoder that is not decoding, and rule 33's own exception has to be
+    /// measurable or it is a promise nobody is keeping.
+    Handoff,
     /// Wall time between one transcript and the next, WITHIN an utterance — the
     /// cadence, which is what an operator perceives as "is it keeping up". The gap
     /// after a closed utterance is a person not talking, and is excluded.
@@ -203,18 +238,22 @@ pub enum Metric {
 }
 
 impl Metric {
-    pub const ALL: [Metric; 7] = [
+    pub const ALL: [Metric; 9] = [
+        Metric::AudioToStt,
         Metric::AudioToPartial,
         Metric::AudioToVisible,
         Metric::TranscriptToReference,
         Metric::ReferenceToFire,
         Metric::SpeechToScripture,
         Metric::Decode,
+        Metric::Handoff,
         Metric::Cadence,
     ];
 
     pub fn label(self) -> &'static str {
         match self {
+            Metric::AudioToStt => "audio_waiting_for_decoder",
+            Metric::Handoff => "transcript_handoff",
             Metric::AudioToPartial => "audio_to_partial_transcript",
             Metric::AudioToVisible => "audio_to_visible_transcript",
             Metric::TranscriptToReference => "transcript_to_reference_detection",
@@ -230,6 +269,7 @@ impl Metric {
     /// `TranscriptToReference`, and that is an absence, never a zero.
     fn span(self, t: &Trace) -> Option<u64> {
         let (a, b) = match self {
+            Metric::AudioToStt => (Stage::AudioReceived, Stage::SttStarted),
             Metric::AudioToPartial => (Stage::AudioReceived, Stage::PartialTranscript),
             Metric::AudioToVisible => (Stage::AudioReceived, Stage::TranscriptRendered),
             Metric::TranscriptToReference => (Stage::PartialTranscript, Stage::ReferenceDetected),
@@ -255,7 +295,7 @@ impl Metric {
             // is the price of it meaning anything at all.
             Metric::SpeechToScripture => (Stage::AudioReceived, Stage::OutputRendered),
             // Not a span between two stages — recorded directly.
-            Metric::Decode | Metric::Cadence => return None,
+            Metric::Decode | Metric::Handoff | Metric::Cadence => return None,
         };
         let from = t.stamps[a.idx()]?;
         let to = t.stamps[b.idx()]?;
@@ -279,6 +319,10 @@ pub struct Trace {
     pub window_ms: u64,
     /// Whisper's blocking decode, microseconds.
     pub decode_us: u64,
+    /// What the worker paid to hand this transcript on, microseconds. Zero until
+    /// the hand-off returns, and it is reported as an absence rather than a zero,
+    /// so a pass whose hand-off never completed cannot read as a free one.
+    pub handoff_us: u64,
     /// How long the frontend's mark took to travel back over the IPC bridge —
     /// arrival-in-Rust minus the frontend's own stamp. Reported, not corrected:
     /// it is a real cost on the path and it is the one number that says whether a
@@ -295,6 +339,7 @@ impl Trace {
             drained: 0,
             window_ms: 0,
             decode_us: 0,
+            handoff_us: 0,
             ipc_return_us: None,
         }
     }
@@ -536,18 +581,29 @@ pub fn is_enabled() -> bool {
 
 /// Open a trace for a decode pass that is about to start.
 ///
-/// `audio_received_us` is when the newest audio in the window reached the worker
-/// and `voice_us` is when the gate opened this utterance — both already known by
-/// the caller, both from before this call, which is why they are passed in
-/// rather than sampled here.
-pub fn begin_pass(audio_received_us: u64, voice_us: Option<u64>) -> u64 {
+/// `audio_received_us` is when the OLDEST audio in the window that has not been
+/// decoded yet reached the worker, and `voice_us` is when the gate opened this
+/// utterance — both already known by the caller, both from before this call, which
+/// is why they are passed in rather than sampled here.
+///
+/// **`None` is a real answer and it used to be `now()`** (RG-137). A pass can
+/// re-decode a window nothing new went into — the audio that arrived went to
+/// `carry` because the window was already full — and for that pass there is no
+/// oldest-undecoded sample, because everything it is about to transcribe has been
+/// transcribed before. The caller used to hand over `now()` there, which reports
+/// an absence as a 0 ms wait and flatters every span that starts here; rule 31's
+/// first honesty rule says the opposite. No stamp means no sample, on all four of
+/// the metrics that start at this stage.
+pub fn begin_pass(audio_received_us: Option<u64>, voice_us: Option<u64>) -> u64 {
     let r = recorder();
     let id = r.next_id.fetch_add(1, Ordering::Relaxed);
     if !r.enabled.load(Ordering::Relaxed) {
         return id;
     }
     let mut t = Trace::new(id);
-    t.stamp(Stage::AudioReceived, audio_received_us);
+    if let Some(a) = audio_received_us {
+        t.stamp(Stage::AudioReceived, a);
+    }
     if let Some(v) = voice_us {
         t.stamp(Stage::VoiceDetected, v);
     }
@@ -601,7 +657,12 @@ fn retire(g: &mut Inner, t: Trace) {
     for (i, m) in Metric::ALL.iter().enumerate() {
         let sample = match m {
             Metric::Decode => (t.decode_us > 0).then_some(t.decode_us),
-            Metric::Cadence => None, // recorded at emit time, not here
+            // Both are recorded when they happen, not here. The hand-off deliberately
+            // so: the pass whose hand-off BLOCKED is the one whose trace the shed
+            // path has already closed, and an instrument that only folds the
+            // measurements of traces that survived would discard exactly the stalls
+            // it exists to find.
+            Metric::Handoff | Metric::Cadence => None,
             other => other.span(&t),
         };
         if let Some(us) = sample {
@@ -704,6 +765,56 @@ pub fn transcript_emitted(
             t.drained = drained;
             t.is_final = is_final;
         }
+    }
+}
+
+/// The worker has finished handing that transcript on and may look at the
+/// microphone again. `us` is what the hand-off cost, on the decoder's own thread.
+///
+/// RG-137. Recorded here rather than folded at `retire`, because the pass whose
+/// hand-off blocked is precisely the pass whose trace the shed path has already
+/// closed — see `Metric::Handoff`.
+pub fn transcript_handed_off(id: u64, us: u64) {
+    let r = recorder();
+    if !r.enabled.load(Ordering::Relaxed) {
+        return;
+    }
+    let at = now_us();
+    if let Ok(mut g) = r.inner.lock() {
+        let i = Metric::Handoff as usize;
+        g.hists[i].add(us);
+        g.drifts[i].add(at, us);
+        if let Some(t) = g.open.iter_mut().find(|t| t.id == id) {
+            t.handoff_us = us;
+        }
+    }
+}
+
+/// An utterance ENDED without a transcript coming out of it.
+///
+/// RG-137, and the half of RG-118 that was missed. The cadence guard asks two
+/// questions of the previous pass — did it close the utterance, and had anybody
+/// spoken — and both answers were written only by `transcript_emitted`. A decode
+/// that returns nothing does not call it: whisper answers `[BLANK_AUDIO]`, or a
+/// hallucination the script guard refuses, or the closing window holds less than
+/// `MIN_SAMPLES` and is never decoded at all. The window is cleared either way, so
+/// the utterance really is over and the worker knows it — the recorder did not.
+///
+/// It then believed the pipeline was still mid-utterance, and the next gap was
+/// timed as cadence however long and however silent it was. That is RG-118's
+/// 43,480 ms sample by a second route, with `worst` and `p99` the numbers
+/// Diagnostics shows a church.
+///
+/// `voiced_chunks` is the worker's own count, so the "did anybody speak" half stays
+/// answerable across the gap rather than being frozen at a stale figure.
+pub fn utterance_closed(voiced_chunks: u64) {
+    let r = recorder();
+    if !r.enabled.load(Ordering::Relaxed) {
+        return;
+    }
+    if let Ok(mut g) = r.inner.lock() {
+        g.last_partial_was_final = true;
+        g.last_partial_voiced = voiced_chunks;
     }
 }
 
@@ -978,7 +1089,7 @@ mod tests {
         // that produced THIS reference arrived a second ago.
         let voice_opened = 1_000_000u64;
         let audio_received = 61_000_000u64;
-        let id = begin_pass(audio_received, Some(voice_opened));
+        let id = begin_pass(Some(audio_received), Some(voice_opened));
         stamp_at(id, Stage::OutputRendered, 61_400_000);
         close(id);
         let r = report(4);
@@ -999,7 +1110,7 @@ mod tests {
     #[test]
     fn a_span_is_the_difference_between_two_stamps() {
         let _l = guard();
-        let id = begin_pass(1_000, Some(500));
+        let id = begin_pass(Some(1_000), Some(500));
         stamp_at(id, Stage::PartialTranscript, 400_000);
         close(id);
         let r = report(4);
@@ -1024,11 +1135,11 @@ mod tests {
     fn a_stage_never_reached_is_absent_not_zero() {
         let _l = guard();
         for _ in 0..20 {
-            let id = begin_pass(0, None);
+            let id = begin_pass(Some(0), None);
             stamp_at(id, Stage::PartialTranscript, 100_000);
             close(id); // no reference, no fire
         }
-        let id = begin_pass(0, None);
+        let id = begin_pass(Some(0), None);
         stamp_at(id, Stage::PartialTranscript, 100_000);
         stamp_at(id, Stage::ReferenceDetected, 120_000);
         stamp_at(id, Stage::FireSent, 1_620_000);
@@ -1046,7 +1157,7 @@ mod tests {
     #[test]
     fn the_first_stamp_of_a_stage_wins() {
         let _l = guard();
-        let id = begin_pass(0, None);
+        let id = begin_pass(Some(0), None);
         stamp_at(id, Stage::PartialTranscript, 50_000);
         stamp_at(id, Stage::PartialTranscript, 900_000);
         close(id);
@@ -1094,7 +1205,7 @@ mod tests {
         // The voiced count CLIMBS: somebody is speaking through all three passes,
         // which is what makes the gaps between them cadence at all (RG-118).
         for n in 1..=3 {
-            let id = begin_pass(0, None);
+            let id = begin_pass(Some(0), None);
             transcript_emitted(id, 1_000, 8_000, 1, false, n);
             close(id);
             std::thread::sleep(std::time::Duration::from_millis(20));
@@ -1121,7 +1232,7 @@ mod tests {
         // throughout, so nothing here is excluded by the voiced rule and this test
         // keeps testing the guard it was written for.
         for (n, is_final) in [false, false, true].into_iter().enumerate() {
-            let id = begin_pass(0, None);
+            let id = begin_pass(Some(0), None);
             transcript_emitted(id, 1_000, 8_000, 1, is_final, n as u64 + 1);
             close(id);
             std::thread::sleep(std::time::Duration::from_millis(10));
@@ -1131,7 +1242,7 @@ mod tests {
         // can never be mistaken for the pause having leaked in — the bound below
         // sits in the empty space between the two populations, not next to one.
         std::thread::sleep(std::time::Duration::from_millis(600));
-        let id = begin_pass(0, None);
+        let id = begin_pass(Some(0), None);
         transcript_emitted(id, 1_000, 8_000, 1, false, 4);
         close(id);
 
@@ -1216,7 +1327,7 @@ mod tests {
         let _l = guard();
         // Speech, and a gap that is real cadence: the voiced count climbs.
         for n in 1..=2u64 {
-            let id = begin_pass(0, None);
+            let id = begin_pass(Some(0), None);
             transcript_emitted(id, 1_000, 8_000, 1, false, n);
             close(id);
             std::thread::sleep(std::time::Duration::from_millis(10));
@@ -1226,7 +1337,7 @@ mod tests {
         // runner overrunning a 10 ms sleep can never be mistaken for the pause
         // leaking in.
         std::thread::sleep(std::time::Duration::from_millis(600));
-        let id = begin_pass(0, None);
+        let id = begin_pass(Some(0), None);
         transcript_emitted(id, 1_000, 8_000, 1, false, 2);
         close(id);
 
@@ -1250,7 +1361,7 @@ mod tests {
         // voice in it, and nothing else. An instrument that stopped measuring after
         // one pause would hide the stalls it exists to find.
         std::thread::sleep(std::time::Duration::from_millis(10));
-        let id = begin_pass(0, None);
+        let id = begin_pass(Some(0), None);
         transcript_emitted(id, 1_000, 8_000, 1, false, 3);
         close(id);
         let r = report(8);
@@ -1282,7 +1393,7 @@ mod tests {
     fn a_window_held_open_across_a_pause_reports_no_cadence_at_all() {
         let _l = guard();
         // One pass while the preacher is speaking, to arm `last_partial_us`.
-        let id = begin_pass(0, None);
+        let id = begin_pass(Some(0), None);
         transcript_emitted(id, 1_000, 3_000, 1, false, 5);
         close(id);
 
@@ -1291,7 +1402,7 @@ mod tests {
         // while it is waiting for the chapter and verse to arrive.
         for _ in 0..4 {
             std::thread::sleep(std::time::Duration::from_millis(120));
-            let id = begin_pass(0, None);
+            let id = begin_pass(Some(0), None);
             transcript_emitted(id, 1_000, 5_000, 1, false, 5);
             close(id);
         }
@@ -1315,7 +1426,7 @@ mod tests {
         // gap IS cadence. A guard that could not tell the two apart would hide the
         // stall it exists to find.
         std::thread::sleep(std::time::Duration::from_millis(10));
-        let id = begin_pass(0, None);
+        let id = begin_pass(Some(0), None);
         transcript_emitted(id, 1_000, 6_000, 1, false, 6);
         close(id);
         assert_eq!(
@@ -1328,7 +1439,7 @@ mod tests {
     #[test]
     fn a_frontend_clock_from_the_future_falls_back_to_arrival() {
         let _l = guard();
-        let id = begin_pass(0, None);
+        let id = begin_pass(Some(0), None);
         transcript_emitted(id, 1_000, 8_000, 1, false, 1);
         let (epoch0, _) = epoch_anchor();
         let year_from_now_ms = (epoch0 / 1_000) + 365 * 24 * 3_600 * 1_000;
@@ -1348,7 +1459,7 @@ mod tests {
     fn open_traces_are_bounded_by_the_ring() {
         let _l = guard();
         for n in 0..(RING * 3) {
-            let id = begin_pass(0, None);
+            let id = begin_pass(Some(0), None);
             transcript_emitted(id, 1_000, 8_000, 1, false, n as u64 + 1);
             // deliberately never closed
         }
@@ -1365,7 +1476,7 @@ mod tests {
     fn an_evicted_trace_still_contributes_the_spans_it_completed() {
         let _l = guard();
         for _ in 0..(RING + 10) {
-            let id = begin_pass(0, None);
+            let id = begin_pass(Some(0), None);
             stamp_at(id, Stage::PartialTranscript, 250_000);
             // never closed — eviction is the only thing that retires these
         }
@@ -1415,13 +1526,185 @@ mod tests {
     fn disabled_records_nothing_and_still_hands_out_ids() {
         let _l = guard();
         set_enabled(false);
-        let a = begin_pass(0, None);
-        let b = begin_pass(0, None);
+        let a = begin_pass(Some(0), None);
+        let b = begin_pass(Some(0), None);
         assert_ne!(a, b, "ids stay unique so callers never alias a trace");
         transcript_emitted(a, 1_000, 8_000, 1, false, 1);
         close(a);
         let r = report(4);
         assert!(r.recent.is_empty());
         set_enabled(true);
+    }
+
+    fn metric<'a>(r: &'a Report, name: &str) -> &'a MetricReport {
+        r.metrics
+            .iter()
+            .find(|m| m.metric == name)
+            .expect("metric missing from the report")
+    }
+
+    /// RG-137. `audio_to_partial_transcript` is the queue in front of whisper PLUS
+    /// whisper, and for a year the report carried only the sum. Service 16 recorded
+    /// a **28,650 ms** worst case beside a **9,326 ms** worst decode and no number
+    /// in the product could say which of the two had moved, which is why the finding
+    /// cost two full replays and stayed open.
+    ///
+    /// The two are now reported apart, and this asserts they still ADD UP — an
+    /// attribution that does not reconcile with the total is worse than none.
+    #[test]
+    fn audio_waiting_for_the_decoder_is_reported_apart_from_the_decode() {
+        let _l = guard();
+        // One pass, with both halves really elapsing: the audio waits for the
+        // decoder, then whisper takes its time. Reported the way the worker reports
+        // them — the wait from the arrival stamp, the decode measured around the
+        // blocking call.
+        let audio = now_us();
+        std::thread::sleep(std::time::Duration::from_millis(40));
+        let id = begin_pass(Some(audio), None);
+        let started = now_us();
+        std::thread::sleep(std::time::Duration::from_millis(40));
+        transcript_emitted(id, now_us() - started, 8_000, 1, true, 1);
+        close(id);
+
+        let r = report(4);
+        let wait = metric(&r, "audio_waiting_for_decoder");
+        let decode = metric(&r, "stt_decode");
+        let total = metric(&r, "audio_to_partial_transcript");
+        assert_eq!(
+            wait.samples, 1,
+            "the queue in front of whisper is unmeasured"
+        );
+        assert_eq!(decode.samples, 1);
+        assert_eq!(total.samples, 1);
+        // The wait really is the gap between the audio arriving and the decode
+        // starting, not a restatement of the total.
+        let measured = (started - audio) / 1000;
+        assert!(
+            wait.mean_ms.unwrap_or(0.0) >= measured as f64 - 1.0
+                && wait.mean_ms.unwrap_or(0.0) <= measured as f64 + 5.0,
+            "wait {:?} ms against a measured {measured} ms",
+            wait.mean_ms
+        );
+        // And the pieces reconcile with the whole.
+        assert!(
+            total.mean_ms.unwrap_or(0.0)
+                >= wait.mean_ms.unwrap_or(0.0) + decode.mean_ms.unwrap_or(0.0) - 2.0,
+            "the parts do not add up to the total: wait {:?} + decode {:?} vs {:?}",
+            wait.mean_ms,
+            decode.mean_ms,
+            total.mean_ms,
+        );
+    }
+
+    /// RG-137. A pass that re-decodes a window nothing new went into has no oldest
+    /// undecoded audio — everything in that window has been through whisper already.
+    /// The worker used to hand `now()` over for it, which reports **0 ms of waiting**
+    /// where the honest answer is that nothing was waiting.
+    ///
+    /// Rule 31's first honesty rule, applied to the one stage that had been exempt
+    /// from it. Put the defect back by passing `Some(now_us())` and this fails.
+    #[test]
+    fn a_pass_with_no_waiting_audio_records_an_absence_not_a_zero() {
+        let _l = guard();
+        let id = begin_pass(None, None);
+        transcript_emitted(id, 1_000, 8_000, 1, true, 1);
+        close(id);
+        let r = report(4);
+        assert_eq!(
+            metric(&r, "audio_waiting_for_decoder").samples,
+            0,
+            "a pass with nothing waiting reported a 0 ms wait"
+        );
+        assert_eq!(
+            metric(&r, "audio_to_partial_transcript").samples,
+            0,
+            "a span with no start stamp was counted from now()"
+        );
+        // The decode still counts: it happened, and its cost is real.
+        assert_eq!(metric(&r, "stt_decode").samples, 1);
+    }
+
+    /// RG-137, and the half of RG-118 that was missed.
+    ///
+    /// The cadence guard asks the previous pass two questions — did it close the
+    /// utterance, and had anybody spoken — and both answers were written ONLY by
+    /// `transcript_emitted`. A decode that returns nothing never calls it: whisper
+    /// answers `[BLANK_AUDIO]`, or a hallucination the script guard refuses, or the
+    /// closing window is under `MIN_SAMPLES` and is never decoded at all. All three
+    /// happen in real church audio — two were observed in one 140-second replay.
+    ///
+    /// The window is cleared regardless, so the utterance really ended; the recorder
+    /// went on believing the pipeline was mid-utterance and timed the silence that
+    /// followed as cadence, however long and however quiet. That is RG-118's
+    /// 43,480 ms sample by a second route, into `worst` and `p99` — the two numbers
+    /// Diagnostics shows a church.
+    ///
+    /// Delete the `utterance_closed` call in `stt.rs` and this fails on the sleep.
+    #[test]
+    fn an_utterance_that_closed_without_a_transcript_still_ends_the_cadence() {
+        let _l = guard();
+        // A partial, so the guard is armed and `last_partial_was_final` is false.
+        let id = begin_pass(Some(0), None);
+        transcript_emitted(id, 1_000, 3_000, 1, false, 4);
+        close(id);
+
+        // The closing pass produced NO text. The worker clears the window anyway,
+        // and says so.
+        let id = begin_pass(Some(0), None);
+        close(id);
+        utterance_closed(4);
+
+        // Then the room is quiet for a long time and the preacher starts again. The
+        // voiced count climbs, so `spoke_during_gap` is true — the RG-118 guard
+        // cannot help here, and this gap is exactly the one that must not be timed.
+        std::thread::sleep(std::time::Duration::from_millis(600));
+        let id = begin_pass(Some(0), None);
+        transcript_emitted(id, 1_000, 1_000, 1, false, 5);
+        close(id);
+
+        let r = report(4);
+        let c = metric(&r, "transcript_cadence");
+        assert_eq!(
+            c.samples, 0,
+            "the silence after an utterance that produced no text was timed as cadence"
+        );
+
+        // And cadence resumes the moment there are two transcripts to measure
+        // between. A guard that stopped measuring would hide the stalls it exists
+        // to find.
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let id = begin_pass(Some(0), None);
+        transcript_emitted(id, 1_000, 2_000, 1, false, 6);
+        close(id);
+        assert_eq!(
+            metric(&report(4), "transcript_cadence").samples,
+            1,
+            "the metric must resume when the preacher does"
+        );
+    }
+
+    /// RG-137. The hand-off is rule 33's one named exception — a `stt://transcript`
+    /// emit on the decoder's own thread — and nothing measured it. It is also the
+    /// only part of a pass that can block for seconds with every other latency
+    /// number reading normal, because `partial_transcript` is stamped BEFORE it on
+    /// purpose.
+    ///
+    /// It is recorded when it happens rather than folded when the trace retires,
+    /// because the pass whose hand-off blocked is the pass whose trace the shed path
+    /// has already closed — so folding at `retire` would discard exactly the stalls
+    /// this exists to find.
+    #[test]
+    fn a_handoff_is_counted_even_when_the_trace_has_already_gone() {
+        let _l = guard();
+        let id = begin_pass(Some(0), None);
+        transcript_emitted(id, 1_000, 8_000, 1, false, 1);
+        // The shed path: the queue was full, the partial was dropped, the trace was
+        // closed — and the hand-off still cost what it cost.
+        close(id);
+        transcript_handed_off(id, 4_000_000);
+        let r = report(4);
+        let h = metric(&r, "transcript_handoff");
+        assert_eq!(h.samples, 1, "a hand-off on a closed trace went unrecorded");
+        assert_eq!(h.worst_ms, Some(4000.0));
     }
 }
