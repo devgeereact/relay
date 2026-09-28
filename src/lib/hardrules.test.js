@@ -282,7 +282,7 @@ describe('RG-76 · the mechanically checkable hard-way rules', () => {
   });
 
   // ── RG-321, the clock the dwell floor measures on ─────────────────────────
-  it('RG-321 — the dwell floor measures on ONE clock, and the content door reads none of its own', () => {
+  it('rule 45 — the dwell floor measures on ONE clock, and the content door reads none of its own (RG-321)', () => {
     // NOT a numbered CLAUDE.md rule; named after the finding, so that file's own
     // counting instructions keep answering what they claim to.
     //

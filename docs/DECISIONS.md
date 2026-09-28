@@ -7388,3 +7388,103 @@ register of INTENT. Conflating the two is what the ref-first rule would have don
 **What this does NOT claim.** That the rail is the filter an operator would design. It says the rail
 no longer offers a row nothing can fill, that the shelf's two empty roles are accounted for by name,
 and that the next person to reach for the ref-first idea meets a failing test instead of a memory.
+
+## 130. A wall a congregation cannot read in time is a wall that erased itself (2026-09-28)
+
+**Amends nothing; completes §37.** RG-321: `Daniel 9:2` reached the screens at 21760.4 s and
+`Hebrews 13:7` replaced it at 21762.9 s. Both correct, both cited in consecutive breaths, and no
+congregation reads a verse in 2.5 seconds — so the second fire was not information, it was an
+erasure. §37 had already answered the version of this that fits in ONE window (`rank_for_wall`), and
+`DEFAULT_DEBOUNCE_MS` answers the version where the SAME reference repeats. This is neither: two
+windows, two references, and both existing guards blind to it by construction.
+
+**The floor is `WALL_DWELL_MS = 4_000` in `Router::decide_live`, before `decide`.** Bracketed rather
+than chosen, and compile-time asserted: above the 2.5 s harm, well inside `WINDOW_SECS` so a held
+reference is still in the rolling window when the floor lifts, and under `DEFAULT_DEBOUNCE_MS`. It
+sits before `decide` because `decide` stamps the cooldown on `AutoFire`, so a fire downgraded
+afterwards leaves the cooldown holding a verse that never reached a screen — the same trap §36's
+corroboration check already had to avoid.
+
+**It HOLDS rather than drops.** The candidate is offered on every pass inside the floor and fires by
+itself on the first pass after it lifts. **And the panic controls are neither behind it nor in front
+of it**: a clear or a blackout sets the stamp back to `None`, because a blank wall has nothing to
+protect and a floor that outlived a blackout is a verse the operator cannot get back for four
+seconds.
+
+**Two things it may not do, both found by measuring rather than reasoning, and both now tests.**
+
+*A misheard citation may not shield itself against its own correction.* The first version cost a
+correct verse: the decoder heard `1 Corinthians, 2, 7` and then `1 Corinthians, 12, 7` one second
+later — a dropped leading digit — and the floor protected the mishear while the correction was
+withheld. `repairs_the_wall` stands the floor aside for a re-hearing of the citation already up:
+same book, exactly ONE of chapter or verse differing, and that pair differing by a single LEADING
+digit. Not "anything better may replace", which would reopen the harm; an adjacent chapter is a
+second citation, a digit on the END is a different number, and a different book is `heard_another_way`'s
+question and not this one's.
+
+*An age is only an age when both readings are on one clock.* The floor stamped `wall_changed_at` from
+`router_clock_ms()` read at the content door while the gate was handed an injected `now_ms`. In
+production those are the same function, so it was correct **for a reason no test could see** — and
+where they differed, `saturating_sub` turned an incomparable pair into the strongest possible hold.
+It reported a GREEN suite over a nondeterministic guarantee for two rounds. `broadcast_with_clock`
+now takes `gate_clock_ms` and reads no clock of its own, `wall_is_too_fresh` requires `now_ms >= t`,
+and `hardrules.test.js` holds the door to having no clock at all — because the suite demonstrably
+could not be trusted to notice. **That is rule 31's *an absence is not a zero* in a new costume, and
+a green suite over a guarantee that is sometimes false is worse than a red one.**
+
+## 131. The corpus every bench scored was not the corpus that ships (2026-09-28)
+
+**Amends nothing; it corrects the evidence under §125, §126, §127 and RG-317.** `data/kjv.json`
+carries the KJV's editorial apparatus — marginal glosses like `{make: Heb. turn}` and supplied words
+like `{it was}`. `db::clean_verse` drops the glosses and keeps the supplied words before a verse ever
+reaches `verses`, so that is the text every shipped index is built from. Three bench corpora were not
+built that way: `suggestions::kjv_corpus()` used the raw file, `eval::kjv_corpus()` stripped only the
+braces, and `passage_guard_bench::kjv_corpus()` kept the braces too.
+
+Because `phrase_words` splits on non-alphanumerics, `{make: Heb. turn}` contributed the run tokens
+`make`, `heb` and `turn`. **17,365 of 31,102 bench verses carried tokens no shipped index contains.**
+One real window moved from `Psalms 66:8` at 0.179 to `Psalms 145:2` at 0.399 — a different verse
+first and more than twice the score — and three windows of a measured stretch fell under
+`SEMANTIC_FLOOR` entirely on the wrong corpus. Built through `clean_verse` the benches reproduce a
+real service's own recorded cosines to four decimal places.
+
+All three now build through `db::clean_verse`, which is `pub(crate)` for that reason and pinned by
+`the_bench_corpus_is_the_shipped_corpus`. **Every figure taken before this is suspect and two are
+already corrected**: RG-317's gain is **+7, not +8**, its run lengths all moved in the same direction
+(`Proverbs 4:7` 6→10, `Isaiah 33:6` 8→9), and its corpus counts were 25,547 archaic forms and 851
+British spellings rather than the 33,945 and 512 first published from a regex over the raw file.
+RG-311's own headline example turns out to be an offer the product cannot make — `hallelujah` appears
+in **zero** shipped verses and survives in the file only inside a marginal note.
+
+**The lesson is the one RG-298 already taught and this is its second instance**: a benchmark built
+from the same file the product reads is not thereby built from the same TEXT the product reads. An
+instrument that agrees with itself proves nothing.
+
+## 132. A recording that cannot describe itself is not evidence (2026-09-28)
+
+**Amends nothing.** RG-316: `write_wav_f32` computed both RIFF size fields as
+`(samples.len() * 4) as u32`, a silent truncating cast. Above 4 GiB it wraps, so both recordings this
+project had ever made declared a quarter of their own length and every reader stopped there — 16.25 h
+opening as 2.73 h and 16.03 h as 2.50 h, with neither service inside the readable part. The
+2026-09-25 file had been like that for four days, undetected, because nobody had opened it: it is the
+file FIELD-2026-09-25 calls *"the first with the audio kept"* and the one every claim about measuring
+word error rate rested on.
+
+**The ceiling belongs to the format**, not to the bug: a 32-bit size field cannot describe more than
+4 GiB, which is 6 h 46 m at 44.1 kHz mono float and 6 h 12 m at 48 kHz, and the recorder buffers from
+app launch rather than from Start. A wider cast fixes nothing.
+
+**Segments, not RF64.** `wav_data_len` returns a `Result` at the one place the number is computed so
+the cast cannot return, and `write_wav_segments` writes as many whole WAVs as the format allows,
+splitting on a whole sample and numbering through the same `free_recording_path` sequence that
+already stops a second Stop overwriting a first. RF64 is the technically correct answer and far less
+software opens it; this artefact exists to be handed to whoever can transcribe it, so compatibility
+wins. `scripts/split-recording.mjs` repairs a file written before the fix, dry-run by default, and
+never modifies its input — both existing recordings were repaired into three parts each and verified
+bit-identical over the audio by SHA-256.
+
+**The test that existed could never have caught it.** `the_debug_recorder_writes_a_wav_that_can_be_read_back`
+writes 2,048 samples, so it pins the field layout and cannot see the only input that breaks it. The
+new tests take the limit as a parameter, because 4 GiB is not allocatable in a unit test, and
+`the_cast_that_shipped_reproduces_the_field_figures` asserts the wrap against the two real byte counts
+so the defect itself is pinned rather than only its absence.

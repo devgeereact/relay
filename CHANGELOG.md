@@ -10,6 +10,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+### A verse stays up long enough to read
+
+Two verses could reach the screens two and a half seconds apart — both correct, both named by the preacher in consecutive breaths — and the second erased the first before anybody in the room could finish it. A verse now holds the screen for four seconds before another may replace it. Nothing is thrown away: the next verse goes up by itself the moment the four seconds are over, and if the preacher corrects a reference they just misread — *"1 Corinthians 2:7… 12:7"* — the correction goes straight up without waiting. **Clear screens** and **Blackout** are not delayed by this and never will be.
+
+### Your service recordings were only playing the first two and a half hours
+
+If you have ever used `RELAY_RECORD_WAV` to record a service for us to look at, the file was written wrongly: anything longer than about six and three-quarter hours told media players it was far shorter than it really was, so they played the beginning and stopped. The audio was always all there. Recordings are now written as several files, each one complete and playable anywhere, and `node scripts/split-recording.mjs <file>` repairs one made by an older version without touching the original.
+
+### The screen no longer flashes a verse the preacher did not ask for
+
+Six more ways a wrong verse could reach a congregation are closed. The ones worth naming: an announcement read as *"Number 2 … these words in verse 17"* put up Numbers 2:17; a reference whose book was misheard as one that has no such chapter is now refused instead of guessed at; and a bare *"verse 15"* is no longer answered from a passage that left the screen eighteen minutes ago.
+
+### Relay recognises more of a verse read aloud
+
+When a preacher reads from the King James Bible, Relay compares what it heard against the verse word for word. It was failing on the words that make the King James the King James: *thy* heard as *your*, *ye* as *you*, *thou shalt* as *you shall*, and *honour* against *honor*. Seven more verses reached the screens on one real service with nothing wrong added, including several read aloud with no reference spoken at all.
+
+### Choosing a speech model now tells you what it costs
+
+The model picker said *"a bigger model hears more accurately but needs a faster computer"* — two things nobody had measured, on the screen that decides how well Relay hears your preacher. Each model now shows what is actually known: how often the transcript updates (the largest model updates about four times more slowly, which nothing used to tell you), which models have been scored for accuracy on real services, and — for the three that have never been scored — that they never have been. **Word error rate has still never been measured in any language**, and the cards say so rather than implying otherwise.
+
+
 ### Only one song slide says Live
 
 A song whose chorus repeats — slides 1, 9 and 17 with the same words — lit **all three** amber and said *Live* on each, so the grid could not tell you which slide you were actually on. Only the one you fired is marked now, so stepping through an arrangement that repeats follows the arrangement.
