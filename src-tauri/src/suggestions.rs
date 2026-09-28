@@ -195,7 +195,7 @@ fn replay(lines: &[(f32, String)], episode_ms: u64) -> Tally {
                 RouteDecision::AutoFire if rank == 0 => {
                     t.fired += 1;
                     context.note_passage(&c.r, None);
-                    router.note_wall(&key);
+                    router.note_wall(&key, now_ms);
                 }
                 RouteDecision::AutoFire | RouteDecision::Suggest => {
                     t.decisions += 1;
@@ -1088,7 +1088,7 @@ mod bar {
                 match router.decide_live(&key, k.conf, k.method, now_ms, true) {
                     RouteDecision::AutoFire if rank == 0 => {
                         context.note_passage(&k.r, None);
-                        router.note_wall(&key);
+                        router.note_wall(&key, now_ms);
                     }
                     RouteDecision::AutoFire | RouteDecision::Suggest => {
                         c.every.push((now_ms, key.clone(), k.method.wire()));

@@ -1107,9 +1107,25 @@ enum PassageUpdate {
 /// congregation. It refuses only the two things that are unambiguously broken and
 /// silently so; everything else it lets through and reports elsewhere. See
 /// `pipeline::preflight` for what it deliberately does NOT check.
+///
+/// ## `gate_clock_ms` — ONE clock, named by the caller, never read twice
+///
+/// RG-321's dwell floor compares "when did the wall last change" with the `now_ms`
+/// the router was handed, and **the two have to be the same clock or the difference
+/// is not a duration.** The first version read `router_clock_ms()` here instead, and
+/// in production that is the very same function the gate is given — so it was
+/// correct, and correct for a reason no test could see. Anywhere the two readings
+/// differed, the subtraction saturated to zero and the floor concluded *"the wall
+/// changed this instant"*, which is the strongest possible hold, over a pair of
+/// numbers that cannot be compared at all.
+///
+/// So the clock arrives as an argument. Every operator-driven caller passes a fresh
+/// `router_clock_ms()`; the detect loop passes the reading its own gate decision was
+/// made on. A new caller cannot forget, because it will not compile.
 fn broadcast_with_clock<R: tauri::Runtime>(
     handle: &tauri::AppHandle<R>,
     mut content: channels::OutputContent,
+    gate_clock_ms: u64,
 ) -> error::Result<()> {
     // A NEW THING ON THE SCREENS IS A CLIP AT ITS BEGINNING, PLAYING.
     //
@@ -1201,14 +1217,22 @@ fn broadcast_with_clock<R: tauri::Runtime>(
         // A SEPARATE `if let`, after the one above has dropped its guard: two locks
         // held at once on a path that also emits is how the Start-listening freeze
         // happened (rule 2, rule 6). Neither lock is needed while the other is.
+        //
+        // …AND THE WALL JUST CHANGED, WHICH IS A THIRD FACT (RG-321). Both branches
+        // below stamp `gate_clock_ms` — the caller's reading, never a second one taken
+        // here — because "how long has a congregation had this screen to itself" is a
+        // question about a room and does not care what kind of content is on it. It is
+        // stamped HERE, at the one door, for rule 36's reason and for one more: the
+        // clock must start when the content actually left, not when the gate decided,
+        // or a verse demoted by rule 29 would hold a wall it never reached.
         if let Some(routing) = handle.try_state::<Routing>() {
             if let Ok(mut r) = routing.0.lock() {
-                r.forget_wall();
+                r.forget_wall(gate_clock_ms);
             }
         }
     } else if let Some(routing) = handle.try_state::<Routing>() {
         if let Ok(mut r) = routing.0.lock() {
-            r.note_wall(&content.reference);
+            r.note_wall(&content.reference, gate_clock_ms);
         }
     }
 
@@ -1269,6 +1293,10 @@ fn fire_manual<R: tauri::Runtime>(
 ) -> bool {
     let db = handle.state::<Db>();
     let ctx = handle.state::<Context>();
+    // ONE reading for this whole fire — the repeat cooldown below and the wall's
+    // dwell stamp at the door are then the same instant rather than two readings a
+    // few microseconds apart (RG-321, `broadcast_with_clock`'s `gate_clock_ms`).
+    let at_ms = router_clock_ms();
 
     let fire = {
         let Ok(conn) = db.0.lock() else { return false };
@@ -1316,7 +1344,7 @@ fn fire_manual<R: tauri::Runtime>(
             // on any clock means "long ago" — so a verse the operator had just put
             // on the wall themselves was never protected from the AI immediately
             // re-firing it off the still-rolling STT window.
-            router.manual_fire(&f.key, router_clock_ms());
+            router.manual_fire(&f.key, at_ms);
         }
         persist_fire(
             &conn,
@@ -1335,7 +1363,7 @@ fn fire_manual<R: tauri::Runtime>(
     // A refused payload must not be followed by a `detection://match` saying it
     // went out — that is the console reporting a success it did not achieve, in a
     // new place (DECISIONS §20). Bail before the event.
-    if broadcast_with_clock(handle, fire.output()).is_err() {
+    if broadcast_with_clock(handle, fire.output(), at_ms).is_err() {
         return false;
     }
     let _ = handle.emit("detection://match", fire.event());
@@ -2488,7 +2516,7 @@ fn emit_detections<R: tauri::Runtime>(
         // has already raised the banner and printed the reason. Swallowed here
         // and nowhere else, deliberately: the alternative is killing the
         // detection thread over one unshowable payload.
-        let _ = broadcast_with_clock(handle, content);
+        let _ = broadcast_with_clock(handle, content, now_ms);
     }
     for ev in events {
         let _ = handle.emit("detection://match", ev);
@@ -4386,7 +4414,11 @@ fn start_countdown<R: tauri::Runtime>(
         let conn = db.0.lock()?;
         cue_or_content_tpl(&conn, template_id, "countdown")
     };
-    broadcast_with_clock(&app, countdown_content(&timer, tid, tjson, tpinned))?;
+    broadcast_with_clock(
+        &app,
+        countdown_content(&timer, tid, tjson, tpinned),
+        router_clock_ms(),
+    )?;
     persist_cue(&app, "countdown", None);
     Ok(())
 }
@@ -4756,7 +4788,7 @@ fn reset_timer<R: tauri::Runtime>(app: tauri::AppHandle<R>, timer_id: i64) -> er
             content.countdown_from = Some(shown.countdown_from);
             content.countdown_paused_ms = shown.countdown_paused_ms;
             content.trace_id = None;
-            broadcast_with_clock(&app, content)?;
+            broadcast_with_clock(&app, content, router_clock_ms())?;
         }
     }
     channels::publish_timers(&app);
@@ -4794,7 +4826,7 @@ fn adjust_timer<R: tauri::Runtime>(
             content.countdown_to = Some(shown.countdown_to);
             content.countdown_paused_ms = shown.countdown_paused_ms;
             content.trace_id = None;
-            broadcast_with_clock(&app, content)?;
+            broadcast_with_clock(&app, content, router_clock_ms())?;
         }
     }
     // And the stage tablet, whichever scope this was — see `start_timer`.
@@ -4927,6 +4959,7 @@ fn fire_content<R: tauri::Runtime>(
             stage_note: clean_note(stage_note),
             ..Default::default()
         },
+        router_clock_ms(),
     )?;
     persist_cue(&app, "manual_override", Some(&label));
     Ok(())
@@ -4997,6 +5030,7 @@ fn fire_media<R: tauri::Runtime>(
             template_pinned: tpinned,
             ..Default::default()
         },
+        router_clock_ms(),
     )?;
     persist_cue(&app, "media", Some(&filename));
     Ok(())
@@ -10671,7 +10705,7 @@ mod passage_guard_bench {
                         // router about rank 1 would measure a product nobody ships —
                         // and that mistake is exactly what this bench caught in the
                         // first design of the guard.
-                        router.note_wall(&key);
+                        router.note_wall(&key, now_ms);
                     }
                     RouteDecision::AutoFire | RouteDecision::Suggest => out.offered += 1,
                     RouteDecision::Drop => {}
