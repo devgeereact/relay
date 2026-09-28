@@ -7900,12 +7900,110 @@ pub struct PhraseIndex {
     df: Vec<u32>,
 }
 
+/// British `-our` stems present in the bundled KJV, which is British throughout:
+/// `honour` 156 and `honor` 0, `neighbour` 143/0, `labour` 95/0, `favour` 77/0,
+/// `savour` 58/0, `valour` 43/0, `saviour` 41/0, `armour` 28/0 and the rest — 512
+/// occurrences with no American variant anywhere. Matched as a PREFIX so every
+/// inflection follows from one entry: `honourable`, `honoureth`, `labourers`,
+/// `savoury`, `armourbearer`.
+///
+/// Longest first, so `dishonour` is not read as a near-miss of `honour` — it is a
+/// separate entry precisely because prefix matching would otherwise never reach
+/// it.
+const BRITISH_OUR_STEMS: &[&str] = &[
+    "armour",
+    "behaviour",
+    "dishonour",
+    "neighbour",
+    "saviour",
+    "succour",
+    "colour",
+    "favour",
+    "honour",
+    "labour",
+    "parlour",
+    "rumour",
+    "savour",
+    "valour",
+    "vapour",
+    "rigour",
+];
+
+/// The register gap between the corpus and the decoder, collapsed to one token
+/// each way (RG-317).
+///
+/// Whisper transcribes modern English. The KJV is not modern English, and
+/// `shared_run_with` compares exact ids, so every archaism is a run break at the
+/// exact point where quotation is densest — measured on service 42, where all 40
+/// reading fires cleared the bar at a run of 8 to 10 and four correct readings
+/// were withheld at 5 to 7, every one cut at a word in this table.
+///
+/// **Only what field evidence named.** `unto` is deliberately absent despite
+/// 9,092 occurrences: nothing has ever shown Whisper mangling it, and merging it
+/// with `to` would widen matching everywhere for no measured gain. The direction
+/// of each pair does not matter — both sides map to one token — but the archaic
+/// form is the canonical one so the corpus side is the identity.
+fn canon_phrase_word(w: &str) -> Option<&'static str> {
+    Some(match w {
+        // Second-person pronouns. These are the ones the field evidence names,
+        // and they are also the widest part of this change: `your` and `you` are
+        // ordinary modern words, so this merges tokens that are genuinely
+        // distinct in speech. Measured through `eval.rs` and the service replay.
+        "thy" | "thine" | "your" | "yours" => "thy",
+        "thee" | "thou" | "ye" | "you" => "thou",
+        "thyself" | "yourself" => "thyself",
+        // Verb forms, where the modern rendering is unambiguous.
+        "hath" => "has",
+        "hast" => "have",
+        "doth" | "dost" => "does",
+        "shalt" => "shall",
+        "wilt" => "will",
+        "saith" => "says",
+        _ => return None,
+    })
+}
+
 /// Every word, lowercased, in order. NOT `tokenize`: stopwords and two-letter
 /// words are exactly what makes a quotation a quotation.
-fn phrase_words(text: &str) -> Vec<String> {
+///
+/// **The one place the register gap is closed** (RG-317), so both sides of every
+/// comparison go through it: `PhraseIndex::build` reads the corpus through here
+/// and `shared_run_with` reads the heard window through here, which is what makes
+/// a normalisation safe to add at all. This may only ever LENGTHEN a run — it
+/// merges ids, never splits them — so no run that matched before can stop
+/// matching.
+/// The same tokens `phrase_words` produces, WITHOUT the register normalisation:
+/// what the window actually said, for showing a person. Index-for-index identical
+/// to `phrase_words` on the same input, because the normalisation is one token in,
+/// one token out.
+fn raw_phrase_words(text: &str) -> Vec<String> {
     text.split(|c: char| !c.is_ascii_alphanumeric())
         .filter(|w| !w.is_empty())
         .map(|w| w.to_ascii_lowercase())
+        .collect()
+}
+
+fn phrase_words(text: &str) -> Vec<String> {
+    text.split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(|w| {
+            let w = w.to_ascii_lowercase();
+            if let Some(canon) = canon_phrase_word(&w) {
+                return canon.to_string();
+            }
+            // A British stem keeps its suffix: `honourable` → `honorable`. The
+            // check is a prefix rather than a suffix because the inflections are
+            // what the corpus is full of, and `our` is far too common a string to
+            // rewrite wherever it appears — `hour`, `four`, `devour`, `glamour`
+            // and `our` itself must all come through untouched.
+            for stem in BRITISH_OUR_STEMS {
+                if let Some(rest) = w.strip_prefix(stem) {
+                    let cut = stem.len() - 3; // everything before the "our"
+                    return format!("{}or{}", &stem[..cut], rest);
+                }
+            }
+            w
+        })
         .collect()
 }
 
@@ -8005,6 +8103,16 @@ impl PhraseIndex {
     /// run alone answers Romans. When the words say, the words win.
     pub fn quoted(&self, heard: &str, book: Option<&str>, k: usize) -> Vec<PhraseHit> {
         let words = phrase_words(heard);
+        // WHAT WAS SAID, beside what was matched (RG-317). `phrase_words` closes
+        // the register gap between a 1611 corpus and a modern decoder, and it must
+        // never close it on the operator's side of the glass: `phrase` reaches
+        // `matched_text`, which rule 18 renders, and a console that prints "seek
+        // THOU first" over a preacher who said "seek ye first" is telling them
+        // what Relay matched rather than what it heard. The mapping is 1:1 per
+        // token — it never splits, merges or drops one — so these two vectors are
+        // the same length and every index means the same word in both.
+        let spoken = raw_phrase_words(heard);
+        debug_assert_eq!(spoken.len(), words.len(), "normalisation changed the count");
         if words.len() < MIN_RUN_WORDS {
             return Vec::new();
         }
@@ -8057,7 +8165,7 @@ impl PhraseIndex {
                     PhraseHit {
                         r: self.refs[vi as usize].clone(),
                         run: n,
-                        phrase: words[i..i + n].join(" "),
+                        phrase: spoken[i..i + n].join(" "),
                         // Filled in below, once the whole set is known.
                         sole: false,
                     },
@@ -8254,7 +8362,22 @@ mod phrase_tests {
 
     /// RULE 40 IN THIS MODULE. "Be not wise in your own eyes" is verbatim in
     /// Romans 12:16, and the preacher reading Proverbs 3 meant Proverbs 3:7.
-    /// Verified by removing the book filter and watching Romans win.
+    ///
+    /// **This trap was a spelling artefact and RG-317 dissolved it.** Romans used
+    /// to win unanchored for one reason: it says *"in **your** own conceits"* and
+    /// Proverbs says *"in **thine** own eyes"*, so a preacher rendered as `your`
+    /// matched Romans word-for-word and Proverbs not at all. With the register gap
+    /// closed both sides read `thy`, and then the rest of the sentence decides —
+    /// Proverbs shares *"be not wise in thy own eyes fear the lord"* (10) against
+    /// Romans' *"be not wise in thy own"* (6). The longest run now answers the
+    /// verse the preacher was reading, unaided.
+    ///
+    /// The anchor still matters and is still asserted below; what changed is that
+    /// this example no longer NEEDS it. A tie the anchor genuinely has to break —
+    /// Judges 1:12 and Joshua 15:16, verbatim duplicates of each other with no
+    /// archaism anywhere in them — is covered by `a_run_two_verses_share_is_not_sole`
+    /// and `a_book_named_in_the_window_makes_a_shared_run_sole_again`, so the
+    /// mechanism does not lose its test with this change.
     #[test]
     fn a_book_the_words_named_beats_a_longer_run_somewhere_else() {
         let idx = PhraseIndex::build(&corpus());
@@ -8262,8 +8385,20 @@ mod phrase_tests {
         let loose = idx.quoted(heard, None, 3);
         assert_eq!(
             loose.first().map(|h| h.r.clone()),
-            Some(vr("Romans", 12, 16)),
-            "without the anchor the longest run is Romans — that is the trap"
+            Some(vr("Proverbs", 3, 7)),
+            "with the register gap closed the longest run is the verse being read"
+        );
+        let romans = loose
+            .iter()
+            .find(|h| h.r == vr("Romans", 12, 16))
+            .map(|h| h.run);
+        let proverbs = loose
+            .iter()
+            .find(|h| h.r == vr("Proverbs", 3, 7))
+            .map(|h| h.run);
+        assert!(
+            proverbs > romans,
+            "Proverbs {proverbs:?} must outrun Romans {romans:?} on the words alone"
         );
         let anchored = idx.quoted(heard, Some("Proverbs"), 3);
         assert_eq!(
@@ -10665,5 +10800,270 @@ mod short_run_doubt {
             assert_eq!(p.verse, 3);
             0
         });
+    }
+}
+
+/// **WHAT THE FOUR WITHHELD READINGS OF SERVICE 42 ACTUALLY MEASURED** (RG-317).
+///
+/// Written because the field audit's hand arithmetic was not trustworthy. I
+/// counted `Proverbs 14:28`'s run as 7 by eye and filed that figure; `king's`
+/// splits into two tokens, so it may well be 8 — which would mean the bar was
+/// already met and `Quoted` came from `sole`, not from the run. A normalisation
+/// justified by a miscount is a normalisation that fixes the wrong thing.
+///
+/// This prints, for each pair, the run the REAL bundled index measures and
+/// whether any other verse matches it as long. `for_quotation(run, sole)` needs
+/// BOTH, so a run at the bar is not on its own a reading.
+#[cfg(test)]
+mod what_the_field_readings_measured {
+    use super::*;
+
+    /// (label, heard, book, chapter, verse) — the exact `heard_text` the database
+    /// recorded, service 42, 2026-09-27.
+    const FIELD: &[(&str, &str, &str, i64, i64)] = &[
+        (
+            "15327 Ps 104:24 withheld",
+            "The Bible says, The wisdom has founded the earth, and by the time he established the earth. How manifold are they works, O God, in wisdom thou hast found.",
+            "Psalms", 104, 24,
+        ),
+        (
+            "15332 Ps 104:24 withheld",
+            "God has made them all when the earth is full of their riches.",
+            "Psalms", 104, 24,
+        ),
+        (
+            "15705 Pr 4:7 withheld",
+            "fair. Therefore get wisdom. And with all your getting, get understanding.",
+            "Proverbs", 4, 7,
+        ),
+        (
+            "15708 Pr 4:8 degraded",
+            "Exhort wisdom. She shall promote things. She shall bring you to honor when that does embrace her.",
+            "Proverbs", 4, 8,
+        ),
+        (
+            "15910 Pr 14:28 withheld",
+            "And the multitude of people is the king's honor.",
+            "Proverbs", 14, 28,
+        ),
+        (
+            "20936 Is 33:6 FIRED",
+            "The Bible says, Wisdom and knowledge shall be the stability of your life.",
+            "Isaiah", 33, 6,
+        ),
+    ];
+
+    #[test]
+    #[ignore]
+    fn print_what_the_withheld_readings_measured() {
+        let idx = PhraseIndex::build(&crate::eval::kjv_corpus());
+        println!("\n  bar = {READING_RUN_WORDS}\n");
+        for (label, heard, book, chapter, verse) in FIELD {
+            let r = VerseRef {
+                book: (*book).into(),
+                chapter: *chapter,
+                verse: *verse,
+            };
+            let run = idx.shared_run_with(heard, &r);
+            // Through the REAL path, so `sole` is whatever the index says rather
+            // than whatever I would reason it to be.
+            let hits = idx.quoted(heard, None, 3);
+            let mine = hits.iter().find(|h| h.r == r);
+            let method = mine.map(|h| DetectionMethod::for_quotation(h.run, h.sole));
+            println!(
+                "  {label:<26} scan_run={run:>2}  hit_run={:>2}  sole={}  method={:?}",
+                mine.map(|h| h.run as i64).unwrap_or(-1),
+                mine.map(|h| h.sole).unwrap_or(false),
+                method
+            );
+            for h in hits.iter().filter(|h| h.r != r) {
+                println!(
+                    "        rival {} {}:{} run={} sole={}",
+                    h.r.book, h.r.chapter, h.r.verse, h.run, h.sole
+                );
+            }
+        }
+        println!();
+    }
+}
+
+/// **THE CORPUS IS WRITTEN IN A REGISTER THE DECODER MODERNISES** (RG-317).
+///
+/// `shared_run_with` compares exact word ids, and the bundled KJV carries 33,945
+/// archaic forms across 31,102 verses plus 512 British `-our` spellings with no
+/// American variant anywhere. Whisper renders `thy` as `your`, `thee` as `the`,
+/// `thou dost` as `that does` and `honour` as `honor` — every one of which cuts a
+/// verbatim run at the exact point where KJV quotation is densest.
+///
+/// **What this recovers, measured rather than assumed.** Of the four readings
+/// service 42 withheld, TWO clear the bar once the substitution is undone
+/// (`Proverbs 4:7` at a run of 6, `Proverbs 14:28` at 7) and TWO do not: both
+/// `Psalms 104:24` windows were mangled elsewhere as well (*"O God"* for
+/// *"O LORD"*, *"when"* for *"the"*) and top out at 7. The field audit implied
+/// all four were this one cause; they are not, and the row says so now.
+///
+/// **This is a change to measurement, not to any threshold** — rule 34. The
+/// spelling half is safe by construction: the two spellings are the same word.
+/// The archaic half genuinely widens matching, because `your`→`thy` and
+/// `you`→`thou` merge words that are distinct in modern speech, so it is measured
+/// through `eval.rs` and the service replay before it is believed.
+#[cfg(test)]
+mod archaic_and_spelling_normalisation {
+    use super::*;
+
+    fn index() -> PhraseIndex {
+        PhraseIndex::build(&crate::eval::kjv_corpus())
+    }
+
+    fn vr(book: &str, chapter: i64, verse: i64) -> VerseRef {
+        VerseRef {
+            book: book.into(),
+            chapter,
+            verse,
+        }
+    }
+
+    /// The token pairs the field evidence named, asserted on `phrase_words`
+    /// itself so a future edit cannot quietly drop one.
+    #[test]
+    fn the_substitutions_the_decoder_makes_are_one_token() {
+        for (a, b) in [
+            ("thy", "your"),
+            ("thine", "yours"),
+            ("thee", "thou"),
+            ("ye", "you"),
+            ("hath", "has"),
+            ("hast", "have"),
+            ("doth", "does"),
+            ("dost", "does"),
+            ("shalt", "shall"),
+            ("saith", "says"),
+            ("honour", "honor"),
+            ("neighbour", "neighbor"),
+            ("labour", "labor"),
+            ("favour", "favor"),
+            ("saviour", "savior"),
+            ("armour", "armor"),
+            ("colour", "color"),
+            ("valour", "valor"),
+            ("savoury", "savory"),
+            ("honourable", "honorable"),
+            ("labourers", "laborers"),
+            ("armourbearer", "armorbearer"),
+        ] {
+            assert_eq!(
+                phrase_words(a),
+                phrase_words(b),
+                "`{a}` and `{b}` are the same word to a run"
+            );
+        }
+    }
+
+    /// The other half of the claim, and the half a careless `-our` rule breaks.
+    ///
+    /// `art` earns its place here: it is the archaic second-person `be`, so it
+    /// looks like it belongs in the table, and it is deliberately NOT there —
+    /// `art` is an ordinary modern noun and merging it with `are` would widen
+    /// matching across every sentence about art for one verb form nothing has
+    /// been measured mangling. `you` is NOT in this list, because it genuinely is
+    /// merged; the first test asserts that.
+    #[test]
+    fn words_that_merely_look_british_are_left_alone() {
+        for w in [
+            "our", "hour", "four", "pour", "sour", "flour", "tour", "devour", "dour", "scour",
+            "glamour", "art",
+        ] {
+            assert_eq!(
+                phrase_words(w),
+                vec![w.to_string()],
+                "`{w}` must not be rewritten"
+            );
+        }
+    }
+
+    /// The two readings this recovers, through the real index and the real
+    /// `for_quotation`, from the exact `heard_text` the database recorded.
+    #[test]
+    fn the_two_recoverable_readings_of_service_42_now_read_as_readings() {
+        let idx = index();
+        for (heard, r) in [
+            (
+                "fair. Therefore get wisdom. And with all your getting, get understanding.",
+                vr("Proverbs", 4, 7),
+            ),
+            (
+                "And the multitude of people is the king's honor.",
+                vr("Proverbs", 14, 28),
+            ),
+        ] {
+            let hit = idx
+                .quoted(heard, None, 3)
+                .into_iter()
+                .find(|h| h.r == r)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "{} {}:{} was not offered at all",
+                        r.book, r.chapter, r.verse
+                    )
+                });
+            assert_eq!(
+                DetectionMethod::for_quotation(hit.run, hit.sole),
+                DetectionMethod::Reading,
+                "{} {}:{} still not a reading at run {} (sole {})",
+                r.book,
+                r.chapter,
+                r.verse,
+                hit.run,
+                hit.sole
+            );
+        }
+    }
+
+    /// **The limit, asserted so it cannot be forgotten.** These two were withheld
+    /// for more than the substitution and normalisation does not rescue them. A
+    /// row claiming four recoveries would be wrong, and this is what keeps the
+    /// claim at two.
+    #[test]
+    fn the_two_that_were_mangled_further_are_still_not_readings() {
+        let idx = index();
+        for heard in [
+            "The Bible says, The wisdom has founded the earth, and by the time he established the earth. How manifold are they works, O God, in wisdom thou hast found.",
+            "God has made them all when the earth is full of their riches.",
+        ] {
+            let r = vr("Psalms", 104, 24);
+            let method = idx
+                .quoted(heard, None, 3)
+                .into_iter()
+                .find(|h| h.r == r)
+                .map(|h| DetectionMethod::for_quotation(h.run, h.sole));
+            assert_ne!(
+                method,
+                Some(DetectionMethod::Reading),
+                "Psalms 104:24 reached Reading from a window with more wrong than `thy` in it"
+            );
+        }
+    }
+
+    /// The control: a reading that already fired must still fire, and at the same
+    /// method. Normalisation may only ever lengthen a run, so this is the cheap
+    /// check that it has not broken the id table.
+    #[test]
+    fn the_reading_that_fired_still_fires() {
+        let idx = index();
+        let r = vr("Isaiah", 33, 6);
+        let hit = idx
+            .quoted(
+                "The Bible says, Wisdom and knowledge shall be the stability of your life.",
+                None,
+                3,
+            )
+            .into_iter()
+            .find(|h| h.r == r)
+            .expect("Isaiah 33:6 offered");
+        assert!(hit.run >= READING_RUN_WORDS, "run fell to {}", hit.run);
+        assert_eq!(
+            DetectionMethod::for_quotation(hit.run, hit.sole),
+            DetectionMethod::Reading
+        );
     }
 }

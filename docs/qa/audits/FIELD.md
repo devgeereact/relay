@@ -1448,6 +1448,31 @@ corpus rather than of one preacher:
 
 `Isaiah 33:6` cleared by one word. The bar is correctly placed; what it measures is not.
 
+**Closed as RG-317 on 2026-09-28, and measuring it corrected this section three times.** Only TWO
+of the four withheld readings clear the bar once the substitution is undone: both `Psalms 104:24`
+windows were mangled elsewhere as well — *"O God"* for *"O LORD"*, *"when"* for *"the"* — and top
+out at a run of 7. `Proverbs 14:28`'s run is 8 by `shared_run_with` and 7 by the `PhraseHit` that
+actually decides, so the hand count above was right by accident and two measurements of one run
+disagree by one. And the table's framing — that all four share one cause — is what the replay
+disproved.
+
+What the replay found instead is larger than what this audit noticed by eye. Over these 3,161
+transcript lines the normalisation gains **eight correct auto-fires, loses none, and fires nothing
+wrong**, six of them verses this audit never flagged:
+
+| gained | what was said | what broke the run |
+|---|---|---|
+| Ecclesiastes 4:9 | *"a good reward for their labor"* | `labour` |
+| Job 22:23 (twice) | *"Return to the Almighty, you shall be built up"* | `thou`, `shalt` |
+| Psalms 41:3 | *"It will make all his bed in his sickness"* | `wilt` |
+| James 1:2 | *"when you fall into divers temples"* | `ye` |
+| Deuteronomy 8:18 | *"You shall remember the Lord your God"* | `shalt`, `thy` |
+| Proverbs 4:7 | *"with all your getting"* | `thy` |
+| Proverbs 14:28 | *"the king's honor"* | `honour` |
+
+Three of those come from the archaic VERB forms — `shalt`, `wilt`, `ye` — which this audit did not
+mention at all, having looked only at the pronouns and the spellings it happened to see.
+
 ## 4. What else the service showed, none of it filed before tonight
 
 - **Two verses on the wall 2.5 s apart.** `Daniel 9:2` at 21760.4 s, `Hebrews 13:7` at 21762.9 s,
@@ -1492,4 +1517,5 @@ on one service watched by the person who wrote the software.
 
 ## 6. Register entries
 
-RG-316 … RG-325, all filed OPEN on 2026-09-27. Nothing in this audit was fixed the same night.
+RG-316 … RG-325, filed OPEN on 2026-09-27. **RG-317 was closed on 2026-09-28** and its measurement
+corrected §3 of this audit, as recorded there. The other nine remain open.
