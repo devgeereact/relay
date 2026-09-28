@@ -2343,12 +2343,29 @@ fn emit_detections<R: tauri::Runtime>(
             // operator learns to stop reading the line.
             fire.named_translation_missing = named_translation_gap(&conn, text, &fire);
 
-            // Parsed, but the verse doesn't exist (garbled speech readily yields
-            // "Psalms 23:99"). Demote to a suggestion rather than broadcasting a
-            // verse with no text, which would blank the projector. See
-            // `Fire::may_broadcast`.
-            if fire.status.goes_to_screen() && fire.verse_id.is_none() {
-                fire.status = FireStatus::Suggested;
+            // ── PARSED, BUT THERE IS NO VERSE BEHIND IT (RG-322) ────────────────
+            //
+            // Garbled speech readily yields "Psalms 23:99", and service 42 yielded
+            // `Jude 29:4` — *"Job 29 verse 4 to 17"* heard as *"Jude 29"*, and Jude
+            // has one chapter. This used to DEMOTE to a suggestion, which was the
+            // right half of the answer: `Fire::may_broadcast` is false for a
+            // suggestion, so nothing blanks a projector.
+            //
+            // It is not offered at all any more. A row that names a verse Relay
+            // cannot show says LESS than no row — the operator's list is what a
+            // volunteer reads in a dark booth mid-service, and three of these
+            // rendered blank on it, with no reference in them, on the morning this
+            // was filed. There is nothing to act on and nothing to learn from, and
+            // `persist_fire` below would write a detection whose `verse_id` is NULL.
+            //
+            // **It is not silent** in the sense rule 35 means: the operator is not
+            // being told a screen is fine when it is not, and no guarantee hangs on
+            // this row's absence. What is worth saying about the window is said by
+            // the cause — an impossible number now refutes the `fuzzy_book` repair
+            // that made it outright (`detection::detect_direct`), so the commoner
+            // route to this state no longer produces a candidate to begin with.
+            if fire.verse_id.is_none() {
+                continue;
             }
 
             if fire.may_broadcast() {

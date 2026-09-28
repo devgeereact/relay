@@ -6408,3 +6408,65 @@ fn the_paraphrase_bar_removes_an_offer_only_when_the_church_asked_and_never_a_wa
          the words win"
     );
 }
+
+/// **A REFERENCE WITH NO VERSE BEHIND IT IS NOT AN OFFER — RG-322.**
+///
+/// Service 42, 2026-09-27 at 20525.4 s, watched live. *"Job 29 verse 4 to 17"* came
+/// through as *"Jude 29, 4 to 17"*, Jude has ONE chapter, so `resolve_fire` found no
+/// verse and `verse_id` was NULL — and the row was offered anyway and **rendered
+/// blank on the operator's list**, three times.
+///
+/// `emit_detections` already demoted a NULL-verse fire to a suggestion, which is the
+/// half that protects the congregation (`Fire::may_broadcast` is false for a
+/// suggestion, so nothing blanks a projector). Nothing protected the operator. A row
+/// that names a verse it cannot show says LESS than no row: it occupies the surface a
+/// volunteer is reading in a dark booth, mid-service, and tells them nothing they can
+/// act on.
+///
+/// **It is the cheap half of RG-322 and deliberately not the whole fix.** The
+/// expensive half is that an impossible number is evidence against the `fuzzy_book`
+/// repair that produced it, which is
+/// `detection::an_impossibility_refutes_the_repair`. This test uses the form where
+/// the book was PLAINLY SAID — *"Jude 29"*, not *"June 29"* — so the two halves are
+/// exercised separately and a regression in either is attributable.
+#[test]
+fn a_reference_whose_verse_cannot_exist_is_not_offered_to_the_operator() {
+    const HEARD: &str = "The secret conveyed, Jude 29, 4 to 17.";
+    // PRECONDITION, so this cannot pass by the parser having stopped producing the
+    // candidate. A vacuous test is how rule 40's first diagnosis survived a revert.
+    assert!(
+        detection::detect_direct(HEARD)
+            .iter()
+            .any(|m| m.reference.book == "Jude" && m.reference.chapter == 29),
+        "precondition: the parser must still produce Jude 29 for this to be a test \
+         about the offer list"
+    );
+
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+    let offered: std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let a = offered.clone();
+    h.listen("detection://match", move |e| {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(e.payload()) {
+            a.lock().unwrap().push(v);
+        }
+    });
+
+    super::emit_detections(&h, HEARD, 64_000, true, None);
+    settle();
+
+    let got = offered.lock().unwrap();
+    assert!(
+        !got.iter().any(|v| v["reference"]
+            .as_str()
+            .is_some_and(|r| r.starts_with("Jude"))),
+        "a reference with no verse behind it was offered and would render blank: {got:?}"
+    );
+    assert!(
+        wall.references().is_empty(),
+        "a verse with no text reached a congregation: {:?}",
+        wall.references()
+    );
+}

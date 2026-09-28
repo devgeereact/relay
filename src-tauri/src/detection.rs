@@ -1095,7 +1095,41 @@ pub fn detect_direct(text: &str) -> Vec<RefMatch> {
                 // partial transcript that means the next word might still belong to
                 // it — see `RefMatch::at_tail`.
                 m.at_tail = next >= tokens.len();
-                out.push(m);
+                // ── AN IMPOSSIBILITY REFUTES THE REPAIR THAT MADE IT (RG-322) ────
+                //
+                // Service 42 at 20525.4 s: *"Job 29 verse 4 to 17"* came through as
+                // *"June 29"*, `fuzzy_book` repaired `june` to **Jude**, and Jude has
+                // ONE chapter — so there is no 29 for a verse 4 to be in, `verse_id`
+                // came back NULL, and the row rendered on the operator's list with no
+                // reference in it at all.
+                //
+                // **`Job 29` is valid and `Jude 29` is not, and the right book was one
+                // edit away.** The repair was discarding that. `chapter_count` and
+                // `verse_count` have been in this file all along; the digit-run
+                // splitter was their only reader, and nothing asked the same question
+                // about an ordinary parse.
+                //
+                // **Only a REPAIRED book, and that scope is the whole of the care
+                // here.** A book somebody plainly said, with an impossible number
+                // after it, is Relay overruling what it heard if it refuses to parse —
+                // and it is already capped, already unable to resolve to any text, and
+                // already stopped from reaching the operator by the verse-exists check
+                // in `emit_detections`. A guess about the acoustics is the one thing an
+                // impossible number is allowed to be evidence *about*. Same family as
+                // the `hymn number three sixteen` → `Numbers 3:16` P0 in rule 10: a
+                // repair that only the grammar supports, and here the arithmetic
+                // contradicts it outright.
+                //
+                // `i = next` all the same. The tokens were consumed by something
+                // reference-shaped, and re-scanning from inside them would only find a
+                // bare number.
+                let refuted = book_ev == BookEvidence::Repaired
+                    && (m.reference.chapter as usize > chapter_count(canonical)
+                        || m.reference.verse as usize
+                            > verse_count(canonical, m.reference.chapter));
+                if !refuted {
+                    out.push(m);
+                }
                 i = next;
                 continue;
             }
@@ -10127,6 +10161,96 @@ mod the_anchor_may_not_launder_a_cap {
             a.as_ref()
                 .is_some_and(|r| r.chapter == 8 && r.book == "Romans"),
             "the capped later parse won: {a:?}"
+        );
+    }
+}
+
+/// **AN IMPOSSIBILITY IS EVIDENCE AGAINST THE REPAIR THAT MADE IT — RG-322.**
+///
+/// Service 42, 2026-09-27 at 20525.4 s, watched live. The preacher said *"Job 29
+/// verse 4 to 17"* and whisper gave it twice, both wrong: *"June 29"* and
+/// *"Jude 29"*. `fuzzy_book` repaired `june` to **Jude** — which has ONE chapter,
+/// so there is no 29 to have a verse 4 in, `verse_id` came back NULL, and three
+/// rows rendered on the operator's list with no reference in them at all.
+///
+/// **`Job 29` is valid and `Jude 29` is not, and the correct book was one edit
+/// away.** That is a discriminator the repair was throwing on the floor. Nothing
+/// in this file checked the bound on an ordinary parsed reference: `chapter_count`
+/// and `verse_count` are both here, and `split_run_into_chapter_verse` was their
+/// only caller.
+///
+/// The check is scoped to a REPAIRED book on purpose. A book somebody plainly said
+/// with an impossible number after it is a different claim — Relay heard the book,
+/// and refusing to parse it at all would be Relay deciding it knows better. That
+/// half is handled where the corpus is, by not offering a row whose verse does not
+/// resolve (`main::emit_detections`), which is also what stops the blank.
+#[cfg(test)]
+mod an_impossibility_refutes_the_repair {
+    use super::*;
+
+    /// Verbatim from `transcripts`, with the book as whisper first gave it.
+    const JUNE: &str = "The secret conveyed, June 29, verse 4 to 17.";
+
+    #[test]
+    fn a_repaired_book_that_cannot_have_this_chapter_yields_nothing() {
+        let got = detect_direct(JUNE);
+        for m in &got {
+            println!(
+                "  {} {}:{}  {:?}  {:.2}",
+                m.reference.book, m.reference.chapter, m.reference.verse, m.method, m.confidence
+            );
+        }
+        assert!(
+            got.is_empty(),
+            "a repair the numbers refute still produced a reference: {:?}",
+            got.iter()
+                .map(|m| (reference_key(&m.reference), m.method))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_repaired_book_the_numbers_agree_with_still_parses() {
+        // THE OPPOSITE MISTAKE. `sam` → Psalms is the ASR mishear the alias table
+        // was built for, and 23:1 is real, so nothing here may touch it.
+        let got = detect_direct("turn with me to sam 23 verse 1");
+        assert!(
+            got.iter()
+                .any(|m| m.reference.chapter == 23 && m.reference.verse == 1),
+            "a sound repair stopped parsing: {:?}",
+            got.iter()
+                .map(|m| (reference_key(&m.reference), m.method))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_verse_the_repaired_chapter_cannot_have_is_refuted_too() {
+        // The chapter is real and the VERSE is not: Jude 1 has 25 verses. Same
+        // evidence, one coordinate over, so a fix that only looked at chapters
+        // fails here. The number has to follow the book immediately — `fuzzy_book`
+        // only runs where the sentence is already reference-shaped — so this is
+        // *"June 1 verse 40"* and not a bare *"June verse 40"*, which repairs
+        // nothing and would make the test vacuous.
+        let got = detect_direct("the secret conveyed, June 1 verse 40");
+        assert!(
+            !got.iter().any(|m| m.reference.book == "Jude"),
+            "a repair whose verse cannot exist still produced a reference: {:?}",
+            got.iter()
+                .map(|m| (reference_key(&m.reference), m.method))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_book_somebody_plainly_said_is_still_parsed_whatever_the_number() {
+        // Deliberately NOT refuted here. Relay heard "Jude"; the number is the
+        // operator's problem to see, and `emit_detections` is what stops the blank
+        // row. A refusal here would be Relay overruling what it heard.
+        let got = detect_direct("The secret conveyed, Jude 29, 4 to 17.");
+        assert!(
+            got.iter().any(|m| m.reference.book == "Jude"),
+            "a plainly-named book stopped parsing: {got:?}"
         );
     }
 }
