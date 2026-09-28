@@ -2356,13 +2356,24 @@
      alarms. */
   /* ── A MESSAGE THAT IS NOTICED (RG-239) ────────────────────────────────────
      The operator asked for every message to catch an eye, not only an alert.
-     OCHRE, because rule 18 leaves it the only free ink: amber means ON AIR,
-     cyan means the AI guessed, amethyst means a rehearsal, and rose is what the
-     alert already uses — spending any of those here would make this message say
-     something it does not mean.
+
+     RED, and this paragraph went on arguing OCHRE after the rule beneath it had
+     changed (RG-290, a second filing of RG-295). The old argument, kept because
+     it was a good one: rule 18 left ochre the only free ink, since amber means
+     ON AIR, cyan means the AI guessed, amethyst means a rehearsal and rose was
+     the alert's. **The operator overruled it** — they are the sole judge of this
+     surface and they said the ochre was still being missed — and DECISIONS §120
+     amends §116 with the reversal and its cost. Red was never a PROMISE colour,
+     which is why it could be spent here; the note-versus-alarm line now rests
+     entirely on SHAPE, `.bigmsg` against the full-bleed `.alert` below.
+
+     THE TWO SURFACES ARE ONE MESSAGE and `colourlaw.test.js` holds them
+     together, both or neither: RG-268 was filed because the phone carried an ink
+     the big screen did not for two days, and the same drift the other way is the
+     same defect.
 
      REDUCED MOTION GETS AN EQUIVALENT, NOT A QUIETER STATE: the text rests at
-     the caution ink rather than pulsing to it, so a viewer who has asked for no
+     the red rather than pulsing to it, so a viewer who has asked for no
      animation still sees a coloured message rather than a plain one. */
   @media (prefers-reduced-motion: no-preference) {
     .pulse { animation: stagepulse 2s ease-in-out infinite; }

@@ -7342,3 +7342,49 @@ of god that"* is far commoner than that, so a verbatim seven-word quotation is i
 pruning is per-gram; the evidence is per-run.** Raising the cap is not the fix — it widens every
 lookup. Seeding from the rarest gram in the window, or admitting one common seed when the extended
 run is long, are the candidates, and both need measuring through `print_every_auto_fire` first.
+
+## 129. `announcement` is a role the shelf cannot fill, and the absence is registered rather than papered over (2026-09-28)
+
+**Amends nothing; completes §78.** RG-160: `KIND_ORDER` offers an **Announcements** row, the shelf
+ships a five-template `Announce · *` family, and not one of the forty seeded looks derives
+`announcement` — so the gallery's rail has no Announcements bucket at all. Before wave 5 the seeded
+`Classic · Announcement` did derive it (RG-140), so the wave removed the only rows that filled the
+bucket while adding five templates named for it, and no instrument said a word.
+
+RG-160 offered two ways out. **Both are refused, and the reasons are measured rather than argued** —
+`src/lib/kindregister.test.js` holds each one as a case.
+
+**Not "give the Announce family a signal `templateKind` can read".** There is no signal to give. A
+static full-screen notice is shaped exactly like a full-screen verse: one large line and one small
+one. The obvious candidate was ORDER — a notice puts its TITLE first, a verse puts its CITATION last
+— and `Scripture · Column` kills it: reference at `y13`, verse at `y26`, which is `Announce · Board`'s
+geometry exactly. A rule built on that would mislabel a shipped scripture look as a notice, which is
+worse than an empty rail row. §78 keeps a role derived from what a template RENDERS, and
+`templateKind`'s own header already refuses `pre-service` for this identical reason. Reading the
+`Announce` name, or the `announce.*` seed key, would be reading a stored label — the field §78 exists
+to avoid.
+
+**Not "retire `announcement` from `KIND_META` and `KIND_ORDER`" either.** The role is derived — by a
+**scrolling text layer** — and two real paths produce one: the **Announcement Ticker** starter, which
+is how an operator makes a crawl of their own, and any legacy region-model crawl once
+`regionsToLayers` has converted it, which is what an existing install still holds. Retiring the role
+would leave the starter producing a template whose role the rail cannot name, and a converted church
+template with nowhere to sit.
+
+**So the role stays, derivation stays shape-only, and what changes is that the empty bucket stops
+being invisible.** `kindregister.test.js` asserts that every role in `KIND_ORDER` has a real path —
+a seeded row or a starter — because a named bucket with no path at all is the one state RG-160 says
+must not stand; and that the roles the SHELF cannot fill are **exactly** the two written down by name
+with their reason, `announcement` and `custom`. Both directions are checked: a role leaving the shelf
+unannounced is the RG-160 defect itself, and an exemption left behind for a role the shelf has since
+started deriving reads like a gap and is how a register stops being believed.
+
+**What an operator does in the meantime, and it is not nothing.** The five `Announce · *` looks are
+reached the way a role is DECLARED in Relay — the content-look register (`CONTENT_KINDS`, which offers
+Announcements on four surfaces) — and the gallery has a search box, so the family is findable by the
+name it was given. The rail is a register of SHAPE and says so honestly; the content look is a
+register of INTENT. Conflating the two is what the ref-first rule would have done.
+
+**What this does NOT claim.** That the rail is the filter an operator would design. It says the rail
+no longer offers a row nothing can fill, that the shelf's two empty roles are accounted for by name,
+and that the next person to reach for the ref-first idea meets a failing test instead of a memory.

@@ -259,3 +259,177 @@ describe('a crawl that cannot crawl does not swallow the notice', () => {
     expect(fn.slice(0, 900)).toMatch(/track\.scrollWidth > track\.clientWidth/);
   });
 });
+
+// ── THREE: THE TWO RENDERINGS AGREE ABOUT WHAT A CONGREGATION SEES ───────────
+//
+// RG-140's headline is not the split; it is the CONSEQUENCE of the split: *"opening
+// a workspace switches every screen in the building from one to the other."*
+// `TemplateGallery.upgradeLegacyToLayers` runs on mount and SAVES, and
+// `save_template` republishes to every output, so a visit to the Templates tab —
+// to LOOK, not to edit — re-renders every notice in the room.
+//
+// The decision (wave 5 Track A) stopped the shelf shipping region-model, so a
+// fresh install has one rendering. An existing install still holds the other, and
+// the row therefore stays open until the two AGREE — which is a different and
+// stronger claim than the characterisation above. RG-174 made them agree about
+// GEOMETRY. This block is what found that the INK had not been carried across,
+// twice, in the two places a keyed channel is most exposed:
+//
+//   1. **THE BAR'S FALLBACK COLOUR.** `regionsToLayers` says in a comment *"Same
+//      precedence as `TemplateRender::tickerBg`, so the two cannot drift"* and the
+//      last term of the two expressions did not match: the renderer ends at
+//      `rgba(0,0,0,0.82)`, a scrim, and the converter ended at `#0a0a0a`, opaque.
+//      On a keyed lower-third channel that bar IS what is composited over the
+//      camera, so one path let the picture through and the other blacked it out.
+//   2. **THE LABEL'S COLOUR.** The renderer's `refColor` falls back to the ACCENT
+//      on a full-frame template and to the VERSE COLOUR on a band; the converter
+//      used the verse colour for both. On the shipped `Classic · Announcement`
+//      (`accent #4fa8c9`, `verseColor #ffffff`) that is a cyan label before the
+//      Templates tab is opened and a white one afterwards, on the same notice.
+//
+// Neither is a crash and both are the row's own sentence, which is why they are
+// here rather than in a new row. jsdom computes no layout, so nothing below claims
+// a pixel: each fact is an inline style the renderer wrote or a number the
+// converter put on a layer, which is what decides the paint either way.
+describe('RG-140 · the two renderings agree about what a congregation sees', () => {
+  /** ONE SPELLING FOR A COLOUR, or this block reports a drift that is not one.
+   *  Svelte writes the region band's colour through `style`, so the DOM hands back
+   *  `rgb(79, 168, 201)` where the converter holds the `#4fa8c9` it was given —
+   *  the same paint, two spellings, and the first run of this block failed on it.
+   *  A test that cannot tell a representation apart from a difference is the same
+   *  class of mistake as the drift it is looking for. */
+  const probe = document.createElement('span');
+  const norm = (v) => {
+    if (!v) return v;
+    probe.style.color = '';
+    probe.style.color = String(v).trim();
+    // An unparseable value leaves the property empty; report it as written so the
+    // failure names the real string rather than an empty one.
+    return probe.style.color || String(v).trim();
+  };
+
+  /** What the REGION path paints, read off the DOM it produced. */
+  const painted = (template) => {
+    const el = mount(template);
+    const band = el.querySelector('.ticker');
+    const label = el.querySelector('.ticker-label');
+    const bandStyle = band?.getAttribute('style') || '';
+    return {
+      bg: /background:\s*([^;]+)/.exec(bandStyle)?.[1]?.trim(),
+      labelColour: /(?:^|[;\s])color:\s*([^;]+)/.exec(label?.getAttribute('style') || '')?.[1]?.trim(),
+      dur: /--tickdur:\s*([^;]+)/.exec(bandStyle)?.[1]?.trim(),
+    };
+  };
+  /** What the CONVERTED path will paint, read off the layers it produced. */
+  const convert = (template) => {
+    const layout = regionsToLayers(template);
+    const L = (n) => layout.layers.find((x) => x.name === n);
+    return { layout, bar: L('Ticker bar'), label: L('Reference'), notice: L('Notice') };
+  };
+
+  /** The legacy announcement shapes an install can still be holding. RG-140 names
+   *  four families that shipped `scroll: true`; `Lower Third · Announcement` is the
+   *  keyed one, which is the case the bar colour matters most to. */
+  const LEGACY = [
+    [
+      'a full-frame notice (Classic · Announcement)',
+      {
+        layout: { regions: ['verse_text', 'reference'], align: 'center', lowerThird: false },
+        style: { verseColor: '#ffffff', accent: '#4fa8c9', verseSize: '2.4', refSize: '2.4', scroll: true },
+      },
+    ],
+    [
+      'a KEYED notice (Lower Third · Announcement) — no background, the bar is all there is',
+      {
+        layout: { regions: ['verse_text', 'reference'], align: 'left', lowerThird: true },
+        style: {
+          verseColor: '#12151b',
+          accent: '#e8c87a',
+          verseSize: '2.6',
+          refSize: '1.6',
+          background: 'transparent',
+          scroll: true,
+        },
+      },
+    ],
+    [
+      'a notice with NO accent and NO background — the last term of both fallbacks',
+      {
+        // THE CASE THAT FOUND THE BAR DRIFT, and the reason the two fixtures above
+        // could not: both name an accent, so both expressions stop at the same term
+        // and the disagreement is in the one nobody reaches with a styled template.
+        // A church that cleared its accent reaches it, and a keyed channel is where
+        // the difference is a camera showing through or not.
+        layout: { regions: ['verse_text', 'reference'], align: 'left', lowerThird: false },
+        style: { verseColor: '#f4e4c8', verseSize: '2.6', refSize: '1.6', scroll: true },
+      },
+    ],
+  ];
+
+  it.each(LEGACY)('%s — the bar is the same colour on both paths', (_name, tpl) => {
+    const { bg } = painted(tpl);
+    const { bar } = convert(tpl);
+    expect(bg, 'the region path painted no bar colour at all').toBeTruthy();
+    expect(bar, 'the conversion produced no ticker bar').toBeTruthy();
+    // THE BAR IS WHAT IS COMPOSITED OVER A CAMERA. A church that has opened the
+    // Templates tab and one that has not must be looking at the same band.
+    expect(norm(bar.fill), 'the converted bar is a different colour from the painted one').toBe(
+      norm(bg),
+    );
+    expect(bar.opacity, 'the converted bar is translucent where the region bar is not').toBe(1);
+  });
+
+  it.each(LEGACY)('%s — the label is the same colour on both paths', (_name, tpl) => {
+    const { labelColour } = painted(tpl);
+    const { label } = convert(tpl);
+    expect(labelColour, 'the region path painted no label colour').toBeTruthy();
+    expect(label, 'the conversion dropped the fixed label').toBeTruthy();
+    expect(
+      norm(label.color),
+      'the converted label is a different colour from the painted one',
+    ).toBe(norm(labelColour));
+  });
+
+  it.each(LEGACY)('%s — the label is bounded, and does not crawl, on both paths', (_name, tpl) => {
+    // The 45% budget RG-140 names. On the region path it is a CSS fact a browser
+    // enforces (`.ticker-label { max-width: 45% }`); on the layer path it is the
+    // box the converter drew. The row's complaint was that the rule existed on one
+    // path and not the other — so the assertion is that the converted box is inside
+    // the same budget, not that the two numbers are equal.
+    const css = readFileSync(resolve(__dirname, './TemplateRender.svelte'), 'utf8');
+    expect(css, 'the region label lost its 45% budget').toMatch(
+      /\.ticker-label\s*\{[^}]*max-width:\s*45%/,
+    );
+    const { label, notice } = convert(tpl);
+    expect(
+      label.w,
+      'the converted label is outside the budget the region path enforces',
+    ).toBeLessThanOrEqual(45);
+    // AND IT IS FIXED. A label that moved with the text would be unreadable at the
+    // one moment it is meant to say what the notice is; the region path keeps it
+    // outside the scrolling track, and the layer path must say the same.
+    expect(label.scroll, 'the converted label crawls with the body').toBe(false);
+    expect(notice.scroll, 'the converted body stopped crawling').toBe(true);
+    // Beside the label, never under it, so the band stays one line.
+    expect(notice.y, 'the converted body left the label’s band').toBe(label.y);
+    expect(notice.x, 'the converted body is not beside the label').toBeGreaterThan(
+      label.x + label.w - 1,
+    );
+  });
+
+  it.each(LEGACY)('%s — and it crawls at the same speed', (_name, tpl) => {
+    // A constant reading speed is the whole reason the duration is computed from
+    // the notice's length. Two paths with two formulas is a notice that reads at
+    // one speed before the Templates tab is opened and another afterwards.
+    const { dur } = painted(tpl);
+    expect(dur, 'the region band set no duration').toBeTruthy();
+    app?.$destroy();
+    host?.remove();
+    const el = mount({ ...tpl, layout: regionsToLayers(tpl) });
+    const run = el.querySelector('.lrun');
+    expect(run, 'the converted crawl is gone').toBeTruthy();
+    const ldur = /--tickdur:\s*([^;]+)/.exec(run.getAttribute('style') || '')?.[1]?.trim();
+    expect(ldur, 'the converted crawl set no duration').toBeTruthy();
+    expect(ldur, 'the two paths crawl the same notice at different speeds').toBe(dur);
+  });
+});
