@@ -4020,14 +4020,53 @@ const MAX_IMPORT_BYTES: usize = 256 * 1024 * 1024;
 /// The length check is on the base64 text, which is 4 bytes per 3 decoded, so the
 /// estimate is exact enough to be a guard and never rejects a file that would have
 /// fit. Shared by both import commands so the limit cannot come to mean two things.
+///
+/// ── THE MESSAGE USED TO CONTRADICT ITSELF AT ITS OWN BOUNDARY ────────────────
+///
+/// Two separate arithmetic faults, both only visible within a hair of the cap, and
+/// the reason the sentence read *"…is about 256 MB, and Relay imports files up to
+/// 256 MB"*:
+///
+/// **PADDING IS NOT PAYLOAD.** `len / 4 * 3` counts the trailing `=` as decoded
+/// bytes. A file of EXACTLY 256 MiB encodes to 357,913,944 characters, of which two
+/// are padding, and the old estimate answered 268,435,458 — two bytes over a
+/// 268,435,456-byte cap. So the one file that is precisely at the documented limit
+/// was refused, by two bytes, with a message saying it was the size of the limit.
+/// The padding is discounted, which makes the estimate exact rather than merely
+/// close, and `saturating_sub` keeps a malformed short string from underflowing.
+///
+/// **A FLOORED FIGURE CANNOT REPORT AN OVERAGE.** Even with the estimate right,
+/// anything from one byte to a megabyte over the cap floors to 256, so the sentence
+/// would still have equated the two numbers for the whole first mebibyte past the
+/// limit. The reported size is rounded UP: a refusal now always names a number
+/// strictly greater than the limit it cites. Overstating by under a megabyte, under
+/// the word "about", is the right direction — a refusal that reads as though the
+/// file fitted is the failure being fixed.
+///
+/// The estimate is split out so the boundary can be tested for nothing. Proving
+/// what happens to a file of exactly 256 MiB through `decode_import` itself means
+/// allocating the payload AND its base64 form — about 600 MB, which is why the only
+/// test that did it is `#[ignore]`d and why the off-by-two lived at the one size
+/// nothing could afford to check.
+fn decoded_size_estimate(data: &str) -> usize {
+    let padding = data
+        .as_bytes()
+        .iter()
+        .rev()
+        .take_while(|&&b| b == b'=')
+        .count()
+        .min(2);
+    (data.len() / 4 * 3).saturating_sub(padding)
+}
+
 fn decode_import(filename: &str, data: &str) -> error::Result<Vec<u8>> {
     use base64::Engine as _;
-    let approx = data.len() / 4 * 3;
+    let approx = decoded_size_estimate(data);
     if approx > MAX_IMPORT_BYTES {
         return Err(error::Error::refused(format!(
             "{filename} is about {} MB, and Relay imports files up to {} MB. \
              Shorten or compress it and try again.",
-            approx / (1024 * 1024),
+            approx.div_ceil(1024 * 1024),
             MAX_IMPORT_BYTES / (1024 * 1024)
         )));
     }
@@ -10374,6 +10413,94 @@ mod import_guard_tests {
         let payload = vec![7u8; 64 * 1024];
         let got = decode_import("logo.png", &b64(&payload)).expect("normal import");
         assert_eq!(got, payload);
+    }
+
+    /// **THE MESSAGE THAT CONTRADICTED ITSELF AT ITS OWN BOUNDARY.**
+    ///
+    /// A file of exactly 256 MiB was refused with *"…is about 256 MB, and Relay
+    /// imports files up to 256 MB"* — a sentence that gives an operator no action,
+    /// because the number it complains about and the number it permits are the same.
+    /// Two faults, checked separately here because they are independent and either
+    /// one alone still produces that sentence.
+    ///
+    /// The estimate is exercised directly rather than through `decode_import`:
+    /// proving the boundary through the real function means allocating the payload
+    /// and its base64 form, about 600 MB, which is exactly why this size was never
+    /// checked. The base64 LENGTH of an N-byte file is arithmetic, so it can be
+    /// stated instead of built.
+    #[test]
+    fn the_import_cap_is_exact_at_its_own_boundary() {
+        /// Characters of padded standard base64 for `n` bytes, and how many of
+        /// them are `=`. This is the encoder's definition, not an approximation.
+        fn encoded(n: usize) -> (usize, usize) {
+            let groups = n.div_ceil(3);
+            let pad = (3 - (n % 3)) % 3;
+            (groups * 4, pad)
+        }
+
+        // Sanity: the shape of the helper, on sizes small enough to check by eye.
+        assert_eq!(encoded(3), (4, 0));
+        assert_eq!(encoded(4), (8, 2));
+        assert_eq!(encoded(5), (8, 1));
+
+        // The estimate is EXACT for every size and every padding residue, which is
+        // the property the old `len / 4 * 3` did not have. Checked on sizes that
+        // cost nothing, because the fault is in the padding term and the padding
+        // term does not grow with the file.
+        for n in [0, 1, 2, 3, 4, 5, 6, 7, 8, 100, 1023, 1024, 1025] {
+            let (len, pad) = encoded(n);
+            let s = format!("{}{}", "A".repeat(len - pad), "=".repeat(pad));
+            assert_eq!(decoded_size_estimate(&s), n, "estimate for {n} bytes");
+        }
+
+        // FAULT ONE — PADDING COUNTED AS PAYLOAD, AT THE ONE SIZE IT MATTERS.
+        // A file of exactly 256 MiB encodes to 357,913,944 characters of which two
+        // are `=`, so `len / 4 * 3` answered 268,435,458 against a 268,435,456-byte
+        // cap and refused it by two bytes. The string is built and dropped without
+        // being decoded: the guard reads its length, and decoding it as well would
+        // put ~600 MB in a test that runs on every commit.
+        let (len, pad) = encoded(MAX_IMPORT_BYTES);
+        assert_eq!((len, pad), (357_913_944, 2), "the encoded form of 256 MiB");
+        {
+            let at_the_cap = format!("{}{}", "A".repeat(len - pad), "=".repeat(pad));
+            assert_eq!(
+                decoded_size_estimate(&at_the_cap),
+                MAX_IMPORT_BYTES,
+                "a file of EXACTLY the cap must estimate to exactly the cap, so the \
+                 guard's `approx > MAX_IMPORT_BYTES` lets it through — the old \
+                 arithmetic answered {} and refused the one file that is precisely at \
+                 the documented limit",
+                MAX_IMPORT_BYTES + 2
+            );
+        }
+
+        // FAULT TWO — A FLOORED FIGURE CANNOT REPORT AN OVERAGE, and it is
+        // independent of fault one: with the padding discounted, every size from one
+        // byte to one mebibyte past the cap still floored to 256, so the sentence
+        // went on equating its two numbers across that whole range. One byte over is
+        // both still refused and now reported as larger than the limit.
+        let (len, pad) = encoded(MAX_IMPORT_BYTES + 1);
+        let over = format!("{}{}", "A".repeat(len - pad), "=".repeat(pad));
+        assert!(
+            decoded_size_estimate(&over) > MAX_IMPORT_BYTES,
+            "one byte past the cap must still be over it — the fix must not have \
+             simply loosened the guard"
+        );
+        let err = decode_import("service.mp4", &over).expect_err("must refuse");
+        let msg = err.message();
+        let reported: usize = msg
+            .split(" is about ")
+            .nth(1)
+            .and_then(|rest| rest.split(' ').next())
+            .and_then(|w| w.parse().ok())
+            .unwrap_or_else(|| panic!("could not read the reported size out of {msg:?}"));
+        assert!(
+            reported > MAX_IMPORT_BYTES / (1024 * 1024),
+            "a refusal must name a size STRICTLY GREATER than the limit it cites. It \
+             read {reported} against a limit of {}, which tells an operator their \
+             file was within the limit and refused anyway: {msg}",
+            MAX_IMPORT_BYTES / (1024 * 1024)
+        );
     }
 
     /// THE BUG. There was no limit at all: the webview built the whole file as a
