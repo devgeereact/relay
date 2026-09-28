@@ -1396,6 +1396,14 @@ which is rule 35 on the one path that produces evidence. And
 `the_debug_recorder_writes_a_wav_that_can_be_read_back` passes, because it writes a short buffer;
 the test pins the field layout and cannot see the only input that breaks it.
 
+**Closed as RG-316 on 2026-09-28.** `wav_data_len` is a `Result`, so the cast cannot return;
+`write_wav_segments` writes as many whole WAVs as the format needs, splitting on a whole sample and
+numbering them through the `free_recording_path` sequence that already stops a second Stop
+overwriting a first. Segments rather than RF64, because every segment is a file every transcriber
+opens. Both existing recordings were repaired with `scripts/split-recording.mjs` into three parts
+each — 6 h 45 m, 6 h 45 m, and the remainder — and verified bit-identical over the audio by SHA-256,
+with the originals left on disk. The audio was never in danger; only the header was wrong.
+
 ## 2. Five wrong verses, and one of them had its own contradiction in hand
 
 `1 Corinthians 2:7`, `Romans 11:28`, `1 Timothy 1:6`, `Matthew 1:7`, `Psalms 119:39`.

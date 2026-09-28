@@ -94,8 +94,21 @@ describe('the Rust half is pinned where it runs', () => {
     // Reporting first would be correct-looking and wrong: `on_error` is what the
     // operator sees, and the audio that proves what happened has to be on disk by
     // then. The order is asserted here because it is invisible at the call site.
+    //
+    // **This scanner matched a DEFINITION and called it a call site.** It looked
+    // for `write_wav_f32` after `drop(stream)`, and RG-316 moved the write behind
+    // `write_wav_segments` — so the only `write_wav_f32` left in range was the
+    // function's own `fn` line, which now sits AFTER the error return. The
+    // guarantee never moved; the test went looking for the wrong symbol and
+    // reported a safety regression that had not happened. Anchor on the CALL, and
+    // require the parenthesis so a doc comment mentioning the name cannot satisfy
+    // it either.
     const rs = read('src-tauri/src/audio.rs');
     const body = rs.slice(rs.indexOf('    drop(stream);'));
-    expect(body.indexOf('write_wav_f32')).toBeLessThan(body.indexOf('return Err(msg)'));
+    const wrote = body.indexOf('write_wav_segments(&path, &buf, sample_rate');
+    const reported = body.indexOf('return Err(msg)');
+    expect(wrote, 'the write call is no longer in the capture epilogue').toBeGreaterThan(-1);
+    expect(reported, 'the error return is no longer in the capture epilogue').toBeGreaterThan(-1);
+    expect(wrote).toBeLessThan(reported);
   });
 });

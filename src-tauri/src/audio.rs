@@ -1020,15 +1020,35 @@ where
     }
     drop(stream);
     if let Some((path, buf)) = rec {
-        // Resolved HERE and not at Start: the previous segment's file exists by
-        // now, and this is what stops a second Stop from writing over it.
-        let path = free_recording_path(&path);
-        match write_wav_f32(&path, &buf, sample_rate) {
-            Ok(()) => println!(
-                "audio: wrote {:.1}s to {}",
-                buf.len() as f32 / sample_rate as f32,
-                path.display()
-            ),
+        // Resolved inside `write_wav_segments` and not at Start: the previous
+        // segment's file exists by then, and that is what stops a second Stop from
+        // writing over it (RG-117) — and now also what numbers the segments.
+        //
+        // SEGMENTED, because one WAV cannot describe more than 4 GiB and a service
+        // recorded from app launch goes past that (RG-316). The line below reports
+        // every file, with its own duration, because the figure that matters to
+        // whoever transcribes this is per file: the old line printed the true total
+        // over a header that declared a quarter of it.
+        match write_wav_segments(&path, &buf, sample_rate, WAV_MAX_DATA_BYTES) {
+            Ok(paths) => {
+                let per = (WAV_MAX_DATA_BYTES / 4).max(1);
+                for (i, p) in paths.iter().enumerate() {
+                    let n = buf.len().saturating_sub(i * per).min(per);
+                    println!(
+                        "audio: wrote {:.1}s to {}",
+                        n as f32 / sample_rate as f32,
+                        p.display()
+                    );
+                }
+                if paths.len() > 1 {
+                    println!(
+                        "audio: {} files — one WAV cannot hold more than {:.1}h at {} Hz",
+                        paths.len(),
+                        WAV_MAX_DATA_BYTES as f32 / 4.0 / sample_rate as f32 / 3600.0,
+                        sample_rate
+                    );
+                }
+            }
             Err(e) => eprintln!("audio: could not write recording: {e}"),
         }
     }
@@ -1042,10 +1062,78 @@ where
     Ok(())
 }
 
+/// The most audio one WAV file may describe: the `data` chunk size is a `u32`, and
+/// the `RIFF` size field is that plus 36, so the ceiling is a property of the
+/// format rather than a choice (RG-316).
+///
+/// 4 GiB is **6 h 46 m** of 44.1 kHz mono float and **6 h 12 m** at 48 kHz. The
+/// debug recorder buffers from app launch rather than from Start, so a Sunday
+/// morning goes past it without anyone doing anything unusual — which is how two
+/// recordings came to declare a quarter of their own length.
+pub const WAV_MAX_DATA_BYTES: usize = (u32::MAX - 36) as usize;
+
+/// The `data` length for `n` samples, or a refusal naming the reason.
+///
+/// **This exists so the truncating cast cannot come back.** `(samples.len() * 4) as
+/// u32` shipped, wrapped twice on a real service, and produced a file that opens
+/// as 2.73 h of a 16.25 h recording with no error anywhere. A `Result` at the one
+/// place the number is computed is the difference between a bug that is loud and a
+/// bug that is discovered four days later by accident.
+fn wav_data_len(n_samples: usize) -> Result<u32, String> {
+    let bytes = n_samples.saturating_mul(4);
+    if bytes > WAV_MAX_DATA_BYTES {
+        return Err(format!(
+            "{bytes} bytes of audio is too long for one WAV file — the data chunk size is a \
+             32-bit field, so 4 GiB is the ceiling the format allows"
+        ));
+    }
+    u32::try_from(bytes).map_err(|_| format!("{bytes} bytes does not fit a 32-bit size field"))
+}
+
+/// Write the recording, splitting it into as many whole WAV files as the format
+/// needs, and answer where each one went.
+///
+/// Segments rather than RF64, deliberately: every segment here is an ordinary WAV
+/// that every reader already opens, and this file exists to be handed to whoever
+/// can transcribe it. RF64 is the technically correct answer and much less
+/// software reads it.
+///
+/// A boundary lands on a whole sample and each name comes from
+/// `free_recording_path`, so the `-2`, `-3` … sequence that stops a second Stop
+/// overwriting a first (RG-117) is the same sequence that numbers the segments.
+/// `max_data_bytes` is a parameter only so a test can reach the boundary without
+/// allocating 4 GiB.
+fn write_wav_segments(
+    requested: &std::path::Path,
+    samples: &[f32],
+    rate: u32,
+    max_data_bytes: usize,
+) -> std::io::Result<Vec<std::path::PathBuf>> {
+    let per_segment = (max_data_bytes / 4).max(1);
+    let mut written = Vec::new();
+    // `chunks` on an empty slice yields nothing, and a recording of no audio
+    // should still leave a file saying so rather than silently nothing.
+    if samples.is_empty() {
+        let path = free_recording_path(requested);
+        write_wav_f32(&path, samples, rate)?;
+        return Ok(vec![path]);
+    }
+    for part in samples.chunks(per_segment) {
+        let path = free_recording_path(requested);
+        write_wav_f32(&path, part, rate)?;
+        written.push(path);
+    }
+    Ok(written)
+}
+
 /// Minimal 32-bit-float mono WAV writer, for the debug recorder only.
+///
+/// Refuses anything the header cannot honestly describe — see `wav_data_len`.
+/// Callers that may hold a whole service go through `write_wav_segments`.
 fn write_wav_f32(path: &std::path::Path, samples: &[f32], rate: u32) -> std::io::Result<()> {
     use std::io::Write;
-    let data_len = (samples.len() * 4) as u32;
+    let data_len = wav_data_len(samples.len())
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
     let mut f = std::io::BufWriter::new(std::fs::File::create(path)?);
     f.write_all(b"RIFF")?;
     f.write_all(&(36 + data_len).to_le_bytes())?;
@@ -1743,7 +1831,10 @@ mod gate {
     /// Locate the real `data` chunk. A fixed 44-byte skip is wrong for any WAV with
     /// extra chunks, and the header bytes then arrive as absurd float samples — which
     /// is not merely noisy, it poisons the level trackers on the very first frame.
-    fn load_f32(path: &str) -> Vec<f32> {
+    // `pub(super)` so `recording_size_limit` can round-trip through the SAME
+    // reader every bench in here uses (RG-316). A test that decoded a WAV with its
+    // own reader would be checking my arithmetic against my arithmetic.
+    pub(super) fn load_f32(path: &str) -> Vec<f32> {
         let bytes = std::fs::read(path).expect("read wav");
         let mut start = 0usize;
         if bytes.starts_with(b"RIFF") {
@@ -1986,5 +2077,142 @@ mod envelope_tests {
     fn an_envelope_of_no_slices_is_empty() {
         assert!(envelope(&[0.5, 0.5], 0).is_empty());
         assert_eq!(envelope(&[], 4), vec![0.0; 4]);
+    }
+}
+
+/// **A RECORDING OVER 4 GiB DECLARED THE WRONG LENGTH AND EVERY READER BELIEVED
+/// IT** (RG-316).
+///
+/// `write_wav_f32` computed both RIFF size fields as `(samples.len() * 4) as u32`.
+/// That cast truncates, so the two recordings this machine has made both lie:
+/// `monitor-2026-09-27.wav` holds 10,320,433,920 bytes of audio and declares
+/// 1,730,499,328, and `service-2026-09-25.wav` holds 10,178,423,040 and declares
+/// 1,588,488,448 — two wraps of 2³² each. 16.25 h opens as 2.73 h and 16.03 h as
+/// 2.50 h, and neither service starts inside the readable part.
+///
+/// **The ceiling belongs to the format.** A 32-bit size field cannot describe more
+/// than 4 GiB, which is 6 h 46 m of 44.1 kHz mono float and 6 h 12 m at 48 kHz —
+/// and the recorder captures from app launch rather than from Start, so a Sunday
+/// morning exceeds it comfortably. A wider cast fixes nothing.
+///
+/// So the writer SEGMENTS, and each segment is an ordinary WAV that every reader
+/// already understands. The alternative was RF64, which is correct and which far
+/// less software opens; on the one artefact that exists to be handed to whoever
+/// can transcribe it, compatibility is the whole point.
+#[cfg(test)]
+mod recording_size_limit {
+    use super::*;
+
+    fn tmpdir(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("relay-seg-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).expect("tmpdir");
+        d
+    }
+
+    /// THE DEFECT, as arithmetic. `10_320_433_920 as u32` is what shipped, and it
+    /// is what the file on disk says.
+    #[test]
+    fn the_cast_that_shipped_reproduces_the_field_figures() {
+        for (bytes, declared) in [
+            (10_320_433_920usize, 1_730_499_328u32),
+            (10_178_423_040usize, 1_588_488_448u32),
+        ] {
+            assert_eq!(bytes as u32, declared, "the wrap is exact, not approximate");
+        }
+    }
+
+    /// A single-segment recording is byte-for-byte what it always was. The whole
+    /// change must be invisible below the limit, because that is every recording
+    /// anyone has ever successfully read.
+    #[test]
+    fn a_short_recording_is_still_one_file_with_the_same_header() {
+        let dir = tmpdir("short");
+        let samples: Vec<f32> = (0..4096).map(|i| (i as f32 / 4096.0) - 0.5).collect();
+        let written =
+            write_wav_segments(&dir.join("rec.wav"), &samples, 48_000, WAV_MAX_DATA_BYTES)
+                .expect("write");
+        assert_eq!(written.len(), 1, "no segmentation below the limit");
+        let bytes = std::fs::read(&written[0]).expect("read back");
+        assert_eq!(
+            u32::from_le_bytes([bytes[40], bytes[41], bytes[42], bytes[43]]) as usize,
+            samples.len() * 4,
+            "data size"
+        );
+        assert_eq!(
+            gate::load_f32(written[0].to_str().unwrap()).len(),
+            samples.len()
+        );
+    }
+
+    /// **The case the field produced**, with the limit shrunk so it is reachable in
+    /// a test. Every segment must be independently readable, every sample must
+    /// survive, and the segments in order must equal the original.
+    #[test]
+    fn a_recording_past_the_limit_becomes_whole_readable_segments() {
+        let dir = tmpdir("long");
+        // 2.5 seconds at 1 kHz, with a limit of one second of audio.
+        let rate = 1_000u32;
+        let samples: Vec<f32> = (0..2_500).map(|i| i as f32 / 2_500.0).collect();
+        let limit = (rate as usize) * 4; // exactly one second
+        let written =
+            write_wav_segments(&dir.join("svc.wav"), &samples, rate, limit).expect("write");
+        assert_eq!(written.len(), 3, "2.5 s at 1 s a segment is three files");
+
+        let mut rejoined: Vec<f32> = Vec::new();
+        for p in &written {
+            let bytes = std::fs::read(p).expect("segment readable");
+            let declared =
+                u32::from_le_bytes([bytes[40], bytes[41], bytes[42], bytes[43]]) as usize;
+            assert_eq!(
+                declared,
+                bytes.len() - 44,
+                "{}: declared length must be the real one",
+                p.display()
+            );
+            rejoined.extend(gate::load_f32(p.to_str().unwrap()));
+        }
+        assert_eq!(
+            rejoined.len(),
+            samples.len(),
+            "no sample lost at a boundary"
+        );
+        assert_eq!(rejoined, samples, "the segments in order are the recording");
+    }
+
+    /// A segment boundary lands on a whole sample, and the names are the ones
+    /// `free_recording_path` already hands out, so a second Stop still cannot
+    /// overwrite a first (RG-117).
+    #[test]
+    fn segments_are_named_so_nothing_is_ever_overwritten() {
+        let dir = tmpdir("names");
+        let rate = 1_000u32;
+        let samples: Vec<f32> = vec![0.25; 2_500];
+        let first =
+            write_wav_segments(&dir.join("svc.wav"), &samples, rate, rate as usize * 4).unwrap();
+        let second =
+            write_wav_segments(&dir.join("svc.wav"), &samples, rate, rate as usize * 4).unwrap();
+        for p in &first {
+            assert!(!second.contains(p), "{} was reused", p.display());
+        }
+        assert_eq!(first.len(), 3);
+        assert_eq!(second.len(), 3);
+    }
+
+    /// **The truncating cast is gone, not merely avoided.** A caller that asks for
+    /// one file larger than the format allows gets an error rather than a file that
+    /// lies about itself — the behaviour that let this ship silently.
+    #[test]
+    fn the_single_file_writer_refuses_what_it_cannot_describe() {
+        let dir = tmpdir("refuse");
+        // No 4 GiB allocation: the guard is on the byte count, so a tiny buffer
+        // with an impossible declared length is the same code path.
+        let err = wav_data_len(u32::MAX as usize / 4 + 1).expect_err("must refuse");
+        assert!(
+            err.contains("4 GiB") || err.contains("too long"),
+            "the refusal must say why: {err}"
+        );
+        assert!(wav_data_len(1_024).is_ok());
+        let _ = dir;
     }
 }
