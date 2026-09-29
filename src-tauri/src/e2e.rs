@@ -7078,3 +7078,102 @@ fn a_conversationally_announced_range_stages_and_walks_to_the_end_the_preacher_g
         wall.references()
     );
 }
+
+/// **RG-323 · A CITATION FIRST HEARD IN A WINDOW THAT FILLED UP IS OFFERED AND NEVER
+/// FIRED, AND THE PARTIAL/FINAL QUESTION IS ANSWERED HERE RATHER THAN ARGUED.**
+///
+/// The row said the cause was that *"corroboration accepts agreement only from a LATER
+/// window"*. It does not: `Router::decide_live` exempts a final window outright, and
+/// `router::a_final_window_needs_no_corroboration` has pinned that all along. **What
+/// the row was missing is one line in `handle_transcript`**, which hands the detector
+/// `update.is_final && !update.continued` (RG-262). So there are TWO kinds of final and
+/// only one of them is a boundary the corroboration rule relaxes at:
+///
+/// ```text
+///   is_final && !continued   the preacher stopped   → exempt, fires on first sight
+///   is_final &&  continued   the window filled up   → a PARTIAL, held for a second pass
+/// ```
+///
+/// **And a second pass over that window's audio is never coming.** `stt.rs` clears
+/// `window` on either close and starts the next one from `carry` — the samples that
+/// would not fit — so the audio of a filled window is decoded exactly as many times as
+/// it was stepped over and never again. `a_final_window_needs_no_corroboration`'s own
+/// comment gives that as the reason for the exemption (*"the window clears, and the
+/// corroborating pass that was supposed to confirm it never comes"*), and it is equally
+/// true of the close this one is withheld from.
+///
+/// **The class is therefore bounded, and the bound is why nothing is changed here.** A
+/// partial decodes the WHOLE window every step, so any reference that has been in the
+/// window for two steps is already corroborated by the time it fills. The only
+/// references a forced close can hold for ever are those first decoded in its LAST step
+/// — which are exactly the once-decoded, unrevised references rule 28 exists to catch
+/// (`Romans 8:16`, then `8:21`, before settling on `8:28`). Granting them the exemption
+/// would fire precisely the set the rule was built for, and lowering the bar underneath
+/// them is rule 10 in its plainest form. What it costs is one click on a row the console
+/// is already showing.
+///
+/// Driven through `handle_transcript` rather than `emit_detections`, because the
+/// distinction this test is about is made in `handle_transcript` and nowhere else — a
+/// test that called `emit_detections` directly would be restating its own premise.
+///
+/// Watched to fail by handing `update.is_final` instead of `update.is_final &&
+/// !update.continued`: the first window then fires and the first assertion reproduces
+/// the unrevised fire RG-262 refused.
+#[test]
+fn a_citation_first_heard_in_a_window_that_filled_is_offered_and_never_fired() {
+    // Verbatim from service 42 at 21608.4 s — the row's own window. `Matthew 6, 33` is
+    // a bare digit pair, which `parse_reference` scores 0.55.
+    const HEARD: &str = "You cannot discover the treasure hidden in Matthew 6, 33.";
+    let filled = |continued: bool| stt::TranscriptUpdate {
+        text: HEARD.into(),
+        language: "en".into(),
+        is_final: true,
+        continued,
+        timestamp_ms: 0,
+        trace_id: 0,
+    };
+
+    // ── THE WINDOW FILLED UP: the preacher has not stopped, so it is a partial ──
+    let still_going = app();
+    let h = still_going.handle().clone();
+    let wall = Wall::watch(&h);
+    let stability = std::sync::Mutex::new(stt::LanguageStability::default());
+    handle_transcript(&h, &stability, filled(true));
+    settle();
+    assert!(
+        wall.references().is_empty(),
+        "a reference decoded once, from a window that filled up, reached a \
+         congregation unattended: {:?}",
+        wall.references()
+    );
+    // Held, never dropped — and the release condition is the one rule 28 states. In a
+    // service that second agreement only arrives if the preacher says it again; here it
+    // is what proves the hold is a wait and not a veto.
+    handle_transcript(&h, &stability, filled(true));
+    settle();
+    assert_eq!(
+        wall.references(),
+        vec!["Matthew 6:33".to_string()],
+        "the second agreeing pass never fired it, so the hold is a permanent refusal \
+         rather than a wait"
+    );
+
+    // ── THE PREACHER STOPPED: the same words, the same score, fires at once ──────
+    //
+    // The contrast is the whole finding. Nothing about the citation, the confidence or
+    // the method differs between the two halves of this test; only whether the window
+    // that carried it had room left.
+    let ended = app();
+    let h = ended.handle().clone();
+    let wall = Wall::watch(&h);
+    let stability = std::sync::Mutex::new(stt::LanguageStability::default());
+    handle_transcript(&h, &stability, filled(false));
+    settle();
+    assert_eq!(
+        wall.references(),
+        vec!["Matthew 6:33".to_string()],
+        "a closed utterance was held for a corroborating pass that cannot come — rule \
+         28 exempts a final window and this is that exemption gone: {:?}",
+        wall.references()
+    );
+}
