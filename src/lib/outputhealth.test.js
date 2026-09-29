@@ -23,6 +23,7 @@ import {
   SCREEN_BADGE,
   BEAT_INTERVAL_MS,
   BEAT_GRACE_MS,
+  MAX_REFUSED_REPORTED,
   PAINT_STATES,
   screenSwitch,
   screenReporting,
@@ -296,9 +297,114 @@ describe('startBeat', () => {
           mediaPaused: null,
           // …and the media failure it did not have (O-4): named, for the same reason.
           mediaError: null,
+          // …and the beats the bridge did not refuse (RG-119). ZERO rather than
+          // null, and that asymmetry is the field's whole claim: this page reached
+          // the bridge to say it, so it KNOWS none were refused, where `null` is
+          // reserved for a page that cannot know.
+          refused: 0,
         },
       ],
     ]);
+  });
+
+  it('counts the beats the bridge REFUSED and names them on the next one that lands', async () => {
+    // **RG-119.** `sendOverBridge` was one `try` with one bare `catch {}`, so a
+    // native window that was alive, painting and ticking on time — and whose
+    // `output_beat` call was being thrown away — was indistinguishable in the
+    // service record from a page the OS had frozen. Both are "no beat arrived", and
+    // `since_ms` alone cannot separate them: a page that ticks every two seconds
+    // into a refusing bridge reports a two-second gap on the beat that finally
+    // lands, which is exactly what a page that came back from being frozen for two
+    // seconds reports. The counter is what makes the next service decisive.
+    //
+    // Reintroduce the defect by dropping `refused` from the payload, or by resetting
+    // it in the `catch`, and this goes red.
+    vi.useFakeTimers();
+    let refuse = true;
+    const sent = [];
+    const stop = startBeat({
+      channelId: 6,
+      getState: () => 'content',
+      invoke: async (cmd, args) => {
+        if (refuse) throw new Error('bridge gone');
+        sent.push(args);
+      },
+    });
+    // Three ticks the bridge throws on. Nothing reaches Relay, which is right —
+    // rule 2, silence is the message — and nothing is reported yet, because the only
+    // way to report a refused beat is over the thing that refused it.
+    await vi.advanceTimersByTimeAsync(BEAT_INTERVAL_MS * 2);
+    expect(sent).toEqual([]);
+    refuse = false;
+    await vi.advanceTimersByTimeAsync(BEAT_INTERVAL_MS);
+    stop();
+    vi.useRealTimers();
+
+    expect(sent.length).toBeGreaterThanOrEqual(1);
+    expect(sent[0].refused).toBe(3);
+    expect(sent[0].sinceMs).toBeLessThan(BEAT_INTERVAL_MS * 2);
+  });
+
+  it('a beat that lands CLEARS the count, so one outage is not reported twice', async () => {
+    vi.useFakeTimers();
+    let refuse = true;
+    const sent = [];
+    const stop = startBeat({
+      channelId: 7,
+      getState: () => 'content',
+      invoke: async (cmd, args) => {
+        if (refuse) throw new Error('bridge gone');
+        sent.push(args);
+      },
+    });
+    await vi.advanceTimersByTimeAsync(BEAT_INTERVAL_MS);
+    refuse = false;
+    await vi.advanceTimersByTimeAsync(BEAT_INTERVAL_MS * 3);
+    stop();
+    vi.useRealTimers();
+    expect(sent[0].refused).toBe(2);
+    // Everything after it is an ordinary beat about nothing, and says so. A count
+    // that accumulated for the life of the page would put the same outage on every
+    // recovery in the record.
+    for (const a of sent.slice(1)) expect(a.refused).toBe(0);
+  });
+
+  it('a page with no bridge and no socket still reports nothing and still ticks', async () => {
+    // The designed silent case, and the one the refusal count must not disturb. A
+    // kiosk page whose socket is down falls through to the bridge, and there is no
+    // bridge: the right behaviour is to send nothing and let the beat go stale
+    // (rule 2), not to throw (rule 1) and not to stop ticking.
+    //
+    // The distinction the counter actually rests on is worth stating here because it
+    // is easy to get backwards, and the first version of this code did:
+    // `@tauri-apps/api/core` is BUNDLED into `output.html`, so the dynamic import
+    // RESOLVES in a plain browser exactly as it does in the native window, and it is
+    // `invoke` that then throws `window.__TAURI_INTERNALS__ is undefined`. Keying the
+    // count on the import would have made every OBS browser source count a refusal
+    // per tick for a fault it does not have. `bridgeAttached()` asks the honest
+    // question instead. A kiosk page can never DELIVER a count (it never lands a
+    // bridge beat), so the guard is about what the number means rather than about
+    // noise reaching the record — which is why this test claims the silence and not
+    // the arithmetic.
+    vi.useFakeTimers();
+    const before = globalThis.window?.__TAURI_INTERNALS__;
+    if (globalThis.window) delete globalThis.window.__TAURI_INTERNALS__;
+    const landed = [];
+    let ticks = 0;
+    const stop = startBeat({
+      channelId: 8,
+      getState: () => {
+        ticks += 1;
+        return 'content';
+      },
+      getWs: () => ({ readyState: 3, send: () => landed.push(1) }),
+    });
+    await vi.advanceTimersByTimeAsync(BEAT_INTERVAL_MS * 4);
+    stop();
+    vi.useRealTimers();
+    expect(landed).toEqual([]);
+    expect(ticks).toBeGreaterThan(4);
+    if (globalThis.window && before !== undefined) globalThis.window.__TAURI_INTERNALS__ = before;
   });
 
   it('the first beat omits the gap entirely on the socket, and later ones carry it', async () => {
@@ -442,6 +548,18 @@ describe('the beat interval is one decision held in two languages', () => {
     // three-beats-of-grace arithmetic itself is pinned on the Rust side, where it
     // can be evaluated instead of pattern-matched.
     expect(rs).toMatch(/BEAT_STALE_MS: u64 = BEAT_INTERVAL_MS \* 3/);
+  });
+
+  it('the refusal cap is one decision held in two languages too (RG-119)', () => {
+    // The page caps what it counts and Rust caps what it believes, and the two
+    // have to be the same number or one of them is doing nothing. A page cap
+    // ABOVE Rust's would be worse than nothing: every beat over the ceiling is
+    // dropped to `None` at the door, so a screen with a genuinely wedged bridge
+    // would say NOTHING about it — the field failing silent in exactly the case
+    // it exists for.
+    const rs = read('src-tauri/src/channels.rs');
+    const clamp = Number(/REFUSED_CLAMP: u32 = ([\d_]+)/.exec(rs)[1].replace(/_/g, ''));
+    expect(MAX_REFUSED_REPORTED).toBe(clamp);
   });
 });
 

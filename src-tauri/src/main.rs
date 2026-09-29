@@ -8505,6 +8505,222 @@ mod main_loop_tests {
         );
     }
 
+    // ── THE TRIPWIRE FOR THE NEXT ONE — RG-299 ──────────────────────────────
+    //
+    // `OFF_THE_RUN_LOOP` above is a list of five commands that were measured and
+    // moved. It says nothing about the 164 that stayed, and RG-299's last open
+    // clause was exactly that: **nothing stops the next slow command being added to
+    // the run loop without anybody measuring it.** The five were not found by
+    // reasoning about what looks slow; they were found by a survey, and the survey
+    // was written down as reproducible — *"walk each command body for `fs::`,
+    // hashing, `decode_import`, a bundle or a model load"*. A survey that is
+    // reproducible by hand is a test that nobody has written yet.
+    //
+    // So this is that survey, run on every build. It is deliberately NOT a rule
+    // about which commands are slow — that is the scanner the note above this module
+    // refuses, and rightly, because it would guess, fail on legitimate code, be
+    // weakened and take the real ones with it. This asks a syntactic question with a
+    // syntactic answer: **does this command's own body do bulk work with a file, a
+    // hash, an import or a model?** If it does, it is `(async)`, or it is named
+    // below with the measurement that says it may stay.
+    //
+    // **What it cannot see, stated rather than implied.** It reads the command's own
+    // body and nothing a call deep, which is the same boundary the hand survey had:
+    // `select_stt_model` does seconds of work and contains none of these markers,
+    // because it calls `load_stt_model`. That is why `OFF_THE_RUN_LOOP` exists as a
+    // list of names beside this — the two tests answer different questions, and
+    // neither subsumes the other. It also cannot see cost that is not file-shaped;
+    // `export_diagnostics` is 16 ms and the whole of it is `sysprobe::read`, which
+    // this would never have found.
+
+    /// Bulk work, and what each marker is a marker FOR. A body naming one of these
+    /// is doing something whose cost is set by how big the thing is, which is the
+    /// property that makes a command able to freeze a window.
+    ///
+    /// `fs::remove_file` is deliberately absent: unlinking a file is one syscall
+    /// whatever is in it, and `delete_media` and `remove_demo_content` do exactly
+    /// that and nothing else. A marker that catches them would be a marker that
+    /// catches everything, and then this list gets weakened.
+    const BULK_WORK: [(&str, &str); 15] = [
+        ("fs::read", "reads a whole file (or a directory)"),
+        ("read_to_string", "reads a whole file"),
+        ("File::open", "opens a file to read it"),
+        ("File::create", "opens a file to write it"),
+        ("fs::write", "writes a whole file"),
+        ("fs::copy", "copies a file"),
+        ("io::copy", "streams a file"),
+        ("read_dir", "enumerates a directory"),
+        ("Sha256", "hashes bytes"),
+        ("decode_import", "decodes an upload"),
+        ("WhisperContext", "loads a speech model"),
+        ("build_stt", "loads a speech model"),
+        (
+            "scan_for_models",
+            "enumerates and hashes every installed model",
+        ),
+        ("install_from_file", "copies and hashes a model"),
+        ("write_bundle", "writes the diagnostic bundle"),
+    ];
+
+    /// Commands whose own body does bulk work, which are MEASURED and staying on the
+    /// run loop. Every entry carries its number and the bench that produced it, and
+    /// an entry with neither does not belong here — that is the whole mechanism.
+    ///
+    /// * `export_diagnostics` — **16 ms** end to end, and `sysprobe::read` is the
+    ///   whole of it (`diagnostic_bundle_tests::what_the_diagnostic_bundle_costs`).
+    ///   Measuring returned a no, which is a result.
+    /// * `export_service` — **~6 ms** for the largest real service, 7,163 transcript
+    ///   rows and 549 KB. This is the command RG-299 called out for reading every
+    ///   transcript row with no `LIMIT`.
+    /// * `import_media` — **169 ms** at the 256 MiB cap, 81 decode and 88 write
+    ///   (`import_guard_tests::what_an_import_at_the_cap_costs`). Service locked.
+    /// * `import_translation` — **241 ms** for the whole KJV, 31,102 verses out of
+    ///   4.3 MB of JSON (`db::verses::imported_translation::what_importing_a_whole_
+    ///   bible_costs`). Service locked.
+    ///
+    /// The four that are NOT here are the four the same survey found and moved; they
+    /// are in `OFF_THE_RUN_LOOP` and this test would fail on any of them that came
+    /// back, from the other direction.
+    const MEASURED_ON_THE_RUN_LOOP: [&str; 4] = [
+        "export_diagnostics",
+        "export_service",
+        "import_media",
+        "import_translation",
+    ];
+
+    /// One Tauri command as this file declares it: its name, whether its attribute
+    /// took it off the run loop, and its own body with comments removed.
+    ///
+    /// **Comments removed, and that is not tidiness.** The first version of this scan
+    /// reported `stt_status` — a lock read and a settings lookup — as loading a
+    /// model, because the comment above its first statement mentions
+    /// `load_stt_model` by name while explaining lock order. A scanner reading prose
+    /// about code instead of code is the same failure `attribute_above` already
+    /// records against itself one screen up.
+    fn command_bodies(src: &str) -> Vec<(String, bool, String)> {
+        let lines: Vec<&str> = src.lines().collect();
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < lines.len() {
+            if !lines[i].starts_with("#[tauri::command") {
+                i += 1;
+                continue;
+            }
+            let is_async = lines[i].trim() == "#[tauri::command(async)]";
+            let mut j = i + 1;
+            while j < lines.len()
+                && (lines[j].starts_with("#[") || lines[j].trim_start().starts_with("//"))
+            {
+                j += 1;
+            }
+            let Some(name) = lines.get(j).and_then(|l| {
+                l.strip_prefix("pub ")
+                    .unwrap_or(l)
+                    .strip_prefix("async ")
+                    .unwrap_or(l)
+                    .strip_prefix("fn ")
+                    .and_then(|r| r.split(['(', '<']).next())
+            }) else {
+                i = j + 1;
+                continue;
+            };
+            // A command's body ends at the first line that is exactly a closing
+            // brace, which is what `rustfmt` guarantees for a top-level item.
+            let mut k = j;
+            while k < lines.len() && lines[k] != "}" {
+                k += 1;
+            }
+            let body = lines[j..k.min(lines.len())]
+                .iter()
+                .filter(|l| !l.trim_start().starts_with("//"))
+                .map(|l| match l.find("//") {
+                    // A trailing comment, unless there is a string before it — a URL
+                    // holds a `//` and cutting there would hide real code.
+                    Some(c) if !l[..c].contains('"') => &l[..c],
+                    _ => *l,
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            out.push((name.to_string(), is_async, body));
+            i = k;
+        }
+        out
+    }
+
+    /// **A NEW COMMAND MAY NOT DO BULK WORK ON THE macOS RUN LOOP UNMEASURED.**
+    ///
+    /// RG-299's residual, and the reason it could not just be closed: five commands
+    /// were measured and moved, 164 stayed, and the next one was going to be added
+    /// the same way the first five were — by somebody writing an ordinary
+    /// `#[tauri::command]` over an ordinary-looking body. Rule 2 is why it matters
+    /// and it is not about a spinning beachball: the STT worker emits
+    /// `stt://transcript` from its own thread, and that emit waits on the run loop,
+    /// so a command hashing a 1.6 GB file during a service stops the decoder for as
+    /// long as it hashes.
+    ///
+    /// Two directions, because a scanner that quietly narrows passes everything:
+    /// every body doing bulk work is accounted for, AND the scanner can still see
+    /// every instance we already know about.
+    #[test]
+    fn a_command_that_does_bulk_work_on_the_run_loop_has_been_measured() {
+        let src = source();
+        let cmds = command_bodies(&src);
+        assert!(
+            cmds.len() > 150,
+            "the scanner found {} commands in a file that has around 169 — it has \
+             stopped parsing this file and would pass whatever is in it",
+            cmds.len()
+        );
+
+        let mut unaccounted: Vec<String> = Vec::new();
+        for (name, is_async, body) in &cmds {
+            let Some((_, what)) = BULK_WORK.iter().find(|(m, _)| body.contains(m)) else {
+                continue;
+            };
+            if *is_async || MEASURED_ON_THE_RUN_LOOP.contains(&name.as_str()) {
+                continue;
+            }
+            unaccounted.push(format!("{name} ({what})"));
+        }
+        assert!(
+            unaccounted.is_empty(),
+            "these commands do bulk work on the macOS window's run loop and nothing \
+             says what it costs: {unaccounted:?}.\nMeasure it. Then either give it \
+             `#[tauri::command(async)]` (and pay for the mutual exclusion the main \
+             thread was silently providing — see `ModelLoad`), or add it to \
+             MEASURED_ON_THE_RUN_LOOP with the number and the bench that produced it. \
+             RG-299, rule 2."
+        );
+
+        // AND THE SCANNER CAN STILL SEE. Every name below is a body we know does
+        // bulk work; if the markers or the parser drift, this fails here rather than
+        // silently reporting a clean sweep of nothing.
+        let seen: std::collections::HashMap<&str, &String> =
+            cmds.iter().map(|(n, _, b)| (n.as_str(), b)).collect();
+        for name in MEASURED_ON_THE_RUN_LOOP
+            .iter()
+            .chain(["find_model_files", "install_model_file", "parse_import"].iter())
+        {
+            let body = seen
+                .get(name)
+                .unwrap_or_else(|| panic!("{name} is gone — update these lists"));
+            assert!(
+                BULK_WORK.iter().any(|(m, _)| body.contains(m)),
+                "the scanner can no longer see the bulk work in `{name}`, so it is \
+                 passing on a pattern that has stopped matching"
+            );
+        }
+        // …and it does NOT see it where there is none. `stt_status` is a lock read
+        // and a settings lookup whose COMMENT names `load_stt_model` while explaining
+        // lock order — the false positive the comment-stripping exists for.
+        let status = seen.get("stt_status").expect("stt_status");
+        assert!(
+            !BULK_WORK.iter().any(|(m, _)| status.contains(m)),
+            "the scanner is reading comments again: `stt_status` does no bulk work and \
+             only its prose mentions any"
+        );
+    }
+
     /// And the scanner can still see a plain command, so it is checking something.
     /// A source scanner that quietly stops matching passes everything.
     #[test]
@@ -9287,7 +9503,7 @@ fn channel_status(
 /// and a print here would bury every other line in stdout (rule 4's lesson, one
 /// layer up). Unlike `greet`, whose entire value is that it appears exactly once,
 /// this one's value is that it never appears at all.
-// EIGHT FLAT ARGUMENTS, AND FLAT ON PURPOSE.
+// NINE FLAT ARGUMENTS, AND FLAT ON PURPOSE.
 //
 // The WebSocket beat carries `media_pos_ms`, `media_dur_ms` and `media_paused` as
 // three fields on one object, because that is what a JSON frame is. Bundling them
@@ -9307,6 +9523,11 @@ fn output_beat(
     // absent is the honest reading of that. See `channels::BeatGap` and RG-119.
     since_ms: Option<u64>,
     hidden_ms: Option<u64>,
+    // HOW MANY BEATS THIS BRIDGE REFUSED BEFORE THIS ONE (RG-119). `Some(0)` on an
+    // ordinary beat and a statement rather than an absence — the page reached the
+    // bridge to say it, so it knows. A refused beat cannot report itself, which is
+    // why this is a running count carried by the one that gets through.
+    refused: Option<u32>,
     // WHERE THE CLIP IS, if this screen is playing one. Absent for every screen
     // showing a verse, and absent is the honest reading — see `channels::MediaBeat`
     // for why the console must never time a clip off its own preview instead.
@@ -9325,7 +9546,7 @@ fn output_beat(
             channel_id,
             st,
             "window",
-            channels::BeatGap::clamped(since_ms, hidden_ms),
+            channels::BeatGap::clamped(since_ms, hidden_ms, refused),
             channels::MediaBeat::clamped(media_pos_ms, media_dur_ms, media_paused),
         );
         health.note_media_error(
