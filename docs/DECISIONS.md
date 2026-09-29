@@ -7673,3 +7673,49 @@ directions, because a scanner that quietly narrows passes everything — it must
 bulk work in all seven bodies known to have it, and must still see NONE in `stt_status`,
 whose *comment* names `load_stt_model` and which the first version of the scan duly
 reported as loading a model.
+
+## 137. A frozen page is a real outage, and `output_lost` is not a cause (2026-09-29)
+
+**RG-119.** A page the OS has stopped running is not repainting, so the congregation is
+looking at whatever was on that screen when it stopped. That is an outage on any honest
+reading and Relay keeps reporting it: `output_lost` stays, the detection built for
+RG-01/RG-02 is untouched, and no threshold, timer, `BEAT_INTERVAL_MS` or `BEAT_STALE_MS`
+moved. **Suppressing the event for a frozen page would be RG-01 in reverse** — a record
+that reads clean over a screen showing a stale verse — and it is the failure rule 35 was
+written against, not an application of it.
+
+What was wrong was never that the loss was reported. It was that **one word covered at
+least five situations**: a projector that died, a window that went behind a terminal, a
+page the OS stopped without telling it, a bridge throwing beats away, and beats that
+simply never arrived. Two of those mean the congregation saw a stale screen and three
+mean the screen never stopped and Relay's record of it was wrong. They want opposite
+responses from an operator and opposite work from whoever reads the timeline. So the
+event stays and the word multiplies: `channels::SilenceCause` is five, each with its own
+sentence on the recovery entry, and `outputHealth.js::SILENCE_CAUSE` is the one place a
+cause becomes English for the desk.
+
+**Every boundary in the classifier is derived from the beat interval, deliberately.** A
+new number here would be a number somebody later moves to make a symptom quieter, which
+is what rules 10, 28, 30 and 34 all keep saying. Hidden accounts for a gap when it covers
+all but at most one tick of it; a gap is a silence when it exceeds the same
+`BEAT_STALE_MS` the badge already judges by, so the classification cannot disagree with
+the event that produced it.
+
+**The classification is retrospective and that is not a gap to be designed around.** Only
+the page can say why it was quiet, and only on the beat that ends the silence — so
+nothing can classify an outage that is still happening. `describeScreen` prints it as the
+past tense it is, labelled `previously`, and never as a diagnosis of the current one.
+
+**And the reading this row had been building on does not hold.** `hidden_ms == 0` was
+read as *the page was visible*; it means *the page never observed a visibility
+transition*, which is weaker and is exactly what a process suspended across a whole
+hidden → visible round trip looks like, since the state at resume equals the state at
+freeze. Measured rather than argued (`outputhealth.test.js`): hold `document.hidden` true
+for a hundred intervals without dispatching the event and every beat still says *never
+hidden*. `hidden_ms` was therefore never able to answer the question the badge makes a
+claim about. **`frames` can**: an animation frame needs nobody's cooperation, a
+composited page gets them at the display's rate and an occluded or suspended one gets
+none, so a count over the gap says whether the screen was painting whatever the OS did or
+did not say. A count above the ticks it missed is the one verdict no other field here
+could reach — the screen was fine and only its clock stopped — and it is the case where
+reporting a loss was wrong. No service has produced it yet, and saying so is the point.

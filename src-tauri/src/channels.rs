@@ -764,11 +764,82 @@ pub fn media_error_from_json(v: &serde_json::Value) -> Option<String> {
 ///   reason. `Some(0)` is a statement and not an absence: this page reached the
 ///   bridge, so it knows nothing was refused. `None` means it did not say — a kiosk
 ///   page over the WebSocket, where there is no bridge to refuse anything.
+/// * `frames` — how many animation frames the page painted during the gap (RG-119,
+///   2026-09-29). **This is the field that stopped `hidden_ms == 0` being read as
+///   "the page was visible".** It is not: `hiddenMs` on the page only ever accrues
+///   from a `visibilitychange` listener, so a page suspended across a whole
+///   hidden→visible round trip observes no transition at all and reports *never
+///   hidden* over a gap of any length. Measured in `outputhealth.test.js`, not
+///   argued. An animation frame needs nobody's cooperation: a composited page gets
+///   them at the display's rate and an occluded or suspended one gets none, so this
+///   answers the question the badge actually claims — *was this screen painting?*
+///   `None` is a page with nothing to count with, under the same rule as the rest.
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub struct BeatGap {
     pub since_ms: Option<u64>,
     pub hidden_ms: Option<u64>,
     pub refused: Option<u32>,
+    pub frames: Option<u32>,
+}
+
+/// WHY A SCREEN WENT QUIET — the classification RG-119 was missing (2026-09-29).
+///
+/// `output_lost` was one word over at least four situations, which is rule 35 with
+/// the service record as the badge: a timeline reading the same for a projector that
+/// died and for a laptop window that went behind a terminal says nothing about
+/// either. Two of these five mean the congregation was looking at a stale screen and
+/// three mean the screen never stopped and Relay's record of it was wrong. They want
+/// opposite responses.
+///
+/// **Retrospective by construction, and that is not a weakness to be designed
+/// around.** Only the page can answer, and it can only answer on the beat that ends
+/// its silence, so nothing here can classify an outage that is still happening — see
+/// `describeScreen`, which labels it as the past tense it is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SilenceCause {
+    /// The OS told the page it was hidden, and that accounts for the gap. Not
+    /// painting: a window behind another window, or a display that slept.
+    Occluded,
+    /// A long gap, nothing told the page, and it painted no more often than it
+    /// failed to tick. The OS was not running it, and did not say so.
+    Frozen,
+    /// A long gap and the page painted right through it. The screen was fine and the
+    /// beat timer was starved — the one outcome no other field here could find, and
+    /// the one where reporting a loss was wrong.
+    Throttled,
+    /// The page ticked on time and handed beats to a bridge that threw them.
+    BridgeRefused,
+    /// The page ticked on time, nothing refused anything, and Relay still has no
+    /// beat. Neither the page nor the bridge: the command, or the poll.
+    Unreached,
+}
+
+impl SilenceCause {
+    /// The word that crosses to the console and into the timeline entry. A closed
+    /// set, mirrored by `SILENCE_CAUSE` in `outputHealth.js`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SilenceCause::Occluded => "occluded",
+            SilenceCause::Frozen => "frozen",
+            SilenceCause::Throttled => "throttled",
+            SilenceCause::BridgeRefused => "bridge_refused",
+            SilenceCause::Unreached => "unreached",
+        }
+    }
+
+    /// The sentence a timeline entry ends with. One per cause, deliberately, so a
+    /// reader who greps the record cannot get two classes in one bucket.
+    fn said(self) -> &'static str {
+        match self {
+            SilenceCause::Occluded => "the OS had hidden this page",
+            SilenceCause::Frozen => "the page was not being run, and nothing told it so",
+            SilenceCause::Throttled => "the page kept painting and only its clock stopped",
+            SilenceCause::BridgeRefused => {
+                "the page ticked on time and Relay's bridge threw its beats away"
+            }
+            SilenceCause::Unreached => "the page ticked on time and Relay got nothing",
+        }
+    }
 }
 
 /// A day. Anything longer is a broken clock or a hostile client, and either way it
@@ -781,6 +852,14 @@ const GAP_CLAMP_MS: u64 = 24 * 60 * 60 * 1000;
 /// to `None` rather than saturated: a number nobody can have produced is not
 /// evidence, and an absence says so where a ceiling would read as a measurement.
 const REFUSED_CLAMP: u32 = 9999;
+
+/// The most animation frames that will be believed on one beat —
+/// `MAX_FRAMES_REPORTED` in `outputHealth.js`, clamped again here for the same reason
+/// the refusal count is. Ten million is about forty-six hours at sixty hertz, so it
+/// is out of reach inside a gap `GAP_CLAMP_MS` will accept at all. Anything above it
+/// is dropped to `None`: a number nobody can have produced is not evidence, and an
+/// absence says so where a ceiling would read as a measurement.
+const FRAMES_CLAMP: u32 = 10_000_000;
 
 impl BeatGap {
     /// Read the two numbers off a JSON beat. Anything that is not a non-negative
@@ -806,20 +885,85 @@ impl BeatGap {
                 .and_then(|n| n.as_u64())
                 .and_then(|n| u32::try_from(n).ok())
                 .filter(|n| *n <= REFUSED_CLAMP),
+            // A browser source CAN count frames — it is being composited by OBS or by
+            // a kiosk browser like any other page — so unlike `refused` this one is
+            // real over both transports.
+            frames: v
+                .get("frames")
+                .and_then(|n| n.as_u64())
+                .and_then(|n| u32::try_from(n).ok())
+                .filter(|n| *n <= FRAMES_CLAMP),
         }
     }
 
     /// Same rule for the Tauri bridge, where the value arrives already typed.
-    pub fn clamped(since_ms: Option<u64>, hidden_ms: Option<u64>, refused: Option<u32>) -> Self {
+    pub fn clamped(
+        since_ms: Option<u64>,
+        hidden_ms: Option<u64>,
+        refused: Option<u32>,
+        frames: Option<u32>,
+    ) -> Self {
         BeatGap {
             since_ms: since_ms.filter(|ms| *ms <= GAP_CLAMP_MS),
             hidden_ms: hidden_ms.filter(|ms| *ms <= GAP_CLAMP_MS),
             refused: refused.filter(|n| *n <= REFUSED_CLAMP),
+            frames: frames.filter(|n| *n <= FRAMES_CLAMP),
         }
     }
 
+    /// WHICH OF THE FIVE THIS SILENCE WAS, or `None` when the page said nothing at
+    /// all about it (its first beat, or a page too old to carry the fields).
+    ///
+    /// **Every boundary here is derived from the beat interval.** There is no new
+    /// number on this path and there must not be one: a threshold invented to sort
+    /// these would be a threshold somebody later moves to make a symptom quieter,
+    /// which is the thing rules 10, 28, 30 and 34 all keep saying.
+    ///
+    /// The order is the order, and it is the safe direction first:
+    ///
+    /// 1. **Told hidden.** If the OS said hidden for all but at most one tick of the
+    ///    gap, the page was not being rendered whatever else is true, and the
+    ///    congregation was looking at a stale frame. That is the outage, and it wins
+    ///    even over a refusal — the safe direction is the one that still reports one.
+    /// 2. **Refused.** A page that reached the bridge to report a refusal
+    ///    demonstrably ran, so this cannot be a page that was not running.
+    /// 3. **A gap Relay would have called a silence** (more than `BEAT_STALE_MS`, the
+    ///    same window `painting` judges by, so this cannot disagree with the badge
+    ///    that produced the event). Then the frames decide: painted more often than
+    ///    it failed to tick → the renderer was alive and the clock was not; anything
+    ///    less, including a page that could not count, → it was not being run.
+    /// 4. **Otherwise** the page ticked on time and Relay has no beat, and neither
+    ///    the page nor the bridge is the answer.
+    pub fn cause(&self) -> Option<SilenceCause> {
+        let since = self.since_ms?;
+        if self
+            .hidden_ms
+            .is_some_and(|h| h > 0 && h.saturating_add(BEAT_INTERVAL_MS) >= since)
+        {
+            return Some(SilenceCause::Occluded);
+        }
+        if self.refused.is_some_and(|n| n > 0) {
+            return Some(SilenceCause::BridgeRefused);
+        }
+        if since > BEAT_STALE_MS {
+            let missed_ticks = since / BEAT_INTERVAL_MS;
+            return Some(match self.frames {
+                Some(f) if u64::from(f) > missed_ticks => SilenceCause::Throttled,
+                _ => SilenceCause::Frozen,
+            });
+        }
+        Some(SilenceCause::Unreached)
+    }
+
     /// One phrase for a timeline entry, or `None` when the screen said nothing.
-    /// Content-free by construction: two durations and no text from anywhere.
+    /// Content-free by construction: durations, counts, and no text from anywhere.
+    ///
+    /// **It ends with the verdict, and the verdict is a different sentence per
+    /// class** (RG-119, 2026-09-29). The numbers were already here and the record
+    /// still read the same for four different faults, because nobody reading a
+    /// timeline is going to do this arithmetic — which is rule 35's own complaint
+    /// about a badge, one layer down, on the line an audit actually opens. The
+    /// numbers stay in front of it as the evidence for it.
     pub fn describe(&self) -> Option<String> {
         let since = self.since_ms?;
         let secs = |ms: u64| (ms as f64 / 1000.0).round() as u64;
@@ -838,6 +982,18 @@ impl BeatGap {
         // not say, and a `0` there would be Relay answering on its behalf.
         if let Some(n) = self.refused.filter(|n| *n > 0) {
             s.push_str(&format!(", bridge refused {n} beats"));
+        }
+        // FRAMES ARE PRINTED EVEN AT ZERO, and that is the opposite rule to the one
+        // above, on purpose. `refused 0` is the ordinary case and says nothing;
+        // `0 frames` is the whole finding — it is what separates a page the OS
+        // stopped from one that painted throughout — and an absence here is a page
+        // that could not count, which must not read as a page that painted nothing.
+        if let Some(f) = self.frames {
+            s.push_str(&format!(", {f} frames painted"));
+        }
+        if let Some(c) = self.cause() {
+            s.push_str(" — ");
+            s.push_str(c.said());
         }
         Some(s)
     }
@@ -9409,24 +9565,27 @@ mod rehearsal_tests {
             9,
             PaintState::Content,
             "window",
-            BeatGap::clamped(Some(641_000), Some(641_000), Some(0)),
+            BeatGap::clamped(Some(641_000), Some(641_000), Some(0), None),
             None,
         );
         assert_eq!(
             h.last_gap(9).and_then(|g| g.describe()).as_deref(),
-            Some("screen's own clock: silent 641s, hidden 641s")
+            Some("screen's own clock: silent 641s, hidden 641s — the OS had hidden this page")
         );
 
         h.beat(
             9,
             PaintState::Content,
             "window",
-            BeatGap::clamped(Some(2_000), Some(0), Some(0)),
+            BeatGap::clamped(Some(2_000), Some(0), Some(0), None),
             None,
         );
         assert_eq!(
             h.last_gap(9).and_then(|g| g.describe()).as_deref(),
-            Some("screen's own clock: silent 2s, never hidden")
+            Some(
+                "screen's own clock: silent 2s, never hidden — the page ticked on time and \
+                 Relay got nothing"
+            )
         );
     }
 
@@ -9454,7 +9613,7 @@ mod rehearsal_tests {
             9,
             PaintState::Content,
             "window",
-            BeatGap::clamped(Some(2_000), Some(0), Some(0)),
+            BeatGap::clamped(Some(2_000), Some(0), Some(0), None),
             None,
         );
         // It goes quiet long enough for Relay to notice.
@@ -9471,7 +9630,7 @@ mod rehearsal_tests {
             9,
             PaintState::Content,
             "window",
-            BeatGap::clamped(Some(24_000), Some(0), Some(0)),
+            BeatGap::clamped(Some(24_000), Some(0), Some(0), None),
             None,
         );
         for _ in 0..2 {
@@ -9479,14 +9638,17 @@ mod rehearsal_tests {
                 9,
                 PaintState::Content,
                 "window",
-                BeatGap::clamped(Some(2_000), Some(0), Some(0)),
+                BeatGap::clamped(Some(2_000), Some(0), Some(0), None),
                 None,
             );
         }
         assert_eq!(h.transition(9), Some(true), "the recovery is noticed");
         assert_eq!(
             h.last_gap(9).and_then(|g| g.describe()).as_deref(),
-            Some("screen's own clock: silent 24s, never hidden"),
+            Some(
+                "screen's own clock: silent 24s, never hidden — the page was not being run, \
+                 and nothing told it so"
+            ),
             "the recovery was logged with an ordinary beat's gap, so the record says \
              the page was quiet for one interval when it said twenty-four seconds"
         );
@@ -9498,12 +9660,15 @@ mod rehearsal_tests {
             9,
             PaintState::Content,
             "window",
-            BeatGap::clamped(Some(2_000), Some(0), Some(0)),
+            BeatGap::clamped(Some(2_000), Some(0), Some(0), None),
             None,
         );
         assert_eq!(
             h.last_gap(9).and_then(|g| g.describe()).as_deref(),
-            Some("screen's own clock: silent 2s, never hidden"),
+            Some(
+                "screen's own clock: silent 2s, never hidden — the page ticked on time and \
+                 Relay got nothing"
+            ),
             "a reopened window inherited the last window's outage"
         );
     }
@@ -9533,6 +9698,7 @@ mod rehearsal_tests {
                 since_ms: Some(4_000),
                 hidden_ms: Some(4_000),
                 refused: None,
+                frames: None,
             }
         );
         // AND THE REFUSAL COUNT OBEYS THE SAME RULE (RG-119). A ceiling would read
@@ -9576,25 +9742,34 @@ mod rehearsal_tests {
     /// and the first case reads exactly like the second.
     #[test]
     fn a_recovery_says_whether_the_bridge_refused_the_beats_it_did_not_get() {
-        let refused = BeatGap::clamped(Some(2_000), Some(0), Some(11));
+        let refused = BeatGap::clamped(Some(2_000), Some(0), Some(11), None);
         assert_eq!(
             refused.describe().as_deref(),
-            Some("screen's own clock: silent 2s, never hidden, bridge refused 11 beats"),
+            Some(
+                "screen's own clock: silent 2s, never hidden, bridge refused 11 beats — the \
+                 page ticked on time and Relay's bridge threw its beats away"
+            ),
             "the page ticked on time and eleven of its beats were thrown away by the \
              bridge, and the record has to say so — that is the whole of this field"
         );
         assert_eq!(
-            BeatGap::clamped(Some(2_000), Some(0), Some(0))
+            BeatGap::clamped(Some(2_000), Some(0), Some(0), None)
                 .describe()
                 .as_deref(),
-            Some("screen's own clock: silent 2s, never hidden"),
+            Some(
+                "screen's own clock: silent 2s, never hidden — the page ticked on time and \
+                 Relay got nothing"
+            ),
             "an ordinary recovery grew a `refused 0`"
         );
         assert_eq!(
-            BeatGap::clamped(Some(2_000), Some(0), None)
+            BeatGap::clamped(Some(2_000), Some(0), None, None)
                 .describe()
                 .as_deref(),
-            Some("screen's own clock: silent 2s, never hidden"),
+            Some(
+                "screen's own clock: silent 2s, never hidden — the page ticked on time and \
+                 Relay got nothing"
+            ),
             "a screen that has no bridge to be refused by was answered for"
         );
         // It travels the whole way a gap travels: kept off the beat that ended the
@@ -9612,15 +9787,194 @@ mod rehearsal_tests {
             4,
             PaintState::Content,
             "window",
-            BeatGap::clamped(Some(2_000), Some(0), Some(0)),
+            BeatGap::clamped(Some(2_000), Some(0), Some(0), None),
             None,
         );
         assert_eq!(h.transition(4), Some(true));
         assert_eq!(
             h.last_gap(4).and_then(|g| g.describe()).as_deref(),
-            Some("screen's own clock: silent 2s, never hidden, bridge refused 11 beats"),
+            Some(
+                "screen's own clock: silent 2s, never hidden, bridge refused 11 beats — the \
+                 page ticked on time and Relay's bridge threw its beats away"
+            ),
             "the refusal count was overwritten by the ordinary beat behind it, which \
              is the race `silence_ended` exists to lose to nothing"
+        );
+    }
+
+    /// ONE WORD OVER FIVE SITUATIONS IS NOT A STATUS (RG-119, rule 35, 2026-09-29).
+    ///
+    /// `output_lost` read identically for a projector that died, a window that went
+    /// behind a terminal, a page the OS stopped without saying so, a bridge throwing
+    /// beats away, and beats that simply never arrived. The numbers to tell them
+    /// apart were on the beat and nobody reading a timeline was ever going to do the
+    /// arithmetic — which is rule 35's own complaint about a badge, one layer down,
+    /// on the line an audit opens.
+    ///
+    /// **The claim here is PAIRWISE DIFFERENCE, not five exact strings.** A test that
+    /// only pinned the wording would still pass if two classes were given the same
+    /// sentence, which is the defect. Put any two `SilenceCause::said` arms on one
+    /// string, or delete the `cause()` clause from `describe`, and this goes red.
+    #[test]
+    fn each_of_the_five_silences_reads_differently_in_the_record() {
+        // Every one of these is a shape taken from `service_events` in the operator's
+        // own database, except `throttled`, which is the shape the frame count exists
+        // to be able to find and which no service has yet produced.
+        let cases = [
+            // Service 42, Main screen and STAGE MONITOR together: the OS said hidden
+            // for the whole gap, to the second. Eleven recoveries on record look like
+            // this and every one of them is a screen that genuinely was not painting.
+            (
+                BeatGap::clamped(Some(1_369_000), Some(1_369_000), Some(0), Some(0)),
+                SilenceCause::Occluded,
+            ),
+            // Service 42, Main screen at 89412.3 s: visible as far as the page could
+            // tell, and silent for 207 seconds. `hidden_ms == 0` is NOT "it was
+            // visible" — see `BeatGap::frames` — and 0 frames says it was not being
+            // rendered whatever the OS said.
+            (
+                BeatGap::clamped(Some(207_000), Some(0), Some(0), Some(0)),
+                SilenceCause::Frozen,
+            ),
+            // The same gap with the page painting right through it. The screen was
+            // fine, only its clock stopped, and reporting a loss for it was wrong.
+            (
+                BeatGap::clamped(Some(207_000), Some(0), Some(0), Some(12_400)),
+                SilenceCause::Throttled,
+            ),
+            // The page ticked on time and handed eleven beats to a bridge that threw
+            // them. Relay's fault, and the screen never stopped.
+            (
+                BeatGap::clamped(Some(2_000), Some(0), Some(11), Some(120)),
+                SilenceCause::BridgeRefused,
+            ),
+            // Service 42 again, and service 21 seven times: one interval, nothing
+            // refused, and Relay still has no beat. Neither the page nor the bridge.
+            (
+                BeatGap::clamped(Some(2_000), Some(0), Some(0), Some(120)),
+                SilenceCause::Unreached,
+            ),
+        ];
+        for (gap, want) in cases {
+            assert_eq!(gap.cause(), Some(want), "classified wrongly: {gap:?}");
+            let phrase = gap
+                .describe()
+                .expect("a gap with a since_ms describes itself");
+            assert!(
+                phrase.contains(want.said()),
+                "the record does not carry the verdict: {phrase}"
+            );
+        }
+
+        // THE SENTENCES THEMSELVES, PAIRWISE, and this is the assertion that carries
+        // the claim. **Comparing the whole phrases does not** — the first version of
+        // this test did, and it stayed green with two causes sharing one sentence,
+        // because the numbers in front of them differed. A test that cannot fail is a
+        // theory that was never tested (rule 40), so the numbers are excluded and only
+        // the verdict is compared.
+        //
+        // Listed rather than derived, because Rust cannot enumerate an enum: a sixth
+        // cause added without a line here leaves `said()`'s match non-exhaustive and
+        // the compiler asks for it, which is the forcing function this relies on.
+        const ALL: [SilenceCause; 5] = [
+            SilenceCause::Occluded,
+            SilenceCause::Frozen,
+            SilenceCause::Throttled,
+            SilenceCause::BridgeRefused,
+            SilenceCause::Unreached,
+        ];
+        for (i, a) in ALL.iter().enumerate() {
+            for b in ALL.iter().skip(i + 1) {
+                assert_ne!(
+                    a.said(),
+                    b.said(),
+                    "{a:?} and {b:?} tell an operator the same thing, and they are not the \
+                     same thing — one word over several situations is the whole of RG-119"
+                );
+                assert_ne!(
+                    a.as_str(),
+                    b.as_str(),
+                    "two causes cross to the console as one word"
+                );
+            }
+        }
+
+        // AND A SCREEN THAT SAID NOTHING IS STILL QUOTED AS SAYING NOTHING. The
+        // classification must not manufacture a cause out of an absence: a page too
+        // old to carry these fields, or on its first beat, has no verdict to give.
+        assert_eq!(BeatGap::default().cause(), None);
+        assert_eq!(BeatGap::default().describe(), None);
+    }
+
+    /// THE FRAME COUNT IS THE ONLY THING HERE THAT ASKS WHETHER THE SCREEN PAINTED.
+    ///
+    /// `hidden_ms` asks whether the OS SAID anything, and the answer is `0` both for
+    /// a page that was visible and for a page suspended across the whole hidden →
+    /// visible round trip, because `hiddenMs` on the page only ever accrues from a
+    /// `visibilitychange` that was dispatched. So the register's second family —
+    /// *"silent 207s, never hidden"*, read as a page that was visible and not
+    /// ticking — was resting on a reading the instrument could not support.
+    ///
+    /// An animation frame needs nobody's cooperation. Delete the `frames` arm from
+    /// `cause()` and the throttled case below becomes `Frozen`, which is the opposite
+    /// verdict about the same screen: not painting, when it painted throughout.
+    #[test]
+    fn frames_separate_a_page_the_os_stopped_from_one_that_painted_throughout() {
+        let long = 300_000;
+        assert_eq!(
+            BeatGap::clamped(Some(long), Some(0), Some(0), Some(0)).cause(),
+            Some(SilenceCause::Frozen),
+            "a page that painted nothing for five minutes was not painting"
+        );
+        assert_eq!(
+            BeatGap::clamped(Some(long), Some(0), Some(0), Some(18_000)).cause(),
+            Some(SilenceCause::Throttled),
+            "a page that painted eighteen thousand frames was painting, and saying \
+             otherwise is the badge being wrong in the other direction"
+        );
+        // A PAGE THAT CANNOT COUNT IS NOT A PAGE THAT PAINTED NOTHING — but it does
+        // not get the benefit of the doubt either. `Frozen` is the safe direction: it
+        // still reports the outage, and the phrase omits the frame count entirely so
+        // an audit can see the verdict was reached without one.
+        let cannot_count = BeatGap::clamped(Some(long), Some(0), Some(0), None);
+        assert_eq!(cannot_count.cause(), Some(SilenceCause::Frozen));
+        let phrase = cannot_count.describe().expect("describes itself");
+        assert!(
+            !phrase.contains("frames"),
+            "a page that did not count frames was quoted a frame count: {phrase}"
+        );
+
+        // AND A KIOSK PAGE IS NOT SLANDERED BY ANY OF IT. A browser source has no
+        // bridge, so it never sends `refused` at all — `None`, not zero — and nothing
+        // may read that absence as a refusal. It CAN count frames, because OBS and a
+        // kiosk browser composite a page like anything else, so the other four
+        // verdicts are open to it.
+        let kiosk = BeatGap::from_json(&serde_json::json!({
+            "since_ms": 2_000, "hidden_ms": 0, "frames": 118
+        }));
+        assert_eq!(kiosk.refused, None, "a page with no bridge invented one");
+        assert_eq!(
+            kiosk.cause(),
+            Some(SilenceCause::Unreached),
+            "a screen with no bridge to refuse anything was blamed for a refusal"
+        );
+
+        // A NUMBER OFF THE LAN IS STILL UNTRUSTED INPUT, and the ceiling is dropped
+        // to an absence rather than saturated — a figure nobody can have produced is
+        // not evidence, and an absence says so where a cap would read as a count.
+        for bad in [
+            serde_json::json!({"since_ms": 4_000, "frames": -1}),
+            serde_json::json!({"since_ms": 4_000, "frames": "120"}),
+            serde_json::json!({"since_ms": 4_000, "frames": FRAMES_CLAMP as u64 + 1}),
+            serde_json::json!({"since_ms": 4_000, "frames": u64::MAX}),
+        ] {
+            assert_eq!(BeatGap::from_json(&bad).frames, None, "not evidence: {bad}");
+        }
+        assert_eq!(
+            BeatGap::from_json(&serde_json::json!({"since_ms": 4_000, "frames": 0})).frames,
+            Some(0),
+            "ZERO IS THE FINDING, not a missing field: it is what separates a page \
+             the OS stopped from one that painted throughout"
         );
     }
 
