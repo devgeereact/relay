@@ -10,6 +10,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+### One less way a wrong verse reaches the screens
+
+When a preacher reads a verse aloud and then says the reference, Relay can mishear a digit in the number — *"Psalms 89:34"* heard as *"119:39"* — and put up a verse nobody asked for. It now notices when the words in that same breath belong to the verse he was already reading rather than the one it thinks he named, and offers instead of firing. On the service this was found in, it removes that wrong verse and nothing else: two candidates changed out of 3,161 windows, both the same mistake.
+
+Relay also no longer offers a verse that does not exist. *"Psalms 14:14"* was reaching the operator's list although Psalms 14 ends at verse 7.
+
+### The speech models now carry what they actually scored
+
+Each model card already told you how often the transcript updates. Three of them said nothing about accuracy because nothing had been measured. On 200 seconds of real preaching, with six references checked by hand across five recording conditions, **`large-v3-turbo` found 8, `base` found 2, and `small` found none at all**. `small` now says so on its own card.
+
+That last figure matters because Relay's own advice, when the transcript falls behind, is to switch to `small`. The speed reasoning behind that advice still holds; the accuracy half of it now has evidence against it, on one service. **Word error rate has still never been measured in any language**, and nothing here claims otherwise.
+
 ### The verse you announce is the verse Relay finds
 
 If you say *"Psalm 23 and we will be reading from verse 1 through to number 6"*, or *"Romans 1 and we will be reading from verse 6 all the way to 8"*, Relay used to throw away the verse you named and stage **verse 1 of the chapter** instead — and *"number 6"* could even conjure up a reference in Numbers. It now reads the whole announcement the way you said it, including spans phrased as *all the way to*, *down to* and *right through to*, and offers the passage with both ends set so one keypress walks it.

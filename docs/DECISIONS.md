@@ -7580,3 +7580,96 @@ service (`Psalm 112, I read verse 1` twice, and three `down to` ranges including
 evidence for this change is the operator's report and the parse table above, not a
 measured improvement in wall accuracy, and the honest expectation is fewer wrong
 verse-1 stagings rather than more correct fires.
+
+
+## 134. Ask the window that fired whose words it is saying (2026-09-29)
+
+**Completes §128.** RG-319: `Psalms 119:39` auto-fired at 0.95 while the preacher was
+reading Psalms 89:34 — the decoder dropped a digit from the spoken citation, and the
+words that refute it were in the window that only SUGGESTED and gone from the window
+that FIRED. The obvious answer is to carry the quotation forward, and a careful pass
+built exactly that and **measured it costing three correct fires** (`Psalms 41:1`,
+`1 Corinthians 12:7`, `Matthew 6:33`). It also proved no *length* bar separates them —
+the wrong citation's carried run is 6 words and the three correct ones span 5 to 7 —
+and no confirmation wait helps, because only one of the three is read aloud afterwards.
+
+**What separates them is a question nobody had asked: what do the FIRING window's own
+words say?** Measured through the real bundled index on all four real cases:
+
+| cited | verdict | carried run | firing window: carried / cited |
+|---|---|---|---|
+| `Psalms 41:1` | right | Psalms 20:3, 6w | 1 / 2 |
+| `1 Corinthians 12:7` | right | 1 Cor 2:16, 7w | 1 / 1 |
+| `Matthew 6:33` | right | Matthew 13:44, 5w | 1 / 1 |
+| `Psalms 119:39` | **WRONG** | Psalms 89:34, 6w | **3 / 1** |
+
+A preacher who has moved on leaves the run behind him. A decoder that dropped a digit
+leaves the man still reading the verse it dropped it from. `a_carried_quotation_contradicts`
+demotes `Direct` to `UncertainNumber` — a METHOD, not a score (rules 10, 34) — only for
+the same book, a different chapter, no span, and only when the firing window points at
+the carried verse MORE than at the cited one.
+
+**Two things this cost that are worth keeping.** Over the whole service it demotes
+**2 candidates across 3,161 windows** with a carry live in 426 of them, and both are the
+one wrong verse — zero collateral, which is the measurement the previous attempt could
+not produce. And the predicate tests all stayed green when the rule was not wired into
+`candidates_for_window` at all, which is why
+`the_carried_quotation_rule_is_wired_into_the_window_a_congregation_gets` exists: *a
+guarantee is only kept on the doors you checked*, for the fifth time in this register.
+
+**RG-327, and why refusing the parse was the wrong door.** A reference to a verse the
+bundled Bible does not have parsed at 0.95 `Direct` — `Psalms 14:14` where Psalms 14 has
+7 verses. Refusing it in the parser broke four deliberate assertions, including `eval`'s
+own labelled corpus, which *asks for* `Psalms 3:16`: RG-322 scoped itself on the argument
+that the parse survives and the OFFER stops it. The fix is one `retain` over
+`reference_exists` at the candidate choke point (rule 36), and the bound is held to both
+bundled Bibles by a test that measured them: **zero versification differences between
+`kjv.json` and `bsb.json`**. Two of the 153 auto-fires everyone had been quoting were
+impossible references, so a bench and a church now report the same number.
+
+## 135. The decode tail is the machine (2026-09-29)
+
+**Closes RG-137, and it is the fourth time measuring this path returned a no.** The row's
+last residual was a real 5,109 ms `stt_decode` against a 1,322 ms p50 — a 3.9x outlier in
+a rig with no webview, no kiosk hub, no SQLite and no detect thread. `audits/FIELD.md` §4
+had ruled out the model and the audio on a 200 s replay whose worst was 1,264 ms, which
+was simply too short to contain a tail event.
+
+Three measurements, each refusing a hypothesis with a number rather than an argument:
+
+* **One unchanging 8 s window decoded eight times: 3051, 2700, 2590, 2469, 2349, 2136,
+  2049, 2274 ms.** A 1.49x spread on *identical input*, declining monotonically.
+* **The five worst windows re-decoded**: the worst went 3161 → 1316 → 1277 ms. The cost
+  does not reproduce, so it was never a property of the audio.
+* **The temperature ladder is not it.** Whisper builds a six-rung fallback ladder and that
+  was the standing hypothesis; with `temperature_inc = 0.0` the same window cost 1308 ms
+  against the 1316 ms it had just cost with the ladder on. Refused with a figure — and
+  `the_temperature_ladder_stays_on` now guards it, because turning the ladder off is what
+  a tail figure invites and it would remove the hallucination guard with the tail (rule 34).
+
+The plainest figure of the four: the same file, model and binary, 8 s windows, median
+**1,352 → 2,258 → 1,322 ms** across three runs — and the middle run's MEDIAN sat above the
+first run's WORST over 450 windows. That run was the one during which the machine was also
+compiling and running the test suites. Roughly 1.5–1.7x of the 3.9x is host variance
+priced before any audio is considered. **Nothing was optimised.**
+
+## 136. A tripwire, not a sweep (2026-09-29)
+
+**Closes RG-299.** 162 of 169 Tauri commands run on the macOS main run loop and most
+belong there — a one-millisecond SQLite read gains nothing from a thread hop and loses
+the serialisation. The row's remaining ask was never the refactor; it was that nothing
+stopped the NEXT slow command being added unmeasured.
+
+`a_command_that_does_bulk_work_on_the_run_loop_has_been_measured` pairs every command
+with its own body, strips comments, and asks whether it reads, writes, enumerates,
+hashes, decodes or loads in bulk. Over 169 commands it finds **eight**: four already
+`(async)`, and four on the loop — `export_diagnostics` 16 ms, `export_service` ~6 ms,
+`import_media` 169 ms, `import_translation` 241 ms — each named with its number and its
+bench. Three limits are written into the test rather than left to be discovered: it reads
+a command's own body and nothing a call deep, it cannot see cost that is not file-shaped,
+and `fs::remove_file` is deliberately not a marker because unlinking is one syscall and a
+marker that caught it would catch everything and then get weakened. Checked from both
+directions, because a scanner that quietly narrows passes everything — it must still see
+bulk work in all seven bodies known to have it, and must still see NONE in `stt_status`,
+whose *comment* names `load_stt_model` and which the first version of the scan duly
+reported as loading a model.
