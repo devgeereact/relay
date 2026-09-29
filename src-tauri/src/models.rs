@@ -245,7 +245,18 @@ const CATALOG: &[ModelInfo] = &[
         measured_on: None, // catalog() fills this in beside the figures
         decode_ms: Some(152),
         cadence_ms: Some(200),
-        accuracy: None,
+        // **FOUND NOTHING ON REAL CHURCH AUDIO, AND THE LAG WARNING POINTS HERE.**
+        // First per-model measurement through `stt::bench::engine_shootout`, on 200 s
+        // of a real service with six hand-labelled references, five signal
+        // conditions: `small` **0 of 30**, `base` 2, `large-v3-turbo` 8. This is one
+        // slice of one service on one machine and it is not a ranking — but it is the
+        // only accuracy evidence `small` has, and it does not support the sentence in
+        // `stt.rs` that recommends this model when the decoder falls behind.
+        accuracy: Some(
+            "Found 0 of 30 references on 200 s of real preaching (six references, five \
+             signal conditions) where `large-v3-turbo` found 8 and `base` 2. One slice \
+             of one service — not a ranking, and the only accuracy figure this model has",
+        ),
     },
     ModelInfo {
         id: "large-v3-turbo-q5_0",
@@ -969,16 +980,18 @@ mod tests {
         }
     }
 
-    /// **AND THE ADMISSION IS THE POINT.** Three of the five entries have never been
-    /// scored for accuracy — including `small`, the one the lag warning now points
-    /// at, whose only attempt returned 1 of 8 and was withdrawn as invalid because it
-    /// had measured whisper's language election rather than the model.
+    /// **AND THE ADMISSION IS THE POINT.** Two of the five entries have never been
+    /// scored for accuracy. `small` was a third until 2026-09-29, when
+    /// `stt::bench::engine_shootout` scored it on 200 s of real preaching and it found
+    /// **nothing at all** — which is worth more than the admission it replaces, and is
+    /// evidence against the sentence in `stt.rs` that recommends this model when the
+    /// decoder falls behind.
     ///
     /// This test exists so that a future pass cannot quietly fill those three in with
     /// something plausible. If one gains a real measurement, this number moves and
     /// whoever moves it has to say which bench produced it.
     #[test]
-    fn three_of_the_five_models_have_never_been_scored_and_the_catalogue_admits_it() {
+    fn the_models_never_scored_are_named_and_the_rest_carry_their_bench() {
         let unmeasured: Vec<&str> = CATALOG
             .iter()
             .filter(|m| m.accuracy.is_none())
@@ -986,7 +999,13 @@ mod tests {
             .collect();
         assert_eq!(
             unmeasured,
-            vec!["base.en", "small", "large-v3-turbo-q5_0"],
+            // `small` LEFT this list on 2026-09-29, and the bench that moved it is
+            // `stt::bench::engine_shootout` over 200 s of service 42 with six
+            // hand-labelled references and five signal conditions: 0 of 30, against
+            // `large-v3-turbo` 8 and `base` 2. One slice, one service, one machine —
+            // which is why the figure on the card says so rather than reading as a
+            // ranking.
+            vec!["base.en", "large-v3-turbo-q5_0"],
             "the set of never-measured models changed. If one was measured, say \
              where; if one was filled in without a measurement, do not."
         );
