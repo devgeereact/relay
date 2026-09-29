@@ -12032,6 +12032,103 @@ mod passage_guard_bench {
         );
     }
 
+    /// **RG-305 · THE ORDINAL SLIP IS A SHAPE ONE WINDOW ALREADY REACHES, AND WHAT
+    /// SAVES IT IS SIXTEEN SECONDS — measured 2026-09-29.**
+    ///
+    /// `the_three_field_instances_a_carried_quotation_still_cannot_reach` records
+    /// `1 Timothy 1:7` against `2 Timothy 1:7` as *"another BOOK — a pair collision, not
+    /// a slip"*, which is the reason the CROSS-WINDOW carry refuses it and is correct
+    /// about that rule. It reads as though the class were unrecognisable. **It is not.**
+    /// Put both in one window and `the_run_contradicts`' cross-book arm demotes it on
+    /// the exact-pair coincidence — same chapter, same verse, a book that differs only
+    /// by its ordinal, which is the decode slip RG-305's own pattern list names
+    /// (*Second* Timothy → 1 Timothy).
+    ///
+    /// So the third of RG-305's three unreachable instances is unreachable for a reason
+    /// that is about TIME and not about evidence: the preacher cited at 29886 s and read
+    /// the verse sixteen seconds later, in a different window, by which point the wrong
+    /// verse was on the wall and debounced.
+    ///
+    /// **THE WIDENING WAS BUILT AND PRICED RATHER THAN ARGUED ABOUT, AND IT IS FREE.**
+    /// An ordinal-sibling arm on `a_carried_quotation_contradicts` — a different book
+    /// whose name differs only by a leading single digit, at the same chapter AND the
+    /// same verse — replayed over service 42 leaves auto-fires at **150 of 150, with an
+    /// empty diff**, and it reaches this instance REVERSED. It is **not** shipped, for
+    /// one reason and not for a cost: no field instance of this class has ever arrived
+    /// in that order, so the rule would be held by this test alone and by nothing a
+    /// congregation has seen. The number is recorded here so that the next Sunday which
+    /// produces one is a one-commit change rather than a fresh investigation.
+    ///
+    /// The first pricing attempt said it cost `1 Corinthians 15:58`, and that was my
+    /// probe rather than the idea: `ordinal_sibling` answered true for a book against
+    /// ITSELF, so a citation whose own carried run is the same verse became its own
+    /// accuser. Recorded because a wrong number that argues for the conclusion you
+    /// already hold is the one you do not re-check.
+    ///
+    /// Watched to fail in both halves. Returning `None` from `the_run_contradicts`'
+    /// cross-book arm fails the first (`the ordinal slip is no longer doubted inside one
+    /// window`); adding the arm above fails the second, which is how its cost was
+    /// measured in the first place.
+    #[test]
+    fn the_ordinal_slip_is_a_shape_one_window_reaches_and_two_windows_do_not() {
+        // Verbatim from service 42: the citation at 29886.0 s (`detections.id = 805`)
+        // and the words he read sixteen seconds later (`id = 806`).
+        const CITED: &str = "1 Timothy, chapter 1, verse 7. 1 Timothy, chapter 1, verse 7.";
+        const READ: &str = "For God hath not given us the spirit of fear; but of power, \
+                            and of love, and of a sound mind.";
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        let context = ContextMemory::default();
+
+        // ── ONE WINDOW: the class is recognised and the fire is refused ──────────
+        let together = format!("{CITED} {READ}");
+        let w = candidates_for_window(&together, true, &sem, &phrases, &context, None, false);
+        assert!(
+            w.doubted
+                .iter()
+                .any(|d| d.reference == "1 Timothy 1:7" && d.doubt == detection::Doubt::SpokenBook),
+            "the ordinal slip is no longer doubted inside one window, so RG-305's \
+             ceiling is worse than the row says: {:?}",
+            w.doubted
+                .iter()
+                .map(|d| (d.reference.clone(), d.doubt))
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            !w.kept
+                .iter()
+                .any(|c| Fire::key_for(&c.r) == "1 Timothy 1:7" && c.method.unattended_rank() > 0),
+            "it was doubted and can still reach a wall, which is RG-314 again"
+        );
+
+        // ── TWO WINDOWS, the reading FIRST, which is not the order it happened in ──
+        //
+        // The carry refuses it on the same-book clause, deliberately: chapter-and-verse
+        // pairs collide across sixty-six books constantly and across two windows there
+        // is no shared breath to make the coincidence worth acting on.
+        let mut back = ContextMemory::default();
+        let first = candidates_for_window(READ, true, &sem, &phrases, &back, None, false);
+        assert_eq!(
+            first.sole_run.as_ref().map(Fire::key_for).as_deref(),
+            Some("2 Timothy 1:7"),
+            "the reading no longer produces a sole run, so the second half of this \
+             test is vacuous"
+        );
+        back.note_carries(detection::chapter_in_flight(READ), first.sole_run, 0);
+        assert!(
+            candidates_for_window(CITED, true, &sem, &phrases, &back, None, false)
+                .kept
+                .iter()
+                .any(|c| Fire::key_for(&c.r) == "1 Timothy 1:7" && c.method.unattended_rank() > 0),
+            "the carry now reaches the ordinal slip. That is a real widening and it \
+             needs its cost measured through print_every_auto_fire before RG-305's \
+             ceiling is requoted"
+        );
+    }
+
     /// **NO CANDIDATE MAY NAME A PLACE SCRIPTURE DOES NOT HAVE** — RG-327, on the
     /// door rather than in the parser.
     ///
@@ -13643,6 +13740,299 @@ mod passage_guard_bench {
         }
         println!(
             "\n  {reorders} of {} windows reorder. Read them; do not count them.\n",
+            lines.len()
+        );
+    }
+
+    /// **RG-320 ROUTE 1 · THE WALL CANNOT ORDER IT EITHER, AND THE TWO ROWS DO NOT
+    /// EVEN TIE — measured 2026-09-29.**
+    ///
+    /// Two earlier passes refused two ranking rules for the same reason: both had to be
+    /// justified by reading a transcript (rule 13) or by carrying a COSINE across a
+    /// window (rule 18). **The one ordering fact in Relay that is neither is the book
+    /// on the wall** — `ContextMemory::current`, objective, already recorded, no score
+    /// involved — and the narrowest rule it supports is: when two candidates tie on
+    /// `unattended_rank()` AND on confidence, prefer the one whose BOOK is the book the
+    /// congregation is already looking at. A tie is an order that is arbitrary today, so
+    /// replacing it with a fact costs nothing by construction, and it reorders rather
+    /// than drops, which is what this row's hard constraint asks.
+    ///
+    /// **It does not reach this row's own case, and it fails twice over rather than
+    /// narrowly.** Replaying service 42 puts `Genesis 8:21` on the wall at 18741.9 s and
+    /// nothing else fires until 19502.8 s, so at 19178.0 s:
+    ///
+    /// ```text
+    ///   on the wall   Genesis 8:21
+    ///   reads first   Jeremiah 6:16   Quoted   0.60
+    ///   should be     Matthew 11:29   Semantic 0.48
+    /// ```
+    ///
+    ///  * **There is no tie.** 0.60 against 0.48, so a tie-restricted rule is never
+    ///    consulted at this window at all.
+    ///  * **And the wall names neither book.** Lifting the tie restriction changes
+    ///    nothing, because the fact the rule orders on has no opinion here: the
+    ///    preacher had left Genesis and the wall had not been told.
+    ///
+    /// The evidence that would name Matthew is *"Come unto me. I'll give you rest"* in
+    /// the window before, which `the_verbatim_carry_does_not_reach_rg320s_first_route`
+    /// measures as carrying no verbatim run at all. So all three orderable facts —
+    /// confidence, the carried run, and the wall — are now measured against this window
+    /// and none of them reaches it. What is left is a cosine carried forward, and rule
+    /// 18 is what that costs.
+    ///
+    /// **And it is not just this window.** `what_a_wall_book_tie_break_would_reorder`
+    /// replays the whole service: 27 windows of 3,161 offer two or more rows at the same
+    /// confidence and the book on the wall would reorder **0** of them. A tie between
+    /// offered rows happens when the preacher is reading words the corpus cannot place,
+    /// which is precisely when he is not in the book on the screen.
+    ///
+    /// Not `#[ignore]`d: three windows against the bundled index, and it is what stops a
+    /// fourth pass re-deriving the same rule from the row.
+    #[test]
+    fn the_wall_cannot_order_rg320s_first_route() {
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        let mut context = ContextMemory::default();
+        // What the replay does at 18741.9 s, through the same call `emit_detections`
+        // makes: `Genesis 8:21` auto-fires and nothing replaces it until 19502.8 s.
+        // `print_every_auto_fire` over the real corpus is where those two numbers come
+        // from, so this is a fact about the service rather than a premise of the test.
+        let genesis = VerseRef {
+            book: "Genesis".into(),
+            chapter: 8,
+            verse: 21,
+        };
+        context.note_passage(&genesis, None);
+        let on_the_wall = Some("Genesis 8:21");
+
+        let w = candidates_for_window(
+            "Come and learn of man. You'll find rest for your souls.",
+            true,
+            &sem,
+            &phrases,
+            &context,
+            on_the_wall,
+            false,
+        );
+        let offered: Vec<(String, String, DetectionMethod, f32)> = w
+            .kept
+            .iter()
+            .filter(|c| c.method.unattended_rank() == 0)
+            .map(|c| (Fire::key_for(&c.r), c.r.book.clone(), c.method, c.conf))
+            .collect();
+        let find = |key: &str| -> (DetectionMethod, f32) {
+            offered
+                .iter()
+                .find(|(k, _, _, _)| k == key)
+                .map(|(_, _, m, conf)| (*m, *conf))
+                .unwrap_or_else(|| panic!("{key} is no longer offered here: {offered:?}"))
+        };
+        // The two rows the row reports, with the two SCALES rule 18 says may not be
+        // compared: a run length against a cosine.
+        let (jeremiah_method, jeremiah) = find("Jeremiah 6:16");
+        let (matthew_method, matthew) = find("Matthew 11:29");
+        assert_eq!(jeremiah_method, DetectionMethod::Quoted);
+        assert_eq!(matthew_method, DetectionMethod::Semantic);
+
+        // THE ROW'S OWN FINDING, still the finding: the wrong row reads first.
+        assert!(
+            jeremiah > matthew,
+            "the offer order has changed since RG-320 was filed, so this test no \
+             longer describes the window it is about: {offered:?}"
+        );
+        // AND THERE IS NO TIE TO BREAK. A rule restricted to ties — the only ranking
+        // rule that can be shipped without a labelled corpus for offer order — is
+        // never consulted at this window.
+        assert_ne!(
+            jeremiah, matthew,
+            "the two rows tie after all, which would make a tie-break reachable and \
+             is worth reopening the row for"
+        );
+        // AND THE ONE FACT IT ORDERS ON HAS NO OPINION. Neither candidate's book is
+        // the book on the wall, so lifting the tie restriction reaches this window no
+        // more than keeping it does.
+        let wall_book = context
+            .current()
+            .map(|r| r.book.clone())
+            .expect("the wall was seeded above");
+        assert_eq!(wall_book, "Genesis");
+        for (key, book, _, _) in &offered {
+            assert_ne!(
+                book, &wall_book,
+                "a candidate here IS in the book on the wall, so book continuity does \
+                 have an opinion and the row is reachable: {key}"
+            );
+        }
+    }
+
+    /// **THE HARD CONSTRAINT, AS A TRIPWIRE RATHER THAN A SENTENCE — RG-320.**
+    ///
+    /// The row's own condition on any ordering rule is that it may REORDER and never
+    /// DROP, because some of the rows it would compare are verses the corpus cannot
+    /// separate: `Psalms 111:4` and `Psalms 112:4` are word-for-word identical, as are
+    /// `Proverbs 6:10` and `Proverbs 24:33`. Both pairs occur in service 42, at 7736.0 s
+    /// and 11933.4 s, and both tie on confidence — which is what makes them the two
+    /// windows where a tie-break would actually be consulted.
+    ///
+    /// Nothing is reordered here, because nothing is shipped. What this holds is the
+    /// constraint itself: both members of both pairs are OFFERED today, and a future
+    /// ranking rule that quietly resolves the ambiguity by dropping a row fails here
+    /// rather than on a Sunday.
+    #[test]
+    fn both_rows_of_a_pair_the_corpus_cannot_separate_are_still_offered() {
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        let context = ContextMemory::default();
+        // Verbatim from service 42.
+        const PAIRS: [(&str, [&str; 2]); 2] = [
+            (
+                "Verse 4. Unto the upright, there arise light in the darkness, is \
+                 gracious and full of compassion.",
+                ["Psalms 111:4", "Psalms 112:4"],
+            ),
+            (
+                "And received instruction. Yet a little sleep, a little slumber, a \
+                 little folding of the hands to sleep. He said, so shall thy poverty \
+                 come from us.",
+                ["Proverbs 6:10", "Proverbs 24:33"],
+            ),
+        ];
+        for (text, pair) in PAIRS {
+            let w = candidates_for_window(text, true, &sem, &phrases, &context, None, false);
+            let keys: Vec<String> = w.kept.iter().map(|c| Fire::key_for(&c.r)).collect();
+            for want in pair {
+                assert!(
+                    keys.iter().any(|k| k == want),
+                    "{want} is no longer offered, so one of two verses the corpus \
+                     cannot tell apart has been dropped: {keys:?}"
+                );
+            }
+        }
+    }
+
+    /// **WHAT A WALL-BOOK TIE-BREAK WOULD REORDER ACROSS A WHOLE SERVICE — RG-320,
+    /// measured 2026-09-29.**
+    ///
+    /// `RELAY_SERVICE_CORPUS=<file> cargo test --release
+    /// what_a_wall_book_tie_break_would_reorder -- --ignored --nocapture`
+    ///
+    /// `what_a_continuity_tie_break_would_reorder` measures the PREVIOUS WINDOW's
+    /// candidates as the ordering fact and prints 14 windows that need an operator's
+    /// reading. This measures the other candidate fact — the book on the wall — under
+    /// the one restriction that makes a ranking rule shippable without a labelled
+    /// corpus: **an exact tie**, where the order today is arbitrary and any fact is an
+    /// improvement on a stable sort over detection order.
+    ///
+    /// It runs the real replay, so `ContextMemory::current` is what the service's own
+    /// auto-fires put there rather than something this bench invents.
+    ///
+    /// **THE ANSWER IS ZERO, and that is why RG-320 closed as a boundary rather than as
+    /// a fix.** Over service 42: **27 windows of 3,161 offer two or more rows at the
+    /// same confidence, and the book on the wall would reorder 0 of them.** Not "a
+    /// small improvement not worth the risk" — the fact this rule orders on has no
+    /// opinion anywhere in a four-hour service, because a tie between two offered rows
+    /// happens when the preacher is reading words the corpus cannot place, which is
+    /// exactly when he is not in the book on the screen. Nothing needs reading, and
+    /// there is nothing here for an operator to adjudicate.
+    #[test]
+    #[ignore]
+    fn what_a_wall_book_tie_break_would_reorder() {
+        let Ok(path) = std::env::var("RELAY_SERVICE_CORPUS") else {
+            println!("set RELAY_SERVICE_CORPUS");
+            return;
+        };
+        let body = std::fs::read_to_string(&path).expect("corpus unreadable");
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        let lines: Vec<(f32, String)> = body
+            .lines()
+            .filter_map(|l| l.split_once('\t'))
+            .filter_map(|(t, x)| t.parse::<f32>().ok().map(|t| (t, x.to_string())))
+            .collect();
+        let mut context = ContextMemory::default();
+        let mut router = Router::default();
+        let mut ties = 0usize;
+        let mut reorders = 0usize;
+        println!();
+        for (at, text) in &lines {
+            let now_ms = (at * 1000.0) as u64;
+            let w =
+                candidates_for_window(text, true, &sem, &phrases, &context, router.wall(), false);
+            let mut offered: Vec<&Cand> = w
+                .kept
+                .iter()
+                .filter(|c| c.method.unattended_rank() == 0)
+                .collect();
+            offered.sort_by(|a, b| {
+                b.conf
+                    .partial_cmp(&a.conf)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            if offered.len() >= 2 {
+                let top = offered[0].conf;
+                let tied: Vec<&&Cand> = offered.iter().filter(|c| c.conf == top).collect();
+                if tied.len() >= 2 {
+                    ties += 1;
+                    if let Some(wall) = context.current() {
+                        if !tied[0].r.book.eq_ignore_ascii_case(&wall.book) {
+                            if let Some(c) = tied
+                                .iter()
+                                .skip(1)
+                                .find(|c| c.r.book.eq_ignore_ascii_case(&wall.book))
+                            {
+                                reorders += 1;
+                                println!(
+                                    "  {at:.1}  on the wall {} {}:{}\n     reads first  \
+                                     {}\n     would rise   {}\n     “{}”",
+                                    wall.book,
+                                    wall.chapter,
+                                    wall.verse,
+                                    Fire::key_for(&tied[0].r),
+                                    Fire::key_for(&c.r),
+                                    text.chars().take(90).collect::<String>()
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            // The same replay `what_the_guard_costs_a_real_service` runs, so the wall
+            // this bench reads is the wall the service had.
+            context.note_carries(detection::chapter_in_flight(text), w.sole_run, now_ms);
+            let mut best: Vec<(String, Cand)> = Vec::new();
+            for c in w.kept {
+                let key = Fire::key_for(&c.r);
+                match best.iter_mut().find(|(k, _)| *k == key) {
+                    Some((_, e)) => {
+                        if !pipeline::better(e, &c) {
+                            *e = c;
+                        }
+                    }
+                    None => best.push((key, c)),
+                }
+            }
+            for (rank, (key, c)) in rank_for_wall(best).into_iter().enumerate() {
+                if router.decide_live(&key, c.conf, c.method, now_ms, true)
+                    == RouteDecision::AutoFire
+                    && rank == 0
+                {
+                    context.note_passage(&c.r, None);
+                    router.note_wall(&key, now_ms);
+                }
+            }
+        }
+        println!(
+            "\n  {ties} windows offer two or more rows at the SAME confidence; the book \
+             on the wall would reorder {reorders} of them, out of {} windows.\n",
             lines.len()
         );
     }
