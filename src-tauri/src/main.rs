@@ -8277,7 +8277,7 @@ fn stt_model_setting(conn: &rusqlite::Connection) -> Option<String> {
 /// loading it are one action or the promise is false (see rule 15).
 ///
 /// **AND THEREFORE OFF THE MAIN RUN LOOP AS WELL — RG-299.** This is the door an
-/// operator actually presses in `Settings → Speech`; `load_stt_model` is the one
+/// operator actually presses in `Settings → Before the service`; `load_stt_model` is the one
 /// the model-installation flow calls. They cost the same 1,097 ms-to-3.6 s, because
 /// the second is the last line of the first. A guarantee kept on one of two doors
 /// is this repository's most-repeated bug, and here it would mean the window

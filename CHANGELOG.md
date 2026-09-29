@@ -10,6 +10,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+### The offline instructions pointed at a tab that does not exist
+
+If you install Relay from a USB stick with no internet, the `READ ME FIRST.txt` on that stick told you to go to **Settings, then Network** to install the speech model. There is no Network section, and never has been — it is **Before the service**. The same wrong name was in the warning Relay prints when the transcript falls behind, which is exactly when you are least able to go hunting. Both fixed, and a test now checks every such instruction against the real list of sections.
+
 ### A screen that stops is described by what it did, not by one word
 
 When an output screen went quiet, the service record said *output lost* — the same three words whether the laptop had put that window to sleep, the window had been covered by another, the message never got through, or the screen was genuinely gone. It now says which, and it says so from what the page itself could observe: how many animation frames it actually painted during the silence, and how many of its own messages the app refused. A page that painted nothing was not showing your congregation anything, whatever else was true.

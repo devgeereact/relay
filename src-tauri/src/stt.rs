@@ -926,7 +926,8 @@ fn worker<F>(
                 // machine is not a ranking — which is exactly why this states the trade
                 // and lets the operator choose, rather than pointing at a model whose
                 // only accuracy evidence is zero.
-                "Switch to a smaller model in Settings -> Speech if the transcript \
+                "Switch to a smaller model in Settings -> Before the service if the \
+                 transcript \
                  falling behind is the bigger problem — and know what it costs. \
                  CADENCE: `base` ~59ms and `small` ~153ms both round to the same single \
                  200ms chunker hop, so they update at the same rate, while \
