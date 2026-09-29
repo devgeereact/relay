@@ -660,6 +660,22 @@ fn verse_count(book: &str, chapter: i64) -> usize {
         .unwrap_or(0)
 }
 
+/// **DOES SCRIPTURE HAVE THIS PLACE AT ALL?** — RG-327.
+///
+/// `false` for a chapter or a verse the bundled Bible does not hold, and for a book
+/// this module does not know. Arithmetic over `VERSES_PER_CHAPTER`, which
+/// `the_verse_count_table_matches_the_bundled_kjv` holds to the shipped corpus —
+/// and `the_two_bundled_translations_agree_on_versification` holds to the OTHER
+/// translation, because every verse read is scoped to `active_translation` and a
+/// bound taken from one Bible must not refuse a verse the other has.
+///
+/// **This is a fact about scripture, not a judgement about audio**, which is what
+/// makes it usable as evidence at all — the distinction RG-322 drew when it refused
+/// a repaired book with an impossible chapter after it.
+pub fn reference_exists(r: &VerseRef) -> bool {
+    r.verse >= 1 && (r.verse as usize) <= verse_count(&r.book, r.chapter)
+}
+
 /// Repair a digit run that whisper ran together: "663" → 6:63.
 ///
 /// ── The mishearing this exists for ──────────────────────────────────────────
@@ -1139,6 +1155,28 @@ pub fn detect_direct(text: &str) -> Vec<RefMatch> {
                 // `i = next` all the same. The tokens were consumed by something
                 // reference-shaped, and re-scanning from inside them would only find a
                 // bare number.
+                //
+                // ── AND RG-327 DELIBERATELY DOES **NOT** WIDEN THIS ───────────────
+                //
+                // The verse case was tried here first and it is the wrong door.
+                // Refusing a plainly-said book's parse because the number after it
+                // cannot exist breaks four assertions this repository took on
+                // purpose: `a_book_somebody_plainly_said_is_still_parsed_whatever_the
+                // _number` and `e2e::a_reference_whose_verse_cannot_exist_is_not
+                // _offered_to_the_operator` both say the parse SURVIVES and the OFFER
+                // is where it is stopped; `e2e::accepting_a_suggestion_that_cannot
+                // _fire_says_so` needs `Psalms 23:99` to parse so an operator gets a
+                // sentence rather than a shrug; and `eval`'s own corpus labels
+                // `Psalms 200:1` (Swahili and Hausa numerals) and `Psalms 3:16` as
+                // references that must be found, and Psalms 3 has eight verses.
+                //
+                // RG-327's harm is not that the parse exists — live, `emit_detections`
+                // has always dropped it. It is that the REPLAY harness had no such
+                // drop, so two of service 42's 153 auto-fires were impossible
+                // references. That is a fact about the CANDIDATE LIST, and the check
+                // lives there, once, at `candidates_for_window`: rule 36, and the row's
+                // own words, *"a test that an impossible verse never reaches a
+                // candidate list at all"*.
                 let refuted = book_ev == BookEvidence::Repaired
                     && (m.reference.chapter as usize > chapter_count(canonical)
                         || m.reference.verse as usize
@@ -2565,6 +2603,20 @@ fn classify_num_word(w: &str) -> Option<NumWord> {
 /// a budget.
 const IN_FLIGHT_MS: u64 = 15_000;
 
+/// **HOW LONG A VERBATIM QUOTATION MAY ACCUSE A LATER CITATION** — RG-319.
+///
+/// `IN_FLIGHT_MS`'s value for `IN_FLIGHT_MS`'s reason: the rolling window re-decodes
+/// several times a second and a carry shorter than a few seconds would be gone before
+/// the next FINAL arrived. The field gap this exists for is 7.0 s (19730.1 s to
+/// 19737.1 s, service 42).
+///
+/// **The age is not what makes this safe and it must not be mistaken for the guard.**
+/// `a_carried_quotation_contradicts` re-asks the FIRING window's own words about both
+/// chapters, so a carry that has gone stale in substance is refused however recent it
+/// is — which is why lengthening this constant does not widen what the rule accuses,
+/// and shortening it only makes it miss.
+const QUOTED_CARRY_MS: u64 = 15_000;
+
 #[derive(Debug, Clone, Default)]
 pub struct ContextMemory {
     current: Option<VerseRef>,
@@ -2585,6 +2637,20 @@ pub struct ContextMemory {
     /// as `current`: something Relay heard a moment ago, offered to a window that
     /// cannot see it.
     in_flight: Option<(VerseRef, u64)>,
+    /// **THE VERSE THE LAST WINDOW QUOTED VERBATIM, AND WHEN** — RG-319.
+    ///
+    /// The longest run in that window that exactly ONE verse holds, which is the only
+    /// evidence `doubt_from_a_quotation` accepts and so the only thing worth carrying.
+    /// Not a passage and not a `current`: nothing walks it, nothing is on a screen
+    /// because of it, and the one question it answers is
+    /// `a_carried_quotation_contradicts` — *did the preacher cite a chapter of this
+    /// book while the words in front of him still belong to another one*.
+    ///
+    /// Beside `in_flight` for the same reasons: `candidates_for_window` already
+    /// receives this struct, nothing else it receives may be stateful, and this is the
+    /// same KIND of fact — something Relay heard a moment ago, offered to a window
+    /// that cannot see it.
+    quoted: Option<(VerseRef, u64)>,
 }
 
 impl ContextMemory {
@@ -2653,16 +2719,47 @@ impl ContextMemory {
     /// window is re-decoded several times a second and the first partial of the
     /// completing window would otherwise throw the chapter away before the final
     /// arrived — it lets it age out instead.
-    pub fn note_in_flight(&mut self, found: Option<VerseRef>, now_ms: u64) {
+    /// **ONE CALL, TWO CARRIES, AND THAT IS DELIBERATE.** This was `note_in_flight`
+    /// (RG-318) until RG-319 gave the window a second thing to hand forward. Both
+    /// ride on one call rather than two because a caller that took the citation carry
+    /// and silently left the quotation carry behind would lose a safety rule and stay
+    /// green — a guarantee kept on the doors somebody checked, which is the shape
+    /// CLAUDE.md records four separate bugs having. There are six callers and the
+    /// compiler now visits every one.
+    pub fn note_carries(
+        &mut self,
+        in_flight: Option<VerseRef>,
+        quoted: Option<VerseRef>,
+        now_ms: u64,
+    ) {
+        Self::carry(&mut self.in_flight, in_flight, now_ms, IN_FLIGHT_MS);
+        Self::carry(&mut self.quoted, quoted, now_ms, QUOTED_CARRY_MS);
+    }
+
+    /// Replace a carry, or age the last one out.
+    ///
+    /// A window that carries nothing does not clear the slot outright — the rolling
+    /// window is re-decoded several times a second and the first partial of the
+    /// completing window would otherwise throw the last one away before the final
+    /// arrived. The expiry is HERE because this is the one place on the path with a
+    /// clock: `candidates_for_window` is pure over its inputs and must stay that way,
+    /// so giving it a stale entry to ignore would put the rule in two places.
+    fn carry(slot: &mut Option<(VerseRef, u64)>, found: Option<VerseRef>, now_ms: u64, life: u64) {
         if let Some(r) = found {
-            self.in_flight = Some((r, now_ms));
+            *slot = Some((r, now_ms));
             return;
         }
-        if let Some((_, at)) = &self.in_flight {
-            if now_ms.saturating_sub(*at) > IN_FLIGHT_MS {
-                self.in_flight = None;
+        if let Some((_, at)) = slot {
+            if now_ms.saturating_sub(*at) > life {
+                *slot = None;
             }
         }
+    }
+
+    /// The verse the last window quoted verbatim and alone, if one is still live.
+    /// See `note_carries` and `a_carried_quotation_contradicts`.
+    pub fn quoted_a_moment_ago(&self) -> Option<&VerseRef> {
+        self.quoted.as_ref().map(|(r, _)| r)
     }
 
     /// The book and chapter a citation cut off by the chunker was in, if one is
@@ -3699,6 +3796,110 @@ pub fn chapter_the_words_point_at(
         }
     }
     None
+}
+
+/// **A QUOTATION THE LAST WINDOW CARRIED, AND THE WORDS STILL IN FRONT OF HIM —
+/// RG-319, the only open row with a wrong verse on a congregation's screen.**
+///
+/// Service 42, 2026-09-27:
+///
+/// ```text
+///   19730.1  "…For my covenant will I not break."            Psalms 89:34, 6 words, sole
+///   19737.1  "…the comfort of my lips. Psalm 119, verse 39."  → fired Psalms 119:39
+/// ```
+///
+/// He was reading **Psalms 89:34** and `Psalms 119:39` is *"Turn away my reproach"*.
+/// The evidence was one window early, and everything window-local was out of reach:
+/// `doubt_from_a_quotation` needs the run and the citation in ONE window,
+/// `chapter_the_words_point_at` probes the chapter the decoder could have SLIPPED
+/// from and 89 is not a slip of 119 (`chapter_is_a_decode_slip` — different digit
+/// lengths, and 119 does not end in 89), and it probes the verse that was said (39),
+/// where the evidence lives at 34.
+///
+/// ── WHY THE OBVIOUS CARRY WAS REFUSED, AND WHAT IS DIFFERENT HERE ────────────
+///
+/// **Carrying the run forward on its own was built and measured: auto-fires 153 to
+/// 148.** `Psalms 119:39` went and so did three CORRECT ones — `Psalms 41:1`,
+/// `1 Corinthians 12:7` and `Matthew 6:33` — each a `sole` run of five to seven words
+/// in one chapter followed by a citation in another chapter of the same book, which
+/// is the ordinary thing a preacher does and is exactly the trace a dropped digit
+/// leaves. No length bar separates them (6 words against a correct span of 5..=7) and
+/// no confirmation wait does either (only one of the three is read aloud verbatim
+/// afterwards). Both refusals are pinned by
+/// `passage_guard_bench::a_carried_run_cannot_tell_a_misheard_chapter_from_the_next_one_he_cites`
+/// and neither is reopened here.
+///
+/// **What separates them is the window that FIRES, and it had never been asked.**
+/// A carried run says what he was reading a moment ago; it says nothing about whether
+/// he is still there. So this rule asks the firing window's own words about BOTH
+/// chapters, and measured over the four field cases they separate cleanly:
+///
+/// ```text
+///                        carried verse   cited verse
+///   Psalms 41:1   RIGHT        1              2
+///   1 Cor 12:7    RIGHT        1              1
+///   Matthew 6:33  RIGHT        1              1
+///   Psalms 119:39 WRONG        3              1
+/// ```
+///
+/// A preacher who has moved on leaves the run behind; a decoder that dropped a digit
+/// leaves the man still reading the verse it dropped it from.
+///
+/// ── THE BAR ─────────────────────────────────────────────────────────────────
+///
+/// The same bar `chapter_the_words_point_at` measured its way to and for the same
+/// reason: **relative, not absolute**. Scripture is full of three-word runs, and a
+/// bare floor of three doubted four correct references and cost two auto-fires there.
+/// The words must point at the carried verse MORE than at the verse that was said,
+/// and `PARAPHRASE_RUN_WORDS` is the floor underneath that.
+///
+/// **AND SERVICE 42 DOES NOT DISTINGUISH THE TWO, which is worth saying rather than
+/// implying otherwise.** `what_the_carried_quotation_rule_demotes` was run with the
+/// relative half removed and answers identically — the same 2 demotions across the
+/// same 3,161 windows — because the three correct citations of the same shape share
+/// only ONE word with the verse they left behind, well under the absolute floor on
+/// their own. The relative half is kept because it can only ever refuse MORE, and
+/// because the evidence for it is the sibling rule's two lost auto-fires rather than
+/// anything in this corpus. If it is ever removed, that is the measurement to redo,
+/// not this sentence to delete.
+///
+/// ── WHAT IT REFUSES, AND WHY EACH REFUSAL IS LOAD-BEARING ───────────────────
+///
+///   * **`Direct` alone.** Everything else is already capped at `Suggest` at any
+///     score, so demoting it moves nothing and only widens the surface.
+///   * **THE SAME CHAPTER IS NEVER A DISAGREEMENT.** This predicate deliberately
+///     does not ask `verse_inside_what_was_said` — it could not reach verse 34
+///     against a cited verse 39 if it did, which is the whole of RG-319 — so the
+///     same-chapter escape is the ONLY thing standing between it and `John 15:14`
+///     cited while 15:15 is read, and `Hebrews 13:7` insisted on while 13:17 is
+///     quoted. Both are one book, one chapter, a different verse.
+///   * **THE SAME BOOK ONLY.** Chapter-and-verse pairs collide across sixty-six
+///     books constantly; `doubt_from_a_quotation`'s cross-book carve-out is safe
+///     because it needs the exact pair in one breath, and across two windows there
+///     is no shared breath to make the coincidence worth acting on.
+///   * **NO WHOLE CHAPTER AND NO SPAN**, because neither names one verse to compare
+///     and the bar would then be a bar for the wrong verse — the cost
+///     `chapter_the_words_point_at` records having paid once.
+///
+/// Returns `Doubt::SpokenChapter`, never `SpokenBook`, so the carve-out that protects
+/// the two correct cross-book fires is untouched.
+pub fn a_carried_quotation_contradicts(
+    said: &Claim<'_>,
+    carried: &VerseRef,
+    mut shared_run: impl FnMut(&VerseRef) -> usize,
+) -> Option<Doubt> {
+    if said.method != DetectionMethod::Direct {
+        return None;
+    }
+    if said.whole_chapter || said.verse_end.is_some_and(|e| e > said.r.verse) {
+        return None;
+    }
+    if !said.r.book.eq_ignore_ascii_case(&carried.book) || said.r.chapter == carried.chapter {
+        return None;
+    }
+    let own = shared_run(said.r);
+    let bar = PARAPHRASE_RUN_WORDS.max(own + 1);
+    (shared_run(carried) >= bar).then_some(Doubt::SpokenChapter)
 }
 
 /// Does this run point at the reference the decoder would have produced had it not
@@ -5043,44 +5244,68 @@ mod tests {
         assert_eq!(split_run_into_chapter_verse("Nowhere", 663), None);
     }
 
-    /// The verse-count table is a `const`, so nothing forces it to match the
-    /// Bible actually shipped. This does. If `kjv.json` is ever replaced and the
-    /// table is not regenerated, `split_run_into_chapter_verse` starts inventing
-    /// references — silently, and only for the books that changed.
+    /// **THE ARITHMETIC RG-327 RESTS ON, STATED WHERE IT LIVES.**
+    ///
+    /// The refusal itself is NOT here and deliberately not: `detect_direct` keeps
+    /// parsing a plainly-said book whatever number follows it (RG-322's scope, and
+    /// four assertions that depend on it), and the candidate list is where an
+    /// impossible reference is dropped —
+    /// `passage_guard_bench::no_candidate_may_name_a_verse_the_bundled_bible_does_not
+    /// _have`. What this holds is the predicate those rest on, including the
+    /// off-by-one at the end of a chapter, which is the edge a bound is likeliest to
+    /// get wrong.
     #[test]
-    fn the_verse_count_table_matches_the_bundled_kjv() {
+    fn reference_exists_knows_the_last_verse_of_a_chapter() {
+        let r = |b: &str, c: i64, v: i64| VerseRef {
+            book: b.into(),
+            chapter: c,
+            verse: v,
+        };
+        // Service 42's two, both auto-fired: Psalms 14 has 7 verses, Psalms 1 has 6.
+        assert!(!reference_exists(&r("Psalms", 14, 14)));
+        assert!(!reference_exists(&r("Psalms", 1, 97)));
+        assert!(!reference_exists(&r("Psalms", 1, 9)));
+        // The last verse of a chapter and the first one past it.
+        assert!(reference_exists(&r("Psalms", 14, 7)));
+        assert!(reference_exists(&r("Psalms", 1, 6)));
+        assert!(reference_exists(&r("Psalms", 119, 176)));
+        assert!(!reference_exists(&r("Psalms", 119, 177)));
+        assert!(reference_exists(&r("John", 14, 14)));
+        // Verse zero, a chapter the book does not have, and a book nothing knows.
+        assert!(!reference_exists(&r("Psalms", 14, 0)));
+        assert!(!reference_exists(&r("Psalms", 200, 1)));
+        assert!(!reference_exists(&r("Nowhere", 1, 1)));
+    }
+
+    /// **A BOUND TAKEN FROM ONE BIBLE MUST NOT REFUSE A VERSE THE OTHER HAS** —    /// **A BOUND TAKEN FROM ONE BIBLE MUST NOT REFUSE A VERSE THE OTHER HAS** —
+    /// RG-327. `reference_exists` refuses a parse outright, and every verse read is
+    /// scoped to `app_settings.active_translation`, so a church on the Berean
+    /// Standard Bible would silently lose any reference whose verse exists there and
+    /// not in the KJV the table was generated from. Measured rather than assumed:
+    /// the two bundled translations agree on versification exactly.
+    ///
+    /// An IMPORTED Bible (DECISIONS §113) is not covered and cannot be from here —
+    /// this module is DB- and IO-free on purpose. That is a real limit of the bound
+    /// and it is recorded in RG-327 rather than hidden behind this test.
+    #[test]
+    fn the_two_bundled_translations_agree_on_versification() {
         #[derive(serde::Deserialize)]
-        struct KjvBook {
+        struct Book {
             chapters: Vec<Vec<String>>,
         }
-        const RAW: &str = include_str!("../data/kjv.json");
-        let books: Vec<KjvBook> =
-            serde_json::from_str(RAW.trim_start_matches('\u{feff}')).expect("kjv.json parses");
-
-        assert_eq!(books.len(), VERSES_PER_CHAPTER.len(), "book count");
-        assert_eq!(books.len(), CANONICAL_BOOKS.len(), "book count vs names");
-        for (i, book) in books.iter().enumerate() {
+        fn load(raw: &str) -> Vec<Book> {
+            serde_json::from_str(raw.trim_start_matches('\u{feff}')).expect("parses")
+        }
+        let kjv = load(include_str!("../data/kjv.json"));
+        let bsb = load(include_str!("../data/bsb.json"));
+        assert_eq!(kjv.len(), bsb.len(), "book count");
+        for (i, (k, b)) in kjv.iter().zip(&bsb).enumerate() {
             let name = CANONICAL_BOOKS[i];
-            assert_eq!(
-                book.chapters.len(),
-                VERSES_PER_CHAPTER[i].len(),
-                "{name}: chapter count"
-            );
-            for (c, chapter) in book.chapters.iter().enumerate() {
-                assert_eq!(
-                    chapter.len(),
-                    VERSES_PER_CHAPTER[i][c] as usize,
-                    "{name} chapter {}: verse count",
-                    c + 1
-                );
+            assert_eq!(k.chapters.len(), b.chapters.len(), "{name}: chapter count");
+            for (c, (ck, cb)) in k.chapters.iter().zip(&b.chapters).enumerate() {
+                assert_eq!(ck.len(), cb.len(), "{name} {}: verse count", c + 1);
             }
         }
-        // Spot-check the lookups the repair actually depends on.
-        assert_eq!(chapter_count("John"), 21);
-        assert_eq!(chapter_count("Hebrews"), 13);
-        assert_eq!(verse_count("John", 6), 71);
-        assert_eq!(verse_count("Psalms", 119), 176);
-        assert_eq!(verse_count("John", 22), 0, "out of range");
     }
 
     /// Every single-chapter book is also an ordinary word or a name in English
@@ -10347,6 +10572,208 @@ mod citation_doubt {
             doubt_from_a_quotation(&[said(&a), run(&b, 9)])[0],
             Some(Doubt::SpokenChapter)
         );
+    }
+
+    // ── A QUOTATION THE LAST WINDOW CARRIED (RG-319) ─────────────────────────
+
+    /// A stub for `PhraseIndex::shared_run_with`: how many of each verse's own words
+    /// the FIRING window still holds, in order. Injected rather than indexed, so the
+    /// predicate's rules are tested apart from the corpus; the corpus measurement is
+    /// `passage_guard_bench::what_the_firing_window_still_says_about_both_chapters`,
+    /// which supplies the four real numbers.
+    fn firing<'a>(pairs: &'a [(&'a VerseRef, usize)]) -> impl FnMut(&VerseRef) -> usize + 'a {
+        move |probe: &VerseRef| {
+            pairs
+                .iter()
+                .find(|(r, _)| *r == probe)
+                .map(|(_, n)| *n)
+                .unwrap_or(0)
+        }
+    }
+
+    /// **FIELD, service 42, 2026-09-27 at 19737.1 s — the wrong verse RG-319 is
+    /// about, and the only open row with a wall behind it.**
+    ///
+    /// *"For my covenant will I not break"* is six words of `Psalms 89:34`, sole, and
+    /// it was in the window BEFORE the citation. By the window that fired, all that
+    /// was left of it was a mangled *"the comfort of my lips"* — three words of
+    /// `Psalms 89:34` — and `Psalms 119:39`, which is *"Turn away my reproach"*, has
+    /// nothing in that window at all.
+    ///
+    /// Carried: 3. Cited: 1. The words in the window that fired still belong to the
+    /// verse he was reading, so the citation is doubted.
+    #[test]
+    fn field_2026_09_27_a_quotation_one_window_back_doubts_a_misheard_chapter() {
+        let spoken = vr("Psalms", 119, 39);
+        let carried = vr("Psalms", 89, 34);
+        assert_eq!(
+            a_carried_quotation_contradicts(
+                &said(&spoken),
+                &carried,
+                firing(&[(&carried, 3), (&spoken, 1)]),
+            ),
+            Some(Doubt::SpokenChapter)
+        );
+    }
+
+    /// **THE THREE CORRECT AUTO-FIRES OF THE SAME SERVICE AND THE SAME SHAPE.**
+    /// A run of five to seven words, sole, in one chapter, then a citation in another
+    /// chapter of the same book — which is the ordinary thing a preacher does. The
+    /// naive carry took all three (auto-fires 153 to 148); the firing window's own
+    /// words are what separate them, because by then he has moved on and the run he
+    /// left behind is no longer in front of him.
+    ///
+    /// The numbers are the measured ones, from
+    /// `passage_guard_bench::what_the_firing_window_still_says_about_both_chapters`.
+    #[test]
+    fn the_three_correct_citations_of_the_same_service_are_not_doubted() {
+        for (book, carried_ch, carried_v, said_ch, said_v, carried_run, cited_run) in [
+            // "Now Psalm 41 verse 1." — Psalms 20:3's run is spent; `Psalms 41:1`'s
+            // own words ("in the day of trouble") are the ones still being said.
+            ("Psalms", 20, 3, 41, 1, 1, 2),
+            // "1 Corinthians 12, verse 7 The Bible tells us," — the window is the
+            // citation and nothing else, so neither chapter has any claim on it.
+            ("1 Corinthians", 2, 16, 12, 7, 1, 1),
+            // "You cannot discover the treasure hidden in Matthew 6, 33."
+            ("Matthew", 13, 44, 6, 33, 1, 1),
+        ] {
+            let spoken = vr(book, said_ch, said_v);
+            let carried = vr(book, carried_ch, carried_v);
+            assert_eq!(
+                a_carried_quotation_contradicts(
+                    &said(&spoken),
+                    &carried,
+                    firing(&[(&carried, carried_run), (&spoken, cited_run)]),
+                ),
+                None,
+                "{book} {said_ch}:{said_v} was doubted by a run it has moved on from"
+            );
+        }
+    }
+
+    /// **THE BAR IS RELATIVE, NOT ABSOLUTE, and this is the half that matters.**
+    /// A preacher reading a verse aloud shares more with the verse he named than
+    /// with any neighbour of it — the measurement `chapter_the_words_point_at`
+    /// records after a bare three-word floor doubted four correct references and cost
+    /// two auto-fires. Three words of the carried verse, said while five of the cited
+    /// verse are also being said, is a man reading what he cited.
+    #[test]
+    fn a_carried_quotation_may_not_doubt_a_reference_the_window_supports_better() {
+        let spoken = vr("Psalms", 119, 39);
+        let carried = vr("Psalms", 89, 34);
+        for (carried_run, cited_run, want) in [
+            (3, 1, Some(Doubt::SpokenChapter)),
+            // Level is not "more".
+            (3, 3, None),
+            (5, 5, None),
+            // The cited verse ahead.
+            (4, 5, None),
+            // And the absolute floor still holds: two words are ordinary English.
+            (2, 0, None),
+            (2, 1, None),
+        ] {
+            assert_eq!(
+                a_carried_quotation_contradicts(
+                    &said(&spoken),
+                    &carried,
+                    firing(&[(&carried, carried_run), (&spoken, cited_run)]),
+                ),
+                want,
+                "carried {carried_run} against cited {cited_run}"
+            );
+        }
+    }
+
+    /// **THE CHAPTER HE NAMED IS NEVER A DISAGREEMENT WITH ITSELF**, and this is
+    /// what keeps `John 15:14` and `Hebrews 13:7` out of reach of a rule that admits
+    /// a differing verse. `doubt_from_a_quotation` states the same escape for the
+    /// same reason; it is stated again here because this predicate deliberately does
+    /// NOT ask `verse_inside_what_was_said` — if it did, it could never reach
+    /// `Psalms 89:34` against a cited verse 39, which is the whole of RG-319.
+    ///
+    /// A whole chapter and a span name no one verse to compare, so both are refused
+    /// for `chapter_the_words_point_at`'s measured reason: the bar would be a bar for
+    /// the wrong verse.
+    #[test]
+    fn a_carried_quotation_cannot_doubt_the_chapter_it_is_in_or_a_span() {
+        let john_15_15 = vr("John", 15, 15);
+        let john_15_14 = vr("John", 15, 14);
+        fn big<'a>(a: &'a VerseRef, b: &'a VerseRef) -> Vec<(&'a VerseRef, usize)> {
+            vec![(a, 9usize), (b, 0usize)]
+        }
+        // SAME CHAPTER — the two correct fires of 2026-09-26.
+        assert_eq!(
+            a_carried_quotation_contradicts(
+                &said(&john_15_14),
+                &john_15_15,
+                firing(&big(&john_15_15, &john_15_14)),
+            ),
+            None
+        );
+        let heb_13_7 = vr("Hebrews", 13, 7);
+        let heb_13_17 = vr("Hebrews", 13, 17);
+        assert_eq!(
+            a_carried_quotation_contradicts(
+                &said(&heb_13_7),
+                &heb_13_17,
+                firing(&big(&heb_13_17, &heb_13_7)),
+            ),
+            None
+        );
+        // ANOTHER BOOK — a chapter and a verse collide across sixty-six books
+        // constantly, and across two windows there is no longer even a shared breath.
+        let romans = vr("Romans", 8, 28);
+        let john = vr("John", 8, 28);
+        assert_eq!(
+            a_carried_quotation_contradicts(&said(&romans), &john, firing(&big(&john, &romans))),
+            None
+        );
+        // A WHOLE CHAPTER and A SPAN name no one verse.
+        let psalms_119 = vr("Psalms", 119, 1);
+        let psalms_89_34 = vr("Psalms", 89, 34);
+        assert_eq!(
+            a_carried_quotation_contradicts(
+                &Claim {
+                    whole_chapter: true,
+                    ..said(&psalms_119)
+                },
+                &psalms_89_34,
+                firing(&big(&psalms_89_34, &psalms_119)),
+            ),
+            None
+        );
+        assert_eq!(
+            a_carried_quotation_contradicts(
+                &Claim {
+                    verse_end: Some(9),
+                    ..said(&psalms_119)
+                },
+                &psalms_89_34,
+                firing(&big(&psalms_89_34, &psalms_119)),
+            ),
+            None
+        );
+        // AND A METHOD THAT CANNOT FIRE ANYWAY. Demoting it would move nothing and
+        // would only give this rule more surface to be wrong on.
+        for method in [
+            DetectionMethod::Semantic,
+            DetectionMethod::UncertainBook,
+            DetectionMethod::Quoted,
+            DetectionMethod::Reading,
+        ] {
+            assert_eq!(
+                a_carried_quotation_contradicts(
+                    &Claim {
+                        method,
+                        ..said(&psalms_119)
+                    },
+                    &psalms_89_34,
+                    firing(&big(&psalms_89_34, &psalms_119)),
+                ),
+                None,
+                "{method:?}"
+            );
+        }
     }
 
     // ── THE CORRECT FIRES IT MUST NOT TOUCH ──────────────────────────────────
