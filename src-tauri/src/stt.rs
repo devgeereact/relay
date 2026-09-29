@@ -522,13 +522,7 @@ fn worker<F>(
             return;
         }
     };
-    // Leave headroom for the UI/audio threads — pegging every core makes the
-    // macOS main run loop unresponsive (looks like a freeze). Half the cores,
-    // capped, is plenty for the base model.
-    let cores = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4);
-    let threads = (cores / 2).clamp(1, 4) as i32;
+    let threads = decode_threads();
 
     let mut window: Vec<f32> = Vec::with_capacity(TARGET_RATE as usize * WINDOW_SECS);
     // Audio that arrived with no room left in the window (RG-262). It starts the
@@ -1189,14 +1183,75 @@ fn is_latin_letter(c: char) -> bool {
     )
 }
 
-fn transcribe(
-    state: &mut whisper_rs::WhisperState,
-    audio: &[f32],
-    threads: i32,
-    lang: Option<&str>,
-    prompt: Option<&str>,
+/// HOW MANY THREADS ONE DECODE MAY USE.
+///
+/// Leave headroom for the UI/audio threads — pegging every core makes the macOS main
+/// run loop unresponsive (looks like a freeze). Half the cores, capped, is plenty for
+/// the base model.
+///
+/// A function rather than the four lines it replaces, because a bench that measured
+/// decode cost on a DIFFERENT thread count than the worker uses would be quoting a
+/// number about nothing (RG-137). `decoder_tail` calls this.
+fn decode_threads() -> i32 {
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+    (cores / 2).clamp(1, 4) as i32
+}
+
+/// THE TEMPERATURE THE DECODER STARTS AT, and the step it falls back by.
+///
+/// **This pair is what the decoder's tail costs, and it must not be set to zero to
+/// make the tail go away — RG-137, rule 34.** `temperature_inc > 0` is what turns
+/// one decode into a LADDER: whisper.cpp builds `[0.0, 0.2, ... 1.0]` and re-decodes
+/// the same window at the next temperature whenever the best sequence came out
+/// below `logprob_thold` and whisper did not already think the room was silent
+/// (`whisper.cpp`, `whisper_full_with_state` - the `for it in temperatures` loop and
+/// the `success = false` branch under it). With `best_of: 1` every rung costs about
+/// what the first one did, so a hard window costs up to `max_decode_attempts()`
+/// times a median one, and that is the whole of the 3.9x outlier this row chased
+/// through the queue, the drain loop and the hand-off before measuring the decoder.
+///
+/// Setting `TEMPERATURE_INC` to 0.0 removes the ladder and the tail with it. It also
+/// removes the only thing that re-rolls an incoherent decode, which is why the
+/// guards below exist at all: a quiet church produced confident nonsense, in
+/// languages nobody in the room spoke. Faster by less safe is rule 34, and the tail
+/// is the price of the guard rather than a fault in the pipeline.
+const TEMPERATURE: f32 = 0.0;
+const TEMPERATURE_INC: f32 = 0.2;
+
+/// How many times whisper may decode ONE window before it ships what it has - the
+/// length of the temperature ladder above, DERIVED rather than written down, so the
+/// number quoted in an audit and the number the decoder runs cannot drift.
+///
+/// Test-only, because nothing in the running product needs to know: the ladder is
+/// whisper's business. It exists so the bench and the audit quote a DERIVED number
+/// rather than a written-down one that goes stale the day a constant moves.
+#[cfg(test)]
+fn max_decode_attempts() -> u32 {
+    if TEMPERATURE_INC <= 0.0 {
+        return 1;
+    }
+    let mut n = 0u32;
+    let mut t = TEMPERATURE;
+    while t < 1.0 + 1e-6 {
+        n += 1;
+        t += TEMPERATURE_INC;
+    }
+    n
+}
+
+/// THE SHIPPED DECODE PARAMETERS, in ONE place.
+///
+/// Extracted from `transcribe` for RG-137 so a bench can measure what SHIPS rather
+/// than a second copy of this block that drifts from it. `decoder_tail` builds these
+/// and changes exactly one field, which is what makes its answer about Relay.
+fn decode_params<'a, 'b>(
     decode: Decode,
-) -> Option<(String, String)> {
+    threads: i32,
+    lang: Option<&'a str>,
+    prompt: Option<&'b str>,
+) -> FullParams<'a, 'b> {
     let mut params = FullParams::new(decode.strategy());
     params.set_language(lang); // None → whisper auto-detects
                                // Bias the decoder toward scripture vocabulary (book names + church terms)
@@ -1229,8 +1284,8 @@ fn transcribe(
     params.set_no_speech_thold(0.6);
     // Temperature fallback: if a decode comes out incoherent, re-roll it hotter
     // rather than shipping it. Without an increment there is no fallback at all.
-    params.set_temperature(0.0);
-    params.set_temperature_inc(0.2);
+    params.set_temperature(TEMPERATURE);
+    params.set_temperature_inc(TEMPERATURE_INC);
     // Reject decodes that are too uncertain (logprob) or too chaotic (entropy) —
     // hallucinated runs score badly on both.
     params.set_logprob_thold(-1.0);
@@ -1239,7 +1294,18 @@ fn transcribe(
     params.set_print_progress(false);
     params.set_print_realtime(false);
     params.set_print_timestamps(false);
+    params
+}
 
+fn transcribe(
+    state: &mut whisper_rs::WhisperState,
+    audio: &[f32],
+    threads: i32,
+    lang: Option<&str>,
+    prompt: Option<&str>,
+    decode: Decode,
+) -> Option<(String, String)> {
+    let params = decode_params(decode, threads, lang, prompt);
     if state.full(params, audio).is_err() {
         return None;
     }
@@ -3918,5 +3984,311 @@ mod realtime {
             }
         }
         println!("\n  {n} transcript updates over {secs:.1}s of audio\n");
+    }
+}
+
+/// **THE DECODER'S OWN TAIL — RG-137.**
+///
+/// This row spent three rounds attributing a 3.9x outlier (`stt_decode` p50
+/// 1,322 ms, worst 5,109 ms on `large-v3-turbo`) to everything in front of the
+/// decoder: the queue in front of whisper, the drain loop, the hand-off, the
+/// subtraction between two metrics. All four were priced and all four were
+/// exonerated — the drain loop is **1 ms**. What was left was the decode itself,
+/// and the one thing nobody had asked was whether a slow decode is slow BECAUSE OF
+/// THE AUDIO IN IT or because of something happening on the machine at that moment.
+///
+/// Those two want opposite responses, so the question has to be settled rather than
+/// reasoned about. This module settles it with three measurements on the same
+/// window, all through `decode_params` — the SHIPPED parameters, not a copy:
+///
+/// 1. **The distribution**, over every window of a long real recording. How often a
+///    tail event happens, and on what window length, is a frequency and needs a
+///    population; a 200 s replay found nothing and a 400 s replay found one.
+/// 2. **The same tail window decoded again, twice.** A cost that reproduces is a
+///    property of the audio. A cost that does not is the host — thermal throttling,
+///    another process on the GPU, a page fault on a 1.6 GB model.
+/// 3. **The same tail window with the temperature ladder OFF.** whisper.cpp
+///    re-decodes a window up to `max_decode_attempts()` times, each rung costing
+///    about what the first did, whenever the result scored below `logprob_thold`
+///    and it did not already believe the room was silent. If a tail window's cost
+///    collapses to roughly the median with `temperature_inc = 0.0`, the tail IS
+///    that ladder, and the ladder is Relay's own hallucination guard.
+///
+/// **Not the pipeline's windowing, deliberately.** The worker's windows depend on the
+/// voice gate and the cadence; this walks the file in fixed `WINDOW_SECS` strides, so
+/// the population is reproducible from the file alone and the same audio is decoded
+/// the same way on every run. Decode cost is a function of the parameters, the model
+/// and the samples, and all three are the shipped ones. What this rig CANNOT tell you
+/// is how often the live worker builds a window like that; `realtime` is for that, and
+/// `RELAY_STT_TIMING=1` prints `decode=` and `window=` per pass beside each other.
+///
+/// ```bash
+/// RELAY_BENCH_WAV=…/service.wav RELAY_MODEL_PATH=…/ggml-large-v3-turbo.bin \
+///   cargo test --release decoder_tail -- --ignored --nocapture
+/// ```
+#[cfg(test)]
+mod decoder_tail {
+    use super::bench::load_f32;
+    use super::*;
+
+    /// A decode this many times the 8-second median is a tail event. Two is
+    /// deliberately low: the question is the SHAPE of the tail, and a threshold set
+    /// at the one outlier already known about would find exactly it.
+    const TAIL_FACTOR: f64 = 2.0;
+
+    /// Window lengths, in samples' worth of seconds. **The live worker does not only
+    /// decode full windows**, and that is the whole reason this is a sweep and not a
+    /// number: a cadence step fires on whatever is in the window at the time, so a
+    /// step taken shortly after a pause decodes a second or two of audio padded to
+    /// whisper's 30-second mel frame. Rule 27 says 8 s and 4 s cost the SAME because
+    /// of that padding, which is a statement about the encoder; the decoder's own
+    /// cost is the number of tokens it generates and how many times it re-rolls
+    /// them, and neither of those is settled by the encoder being flat.
+    const LENGTHS_SECS: [f32; 5] = [0.5, 1.0, 2.0, 4.0, 8.0];
+
+    /// Windows per length. Spread across the whole file rather than taken from one
+    /// stretch, so the population is the recording and not a minute of it.
+    const PER_LENGTH: usize = 80;
+
+    /// How many of the worst windows to re-decode. Each costs three more decodes,
+    /// and the answer does not get truer once the first handful agree.
+    const TAIL_SAMPLES: usize = 5;
+
+    /// How many times to decode ONE unchanging window, to price the host.
+    const REPEATS: usize = 8;
+
+    fn pct(sorted: &[f64], q: f64) -> f64 {
+        if sorted.is_empty() {
+            return 0.0;
+        }
+        let i = ((sorted.len() - 1) as f64 * q).round() as usize;
+        sorted[i]
+    }
+
+    /// One decoded window: where it started, how long it was, what it cost.
+    #[derive(Clone, Copy)]
+    struct Pass {
+        at: usize,
+        len: usize,
+        ms: u64,
+    }
+
+    #[test]
+    #[ignore = "needs RELAY_BENCH_WAV (16 kHz mono f32) and an installed model"]
+    fn what_the_decoder_tail_is() {
+        let Some(wav) = std::env::var_os("RELAY_BENCH_WAV") else {
+            eprintln!("set RELAY_BENCH_WAV to a raw/RIFF f32 mono 16k file of real preaching");
+            return;
+        };
+        let model = default_model_path().expect("no STT model found");
+        let pcm = load_f32(&wav.to_string_lossy());
+        let threads = decode_threads();
+        println!(
+            "\n  model {}\n  audio {:.1}s  threads {threads}  \
+             ladder {} rungs (temperature {TEMPERATURE} += {TEMPERATURE_INC})\n",
+            model.display(),
+            pcm.len() as f32 / TARGET_RATE as f32,
+            max_decode_attempts(),
+        );
+
+        let ctx = whisper_rs::WhisperContext::new_with_params(
+            &model.to_string_lossy(),
+            whisper_rs::WhisperContextParameters::default(),
+        )
+        .expect("load model");
+        let mut state = ctx.create_state().expect("create state");
+
+        // ── 0. THE HOST'S OWN NOISE FLOOR ────────────────────────────────────
+        //
+        // ONE window, decoded `REPEATS` times. The audio, the parameters, the model
+        // and the thread count are identical on every pass, so anything this spread
+        // shows is the machine and nothing else: another process on the GPU, the
+        // cores clocking down, a page fault on 1.6 GB of weights.
+        //
+        // **This is here because it caught something.** Two runs of the sweep below,
+        // same file, same model, same binary, measured the 8 s median at 1,352 ms and
+        // then at 2,258 ms — the second run's MEDIAN above the first run's worst over
+        // 450 windows, which no sampling difference explains. The machine was busy
+        // building and testing during the second. A tail event on a rig is not
+        // evidence about a decoder until this number is beside it.
+        let probe_len = WINDOW_SECS * TARGET_RATE as usize;
+        let probe = &pcm[pcm.len() / 2..pcm.len() / 2 + probe_len.min(pcm.len() / 2)];
+        let mut repeats: Vec<f64> = Vec::new();
+        for _ in 0..REPEATS {
+            let t = std::time::Instant::now();
+            let _ = transcribe(&mut state, probe, threads, None, None, DECODE);
+            repeats.push(t.elapsed().as_millis() as f64);
+        }
+        let spread = repeats.iter().cloned().fold(f64::MIN, f64::max)
+            / repeats.iter().cloned().fold(f64::MAX, f64::min).max(1.0);
+        println!(
+            "  ONE 8 s window decoded {REPEATS}x: {:?}ms\n  spread worst/best {spread:.2}x \
+             — this much of any outlier below is the machine, not the audio\n",
+            repeats.iter().map(|m| *m as u64).collect::<Vec<_>>()
+        );
+
+        // ── 1. THE DISTRIBUTION, BY WINDOW LENGTH ────────────────────────────
+        println!(
+            "  {:>8} {:>7} {:>8} {:>8} {:>8} {:>8}",
+            "window", "n", "p50", "p95", "worst", "blank"
+        );
+        let mut all: Vec<Pass> = Vec::new();
+        let mut reference_p50 = 0.0f64;
+        for secs in LENGTHS_SECS {
+            let len = (secs * TARGET_RATE as f32) as usize;
+            if len < MIN_SAMPLES || pcm.len() < len * 2 {
+                continue;
+            }
+            let stride = (pcm.len() - len) / PER_LENGTH;
+            let mut ms: Vec<f64> = Vec::new();
+            let mut blank = 0usize;
+            for k in 0..PER_LENGTH {
+                let at = k * stride;
+                let w = &pcm[at..at + len];
+                let t = std::time::Instant::now();
+                let said = transcribe(&mut state, w, threads, None, None, DECODE);
+                let took = t.elapsed().as_millis() as u64;
+                if said.is_none() {
+                    blank += 1;
+                }
+                ms.push(took as f64);
+                all.push(Pass { at, len, ms: took });
+            }
+            ms.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let p50 = pct(&ms, 0.5);
+            // The 8 s window is the reference, because that is the one every other
+            // number in this repository was measured on.
+            if (secs - WINDOW_SECS as f32).abs() < f32::EPSILON {
+                reference_p50 = p50;
+            }
+            println!(
+                "  {:>7.1}s {:>7} {:>6.0}ms {:>6.0}ms {:>6.0}ms {:>8}",
+                secs,
+                ms.len(),
+                p50,
+                pct(&ms, 0.95),
+                pct(&ms, 1.0),
+                blank
+            );
+        }
+        assert!(
+            reference_p50 > 0.0,
+            "the 8 s reference window was never decoded"
+        );
+        let ceiling = reference_p50 * TAIL_FACTOR;
+        let tail: Vec<Pass> = all
+            .iter()
+            .copied()
+            .filter(|p| p.ms as f64 > ceiling)
+            .collect();
+        println!(
+            "\n  tail events (> {TAIL_FACTOR}x the {reference_p50:.0}ms 8 s median = \
+             {ceiling:.0}ms): {} of {}\n  what a full ladder would cost: {:.0}ms",
+            tail.len(),
+            all.len(),
+            reference_p50 * max_decode_attempts() as f64,
+        );
+
+        if tail.is_empty() {
+            println!(
+                "  NO WINDOW CROSSED THE TAIL THRESHOLD IN THIS FILE, at any of these \
+                 lengths. That is a result about this recording and this window shape, not \
+                 an absolution of the decoder — the outlier RG-137 is chasing was seen \
+                 through `realtime`, whose windows the voice gate builds. The worst ones \
+                 are still taken apart below, because the shape of the top of a \
+                 distribution is the question even when it did not cross a line."
+            );
+        }
+
+        // ── 2 AND 3. THE SAME WINDOWS AGAIN, AND WITH THE LADDER OFF ─────────
+        //
+        // A cost that reproduces is a property of the audio. A cost that does not is
+        // the host. A cost that collapses with `temperature_inc = 0.0` is the
+        // temperature ladder, which is Relay's own hallucination guard.
+        //
+        // Run on the worst windows whether or not any of them crossed `TAIL_FACTOR`:
+        // a run that reports nothing because nothing was bad enough tells you less
+        // than the same three numbers about the worst thing it did see, and "the top
+        // of this distribution is ordinary" is itself the finding on a quiet machine.
+        let mut worst = all.clone();
+        worst.sort_by_key(|p| std::cmp::Reverse(p.ms));
+        println!(
+            "\n  {:>9} {:>8} {:>9} {:>9} {:>9} {:>11} {:>7}",
+            "at", "window", "first", "again", "again", "no ladder", "rungs"
+        );
+        let mut ratios: Vec<f64> = Vec::new();
+        for p in worst.iter().take(TAIL_SAMPLES) {
+            let w = &pcm[p.at..p.at + p.len];
+            let mut repeat = [0u64; 2];
+            for r in repeat.iter_mut() {
+                let t = std::time::Instant::now();
+                let _ = transcribe(&mut state, w, threads, None, None, DECODE);
+                *r = t.elapsed().as_millis() as u64;
+            }
+            // ONE field changed off the shipped parameters, and this is the change:
+            // no ladder, so whisper decodes the window exactly once.
+            let mut params = decode_params(DECODE, threads, None, None);
+            params.set_temperature_inc(0.0);
+            let t = std::time::Instant::now();
+            let _ = state.full(params, w);
+            let once = t.elapsed().as_millis() as u64;
+            let rungs = if once > 0 {
+                p.ms as f64 / once as f64
+            } else {
+                0.0
+            };
+            ratios.push(rungs);
+            println!(
+                "  {:>8.1}s {:>7.1}s {:>7}ms {:>7}ms {:>7}ms {:>9}ms {:>6.1}x",
+                p.at as f64 / TARGET_RATE as f64,
+                p.len as f64 / TARGET_RATE as f64,
+                p.ms,
+                repeat[0],
+                repeat[1],
+                once,
+                rungs
+            );
+        }
+        let mean = ratios.iter().sum::<f64>() / ratios.len() as f64;
+        println!(
+            "\n  a tail window costs {mean:.1}x what ONE decode of the same window costs, \
+             against a ladder of {} rungs.\n  Near 1.0 and the tail is NOT the ladder and \
+             the host is back in the frame; if `again` swings against `first`, it was never \
+             the audio.\n",
+            max_decode_attempts()
+        );
+    }
+
+    /// THE LADDER IS ON, AND TURNING IT OFF IS NOT A PERFORMANCE FIX — rule 34.
+    ///
+    /// Cheap, no model, runs in CI. `TEMPERATURE_INC = 0.0` would delete whatever
+    /// part of the decoder's tail is the ladder AND the re-roll that stops a quiet
+    /// room being transcribed as confident nonsense, which is the one change
+    /// somebody reading a tail figure is most likely to reach for. Put `0.0` in and
+    /// this fails.
+    #[test]
+    fn the_temperature_ladder_stays_on() {
+        // Asked through `max_decode_attempts()` rather than of `TEMPERATURE_INC`
+        // directly: the constant folds, and clippy is right that an assertion the
+        // compiler can evaluate is not an assertion. The function returns 1 for any
+        // increment at or below zero, so this is the same claim through a door the
+        // optimiser cannot open.
+        assert!(
+            max_decode_attempts() > 1,
+            "the temperature ladder has one rung ({TEMPERATURE} += {TEMPERATURE_INC}), so \
+             whisper.cpp never re-rolls an incoherent decode. That would remove whatever \
+             part of the decoder's tail is the ladder by removing the hallucination guard \
+             that causes it (rule 34, RG-137)."
+        );
+        // The number an audit quotes for the worst case. DERIVED from the two
+        // constants, so a change to either moves it here rather than leaving a stale
+        // figure in a document: 0.0, 0.2, 0.4, 0.6, 0.8, 1.0.
+        assert_eq!(
+            max_decode_attempts(),
+            6,
+            "the ladder changed length — the worst case one window can cost is now {}x a \
+             median decode, and RG-137 in RELAY_GAP says 6",
+            max_decode_attempts()
+        );
     }
 }

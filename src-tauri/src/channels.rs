@@ -752,15 +752,35 @@ pub fn media_error_from_json(v: &serde_json::Value) -> Option<String> {
 /// LAN socket, so they are clamped at the door and dropped if they are not
 /// non-negative integers. A number here can only ever be evidence in a timeline
 /// entry; nothing routes, gates or fires on it.
+/// * `refused` — how many beats the page handed to the Tauri bridge and the bridge
+///   THREW on, since the last one that got through (RG-119, 2026-09-29). The two
+///   numbers above can distinguish "the page was not running" from "the page was
+///   running and Relay did not get the beats"; they cannot say WHY the second one
+///   happened, and the only place a beat can be lost on its way out is one bare
+///   `catch {}` in `outputHealth.js`. A swallowed error on the one path that tells
+///   an operator whether a screen is alive is rule 35 with the page as the badge.
+///   **A refused beat cannot report itself**, so the count rides on the next beat
+///   that lands, which is the same shape as `since_ms` and safe for the same
+///   reason. `Some(0)` is a statement and not an absence: this page reached the
+///   bridge, so it knows nothing was refused. `None` means it did not say — a kiosk
+///   page over the WebSocket, where there is no bridge to refuse anything.
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub struct BeatGap {
     pub since_ms: Option<u64>,
     pub hidden_ms: Option<u64>,
+    pub refused: Option<u32>,
 }
 
 /// A day. Anything longer is a broken clock or a hostile client, and either way it
 /// is not evidence about a service.
 const GAP_CLAMP_MS: u64 = 24 * 60 * 60 * 1000;
+
+/// The most refused beats that will be believed — `MAX_REFUSED_REPORTED` in
+/// `outputHealth.js`, clamped again here because this arrives from a page and one of
+/// the two transports is an unauthenticated LAN socket. A larger figure is dropped
+/// to `None` rather than saturated: a number nobody can have produced is not
+/// evidence, and an absence says so where a ceiling would read as a measurement.
+const REFUSED_CLAMP: u32 = 9999;
 
 impl BeatGap {
     /// Read the two numbers off a JSON beat. Anything that is not a non-negative
@@ -777,14 +797,24 @@ impl BeatGap {
         BeatGap {
             since_ms: field("since_ms"),
             hidden_ms: field("hidden_ms"),
+            // A browser source has no bridge, so nothing over this transport ever
+            // sets it. Read anyway, under the same clamp, because one rule reading
+            // both transports is what stops a window and a browser source reaching
+            // different conclusions about the same screen.
+            refused: v
+                .get("refused")
+                .and_then(|n| n.as_u64())
+                .and_then(|n| u32::try_from(n).ok())
+                .filter(|n| *n <= REFUSED_CLAMP),
         }
     }
 
     /// Same rule for the Tauri bridge, where the value arrives already typed.
-    pub fn clamped(since_ms: Option<u64>, hidden_ms: Option<u64>) -> Self {
+    pub fn clamped(since_ms: Option<u64>, hidden_ms: Option<u64>, refused: Option<u32>) -> Self {
         BeatGap {
             since_ms: since_ms.filter(|ms| *ms <= GAP_CLAMP_MS),
             hidden_ms: hidden_ms.filter(|ms| *ms <= GAP_CLAMP_MS),
+            refused: refused.filter(|n| *n <= REFUSED_CLAMP),
         }
     }
 
@@ -793,14 +823,23 @@ impl BeatGap {
     pub fn describe(&self) -> Option<String> {
         let since = self.since_ms?;
         let secs = |ms: u64| (ms as f64 / 1000.0).round() as u64;
-        Some(match self.hidden_ms {
+        let mut s = match self.hidden_ms {
             Some(h) if h > 0 => format!(
                 "screen's own clock: silent {}s, hidden {}s",
                 secs(since),
                 secs(h)
             ),
             _ => format!("screen's own clock: silent {}s, never hidden", secs(since)),
-        })
+        };
+        // ONLY WHEN THERE WERE SOME. A `refused 0` on every recovery in the record
+        // would be nine characters of noise on the line an audit reads, and the
+        // question this answers is none-versus-some. An absence (a kiosk page, which
+        // has no bridge) prints nothing either, and for the stronger reason: it did
+        // not say, and a `0` there would be Relay answering on its behalf.
+        if let Some(n) = self.refused.filter(|n| *n > 0) {
+            s.push_str(&format!(", bridge refused {n} beats"));
+        }
+        Some(s)
     }
 }
 
@@ -9370,7 +9409,7 @@ mod rehearsal_tests {
             9,
             PaintState::Content,
             "window",
-            BeatGap::clamped(Some(641_000), Some(641_000)),
+            BeatGap::clamped(Some(641_000), Some(641_000), Some(0)),
             None,
         );
         assert_eq!(
@@ -9382,7 +9421,7 @@ mod rehearsal_tests {
             9,
             PaintState::Content,
             "window",
-            BeatGap::clamped(Some(2_000), Some(0)),
+            BeatGap::clamped(Some(2_000), Some(0), Some(0)),
             None,
         );
         assert_eq!(
@@ -9415,7 +9454,7 @@ mod rehearsal_tests {
             9,
             PaintState::Content,
             "window",
-            BeatGap::clamped(Some(2_000), Some(0)),
+            BeatGap::clamped(Some(2_000), Some(0), Some(0)),
             None,
         );
         // It goes quiet long enough for Relay to notice.
@@ -9432,7 +9471,7 @@ mod rehearsal_tests {
             9,
             PaintState::Content,
             "window",
-            BeatGap::clamped(Some(24_000), Some(0)),
+            BeatGap::clamped(Some(24_000), Some(0), Some(0)),
             None,
         );
         for _ in 0..2 {
@@ -9440,7 +9479,7 @@ mod rehearsal_tests {
                 9,
                 PaintState::Content,
                 "window",
-                BeatGap::clamped(Some(2_000), Some(0)),
+                BeatGap::clamped(Some(2_000), Some(0), Some(0)),
                 None,
             );
         }
@@ -9459,7 +9498,7 @@ mod rehearsal_tests {
             9,
             PaintState::Content,
             "window",
-            BeatGap::clamped(Some(2_000), Some(0)),
+            BeatGap::clamped(Some(2_000), Some(0), Some(0)),
             None,
         );
         assert_eq!(
@@ -9492,8 +9531,96 @@ mod rehearsal_tests {
             BeatGap::from_json(&serde_json::json!({"since_ms": 4000, "hidden_ms": 4000})),
             BeatGap {
                 since_ms: Some(4_000),
-                hidden_ms: Some(4_000)
+                hidden_ms: Some(4_000),
+                refused: None,
             }
+        );
+        // AND THE REFUSAL COUNT OBEYS THE SAME RULE (RG-119). A ceiling would read
+        // as a measurement; an absence says the number was not believed.
+        for bad in [
+            serde_json::json!({"since_ms": 4000, "refused": -1}),
+            serde_json::json!({"since_ms": 4000, "refused": "11"}),
+            serde_json::json!({"since_ms": 4000, "refused": REFUSED_CLAMP as u64 + 1}),
+            serde_json::json!({"since_ms": 4000, "refused": u64::MAX}),
+        ] {
+            assert_eq!(
+                BeatGap::from_json(&bad).refused,
+                None,
+                "not evidence: {bad}"
+            );
+        }
+        assert_eq!(
+            BeatGap::from_json(&serde_json::json!({"since_ms": 4000, "refused": 11})).refused,
+            Some(11)
+        );
+    }
+
+    /// **A BEAT THE BRIDGE REFUSED IS NAMED, AND A BEAT IT DID NOT IS NOT — RG-119.**
+    ///
+    /// The two readings this row could not tell apart are *"the page ticked on time
+    /// and Relay did not get the beats because something refused them"* and *"the
+    /// page ticked on time and Relay did not get the beats and nothing refused
+    /// anything"*. Both were `silent 2s, never hidden`, because the only place a
+    /// beat can be refused on the way out was a bare `catch {}` in `outputHealth.js`
+    /// and it said nothing to anybody. They want different next steps — one is the
+    /// bridge, the other is the command or the console's poll — so the record has to
+    /// separate them or the next service is no more decisive than the last four.
+    ///
+    /// Three things are asserted, and the middle one is the one an audit will lean
+    /// on: a refusal is on the line, a zero is NOT (nine characters of noise on
+    /// every recovery in the record would get the field deleted within a month), and
+    /// an absence is not a zero — a kiosk page has no bridge and Relay does not
+    /// answer on its behalf.
+    ///
+    /// Put the defect back by deleting the `refused` branch from `BeatGap::describe`
+    /// and the first case reads exactly like the second.
+    #[test]
+    fn a_recovery_says_whether_the_bridge_refused_the_beats_it_did_not_get() {
+        let refused = BeatGap::clamped(Some(2_000), Some(0), Some(11));
+        assert_eq!(
+            refused.describe().as_deref(),
+            Some("screen's own clock: silent 2s, never hidden, bridge refused 11 beats"),
+            "the page ticked on time and eleven of its beats were thrown away by the \
+             bridge, and the record has to say so — that is the whole of this field"
+        );
+        assert_eq!(
+            BeatGap::clamped(Some(2_000), Some(0), Some(0))
+                .describe()
+                .as_deref(),
+            Some("screen's own clock: silent 2s, never hidden"),
+            "an ordinary recovery grew a `refused 0`"
+        );
+        assert_eq!(
+            BeatGap::clamped(Some(2_000), Some(0), None)
+                .describe()
+                .as_deref(),
+            Some("screen's own clock: silent 2s, never hidden"),
+            "a screen that has no bridge to be refused by was answered for"
+        );
+        // It travels the whole way a gap travels: kept off the beat that ended the
+        // silence, so it pairs with the entry rather than racing the console's poll.
+        let h = OutputHealth::default();
+        h.beat(4, PaintState::Content, "window", BeatGap::default(), None);
+        {
+            let mut m = h.beats.lock().expect("lock");
+            let b = m.get_mut(&4).expect("beat");
+            b.at = std::time::Instant::now() - std::time::Duration::from_millis(BEAT_STALE_MS * 2);
+        }
+        assert_eq!(h.transition(4), Some(false));
+        h.beat(4, PaintState::Content, "window", refused, None);
+        h.beat(
+            4,
+            PaintState::Content,
+            "window",
+            BeatGap::clamped(Some(2_000), Some(0), Some(0)),
+            None,
+        );
+        assert_eq!(h.transition(4), Some(true));
+        assert_eq!(
+            h.last_gap(4).and_then(|g| g.describe()).as_deref(),
+            Some("screen's own clock: silent 2s, never hidden, bridge refused 11 beats"),
+            "the refusal count was overwritten by the ordinary beat behind it, which \
+             is the race `silence_ended` exists to lose to nothing"
         );
     }
 

@@ -49,12 +49,49 @@
 // of its life has no previous tick). Absent means "did not say"; zero would mean
 // "said it never went quiet", and only one of those is true.
 //
+// * `refused` — how many beats this page tried to hand to the Tauri bridge and the
+//   bridge threw, since the last one that got through. **This is the third reading,
+//   and it is what turns the other two from a deduction into a statement.** Once
+//   `since_ms` is trustworthy (it is only trustworthy since `OutputHealth`'s
+//   `silence_ended` stopped an ordinary beat overwriting it), a recovery whose
+//   `since_ms` is about ONE INTERVAL means the page ticked on time and Relay did
+//   not get the beats — and that is where the evidence ran out, because the only
+//   place a beat could be refused on the way out is `sendOverBridge`'s `catch`, and
+//   it swallowed. A swallowed error on the one path that tells an operator whether
+//   a screen is alive is rule 35 with the page as the badge, whatever the cause of
+//   the outage turns out to be. So now the page counts them and says so on the
+//   first beat that lands, exactly as it says how long it was quiet.
+//
+//   Three readings, three different faults, and no two of them look alike:
+//     silent 200s, hidden 200s     → the OS was not running the page. It was not
+//                                    painting either, and it was covered.
+//     silent 200s, never hidden    → the page's own interval did not fire while it
+//                                    was visible. A throttled or wedged renderer.
+//     silent 2s,  refused 11       → the page ticked on time and the bridge refused
+//                                    eleven beats. Relay's fault, and named.
+//     silent 2s,  refused 0        → the page ticked, nothing refused, and Relay
+//                                    still has no beat. Neither the page nor the
+//                                    bridge; look at the command and the poll.
+//   The last two were ONE reading until this field existed.
+//
+//   A page with no bridge at all is deliberately NOT counted — see `sendOverBridge`.
+//
 // The interval is Rust's `channels::BEAT_INTERVAL_MS`, and the staleness window it
 // has to stay under is `channels::BEAT_STALE_MS`. They are coupled — three beats
 // of grace — and `r6-contracts.test.js` fails if this file and that one drift.
 
 /** How often a screen reports in. Must match `channels::BEAT_INTERVAL_MS`. */
 export const BEAT_INTERVAL_MS = 2000;
+
+/**
+ * The most refused beats a page will ever report (RG-119).
+ *
+ * At one beat every two seconds a bridge refusing for a whole seven-hour service
+ * reaches about 12,600, and the phrase on a timeline entry is not improved by the
+ * fourth digit. Relay clamps the same value again at the door, because this one
+ * arrives from a page; `channels::REFUSED_CLAMP` is the pair.
+ */
+export const MAX_REFUSED_REPORTED = 9999;
 
 /**
  * A clock for measuring a gap. `performance.now()` where it exists, because it is
@@ -126,6 +163,12 @@ export function startBeat({
   let lastTickAt = null;
   let hiddenSince = null;
   let hiddenMs = 0;
+  // Beats the bridge THREW on, since the last one that got through. Kept on the
+  // page rather than reported per-attempt, because the only way to report a
+  // refused beat is over the thing that refused it: it rides on the next beat that
+  // lands, which is the same shape as the gap above and cannot be lost to a race
+  // with the console's poll for the same reason.
+  let bridgeRefused = 0;
   const doc = typeof document === 'undefined' ? null : document;
 
   const onVisibility = () => {
@@ -205,6 +248,47 @@ export function startBeat({
     }
   };
 
+  /**
+   * IS THERE A BRIDGE IN THIS PAGE AT ALL?
+   *
+   * The distinction the refusal count rests on, and **it is not the import**. The
+   * first version of this asked whether `@tauri-apps/api/core` resolved, which was
+   * wrong in the quiet way: the module is BUNDLED into `output.html`, so it resolves
+   * in a plain browser too, and it is `invoke` itself that then throws
+   * `window.__TAURI_INTERNALS__ is undefined`. Counting that would have given every
+   * OBS browser source a four-figure refusal count for a fault it does not have.
+   *
+   * An injected `invoke` counts as a bridge, because a caller handing one over is a
+   * caller saying so; otherwise the internals are the only honest signal.
+   */
+  const bridgeAttached = () => {
+    if (invoke) return true;
+    try {
+      return !!globalThis.window?.__TAURI_INTERNALS__;
+    } catch {
+      // Rule 1. Asking whether a bridge exists may never take a live page down.
+      return false;
+    }
+  };
+
+  /**
+   * Hand the beat to Relay over the Tauri bridge — the native output window's only
+   * transport, and the one where a refusal used to be invisible (RG-119).
+   *
+   * **TWO failures, and they are not the same failure.** This was one `try` with one
+   * bare `catch {}` around the whole of it, so a kiosk page that has no bridge and a
+   * native window whose `output_beat` call was REFUSED were the same observable
+   * event: nothing. The first is the designed case and must stay silent — a browser
+   * source reaches this line only because its socket was down, and correctly goes
+   * stale. The second is a screen that is alive, painting, ticking on time, and
+   * telling Relay so into a void, which is precisely the reading RG-119 could not
+   * separate from a frozen page.
+   *
+   * So a failure is counted only where there was a bridge to refuse it, and the
+   * count rides on the next beat that gets through. Rule 1 still holds — nothing
+   * here throws — and so does rule 2: the beat still goes stale, because a count is
+   * evidence and never a reason to claim a screen is fine.
+   */
   const sendOverBridge = async (state, g, m) => {
     try {
       const inv = invoke ?? (await import('@tauri-apps/api/core')).invoke;
@@ -223,9 +307,18 @@ export function startBeat({
         mediaPaused: mf?.media_paused ?? null,
         // A PICTURE OR CLIP THIS SCREEN COULD NOT LOAD, or null (O-4).
         mediaError: mediaErrorField().media_error ?? null,
+        // HOW MANY BEATS THE BRIDGE REFUSED BEFORE THIS ONE (RG-119). Zero on an
+        // ordinary beat, which is the truth and not an absence: this page is
+        // talking to the bridge right now, so it knows.
+        refused: bridgeRefused,
       });
+      bridgeRefused = 0;
     } catch {
-      /* no backend, or the command is gone. Stay silent and go stale. */
+      // REFUSED. Stay silent and go stale — rule 2 — but remember, so the next beat
+      // that lands can say it happened. Capped so a wedged bridge over a long
+      // service cannot turn the timeline phrase into nonsense; the distinction that
+      // matters is none versus some, not 5,000 versus 6,000.
+      if (bridgeAttached()) bridgeRefused = Math.min(bridgeRefused + 1, MAX_REFUSED_REPORTED);
     }
   };
 
