@@ -20,7 +20,7 @@ Relay also no longer offers a verse that does not exist. *"Psalms 14:14"* was re
 
 Each model card already told you how often the transcript updates. Three of them said nothing about accuracy because nothing had been measured. On 200 seconds of real preaching, with six references checked by hand across five recording conditions, **`large-v3-turbo` found 8, `base` found 2, and `small` found none at all**. `small` now says so on its own card.
 
-That last figure matters because Relay's own advice, when the transcript falls behind, is to switch to `small`. The speed reasoning behind that advice still holds; the accuracy half of it now has evidence against it, on one service. **Word error rate has still never been measured in any language**, and nothing here claims otherwise.
+That last figure matters because Relay's own advice, when the transcript falls behind, used to say *"prefer `small`"*. **It no longer recommends a model.** It tells you what each choice costs — the update rate, which is the same for `base` and `small` and four times slower for the largest model, and the accuracy figures above — and leaves the choice with you, because one service is not enough to rank models and pointing you at one that found nothing would be worse than pointing at none. **Word error rate has still never been measured in any language**, and nothing here claims otherwise.
 
 ### The verse you announce is the verse Relay finds
 

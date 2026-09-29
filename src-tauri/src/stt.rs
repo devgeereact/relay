@@ -914,14 +914,31 @@ fn worker<F>(
                 // point where it is offered. `small` is named because rule 32 makes it
                 // free: 153ms rounds to the same single 200ms chunker hop that base's
                 // 59ms does, so it costs no cadence at all.
-                "Switch to a smaller model in Settings -> Speech, and prefer `small`: at \
-                 ~153ms it rounds to the same 200ms cadence step as `base` at ~59ms, so \
-                 it is the larger model for the same speed (`large-v3-turbo` ~602ms per \
-                 window; measured on an M4 Pro with Metal). A SMALLER MODEL CAN COST \
-                 ACCURACY, and Relay has never measured how much: in one field service \
-                 `large-v3-turbo` auto-fired 3 of 3 references correctly and `ggml-base` \
-                 5 of 9, putting four wrong verses on the output. That is one sample per \
-                 model and not a ranking, and it is the only accuracy evidence there is."
+                // **THIS NO LONGER RECOMMENDS A MODEL, AND THAT IS THE CHANGE** (RG-116,
+                // 2026-09-29). It used to say *"prefer `small`"* on the cadence
+                // argument, which is still sound — 153ms and 59ms round to the same
+                // single 200ms hop — beside the sentence *"Relay has never measured how
+                // much"*. That sentence is now false, and the measurement argues with
+                // the recommendation it sat under: over 200s of real preaching with six
+                // hand-labelled references and five signal conditions,
+                // `stt::bench::engine_shootout` found `large-v3-turbo` 8 of 30, `base`
+                // 2, and **`small` none at all**. One slice of one service on one
+                // machine is not a ranking — which is exactly why this states the trade
+                // and lets the operator choose, rather than pointing at a model whose
+                // only accuracy evidence is zero.
+                "Switch to a smaller model in Settings -> Speech if the transcript \
+                 falling behind is the bigger problem — and know what it costs. \
+                 CADENCE: `base` ~59ms and `small` ~153ms both round to the same single \
+                 200ms chunker hop, so they update at the same rate, while \
+                 `large-v3-turbo` at ~602ms takes four hops and updates about a quarter \
+                 as often (measured on an M4 Pro with Metal). ACCURACY, measured at last \
+                 and on ONE service only: over 200s of real preaching with six \
+                 references and five signal conditions, `large-v3-turbo` found 8 of 30, \
+                 `base` 2 of 30, and `small` NONE. In a separate field service \
+                 `large-v3-turbo` auto-fired 3 of 3 correctly and `base` 5 of 9, putting \
+                 four wrong verses on the output. Word error rate has still never been \
+                 measured in any language. So a smaller model is a real trade and not a \
+                 free one, and the evidence does not point at `small`."
             };
             eprintln!(
                 "stt: decode {decode_ms}ms for a {window_ms}ms window on {threads} threads — \

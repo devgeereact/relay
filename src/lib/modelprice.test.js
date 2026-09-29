@@ -57,13 +57,13 @@ describe('the update rate — the half an operator feels', () => {
     expect(describeSpeed(TURBO, ALL)).toContain('a Mac');
   });
 
-  it('SMALL IS FREE, and says so — the most useful sentence PERF has', () => {
+  it('SMALL costs no SPEED, and says exactly that — scoped since its accuracy was measured', () => {
     // 152 ms and 59 ms both round up to the same single 200 ms hop, so the larger
     // model costs nothing an operator can feel. This is the sentence the in-product
     // lag warning rests on, and until now it existed nowhere a church could read it.
     const said = describeSpeed(SMALL, ALL);
     expect(said).toContain('same rate as the recommended model');
-    expect(said).toContain('costs no speed at all');
+    expect(said).toContain('costs no speed');
   });
 
   it('the largest model states the quarter of the cadence it takes', () => {

@@ -113,7 +113,7 @@ describe('every model states its price', () => {
   it('the larger model that is free says it is free', async () => {
     new ModelSetup({ target: host, props: {} });
     await settle();
-    expect(cardFor('Multilingual, larger').textContent).toContain('costs no speed at all');
+    expect(cardFor('Multilingual, larger').textContent).toContain('costs no speed');
   });
 
   it('a measured wrong-verse count reaches the card', async () => {

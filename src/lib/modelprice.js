@@ -84,9 +84,17 @@ export function describeSpeed(model, models = []) {
   const factor = recommended && recommended.id !== model?.id ? slowdown(model, recommended) : null;
   if (factor == null) return head;
   if (factor === 1) {
-    // PERF §2: "`small` is free." It costs 2.6× the decode of `base` and lands in the
-    // same single hop, so the operator gives up nothing they can feel.
-    return `${head} That is the same rate as the recommended model, so choosing this one costs no speed at all.`;
+    // PERF §2: "`small` is free." It costs 2.6x the decode of `base` and lands in the
+    // same single hop, so the operator gives up nothing they can FEEL in the cadence.
+    //
+    // **Scoped to speed on purpose, since 2026-09-29** (RG-116). "Free" was the whole
+    // sentence when nothing about accuracy had been measured. It has been now, and on
+    // the one service measured `small` found none of six references where the
+    // recommended model found eight — so a card that said "costs nothing" beside an
+    // accuracy line reading zero would be contradicting itself on the screen that
+    // decides how well Relay hears a preacher. Speed is what this sentence knows
+    // about; `ModelInfo::accuracy` is rendered beside it and owns the rest.
+    return `${head} That is the same rate as the recommended model, so choosing this one costs no speed — what it costs in accuracy is the line below.`;
   }
   if (factor > 1) {
     return `${head} That is ${factor}× slower to update than the recommended model — a verse takes noticeably longer to reach the screen, and every reference has to survive a second pass before it may fire, which is that much longer too.`;
