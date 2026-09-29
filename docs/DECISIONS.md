@@ -7519,18 +7519,29 @@ connectors: *"all the way to"*, *"down to"*, *"right through to"* were not conne
 at all. The allow-list there is deliberately TIGHT rather than "any ordinary word",
 because with arbitrary filler *"…and we give it all to 30 people"* would read 28-30.
 
-**It is OFFERED, never fired, and the reason is a fact about the tokeniser.**
-`normalize` turns `.` into a separator, so a sentence boundary never reaches this
-parser. FIELD F-1 is the proof and `eval`'s own negative case caught it within minutes
-of the run being added: *"…going through in Luke 10. If you read from verse 32, 37."*
-is two sentences, and across a filler run it reads exactly like one announcement — it
-auto-fired `Luke 10:32`. That verse may even be the one he meant; the point is that
-Relay cannot SEE the full stop, so it cannot tell that case from a chapter and a verse
-in one breath. Rule 10's answer to a confident claim about something nobody said is a
-METHOD, not a score, so the filler path is `UncertainNumber`: the right reference with
-its span, one action away, instead of verse 1 of the chapter on a wall. Promoting it
-needs sentence boundaries surviving `normalize`, which changes every parse in the file
-and wants its own measurement.
+**It fires, and what made that safe was teaching the parser to see a sentence.**
+`normalize` turns `.` into a separator — deliberately, because preachers say *"Psalm
+23, 1"* and ASR renders the pauses as punctuation — so this parser had never been able
+to see a sentence boundary. That blindness is what the filler run could not survive:
+FIELD F-1, *"…going through in Luke 10. If you read from verse 32, 37."*, is two
+sentences, and across a run of filler it reads exactly like one announcement. `eval`'s
+own `field-luke-10-not-proverbs` negative case caught it auto-firing `Luke 10:32`
+within minutes of the run being added, so the whole path shipped capped at `Suggest`
+for a day.
+
+`sentence_breaks` removes the blindness rather than working around it: the raw text is
+split on sentence enders, each part normalised on its own, and the running token count
+is a boundary index. **Nothing downstream sees a new token**, so the bare-digit form
+the stripping exists for is untouched. A filler run refuses to cross a boundary, and
+with that in place a chapter and a verse said in ONE sentence make the same claim
+`Romans 8 verse 28` makes and fire the same way — which is what the operator asked
+for: *"Romans 1: 6-8 should be ready to push"*. A `.` inside a decimal yields a false
+boundary, and that is the safe direction: a false boundary only ever refuses to join.
+
+The pair that proves the boundary is what decides, rather than the filler, is in
+`a_filler_run_may_not_cross_a_full_stop`: the Luke sentence reaches nothing firable,
+and the identical words with the full stop removed fire.
+
 
 **Following the preacher through the passage is a different act from choosing a
 verse.** The second half of the report: *"even if the preacher paraphrases some

@@ -16,7 +16,7 @@ If you say *"Psalm 23 and we will be reading from verse 1 through to number 6"*,
 
 **And a pause in the middle no longer loses it.** If you say *"we are in Romans 1 and we will be reading from…"*, stop for breath, and then say *"verse 6 all the way to 8"*, Relay used to show **nothing at all** for that second half — the chapter was forgotten the moment you paused. It now carries the book and chapter across the gap and still picks up how far you said you were going.
 
-These come up as a suggestion to accept rather than going straight to the screens. That is deliberate: Relay cannot hear a full stop, so *"…in Luke 10. If you read from verse 32"* — two separate sentences — looks identical to one announcement, and putting a verse on a wall from a guess about that is the one thing it must not do.
+These now go to the screens like any other reference you name. For a day they did not, and the reason is worth knowing: Relay could not hear a full stop, so *"…in Luke 10. If you read from verse 32"* — two separate sentences — looked identical to one announcement. It can hear one now, and a reference is only assembled across the words in between when they are all in the same sentence.
 
 ### Relay follows you through a passage you announced, even when you paraphrase
 

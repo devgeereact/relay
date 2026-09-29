@@ -1097,11 +1097,16 @@ fn contains_token_run(hay: &str, needle: &str) -> bool {
 pub fn detect_direct(text: &str) -> Vec<RefMatch> {
     let norm = normalize(text);
     let tokens: Vec<&str> = norm.split_whitespace().collect();
+    // Where the speaker finished a sentence. The parser could not see this until
+    // RG-328; a filler run may not cross one.
+    let breaks = sentence_breaks(text);
     let mut out = Vec::new();
     let mut i = 0;
     while i < tokens.len() {
         if let Some((canonical, book_end, book_ev)) = match_book(&tokens, i) {
-            if let Some((mut m, next)) = parse_reference(&tokens, book_end, canonical, i, book_ev) {
+            if let Some((mut m, next)) =
+                parse_reference(&tokens, book_end, canonical, i, book_ev, &breaks)
+            {
                 // Nothing followed this reference in the text it came from. On a
                 // partial transcript that means the next word might still belong to
                 // it — see `RefMatch::at_tail`.
@@ -1199,6 +1204,36 @@ pub(crate) fn normalize(text: &str) -> String {
         }
     }
     s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// **WHERE THE SPEAKER FINISHED A SENTENCE**, as token indices.
+///
+/// `normalize` turns `.`, `!` and `?` into separators, deliberately — preachers say
+/// *"Psalm 23, 1"* and *"Romans eight one"*, ASR renders the pauses as punctuation, and
+/// that form has to reach a congregation (see the bare-digits note in
+/// `parse_reference`). So the parser has never been able to see a sentence boundary,
+/// and RG-328 is what that cost: across a run of filler words *"…in Luke 10. If you
+/// read from verse 32"* is indistinguishable from one announcement, so the whole filler
+/// path had to be capped at `Suggest` even for a sentence that plainly is one.
+///
+/// This answers the question WITHOUT changing tokenisation: the raw text is split on
+/// sentence enders, each part normalised on its own, and the running token count after
+/// each part that ended with one is a boundary. Nothing downstream sees a new token.
+///
+/// A `.` inside a decimal or an abbreviation yields a false boundary, and that is the
+/// safe direction: a false boundary only makes the parser refuse to join things, never
+/// join things it should not.
+pub(crate) fn sentence_breaks(text: &str) -> Vec<usize> {
+    let mut breaks = Vec::new();
+    let mut count = 0usize;
+    for part in text.split_inclusive(['.', '!', '?']) {
+        let n = normalize(part).split_whitespace().count();
+        count += n;
+        if n > 0 && part.trim_end().ends_with(['.', '!', '?']) {
+            breaks.push(count);
+        }
+    }
+    breaks
 }
 
 /// Ordinary English words that are ALSO one-token book aliases.
@@ -1411,8 +1446,9 @@ fn parse_reference(
     canonical: &str,
     book_start: usize,
     book_ev: BookEvidence,
+    breaks: &[usize],
 ) -> Option<(RefMatch, usize)> {
-    let (mut m, end) = parse_reference_inner(tokens, idx, canonical, book_start, book_ev)?;
+    let (mut m, end) = parse_reference_inner(tokens, idx, canonical, book_start, book_ev, breaks)?;
     if parsed_an_unreviewed_numeral(&m.matched_text) {
         DetectionMethod::uncertain_number(&mut m);
     }
@@ -1442,6 +1478,7 @@ fn parse_reference_inner(
     canonical: &str,
     book_start: usize,
     book_ev: BookEvidence,
+    breaks: &[usize],
 ) -> Option<(RefMatch, usize)> {
     let mut i = idx;
     let mut used_kw = false;
@@ -1642,7 +1679,7 @@ fn parse_reference_inner(
     // a reference assembled across a gap this wide cannot be allowed to fire
     // unattended — see the demotion below.
     let mut crossed_filler = false;
-    if let Some(v) = verse_word_after_filler(tokens, i) {
+    if let Some(v) = verse_word_after_filler(tokens, i, breaks) {
         if v > i + 1 {
             crossed_filler = true;
         }
@@ -1882,9 +1919,14 @@ fn parse_reference_inner(
     // instead of verse 1 of the chapter on the wall. Promoting this to `Direct` needs
     // sentence boundaries surviving `normalize`, which is a change to every parse in
     // the file and wants its own measurement.
-    if crossed_filler {
-        DetectionMethod::uncertain_number(&mut m);
-    }
+    // The cap this path carried from 2026-09-28 until `sentence_breaks` existed is
+    // GONE, and the reason it existed is the reason it can go: the filler run now
+    // refuses to cross a sentence, so `verse_word_after_filler` can no longer join
+    // *"…in Luke 10."* to *"If you read from verse 32"*. What reaches here is a
+    // chapter and a verse the speaker said in ONE sentence, which is the same claim
+    // `Romans 8 verse 28` makes and fires on. `eval`'s `field-luke-10-not-proverbs`
+    // is the instrument that decides whether this is true, and it is a build gate.
+    let _ = crossed_filler;
     if let Some((e, _)) = range {
         m.verse_end = Some(e);
     }
@@ -2189,10 +2231,19 @@ const MAX_REF_FILLER: usize = 8;
 /// way to one. A filler token is an ordinary word: not a number, not a book alias,
 /// not a chapter or verse keyword. Stopping at a book alias is what stops
 /// *"Romans 8 and then later Galatians 5 verse 22"* handing Romans the 22.
-fn verse_word_after_filler(tokens: &[&str], from: usize) -> Option<usize> {
+fn verse_word_after_filler(tokens: &[&str], from: usize, breaks: &[usize]) -> Option<usize> {
     let aliases = alias_map();
     for step in 0..=MAX_REF_FILLER {
         let j = from + step;
+        // **A FILLER RUN MAY NOT CROSS A SENTENCE** (RG-328). This is the whole
+        // reason the path could be promoted: *"…in Luke 10. If you read from verse
+        // 32"* is two sentences and `eval`'s own negative case proves what joining
+        // them costs, while *"Romans 1 and we will be reading from verse 6"* is one.
+        // Until `sentence_breaks` existed the parser could not tell them apart and
+        // the whole path had to be capped.
+        if breaks.contains(&j) {
+            return None;
+        }
         let t = *tokens.get(j)?;
         if is_verse_word(t) {
             // A run of nothing is the plain case the loop below already handles; it
@@ -12105,6 +12156,49 @@ mod conversational_ranges {
         "Hebrews 12 and 13",
     ];
 
+    /// **AND THE SENTENCE BOUNDARY IS WHAT MAKES THAT SAFE.** The same filler run
+    /// across a full stop must reach nothing firable, because the two halves are two
+    /// claims. FIELD F-1 is the case: *"…going through in Luke 10. If you read from
+    /// verse 32, 37."* put a wrong verse on a congregation's wall, and `eval`'s
+    /// `field-luke-10-not-proverbs` is the build gate that holds it.
+    #[test]
+    fn a_filler_run_may_not_cross_a_full_stop() {
+        let across = detect_direct(
+            "that man was going through what was going through in Luke 10. \
+             If you read from verse 32, 37.",
+        );
+        assert!(
+            across
+                .iter()
+                .all(|m| m.reference.verse != 32 || m.method.unattended_rank() == 0),
+            "a verse from the next sentence became firable: {across:?}"
+        );
+        // The SAME words with no full stop are one announcement, and do fire. This is
+        // the pair that proves the boundary is what decides, rather than the filler.
+        let one = detect_direct("in Luke 10 and if you read from verse 32");
+        assert!(
+            one.iter()
+                .any(|m| m.reference.verse == 32 && m.method == DetectionMethod::Direct),
+            "one sentence naming a chapter and a verse did not fire: {one:?}"
+        );
+    }
+
+    /// `sentence_breaks` must agree with `normalize`'s own tokenisation, or the index
+    /// it returns points at the wrong word and the guard above protects nothing.
+    #[test]
+    fn a_boundary_index_lands_on_the_token_after_the_full_stop() {
+        // "in luke 10" = 3 tokens, so the break sits at 3 and the next token is "if".
+        assert_eq!(sentence_breaks("in Luke 10. If you read"), vec![3]);
+        assert_eq!(
+            sentence_breaks("no punctuation here at all"),
+            Vec::<usize>::new()
+        );
+        // Two sentences, two boundaries, counted cumulatively.
+        assert_eq!(sentence_breaks("Romans 1. Verse six. And then"), vec![2, 4]);
+        // A question mark and an exclamation end a sentence too.
+        assert_eq!(sentence_breaks("Is it Romans 1? Verse six"), vec![4]);
+    }
+
     /// **THE OPERATOR'S REPORT, AS ASSERTIONS.** Each of these is how a reference is
     /// actually announced in this congregation, and every one of them used to reach
     /// the wall as WHOLE-CHAPTER VERSE 1 — the verse called was the one thrown away.
@@ -12141,13 +12235,17 @@ mod conversational_ranges {
                 (verse, end, false),
                 "{said:?} must name the verse the preacher called, not verse 1 of the chapter"
             );
-            // Offered, never fired — `normalize` strips the full stop, so this parser
-            // cannot tell one announcement from a chapter and a verse in two
-            // sentences (FIELD F-1). Rule 10: the demotion is a method, not a score.
+            // **Ready to push, which is what the operator asked for.** This asserted
+            // `unattended_rank() == 0` while the parser could not see a sentence
+            // boundary: across a filler run *"…in Luke 10. If you read from verse 32"*
+            // was indistinguishable from one announcement, so the whole path had to be
+            // capped. `sentence_breaks` removed that blindness, so a chapter and a
+            // verse said in ONE sentence now make the same claim `Romans 8 verse 28`
+            // makes — and the test below holds the other half of it.
             assert_eq!(
-                m.method.unattended_rank(),
-                0,
-                "{said:?} reached a firable method across a filler run"
+                m.method,
+                DetectionMethod::Direct,
+                "{said:?} is one sentence naming a chapter and a verse"
             );
         }
     }
