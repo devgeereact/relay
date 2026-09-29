@@ -9278,6 +9278,16 @@ struct ChannelLiveness {
     /// `Not confirmed` for the rest of the service: a standing alarm about a
     /// screen doing exactly what it was told.
     down: Option<&'static str>,
+    /// WHY THIS SCREEN LAST WENT QUIET — one word from `channels::SilenceCause`, or
+    /// `None` for a screen that has not come back from a silence in this run
+    /// (RG-119).
+    ///
+    /// **Retrospective, and the surface that renders it has to say so.** The cause of
+    /// a silence happening right now is unknowable from here by construction: only
+    /// the page can answer and the page is not talking, which is the silence. So this
+    /// is the last one it came back from, `outputHealth.js::silenceCause` is the one
+    /// place it becomes English, and `describeScreen` prints it as the past tense.
+    last_silence: Option<&'static str>,
 }
 
 /// WHICH PHYSICAL DISPLAY A SCREEN SHOULD OPEN ON — and whether it can at all.
@@ -9374,6 +9384,19 @@ fn resolve_display(target: Option<&str>, monitors: &[channels::MonitorInfo]) -> 
 /// downstream can read "down" off a row that says it is up.
 fn down_of(down: &channels::ScreensDown, id: i64) -> Option<&'static str> {
     down.get(id).map(|s| s.as_str())
+}
+
+/// WHY THIS SCREEN LAST WENT QUIET, flattened for `ChannelLiveness` (RG-119).
+///
+/// From the beat that ENDED the silence, which is the only beat that can answer, and
+/// `None` for a screen that has not come back from one in this run. One helper rather
+/// than the expression written out at each arm, because there are four arms and the
+/// two that cannot answer must return the absence rather than a word they invented.
+fn last_silence_of(health: &channels::OutputHealth, id: i64) -> Option<&'static str> {
+    health
+        .last_gap(id)
+        .and_then(|g| g.cause())
+        .map(|c| c.as_str())
 }
 
 /// The beat for one channel, flattened for `ChannelLiveness`.
@@ -9534,6 +9557,7 @@ fn channel_status(
                     last_beat_ms: age,
                     paint_state: state,
                     down: down_of(&down, c.id),
+                    last_silence: last_silence_of(&health, c.id),
                 }
             }
             "network_client" => {
@@ -9584,6 +9608,7 @@ fn channel_status(
                     last_beat_ms: age,
                     paint_state: state,
                     down: down_of(&down, c.id),
+                    last_silence: last_silence_of(&health, c.id),
                 }
             }
             // NDI is parked, not broken — `open_ndi_output` says so too.
@@ -9602,6 +9627,9 @@ fn channel_status(
                 last_beat_ms: None,
                 paint_state: None,
                 down: down_of(&down, c.id),
+                // A target Relay cannot drive has never been quiet, because it has
+                // never spoken. An absence, not a cause.
+                last_silence: None,
             },
             other => ChannelLiveness {
                 id: c.id,
@@ -9618,6 +9646,9 @@ fn channel_status(
                 last_beat_ms: None,
                 paint_state: None,
                 down: down_of(&down, c.id),
+                // A target Relay cannot drive has never been quiet, because it has
+                // never spoken. An absence, not a cause.
+                last_silence: None,
             },
         })
         .collect())
@@ -9659,6 +9690,12 @@ fn output_beat(
     // bridge to say it, so it knows. A refused beat cannot report itself, which is
     // why this is a running count carried by the one that gets through.
     refused: Option<u32>,
+    // HOW MANY ANIMATION FRAMES THIS SCREEN PAINTED SINCE ITS LAST TICK (RG-119).
+    // The only field on this beat that measures whether the screen was PAINTING
+    // rather than whether the OS said anything about it: `hidden_ms` reports zero for
+    // a page suspended across a whole hidden→visible round trip, because it never
+    // observed the transition. `None` is a page with nothing to count with.
+    frames: Option<u32>,
     // WHERE THE CLIP IS, if this screen is playing one. Absent for every screen
     // showing a verse, and absent is the honest reading — see `channels::MediaBeat`
     // for why the console must never time a clip off its own preview instead.
@@ -9677,7 +9714,7 @@ fn output_beat(
             channel_id,
             st,
             "window",
-            channels::BeatGap::clamped(since_ms, hidden_ms, refused),
+            channels::BeatGap::clamped(since_ms, hidden_ms, refused, frames),
             channels::MediaBeat::clamped(media_pos_ms, media_dur_ms, media_paused),
         );
         health.note_media_error(

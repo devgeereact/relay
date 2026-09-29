@@ -76,6 +76,45 @@
 //
 //   A page with no bridge at all is deliberately NOT counted — see `sendOverBridge`.
 //
+// * `frames` — HOW MANY ANIMATION FRAMES THE PAGE PRODUCED DURING THE GAP, and it is
+//   the field that stopped the second line above being a guess (RG-119, 2026-09-29).
+//
+//   **`hidden_ms == 0` does not mean the page was visible. It means the page never
+//   OBSERVED a visibility transition**, which is a different and weaker claim, and
+//   the difference is the whole of the reading the register had been building on.
+//   `hiddenMs` only ever accrues from the `visibilitychange` listener below, so a
+//   page that is hidden and back again without that listener running — which is
+//   exactly what a process suspended across the whole round trip looks like, since
+//   the state at resume equals the state at freeze and no engine dispatches a
+//   transition that did not happen from its own point of view — reports `hidden 0`
+//   over a gap of any length. Measured, not reasoned: hold `document.hidden` true
+//   for a hundred intervals without dispatching the event and every beat says
+//   *never hidden* (`outputhealth.test.js`). So service 42's *"silent 207s, never
+//   hidden"* cannot be read as *"the page was visible"*, and the register's (b) was
+//   resting on that reading.
+//
+//   An animation frame does not depend on the OS telling the page anything. A
+//   visible page is composited at the display's rate; an occluded, minimised or
+//   suspended one is composited at nothing. So the count answers the question the
+//   badge actually makes a claim about — *was this screen painting?* — rather than
+//   the question the OS happened to answer:
+//
+//     silent 207s, 0 frames        → it was not being rendered. Not painting,
+//                                    whatever `hidden_ms` says.
+//     silent 207s, 12000 frames    → it WAS being rendered and only its clock
+//                                    stopped. The screen was fine and the badge
+//                                    was wrong, which is the one outcome no other
+//                                    field here could have found.
+//
+//   `undefined` when the page has no `requestAnimationFrame` to count with, under
+//   the same rule as the two numbers above: an absence says *did not say*, and a
+//   zero would say *counted, and there were none*.
+//
+//   The cost is one counter increment per frame on a page that is already being
+//   composited every frame, and it is not a wakeup source: `requestAnimationFrame`
+//   is driven by the display, so unlike a `setInterval` it cannot hold a napping
+//   process awake and therefore cannot perturb the thing it is measuring.
+//
 // The interval is Rust's `channels::BEAT_INTERVAL_MS`, and the staleness window it
 // has to stay under is `channels::BEAT_STALE_MS`. They are coupled — three beats
 // of grace — and `r6-contracts.test.js` fails if this file and that one drift.
@@ -92,6 +131,17 @@ export const BEAT_INTERVAL_MS = 2000;
  * arrives from a page; `channels::REFUSED_CLAMP` is the pair.
  */
 export const MAX_REFUSED_REPORTED = 9999;
+
+/**
+ * The most animation frames a page will ever report on one beat (RG-119).
+ *
+ * Ten million is about forty-six hours at sixty hertz, so it is unreachable inside
+ * a gap Relay will believe at all (`channels::GAP_CLAMP_MS` is a day). It exists so
+ * the counter cannot grow without bound if something ever holds a beat back, and so
+ * that the page and the door agree on one ceiling; `channels::FRAMES_CLAMP` is the
+ * pair, and anything above it is dropped to an absence there rather than saturated.
+ */
+export const MAX_FRAMES_REPORTED = 10_000_000;
 
 /**
  * A clock for measuring a gap. `performance.now()` where it exists, because it is
@@ -169,7 +219,27 @@ export function startBeat({
   // lands, which is the same shape as the gap above and cannot be lost to a race
   // with the console's poll for the same reason.
   let bridgeRefused = 0;
+  // ANIMATION FRAMES SINCE THE LAST TICK — the only thing here that measures
+  // whether the screen was PAINTING rather than whether the OS said so. See the
+  // header note; `null` for a page with no `requestAnimationFrame`, which is an
+  // absence and never a zero.
+  let framesPainted = 0;
   const doc = typeof document === 'undefined' ? null : document;
+  const raf =
+    typeof globalThis.requestAnimationFrame === 'function'
+      ? globalThis.requestAnimationFrame.bind(globalThis)
+      : null;
+  let rafId = null;
+  const countFrame = () => {
+    framesPainted = Math.min(framesPainted + 1, MAX_FRAMES_REPORTED);
+    try {
+      rafId = stopped ? null : raf(countFrame);
+    } catch {
+      // Rule 1. Counting frames may never take a live output page down, and a
+      // counter that has stopped counting reports what it has, not an exception.
+      rafId = null;
+    }
+  };
 
   const onVisibility = () => {
     try {
@@ -187,7 +257,7 @@ export function startBeat({
     if (doc.hidden) hiddenSince = now();
   }
 
-  /** The two numbers for this tick, omitting what the page cannot know. */
+  /** The numbers for this tick, omitting what the page cannot know. */
   const gap = () => {
     const at = now();
     // A page suspended while hidden never runs this listener, so the time it
@@ -200,9 +270,14 @@ export function startBeat({
     if (lastTickAt !== null) {
       out.since_ms = Math.max(0, Math.round(at - lastTickAt));
       out.hidden_ms = Math.max(0, Math.round(hiddenMs));
+      // Omitted entirely rather than sent as 0 when there is nothing counting: a
+      // page with no `requestAnimationFrame` did not say, and a zero from it would
+      // be read as a screen that painted nothing.
+      if (raf) out.frames = Math.min(framesPainted, MAX_FRAMES_REPORTED);
     }
     lastTickAt = at;
     hiddenMs = 0;
+    framesPainted = 0;
     return out;
   };
 
@@ -311,6 +386,9 @@ export function startBeat({
         // ordinary beat, which is the truth and not an absence: this page is
         // talking to the bridge right now, so it knows.
         refused: bridgeRefused,
+        // HOW MANY FRAMES THIS SCREEN PAINTED SINCE ITS LAST TICK (RG-119). `null`
+        // when nothing was counting them, which is an absence and not a zero.
+        frames: g.frames ?? null,
       });
       bridgeRefused = 0;
     } catch {
@@ -360,10 +438,28 @@ export function startBeat({
   // be looking at it.
   tick();
   const id = setInterval(tick, BEAT_INTERVAL_MS);
+  // REQUESTED, not called: calling `countFrame` here would credit the page with a
+  // frame nothing had painted, and the whole value of the number is that a zero
+  // means a zero.
+  if (raf) {
+    try {
+      rafId = raf(countFrame);
+    } catch {
+      rafId = null;
+    }
+  }
 
   return () => {
     stopped = true;
     clearInterval(id);
+    if (rafId !== null && typeof globalThis.cancelAnimationFrame === 'function') {
+      try {
+        globalThis.cancelAnimationFrame(rafId);
+      } catch {
+        // Rule 1, on the way out as much as on the way in.
+      }
+    }
+    rafId = null;
     if (doc?.removeEventListener) doc.removeEventListener('visibilitychange', onVisibility);
   };
 }
@@ -375,6 +471,52 @@ export function startBeat({
 // operator is told is the part that must never be wrong, and a rule buried in a
 // component can only be tested by mounting one. Live and the Outputs inspector
 // both call this, so they cannot disagree about the same screen.
+
+/**
+ * WHY A SCREEN LAST WENT QUIET — the one place a cause word becomes English
+ * (RG-119, 2026-09-29). Keys must match `channels::SilenceCause::as_str`, and
+ * `outputhealth.test.js` fails if the two sets drift.
+ *
+ * ── Why five words and not one ────────────────────────────────────────────────
+ *
+ * `output_lost` was one word over at least four situations, which is rule 35 with
+ * the service record as the badge. Two of the five mean the congregation was
+ * looking at a stale screen; three of them mean the screen was fine and Relay's own
+ * record of it was not. Those want opposite responses from an operator and opposite
+ * work from whoever reads the timeline afterwards, and a single word made them one
+ * event.
+ *
+ * **The event itself is unchanged and that is a decision, not an omission**
+ * (DECISIONS §137): a page that is not running is not repainting, so the congregation
+ * is looking at a stale screen and `output_lost` is the true report. What was wrong
+ * was never that the loss was reported — it was that one word covered a dead
+ * projector and a window behind a terminal. So the loss stays and the word multiplies.
+ *
+ * A word to one sentence and nothing else. There is no short badge word beside it on
+ * purpose: five causes with a two-word label each would put a fifth vocabulary on a
+ * desk that already has `FAULT_WORD`, `SCREEN_BADGE` and `describeScreen`'s labels,
+ * and this is a sentence an operator reads once after an outage rather than a state
+ * they glance at. Every sentence is in the PAST TENSE, because that is the only tense
+ * this can be in: see `describeScreen`.
+ */
+export const SILENCE_CAUSE = {
+  occluded: 'the OS had hidden this page',
+  frozen: 'the page was not being run, and nothing told it so',
+  throttled: 'the page kept painting and only its clock stopped',
+  bridge_refused: "the page ticked on time and Relay's bridge threw its beats away",
+  unreached: 'the page ticked on time and Relay got nothing',
+};
+
+/**
+ * What one cause word means, or `null` for a screen that has not come back from a
+ * silence in this run. An unrecognised word is `null` too — it originates on a page,
+ * one of whose transports is an unauthenticated LAN socket (DECISIONS §35), and
+ * although Rust already narrows it to a closed enum, a word this file does not know
+ * is a word it must not render. Same discipline as `paint_state` below.
+ */
+export function silenceCause(word) {
+  return (typeof word === 'string' && SILENCE_CAUSE[word]) || null;
+}
 
 /**
  * How long a just-attached screen may stay silent before silence becomes a
@@ -464,13 +606,27 @@ export function describeScreen(st, wall, waitedMs = 0) {
         note: 'the screen has not reported yet',
         shows: 'unknown',
       };
+    // ── AND WHY IT WENT QUIET THE LAST TIME, WHEN IT HAS EVER SAID (RG-119) ────
+    //
+    // Stated as the past tense it is. **The cause of the silence happening RIGHT
+    // NOW cannot be known from here, by construction**: only the page can say, and
+    // the page is not talking — that is the silence. So this is the last one it came
+    // back from, and it is labelled `previously` so it can never be read as a
+    // diagnosis of the current outage.
+    //
+    // It is worth the words because on a one-monitor desk the honest answer is
+    // usually "the same thing as last time": a window behind a terminal. An
+    // operator who knows that is deciding about their layout; one who reads
+    // **Not responding** with nothing beside it is deciding about a projector.
+    const was = silenceCause(st.last_silence);
     return {
       kind: 'down',
       label: 'Not responding',
       note:
-        fault === 'never'
+        (fault === 'never'
           ? 'this screen has never reported painting'
-          : `last answered ${Math.round(st.last_beat_ms / 1000)}s ago`,
+          : `last answered ${Math.round(st.last_beat_ms / 1000)}s ago`) +
+        (was ? ` · previously: ${was}` : ''),
       shows: 'stale',
     };
   }
@@ -690,13 +846,25 @@ export function screenReporting(st) {
   if (fault === 'offline') return { word: 'no', note: st.detail ?? 'nothing is attached' };
   if (fault === 'never')
     return { word: 'never', note: 'attached, and has never reported painting' };
+  // WHY IT LAST WENT QUIET, on the row an operator opens to check one screen
+  // (RG-119). It belongs on both answers and it means different things on each: on a
+  // screen that has STOPPED it is the previous outage, and on one answering `yes` it
+  // is the verdict on the outage it came back from — which is the only place the
+  // record's own classification is visible while the app is running.
+  const was = silenceCause(st.last_silence);
   if (fault === 'silent')
-    return { word: 'stopped', note: `last answered ${Math.round(st.last_beat_ms / 1000)}s ago` };
+    return {
+      word: 'stopped',
+      note:
+        `last answered ${Math.round(st.last_beat_ms / 1000)}s ago` +
+        (was ? ` · previously: ${was}` : ''),
+    };
+  const seen = st.paint_state
+    ? `screen: ${st.paint_state} · ${Math.round((st.last_beat_ms ?? 0) / 1000)}s ago`
+    : '';
   return {
     word: 'yes',
-    note: st.paint_state
-      ? `screen: ${st.paint_state} · ${Math.round((st.last_beat_ms ?? 0) / 1000)}s ago`
-      : '',
+    note: was ? `${seen ? `${seen} · ` : ''}last silence: ${was}` : seen,
   };
 }
 
