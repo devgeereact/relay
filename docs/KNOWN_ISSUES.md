@@ -36,6 +36,35 @@ code that would consume each already exists.
 > **once, at Stop**. A force-quit or a crash loses all of it, which is exactly the morning you
 > most wanted it. So: end the service with **Stop**, then check the file exists before closing
 > the laptop.
+>
+> **2026-09-29 — THE BLOCKER HAS MOVED, and this section is out of date about which half is
+> hard.** There is now roughly **32 hours of real church audio on disk and readable**: two
+> services recorded 2026-09-25 and 2026-09-27, repaired into six segments. So *"there is no
+> sermon audio"* is no longer the blocker.
+>
+> Three things that changed under this paragraph, each of which cost something to learn:
+>
+> * **A recording over 4 GiB used to lie about its own length** (RG-316, DECISIONS §132).
+>   `write_wav_f32` truncated both RIFF size fields through `as u32`, so **both** files this
+>   project had ever made declared a quarter of their duration and every reader stopped there —
+>   16.25 h opening as 2.73 h. Undetected for four days because nobody had opened one. A long
+>   service is now written as SEVERAL files, each complete, and
+>   `node scripts/split-recording.mjs <file>` repairs one made by an older build without touching
+>   it. **Check a recording before trusting it**; `ls` will not tell you.
+> * **Check the buffer with `footprint -p <pid>`, never RSS.** RSS excludes compressed pages and
+>   reads ~0.09 GB against 2.3 GB of real dirty pages, which looks exactly like a recording that
+>   has already been lost.
+> * **The recorder starts when the MICROPHONE opens, not when the service starts**, so the file
+>   is much longer than the service and service time equals audio time. Established by
+>   cross-correlating a speech envelope against the transcript timeline (a sharp peak at lag 0,
+>   80.2% against a 31% chance level) after an arithmetic estimate put it 9 hours out.
+>
+> **What is actually blocked now is `RELAY_BENCH_TRANSCRIPT`: a human transcript of a stretch of
+> that audio.** Word error rate cannot be scored without one, and it cannot be produced by
+> anything that cannot listen — scoring Whisper against its own output measures nothing, which is
+> RG-298's lesson twice over. Per-model DETECTION accuracy is a different question and it has
+> now been measured on real audio through `stt::bench::engine_shootout`; word error rate has
+> not, in any language.
 
 | Item | Unblocks | Cost |
 |---|---|---|

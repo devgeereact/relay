@@ -26,17 +26,17 @@ beside it in this session; the 2026-09-17 block that follows is kept as history.
 
 | Count | Value | Command |
 |---|---|---|
-| Rust tests | **1235 passed / 0 failed / 55 ignored** | `cd src-tauri && cargo test` |
+| Rust tests | **1242 passed / 0 failed / 60 ignored** | `cd src-tauri && cargo test` |
 | Frontend tests | **4068 passed, 289 files** | `npx vitest run` |
-| `e2e.rs` tests | **120 passed / 1 ignored** (the ignored one is `stt::e2e_latency`, matched by substring) | `cd src-tauri && cargo test e2e` |
+| `e2e.rs` tests | **121 passed / 1 ignored** (the ignored one is `stt::e2e_latency`, matched by substring) | `cd src-tauri && cargo test e2e` |
 | Registered commands | **169** — 164 plain plus **5 `(async)`**, the ones measured to hold the macOS run loop for seconds (RG-299) | `grep -c '^#\[tauri::command\]$' src-tauri/src/main.rs` plus `grep -c '^#\[tauri::command(async)\]$'` |
 | qa-inventory | 169/169 addressed, 0 handlerless, 0 unnamed, 1 intentional orphan (`__r6probe.svelte`) | `node scripts/qa-inventory.mjs` |
 | Controls | **521**, 0 in components nothing renders | `node scripts/qa-inventory.mjs` |
 | Tauri events | **31** | `grep -rhoE '"[a-z_]+://[a-z_]+"' src-tauri/src/*.rs \| sort -u \| wc -l` — `tauri://localhost` is an origin string, not an event |
-| Numbered decisions | **§18 – §132** | `grep -cE '^## [0-9]+\. ' docs/DECISIONS.md` → 115 |
-| Register entries | **327** (317 closed, 1 withdrawn, 9 not closed) | `docs/qa/RELAY_GAP.md` §23, pinned by `relaygap.test.js` |
+| Numbered decisions | **§18 – §133** | `grep -cE '^## [0-9]+\. ' docs/DECISIONS.md` → 116 |
+| Register entries | **329** (319 closed, 1 withdrawn, 9 not closed) | `docs/qa/RELAY_GAP.md` §23, pinned by `relaygap.test.js` |
 | Dated audits | **4 files, 12 audits** | `ls docs/qa/audits \| wc -l` — merged 2026-09-21: FIELD, DESIGN, PERF, SUPERSEDED |
-| `#[ignore]`d benches | **55** | the `cargo test` summary line above |
+| `#[ignore]`d benches | **60** | the `cargo test` summary line above |
 | `hardrules.test.js` rules | **9** | `grep -o "it('rule [0-9]*" src/lib/hardrules.test.js \| sort -u \| wc -l` |
 
 **One parallel-run flake, recorded rather than hidden.** One full `cargo test` on 2026-09-21
