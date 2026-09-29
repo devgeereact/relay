@@ -10,6 +10,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+### A screen that stops is described by what it did, not by one word
+
+When an output screen went quiet, the service record said *output lost* — the same three words whether the laptop had put that window to sleep, the window had been covered by another, the message never got through, or the screen was genuinely gone. It now says which, and it says so from what the page itself could observe: how many animation frames it actually painted during the silence, and how many of its own messages the app refused. A page that painted nothing was not showing your congregation anything, whatever else was true.
+
+The record still counts it as an outage, deliberately: a window your laptop paused is not repainting, so the congregation really is looking at a stale screen and you should be told. What changed is that it no longer tells you the same thing about four different situations.
+
 ### One less way a wrong verse reaches the screens
 
 When a preacher reads a verse aloud and then says the reference, Relay can mishear a digit in the number — *"Psalms 89:34"* heard as *"119:39"* — and put up a verse nobody asked for. It now notices when the words in that same breath belong to the verse he was already reading rather than the one it thinks he named, and offers instead of firing. On the service this was found in, it removes that wrong verse and nothing else: two candidates changed out of 3,161 windows, both the same mistake.
