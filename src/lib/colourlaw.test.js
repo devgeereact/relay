@@ -55,7 +55,13 @@ const STYLESHEET = ['../tokens.css', '../app.css']
 
 /** The declared value of `--token`, or null. First definition wins, as CSS does not. */
 function declarationOf(token) {
-  const m = STYLESHEET.match(new RegExp(`${token.replace(/[-]/g, '\\-')}\\s*:\\s*([^;}]+)[;}]`));
+  // EVERY metacharacter, not just `-`. CodeQL's `js/incomplete-sanitization`:
+  // a subset escape compiles the rest as a PATTERN, and a token that missed
+  // would return null, hit the `if (!decl) continue` below and read as "not a
+  // promise" — a vacuous pass on the one scanner that polices rule 18.
+  const m = STYLESHEET.match(
+    new RegExp(`${token.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&')}\\s*:\\s*([^;}]+)[;}]`),
+  );
   return m ? m[1].trim() : null;
 }
 

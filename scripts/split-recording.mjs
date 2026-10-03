@@ -19,7 +19,16 @@
 // less software reads it, and this file exists to be handed to whoever can measure
 // word error rate from it.
 
-import { existsSync, mkdirSync, openSync, readSync, writeSync, closeSync, statSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  openSync,
+  readSync,
+  writeSync,
+  closeSync,
+  statSync,
+  fstatSync,
+} from 'node:fs';
 import { basename, extname, join, dirname } from 'node:path';
 
 const HEADER = 44;
@@ -37,9 +46,25 @@ const outIdx = args.indexOf('--out');
 const outDir = outIdx >= 0 ? args[outIdx + 1] : null;
 
 if (!file) fail('usage: split-recording.mjs <file.wav> [--write] [--out DIR]');
-if (!existsSync(file)) fail(`no such file: ${file}`);
-
-const fd = openSync(file, 'r');
+// ATTEMPT, don't ask. `existsSync` then `openSync` is a check-then-use race
+// (CodeQL `js/file-system-race`, which points at the OPEN — the half that does
+// the damage), and the open reports a missing file and a permission error itself.
+//
+// A DIRECTORY IS NOT ONE OF THOSE, which is worth the extra line: `open(2)` on a
+// directory SUCCEEDS for reading on macOS, so `split-recording.mjs /etc` reached
+// the `readSync` below and died with a raw EISDIR stack trace. It did that before
+// this check-then-use was removed as well — `existsSync('/etc')` is true. The
+// question is asked of the FD we are already holding, so it cannot be raced.
+let fd;
+try {
+  fd = openSync(file, 'r');
+} catch (e) {
+  fail(e.code === 'ENOENT' ? `no such file: ${file}` : `cannot read ${file}: ${e.message}`);
+}
+if (!fstatSync(fd).isFile()) {
+  closeSync(fd);
+  fail(`not a regular file: ${file}`);
+}
 const head = Buffer.alloc(HEADER);
 if (readSync(fd, head, 0, HEADER, 0) !== HEADER) fail('file is shorter than a WAV header');
 

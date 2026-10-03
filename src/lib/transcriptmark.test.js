@@ -431,7 +431,9 @@ describe('the Live transcript card wears the mark', () => {
     const { resolve } = await import('node:path');
     const { codeOnly } = await import('./codeonly.js');
     const css = codeOnly(readFileSync(resolve('src/lib/Dock.svelte'), 'utf8'));
-    const rule = (sel) => (css.match(new RegExp(`${sel.replace(/[.\-]/g, '\\$&')}\\s*\\{([^}]*)\\}`)) || [])[1] || '';
+    // Every metacharacter, not `.` and `-` alone.
+    const rule = (sel) =>
+      (css.match(new RegExp(`${sel.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&')}\\s*\\{([^}]*)\\}`)) || [])[1] || '';
     expect(rule('.trl.mk-guess .tref'), 'a guess is cyan, rule 18').toContain('--v-cyan');
     const heardInk = rule('.trl.mk-heard .tref');
     expect(heardInk, '.trl.mk-heard .tref has no rule').toBeTruthy();

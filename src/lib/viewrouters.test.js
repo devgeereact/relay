@@ -41,6 +41,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve, dirname, basename } from 'node:path';
+import { codeOnly, withoutBlock } from './codeonly.js';
 
 const ROOT = resolve(__dirname, '../..');
 const VIEWS = resolve(ROOT, 'src/lib/views');
@@ -48,13 +49,26 @@ const src = (p) => readFileSync(resolve(ROOT, p), 'utf8');
 
 /** The markup half of a Svelte file: everything after the last `</script>`, with
  *  the `<style>` block and HTML comments removed. A comment mentioning `<h2>` is
- *  not a heading, and `.lib-sheeth` in a stylesheet is not an element. */
+ *  not a heading, and `.lib-sheeth` in a stylesheet is not an element.
+ *
+ *  THROUGH THE ONE STRIPPER (RG-169, RG-283), which this file was the last
+ *  holdout from — and it hid there in a way worth recording, because three of
+ *  the assertions below are negative (`.not.toMatch` a heading, `.toEqual([])`
+ *  for own-painted tags) and every negative assertion passes on text that was
+ *  thrown away.
+ *
+ *  Its private chain was the exact one `codeonly.test.js` forbids, and the sweep
+ *  that forbids it reported this file clean for as long as it existed: `codeOnly`
+ *  walked INTO the literal `/<!--…-->/`, read the `<!--` in it as a comment, and
+ *  blanked the pattern down to `.replace(/   /g, '')`. The instrument could not
+ *  see the one thing it was built to see. CodeQL found it instead
+ *  (`js/incomplete-multi-character-sanitization`), and the root fix is in
+ *  `codeonly.js`, which now skips a regex literal the way it already skipped a
+ *  quoted run. */
 function markup(text) {
   const i = text.lastIndexOf('</script>');
-  let m = i === -1 ? text : text.slice(i + '</script>'.length);
-  m = m.replace(/<style[\s\S]*?<\/style>/g, '');
-  m = m.replace(/<!--[\s\S]*?-->/g, '');
-  return m;
+  const m = i === -1 ? text : text.slice(i + '</script>'.length);
+  return withoutBlock(codeOnly(m), 'style');
 }
 
 /** Every tag name opened in a piece of markup, in source order. `svelte:*` special

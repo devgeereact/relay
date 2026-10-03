@@ -228,7 +228,9 @@ describe('a Stage Timer says what it is and what it has done', () => {
 
 const STYLE = TR.slice(TR.indexOf('<style>'));
 const rule = (sel) => {
-  const m = STYLE.match(new RegExp(`${sel.replace(/[.]/g, '\\.')}\\s*\\{([^}]*)\\}`));
+  // Every metacharacter, not just `.` — see `stagemessagenative.test.js`, where
+  // the same subset escape sat over three negative assertions.
+  const m = STYLE.match(new RegExp(`${sel.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&')}\\s*\\{([^}]*)\\}`));
   return m ? m[1] : '';
 };
 

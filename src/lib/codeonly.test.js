@@ -23,7 +23,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { codeOnly } from './codeonly.js';
+import { codeOnly, withoutBlock } from './codeonly.js';
 
 const ROOT = resolve(__dirname, '../..');
 
@@ -53,6 +53,55 @@ describe('codeOnly — the two directions the chains got wrong', () => {
     const out = codeOnly(src);
     expect(out).toContain('/api/*');
     expect(out).toContain('still here');
+  });
+
+  it('a regex LITERAL is a pattern, not a comment — RG-169\'s own blind spot', () => {
+    // THE SWEEP BELOW COULD NOT SEE THE ONE THING IT FORBIDS, and this is the
+    // whole of it in four lines. The scan walked into `/<!--[\\s\\S]*?-->/`, read
+    // the `<!--` in it as an HTML comment and blanked to the `-->`, so a file
+    // hand-rolling exactly the forbidden chain came out as `.replace(/   /g,'')`
+    // and the sweep reported it clean. `viewrouters.test.js` sat there for the
+    // life of the rule; CodeQL found it and this file did not.
+    //
+    // A quoted run was already skipped for this exact reason. A regex literal is
+    // code in the same way, so it is skipped the same way.
+    // SPLIT ON PURPOSE. Written contiguously this datum would make THIS file an
+    // offender in the sweep below — which is the sweep working, and is the same
+    // reason the patterns down there carry their own escapes. There is no
+    // exemption list and this is what it costs to keep it that way.
+    const src = `m = m.replace(/${'<!--'}[\\s\\S]*?-->/g, '');`;
+    expect(codeOnly(src), 'the pattern was eaten, so no sweep can see it').toBe(src);
+    expect(/replace\(\/<!--/.test(codeOnly(src)), 'the sweep is blind again').toBe(true);
+  });
+
+  it('…and a comment that follows an opening bracket is still a comment', () => {
+    // The other side of that change, because the cheap fix for the test above is
+    // to call every `/` a regex and lose the comments. `//` and `/*` are comment
+    // markers and a literal can begin with neither.
+    expect(codeOnly('foo(  // a note'), 'a line comment after `(` survived').not.toContain('a note');
+    expect(codeOnly('bar(/* gone */ 1)')).not.toContain('gone');
+    expect(codeOnly('bar(/* gone */ 1)'), 'the code around it went too').toContain('1)');
+    // Division is never guessed at: nothing in the preceder set can precede it.
+    expect(codeOnly('const q = a / b / c;')).toBe('const q = a / b / c;');
+  });
+
+  it('withoutBlock closes a tag a browser closes, and the regex did not', () => {
+    // `js/bad-tag-filter`, in one case. `<\/style>` does not match `</style >`,
+    // so the regex four scanners hand-rolled left the whole block in the text —
+    // and every class, heading and `<button>` inside it was then read as markup.
+    const src = '<p>keep</p><style>\n  .x { color: red }\n</style >\n<h2>also</h2>';
+    const out = withoutBlock(src, 'style');
+    expect(out, 'the stylesheet is still being read as markup').not.toContain('color: red');
+    expect(out, 'the markup around it went with it').toContain('<p>keep</p>');
+    expect(out).toContain('<h2>also</h2>');
+    expect(out.split('\n').length, 'line numbers moved').toBe(src.split('\n').length);
+  });
+
+  it('…and it matches the whole tag NAME, not a prefix of it', () => {
+    // A prefix match would blank from `<styles>` to the next `</style>`, which is
+    // the 7 KB bug wearing a different hat.
+    const out = withoutBlock('<styles>a</styles><h2>kept</h2>', 'style');
+    expect(out, 'a different element was eaten as though it were <style>').toContain('<h2>kept</h2>');
   });
 
   it('offsets and line numbers survive, because it blanks rather than deletes', () => {
@@ -108,6 +157,26 @@ describe('and no scanner has grown its own chain again — RG-169', () => {
     // whole file is about. Named here rather than assumed.
     expect(files.length).toBeGreaterThan(100);
     expect(files).toContain('src/lib/codeonly.js');
+  });
+
+  it('nothing strips a tag BLOCK by hand either — the third chain', () => {
+    // THE TWO SWEEPS ABOVE FORBID THE COMMENT CHAINS AND LEFT THE TAG-BLOCK ONE
+    // OPEN. Four scanners hand-rolled `<script>`/`<style>` removal and CodeQL
+    // raised `js/bad-tag-filter` on three of them: `<\/style>` does not match
+    // `</style >`, which a browser closes, so one stray space leaves the entire
+    // block in the text to be read as markup.
+    //
+    // Same design as the two above — the input is stripped first, so a file that
+    // NAMES the retired chain in prose is honestly clean and nobody is ever paid
+    // to delete an explanation. The pattern is written with its own escapes, so
+    // it cannot report this file either.
+    const offenders = files.filter((f) =>
+      /replace\(\/<(script|style)/.test(codeOnly(readFileSync(join(ROOT, f), 'utf8'))),
+    );
+    expect(
+      offenders,
+      'use `withoutBlock` from src/lib/codeonly.js — `<\\/style>` misses `</style >`',
+    ).toEqual([]);
   });
 
   it('nothing strips HTML comments by hand', () => {

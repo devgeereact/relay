@@ -21,7 +21,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { codeOnly } from '../codeonly.js';
+import { codeOnly, withoutBlock } from '../codeonly.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '../../..');
@@ -995,8 +995,10 @@ describe('§1 · a button is the shared one, or a named shape — Planner · Out
     const i = src.lastIndexOf('<style>');
     return i === -1 ? '' : src.slice(i);
   };
-  const templateOf = (src) =>
-    src.replace(/<style[\s\S]*?<\/style>/g, '').replace(/<script[\s\S]*?<\/script>/g, '');
+  // Through the ONE block stripper. `</style >` and `</script >` are both closed
+  // by a browser and were both missed by the regexes this replaced, which left
+  // the whole block in to be read as template.
+  const templateOf = (src) => withoutBlock(withoutBlock(src, 'style'), 'script');
 
   // A `<button>`'s attributes cannot be matched with `[^>]*`: an inline handler
   // contains `=>`, and the first regex written here stopped at the `>` of the

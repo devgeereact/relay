@@ -36,7 +36,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { codeOnly } from '../codeonly.js';
+import { codeOnly, withoutBlock } from '../codeonly.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const read = (f) => readFileSync(resolve(__dirname, '../../..', f), 'utf8');
@@ -135,12 +135,14 @@ const markupOf = (src) => {
   // handler, and counting one would report an anonymous button in a paragraph of
   // prose. It was three regexes here, which is the shape that let a comment
   // carrying `:8032/api/*` open a block comment and blank 7 KB of `Stage.svelte`.
-  return codeOnly((i === -1 ? src : src.slice(0, i))
-    // The `<script>` block is not markup. VerseDeck's JSDoc on the row handler
-    // says *"the GRID card is a native `<button>`"* — a scanner that counted
-    // that would report an anonymous button in a paragraph of prose, and the
-    // fix for it would be to delete the explanation.
-    .replace(/<script[\s\S]*?<\/script>/g, ''));
+  // The `<script>` block is not markup. VerseDeck's JSDoc on the row handler
+  // says *"the GRID card is a native `<button>`"* — a scanner that counted that
+  // would report an anonymous button in a paragraph of prose, and the fix for it
+  // would be to delete the explanation. Through the ONE block stripper, which
+  // also closes `</script >`: the regex this replaced did not, so one stray
+  // space left the whole block in and every `<button>` named in a comment there
+  // was counted.
+  return codeOnly(withoutBlock(i === -1 ? src : src.slice(0, i), 'script'));
 };
 
 /** Every `<button>` tag in a component's markup, with its class attribute. */
