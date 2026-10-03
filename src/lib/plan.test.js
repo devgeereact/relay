@@ -19,8 +19,10 @@ import {
   dropIndex,
   reorderTo,
   previewState,
+  staleNote,
   planChannelsOf,
 } from './plan.js';
+import { codeOnly } from './codeonly.js';
 
 const song = (id, ...labels) => ({
   id,
@@ -184,10 +186,7 @@ describe('typeOf — the one door onto TYPE', () => {
           // Strip comments: three files DESCRIBE this defect in prose, and a
           // scanner that greps a comment is how one entitlement test passed on
           // a broken file.
-          const code = src
-            .replace(/<!--[\s\S]*?-->/g, '')
-            .replace(/\/\*[\s\S]*?\*\//g, '')
-            .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+          const code = codeOnly(src);
           if (/(\|\||\?\?)\s*TYPE\.scripture\b/.test(code)) hits.push(p.slice(root.length + 1));
         }
       }
@@ -515,5 +514,37 @@ describe('planChannelsOf', () => {
 
   it('drops entries that are not numbers rather than passing them on', () => {
     expect(planChannelsOf('[1,"two",null,3]')).toEqual([1, 3]);
+  });
+});
+
+// 2026-09-21 · F5. The library's one clip is HEVC. It decodes in the projector's
+// own window and may be black in an OBS browser source or on Windows, and
+// nothing said so. The probe at import records the codec; the Planner's preview
+// verdict carries the warning so it is read where the cue is built.
+describe('a cue whose clip is a codec other screens may not play', () => {
+  it('still renders, and says so', () => {
+    const v = previewState({ cue_type: 'media' }, false, { found: true, filename: 'IMG_3427.mov', codec: 'hevc' });
+    expect(v.state).toBe('render');
+    expect(v.warning).toMatch(/HEVC/);
+    expect(v.warning).toMatch(/OBS|Windows/);
+  });
+  it('says nothing for a codec every screen plays', () => {
+    const v = previewState({ cue_type: 'media' }, false, { found: true, filename: 'a.mp4', codec: 'h264' });
+    expect(v.warning ?? '').toBe('');
+  });
+});
+
+// 2026-09-21 · P-4 (RG-203). `arrangement_stale` was shown on the Planner and
+// nowhere on Live, the surface a service is actually run from. Rule 39 says a
+// stale arrangement is "shown as needing checking"; the run surface must say it
+// beside the slides it is about to step.
+describe('staleNote — the run surface says an arrangement needs checking', () => {
+  it('names it for a song cue whose arrangement went stale', () => {
+    const item = { cue_type: 'song', label: 'Amazing Grace', payload_json: JSON.stringify({ arrangement_stale: true }) };
+    expect(staleNote(item)).toMatch(/arrangement needs checking/i);
+  });
+  it('says nothing otherwise', () => {
+    expect(staleNote({ cue_type: 'song', payload_json: '{}' })).toBe('');
+    expect(staleNote(null)).toBe('');
   });
 });

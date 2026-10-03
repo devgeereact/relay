@@ -49,12 +49,99 @@
 // of its life has no previous tick). Absent means "did not say"; zero would mean
 // "said it never went quiet", and only one of those is true.
 //
+// * `refused` — how many beats this page tried to hand to the Tauri bridge and the
+//   bridge threw, since the last one that got through. **This is the third reading,
+//   and it is what turns the other two from a deduction into a statement.** Once
+//   `since_ms` is trustworthy (it is only trustworthy since `OutputHealth`'s
+//   `silence_ended` stopped an ordinary beat overwriting it), a recovery whose
+//   `since_ms` is about ONE INTERVAL means the page ticked on time and Relay did
+//   not get the beats — and that is where the evidence ran out, because the only
+//   place a beat could be refused on the way out is `sendOverBridge`'s `catch`, and
+//   it swallowed. A swallowed error on the one path that tells an operator whether
+//   a screen is alive is rule 35 with the page as the badge, whatever the cause of
+//   the outage turns out to be. So now the page counts them and says so on the
+//   first beat that lands, exactly as it says how long it was quiet.
+//
+//   Three readings, three different faults, and no two of them look alike:
+//     silent 200s, hidden 200s     → the OS was not running the page. It was not
+//                                    painting either, and it was covered.
+//     silent 200s, never hidden    → the page's own interval did not fire while it
+//                                    was visible. A throttled or wedged renderer.
+//     silent 2s,  refused 11       → the page ticked on time and the bridge refused
+//                                    eleven beats. Relay's fault, and named.
+//     silent 2s,  refused 0        → the page ticked, nothing refused, and Relay
+//                                    still has no beat. Neither the page nor the
+//                                    bridge; look at the command and the poll.
+//   The last two were ONE reading until this field existed.
+//
+//   A page with no bridge at all is deliberately NOT counted — see `sendOverBridge`.
+//
+// * `frames` — HOW MANY ANIMATION FRAMES THE PAGE PRODUCED DURING THE GAP, and it is
+//   the field that stopped the second line above being a guess (RG-119, 2026-09-29).
+//
+//   **`hidden_ms == 0` does not mean the page was visible. It means the page never
+//   OBSERVED a visibility transition**, which is a different and weaker claim, and
+//   the difference is the whole of the reading the register had been building on.
+//   `hiddenMs` only ever accrues from the `visibilitychange` listener below, so a
+//   page that is hidden and back again without that listener running — which is
+//   exactly what a process suspended across the whole round trip looks like, since
+//   the state at resume equals the state at freeze and no engine dispatches a
+//   transition that did not happen from its own point of view — reports `hidden 0`
+//   over a gap of any length. Measured, not reasoned: hold `document.hidden` true
+//   for a hundred intervals without dispatching the event and every beat says
+//   *never hidden* (`outputhealth.test.js`). So service 42's *"silent 207s, never
+//   hidden"* cannot be read as *"the page was visible"*, and the register's (b) was
+//   resting on that reading.
+//
+//   An animation frame does not depend on the OS telling the page anything. A
+//   visible page is composited at the display's rate; an occluded, minimised or
+//   suspended one is composited at nothing. So the count answers the question the
+//   badge actually makes a claim about — *was this screen painting?* — rather than
+//   the question the OS happened to answer:
+//
+//     silent 207s, 0 frames        → it was not being rendered. Not painting,
+//                                    whatever `hidden_ms` says.
+//     silent 207s, 12000 frames    → it WAS being rendered and only its clock
+//                                    stopped. The screen was fine and the badge
+//                                    was wrong, which is the one outcome no other
+//                                    field here could have found.
+//
+//   `undefined` when the page has no `requestAnimationFrame` to count with, under
+//   the same rule as the two numbers above: an absence says *did not say*, and a
+//   zero would say *counted, and there were none*.
+//
+//   The cost is one counter increment per frame on a page that is already being
+//   composited every frame, and it is not a wakeup source: `requestAnimationFrame`
+//   is driven by the display, so unlike a `setInterval` it cannot hold a napping
+//   process awake and therefore cannot perturb the thing it is measuring.
+//
 // The interval is Rust's `channels::BEAT_INTERVAL_MS`, and the staleness window it
 // has to stay under is `channels::BEAT_STALE_MS`. They are coupled — three beats
 // of grace — and `r6-contracts.test.js` fails if this file and that one drift.
 
 /** How often a screen reports in. Must match `channels::BEAT_INTERVAL_MS`. */
 export const BEAT_INTERVAL_MS = 2000;
+
+/**
+ * The most refused beats a page will ever report (RG-119).
+ *
+ * At one beat every two seconds a bridge refusing for a whole seven-hour service
+ * reaches about 12,600, and the phrase on a timeline entry is not improved by the
+ * fourth digit. Relay clamps the same value again at the door, because this one
+ * arrives from a page; `channels::REFUSED_CLAMP` is the pair.
+ */
+export const MAX_REFUSED_REPORTED = 9999;
+
+/**
+ * The most animation frames a page will ever report on one beat (RG-119).
+ *
+ * Ten million is about forty-six hours at sixty hertz, so it is unreachable inside
+ * a gap Relay will believe at all (`channels::GAP_CLAMP_MS` is a day). It exists so
+ * the counter cannot grow without bound if something ever holds a beat back, and so
+ * that the page and the door agree on one ceiling; `channels::FRAMES_CLAMP` is the
+ * pair, and anything above it is dropped to an absence there rather than saturated.
+ */
+export const MAX_FRAMES_REPORTED = 10_000_000;
 
 /**
  * A clock for measuring a gap. `performance.now()` where it exists, because it is
@@ -90,7 +177,28 @@ export function paintState({ black, visible, content }) {
  * `getWs` is likewise a getter: a kiosk socket is replaced on every reconnect, and
  * a captured reference would keep beating down a dead one.
  */
-export function startBeat({ channelId, getState, getWs = () => null, invoke = null }) {
+export function startBeat({
+  channelId,
+  getState,
+  getWs = () => null,
+  invoke = null,
+  // WHERE THIS SCREEN'S CLIP IS, or `null` when it is not playing one.
+  //
+  // It rides the beat rather than a channel of its own, because the beat is
+  // already the one thing a screen says about itself and it already carries the
+  // answer to "are you still painting". A clip's position is worth nothing
+  // without that: a position from a screen that stopped answering a minute ago is
+  // a countdown an operator would time the next cue against.
+  //
+  // The console must never compute this from its own preview. Its programme pane
+  // renders through the same component, so it holds a second player of the same
+  // file that buffers differently and carries on if the wall's copy stalls.
+  getMedia = () => null,
+  // WHAT THIS SCREEN COULD NOT LOAD, as a short sentence, or `null` (O-4). Sent
+  // only when set, so an absent field means "nothing failed" and clears the
+  // desk's last report — which is the honest reading of a beat that says nothing.
+  getMediaError = () => null,
+}) {
   // Channel 0 is a raw template preview with no channel behind it — there is no
   // screen for an operator to worry about, so there is nothing to report.
   if (!Number.isFinite(channelId) || channelId <= 0) return () => {};
@@ -105,7 +213,33 @@ export function startBeat({ channelId, getState, getWs = () => null, invoke = nu
   let lastTickAt = null;
   let hiddenSince = null;
   let hiddenMs = 0;
+  // Beats the bridge THREW on, since the last one that got through. Kept on the
+  // page rather than reported per-attempt, because the only way to report a
+  // refused beat is over the thing that refused it: it rides on the next beat that
+  // lands, which is the same shape as the gap above and cannot be lost to a race
+  // with the console's poll for the same reason.
+  let bridgeRefused = 0;
+  // ANIMATION FRAMES SINCE THE LAST TICK — the only thing here that measures
+  // whether the screen was PAINTING rather than whether the OS said so. See the
+  // header note; `null` for a page with no `requestAnimationFrame`, which is an
+  // absence and never a zero.
+  let framesPainted = 0;
   const doc = typeof document === 'undefined' ? null : document;
+  const raf =
+    typeof globalThis.requestAnimationFrame === 'function'
+      ? globalThis.requestAnimationFrame.bind(globalThis)
+      : null;
+  let rafId = null;
+  const countFrame = () => {
+    framesPainted = Math.min(framesPainted + 1, MAX_FRAMES_REPORTED);
+    try {
+      rafId = stopped ? null : raf(countFrame);
+    } catch {
+      // Rule 1. Counting frames may never take a live output page down, and a
+      // counter that has stopped counting reports what it has, not an exception.
+      rafId = null;
+    }
+  };
 
   const onVisibility = () => {
     try {
@@ -123,7 +257,7 @@ export function startBeat({ channelId, getState, getWs = () => null, invoke = nu
     if (doc.hidden) hiddenSince = now();
   }
 
-  /** The two numbers for this tick, omitting what the page cannot know. */
+  /** The numbers for this tick, omitting what the page cannot know. */
   const gap = () => {
     const at = now();
     // A page suspended while hidden never runs this listener, so the time it
@@ -136,38 +270,133 @@ export function startBeat({ channelId, getState, getWs = () => null, invoke = nu
     if (lastTickAt !== null) {
       out.since_ms = Math.max(0, Math.round(at - lastTickAt));
       out.hidden_ms = Math.max(0, Math.round(hiddenMs));
+      // Omitted entirely rather than sent as 0 when there is nothing counting: a
+      // page with no `requestAnimationFrame` did not say, and a zero from it would
+      // be read as a screen that painted nothing.
+      if (raf) out.frames = Math.min(framesPainted, MAX_FRAMES_REPORTED);
     }
     lastTickAt = at;
     hiddenMs = 0;
+    framesPainted = 0;
     return out;
   };
 
-  const sendOverSocket = (ws, state, g) => {
+  /**
+   * The clip fields for the wire, or nothing at all.
+   *
+   * A report with no duration is dropped whole rather than sent with a zero: zero
+   * is not a clip that takes no time, it is a player that has not loaded one yet,
+   * and "0:00 left" over a clip that has barely started is worse than saying
+   * nothing. The engine drops it again on arrival for the same reason; this is the
+   * near half of one rule, not a second one.
+   */
+  const mediaErrorField = () => {
+    let e = null;
+    try {
+      e = getMediaError();
+    } catch {
+      e = null;
+    }
+    return typeof e === 'string' && e.trim() ? { media_error: e.trim().slice(0, 300) } : {};
+  };
+  const mediaFields = (m) => {
+    const dur = Number(m?.dur_ms);
+    const pos = Number(m?.pos_ms);
+    if (!Number.isFinite(dur) || dur <= 0 || !Number.isFinite(pos) || pos < 0) return null;
+    return {
+      media_pos_ms: Math.round(Math.min(pos, dur)),
+      media_dur_ms: Math.round(dur),
+      media_paused: !!m.paused,
+    };
+  };
+
+  const sendOverSocket = (ws, state, g, m) => {
     // OPEN only (readyState 1). A queued send on a reconnecting socket arrives
     // seconds later and would report a screen as healthy at a moment it demonstrably
     // was not — the beat would paper over the very gap it exists to expose.
     if (!ws || ws.readyState !== 1) return false;
     try {
-      ws.send(JSON.stringify({ kind: 'beat', channel: channelId, state, ...g }));
+      ws.send(JSON.stringify({ kind: 'beat', channel: channelId, state, ...g, ...(mediaFields(m) ?? {}), ...mediaErrorField() }));
       return true;
     } catch {
       return false;
     }
   };
 
-  const sendOverBridge = async (state, g) => {
+  /**
+   * IS THERE A BRIDGE IN THIS PAGE AT ALL?
+   *
+   * The distinction the refusal count rests on, and **it is not the import**. The
+   * first version of this asked whether `@tauri-apps/api/core` resolved, which was
+   * wrong in the quiet way: the module is BUNDLED into `output.html`, so it resolves
+   * in a plain browser too, and it is `invoke` itself that then throws
+   * `window.__TAURI_INTERNALS__ is undefined`. Counting that would have given every
+   * OBS browser source a four-figure refusal count for a fault it does not have.
+   *
+   * An injected `invoke` counts as a bridge, because a caller handing one over is a
+   * caller saying so; otherwise the internals are the only honest signal.
+   */
+  const bridgeAttached = () => {
+    if (invoke) return true;
+    try {
+      return !!globalThis.window?.__TAURI_INTERNALS__;
+    } catch {
+      // Rule 1. Asking whether a bridge exists may never take a live page down.
+      return false;
+    }
+  };
+
+  /**
+   * Hand the beat to Relay over the Tauri bridge — the native output window's only
+   * transport, and the one where a refusal used to be invisible (RG-119).
+   *
+   * **TWO failures, and they are not the same failure.** This was one `try` with one
+   * bare `catch {}` around the whole of it, so a kiosk page that has no bridge and a
+   * native window whose `output_beat` call was REFUSED were the same observable
+   * event: nothing. The first is the designed case and must stay silent — a browser
+   * source reaches this line only because its socket was down, and correctly goes
+   * stale. The second is a screen that is alive, painting, ticking on time, and
+   * telling Relay so into a void, which is precisely the reading RG-119 could not
+   * separate from a frozen page.
+   *
+   * So a failure is counted only where there was a bridge to refuse it, and the
+   * count rides on the next beat that gets through. Rule 1 still holds — nothing
+   * here throws — and so does rule 2: the beat still goes stale, because a count is
+   * evidence and never a reason to claim a screen is fine.
+   */
+  const sendOverBridge = async (state, g, m) => {
     try {
       const inv = invoke ?? (await import('@tauri-apps/api/core')).invoke;
       // camelCase across the bridge, snake_case on the wire: Tauri maps the
       // argument names and the WebSocket protocol does not.
+      const mf = mediaFields(m);
       await inv('output_beat', {
         channelId,
         state,
         sinceMs: g.since_ms ?? null,
         hiddenMs: g.hidden_ms ?? null,
+        // camelCase across the bridge, snake_case on the wire — the same mapping
+        // the two lines above already make.
+        mediaPosMs: mf?.media_pos_ms ?? null,
+        mediaDurMs: mf?.media_dur_ms ?? null,
+        mediaPaused: mf?.media_paused ?? null,
+        // A PICTURE OR CLIP THIS SCREEN COULD NOT LOAD, or null (O-4).
+        mediaError: mediaErrorField().media_error ?? null,
+        // HOW MANY BEATS THE BRIDGE REFUSED BEFORE THIS ONE (RG-119). Zero on an
+        // ordinary beat, which is the truth and not an absence: this page is
+        // talking to the bridge right now, so it knows.
+        refused: bridgeRefused,
+        // HOW MANY FRAMES THIS SCREEN PAINTED SINCE ITS LAST TICK (RG-119). `null`
+        // when nothing was counting them, which is an absence and not a zero.
+        frames: g.frames ?? null,
       });
+      bridgeRefused = 0;
     } catch {
-      /* no backend, or the command is gone. Stay silent and go stale. */
+      // REFUSED. Stay silent and go stale — rule 2 — but remember, so the next beat
+      // that lands can say it happened. Capped so a wedged bridge over a long
+      // service cannot turn the timeline phrase into nonsense; the distinction that
+      // matters is none versus some, not 5,000 versus 6,000.
+      if (bridgeAttached()) bridgeRefused = Math.min(bridgeRefused + 1, MAX_REFUSED_REPORTED);
     }
   };
 
@@ -189,10 +418,19 @@ export function startBeat({ channelId, getState, getWs = () => null, invoke = nu
       ws = null;
     }
     const g = gap();
-    if (sendOverSocket(ws, state, g)) return;
+    // Read once per beat, not per frame. `timeupdate` fires several times a second
+    // and none of those are worth a message; the beat's own interval is the rate
+    // an operator can read anyway.
+    let m = null;
+    try {
+      m = getMedia();
+    } catch {
+      m = null;
+    }
+    if (sendOverSocket(ws, state, g, m)) return;
     // A kiosk page has no bridge, so this is a no-op there and the beat correctly
     // goes stale while its socket is down.
-    void sendOverBridge(state, g);
+    void sendOverBridge(state, g, m);
   };
 
   // Report at once, so a screen that has just opened is not shown as silent for
@@ -200,10 +438,28 @@ export function startBeat({ channelId, getState, getWs = () => null, invoke = nu
   // be looking at it.
   tick();
   const id = setInterval(tick, BEAT_INTERVAL_MS);
+  // REQUESTED, not called: calling `countFrame` here would credit the page with a
+  // frame nothing had painted, and the whole value of the number is that a zero
+  // means a zero.
+  if (raf) {
+    try {
+      rafId = raf(countFrame);
+    } catch {
+      rafId = null;
+    }
+  }
 
   return () => {
     stopped = true;
     clearInterval(id);
+    if (rafId !== null && typeof globalThis.cancelAnimationFrame === 'function') {
+      try {
+        globalThis.cancelAnimationFrame(rafId);
+      } catch {
+        // Rule 1, on the way out as much as on the way in.
+      }
+    }
+    rafId = null;
     if (doc?.removeEventListener) doc.removeEventListener('visibilitychange', onVisibility);
   };
 }
@@ -215,6 +471,52 @@ export function startBeat({ channelId, getState, getWs = () => null, invoke = nu
 // operator is told is the part that must never be wrong, and a rule buried in a
 // component can only be tested by mounting one. Live and the Outputs inspector
 // both call this, so they cannot disagree about the same screen.
+
+/**
+ * WHY A SCREEN LAST WENT QUIET — the one place a cause word becomes English
+ * (RG-119, 2026-09-29). Keys must match `channels::SilenceCause::as_str`, and
+ * `outputhealth.test.js` fails if the two sets drift.
+ *
+ * ── Why five words and not one ────────────────────────────────────────────────
+ *
+ * `output_lost` was one word over at least four situations, which is rule 35 with
+ * the service record as the badge. Two of the five mean the congregation was
+ * looking at a stale screen; three of them mean the screen was fine and Relay's own
+ * record of it was not. Those want opposite responses from an operator and opposite
+ * work from whoever reads the timeline afterwards, and a single word made them one
+ * event.
+ *
+ * **The event itself is unchanged and that is a decision, not an omission**
+ * (DECISIONS §137): a page that is not running is not repainting, so the congregation
+ * is looking at a stale screen and `output_lost` is the true report. What was wrong
+ * was never that the loss was reported — it was that one word covered a dead
+ * projector and a window behind a terminal. So the loss stays and the word multiplies.
+ *
+ * A word to one sentence and nothing else. There is no short badge word beside it on
+ * purpose: five causes with a two-word label each would put a fifth vocabulary on a
+ * desk that already has `FAULT_WORD`, `SCREEN_BADGE` and `describeScreen`'s labels,
+ * and this is a sentence an operator reads once after an outage rather than a state
+ * they glance at. Every sentence is in the PAST TENSE, because that is the only tense
+ * this can be in: see `describeScreen`.
+ */
+export const SILENCE_CAUSE = {
+  occluded: 'the OS had hidden this page',
+  frozen: 'the page was not being run, and nothing told it so',
+  throttled: 'the page kept painting and only its clock stopped',
+  bridge_refused: "the page ticked on time and Relay's bridge threw its beats away",
+  unreached: 'the page ticked on time and Relay got nothing',
+};
+
+/**
+ * What one cause word means, or `null` for a screen that has not come back from a
+ * silence in this run. An unrecognised word is `null` too — it originates on a page,
+ * one of whose transports is an unauthenticated LAN socket (DECISIONS §35), and
+ * although Rust already narrows it to a closed enum, a word this file does not know
+ * is a word it must not render. Same discipline as `paint_state` below.
+ */
+export function silenceCause(word) {
+  return (typeof word === 'string' && SILENCE_CAUSE[word]) || null;
+}
 
 /**
  * How long a just-attached screen may stay silent before silence becomes a
@@ -253,7 +555,7 @@ export function screenFault(st) {
 /**
  * What to say about one screen.
  *
- * Returns `{ kind, label, note }`. `kind` chooses the colour, and it obeys the
+ * Returns `{ kind, label, note, shows }`. `kind` chooses the colour, and it obeys the
  * colour law (DECISIONS §22): **amber is spent only on a screen that is both
  * genuinely on air and answering.** A screen that is not answering can never be
  * amber, and neither can one that IS answering and says it is showing nothing —
@@ -265,29 +567,67 @@ export function screenFault(st) {
  * either claim is compared, because the two disagree on purpose there and the
  * disagreement is not news.
  *
+ * `shows` is the same verdict saying one thing more: what a surface that PAINTS
+ * this screen — the Outputs workspace's cards — is allowed to put in the frame.
+ * It is part of this function rather than a second rule beside it, because a
+ * badge and a picture derived separately are how a card comes to argue with its
+ * own label (RG-211). Four answers, and every branch gives one:
+ *
+ * - `content` — paint what Relay is sending. The screen has said it is painting
+ *               content, so the card and the screen agree.
+ * - `blank`   — paint nothing. The screen is down, taken down, blacked out, in a
+ *               rehearsal nothing reaches, or has itself said it is clear.
+ * - `stale`   — paint the last frame this screen was KNOWN to be showing, and
+ *               say that it is old. Painting the current programme under a **Not
+ *               responding** badge is the rule 35 failure in a new place: the
+ *               verse on that card is one the screen never received.
+ * - `unknown` — paint nothing and claim nothing. Nobody has heard from it yet.
+ *
  * @param st       the channel's `ChannelLiveness` row, or null before the first poll
  * @param wall     `{ rehearsing, live, black }` — what Relay believes it is sending
  * @param waitedMs how long this screen has been attached without answering
  */
 export function describeScreen(st, wall, waitedMs = 0) {
   const fault = screenFault(st);
-  if (fault === 'unknown') return { kind: 'unknown', label: 'Checking…', note: '' };
+  if (fault === 'unknown')
+    return { kind: 'unknown', label: 'Checking…', note: '', shows: 'unknown' };
   if (fault === 'unsupported')
-    return { kind: 'idle', label: 'Unavailable', note: st.detail ?? '' };
-  if (fault === 'offline') return { kind: 'idle', label: 'No window', note: st.detail ?? '' };
+    return { kind: 'idle', label: 'Unavailable', note: st.detail ?? '', shows: 'blank' };
+  if (fault === 'offline')
+    return { kind: 'idle', label: 'No window', note: st.detail ?? '', shows: 'blank' };
 
   if (fault !== 'ok') {
     // Never answered AND still inside the grace window: say so plainly rather
     // than accusing a screen that is still starting up.
     if (fault === 'never' && waitedMs < BEAT_GRACE_MS)
-      return { kind: 'idle', label: 'Waiting…', note: 'the screen has not reported yet' };
+      return {
+        kind: 'idle',
+        label: 'Waiting…',
+        note: 'the screen has not reported yet',
+        shows: 'unknown',
+      };
+    // ── AND WHY IT WENT QUIET THE LAST TIME, WHEN IT HAS EVER SAID (RG-119) ────
+    //
+    // Stated as the past tense it is. **The cause of the silence happening RIGHT
+    // NOW cannot be known from here, by construction**: only the page can say, and
+    // the page is not talking — that is the silence. So this is the last one it came
+    // back from, and it is labelled `previously` so it can never be read as a
+    // diagnosis of the current outage.
+    //
+    // It is worth the words because on a one-monitor desk the honest answer is
+    // usually "the same thing as last time": a window behind a terminal. An
+    // operator who knows that is deciding about their layout; one who reads
+    // **Not responding** with nothing beside it is deciding about a projector.
+    const was = silenceCause(st.last_silence);
     return {
       kind: 'down',
       label: 'Not responding',
       note:
-        fault === 'never'
+        (fault === 'never'
           ? 'this screen has never reported painting'
-          : `last answered ${Math.round(st.last_beat_ms / 1000)}s ago`,
+          : `last answered ${Math.round(st.last_beat_ms / 1000)}s ago`) +
+        (was ? ` · previously: ${was}` : ''),
+      shows: 'stale',
     };
   }
 
@@ -331,7 +671,8 @@ export function describeScreen(st, wall, waitedMs = 0) {
   // and a fixture must not be able to earn amber that a screen would not.
   const says = PAINT_STATES.includes(st.paint_state) ? st.paint_state : null;
   const seen = says ? `screen: ${says}` : '';
-  if (wall?.rehearsing) return { kind: 'rehearsal', label: 'Rehearsal', note: seen };
+  if (wall?.rehearsing)
+    return { kind: 'rehearsal', label: 'Rehearsal', note: seen, shows: 'blank' };
 
   // ── THE OPERATOR TOOK THIS SCREEN OUT OF THE WALL ──────────────────────────
   //
@@ -358,10 +699,24 @@ export function describeScreen(st, wall, waitedMs = 0) {
       kind: 'ready',
       label: st.down === 'black' ? 'Taken down · black' : 'Taken down',
       note: seen ? `you took this screen down · ${seen}` : 'you took this screen down',
+      shows: 'blank',
     };
   }
 
   // What Relay believes it is sending this screen, in the screen's own vocabulary.
+  // A SCREEN THAT SAYS ITS PICTURE DID NOT LOAD IS NOT ON AIR (O-4, 2026-09-21).
+  // Its DOM has a slide, so `paint_state` honestly reads `content`; the picture
+  // inside it is blank. Ranked with `down`, because a congregation looking at a
+  // blank frame under an amber badge is the failure rule 35 exists to stop.
+  if (typeof st.media_error === 'string' && st.media_error.trim()) {
+    return {
+      kind: 'down',
+      label: 'Not painting the picture',
+      note: st.media_error.trim(),
+      shows: 'content',
+    };
+  }
+
   const sending = wall?.live && !wall?.black ? 'content' : wall?.black ? 'black' : 'clear';
   // `clear` and `black` both mean "nothing of ours is on that screen", which is
   // the claim a Blackout or a Ready badge makes. Only `content` vs not-content is
@@ -376,10 +731,17 @@ export function describeScreen(st, wall, waitedMs = 0) {
         says === null
           ? 'the screen has not said what it is showing'
           : `${RELAY_CLAIM[sending]} · the screen says ${says}`,
+      shows: says === null ? 'unknown' : says === 'content' ? 'content' : 'blank',
     };
   }
-  if (sending === 'content') return { kind: 'onair', label: 'On Air', note: seen };
-  return { kind: 'ready', label: sending === 'black' ? 'Blackout' : 'Ready', note: seen };
+  if (sending === 'content')
+    return { kind: 'onair', label: 'On Air', note: seen, shows: 'content' };
+  return {
+    kind: 'ready',
+    label: sending === 'black' ? 'Blackout' : 'Ready',
+    note: seen,
+    shows: 'blank',
+  };
 }
 
 /** Relay's half of the note, in words — one per thing Relay can be sending. */
@@ -484,13 +846,25 @@ export function screenReporting(st) {
   if (fault === 'offline') return { word: 'no', note: st.detail ?? 'nothing is attached' };
   if (fault === 'never')
     return { word: 'never', note: 'attached, and has never reported painting' };
+  // WHY IT LAST WENT QUIET, on the row an operator opens to check one screen
+  // (RG-119). It belongs on both answers and it means different things on each: on a
+  // screen that has STOPPED it is the previous outage, and on one answering `yes` it
+  // is the verdict on the outage it came back from — which is the only place the
+  // record's own classification is visible while the app is running.
+  const was = silenceCause(st.last_silence);
   if (fault === 'silent')
-    return { word: 'stopped', note: `last answered ${Math.round(st.last_beat_ms / 1000)}s ago` };
+    return {
+      word: 'stopped',
+      note:
+        `last answered ${Math.round(st.last_beat_ms / 1000)}s ago` +
+        (was ? ` · previously: ${was}` : ''),
+    };
+  const seen = st.paint_state
+    ? `screen: ${st.paint_state} · ${Math.round((st.last_beat_ms ?? 0) / 1000)}s ago`
+    : '';
   return {
     word: 'yes',
-    note: st.paint_state
-      ? `screen: ${st.paint_state} · ${Math.round((st.last_beat_ms ?? 0) / 1000)}s ago`
-      : '',
+    note: was ? `${seen ? `${seen} · ` : ''}last silence: ${was}` : seen,
   };
 }
 

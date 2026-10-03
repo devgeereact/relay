@@ -37,6 +37,10 @@
   import MediaLibrary from './library/MediaLibrary.svelte';
   import Announcements from './library/Announcements.svelte';
   import ImportReview from './library/ImportReview.svelte';
+  import BulkImport from './library/BulkImport.svelte';
+  import { BULK_THRESHOLD, describeRun } from '../bulkimport.js';
+  import { findProPresenter, saveAnnouncement } from '../stores/capture.js';
+  import { sourceFolder, shelfFor, foldersIn } from '../importroute.js';
   import Collections from './library/Collections.svelte';
   import { COLLECTIONS, collectionOf } from './library/collections.js';
   import {
@@ -190,7 +194,7 @@
       await fireContent(item.reference, item.text, item.kind);
     } else {
       throw new Error(
-        `This item was queued without a content kind, so Relay will not guess what it is. Remove it from Up Next and add it again.`,
+        `This item was queued without a content kind, so Relay will not guess what it is. Remove it from Staging and add it again.`,
       );
     }
   }
@@ -285,6 +289,23 @@
   });
   let reload = 0; // bump to remount the active pane after an import
   let fileInput;
+  let folderInput;
+  /**
+   * WHAT A SCAN FOUND, or `null` before anybody has asked.
+   *
+   * `[]` after a scan means nothing was found, which is a different thing from
+   * `null` and reads differently on the surface: one is "we looked", the other is
+   * "nobody has looked yet".
+   */
+  let foundLibraries = null;
+  let scanning = false;
+  async function findLibraries() {
+    scanning = true;
+    importMsg = '';
+    errMsg = '';
+    foundLibraries = await findProPresenter();
+    scanning = false;
+  }
   let importing = false;
   let importMsg = '';
   let showNew = false;
@@ -292,6 +313,15 @@
   // pre-save review of parsed lyric files
   let reviewSongs = [];
   let reviewing = false;
+
+  // ── A WHOLE LIBRARY IS NOT A BIG VERSION OF A HANDFUL ─────────────────────
+  //
+  // A ProPresenter 7 export is 726 `.pro` files. The pre-save review above is the
+  // right product for two or three of them and is not a plan for 726 — see the
+  // long note at the top of `library/BulkImport.svelte` for the trade, and
+  // `bulkimport.js` for the runner. Held here (rather than passed straight to the
+  // panel) so the decision is visible in one place beside `reviewing`.
+  let bulkFiles = [];
 
   // pane actions passed on (re)mount
   let announceAction = false; // true when New → draft announcement
@@ -309,7 +339,11 @@
   const VID = ['mp4', 'mov', 'webm', 'mkv', 'm4v'];
   const DOC = ['pdf', 'pptx', 'ppt', 'key'];
   const TXT = ['txt', 'text', 'md', 'lyric', 'lyrics'];
-  const PRO = ['pro', 'pro6', 'pro5', 'proplaylist'];
+  // `.pro` (ProPresenter 7) and `.proplaylist` only (RG-202, 2026-09-21). `.pro6`
+  // and `.pro5` were offered here while `proimport.rs` scans raw bytes for
+  // `{\rtf1`; a ProPresenter 6 file stores its RTF base64-encoded inside XML, so
+  // every one read "unreadable" after the picker had said it was supported.
+  const PRO = ['pro', 'proplaylist'];
   // The file picker and the router are ONE list. They were two, and the picker's
   // was shorter — .bmp, .avif, .svg, .mkv, .m4v, .pro5 and .key were greyed out
   // in the dialog even though the importer handles them, so choosing one was
@@ -341,7 +375,13 @@
   let mediaReview = []; // [{ file, kind, name, ext, url }] while the sheet is open
   let mediaBusy = false;
 
-  const EXT_OF = (name) => (name.split('.').pop() || '').toLowerCase();
+  // `split('.').pop()` on a name with NO dot returns the whole name, so
+  // `EXT_OF('Timers')` is `'timers'` and a ProPresenter library's own
+  // configuration files were reported as `Skipped .timers (unsupported)` —
+  // an extension nobody has, named after the file. Harmless while every file was
+  // hand-picked; a dozen of them arrive with a folder.
+  const HAS_EXT = (name) => /\.[^.]+$/.test(name);
+  const EXT_OF = (name) => (HAS_EXT(name) ? name.split('.').pop().toLowerCase() : '');
   const STEM_OF = (name) => name.replace(/\.[^.]*$/, '');
 
   function closeMediaReview() {
@@ -371,48 +411,152 @@
   async function onFiles(e) {
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
+    // Cleared FIRST, so picking the same folder twice in a row still fires a
+    // change event. The `File` handles below stay readable afterwards.
+    e.target.value = '';
     importing = true;
     importMsg = '';
-    const parsed = []; // lyric songs → pre-save review
+
+    // ROUTE BEFORE READING. This loop used to `await fileToBase64(file)` for every
+    // lyric file it saw, which at 726 files builds 726 base64 strings in the
+    // webview before anything is decided — four simultaneous copies each, per the
+    // note on `fileToBase64`. Sorting is free; reading is not.
+    const lyric = []; // → the pre-save review, or the bulk runner
+    const notices = []; // out of an ANNOUNCEMENT folder → the announcements shelf
     const media = []; // pictures, video, documents → the look below
-    try {
-      for (const file of files) {
-        const ext = EXT_OF(file.name);
-        const kind = IMG.includes(ext)
-          ? 'image'
-          : VID.includes(ext)
-            ? 'video'
-            : DOC.includes(ext)
-              ? 'document'
-              : null;
-        if (PRO.includes(ext) || TXT.includes(ext)) {
-          const got = await parseImport(file.name, await fileToBase64(file));
-          parsed.push(...got);
-        } else if (kind) {
-          media.push({
-            file,
-            kind,
-            ext,
-            name: STEM_OF(file.name),
-            // A document has no frame to show, so it gets no object URL rather
-            // than an <img> that will never paint.
-            url: kind === 'document' ? null : URL.createObjectURL(file),
-          });
-        } else {
-          importMsg = `Skipped .${ext} (unsupported)`;
+    // WHAT A FOLDER BRINGS WITH IT, and why a hand-picked set never needed this.
+    //
+    // A directory pick hands over everything underneath it, not a chosen list, so
+    // the junk arrives too. A real ProPresenter library is the case this exists
+    // for: 726 `.pro` files, and beside them a `__MACOSX` directory of AppleDouble
+    // stubs named `._Something.pro` — 4 KB of resource fork that carries the same
+    // extension, parses to nothing, and would be reported as 726 files that came
+    // in empty. `.DS_Store` and the library's own extensionless config files
+    // (`Library`, `Media`, `Stage`, `Timers`) arrive the same way.
+    //
+    // Skipped SILENTLY, unlike an unsupported extension below, and the difference
+    // is the operator's attention: they chose those files by choosing the folder,
+    // they did not choose them one by one, and a list of 726 skipped stubs is a
+    // report nobody reads. What they came in for is counted instead.
+    let junk = 0;
+    for (const file of files) {
+      if (file.name.startsWith('._') || file.name.startsWith('.')) {
+        junk += 1;
+        continue;
+      }
+      const ext = EXT_OF(file.name);
+      const kind = IMG.includes(ext)
+        ? 'image'
+        : VID.includes(ext)
+          ? 'video'
+          : DOC.includes(ext)
+            ? 'document'
+            : null;
+      if (PRO.includes(ext) || TXT.includes(ext)) {
+        // WHICH SHELF, from the folder it came out of. A hand-picked file carries
+        // no relative path and lands on the songs shelf exactly as before — this
+        // only reads a grouping a FOLDER pick already supplies, and never guesses
+        // one from a file name.
+        if (shelfFor(sourceFolder(file)) === 'announcement') notices.push(file);
+        else lyric.push(file);
+      } else if (kind) {
+        media.push({
+          file,
+          kind,
+          ext,
+          name: STEM_OF(file.name),
+          // A document has no frame to show, so it gets no object URL rather
+          // than an <img> that will never paint.
+          url: kind === 'document' ? null : URL.createObjectURL(file),
+        });
+      } else if (!ext) {
+        // No extension at all. A ProPresenter library's own configuration files
+        // look exactly like this — `Library`, `Media`, `Stage`, `Timers` — and
+        // there are a dozen of them beside the songs.
+        junk += 1;
+      } else {
+        importMsg = `Skipped .${ext} (unsupported)`;
+      }
+    }
+    // WHAT CAME FROM WHERE. Counted by the folder's own name, because that is the
+    // church's word: an operator recognises `HMYN`, and does not recognise "18
+    // items were classified as songs". Empty for a hand-picked set, which has no
+    // grouping to report.
+    const folders = foldersIn(files);
+    if (folders.length > 1) {
+      importMsg = folders.map((f) => `${f.folder} ${f.count}`).join(' · ');
+    }
+
+    // THE ANNOUNCEMENT SHELF, and it is a short list on purpose.
+    //
+    // The real library has about four of these against seven hundred songs, so a
+    // sequential save is the right shape — the bulk runner exists for the case
+    // where reading everything up front is the problem, and four files are not
+    // that case. A failure on one is collected and the rest carry on, because
+    // aborting a 726-file import over one announcement would be the worse answer.
+    if (notices.length) {
+      let saved = 0;
+      const failed = [];
+      for (const file of notices) {
+        try {
+          const parsed = await parseImport(file.name, await fileToBase64(file));
+          for (const song of parsed) {
+            const body = (song.sections ?? [])
+              .map((sec) => sec.lyrics ?? '')
+              .filter(Boolean)
+              .join('\n\n');
+            await saveAnnouncement(null, song.title, body);
+            saved += 1;
+          }
+        } catch {
+          failed.push(file.name);
         }
       }
-      if (parsed.length) {
-        // Lyrics go through the pre-save review (edit before committing).
-        reviewSongs = parsed;
-        reviewing = true;
-      }
-      if (media.length) mediaReview = media;
-    } catch (err) {
-      errMsg = humanError(err);
+      const tail = failed.length ? ` · ${failed.length} could not be read` : '';
+      importMsg = `${saved} announcement${saved === 1 ? '' : 's'} imported${tail}`;
     }
+
+    if (junk && !lyric.length && !media.length && !notices.length) {
+      importMsg = `Nothing importable in that folder — ${junk} file${junk === 1 ? '' : 's'} skipped`;
+    }
+
+    if (lyric.length >= BULK_THRESHOLD) {
+      // The panel owns the run from here: it reads one file at a time, commits in
+      // batches, and can be stopped. Nothing is read on this line.
+      bulkFiles = lyric;
+    } else if (lyric.length) {
+      const parsed = [];
+      try {
+        for (const file of lyric) {
+          parsed.push(...(await parseImport(file.name, await fileToBase64(file))));
+        }
+        if (parsed.length) {
+          // Lyrics go through the pre-save review (edit before committing).
+          reviewSongs = parsed;
+          reviewing = true;
+        }
+      } catch (err) {
+        errMsg = humanError(err);
+      }
+    }
+    if (media.length) mediaReview = media;
     importing = false;
-    e.target.value = '';
+  }
+
+  /**
+   * The bulk run is over and the operator has read the report.
+   *
+   * A run that was REFUSED goes to the error line and not the success line — they
+   * are two different elements in two different colours for exactly this reason,
+   * and `describeRun` leads with the refusal when there was one.
+   */
+  function onBulkDone(ev) {
+    const report = ev.detail || {};
+    bulkFiles = [];
+    const said = describeRun(report);
+    if (report.error) errMsg = said;
+    else importMsg = said;
+    goTab('lyrics');
   }
 
   function onReviewDone(ev) {
@@ -622,7 +766,9 @@
   </div>
 {/if}
 
-{#if reviewing}
+{#if bulkFiles.length}
+  <BulkImport files={bulkFiles} on:done={onBulkDone} />
+{:else if reviewing}
   <ImportReview songs={reviewSongs} on:done={onReviewDone} on:cancel={() => (reviewing = false)} />
 {:else}
   <!-- ── ONE ROW OF CHROME, NOT FOUR (REBRAND §10) ────────────────────────────
@@ -669,9 +815,38 @@
     </div>
 
     <div class="lib-topactions">
+      <!-- FIND IT, DON'T MAKE THEM. A church's library is 726 files in a folder
+           whose path the volunteer running Relay has very likely never seen, and
+           `Import folder` is only useful to somebody who already knows where it
+           is. This is the answer for everybody else.
+
+           It finds and counts; it imports nothing. The webview cannot open a path,
+           so the operator still picks the folder — what this removes is having to
+           know which one. -->
+      <button
+        class="r-btn ghost sm"
+        on:click={findLibraries}
+        disabled={!$capture.available || importing || scanning}
+        title="Look in the usual places for a ProPresenter library">
+        {scanning ? 'Looking…' : 'Find ProPresenter'}
+      </button>
       <button class="r-btn ghost sm" on:click={() => fileInput.click()} disabled={!$capture.available || importing}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M8 11l4 4 4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
         {importing ? 'Importing…' : 'Import'}
+      </button>
+      <!-- A WHOLE LIBRARY IS A FOLDER, NOT A SELECTION.
+           `Import` has always taken many files at once; what it could not take is
+           a directory, and a ProPresenter library is 726 files inside one. Asking
+           an operator to select 726 entries in a dialog is asking them not to
+           bother. Same handler, same routing, same bulk runner — the only
+           difference is which door the files came through. -->
+      <button
+        class="r-btn ghost sm"
+        on:click={() => folderInput.click()}
+        disabled={!$capture.available || importing}
+        title="Import every song in a folder, including a whole ProPresenter library">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+        {importing ? 'Importing…' : 'Import folder'}
       </button>
       <div class="lib-newwrap">
         <button class="r-btn primary sm" aria-haspopup="menu" aria-expanded={showNew} on:click={() => (showNew = !showNew)}>
@@ -708,6 +883,46 @@
         {/if}
       </div>
       <input type="file" multiple accept={ACCEPT} bind:this={fileInput} on:change={onFiles} style="display:none" />
+      {#if foundLibraries}
+        <div class="lib-found" role="status">
+          {#if foundLibraries.length}
+            <p class="lib-foundhead">
+              Found {foundLibraries.length === 1 ? 'a ProPresenter library' : `${foundLibraries.length} ProPresenter libraries`}.
+              Open <b>Import folder</b> and choose the one you want.
+            </p>
+            <ul>
+              {#each foundLibraries as f (f.path)}
+                <li>
+                  <code>{f.path}</code>
+                  <!-- "at least", when the walk stopped at its bound. A count that
+                       stopped early and does not say so is a wrong count, and this
+                       one is the number an operator checks the import against. -->
+                  <span class="lib-foundn">{f.truncated ? 'at least ' : ''}{f.songs} song{f.songs === 1 ? '' : 's'}</span>
+                </li>
+              {/each}
+            </ul>
+          {:else}
+            <!-- A scan that failed and a scan that found nothing are the same
+                 answer here, deliberately: this surface cannot tell them apart and
+                 must not pretend to. What it CAN do is say what to try next. -->
+            <p class="lib-foundhead">
+              No ProPresenter library in the usual places. If yours lives somewhere
+              else, use <b>Import folder</b> and point at it.
+            </p>
+          {/if}
+        </div>
+      {/if}
+      <!-- NO `accept` ON THE DIRECTORY INPUT, deliberately. A directory pick
+           chooses a folder, not files, so an accept list filters nothing and only
+           risks a browser greying out the folder itself. `onFiles` does the
+           sorting, which is where it already happened. -->
+      <input
+        type="file"
+        multiple
+        webkitdirectory
+        bind:this={folderInput}
+        on:change={onFiles}
+        style="display:none" />
     </div>
   </div>
 

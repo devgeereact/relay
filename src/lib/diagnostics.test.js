@@ -32,8 +32,15 @@ const settings = read('src/lib/views/Settings.svelte');
  * new field gets appended to.
  */
 function exportDiagnostics() {
-  const start = rs.indexOf('fn export_diagnostics(');
-  expect(start).toBeGreaterThan(-1);
+  // Anchored at the start of a line, and the generic parameter list is optional:
+  // the command became `fn export_diagnostics<R: tauri::Runtime>(…)` when the
+  // bundle was made drivable by a test (RG-299), and a scanner looking for the
+  // literal `fn export_diagnostics(` found nothing and reported it. A scanner that
+  // stops matching is the failure mode this repository keeps hitting, so the only
+  // thing this fixes is the false negative — it still refuses to match nothing.
+  const sig = /^fn export_diagnostics(<[^>]*>)?\(/m.exec(rs);
+  expect(sig, 'export_diagnostics is gone, or its signature changed shape again').not.toBe(null);
+  const start = sig.index;
   const end = rs.indexOf('\n}\n', start);
   expect(end).toBeGreaterThan(start);
   return rs.slice(start, end);

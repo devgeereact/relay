@@ -671,7 +671,7 @@
     border-bottom: 1px solid var(--v-line);
   }
   .ly-warn {
-    background: var(--v-amethyst-soft);
+    background: var(--v-caution-soft);
     color: var(--v-txt);
   }
   .ly-warn span {

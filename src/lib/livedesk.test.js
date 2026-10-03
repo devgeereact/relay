@@ -711,6 +711,40 @@ describe('L2 · the slides head says what it is and what a press does', () => {
   // segment coming back: that changed spacing and type, this changes the width of
   // the picture an operator is reading the words off. `slidesizer.test.js` holds
   // its behaviour, including that it moves the grid track and not `.sg-thumb`.
+  // ── LOAD WHOLE PLAN CAME UP FROM THE DOCK (RG-261) ───────────────────────
+  //
+  // The operator asked for the room the Quick tools head was spending on it:
+  // that card does one job at a time since RG-258 and the picker needs the slot.
+  // It belongs here in any case — it is the one control in the product whose
+  // whole effect is on this grid.
+  //
+  // The four cases that held its behaviour came with it from
+  // `quicktools.test.js`, which now asserts only that the dock does not offer a
+  // second copy. What it does is asserted where it is.
+  it('is offered on the slides head, and NOT inside the view control', async () => {
+    new Live({ target: host, props: {} });
+    await settle();
+    const btn = [...host.querySelectorAll('.sg-head button')].find(
+      (b) => b.textContent.trim() === 'Load whole plan',
+    );
+    expect(btn, 'the button did not arrive with the move').toBeTruthy();
+    // `.view-ctl` is the SIZER plus full screen, and its exact button set is
+    // asserted below. A control that only stages does not belong in it.
+    expect(host.querySelector('.sg-head .view-ctl')?.contains(btn)).toBe(false);
+  });
+
+  it('is disabled, and says why, until the Planner has handed a plan over', async () => {
+    new Live({ target: host, props: {} });
+    await settle();
+    const btn = [...host.querySelectorAll('.sg-head button')].find(
+      (b) => b.textContent.trim() === 'Load whole plan',
+    );
+    // A DISABLED CONTROL OWES A REASON. With nothing chosen it has nothing to
+    // load, and saying so beats looking broken.
+    expect(btn.disabled).toBe(true);
+    expect(btn.getAttribute('title')).toContain('Run in Live');
+  });
+
   it('the full-screen control left the rail and is still reachable', async () => {
     new Live({ target: host, props: {} });
     await settle();
@@ -1152,5 +1186,39 @@ describe('the detection inspector acts on the claim that was opened', () => {
     const dropped = invoke.mock.calls.filter(([c]) => c === 'dismiss_detection');
     expect(dropped.length).toBe(1);
     expect(dropped[0][1].reference).toBe('Psalms 23:1');
+  });
+});
+
+// ── RG-302 · THE CARD MUST SAY THERE IS A PASSAGE TO WALK ───────────────────
+//
+// `passageSpan` being right is not the claim; the claim is that the operator READS
+// it. A pure helper with five green tests and nothing rendering it is the
+// `PreviewProgram.svelte` mistake, and this repository has made it once already.
+//
+// Service 40, 2026-09-25 at 945 s: "Proverbs 7, 1 to 5" auto-fired Proverbs 7:1 and
+// this card showed one verse with nothing about the other four.
+describe('a passage asked for — RG-302', () => {
+  it('a range names how far it goes and what → is for', async () => {
+    cap.detections.set([claim({ reference: 'Proverbs 7:1', verse: 1, passage_end: 5 })]);
+    new Live({ target: host, props: {} });
+    await settle();
+    const card = host.querySelector('.clm');
+    const line = card.querySelector('.claim-span');
+    expect(line).not.toBeNull();
+    // The three facts an operator acts on: how much was asked for, where it ends,
+    // and that the transport is the way to get there.
+    expect(line.textContent).toContain('5 verses');
+    expect(line.textContent).toContain('verse 5');
+    expect(line.textContent).toContain('4 still to come');
+    expect(line.textContent).toContain('→');
+  });
+
+  it('an ordinary single verse gets no such line', async () => {
+    // Most claims are one verse. A note on every card is a note nobody reads, and
+    // this card is where the operator judges whether the AI got it right.
+    cap.detections.set([claim({ reference: 'Romans 8:28', verse: 28 })]);
+    new Live({ target: host, props: {} });
+    await settle();
+    expect(host.querySelector('.clm .claim-span')).toBeNull();
   });
 });

@@ -36,6 +36,29 @@ const TARGET_RATE: u32 = 16_000; // whisper input rate
 /// re-detected on every pass — which is why `router::DEFAULT_DEBOUNCE_MS` is
 /// derived from this value rather than picked independently. Keep them coupled.
 pub const WINDOW_SECS: usize = 8;
+
+/// **A FULL WINDOW IS A BOUNDARY, NOT A PLACE TO DROP AUDIO — RG-262.**
+///
+/// The decode loop kept the last `WINDOW_SECS` of an open utterance and drained
+/// the front, and `transcribe` decodes the whole window each pass. So a FINAL
+/// carried the last eight seconds of the utterance and nothing before it: a
+/// preacher speaking for forty seconds without a 1.4 s gap produced one line of
+/// about eight seconds, and the other thirty-two existed only as partials, each
+/// overwriting the last.
+///
+/// **Measured in a real service rather than argued.** Across 982 rows of the
+/// author's own database no transcript line anywhere exceeds 160 characters —
+/// that ceiling IS this window, visible in the data — and service 24, ninety
+/// three minutes of preaching, produced 9,987 characters in total.
+///
+/// So a window that has no room CLOSES. The text is emitted and kept, the window
+/// is cleared, and the audio that would not fit starts the next one. Nothing is
+/// decoded twice and nothing is thrown away; the cost is that a word straddling
+/// the boundary can be split, which is a far smaller harm than losing four
+/// fifths of a sermon.
+pub(crate) fn window_is_full(window_len: usize, incoming: usize, max_window: usize) -> bool {
+    window_len + incoming > max_window
+}
 /// The SLOWEST the worker will step: one pass per second of new audio. This is
 /// also the ceiling the real-time budget is judged against, and it is what the
 /// cadence used to be, always, on every machine.
@@ -120,6 +143,100 @@ fn step_samples_for(decode_ema_ms: f32) -> usize {
 /// the middle of one.
 const SILENCE_FINALIZE: u32 = 7;
 
+/// **HOW LONG A PAUSE IS HELD WHEN THE WORDS SO FAR END ON A BOOK NAME — RG-284.**
+///
+/// 15 hops ≈ 3.0 s, against `SILENCE_FINALIZE`'s 7 ≈ 1.4 s.
+///
+/// The operator: *"when you hear psalms and there is a pause in the voice, wait to
+/// hear the next couple sentence for any chapter and verse before breaking
+/// transcript."* Finalizing CLEARS the window, so "Turn with me to Psalms" …
+/// [page turn] … "chapter twenty-three, verse one" is decoded as two windows, one
+/// holding a book with no numbers and one holding numbers with no book. Neither is
+/// a reference and nothing downstream can reassemble them: `detection.rs` is handed
+/// one window at a time, on purpose.
+///
+/// **Three seconds, and the number is not a taste judgement.** The unit is SILENCE,
+/// not speech — the moment the preacher says anything the run resets and the window
+/// stays open for as long as they keep talking, so three seconds of held silence
+/// buys the whole of the next sentence, which is what was asked for. The ceiling is
+/// the window: `WINDOW_SECS` is 8 s, a phrase ending on a book name has already
+/// spent two or three of them, and held silence spends the rest. A hold long enough
+/// to fill the window on its own would force-close it (RG-262) BEFORE the chapter
+/// could arrive — buying nothing, and still delaying every FINAL behind it. A FINAL
+/// is what carries persistence and the spoken commands (rule 33), so it is not free
+/// to postpone.
+///
+/// The hard ceiling is structural and stays where it is: `window_is_full` closes the
+/// window whatever this constant says. This is the softer bound, and it is pinned by
+/// `the_hold_can_never_on_its_own_exhaust_the_window`.
+const DANGLING_SILENCE_FINALIZE: u32 = 15;
+
+/// The probe appended to the transcript to ask the parser whether the tail is a
+/// book name waiting for its numbers. Digits and the pairing colon, so it says the
+/// same thing in every language Relay ships.
+const PROBE_NUMBERS: &str = "1:1";
+
+/// How many consecutive silent chunks end this utterance.
+///
+/// The ONLY place the two silence thresholds are chosen between, so the policy is
+/// one expression rather than a condition repeated at a call site — the shape rule
+/// 36 asks for, one door down.
+pub(crate) fn finalize_after(tail_may_be_unfinished: bool) -> u32 {
+    if tail_may_be_unfinished {
+        DANGLING_SILENCE_FINALIZE
+    } else {
+        SILENCE_FINALIZE
+    }
+}
+
+/// **COULD THESE WORDS BE THE FIRST HALF OF A REFERENCE? — RG-284.**
+///
+/// ── The interface, which is the judgement call in this change ───────────────
+///
+/// `stt.rs` decodes. It does not know what a book is, and after this function it
+/// still does not: there is no alias table here, no book list, no language list and
+/// no grammar. The question is asked of `detection::detect_direct`, the public
+/// parser that owns all four, and it is asked as a PROBE — *does appending a
+/// chapter and verse make a reference appear at the tail that was not there
+/// before?* That is exactly the question, phrased in the one vocabulary both
+/// modules already share.
+///
+/// The alternative was a `detection::` predicate written for this caller. It would
+/// be a better name and a worse boundary: a second entry point into the parser,
+/// with its own view of what a book name is, to keep in step with the first. The
+/// probe cannot drift from `detect_direct`, because it IS `detect_direct`.
+///
+/// ── What it deliberately does not do ────────────────────────────────────────
+///
+/// A reading that ALREADY parses at the tail returns false and is not delayed.
+/// DECISIONS §34 settled that: guarding every tail match costs about a second on
+/// essentially every auto-fire, and `RefMatch::is_provisional` already owns the
+/// "the verse number has not arrived yet" case at the detection layer. This
+/// function is only about the pause BEFORE any number has been said at all.
+///
+/// ── What it gets wrong, measured rather than guessed ────────────────────────
+///
+/// Rule 10's ordinary English words that are also one-token aliases — `job`,
+/// `song`, `mark` — make this answer true at the end of a sentence that had
+/// nothing to do with scripture. The cost of a wrong yes is bounded and small: a
+/// FINAL waits up to `DANGLING_SILENCE_FINALIZE`, nothing fires, nothing is lost.
+/// `bench::dangling_hold_rate` measures how often it happens on real preaching.
+pub(crate) fn tail_may_be_an_unfinished_reference(text: &str) -> bool {
+    if text.trim().is_empty() {
+        return false;
+    }
+    if crate::detection::detect_direct(text)
+        .iter()
+        .any(|m| m.at_tail)
+    {
+        return false;
+    }
+    let probed = format!("{text} {PROBE_NUMBERS}");
+    crate::detection::detect_direct(&probed)
+        .iter()
+        .any(|m| m.at_tail)
+}
+
 /// A transcript update pushed to the UI. `is_final` marks an utterance closed
 /// by a silence gap; partials update the same in-progress line.
 #[derive(Debug, Clone, Serialize)]
@@ -127,6 +244,15 @@ pub struct TranscriptUpdate {
     pub text: String,
     pub language: String,
     pub is_final: bool,
+    /// **THE UTTERANCE IS STILL GOING — RG-262.** `true` when this final closed
+    /// because the window filled rather than because the speaker stopped.
+    ///
+    /// It is a FINAL for every purpose that keeps text: it is shown, it is
+    /// persisted, and it is not overwritten by the next partial. It is NOT an
+    /// utterance boundary, and the detection side must not treat it as one —
+    /// rule 28's corroboration exemption exists because "no next pass is coming",
+    /// and after a forced close the next pass is coming immediately.
+    pub continued: bool,
     pub timestamp_ms: u64,
     /// The decode pass this text came out of (`latency::begin_pass`). Rides to the
     /// console and on to detection so ONE identifier spans microphone to
@@ -396,15 +522,13 @@ fn worker<F>(
             return;
         }
     };
-    // Leave headroom for the UI/audio threads — pegging every core makes the
-    // macOS main run loop unresponsive (looks like a freeze). Half the cores,
-    // capped, is plenty for the base model.
-    let cores = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4);
-    let threads = (cores / 2).clamp(1, 4) as i32;
+    let threads = decode_threads();
 
     let mut window: Vec<f32> = Vec::with_capacity(TARGET_RATE as usize * WINDOW_SECS);
+    // Audio that arrived with no room left in the window (RG-262). It starts the
+    // next window rather than being drained off the front of this one.
+    let mut carry: Vec<f32> = Vec::new();
+    let mut force_close = false;
     let max_window = TARGET_RATE as usize * WINDOW_SECS;
     let mut new_since_step = 0usize;
     // Cadence, and the measurement that drives it. Starts at the old fixed second
@@ -413,6 +537,13 @@ fn worker<F>(
     let mut step_samples = STEP_SAMPLES;
     let mut decode_ema_ms = 0.0f32;
     let mut silence_run = 0u32;
+    // RG-284. Did the LAST decode of this still-open window end on something that
+    // could be the first half of a reference? Recomputed once per decode, never per
+    // chunk: the decoder's thread decodes (rule 33), and this is the cheapest place
+    // the answer can be had — the text is already in hand and nothing else on the
+    // path needs it. Cleared at every window boundary, because the next window's
+    // text is not known until it has been decoded.
+    let mut tail_may_be_unfinished = false;
     // Timestamp of the newest chunk seen. Now that a batch is drained before any
     // decode, this must persist ACROSS batches — a batch of purely-overlapping
     // chunks assigns nothing, and the last real timestamp is still the right one.
@@ -432,7 +563,12 @@ fn worker<F>(
     // nothing about the word at the front of the batch, which waited longer and is
     // the one the operator is looking for. A latency report should describe the
     // word that waited longest, not the one that waited least.
+    // In a window, and undecoded. RG-137: audio that never enters a window is never
+    // transcribed, so it was never waiting for anything — see the stamping site.
     let mut oldest_pending_us: Option<u64> = None;
+    // The same question for the audio held back in `carry`, which is waiting for the
+    // NEXT window and must not have its stamp reset by this window's decode.
+    let mut carry_oldest_us: Option<u64> = None;
     let mut voice_opened_us: Option<u64> = None;
 
     // How far behind real time we have been running. Only used to warn.
@@ -477,9 +613,6 @@ fn worker<F>(
         for chunk in std::iter::once(first).chain(rx.try_iter()) {
             drained += 1;
             last_ts_ms = chunk.timestamp_ms;
-            if oldest_pending_us.is_none() {
-                oldest_pending_us = Some(chunk.received_at_us);
-            }
 
             if chunk.is_voice {
                 // The gate opening on an empty window IS the start of an
@@ -509,7 +642,12 @@ fn worker<F>(
             // End of utterance: a real run of silence, with something to close. Tested
             // here — before any `continue` below — so a chunk that happens to be fully
             // overlapping cannot skip past the check and swallow the finalize.
-            if silence_run >= SILENCE_FINALIZE && !window.is_empty() {
+            //
+            // HOW LONG THAT RUN HAS TO BE IS NOT A CONSTANT (RG-284). A pause after a
+            // dangling book name is a preacher finding the page, not the end of the
+            // sentence, and finalizing there clears the window and separates the book
+            // from its chapter and verse for good. `finalize_after` owns that choice.
+            if silence_run >= finalize_after(tail_may_be_unfinished) && !window.is_empty() {
                 want_final = true;
             }
 
@@ -555,10 +693,38 @@ fn worker<F>(
                 continue; // fully overlapping — nothing new
             }
             let resampled = resample_linear(new_slice, chunk.sample_rate, TARGET_RATE);
-            window.extend_from_slice(&resampled);
-            if window.len() > max_window {
-                let drop = window.len() - max_window;
-                window.drain(..drop);
+            // RG-262. A window with no room left is CLOSED rather than drained:
+            // the audio that will not fit is held back and starts the next one,
+            // so the text of what has already been heard is emitted and kept
+            // instead of falling off the front unsaid.
+            // ── WHEN THIS CHUNK STARTED WAITING FOR THE DECODER (RG-137) ──────
+            //
+            // Here, and nowhere earlier, because here is where the audio actually
+            // enters something whisper will read. The stamp used to be taken from
+            // the first chunk of the batch, before both `continue`s above — so room
+            // tone skipped for arriving at an empty window set it, and then survived
+            // every batch that produced no decode, which in a quiet church is all of
+            // them. Measured through the real worker on real church audio: the stamp
+            // was **107,801 ms** old on a pass whose window held 1,000 ms of audio.
+            // Nothing had waited 107 seconds; the audio it named was never
+            // transcribed at all. Rule 31's own fourth honesty rule — a gap with no
+            // voiced audio in it is silence, not cadence — applied to the cadence
+            // metric and to nothing else, and this is the same mistake one stage
+            // upstream.
+            if window_is_full(window.len(), resampled.len(), max_window) {
+                force_close = true;
+                // Audio that will not fit is still waiting, in `carry`, and it starts
+                // the next window (RG-262) — so its stamp has to survive this
+                // window's decode rather than being reset with the rest.
+                if carry.is_empty() {
+                    carry_oldest_us = Some(chunk.received_at_us);
+                }
+                carry.extend_from_slice(&resampled);
+            } else {
+                if oldest_pending_us.is_none() {
+                    oldest_pending_us = Some(chunk.received_at_us);
+                }
+                window.extend_from_slice(&resampled);
             }
             new_since_step += resampled.len();
 
@@ -574,40 +740,62 @@ fn worker<F>(
 
         // ONE decode per batch. `final` wins: the speaker has stopped, and the
         // finalized text is what the console keeps.
-        if !want_final && !want_step {
+        // A FORCED CLOSE IS A DECODE, whatever the cadence says. The window is
+        // full; waiting for the next step would mean draining it after all.
+        if !want_final && !want_step && !force_close {
             continue;
         }
-        let is_final = want_final;
+        // AND IT IS A FINAL, because the window really is closing: the text has
+        // to be kept, and a partial is a line that gets overwritten. It is NOT
+        // the end of what the preacher is saying, and `continued` is how the
+        // detection side is told the difference (RG-262).
+        let is_final = want_final || force_close;
+        let continued = force_close && !want_final;
         let started = std::time::Instant::now();
         let window_ms = window.len() as u64 * 1000 / TARGET_RATE as u64;
-        let trace = crate::latency::begin_pass(
-            oldest_pending_us.unwrap_or_else(crate::latency::now_us),
-            voice_opened_us,
-        );
+        // How long the oldest undecoded audio in this window waited for the decoder.
+        // Reported beside the decode rather than added to it: `audio_to_partial` is
+        // the sum of the two and a sum cannot say which addend moved (RG-137).
+        //
+        // `None` when this pass re-decodes a window nothing new went into — every
+        // sample in it has been through whisper before, so there is no waiting audio
+        // to report and the recorder is told that rather than being handed a zero.
+        let wait_ms =
+            oldest_pending_us.map(|us| crate::latency::now_us().saturating_sub(us) / 1000);
+        let trace = crate::latency::begin_pass(oldest_pending_us, voice_opened_us);
 
         let mut emitted = false;
+        let mut handoff_ms = 0u64;
         if window.len() >= MIN_SAMPLES {
             let lang_opt = lang.lock().ok().and_then(|g| g.clone());
             let prompt_opt = prompt.lock().ok().and_then(|g| g.clone());
-            if let Some((text, detected)) = transcribe(
+            let said = transcribe(
                 &mut state,
                 &window,
                 threads,
                 lang_opt.as_deref(),
                 prompt_opt.as_deref(),
                 DECODE,
-            ) {
+            );
+            // ── EVERY DECODE IS COUNTED, INCLUDING THE ONES THAT SAID NOTHING ──
+            //
+            // RG-137. One call, at the choke point, before the outcome is branched
+            // on (rule 36). `decode_us` used to be written only inside the arm
+            // below, so a pass whose decode returned `[BLANK_AUDIO]` — or whose
+            // text the script guard refused — contributed no `stt_decode` sample
+            // at all. Service 16 printed 4,416 passes and recorded 4,046, and the
+            // 11,651 ms this row has been chasing was a 20,977 ms LAG over all
+            // 4,416 minus a 9,326 ms worst decode over 4,046 of them.
+            let decode_us = started.elapsed().as_micros() as u64;
+            crate::latency::decode_finished(trace, decode_us, window_ms, drained);
+            if let Some((text, detected)) = said {
                 // Stamp BEFORE handing the text on. `on_update` is the whole
                 // downstream pipeline — detection, the router, the wall — and a
                 // transcript stamp taken after it would fold every one of those
                 // costs into "how long whisper took", which is the exact
                 // misattribution this module exists to end.
                 crate::latency::transcript_emitted(
-                    trace,
-                    started.elapsed().as_micros() as u64,
-                    window_ms,
-                    drained,
-                    is_final,
+                    trace, decode_us, window_ms, drained, is_final,
                     // RG-118. The worker's own voiced count decides whether the gap
                     // this pass closes was speech or a pause: silent chunks are
                     // appended to a window that has not closed (see the comment
@@ -616,13 +804,28 @@ fn worker<F>(
                     voiced,
                 );
                 emitted = true;
+                // RG-284. Ask ONCE per decode, before the text is handed on, so a
+                // pause arriving in the very next chunk is judged against words
+                // that have actually been decoded.
+                tail_may_be_unfinished = tail_may_be_an_unfinished_reference(&text);
+                // RG-137. Rule 33 allows exactly one thing on this thread besides the
+                // decode — the `stt://transcript` emit inside `on_update` — and until
+                // now nothing measured it. It is the only part of a pass that could
+                // block for seconds with every latency metric reading normal, because
+                // `transcript_emitted` is stamped deliberately BEFORE it. A decoder
+                // held here is a decoder that is not decoding.
+                let handed = std::time::Instant::now();
                 on_update(TranscriptUpdate {
                     text,
                     language: detected,
                     is_final,
+                    continued,
                     timestamp_ms: last_ts_ms,
                     trace_id: trace,
                 });
+                let handoff_us = handed.elapsed().as_micros() as u64;
+                handoff_ms = handoff_us / 1000;
+                crate::latency::transcript_handed_off(trace, handoff_us);
             }
         }
         // A pass that produced no text reaches no further stage. Retire it now, so
@@ -630,14 +833,49 @@ fn worker<F>(
         // evicts it.
         if !emitted {
             crate::latency::close(trace);
+            // AND IF IT ALSO CLOSED THE WINDOW, THE UTTERANCE IS OVER AND ONLY THE
+            // WORKER KNOWS (RG-137, completing RG-118). `transcript_emitted` is the
+            // only writer of the cadence guard's two answers, and it is not called on
+            // a pass whose decode returned nothing — a blank window, a hallucination
+            // the script guard refused, or a closing window under `MIN_SAMPLES` that
+            // is never decoded at all. The recorder then went on believing the
+            // pipeline was mid-utterance, and timed the silence that followed as
+            // cadence, however long it was.
+            if is_final && !continued {
+                crate::latency::utterance_closed(voiced);
+            }
         }
         new_since_step = 0;
         oldest_pending_us = None;
         if is_final {
+            // THE HOLD DOES NOT SURVIVE THE WINDOW IT WAS HELD FOR (RG-284). This
+            // covers both closes: a real stop, and a forced close whose `carry`
+            // starts the next window with audio nothing has decoded yet. Claiming
+            // a dangling book name in text that has not been produced would hold
+            // the NEXT window on the strength of the last one.
+            tail_may_be_unfinished = false;
             window.clear();
-            // The utterance is closed; the next voiced chunk starts a new one.
-            voice_opened_us = None;
+            // THE AUDIO THAT WOULD NOT FIT STARTS THE NEXT WINDOW (RG-262).
+            // Held back rather than dropped, which is the whole of the change:
+            // before this the same samples were drained off the front and their
+            // words were never said in any line anybody kept.
+            if !carry.is_empty() {
+                window.extend_from_slice(&carry);
+                carry.clear();
+                // It has been waiting since it arrived, not since this line. Taking
+                // the stamp with the samples is the difference between a reported
+                // wait and a reported nothing (RG-137).
+                oldest_pending_us = carry_oldest_us.take();
+            }
+            // A FORCED CLOSE DOES NOT END THE UTTERANCE. The preacher is still
+            // speaking; only the window ended, so the voice stays open and the
+            // latency trace goes on measuring the same breath.
+            if !continued {
+                // The utterance is closed; the next voiced chunk starts a new one.
+                voice_opened_us = None;
+            }
         }
+        force_close = false;
 
         // Whisper cannot keep up with the preacher on this machine. Say so ONCE,
         // with the numbers — a transcript that silently runs late is the hardest
@@ -671,19 +909,37 @@ fn worker<F>(
                 // this form. It used to name three millisecond figures and nothing
                 // else, so an operator who followed it landed on `ggml-base`, which is
                 // the configuration that produced four wrong verses in 85.5 minutes on
-                // 2026-09-06 (`docs/qa/audits/FIELD-2026-09-06.md` §3, RG-116). A
+                // 2026-09-06 (`docs/qa/audits/FIELD.md` §3, RG-116). A
                 // speed setting that is really an accuracy setting must say so at the
                 // point where it is offered. `small` is named because rule 32 makes it
                 // free: 153ms rounds to the same single 200ms chunker hop that base's
                 // 59ms does, so it costs no cadence at all.
-                "Switch to a smaller model in Settings -> Speech, and prefer `small`: at \
-                 ~153ms it rounds to the same 200ms cadence step as `base` at ~59ms, so \
-                 it is the larger model for the same speed (`large-v3-turbo` ~602ms per \
-                 window; measured on an M4 Pro with Metal). A SMALLER MODEL CAN COST \
-                 ACCURACY, and Relay has never measured how much: in one field service \
-                 `large-v3-turbo` auto-fired 3 of 3 references correctly and `ggml-base` \
-                 5 of 9, putting four wrong verses on the output. That is one sample per \
-                 model and not a ranking, and it is the only accuracy evidence there is."
+                // **THIS NO LONGER RECOMMENDS A MODEL, AND THAT IS THE CHANGE** (RG-116,
+                // 2026-09-29). It used to say *"prefer `small`"* on the cadence
+                // argument, which is still sound — 153ms and 59ms round to the same
+                // single 200ms hop — beside the sentence *"Relay has never measured how
+                // much"*. That sentence is now false, and the measurement argues with
+                // the recommendation it sat under: over 200s of real preaching with six
+                // hand-labelled references and five signal conditions,
+                // `stt::bench::engine_shootout` found `large-v3-turbo` 8 of 30, `base`
+                // 2, and **`small` none at all**. One slice of one service on one
+                // machine is not a ranking — which is exactly why this states the trade
+                // and lets the operator choose, rather than pointing at a model whose
+                // only accuracy evidence is zero.
+                "Switch to a smaller model in Settings -> Before the service if the \
+                 transcript \
+                 falling behind is the bigger problem — and know what it costs. \
+                 CADENCE: `base` ~59ms and `small` ~153ms both round to the same single \
+                 200ms chunker hop, so they update at the same rate, while \
+                 `large-v3-turbo` at ~602ms takes four hops and updates about a quarter \
+                 as often (measured on an M4 Pro with Metal). ACCURACY, measured at last \
+                 and on ONE service only: over 200s of real preaching with six \
+                 references and five signal conditions, `large-v3-turbo` found 8 of 30, \
+                 `base` 2 of 30, and `small` NONE. In a separate field service \
+                 `large-v3-turbo` auto-fired 3 of 3 correctly and `base` 5 of 9, putting \
+                 four wrong verses on the output. Word error rate has still never been \
+                 measured in any language. So a smaller model is a real trade and not a \
+                 free one, and the evidence does not point at `small`."
             };
             eprintln!(
                 "stt: decode {decode_ms}ms for a {window_ms}ms window on {threads} threads — \
@@ -697,12 +953,24 @@ fn worker<F>(
             // Wall time from the newest chunk landing in this worker to the transcript
             // being emitted. `gap` is the cadence — how long the operator waits between
             // one transcript update and the next, which is the thing they actually feel.
+            //
+            // `wait` and `handoff` are the two pieces of LAG that are not the decode,
+            // and they are printed because LAG alone could not say which it was:
+            // service 16's log held a **20,977 ms** LAG against a **9,326 ms** worst
+            // decode, so at least 11,651 ms of one pass was spent somewhere this line
+            // did not name (RG-137).
             let lag_ms = batch_at.elapsed().as_millis() as u64;
             let gap_ms = last_emit.elapsed().as_millis() as u64;
+            // `none` rather than `0`: this pass had no audio waiting for the decoder,
+            // which is not the same fact as audio that waited no time at all.
+            let wait = match wait_ms {
+                Some(ms) => format!("{ms}ms"),
+                None => "none".to_string(),
+            };
             eprintln!(
                 "stt: LAG={lag_ms}ms decode={decode_ms}ms gap_since_last_emit={gap_ms}ms \
                  window={window_ms}ms drained={drained} voiced={voiced} silent={silent} \
-                 final={is_final}"
+                 final={is_final} wait={wait} handoff={handoff_ms}ms emitted={emitted}"
             );
         }
         last_emit = std::time::Instant::now();
@@ -933,14 +1201,75 @@ fn is_latin_letter(c: char) -> bool {
     )
 }
 
-fn transcribe(
-    state: &mut whisper_rs::WhisperState,
-    audio: &[f32],
-    threads: i32,
-    lang: Option<&str>,
-    prompt: Option<&str>,
+/// HOW MANY THREADS ONE DECODE MAY USE.
+///
+/// Leave headroom for the UI/audio threads — pegging every core makes the macOS main
+/// run loop unresponsive (looks like a freeze). Half the cores, capped, is plenty for
+/// the base model.
+///
+/// A function rather than the four lines it replaces, because a bench that measured
+/// decode cost on a DIFFERENT thread count than the worker uses would be quoting a
+/// number about nothing (RG-137). `decoder_tail` calls this.
+fn decode_threads() -> i32 {
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+    (cores / 2).clamp(1, 4) as i32
+}
+
+/// THE TEMPERATURE THE DECODER STARTS AT, and the step it falls back by.
+///
+/// **This pair is what the decoder's tail costs, and it must not be set to zero to
+/// make the tail go away — RG-137, rule 34.** `temperature_inc > 0` is what turns
+/// one decode into a LADDER: whisper.cpp builds `[0.0, 0.2, ... 1.0]` and re-decodes
+/// the same window at the next temperature whenever the best sequence came out
+/// below `logprob_thold` and whisper did not already think the room was silent
+/// (`whisper.cpp`, `whisper_full_with_state` - the `for it in temperatures` loop and
+/// the `success = false` branch under it). With `best_of: 1` every rung costs about
+/// what the first one did, so a hard window costs up to `max_decode_attempts()`
+/// times a median one, and that is the whole of the 3.9x outlier this row chased
+/// through the queue, the drain loop and the hand-off before measuring the decoder.
+///
+/// Setting `TEMPERATURE_INC` to 0.0 removes the ladder and the tail with it. It also
+/// removes the only thing that re-rolls an incoherent decode, which is why the
+/// guards below exist at all: a quiet church produced confident nonsense, in
+/// languages nobody in the room spoke. Faster by less safe is rule 34, and the tail
+/// is the price of the guard rather than a fault in the pipeline.
+const TEMPERATURE: f32 = 0.0;
+const TEMPERATURE_INC: f32 = 0.2;
+
+/// How many times whisper may decode ONE window before it ships what it has - the
+/// length of the temperature ladder above, DERIVED rather than written down, so the
+/// number quoted in an audit and the number the decoder runs cannot drift.
+///
+/// Test-only, because nothing in the running product needs to know: the ladder is
+/// whisper's business. It exists so the bench and the audit quote a DERIVED number
+/// rather than a written-down one that goes stale the day a constant moves.
+#[cfg(test)]
+fn max_decode_attempts() -> u32 {
+    if TEMPERATURE_INC <= 0.0 {
+        return 1;
+    }
+    let mut n = 0u32;
+    let mut t = TEMPERATURE;
+    while t < 1.0 + 1e-6 {
+        n += 1;
+        t += TEMPERATURE_INC;
+    }
+    n
+}
+
+/// THE SHIPPED DECODE PARAMETERS, in ONE place.
+///
+/// Extracted from `transcribe` for RG-137 so a bench can measure what SHIPS rather
+/// than a second copy of this block that drifts from it. `decoder_tail` builds these
+/// and changes exactly one field, which is what makes its answer about Relay.
+fn decode_params<'a, 'b>(
     decode: Decode,
-) -> Option<(String, String)> {
+    threads: i32,
+    lang: Option<&'a str>,
+    prompt: Option<&'b str>,
+) -> FullParams<'a, 'b> {
     let mut params = FullParams::new(decode.strategy());
     params.set_language(lang); // None → whisper auto-detects
                                // Bias the decoder toward scripture vocabulary (book names + church terms)
@@ -973,8 +1302,8 @@ fn transcribe(
     params.set_no_speech_thold(0.6);
     // Temperature fallback: if a decode comes out incoherent, re-roll it hotter
     // rather than shipping it. Without an increment there is no fallback at all.
-    params.set_temperature(0.0);
-    params.set_temperature_inc(0.2);
+    params.set_temperature(TEMPERATURE);
+    params.set_temperature_inc(TEMPERATURE_INC);
     // Reject decodes that are too uncertain (logprob) or too chaotic (entropy) —
     // hallucinated runs score badly on both.
     params.set_logprob_thold(-1.0);
@@ -983,7 +1312,18 @@ fn transcribe(
     params.set_print_progress(false);
     params.set_print_realtime(false);
     params.set_print_timestamps(false);
+    params
+}
 
+fn transcribe(
+    state: &mut whisper_rs::WhisperState,
+    audio: &[f32],
+    threads: i32,
+    lang: Option<&str>,
+    prompt: Option<&str>,
+    decode: Decode,
+) -> Option<(String, String)> {
+    let params = decode_params(decode, threads, lang, prompt);
     if state.full(params, audio).is_err() {
         return None;
     }
@@ -1533,6 +1873,199 @@ mod deoverlap_tests {
         }
     }
 
+    /// FOUR FIFTHS OF A SERMON WAS NEVER WRITTEN DOWN — RG-262.
+    ///
+    /// The operator: *"make the live transcript capture everything being said
+    /// without hiding or dismissing any part"*. The loss was not in the store
+    /// (uncapped since 2026-09-20), not in the card (a paint budget that grows on
+    /// scroll) and not in the database (every final is kept). It was here: the
+    /// window drained its front, `transcribe` decodes the whole window, so a
+    /// final carried the last eight seconds of an utterance and nothing before.
+    ///
+    /// **Measured in a real database rather than argued.** Across 982 rows of the
+    /// author's own services no line exceeds 160 characters — that ceiling IS the
+    /// eight-second window, visible in the data — and service 24, ninety three
+    /// minutes of preaching, produced 9,987 characters in total.
+    #[test]
+    fn a_full_window_closes_rather_than_dropping_what_it_cannot_hold() {
+        let max = TARGET_RATE as usize * WINDOW_SECS;
+
+        // Room left: the audio goes in.
+        assert!(!window_is_full(0, 1000, max));
+        assert!(!window_is_full(max - 1000, 1000, max));
+
+        // NO ROOM: the window closes. The old rule made room by draining the
+        // front, and the words in those samples were never said in any line
+        // anybody kept.
+        assert!(window_is_full(max, 1, max));
+        assert!(window_is_full(max - 999, 1000, max));
+    }
+
+    /// **A PAUSE AFTER A BARE BOOK NAME IS NOT THE END OF THE SENTENCE — RG-284.**
+    ///
+    /// The operator: *"when audio is listening if a scripture is called make sure
+    /// to hear the full bible verse before breaking transcript to keep accuracy …
+    /// when you hear psalms and there is a pause in the voice, wait to hear the
+    /// next couple sentence for any chapter and verse before breaking transcript."*
+    ///
+    /// "Turn with me to Psalms" — the preacher finds the page — "chapter
+    /// twenty-three, verse one." The pause clears `SILENCE_FINALIZE`, the window
+    /// is finalized AND CLEARED, and the two halves land in two different windows:
+    /// one with a book and no numbers, one with numbers and no book. Neither is a
+    /// reference, and nothing downstream can reassemble them — `detection.rs` is
+    /// handed one window at a time.
+    ///
+    /// This is the same failure `SILENCE_FINALIZE`'s own comment records when it
+    /// was raised from 5 to 7 ("the second half of 'Romans chapter eight … verse
+    /// twenty-eight' was being decoded with no memory of the first half"). 1.4 s
+    /// does not cover a preacher turning a page.
+    #[test]
+    fn a_pause_after_a_bare_book_name_holds_the_window_open() {
+        // Nothing that could be the start of a reference: the gap closes the
+        // utterance exactly as it always did. This half must not move.
+        assert_eq!(finalize_after(false), SILENCE_FINALIZE);
+        // A dangling book name: the window is held, so the chapter and verse
+        // arrive in the SAME window the book is in.
+        assert!(finalize_after(true) > SILENCE_FINALIZE);
+        assert_eq!(finalize_after(true), DANGLING_SILENCE_FINALIZE);
+    }
+
+    /// **AND THE HOLD IS BOUNDED, BY A NUMBER WITH A REASON.**
+    ///
+    /// An unbounded wait is a transcript that never arrives. The bound is not a
+    /// taste judgement: a hold long enough to fill the window on its own would
+    /// force-close it (RG-262) before the chapter could arrive, so it would buy
+    /// nothing at all and still delay every FINAL — which carries persistence and
+    /// the spoken commands — behind it.
+    ///
+    /// Put the defect back by raising `DANGLING_SILENCE_FINALIZE` to a window's
+    /// worth of hops and this fails.
+    #[test]
+    fn the_hold_can_never_on_its_own_exhaust_the_window() {
+        let hold_ms = DANGLING_SILENCE_FINALIZE as usize * crate::audio::HOP_MS as usize;
+        let window_ms = WINDOW_SECS * 1000;
+        assert!(
+            hold_ms * 2 < window_ms,
+            "a {hold_ms}ms hold leaves under half of a {window_ms}ms window for the \
+             words on either side of the pause"
+        );
+        const { assert!(DANGLING_SILENCE_FINALIZE > SILENCE_FINALIZE) };
+    }
+
+    /// **AND THE LOOP HAS TO ASK — RG-284.**
+    ///
+    /// The worker owns a whisper state and a channel, so no test drives it. What a
+    /// test CAN hold is that there is exactly ONE place an utterance is closed on
+    /// silence and that it goes through the policy function: a call site comparing
+    /// `silence_run` against `SILENCE_FINALIZE` directly is the hold silently
+    /// deleted, and it would read exactly like the code that was here before.
+    ///
+    /// The same shape as rule 36 — put the check on the one door rather than at the
+    /// call sites — and the scanner asserts what it found before asserting anything
+    /// about it, because a scanner that quietly matches nothing passes everything.
+    #[test]
+    fn the_silence_run_is_judged_in_exactly_one_place() {
+        let src = include_str!("stt.rs");
+        // Split, so the scanner cannot match its own filter — its first version
+        // did, and reported two sites in a file that has one.
+        let needle = concat!("silence_run ", ">=");
+        let sites: Vec<&str> = src
+            .lines()
+            .map(str::trim)
+            .filter(|l| l.contains(needle))
+            .collect();
+        assert_eq!(
+            sites.len(),
+            1,
+            "expected one place to close an utterance on silence, found {sites:?}"
+        );
+        assert!(
+            sites[0].contains("finalize_after("),
+            "the loop closes on a constant and not on the policy: {:?}",
+            sites[0]
+        );
+    }
+
+    /// **WHAT COUNTS AS "COULD BE THE START OF A REFERENCE".**
+    ///
+    /// A book name with nothing after it, in any of the four shipped languages.
+    /// Code-switching is the normal case (CLAUDE.md), so nothing here may assume
+    /// English — and nothing here may hold a window that ends mid-sentence with no
+    /// book name in it.
+    #[test]
+    fn only_a_dangling_book_name_holds_anything() {
+        // ── HOLD ──
+        for t in [
+            "turn with me to psalms",
+            "if you have your bibles open to the book of romans",
+            // §34's dangling verse marker: the grammar committed to a number and
+            // the number has not arrived. That is the same pause, one word later.
+            "turn with me to psalms chapter",
+            // Yorùbá, Swahili, Hausa — the alias table, not an English word list.
+            "e jowo, e si iwe Saamu",
+            "tufungue Zaburi",
+            "mu bude Zabura",
+        ] {
+            assert!(
+                tail_may_be_an_unfinished_reference(t),
+                "should hold the window: {t:?}"
+            );
+        }
+
+        // ── DO NOT HOLD ──
+        for t in [
+            "",
+            "and that is what the lord has done for us",
+            "he went down to the market that afternoon",
+            // A COMPLETE READING AT THE TAIL IS NOT DELAYED. DECISIONS §34 settled
+            // this: guarding every tail match costs ~1s on essentially every
+            // auto-fire. `RefMatch::is_provisional` owns the "the verse number has
+            // not arrived yet" case, at the detection layer, where it belongs.
+            "turn with me to psalms 23",
+            "psalms chapter 23 verse 1",
+            "john 3:16",
+        ] {
+            assert!(
+                !tail_may_be_an_unfinished_reference(t),
+                "should NOT hold the window: {t:?}"
+            );
+        }
+    }
+
+    /// AND A FORCED CLOSE IS NOT AN UTTERANCE END.
+    ///
+    /// Rule 28's corroboration exemption rests on "a FINAL window is exempt — no
+    /// next pass is coming". After a window fills, the next pass is coming
+    /// immediately, because the preacher has not stopped. `continued` is how the
+    /// two are told apart, and `main::handle_transcript` hands
+    /// `is_final && !continued` to the detector for exactly that reason.
+    ///
+    /// Recovering four fifths of a sermon may not cost one of rule 10's, 28's or
+    /// 30's guarantees — rule 34, which this repository has had to write down
+    /// three times.
+    #[test]
+    fn the_transcript_event_can_say_the_speaker_has_not_stopped() {
+        let ended = TranscriptUpdate {
+            text: "and he said unto them".into(),
+            language: "en".into(),
+            is_final: true,
+            continued: false,
+            timestamp_ms: 1000,
+            trace_id: 1,
+        };
+        let filled = TranscriptUpdate {
+            continued: true,
+            ..ended.clone()
+        };
+
+        // BOTH are finals for every purpose that keeps text: shown, persisted,
+        // and never overwritten by the next partial.
+        assert!(ended.is_final && filled.is_final);
+        // Only one of them is a boundary the detector may relax a rule at.
+        assert!(ended.is_final && !ended.continued);
+        assert!(!(filled.is_final && !filled.continued));
+    }
+
     /// THE BUG THIS EXISTS FOR. `audio.rs` emits `CHUNK_MS = 400` every
     /// `HOP_MS = 200` — half of every chunk is the previous chunk. Fed verbatim,
     /// whisper hears every hop twice.
@@ -1780,6 +2313,88 @@ mod tests {
 #[cfg(test)]
 mod bench {
     use super::*;
+
+    /// **WHAT THE HOLD COSTS AND WHAT IT BUYS, ON REAL PREACHING — RG-284.**
+    ///
+    /// `RELAY_TRANSCRIPT_CORPUS=<file> cargo test dangling_hold_rate -- --ignored --nocapture`
+    ///
+    /// One finalized transcript line per line of the file, IN SERVICE ORDER. The
+    /// author's own database produces it:
+    ///
+    /// ```text
+    /// sqlite3 -readonly relay.db -noheader \
+    ///   "select replace(text, char(10), ' ') from transcripts where trim(text) <> '';"
+    /// ```
+    ///
+    /// Two numbers come out, and they answer different questions.
+    ///
+    /// **The cost**: how many FINALS would have been held, each by up to
+    /// `DANGLING_SILENCE_FINALIZE - SILENCE_FINALIZE` hops. A hold fires nothing and
+    /// loses nothing; it postpones persistence and any spoken command in that window.
+    ///
+    /// **The buy**: adjacent lines where the join yields a reference that NEITHER half
+    /// yields. That is the operator's bug, counted in the data rather than argued from
+    /// an example — and it is a SIMULATION, because these lines were produced by a
+    /// pipeline that did not have the hold. Rejoining their text is not the same as
+    /// decoding their audio in one window, which is the other half of the effect and
+    /// needs audio nobody has recorded yet. Do not quote the second number as an
+    /// accuracy improvement.
+    #[test]
+    #[ignore]
+    fn dangling_hold_rate() {
+        let Ok(path) = std::env::var("RELAY_TRANSCRIPT_CORPUS") else {
+            println!("set RELAY_TRANSCRIPT_CORPUS to a file of finalized lines, in order");
+            return;
+        };
+        let body = std::fs::read_to_string(&path).expect("corpus unreadable");
+        let lines: Vec<&str> = body
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .collect();
+
+        let refs = |t: &str| -> Vec<String> {
+            crate::detection::detect_direct(t)
+                .iter()
+                .map(|m| {
+                    format!(
+                        "{} {}:{}",
+                        m.reference.book, m.reference.chapter, m.reference.verse
+                    )
+                })
+                .collect()
+        };
+
+        let probe_start = std::time::Instant::now();
+        let held: Vec<usize> = (0..lines.len())
+            .filter(|i| tail_may_be_an_unfinished_reference(lines[*i]))
+            .collect();
+        let probe_us = probe_start.elapsed().as_micros() as f64 / lines.len() as f64;
+
+        let mut gained = 0usize;
+        for &i in &held {
+            let next = lines.get(i + 1).copied().unwrap_or("");
+            let (a, b) = (refs(lines[i]), refs(next));
+            let joined = format!("{} {next}", lines[i]);
+            if refs(&joined)
+                .iter()
+                .any(|r| !a.contains(r) && !b.contains(r))
+            {
+                gained += 1;
+            }
+        }
+
+        let extra_ms =
+            (DANGLING_SILENCE_FINALIZE - SILENCE_FINALIZE) as usize * crate::audio::HOP_MS as usize;
+        println!(
+            "\n  lines={}  held={} ({:.1}%)  each by up to {extra_ms}ms\n  \
+             adjacent joins that gain a reference={gained}\n  \
+             predicate cost={probe_us:.1}us per decoded line\n",
+            lines.len(),
+            held.len(),
+            held.len() as f64 * 100.0 / lines.len() as f64,
+        );
+    }
 
     /// Word error rate: the number Relay has never had.
     ///
@@ -2886,6 +3501,73 @@ mod adaptive_cadence {
         samples as u64 * 1000 / TARGET_RATE as u64
     }
 
+    /// WHAT THE DRAIN LOOP COSTS WHEN THE QUEUE IS AS DEEP AS IT CAN GET — RG-137.
+    ///
+    /// The row named two candidates for the ~11.6 s of service 16's worst pass that
+    /// the decode could not account for: *"the drain loop (a resample and a memcpy
+    /// per chunk) or the hand-off"*. This is the first of the two, priced.
+    ///
+    /// `LAG` is stamped when `rx.recv()` returns the batch's first chunk and read
+    /// after the decode, so `LAG - decode` is the drain loop and nothing else. On
+    /// 300 s of real church preaching replayed at wall-clock pace through the real
+    /// worker on `large-v3-turbo` (2026-09-28), the worst `LAG - decode` over 98
+    /// logged passes was **1 ms**, with `drained` 5–7 per pass. A field service
+    /// drains 1–16 (`audits/FIELD.md` §4), so this asks the extreme question the
+    /// replay could not: a **full** `STT_QUEUE`, drained in one batch.
+    ///
+    /// Reports rather than asserts a clock — a bench that fails on a busy machine
+    /// gets deleted within a month — but what it reports settles an arithmetic
+    /// question, and an answer in single-digit milliseconds against 11,651 ms is
+    /// not a close call.
+    #[test]
+    #[ignore = "a bench: reports what the deepest possible drain costs"]
+    fn what_the_deepest_drain_costs() {
+        // A real chunker's worth of 48 kHz audio, resampled on the way in exactly
+        // as the worker does it: the live path's chunks are 48 kHz off the device
+        // and `resample_linear` is the per-chunk cost this is about.
+        let secs = STT_QUEUE as f32 * crate::audio::HOP_MS as f32 / 1000.0 + 1.0;
+        let n = (48_000.0 * secs) as usize;
+        let tone: Vec<f32> = (0..n)
+            .map(|i| (i as f32 * 0.02).sin() * 0.2 + (i as f32 * 0.31).sin() * 0.05)
+            .collect();
+        let chunks = crate::audio::chunks_as_captured(&tone, 48_000);
+        let chunks: Vec<_> = chunks.into_iter().take(STT_QUEUE).collect();
+        assert_eq!(
+            chunks.len(),
+            STT_QUEUE,
+            "not enough audio to fill the queue — the bench, not the loop"
+        );
+
+        let mut deoverlap = Deoverlap::default();
+        let mut window: Vec<f32> = Vec::new();
+        let at = std::time::Instant::now();
+        let mut samples = 0usize;
+        for chunk in &chunks {
+            let new_slice = deoverlap.tail(chunk);
+            if new_slice.is_empty() {
+                continue;
+            }
+            let resampled = resample_linear(new_slice, chunk.sample_rate, TARGET_RATE);
+            samples += resampled.len();
+            window.extend_from_slice(&resampled);
+            // The live loop never lets the window past the cap; draining a full
+            // queue therefore recycles it rather than growing without bound.
+            if window.len() > WINDOW_SECS * TARGET_RATE as usize {
+                window.clear();
+            }
+        }
+        let cost = at.elapsed();
+        println!(
+            "\n  drain loop, {} chunks (a FULL STT_QUEUE = {:.1}s of audio):\n    \
+             {:.3} ms total, {} samples resampled\n    \
+             service 16's unexplained residual was 11,651 ms\n",
+            chunks.len(),
+            chunks.len() as f32 * crate::audio::HOP_MS as f32 / 1000.0,
+            cost.as_secs_f64() * 1000.0,
+            samples,
+        );
+    }
+
     /// A fast pairing must not be held to the old fixed second.
     ///
     /// `ggml-base` decodes the window in ~59ms on an M4 Pro with Metal. Waiting a
@@ -3147,13 +3829,30 @@ mod realtime {
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
-    #[test]
-    #[ignore = "needs RELAY_BENCH_WAV and an installed model"]
-    fn live_transcript_latency() {
-        let Some(wav) = std::env::var_os("RELAY_BENCH_WAV") else {
-            eprintln!("set RELAY_BENCH_WAV to a raw/RIFF f32 mono 16k file");
-            return;
-        };
+    /// Replay one file through the real worker at wall-clock pace and hand back the
+    /// report, so a bench that PRINTS and a test that ASSERTS cannot drift into
+    /// describing two different rigs.
+    /// TWO REPLAYS MAY NOT RUN AT ONCE, AND THE DOCUMENTED COMMAND RUNS BOTH.
+    ///
+    /// `latency.rs`'s recorder is one global, and `replay` starts with
+    /// `latency::reset()`. `cargo test --release realtime -- --ignored` — the
+    /// command both tests in this module tell you to use — runs them on separate
+    /// threads, so each reset the other's histograms mid-flight and each loaded its
+    /// own 1.6 GB whisper and competed with it for the GPU. Measured 2026-09-28 on
+    /// one 400 s slice of real church audio: run together, `stt_decode` p50 doubled
+    /// to 2192 ms, one pass logged a 15,476 ms decode that the distribution's own
+    /// 7,408 ms worst says never happened (it was the other run's), and
+    /// `a_silence_is_not_audio_waiting_for_the_decoder` FAILED at 20,749 ms against
+    /// its 15,608 ms ceiling. Run alone, the same worker's worst decode on 300 s of
+    /// the same service is 1,371 ms.
+    ///
+    /// A table that is two runs mixed together looks exactly like a table of one,
+    /// and the test it broke is the one pinning RG-137's stamping artefact — an
+    /// instrument that cries wolf gets its assertion loosened, and then it is not an
+    /// instrument. The unit tests in `latency.rs` already serialise on
+    /// `test_lock()`; these are the two that did not.
+    fn replay(wav: &std::ffi::OsString) -> (crate::latency::Report, f32, usize) {
+        let _one_at_a_time = crate::latency::test_lock();
         let model = default_model_path().expect("no STT model found");
         let pcm = load_f32(&wav.to_string_lossy());
         let secs = pcm.len() as f32 / TARGET_RATE as f32;
@@ -3165,10 +3864,6 @@ mod realtime {
         crate::latency::reset();
         crate::latency::set_enabled(true);
 
-        // Collect what the worker emits, and stamp the render the way the console
-        // does — this rig stands in for the webview, so `audio_to_visible` here is
-        // "audio in the worker → a consumer was handed the text", with no webview
-        // paint in it. The shipped console reports its own paint on top.
         let seen: Arc<Mutex<Vec<(u128, bool)>>> = Arc::new(Mutex::new(Vec::new()));
         let sink = seen.clone();
         let t0 = Instant::now();
@@ -3189,32 +3884,94 @@ mod realtime {
         .expect("load model");
         let tx = engine.sender();
 
-        // The REAL chunker and the REAL voice gate — not a hand-rolled hop. See
-        // `audio::chunks_as_captured`, which exists so a bench cannot drift from
-        // the pipeline it claims to describe.
         let chunks = crate::audio::chunks_as_captured(&pcm, TARGET_RATE);
         let hop = Duration::from_millis(crate::audio::CHUNK_MS as u64 / 2);
         let feed = Instant::now();
         for (i, mut c) in chunks.into_iter().enumerate() {
-            // Wall-clock pacing. Without this the rig hands the worker the whole
-            // sermon at once and measures a queue no room can produce.
             let due = hop * i as u32;
             if let Some(wait) = due.checked_sub(feed.elapsed()) {
                 std::thread::sleep(wait);
             }
-            // Re-stamp: `chunks_as_captured` builds them all up front, so their
-            // arrival times would otherwise all be "when the test started".
             c.received_at_us = crate::latency::now_us();
             if tx.send(c).is_err() {
                 break;
             }
         }
-        // Let the tail drain — the last window still has a decode and a finalize
-        // in front of it.
         std::thread::sleep(Duration::from_secs(3));
         drop(engine);
+        let n = seen.lock().map(|g| g.len()).unwrap_or(0);
+        (crate::latency::report(0), secs, n)
+    }
 
-        let report = crate::latency::report(0);
+    /// AUDIO NOBODY IS WAITING FOR IS NOT LATENCY — RG-137.
+    ///
+    /// `audio_waiting_for_decoder` is the queue in FRONT of whisper, so it is bounded
+    /// by the window the worker is filling: eight seconds of audio, plus whatever the
+    /// last decode cost. It can never legitimately be a minute, because the worker
+    /// never holds a minute of undecoded audio — the 8 s cap makes that impossible.
+    ///
+    /// It used to be. `oldest_pending_us` was stamped from the first chunk of the
+    /// first batch after a decode, before the two `continue`s that skip room tone at
+    /// an empty window and a fully-overlapping chunk, and it then survived every
+    /// batch that produced no decode — which in a quiet church is all of them.
+    /// Measured against the pre-fix worker on 140 s cut from a real service
+    /// (`service-2026-09-25`, a 109 s gap at t=5273 s followed by preaching):
+    /// **107,801 ms** on a pass whose window held 1,000 ms of audio and whose decode
+    /// took 797 ms, and **38,401 ms** on the 40 s gap at t=20472 s. Whether that
+    /// reaches the report at all depends only on whether that particular decode
+    /// returns text, which is the worst property an instrument can have: the same
+    /// silence is a 107-second latency or nothing, by luck.
+    ///
+    /// Give it a file with a long quiet stretch in it. A file of continuous speech
+    /// cannot fail this test, and that is exactly why the two replays in
+    /// `audits/PERF.md` found nothing.
+    #[test]
+    #[ignore = "needs RELAY_BENCH_WAV (include a long silence) and an installed model"]
+    fn a_silence_is_not_audio_waiting_for_the_decoder() {
+        let Some(wav) = std::env::var_os("RELAY_BENCH_WAV") else {
+            eprintln!("set RELAY_BENCH_WAV to a raw/RIFF f32 mono 16k file with a silence in it");
+            return;
+        };
+        let (report, _secs, _n) = replay(&wav);
+        let wait = report
+            .metrics
+            .iter()
+            .find(|m| m.metric == "audio_waiting_for_decoder")
+            .expect("metric");
+        let decode_worst = report
+            .metrics
+            .iter()
+            .find(|m| m.metric == "stt_decode")
+            .and_then(|m| m.worst_ms)
+            .unwrap_or(0.0);
+        assert!(
+            wait.samples > 0,
+            "nothing was measured — is the file silent?"
+        );
+        // The window cap plus one decode plus one chunker hop of slack. Nothing the
+        // worker can legitimately be holding is older than that.
+        let ceiling = (WINDOW_SECS as f64 * 1000.0) + decode_worst + crate::audio::HOP_MS as f64;
+        println!(
+            "  audio_waiting_for_decoder: n={} p50={:?} worst={:?}  ceiling={ceiling:.0}ms",
+            wait.samples, wait.p50_ms, wait.worst_ms
+        );
+        assert!(
+            wait.worst_ms.unwrap_or(0.0) <= ceiling,
+            "the oldest audio waiting for the decoder was reported as {:?} ms, and the \
+             worker cannot hold more than {ceiling:.0} ms of undecoded audio — this is a \
+             silence being counted as a latency (RG-137)",
+            wait.worst_ms
+        );
+    }
+
+    #[test]
+    #[ignore = "needs RELAY_BENCH_WAV and an installed model"]
+    fn live_transcript_latency() {
+        let Some(wav) = std::env::var_os("RELAY_BENCH_WAV") else {
+            eprintln!("set RELAY_BENCH_WAV to a raw/RIFF f32 mono 16k file");
+            return;
+        };
+        let (report, secs, n) = replay(&wav);
         println!(
             "  {:<38} {:>7} {:>8} {:>8} {:>8}",
             "", "n", "p50", "p95", "worst"
@@ -3244,7 +4001,312 @@ mod realtime {
                 println!("  {} per minute: {:?}", m.metric, m.per_minute_mean_ms);
             }
         }
-        let n = seen.lock().map(|g| g.len()).unwrap_or(0);
         println!("\n  {n} transcript updates over {secs:.1}s of audio\n");
+    }
+}
+
+/// **THE DECODER'S OWN TAIL — RG-137.**
+///
+/// This row spent three rounds attributing a 3.9x outlier (`stt_decode` p50
+/// 1,322 ms, worst 5,109 ms on `large-v3-turbo`) to everything in front of the
+/// decoder: the queue in front of whisper, the drain loop, the hand-off, the
+/// subtraction between two metrics. All four were priced and all four were
+/// exonerated — the drain loop is **1 ms**. What was left was the decode itself,
+/// and the one thing nobody had asked was whether a slow decode is slow BECAUSE OF
+/// THE AUDIO IN IT or because of something happening on the machine at that moment.
+///
+/// Those two want opposite responses, so the question has to be settled rather than
+/// reasoned about. This module settles it with three measurements on the same
+/// window, all through `decode_params` — the SHIPPED parameters, not a copy:
+///
+/// 1. **The distribution**, over every window of a long real recording. How often a
+///    tail event happens, and on what window length, is a frequency and needs a
+///    population; a 200 s replay found nothing and a 400 s replay found one.
+/// 2. **The same tail window decoded again, twice.** A cost that reproduces is a
+///    property of the audio. A cost that does not is the host — thermal throttling,
+///    another process on the GPU, a page fault on a 1.6 GB model.
+/// 3. **The same tail window with the temperature ladder OFF.** whisper.cpp
+///    re-decodes a window up to `max_decode_attempts()` times, each rung costing
+///    about what the first did, whenever the result scored below `logprob_thold`
+///    and it did not already believe the room was silent. If a tail window's cost
+///    collapses to roughly the median with `temperature_inc = 0.0`, the tail IS
+///    that ladder, and the ladder is Relay's own hallucination guard.
+///
+/// **Not the pipeline's windowing, deliberately.** The worker's windows depend on the
+/// voice gate and the cadence; this walks the file in fixed `WINDOW_SECS` strides, so
+/// the population is reproducible from the file alone and the same audio is decoded
+/// the same way on every run. Decode cost is a function of the parameters, the model
+/// and the samples, and all three are the shipped ones. What this rig CANNOT tell you
+/// is how often the live worker builds a window like that; `realtime` is for that, and
+/// `RELAY_STT_TIMING=1` prints `decode=` and `window=` per pass beside each other.
+///
+/// ```bash
+/// RELAY_BENCH_WAV=…/service.wav RELAY_MODEL_PATH=…/ggml-large-v3-turbo.bin \
+///   cargo test --release decoder_tail -- --ignored --nocapture
+/// ```
+#[cfg(test)]
+mod decoder_tail {
+    use super::bench::load_f32;
+    use super::*;
+
+    /// A decode this many times the 8-second median is a tail event. Two is
+    /// deliberately low: the question is the SHAPE of the tail, and a threshold set
+    /// at the one outlier already known about would find exactly it.
+    const TAIL_FACTOR: f64 = 2.0;
+
+    /// Window lengths, in samples' worth of seconds. **The live worker does not only
+    /// decode full windows**, and that is the whole reason this is a sweep and not a
+    /// number: a cadence step fires on whatever is in the window at the time, so a
+    /// step taken shortly after a pause decodes a second or two of audio padded to
+    /// whisper's 30-second mel frame. Rule 27 says 8 s and 4 s cost the SAME because
+    /// of that padding, which is a statement about the encoder; the decoder's own
+    /// cost is the number of tokens it generates and how many times it re-rolls
+    /// them, and neither of those is settled by the encoder being flat.
+    const LENGTHS_SECS: [f32; 5] = [0.5, 1.0, 2.0, 4.0, 8.0];
+
+    /// Windows per length. Spread across the whole file rather than taken from one
+    /// stretch, so the population is the recording and not a minute of it.
+    const PER_LENGTH: usize = 80;
+
+    /// How many of the worst windows to re-decode. Each costs three more decodes,
+    /// and the answer does not get truer once the first handful agree.
+    const TAIL_SAMPLES: usize = 5;
+
+    /// How many times to decode ONE unchanging window, to price the host.
+    const REPEATS: usize = 8;
+
+    fn pct(sorted: &[f64], q: f64) -> f64 {
+        if sorted.is_empty() {
+            return 0.0;
+        }
+        let i = ((sorted.len() - 1) as f64 * q).round() as usize;
+        sorted[i]
+    }
+
+    /// One decoded window: where it started, how long it was, what it cost.
+    #[derive(Clone, Copy)]
+    struct Pass {
+        at: usize,
+        len: usize,
+        ms: u64,
+    }
+
+    #[test]
+    #[ignore = "needs RELAY_BENCH_WAV (16 kHz mono f32) and an installed model"]
+    fn what_the_decoder_tail_is() {
+        let Some(wav) = std::env::var_os("RELAY_BENCH_WAV") else {
+            eprintln!("set RELAY_BENCH_WAV to a raw/RIFF f32 mono 16k file of real preaching");
+            return;
+        };
+        let model = default_model_path().expect("no STT model found");
+        let pcm = load_f32(&wav.to_string_lossy());
+        let threads = decode_threads();
+        println!(
+            "\n  model {}\n  audio {:.1}s  threads {threads}  \
+             ladder {} rungs (temperature {TEMPERATURE} += {TEMPERATURE_INC})\n",
+            model.display(),
+            pcm.len() as f32 / TARGET_RATE as f32,
+            max_decode_attempts(),
+        );
+
+        let ctx = whisper_rs::WhisperContext::new_with_params(
+            &model.to_string_lossy(),
+            whisper_rs::WhisperContextParameters::default(),
+        )
+        .expect("load model");
+        let mut state = ctx.create_state().expect("create state");
+
+        // ── 0. THE HOST'S OWN NOISE FLOOR ────────────────────────────────────
+        //
+        // ONE window, decoded `REPEATS` times. The audio, the parameters, the model
+        // and the thread count are identical on every pass, so anything this spread
+        // shows is the machine and nothing else: another process on the GPU, the
+        // cores clocking down, a page fault on 1.6 GB of weights.
+        //
+        // **This is here because it caught something.** Two runs of the sweep below,
+        // same file, same model, same binary, measured the 8 s median at 1,352 ms and
+        // then at 2,258 ms — the second run's MEDIAN above the first run's worst over
+        // 450 windows, which no sampling difference explains. The machine was busy
+        // building and testing during the second. A tail event on a rig is not
+        // evidence about a decoder until this number is beside it.
+        let probe_len = WINDOW_SECS * TARGET_RATE as usize;
+        let probe = &pcm[pcm.len() / 2..pcm.len() / 2 + probe_len.min(pcm.len() / 2)];
+        let mut repeats: Vec<f64> = Vec::new();
+        for _ in 0..REPEATS {
+            let t = std::time::Instant::now();
+            let _ = transcribe(&mut state, probe, threads, None, None, DECODE);
+            repeats.push(t.elapsed().as_millis() as f64);
+        }
+        let spread = repeats.iter().cloned().fold(f64::MIN, f64::max)
+            / repeats.iter().cloned().fold(f64::MAX, f64::min).max(1.0);
+        println!(
+            "  ONE 8 s window decoded {REPEATS}x: {:?}ms\n  spread worst/best {spread:.2}x \
+             — this much of any outlier below is the machine, not the audio\n",
+            repeats.iter().map(|m| *m as u64).collect::<Vec<_>>()
+        );
+
+        // ── 1. THE DISTRIBUTION, BY WINDOW LENGTH ────────────────────────────
+        println!(
+            "  {:>8} {:>7} {:>8} {:>8} {:>8} {:>8}",
+            "window", "n", "p50", "p95", "worst", "blank"
+        );
+        let mut all: Vec<Pass> = Vec::new();
+        let mut reference_p50 = 0.0f64;
+        for secs in LENGTHS_SECS {
+            let len = (secs * TARGET_RATE as f32) as usize;
+            if len < MIN_SAMPLES || pcm.len() < len * 2 {
+                continue;
+            }
+            let stride = (pcm.len() - len) / PER_LENGTH;
+            let mut ms: Vec<f64> = Vec::new();
+            let mut blank = 0usize;
+            for k in 0..PER_LENGTH {
+                let at = k * stride;
+                let w = &pcm[at..at + len];
+                let t = std::time::Instant::now();
+                let said = transcribe(&mut state, w, threads, None, None, DECODE);
+                let took = t.elapsed().as_millis() as u64;
+                if said.is_none() {
+                    blank += 1;
+                }
+                ms.push(took as f64);
+                all.push(Pass { at, len, ms: took });
+            }
+            ms.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let p50 = pct(&ms, 0.5);
+            // The 8 s window is the reference, because that is the one every other
+            // number in this repository was measured on.
+            if (secs - WINDOW_SECS as f32).abs() < f32::EPSILON {
+                reference_p50 = p50;
+            }
+            println!(
+                "  {:>7.1}s {:>7} {:>6.0}ms {:>6.0}ms {:>6.0}ms {:>8}",
+                secs,
+                ms.len(),
+                p50,
+                pct(&ms, 0.95),
+                pct(&ms, 1.0),
+                blank
+            );
+        }
+        assert!(
+            reference_p50 > 0.0,
+            "the 8 s reference window was never decoded"
+        );
+        let ceiling = reference_p50 * TAIL_FACTOR;
+        let tail: Vec<Pass> = all
+            .iter()
+            .copied()
+            .filter(|p| p.ms as f64 > ceiling)
+            .collect();
+        println!(
+            "\n  tail events (> {TAIL_FACTOR}x the {reference_p50:.0}ms 8 s median = \
+             {ceiling:.0}ms): {} of {}\n  what a full ladder would cost: {:.0}ms",
+            tail.len(),
+            all.len(),
+            reference_p50 * max_decode_attempts() as f64,
+        );
+
+        if tail.is_empty() {
+            println!(
+                "  NO WINDOW CROSSED THE TAIL THRESHOLD IN THIS FILE, at any of these \
+                 lengths. That is a result about this recording and this window shape, not \
+                 an absolution of the decoder — the outlier RG-137 is chasing was seen \
+                 through `realtime`, whose windows the voice gate builds. The worst ones \
+                 are still taken apart below, because the shape of the top of a \
+                 distribution is the question even when it did not cross a line."
+            );
+        }
+
+        // ── 2 AND 3. THE SAME WINDOWS AGAIN, AND WITH THE LADDER OFF ─────────
+        //
+        // A cost that reproduces is a property of the audio. A cost that does not is
+        // the host. A cost that collapses with `temperature_inc = 0.0` is the
+        // temperature ladder, which is Relay's own hallucination guard.
+        //
+        // Run on the worst windows whether or not any of them crossed `TAIL_FACTOR`:
+        // a run that reports nothing because nothing was bad enough tells you less
+        // than the same three numbers about the worst thing it did see, and "the top
+        // of this distribution is ordinary" is itself the finding on a quiet machine.
+        let mut worst = all.clone();
+        worst.sort_by_key(|p| std::cmp::Reverse(p.ms));
+        println!(
+            "\n  {:>9} {:>8} {:>9} {:>9} {:>9} {:>11} {:>7}",
+            "at", "window", "first", "again", "again", "no ladder", "rungs"
+        );
+        let mut ratios: Vec<f64> = Vec::new();
+        for p in worst.iter().take(TAIL_SAMPLES) {
+            let w = &pcm[p.at..p.at + p.len];
+            let mut repeat = [0u64; 2];
+            for r in repeat.iter_mut() {
+                let t = std::time::Instant::now();
+                let _ = transcribe(&mut state, w, threads, None, None, DECODE);
+                *r = t.elapsed().as_millis() as u64;
+            }
+            // ONE field changed off the shipped parameters, and this is the change:
+            // no ladder, so whisper decodes the window exactly once.
+            let mut params = decode_params(DECODE, threads, None, None);
+            params.set_temperature_inc(0.0);
+            let t = std::time::Instant::now();
+            let _ = state.full(params, w);
+            let once = t.elapsed().as_millis() as u64;
+            let rungs = if once > 0 {
+                p.ms as f64 / once as f64
+            } else {
+                0.0
+            };
+            ratios.push(rungs);
+            println!(
+                "  {:>8.1}s {:>7.1}s {:>7}ms {:>7}ms {:>7}ms {:>9}ms {:>6.1}x",
+                p.at as f64 / TARGET_RATE as f64,
+                p.len as f64 / TARGET_RATE as f64,
+                p.ms,
+                repeat[0],
+                repeat[1],
+                once,
+                rungs
+            );
+        }
+        let mean = ratios.iter().sum::<f64>() / ratios.len() as f64;
+        println!(
+            "\n  a tail window costs {mean:.1}x what ONE decode of the same window costs, \
+             against a ladder of {} rungs.\n  Near 1.0 and the tail is NOT the ladder and \
+             the host is back in the frame; if `again` swings against `first`, it was never \
+             the audio.\n",
+            max_decode_attempts()
+        );
+    }
+
+    /// THE LADDER IS ON, AND TURNING IT OFF IS NOT A PERFORMANCE FIX — rule 34.
+    ///
+    /// Cheap, no model, runs in CI. `TEMPERATURE_INC = 0.0` would delete whatever
+    /// part of the decoder's tail is the ladder AND the re-roll that stops a quiet
+    /// room being transcribed as confident nonsense, which is the one change
+    /// somebody reading a tail figure is most likely to reach for. Put `0.0` in and
+    /// this fails.
+    #[test]
+    fn the_temperature_ladder_stays_on() {
+        // Asked through `max_decode_attempts()` rather than of `TEMPERATURE_INC`
+        // directly: the constant folds, and clippy is right that an assertion the
+        // compiler can evaluate is not an assertion. The function returns 1 for any
+        // increment at or below zero, so this is the same claim through a door the
+        // optimiser cannot open.
+        assert!(
+            max_decode_attempts() > 1,
+            "the temperature ladder has one rung ({TEMPERATURE} += {TEMPERATURE_INC}), so \
+             whisper.cpp never re-rolls an incoherent decode. That would remove whatever \
+             part of the decoder's tail is the ladder by removing the hallucination guard \
+             that causes it (rule 34, RG-137)."
+        );
+        // The number an audit quotes for the worst case. DERIVED from the two
+        // constants, so a change to either moves it here rather than leaving a stale
+        // figure in a document: 0.0, 0.2, 0.4, 0.6, 0.8, 1.0.
+        assert_eq!(
+            max_decode_attempts(),
+            6,
+            "the ladder changed length — the worst case one window can cost is now {}x a \
+             median decode, and RG-137 in RELAY_GAP says 6",
+            max_decode_attempts()
+        );
     }
 }

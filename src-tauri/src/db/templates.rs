@@ -50,10 +50,26 @@ pub fn get_template(conn: &Connection, id: i64) -> rusqlite::Result<Option<Templ
 /// Delete a template. Any output channel pointing at it is unassigned first so
 /// the foreign key stays valid.
 pub fn delete_template(conn: &Connection, id: i64) -> rusqlite::Result<()> {
+    // EVERY DOOR THAT CAN HOLD A TEMPLATE ID, in one delete (RG-205, 2026-09-21).
+    // This cleared `output_channels` alone. A screen's per-kind look holds a
+    // `NOT NULL REFERENCES templates(id)`, so deleting the template a screen wore
+    // as a look failed with a raw `FOREIGN KEY constraint failed`; and a delete
+    // that succeeded left a pinned cue, the `tpl_<kind>` content looks and the
+    // configured default pointing at a row that was gone, so a Sunday cue
+    // quietly wore something else. The automatic preset retirement already
+    // walks these doors (`ensure_retired_presets_are_gone`); the operator's own
+    // Delete now does too.
     conn.execute(
         "UPDATE output_channels SET template_id = NULL WHERE template_id = ?1",
         [id],
     )?;
+    conn.execute("DELETE FROM channel_looks WHERE template_id = ?1", [id])?;
+    // `plan_items.template_id` and the `tpl_<kind>` / `default_template_id`
+    // settings are deliberately LEFT pointing at the deleted row: they carry no
+    // FK, the resolver degrades a dangling id to the content look, and
+    // `qa::cold_start::deleting_a_template_a_cue_pins_degrades_the_cue_instead_of_breaking_it`
+    // pins that a pinned cue still fires afterwards. Clearing them would erase
+    // the record of what the operator chose; degrading keeps it readable.
     conn.execute("DELETE FROM templates WHERE id = ?1", [id])?;
     Ok(())
 }
@@ -1349,6 +1365,89 @@ pub(super) fn reset_builtin_templates(conn: &Connection) -> rusqlite::Result<()>
         )?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod delete_template_tests {
+    use super::*;
+
+    /// 2026-09-21 · T-2 (RG-205). Deleting a template that was a screen's
+    /// per-kind look failed on `channel_looks.template_id NOT NULL REFERENCES
+    /// templates(id)` with a raw `FOREIGN KEY constraint failed` — the operator's
+    /// Delete button reporting SQL. The look row goes with the template. The
+    /// pinned cue and the settings pointers are deliberately NOT cleared: the
+    /// resolver degrades them to the content look and `qa::cold_start` pins
+    /// that a pinned cue still fires afterwards.
+    #[test]
+    fn deleting_a_template_a_screen_wears_as_a_look_succeeds_and_clears_the_look() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(include_str!("../../../docs/data/schema.sql"))
+            .unwrap();
+        crate::db::settings::ensure_app_settings(&conn).unwrap();
+        let tpl = upsert_template(
+            &conn,
+            &Template {
+                id: 0,
+                name: "Doomed".into(),
+                layout: serde_json::json!({ "layers": [] }),
+                style: serde_json::json!({}),
+                active: false,
+            },
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO output_channels (id, name, render_target, template_id) VALUES (4, 'Lobby', 'network_client', ?1)",
+            [tpl],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO channel_looks (channel_id, kind, template_id) VALUES (4, 'song', ?1)",
+            [tpl],
+        )
+        .unwrap();
+        conn.execute_batch("INSERT INTO service_plans (id, title) VALUES (1, 'Sunday');")
+            .unwrap();
+        conn.execute(
+            "INSERT INTO plan_items (plan_id, position, cue_type, label, template_id) VALUES (1, 0, 'scripture', 'John 3:16', ?1)",
+            [tpl],
+        )
+        .unwrap();
+        crate::db::settings::set_setting(&conn, "tpl_song", &tpl.to_string()).unwrap();
+        crate::db::settings::set_setting(&conn, "default_template_id", &tpl.to_string()).unwrap();
+
+        delete_template(&conn, tpl)
+            .expect("a template that a screen wears as a look can be deleted");
+
+        let looks: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM channel_looks WHERE template_id = ?1",
+                [tpl],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(looks, 0);
+        // Left as they were, on purpose (see the doc comment).
+        let pinned: Option<i64> = conn
+            .query_row(
+                "SELECT template_id FROM plan_items WHERE plan_id = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            pinned,
+            Some(tpl),
+            "the record of the operator's choice survives; the resolver degrades it"
+        );
+        let screen: Option<i64> = conn
+            .query_row(
+                "SELECT template_id FROM output_channels WHERE id = 4",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(screen, None);
+    }
 }
 
 #[cfg(test)]

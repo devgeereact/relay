@@ -371,8 +371,35 @@ describe('§2 · drag reorders on release, and only on release', () => {
   it('drags with pointer events, not with HTML5 drag-and-drop', () => {
     // `dragstart`/`drop` never fire for a pen or a finger, and the browser draws
     // its own ghost instead of moving the row. Fails if either is reintroduced.
-    expect(src).not.toMatch(/on:dragstart|on:dragover|on:drop\b|draggable=/);
+    //
+    // ── NARROWED, 2026-09-20, AND THE NARROWING IS THE POINT ─────────────────
+    //
+    // This used to forbid `on:dragover` and `on:drop` anywhere in the file as
+    // well, which was right while the reorder was the only drag on the surface
+    // and became wrong the moment a FILE could be dropped onto the running order
+    // (Requirement 13). The two are different features that happen to share an
+    // event family: a file dragged in from the operating system fires
+    // `dragenter`/`dragover`/`drop` and never `pointerdown`, so it cannot become
+    // the reorder by accident — but a `dragstart` or a `draggable=` can, and
+    // those are what this test is actually about. They stay banned outright.
+    //
+    // The replacement for the half that was dropped is the assertion below it:
+    // the file listeners live on the LIST and never on a row. A row that took a
+    // drop would be the browser's own drag arriving at the thing the pointer
+    // reorder owns, which is the collision this file exists to prevent.
+    expect(src).not.toMatch(/on:dragstart|draggable=/);
     expect(src).toMatch(/on:pointerdown=\{\(e\) => onGripDown\(/);
+  });
+
+  it('…and the file drop is on the LIST, never on a row', () => {
+    // The seam between the two features. `sp-tablewrap` is the scroller; a
+    // `.sp-row` must carry no HTML5 drag listener at all.
+    const listTag = src.slice(src.indexOf('<div class="rw-panebody sp-tablewrap"'));
+    expect(listTag.slice(0, listTag.indexOf('>'))).toMatch(/on:drop=\{onFileDrop\}/);
+
+    const rowTag = src.slice(src.indexOf('<div class="sp-row"'));
+    const rowAttrs = rowTag.slice(0, rowTag.indexOf('>'));
+    expect(rowAttrs).not.toMatch(/on:drag|on:drop/);
   });
 
   itMounted('lets a keyboard reorder a plan at all', async () => {
@@ -678,4 +705,20 @@ describe('P1/W3 · the rail foot', () => {
   // walk so the six files that DISCUSS these calls are not flagged. A second,
   // weaker copy scoped to one file is how two scanners come to disagree about what
   // they cover, and this repository has had that exact failure twice.
+});
+
+// 2026-09-21 · PL-8 (RG-204). Duplicate called `addPlanItem` alone, and that
+// inserts type, label, payload and template only — so a duplicated countdown
+// lost its five minutes, its timer binding and its screen set. "Duplicate" is a
+// word with a meaning; the three second writes are replayed from the source.
+describe('Duplicate carries the whole cue', () => {
+  it('replays duration, timer and screens after the add', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { resolve } = await import('node:path');
+    const src = readFileSync(resolve(process.cwd(), 'src/lib/views/ServicePlanner.svelte'), 'utf8');
+    const body = src.slice(src.indexOf('async function duplicateCue'), src.indexOf('async function', src.indexOf('async function duplicateCue') + 10));
+    expect(body).toMatch(/setPlanDuration\(newId/);
+    expect(body).toMatch(/setPlanTimer\(newId/);
+    expect(body).toMatch(/setPlanChannels\(newId/);
+  });
 });

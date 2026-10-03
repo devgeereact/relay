@@ -30,6 +30,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { codeOnly } from './codeonly.js';
 
 const src = readFileSync(
   resolve(process.cwd(), 'src/lib/views/templates/TemplateGallery.svelte'),
@@ -40,10 +41,7 @@ const src = readFileSync(
 const body = (() => {
   const from = src.indexOf('async function upgradeLegacyToLayers');
   const to = src.indexOf('\n  }', src.indexOf('finally', from));
-  return src
-    .slice(from, to)
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^\s*\/\/.*$/gm, '');
+  return codeOnly(src.slice(from, to));
 })();
 
 describe('converting the shelf is reversible, visible, and not done mid-service', () => {

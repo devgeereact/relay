@@ -397,3 +397,16 @@ describe('countdownWarning', () => {
     expect(countdownWarning(11_000, countdownTotalMs(noSpan), 120_000)).toBe(true);
   });
 });
+
+// 2026-09-21 · O-9 (RG-201). `layers.js` carried a raw NUL byte in a template
+// literal, so `file(1)` called it `data` and every plain `grep` silently skipped
+// the file that holds output template resolution. A NUL in source is a NUL in
+// the bundle either way; it is written as an escape so the file stays text.
+describe('layers.js is a text file', () => {
+  it('contains no raw NUL byte', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { resolve } = await import('node:path');
+    const bytes = readFileSync(resolve(process.cwd(), 'src/lib/layers.js'));
+    expect(bytes.includes(0)).toBe(false);
+  });
+});

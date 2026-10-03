@@ -199,7 +199,7 @@ describe('the Live search rail', () => {
 
     host.querySelector('.lr-row').dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await tick();
-    host.querySelector('.lr-chip').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    host.querySelector('.cp-chip').dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await tick();
 
     expect(staged).toEqual([['Psalms', 1]]);
@@ -428,20 +428,23 @@ describe('the chapter picker', () => {
 
   const bookRow = (name) =>
     [...host.querySelectorAll('.lr-row')].find((r) => r.querySelector('.lr-n')?.textContent === name);
-  const chips = () => [...host.querySelectorAll('.lr-chip')];
+  const chips = () => [...host.querySelectorAll('.cp-chip')];
 
   it('lays the chapters on a FIXED GRID of equal cells, not a ragged wrap (source)', () => {
     // A SOURCE TEST, labelled as one: jsdom does no layout, so it cannot measure
     // two boxes and compare them. What it CAN hold is the pair of properties
     // that made them ragged — a wrap, and a chip sized by its own label — and it
     // was watched to fail with either of them restored.
-    const css = read('./LiveRail.svelte');
-    const block = css.slice(css.indexOf('.lr-chips {'), css.indexOf('.lr-chip {'));
+    // The grid moved into `ui/ChapterPicker.svelte` (RG-216) so the Library
+    // could mount the same picker rather than grow a copy. The rules did not
+    // move: every property below is the one that made these ragged.
+    const css = read('./ui/ChapterPicker.svelte');
+    const block = css.slice(css.indexOf('.cp-chips {'), css.indexOf('.cp-chip {'));
     expect(block).toContain('display: grid');
     expect(block).toContain('repeat(auto-fill, minmax(');
     expect(block).not.toContain('flex-wrap');
 
-    const chip = css.slice(css.indexOf('.lr-chip {'), css.indexOf('.lr-chip:hover'));
+    const chip = css.slice(css.indexOf('.cp-chip {'), css.indexOf('.cp-chip:hover'));
     // Every cell filled by its grid track — NOT `min-width`, which is what let
     // `50` draw a wider box than `1`.
     expect(chip).toContain('width: 100%');
@@ -450,21 +453,19 @@ describe('the chapter picker', () => {
     expect(chip).toContain('tabular-nums');
   });
 
-  it('the chapter grid says what a press does, where the press happens', async () => {
+  it('the chapter grid no longer carries a standing caption (RG-261)', async () => {
+    // REVERSED, NOT DELETED. This required the caption, on the argument that a
+    // press should say what it does where the press happens. The argument still
+    // holds and the operator overruled the PLACE: a legend standing over a grid
+    // of a hundred and fifty chapters is read once and then never again, and it
+    // was costing a line of the rail every Sunday for a promise nobody was
+    // re-reading. The promise moved to the controls themselves, which is the
+    // case below and is the one that now carries the guarantee.
     mountBooks();
     await settle(0);
     bookRow('Genesis').click();
     await tick();
-
-    const cap = host.querySelector('.lr-chapcap');
-    expect(cap).not.toBeNull();
-    // Browsing opens a chapter in the grid. It is NOT the search half's
-    // sentence, which is true of a hit and false of a chapter: §9 makes a single
-    // press on a search HIT send a verse to the programme. One legend over both
-    // meanings would read the same whether or not a congregation is looking at
-    // something, which is rule 35 on a caption.
-    expect(cap.textContent).toMatch(/no screen changes/i);
-    expect(cap.textContent).not.toMatch(/send/i);
+    expect(document.querySelector('.cp-cap'), 'the caption came back').toBeNull();
   });
 
   it('every chapter says, on itself, that it reaches no screen', async () => {
@@ -515,8 +516,8 @@ describe('the chapter picker', () => {
   });
 
   it('the mark is the rail’s own action and never wears a colour that claims a screen', () => {
-    const css = read('./LiveRail.svelte');
-    const at = css.indexOf(".lr-chip[aria-current='true'] {");
+    const css = read('./ui/ChapterPicker.svelte');
+    const at = css.indexOf(".cp-chip[aria-current='true'] {");
     expect(at).toBeGreaterThan(-1);
     const rule = css.slice(at, css.indexOf('}', at));
     // Steel = the thing being worked on. Amber means ON AIR, amethyst means
@@ -553,5 +554,91 @@ describe('the chapter picker', () => {
     mount();
     await search('ps 23 1');
     expect(host.querySelector('.lr-fire').classList.contains('r-btn')).toBe(true);
+  });
+});
+
+// ── THE SONGS HALF DEBOUNCES TOO, AND FOR THE SAME REASON (RG-300) ──────────
+//
+// The scripture half has carried a 220 ms debounce since it was written, with
+// the reason in a comment above it: "`search_scripture` runs a semantic pass over
+// the corpus and an operator types a reference one character at a time." The
+// songs half is the SAME BOX — one `q`, one `<input>`, two collections — and it
+// had no debounce at all: `$: if (tab === 'songs') loadSongs(q)` fires on every
+// keystroke.
+//
+// Why that costs more than it looks. Tauri runs a `#[tauri::command]` that is not
+// `async fn` ON THE MAIN THREAD, and `search_songs` is one of the 162 sync
+// commands: it takes the app-wide `Db` mutex (`main.rs`) and runs
+// `title LIKE '%…%' OR author LIKE '%…%'` with a correlated `COUNT(*)` subquery
+// per row (`db/songs.rs::query_song_summaries`). On macOS the main thread is the
+// UI run loop, and the lock it wants is the one the detect thread holds while it
+// persists a transcript line or a fire. So a keystroke in this box during a
+// service is a full table scan and a lock wait on the thread that draws the
+// window — thirteen of them for "amazing grace", typed at speed.
+//
+// The second half is a correctness bug rather than a cost: the scripture half
+// checks `asked === q.trim()` before it publishes, precisely so "a slow search
+// must not label itself with a query the operator has since typed past". The
+// songs half assigned whatever came back, so two calls answering out of order
+// left the list showing the OLDER query's results with the newer one in the box.
+describe('the songs half of the rail', () => {
+  /** Type `text` a character at a time, the way an operator does. */
+  async function typeSongQuery(text, gapMs = 20) {
+    const box = host.querySelector('.lr-q');
+    for (let i = 1; i <= text.length; i++) {
+      box.value = text.slice(0, i);
+      box.dispatchEvent(new Event('input'));
+      await new Promise((r) => setTimeout(r, gapMs));
+    }
+  }
+
+  const songCalls = () => invoke.mock.calls.filter((c) => c[0] === 'search_songs');
+
+  it('asks the backend ONCE for a query typed at speed, not once per keystroke', async () => {
+    invoke.mockImplementation(async (cmd) => (cmd === 'search_songs' ? [] : []));
+    mount();
+    host.querySelectorAll('.lr-seg button')[1].click(); // Songs
+    await settle();
+    invoke.mockClear();
+
+    await typeSongQuery('amazing grace'); // 13 characters
+    await settle();
+
+    // One search for the settled query. It was thirteen — one per keystroke —
+    // each a main-thread table scan under the app-wide database lock.
+    expect(songCalls().length).toBe(1);
+    expect(songCalls()[0][1]).toMatchObject({ query: 'amazing grace' });
+  });
+
+  it('a slow answer to a query the operator has typed past does not replace the list', async () => {
+    // Two searches, answered out of order: the first (stale) resolves LAST.
+    const OLD = [{ id: 1, title: 'Old answer', author: '', section_count: 1 }];
+    const NEW = [{ id: 2, title: 'New answer', author: '', section_count: 1 }];
+    let n = 0;
+    invoke.mockImplementation(async (cmd, args) => {
+      if (cmd !== 'search_songs') return [];
+      n += 1;
+      if (n === 1) {
+        await new Promise((r) => setTimeout(r, 260));
+        return OLD;
+      }
+      return NEW;
+    });
+    mount();
+    host.querySelectorAll('.lr-seg button')[1].click();
+    await settle();
+    invoke.mockClear();
+    n = 0;
+
+    const box = host.querySelector('.lr-q');
+    box.value = 'aa';
+    box.dispatchEvent(new Event('input'));
+    await new Promise((r) => setTimeout(r, 240)); // let the first search go out
+    box.value = 'bb';
+    box.dispatchEvent(new Event('input'));
+    await settle(500); // both answers land, the stale one last
+
+    const shown = [...host.querySelectorAll('.lr-row .lr-n')].map((e) => e.textContent.trim());
+    expect(shown).toEqual(['New answer']);
   });
 });

@@ -64,6 +64,21 @@ function mount() {
   return cmp;
 }
 
+/**
+ * Put the Design panel on the TEMPLATE, which is where these controls now live.
+ *
+ * RG-217 moved the template's own two facts out of the layer's property column
+ * and behind their own tab: they answer a different question from everything
+ * above them, and under a long scroll a heading is not a boundary an operator
+ * notices. Nothing about the register itself changed, which is why every
+ * assertion below is untouched.
+ */
+async function templateTab() {
+  await settle();
+  [...host.querySelectorAll('.te-scope button')].find((b) => /template/i.test(b.textContent))?.click();
+  await settle();
+}
+
 describe('the two content-kind registers are told apart', () => {
   beforeEach(() => {
     invoke.mockReset();
@@ -89,7 +104,7 @@ describe('the two content-kind registers are told apart', () => {
     // from `Channels.svelte`'s matrix and from the gallery inspector, both
     // through `setContentTemplate` — still the one writer (DECISIONS §25, §70).
     mount();
-    await settle();
+    await templateTab();
     expect(host.textContent).not.toMatch(/Used for/);
     // No chip grid at all in the Template section: the only `.te-showgrid` left
     // in this component belongs to "Words in this band", which needs a band
@@ -102,7 +117,7 @@ describe('the two content-kind registers are told apart', () => {
 
   it('renders the per-template filter as switches, one per content kind', async () => {
     mount();
-    await settle();
+    await templateTab();
     const switches = [...host.querySelectorAll('.te-showlist [role="switch"]')];
     expect(switches.length, 'one switch per CONTENT_KINDS entry').toBe(5);
     for (const sw of switches) {
@@ -113,7 +128,7 @@ describe('the two content-kind registers are told apart', () => {
 
   it('gives the filter its own section heading, distinct from the Used-for label', async () => {
     mount();
-    await settle();
+    await templateTab();
     const heading = host.querySelector('.te-showsec');
     expect(heading, 'no heading element for the per-template filter').toBeTruthy();
     expect(heading.tagName).toBe('H3');
@@ -127,7 +142,7 @@ describe('the two content-kind registers are told apart', () => {
     // dark in the same click. A switch must go from unset (Shows, because an
     // absent list means everything) to Ignores on ITS OWN row only.
     mount();
-    await settle();
+    await templateTab();
     const rowFor = (label) =>
       [...host.querySelectorAll('.te-showlist [role="switch"]')].find((b) => b.textContent.includes(label));
     const before = [...host.querySelectorAll('.te-showlist [role="switch"]')].map((b) => b.getAttribute('aria-checked'));

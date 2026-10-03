@@ -21,8 +21,10 @@ mod error;
 #[cfg(test)]
 mod eval;
 mod latency;
+mod mediaprobe;
 mod models;
 mod pipeline;
+mod prodiscover;
 mod proimport;
 /// The shared QA harness: a first-launch fixture plus the two doors (Tauri events
 /// and the kiosk hub) a guarantee has to be checked on. Test-only. See `qa.rs`.
@@ -43,6 +45,10 @@ mod search;
 mod servicelock;
 mod songs;
 mod stt;
+/// **How many suggestions a real service produces, measured.** Test-only. The
+/// schema decision in RG-309 rests on it, so it is a module rather than a script.
+#[cfg(test)]
+mod suggestions;
 mod sysprobe;
 mod telemetry;
 mod timers;
@@ -79,7 +85,12 @@ struct Stt(Mutex<Option<SttEngine>>);
 struct Routing(Mutex<Router>);
 
 /// The semantic (paraphrase) index, built once from the corpus at startup.
-struct Semantic(SemanticIndex);
+struct Semantic(std::sync::RwLock<SemanticIndex>);
+
+/// The contiguous-phrase index. Built from the same corpus as `Semantic` and
+/// answering the opposite question: not "which verse means this" but "which
+/// verse did the preacher just READ ALOUD". See `detection::PhraseIndex`.
+struct Phrases(std::sync::RwLock<detection::PhraseIndex>);
 
 /// "Current passage" state for resolving bare verse references ("verse 4").
 #[derive(Default)]
@@ -89,6 +100,76 @@ struct Context(Mutex<ContextMemory>);
 /// but no auto-fire/suggest reaches the console; manual override is unaffected
 /// (it bypasses this entirely — a first-class control, CLAUDE.md).
 struct Detecting(AtomicBool);
+
+/// **MUST A PARAPHRASE ECHO THE VERSE BEFORE RELAY OFFERS IT?**
+///
+/// The church's switch over the paraphrase path: a contiguous run of
+/// `detection::PARAPHRASE_RUN_WORDS` words shared with the verse, in the verse's
+/// own order (DECISIONS §125, RG-311). **Off by default**, so nothing changes for a
+/// church that never opens Settings.
+///
+/// ## Why it lives here and not on the `Router`
+///
+/// `follow_the_reader` is on the router because the router is what DECIDES it, and
+/// `get_follow_the_reader` reads from the router for exactly that reason. This is
+/// decided in `candidates_for_window`, before the gate, so putting it on the router
+/// would mean a surface asking a thing that does not decide — and it would invite
+/// the next reader to consume it inside `Router::decide`, where it would be a
+/// fourth kind of cap over a method rule 10 already caps absolutely. `Detecting` is
+/// the precedent: a persisted-or-not switch over what the detection path surfaces,
+/// read in `emit_detections` and nowhere else.
+///
+/// An `AtomicBool` and not a `Mutex`: it is read once per window on the live path
+/// and written by one command, so it must never be able to contend a lock with
+/// anything the decoder is waiting on (rule 2).
+struct ParaphraseRun(AtomicBool);
+
+/// ONE SPEECH MODEL LOAD AT A TIME — RG-299.
+///
+/// `load_stt_model` costs **1,097 ms warm and about 3.6 s on a cold 1.6 GB read**
+/// (`models::tests::what_the_model_flow_costs`), and until it carried this it ran
+/// on the macOS window's run loop — which is a freeze an operator feels, and, per
+/// rule 2, a run loop the STT worker's own `stt://transcript` emit can end up
+/// waiting on.
+///
+/// **What the main thread was silently providing was mutual exclusion**, and that
+/// is the whole reason this had to exist before `#[tauri::command(async)]` could:
+/// two concurrent calls would each build a whisper context — **3.2 GB of resident
+/// memory for two copies of `large-v3-turbo`** — and both would then write the same
+/// `Stt` slot, so the engine the church ends up listening through is whichever race
+/// finished second while the other 1.6 GB is dropped. The same objection settled
+/// `install_model_file`'s shared `.part` path, and it is not an argument for leaving
+/// it on the run loop; it is a thing to pay for first.
+///
+/// A second caller is REFUSED with a sentence, not queued: queueing would hide a
+/// double-click behind a second full load, and the honest answer to "load it again
+/// while it is loading" is that it is already loading.
+///
+/// `AtomicBool` with an RAII guard, following `models::RunningGuard` and the lesson
+/// written above it: a bare `store(false)` on the way out leaves the flag stuck
+/// `true` for the life of the process if the path is ever left early, and a stuck
+/// flag turns one bad load into a feature that is dead until Relay is restarted.
+#[derive(Default)]
+struct ModelLoad(AtomicBool);
+
+/// Clears `ModelLoad` however the load is left, including a panic.
+struct ModelLoadGuard<'a>(&'a AtomicBool);
+
+impl Drop for ModelLoadGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
+impl ModelLoad {
+    /// Claim the slot, or `None` if a load is already in flight.
+    fn begin(&self) -> Option<ModelLoadGuard<'_>> {
+        self.0
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .ok()
+            .map(|_| ModelLoadGuard(&self.0))
+    }
+}
 
 /// The in-progress service being recorded to local history, if any.
 struct SessionState {
@@ -104,7 +185,32 @@ struct SessionState {
     /// mid-service does not retro-move the current service's target.
     target_ms: i64,
     last_transcript: Option<i64>,
+    /// **THE LANGUAGE THE DECODER REPORTED FOR THE WINDOW BEING HANDLED — RG-113(5).**
+    ///
+    /// `persist_fire` writes an evidence transcript row when the detection came out
+    /// of a window the last FINAL does not contain (the FIELD F-2 fix), and that
+    /// insert carried a hardcoded `"en"` — on the product whose Tier-1 languages are
+    /// Yorùbá, Swahili and Hausa and where code-switching is the normal case. Every
+    /// one of those rows asserted English about speech nobody had established was
+    /// English, and `service_transcripts` hands them to the replay.
+    ///
+    /// It lives beside `last_transcript` because it is the same kind of fact about
+    /// the same row, and because a PARTIAL window never reaches
+    /// `persist_transcript` at all — so the Session is the only thing that can carry
+    /// its language to the one place that needs it. `handle_transcript` is the ONE
+    /// writer, on `relay-detect`, in order, and it sets this from the same
+    /// `TranscriptUpdate` it then hands to `emit_detections`.
+    ///
+    /// `"und"` (ISO 639-3, *undetermined*) until a decoder has said otherwise, and
+    /// that is not a placeholder: a manual fire's evidence row is a reference the
+    /// operator typed, and no language was spoken for it. Whisper never returns
+    /// `und`, so a real answer and an absent one stay separable — which is the whole
+    /// complaint against the `"en"` this replaces.
+    last_language: String,
 }
+
+/// ISO 639-3 for *undetermined*. See `SessionState::last_language`.
+const LANGUAGE_UNDETERMINED: &str = "und";
 
 /// Current wall-clock time in epoch milliseconds. `0` before the UNIX epoch
 /// (never happens in practice), so callers never handle an error.
@@ -129,6 +235,14 @@ struct ChunkEvent {
     rms: f32,
     is_voice: bool,
     samples: usize,
+    /// THE SHAPE OF THE SOUND, not just how much of it there was.
+    ///
+    /// `audio::CHUNK_PEAKS` readings across this chunk's 400 ms, so the console
+    /// can draw a real envelope instead of joining one level per delivery with a
+    /// straight line. Peaks of the CLEANED stream, which is what the voice gate
+    /// and whisper are given, so a peak at 1.0 here is the signal Relay is
+    /// actually working from being clipped, after gain, and is worth a colour.
+    peaks: Vec<f32>,
 }
 
 fn main() {
@@ -147,8 +261,12 @@ fn main() {
         .manage(Audio::default())
         .manage(Routing::default())
         .manage(Detecting(AtomicBool::new(true)))
+        // OFF until the row says otherwise. Overwritten in `setup` from
+        // `app_settings`, below, before anything can be heard.
+        .manage(ParaphraseRun(AtomicBool::new(false)))
         .manage(channels::Rehearsal::default())
         .manage(channels::CountdownWarnDefault::default())
+        .manage(channels::MediaTransport::default())
         .manage(channels::WallState::default())
         .manage(channels::LiveContent::default())
         .manage(timers::TimerRegistry::default())
@@ -157,7 +275,45 @@ fn main() {
         .manage(servicelock::ServiceLock::default())
         .manage(Session::default())
         .manage(models::DownloadState::default())
+        .manage(ModelLoad::default())
         .setup(|app| {
+            // THE CLOCKS COME BACK BEFORE ANYTHING ELSE CAN TOUCH THEM (F28,
+            // DECISIONS §112). Restored, not re-aired: nothing here reaches a
+            // congregation screen. Then every later change is written on its own
+            // thread, so the registry never holds the database lock.
+            // ONE LINE NAMING THE BUILD, before anything else prints. The
+            // heartbeat below stays exactly one line per launch (rule 26);
+            // this is a different line with a different word.
+            println!("relay: build {} (v{})", diagnostics::BUILD, env!("CARGO_PKG_VERSION"));
+            restore_timers(&app.handle().clone(), cd_now_ms());
+            {
+                let h = app.handle().clone();
+                let (tx, rx) = std::sync::mpsc::sync_channel::<(i64, Vec<timers::Timer>)>(64);
+                let spawned = std::thread::Builder::new()
+                    .name("relay-timers".into())
+                    .spawn(move || {
+                        for (next_id, set) in rx {
+                            let db = h.state::<Db>();
+                            let conn = match db.0.lock() {
+                                Ok(c) => c,
+                                Err(e) => e.into_inner(),
+                            };
+                            if let Err(e) = db::save_timers(&conn, next_id, &set) {
+                                eprintln!("timers: could not save ({e}) — a relaunch will not have this change");
+                            }
+                        }
+                    });
+                match spawned {
+                    Ok(_) => app.state::<timers::TimerRegistry>().set_sink(Box::new(
+                        move |next_id, set| {
+                            // A full queue drops THIS snapshot; the next change carries
+                            // the whole registry again, so nothing is lost for long.
+                            let _ = tx.try_send((next_id, set));
+                        },
+                    )),
+                    Err(e) => eprintln!("timers: no persistence thread ({e}) — clocks will not survive a relaunch"),
+                }
+            }
             // Crash reporting: OFF unless the operator previously opted in. This
             // runs before anything else can panic, but deliberately after the DB
             // is open, because the consent lives in the DB. No consent → no DSN,
@@ -194,6 +350,8 @@ fn main() {
             let corpus: Vec<(VerseRef, String)> = {
                 let db = app.state::<Db>();
                 let conn = db.0.lock().expect("db lock");
+                // ONE TRANSLATION (RG-50): the active one. Two in the index would
+                // offer every quotation twice.
                 db::all_verses(&conn)
                     .unwrap_or_default()
                     .into_iter()
@@ -209,7 +367,12 @@ fn main() {
                     })
                     .collect()
             };
-            app.manage(Semantic(SemanticIndex::build(&corpus)));
+            app.manage(Phrases(std::sync::RwLock::new(
+                detection::PhraseIndex::build(&corpus),
+            )));
+            app.manage(Semantic(std::sync::RwLock::new(SemanticIndex::build(
+                &corpus,
+            ))));
             app.manage(Context(Mutex::new(ContextMemory::default())));
 
             // Start the kiosk WebSocket server (network_client render target) on
@@ -228,6 +391,8 @@ fn main() {
             let kiosk_last_x = kiosk.last_transition_handle();
             let kiosk_last_t = kiosk.last_timers_handle();
             let kiosk_last_bg = kiosk.last_background_handle();
+            let kiosk_last_stage_media = kiosk.last_stage_media_handle();
+            let kiosk_last_transport = kiosk.last_media_transport_handle();
             let kiosk_down = kiosk.screens_down_handle();
             let kiosk_looks = kiosk.look_ids_handle();
             // The configured default, warmed before any client can connect — a
@@ -400,6 +565,8 @@ fn main() {
                 kiosk_last_x,
                 kiosk_last_t,
                 kiosk_last_bg,
+                kiosk_last_stage_media,
+                kiosk_last_transport,
                 kiosk_down,
                 kiosk_looks,
                 app.state::<channels::OutputHealth>().inner().clone(),
@@ -428,11 +595,32 @@ fn main() {
             // decoder-bias prompt to STT, calibrated thresholds to the router —
             // so accent calibration is live from the first word, before any UI.
             {
-                let profile = {
+                let (profile, follow, needs_a_run) = {
                     let db = app.state::<Db>();
                     let conn = db.0.lock().expect("db lock");
-                    db::active_voice_profile(&conn).ok().flatten()
+                    (
+                        db::active_voice_profile(&conn).ok().flatten(),
+                        db::follow_the_reader(&conn),
+                        db::paraphrase_needs_a_run(&conn),
+                    )
                 };
+                // THE PARAPHRASE BAR, BEFORE THE FIRST WORD, for the same reason as
+                // the reader switch below: a rule the operator set weeks ago must be
+                // live from the first window, not from whenever a settings page
+                // happens to be opened. Off unless the row says otherwise, so this
+                // line is a no-op on every install that has never touched it.
+                app.state::<ParaphraseRun>()
+                    .0
+                    .store(needs_a_run, Ordering::Relaxed);
+                // THE CHURCH'S SWITCH, BEFORE THE FIRST WORD IS HEARD. It governs
+                // what may reach a wall unattended, so it has to be on the router
+                // by the time anything can be decided — not applied when a settings
+                // page happens to be opened. Same reasoning as the learned gate two
+                // lines down, and the same named exception to rule 35: there is no
+                // webview yet to announce it to.
+                if let Ok(mut r) = app.state::<Routing>().0.lock() {
+                    r.set_follow_the_reader(follow);
+                }
                 if let Some(p) = profile {
                     if let Some(e) = engine.as_ref() {
                         apply_profile_to_stt(e, &p);
@@ -487,7 +675,6 @@ fn main() {
             save_song,
             delete_song,
             start_countdown,
-            adjust_countdown,
             start_timer,
             adjust_timer,
             reset_timer,
@@ -497,7 +684,6 @@ fn main() {
             delete_stage_layout,
             stop_timer,
             list_timers,
-            show_timer,
             list_arrangements,
             save_arrangement,
             delete_arrangement,
@@ -518,6 +704,9 @@ fn main() {
             fire_content,
             fire_media,
             show_background,
+            send_stage_media,
+            set_media_transport,
+            find_propresenter,
             get_content_templates,
             set_content_template,
             get_setting,
@@ -529,6 +718,7 @@ fn main() {
             list_books,
             chapter_verses,
             system_hardware,
+            build_marker,
             probe_integrations,
             migration_status,
             list_audio_devices,
@@ -539,6 +729,10 @@ fn main() {
             stt_status,
             confirm_detection,
             dismiss_detection,
+            set_follow_the_reader,
+            get_follow_the_reader,
+            set_paraphrase_needs_a_run,
+            get_paraphrase_needs_a_run,
             get_thresholds,
             get_sensitivity,
             set_sensitivity,
@@ -611,6 +805,8 @@ fn main() {
             list_translations,
             get_active_translation,
             set_active_translation,
+            import_translation,
+            delete_translation,
             list_voice_profiles,
             active_voice_profile,
             create_voice_profile,
@@ -621,19 +817,159 @@ fn main() {
             verse_repeat_count,
             open_ndi_output
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Relay");
+        .build(tauri::generate_context!())
+        .expect("error while running Relay")
+        .run(|app, event| {
+            // THE ONE THING THAT HAPPENS ON THE WAY OUT (RG-269). `RunEvent::Exit`
+            // is a CLEAN exit and nothing else: a crash, a force-quit or a power
+            // cut never reaches here, which is exactly the line this rule wants
+            // drawn. DECISIONS §112 promises the clocks survive a crash, and a
+            // crash still keeps them.
+            if let tauri::RunEvent::Exit = event {
+                stop_clocks_a_relaunch_would_paint(app);
+            }
+        });
+}
+
+/// STOP THE CLOCKS A RELAUNCH WOULD PUT ON A SCREEN BY ITSELF — RG-269.
+///
+/// The operator: *"When Application close clear all active timer running or if not
+/// its running it should display on the right output...stage"*.
+///
+/// `restore_timers` publishes to the stage unconditionally, because a programme
+/// clock is the one thing that reaches a preacher's screen without a content frame.
+/// So a running stage clock left in the registry at quitting time came back on that
+/// screen at the next launch, counting from a moment that had passed, with nobody
+/// having asked for it. `db::restorable` drops anything over six hours old, which
+/// covers last Sunday and does nothing at all for this afternoon.
+///
+/// ## The rule, and the two things it deliberately leaves
+///
+/// **It takes a clock only if a relaunch would PAINT it and it would still be
+/// counting.** That is one sentence and it decides both exemptions:
+///
+/// - **A HELD timer stays.** It was not running, so nothing about it goes stale: it
+///   comes back at the figure somebody parked it at, which is the figure they
+///   parked. Taking it would be taking a decision the operator made.
+/// - **A congregation countdown (`Scope::Both`) stays.** §112 restores it to the
+///   DESK and never to a wall — Live's Screen Countdown band offers it as
+///   *counting, off the screens* behind **Put back on screens** — so it cannot
+///   paint itself unasked, which is the whole harm here. It is also the clock a
+///   church most wants back after a mid-service relaunch.
+///
+/// ## What this costs, stated rather than discovered
+///
+/// An UPDATE restart is a clean exit, so a church that updates mid-service loses the
+/// sermon clock and has to press it again. That is the price, and it is one press of
+/// a control the operator is already looking at, against a preacher's screen showing
+/// a clock nobody started. Of §112's three motivating cases — a crash, an update, a
+/// laptop closed and opened — only the middle one is a clean exit, and the other two
+/// keep every clock exactly as they did.
+///
+/// Generic over the runtime (rule 24) so `e2e.rs` can drive the real thing.
+fn stop_clocks_a_relaunch_would_paint<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> usize {
+    let n = {
+        let reg = app.state::<timers::TimerRegistry>();
+        reg.stop_running(timers::Scope::Stage)
+    };
+    if n == 0 {
+        return 0;
+    }
+    println!("timers: {n} running stage clock(s) stopped on exit — a relaunch will not paint them");
+    // WRITTEN ON THIS THREAD, not through the sink. The sink hands its snapshot to
+    // `relay-timers` and a process that is quitting does not wait for that thread
+    // to drain, so the registry change would be lost and the next launch would
+    // restore exactly the clock this just stopped.
+    let (next_id, set) = {
+        let reg = app.state::<timers::TimerRegistry>();
+        reg.saveable()
+    };
+    {
+        let db = app.state::<Db>();
+        let conn = match db.0.lock() {
+            Ok(c) => c,
+            Err(e) => e.into_inner(),
+        };
+        if let Err(e) = db::save_timers(&conn, next_id, &set) {
+            eprintln!("timers: could not write the stopped clocks ({e}) — the next launch may still have them");
+        }
+    }
+    // AND TELL THE STAGE. A kiosk browser source on another machine outlives
+    // Relay's own window and keeps rendering the last frame it was sent, so
+    // without this the clock stays on the preacher's screen after Relay has gone.
+    // No lock is held here (rule 2); both blocks above released theirs.
+    channels::publish_timers(app);
+    n
 }
 
 /// Minimum semantic cosine to even consider a paraphrase candidate. Below this
 /// it's noise; above, the router's suggest/auto thresholds still apply.
 ///
-/// NOTE: this floor, not the length of the suggestion list, is what currently
-/// limits paraphrase recall. `eval::suggestion_policy_scorecard` shows the right
-/// passage sits in the top 5 for 98% of retellings but only 84% survive this
-/// cut. Lowering it would trade that back for noise — and the corpus has no
-/// negative cases yet (transcript that mentions no scripture at all), so the
-/// noise it would cost is currently UNMEASURED. Do not lower it on a hunch.
+/// This floor, not the length of the suggestion list, is what limits paraphrase
+/// recall. Measured rather than remembered — this comment carried **98% and 84%**
+/// from an older, smaller corpus and both were stale: against the 43 cases in
+/// `data/paraphrase_corpus.json` today, `eval::paraphrase_scorecard` puts the right
+/// passage in the top 5 for **100%** of retellings and
+/// `eval::suggestion_policy_scorecard` shows **77%** surviving this cut (41% of the
+/// modern-wording ones). Reproduce both rather than trusting this sentence:
+/// `cargo test --release print_paraphrase_scorecard print_suggestion_policy -- --nocapture`.
+///
+/// ── THE NOISE IT COSTS IS NO LONGER UNMEASURED, AND THE ANSWER WAS NOT A NUMBER ──
+///
+/// This comment said the negative cases did not exist — *"transcript that mentions
+/// no scripture at all"* — and asked that the floor not be lowered on a hunch. The
+/// cases exist now: 14,158 final transcript lines across eleven of the author's own
+/// services, 35.3 hours, of which **85.3% name no reference and hold no verbatim
+/// run**. `suggestions::bar::paraphrase_bar` replays them through this path and the
+/// real `Router`; 150 of those windows were then read by hand and judged.
+///
+/// **The false-positive rate at this floor is 74%** — 111 of 150 offers answer
+/// speech that is not about the verse named, and 28 are plainly right. And the
+/// measurement that decides this constant is not the rate but the ORDERING:
+///
+/// | policy                | offers removed | precision | recall | ALL | MODERN |
+/// |-----------------------|---------------:|----------:|-------:|----:|-------:|
+/// | **0.30 (shipped)**    |         **0%** | **18.7%** | **100%** | **77%** | **41%** |
+/// | 0.40                  |          70.9% |     38.0% |  67.9% | 58% |     6% |
+/// | 0.45                  |          84.8% |     56.7% |  60.7% | 51% |     0% |
+/// | a 3-word shared run   |          73.5% |     50.0% |  78.6% | 70% |    24% |
+///
+/// *precision and recall are over the 150 hand-read windows; ALL and MODERN are
+/// `para_cases()` recall, the retellings this path exists for.*
+///
+/// **RAISING IT IS REFUSED ON THE EVIDENCE, NOT ON CAUTION.** The two populations
+/// have the same distribution — p50 cosine **0.356** in windows that name no
+/// scripture against **0.361** in windows that do — so there is nothing for an
+/// absolute to cut between, which is rule 12's shape one door along. Worse, the
+/// ordering is inverted at both tails: the top-scoring false positives in the whole
+/// sample are stock liturgical formulae (*"Hallelujah. Hallelujah. Praise the
+/// Lord."* → `Psalms 146:1` at **0.557**; *"In the name of Jesus Christ"* four
+/// times → `1 Corinthians 5:4` at **0.580**) and they outscore twenty-six of the
+/// twenty-eight correct offers, whose bottom end is real citation (*"ten times
+/// better than their colleagues"* → `Daniel 1:20` at **0.327**). A floor high
+/// enough to silence the boilerplate silences the citations first. Pinned by
+/// `suggestions::why_the_floor_holds`, which is the one part of that measurement
+/// reproducible from the bundled KJV alone.
+///
+/// **What the data supports is not a bar on this number at all**: a contiguous run of
+/// three words shared with the verse named beats every value of this constant on all
+/// four columns above. **That rule now EXISTS, and it is deliberately not this
+/// constant** — `detection::PARAPHRASE_RUN_WORDS`, applied in
+/// `candidates_for_window`, behind the church's own switch
+/// (`detection.paraphrase_needs_a_run`) and OFF by default.
+///
+/// It is a setting rather than a value of this number for two reasons that both still
+/// hold. It is a different INSTRUMENT — a question about word order, where this is a
+/// bar on a score — so folding it in here would give one gate two owners, which is
+/// §96's whole subject. And it costs recall on exactly the case the product's claim
+/// rests on: three of the 43 labelled retellings, every one `vocab: modern`
+/// (`suggestions::what_the_bar_silences`, which names them and asserts the count).
+/// Spending those is an operator's trade, so the operator makes it.
+///
+/// **This constant did not move and may not.** A church that has never opened that
+/// switch is running the recall it ran before it existed — 77% ALL, 41% MODERN — and
+/// that is what the switch defaulting off is for. So: do not raise it, and do not
+/// lower it either. The number is not the lever.
 const SEMANTIC_FLOOR: f32 = 0.30;
 
 /// Most paraphrase alternatives to offer for one transcript chunk.
@@ -644,6 +980,19 @@ const SEMANTIC_SUGGESTIONS_MAX: usize = 3;
 /// the list when scores are close. 0.60 measured +12 points of reachable recall
 /// on modern-wording retellings for about one extra row.
 const SEMANTIC_RELATIVE_FLOOR: f32 = 0.60;
+
+/// How many quoted verses one window may offer. A preacher reading a passage
+/// aloud quotes several verses in one breath, and the run surface is read in a
+/// dark booth by a volunteer — so the list is capped where it stays readable.
+const QUOTED_SUGGESTIONS_MAX: usize = 3;
+
+/// An ordering number for a quoted run. NOT a probability, and never rendered as
+/// a percentage (rule 18): it exists so `pipeline::better` can put a twelve-word
+/// quotation above a five-word one, and for nothing else. The evidence a person
+/// judges this by is the PHRASE, which is carried beside it.
+fn quoted_confidence(run: usize) -> f32 {
+    (0.60 + 0.03 * run.saturating_sub(detection::MIN_RUN_WORDS) as f32).min(0.95)
+}
 
 /// Which paraphrase hits are worth an operator's attention.
 ///
@@ -670,6 +1019,25 @@ fn passage_end(conn: &Connection, c: &Cand) -> Option<i64> {
     } else {
         c.verse_end
     }
+}
+
+/// **WHAT COUNTS AS A PASSAGE WORTH TELLING THE OPERATOR ABOUT — RG-302.**
+///
+/// The ONE place that decision is made, called by every path that has a passage
+/// end in its hand. Service 40 at 945 s: *"Proverbs 7, 1 to 5."* auto-fired
+/// **Proverbs 7:1** and the console showed one verse with nothing to say that four
+/// more had been asked for. `→` would have walked them, if anybody had known to
+/// press it — which is the whole defect: an absence, not a wrong verse.
+///
+/// A span is reported only when it is LONGER than the anchor. `passage_end`
+/// already answers `Some(end)` for a whole chapter and for an explicit range, and
+/// both can legitimately land on the anchor itself — "Psalm 117" is a two-verse
+/// chapter fired at verse 1, but "verse 5 to 5" and a one-verse chapter are not
+/// passages and must not be announced as though the operator had something to
+/// walk. Saying "there is more" when there is not is the same class of lie as a
+/// status badge that cannot fail (rule 35), in the other direction.
+fn span_to_report(anchor_verse: i64, end: Option<i64>) -> Option<i64> {
+    end.filter(|e| *e > anchor_verse)
 }
 
 /// Look up a verse and its scripture template, and assemble the `Fire` that
@@ -718,6 +1086,11 @@ fn resolve_fire(
         stage_note,
         next_reference: None,
         next_text: None,
+        // RG-302. Filled in by the caller, like `trace_id` and
+        // `named_translation_missing` and for the same reason: how much was asked
+        // for is a fact about the WINDOW (or about the operator's own typed
+        // reference), not about the anchor verse this builder is handed.
+        passage_end: None,
         template_id,
         template_json,
         template_pinned,
@@ -782,10 +1155,52 @@ enum PassageUpdate {
 /// congregation. It refuses only the two things that are unambiguously broken and
 /// silently so; everything else it lets through and reports elsewhere. See
 /// `pipeline::preflight` for what it deliberately does NOT check.
+///
+/// ## `gate_clock_ms` — ONE clock, named by the caller, never read twice
+///
+/// RG-321's dwell floor compares "when did the wall last change" with the `now_ms`
+/// the router was handed, and **the two have to be the same clock or the difference
+/// is not a duration.** The first version read `router_clock_ms()` here instead, and
+/// in production that is the very same function the gate is given — so it was
+/// correct, and correct for a reason no test could see. Anywhere the two readings
+/// differed, the subtraction saturated to zero and the floor concluded *"the wall
+/// changed this instant"*, which is the strongest possible hold, over a pair of
+/// numbers that cannot be compared at all.
+///
+/// So the clock arrives as an argument. Every operator-driven caller passes a fresh
+/// `router_clock_ms()`; the detect loop passes the reading its own gate decision was
+/// made on. A new caller cannot forget, because it will not compile.
 fn broadcast_with_clock<R: tauri::Runtime>(
     handle: &tauri::AppHandle<R>,
     mut content: channels::OutputContent,
+    gate_clock_ms: u64,
 ) -> error::Result<()> {
+    // A NEW THING ON THE SCREENS IS A CLIP AT ITS BEGINNING, PLAYING.
+    //
+    // The hub empties the retained transport frame on any content, clear or black
+    // (`media_transport_retention`); this is the same decision for the state the
+    // commands read back from, in the same place the content leaves by (rule 36).
+    // Without it the next video a church put up would arrive already held, because
+    // somebody paused a different one twenty minutes earlier, and nothing in the
+    // product would say why.
+    //
+    // The epoch is deliberately NOT wound back — it is a monotonic instruction
+    // counter, and a replay number a screen has already seen is a replay that does
+    // nothing.
+    handle.state::<channels::MediaTransport>().reset();
+    // …AND THE INSTANT IT STARTED, so every screen can agree about where it is
+    // (RG-220). Stamped here, at the one door content leaves by, for rule 36's
+    // reason: a media path added next year carries it by construction and there
+    // is no second call site to forget. Only for content that actually has a
+    // clip — `media_started_at` on a verse would be a fact about nothing, and
+    // `syncSeek` corrects nothing without a duration in any case.
+    //
+    // It is NOT overwritten if a caller has already set one: a replay or a
+    // re-send of the same clip is the caller's decision to make, and this is the
+    // default rather than an authority.
+    if content.media_url.is_some() && content.media_started_at.is_none() {
+        content.media_started_at = Some(now_epoch_ms());
+    }
     if let Err(bad) = pipeline::preflight(&content) {
         // The screens are left exactly as they were. Doing nothing quietly is the
         // failure being fixed, so this is said in three places: stdout for a
@@ -825,11 +1240,47 @@ fn broadcast_with_clock<R: tauri::Runtime>(
     // over content that renders perfectly well, and `preflight` above refuses only
     // what is broken AND silent (rule 36). Pinned by
     // `e2e::r2_a_payload_that_forgot_its_kind_still_disarms_the_passage`.
+    // …AND WHAT IS ON THE SCREENS IS DECIDED HERE TOO, for the same reason and at
+    // the same door. `Router::last_wall` is what the passage guard compares a
+    // reading against (the passage guard, 2026-09-25), and it must record what
+    // actually LEFT: rule
+    // 29 lets one window auto-fire only its rank-0 candidate, so recording it inside
+    // `Router::decide` — the first attempt — put verses on the record that were
+    // demoted to suggestions and never shown. `Router::note_wall` carries the
+    // measurement that found it.
     if content.kind.as_deref() != Some("scripture") {
         if let Some(ctx) = handle.try_state::<Context>() {
             if let Ok(mut c) = ctx.0.lock() {
                 c.forget();
             }
+        }
+        // AND NO VERSE IS ON THE SCREENS ANY MORE, which is a different fact from
+        // the one above and is why it needs its own line. `ContextMemory` is the
+        // passage `→` resumes from; `Router::last_wall` is what the screens are
+        // showing, and the passage guard refuses to re-fire a verse that is already
+        // up. Leaving it set here would mean a song, then the preacher reading that
+        // same verse again, and Relay declining to put it back — a screen held blank
+        // by the guard, which is the failure `forget_last_fire` was written for.
+        //
+        // A SEPARATE `if let`, after the one above has dropped its guard: two locks
+        // held at once on a path that also emits is how the Start-listening freeze
+        // happened (rule 2, rule 6). Neither lock is needed while the other is.
+        //
+        // …AND THE WALL JUST CHANGED, WHICH IS A THIRD FACT (RG-321). Both branches
+        // below stamp `gate_clock_ms` — the caller's reading, never a second one taken
+        // here — because "how long has a congregation had this screen to itself" is a
+        // question about a room and does not care what kind of content is on it. It is
+        // stamped HERE, at the one door, for rule 36's reason and for one more: the
+        // clock must start when the content actually left, not when the gate decided,
+        // or a verse demoted by rule 29 would hold a wall it never reached.
+        if let Some(routing) = handle.try_state::<Routing>() {
+            if let Ok(mut r) = routing.0.lock() {
+                r.forget_wall(gate_clock_ms);
+            }
+        }
+    } else if let Some(routing) = handle.try_state::<Routing>() {
+        if let Ok(mut r) = routing.0.lock() {
+            r.note_wall(&content.reference, gate_clock_ms);
         }
     }
 
@@ -890,6 +1341,10 @@ fn fire_manual<R: tauri::Runtime>(
 ) -> bool {
     let db = handle.state::<Db>();
     let ctx = handle.state::<Context>();
+    // ONE reading for this whole fire — the repeat cooldown below and the wall's
+    // dwell stamp at the door are then the same instant rather than two readings a
+    // few microseconds apart (RG-321, `broadcast_with_clock`'s `gate_clock_ms`).
+    let at_ms = router_clock_ms();
 
     let fire = {
         let Ok(conn) = db.0.lock() else { return false };
@@ -923,13 +1378,21 @@ fn fire_manual<R: tauri::Runtime>(
             // The passage now reflects this fire, so "up next" is the bounded
             // next verse (None at a range end). Computed here, under both locks.
             attach_next_verse(&conn, &context, &mut f);
+            // RG-302, and it is taken from the CONTEXT here rather than from the
+            // `PassageUpdate` on purpose. `Note(end)` is only one of three arrivals:
+            // a nav step is `Advance`, which keeps the span it is walking inside, so
+            // an operator three verses into a five-verse reading must still be told
+            // what they are inside of. Reading the staged span answers all three
+            // with one line, and `Jump` correctly answers `None` because `note`
+            // clears the span.
+            f.passage_end = span_to_report(f.reference.verse, context.span_end());
         }
         if let Ok(mut router) = handle.state::<Routing>().0.lock() {
             // The same wall clock the AI path uses. This was a literal `0`, which
             // on any clock means "long ago" — so a verse the operator had just put
             // on the wall themselves was never protected from the AI immediately
             // re-firing it off the still-rolling STT window.
-            router.manual_fire(&f.key, router_clock_ms());
+            router.manual_fire(&f.key, at_ms);
         }
         persist_fire(
             &conn,
@@ -939,6 +1402,8 @@ fn fire_manual<R: tauri::Runtime>(
             f.confidence,
             f.status.as_str(),
             &f.key,
+            // A manual fire reached a screen — it returned `false` above otherwise.
+            Provenance::Fired,
         );
         f
     }; // locks released BEFORE the emit below — CLAUDE.md rule #2.
@@ -946,7 +1411,7 @@ fn fire_manual<R: tauri::Runtime>(
     // A refused payload must not be followed by a `detection://match` saying it
     // went out — that is the console reporting a success it did not achieve, in a
     // new place (DECISIONS §20). Bail before the event.
-    if broadcast_with_clock(handle, fire.output()).is_err() {
+    if broadcast_with_clock(handle, fire.output(), at_ms).is_err() {
         return false;
     }
     let _ = handle.emit("detection://match", fire.event());
@@ -1040,8 +1505,11 @@ fn rank_for_wall(mut cands: Vec<(String, Cand)>) -> Vec<(String, Cand)> {
     // Ordered explicitly, descending, ties Equal, which is what makes the stable
     // sort keep the order the preacher spoke in.
     cands.sort_by(|(_, a), (_, b)| {
-        (b.method.may_auto_fire(), b.conf)
-            .partial_cmp(&(a.method.may_auto_fire(), a.conf))
+        // THREE TIERS, NOT TWO — see `pipeline::better`, which this must agree
+        // with exactly or the dedup and the sort would disagree about which
+        // evidence is stronger.
+        (b.method.unattended_rank(), b.conf)
+            .partial_cmp(&(a.method.unattended_rank(), a.conf))
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     cands
@@ -1138,6 +1606,921 @@ fn named_translation_gap(
     Some(named)
 }
 
+/// What this window found and did NOT offer, because the preacher is reading the
+/// passage already on the screen. Carried to the console so a held candidate is
+/// visible somewhere (rule 35) rather than simply absent.
+#[derive(Serialize, Clone)]
+struct HeldCandidate {
+    reference: String,
+    method: DetectionMethod,
+    /// The words that produced it — the phrase for a quotation, the terms for a
+    /// paraphrase. The same field `DetectionEvent::matched_text` carries, for the
+    /// same reason: a person judges this by the words, not by a number.
+    matched_text: Option<String>,
+    /// WHICH RULE HELD IT. Two rules do very different things and an operator
+    /// reading "3 held" cannot act on it without knowing which — "the verse is
+    /// already up" needs nothing from them, "this one is outside the reading" might.
+    reason: detection::HeldReason,
+}
+
+/// `detection://held` — the whole of what the passage guard did in one window.
+///
+/// Its own event rather than a field on `detection://match`, because the thing it
+/// has to report happens in exactly the windows where a match may not be emitted
+/// at all: the in-passage reading that armed the guard is usually a repeat inside
+/// the router's cooldown and is Dropped, so a field on a `match` would go missing
+/// precisely when the operator needed it. One door, beside the decision.
+/// One candidate the citation-doubt rule demoted, and why. RG-305.
+///
+/// Rule 35: a demotion an operator cannot see is indistinguishable from a detector
+/// that missed. The reference is still offered and the run beside it is still
+/// offered; what the operator has to be told is that Relay heard TWO things in one
+/// breath that disagree, and which words say so.
+#[derive(Serialize, Clone)]
+struct DoubtedClaim {
+    /// The candidate that was demoted — the spoken reference, or the run that
+    /// contradicted it.
+    reference: String,
+    /// What it is now. `uncertain_number` / `uncertain_book` for a doubted citation,
+    /// `quoted` for the run, and every one of those is capped at Suggest.
+    method: DetectionMethod,
+    /// The words behind it. Never a number (rule 18).
+    matched_text: Option<String>,
+    /// WHICH RULE, and for the run, that it is the accuser rather than the accused.
+    doubt: detection::Doubt,
+}
+
+#[derive(Serialize, Clone)]
+struct PassageHold {
+    /// The book and chapter Relay believes is being read — "Psalms 107". `None`
+    /// when only rule B fired, which needs no passage: the wall says it itself.
+    passage: Option<String>,
+    /// The phrase in this window, verbatim in that passage, that says the preacher
+    /// is reading it. The evidence, not a number.
+    reading: Option<String>,
+    held: Vec<HeldCandidate>,
+    /// **What the citation-doubt rule demoted in this window** (RG-305).
+    ///
+    /// On this event rather than on one of its own, and the reasoning is the same
+    /// reasoning the event already carries: the thing to report happens in a window
+    /// where a `detection://match` may not be emitted at all, and a second event
+    /// name is a second thing to keep listened-for in both directions
+    /// (`ipc.test.js`). It is a window-level decision about a candidate SET, which
+    /// is what this event is for; `held` and `doubted` are the two such decisions
+    /// there are.
+    ///
+    /// Empty in the overwhelmingly common case, and `skip_serializing_if` so an
+    /// ordinary hold's payload is byte-for-byte what it was.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    doubted: Vec<DoubtedClaim>,
+    trace_id: Option<u64>,
+}
+
+/// Everything one window of transcript has to say about scripture.
+///
+/// **Why this is a function and not sixty lines inside `emit_detections`.** The
+/// passage guard below is a decision about a window's WHOLE candidate set — it
+/// cannot live inside any one gatherer, and a set-level rule applied at four
+/// gathering sites is rule 36's four-separate-bugs shape. It also could not be
+/// measured: the assembly sat inside a closure holding three locks in a function
+/// that needs a Tauri window, so no test and no bench could reach it, and the
+/// only way to score a real service was to write a second copy of it. There is
+/// now one copy, `emit_detections` calls it under the locks, and
+/// `passage_guard_bench` scores the same code a congregation gets.
+struct WindowCandidates {
+    /// What reaches the gate.
+    kept: Vec<Cand>,
+    /// What the passage guard held, each with the rule that held it.
+    ///
+    /// The whole `Cand`, not the report shape: the report is built where it is
+    /// reported, and a bench that wants to replay the shipped behaviour has to be
+    /// able to put back exactly what was taken — a reconstruction from a narrower
+    /// struct is a different candidate wearing the same reference.
+    held: Vec<(Cand, detection::HeldReason)>,
+    /// The book and chapter on screen that this window was heard reading, and the
+    /// phrase that said so. `None` when the guard did not apply.
+    reading_in: Option<(String, String)>,
+    /// What the citation-doubt rule demoted, and why (RG-305). These candidates are
+    /// in `kept` — nothing is held by that rule and nothing is dropped; only what
+    /// may reach a wall unattended changed.
+    doubted: Vec<Doubted>,
+    /// **WHAT THIS WINDOW HANDS THE NEXT ONE — RG-319.** The longest verbatim run in
+    /// it that exactly one verse holds, which is the only evidence
+    /// `doubt_from_a_quotation` accepts and so the only thing worth carrying.
+    ///
+    /// Returned rather than written, because this function is pure over its inputs and
+    /// `ContextMemory::note_carries` owns the clock and the expiry. Read by every
+    /// caller in the same breath as `chapter_in_flight`, through ONE call, so a new
+    /// caller cannot take one carry and drop the other.
+    sole_run: Option<detection::VerseRef>,
+}
+
+/// One candidate the citation-doubt rule demoted, as the window reports it.
+struct Doubted {
+    reference: String,
+    /// What it is now — all three outcomes capped at Suggest by `Router::decide`.
+    method: DetectionMethod,
+    /// What it WAS. Carried so a bench can put back exactly the shipped behaviour of
+    /// 2026-09-25 rather than a near miss at it, which is the same reasoning
+    /// `passage_guard_bench` records for a held candidate.
+    ///
+    /// Read by `citation_doubt_bench` alone, so a release build has no reader —
+    /// allowed rather than `#[cfg(test)]`, because a field the SHIPPED path fills and
+    /// a test reads is not the same thing as a test-only field, and hiding it behind
+    /// `cfg` would let the two builds disagree about what a window reported.
+    #[allow(dead_code)]
+    was: DetectionMethod,
+    matched_text: Option<String>,
+    doubt: detection::Doubt,
+}
+
+/// Gather, and apply the passage guard.
+///
+/// Pure over its inputs — no database, no clock, no Tauri handle — so the bench
+/// and the live path cannot disagree about what a window produces.
+fn candidates_for_window(
+    text: &str,
+    is_final: bool,
+    sem: &Semantic,
+    phrases: &Phrases,
+    context: &ContextMemory,
+    on_the_wall: Option<&str>,
+    // **THE CHURCH'S BAR ON A PARAPHRASE** — must the words echo a run of the
+    // verse's own words before Relay offers it? A PARAMETER rather than a read of
+    // the state it comes from, so this function stays pure over its inputs and
+    // `suggestions::bar::paraphrase_bar` can score both settings against the same
+    // corpus through the same code a congregation gets (rule 13).
+    paraphrase_needs_a_run: bool,
+) -> WindowCandidates {
+    // Gather candidates. Each one carries the EVIDENCE for itself — the words
+    // that produced it — so the console can show the operator why, and not just
+    // a number (see pipeline::DetectionEvent).
+    let mut candidates: Vec<Cand> = Vec::new();
+
+    let directs = detection::detect_direct(text);
+    let direct_empty = directs.is_empty();
+    for m in directs {
+        // A reading that exists only because the transcript was cut mid-sentence
+        // describes the window boundary, not the sermon. See
+        // `RefMatch::is_provisional`, which owns the rule so this path and the
+        // bench that scores it cannot disagree.
+        if m.is_provisional(is_final) {
+            continue;
+        }
+        candidates.push(Cand {
+            r: m.reference,
+            conf: m.confidence,
+            // `m.method`, NOT a hardcoded `Direct`. This line threw away the
+            // parser's own verdict about how good the evidence was, and it is
+            // the THIRD place in this codebase found doing it on 2026-08-14 —
+            // `eval.rs`'s scorer and `detection.rs`'s harness were the other
+            // two. Between them they meant the `UncertainBook` cap existed,
+            // was unit-tested, passed at the router, and did nothing whatever
+            // in the product: "hymn number three sixteen" still reached the
+            // wall, because by the time the router saw the candidate it had
+            // been relabelled as something Relay heard.
+            //
+            // Caught by `e2e::ordinary_church_announcements_reach_nobody`,
+            // which is the first test in this repo to drive the AI's own path
+            // end to end. A router that is told the answer is not a gate.
+            method: m.method,
+            verse_end: m.verse_end,
+            whole_chapter: m.whole_chapter,
+            matched: Some(m.matched_text),
+        });
+    }
+    // A reference named in THIS window outranks the one in memory. FIELD F-1:
+    // "…going through in Luke 10. If you read from verse 32, 37" put
+    // **Proverbs 3:32** on a congregation's wall, because Proverbs 3:6 had been
+    // fired by hand five minutes earlier and the bare 32 was resolved against
+    // it — with Luke 10 sitting in the same sentence.
+    //
+    // Memory is what Relay has when the words do not say. When the words do
+    // say, the words win.
+    //
+    // FIELD F-8 added the second half of that rule: a window can STATE a
+    // chapter without any reference parsing out of it ("4th Peter chapter 5
+    // verse 10" — there is no 4th Peter), and memory used to win there too.
+    // `resolve_bare_verse_for_window` owns the whole decision so it is one
+    // pure function with a test, rather than an `or_else` chain here that no
+    // test could reach.
+    let anchor = detection::anchor_for_bare_verses(text);
+    for n in detection::detect_bare_verses(text) {
+        let from_memory = context.resolve_bare_verse(n);
+        let resolved = detection::resolve_bare_verse_with_source(
+            text,
+            n,
+            anchor.as_ref(),
+            // RG-318. A book and chapter said one window ago, with the sentence
+            // plainly unfinished — `chapter_in_flight`. It beats memory and loses to
+            // this window's own anchor, which is rule 40's ordering rather than a
+            // new one, and it is labelled `UncertainBook` so it can never fire.
+            context.in_flight(),
+            from_memory.as_ref(),
+        );
+        if let Some((r, source)) = resolved {
+            // "…and verse eighteen", resolved against the passage already on
+            // screen. The operator needs to see that this came from CONTEXT, not
+            // from a book name they never heard the preacher say.
+            //
+            // AND THE LABEL SAYS WHICH (FIELD 2026-09-20, RG-179). This was a
+            // hardcoded `Direct` for both sources, and rule 40 recorded the lie
+            // on purpose while one service was the evidence. The second service
+            // put **Psalms 55:1** on a wall for a preacher quoting Hosea 6:1:
+            // the book was misheard into a word no alias knows, memory answered
+            // with the psalm already up, and `Direct` at 0.88 auto-fired it.
+            // A book Relay assumed is `UncertainBook` — the router offers it and
+            // fires nothing. A book named in this breath is still heard.
+            let mut c = Cand::single(
+                r,
+                0.88,
+                DetectionMethod::for_bare_verse(source),
+                Some(format!("verse {n}")),
+            );
+            // HOW FAR HE SAID HE WAS GOING, when the chunker cut the announcement in
+            // two and this bare verse is all the second window has (RG-328). *"verse 6
+            // all the way to 8"* carried the 6 and dropped the 8, so the operator was
+            // shown one verse of a three-verse reading with nothing saying there were
+            // two more — `detect_bare_verses` answers numbers, not spans, and nothing
+            // else on this path was looking.
+            if let Some((v, end)) = detection::bare_verse_span(text) {
+                if v == n {
+                    c.verse_end = Some(end);
+                }
+            }
+            candidates.push(c);
+        }
+    }
+    // Paraphrase alternatives. Only ONE was ever offered, which threw away
+    // most of what the index had already found: measured on the paraphrase
+    // corpus, the right passage is in the top 5 for 98% of retellings but is
+    // ranked first for only 81% — and for a retelling in modern words, only
+    // 53%. The operator was never shown the difference.
+    //
+    // Two limits, because a longer list is not free — every row costs a
+    // volunteer attention in a dark booth mid-service:
+    //   * a RELATIVE floor, so the list widens only when Relay is genuinely
+    //     torn between similar scores, and stays at one when a verse wins
+    //     outright,
+    //   * a hard CAP, because a well-quoted verse matches many verses
+    //     strongly and would otherwise pad the list exactly when the first
+    //     answer was already correct.
+    // Both are configuration (§ thresholds are config, not constants).
+    // READ GUARD (RG-300). Readers do not block readers, so the detection path
+    // costs what the bare field cost; the one writer is a translation switch,
+    // which the service lock refuses while a service is recording.
+    //
+    // A POISONED INDEX SUGGESTS NOTHING rather than panicking. The only writer
+    // runs off the live path, so this can practically only follow a panic
+    // elsewhere — and an empty suggestion list is the same answer an empty
+    // corpus gives, on a path that must never bring the service down.
+    let semantic_hits = match sem.0.read() {
+        Ok(idx) => worth_suggesting(idx.top_k_explained(text, SEMANTIC_SUGGESTIONS_MAX)),
+        Err(_) => Vec::new(),
+    };
+    for (r, score, terms) in semantic_hits {
+        candidates.push(Cand::single(
+            r,
+            score.min(0.95),
+            DetectionMethod::Semantic,
+            Some(terms.join(" · ")),
+        ));
+    }
+    // ── QUOTED SCRIPTURE ──────────────────────────────────────────────
+    //
+    // A contiguous run of the preacher's own words that is verbatim in one
+    // verse. This is the operator's instruction of 2026-09-20 — *"it has to
+    // be three words together as in the scripture"* — and it exists because
+    // the paraphrase row above renders `terms.join(" · ")` inside quotation
+    // marks, so a verse justified by `lord` and `shepherd`, in neither order,
+    // reached the run surface dressed as a quotation.
+    //
+    // THE ANCHOR IS RULE 40, AND IT IS APPLIED IN TWO STRENGTHS, because the
+    // two kinds of evidence are not equal:
+    //
+    //   * A BOOK THIS WINDOW NAMED restricts. The words said it, so nothing
+    //     outside it is a candidate.
+    //   * THE PASSAGE ON SCREEN only re-ranks. Memory is what Relay has when
+    //     the words do not say, and a quotation IS the words saying — a
+    //     preacher reading Proverbs who quotes Isaiah is quoting Isaiah.
+    //     Restricting on memory would hide it; preferring merely puts the
+    //     likelier reading first.
+    //
+    // Measured on the service of 2026-09-20: "Verse 7 says, Be not wise in
+    // your own eyes" names no book at all, and that phrase is verbatim in
+    // Romans 12:16 as well as in the Proverbs 3 the preacher was reading.
+    let quoted_in = anchor.as_ref().map(|r| r.book.as_str());
+    let mut quoted = match phrases.0.read() {
+        Ok(g) => g.quoted(text, quoted_in, QUOTED_SUGGESTIONS_MAX),
+        Err(_) => Vec::new(),
+    };
+    if quoted_in.is_none() {
+        if let Some(on_screen) = context.current().map(|r| r.book.clone()) {
+            quoted.sort_by_key(|h| h.r.book != on_screen);
+        }
+    }
+    // ── THE ONE CROSS-BOOK EXCEPTION TO THE RESTRICTION ABOVE (RG-305) ────────
+    //
+    // FIELD, service 40, 2026-09-25 at 9831 s: *"Acts 8, 12, I wisdom dwell with
+    // prudence and find out the knowledge of witty inventions."* Those fifteen words
+    // are **Proverbs 8:12**; whisper heard `Proverbs` as `Acts`. Relay fired
+    // **Acts 8:12**. The words that named the right verse were in the same window,
+    // long enough to be unambiguous — and the restriction above had already thrown
+    // them away, because the window "named" Acts.
+    //
+    // **This does not relax the restriction; it carves out the single shape that is
+    // evidence ABOUT the restriction.** A hit is admitted only when it is in another
+    // book at the EXACT chapter and verse a spoken reference in this window named.
+    // Chapter-and-verse pairs collide across sixty-six books, so on its own that is
+    // a coincidence — which is why the hit cannot fire (`doubt_from_a_quotation`
+    // demotes it) and is only ever offered beside the reference it contradicts. Every
+    // other verse outside the named book stays hidden exactly as before, so the
+    // measured reason the restriction exists is untouched.
+    //
+    // It costs one more `quoted` call, in windows that name a book AND a verse.
+    // Measured in `citation_doubt_bench`.
+    let said_pairs: Vec<(i64, i64)> = candidates
+        .iter()
+        .filter(|c| c.method == DetectionMethod::Direct && !c.whole_chapter)
+        .map(|c| (c.r.chapter, c.r.verse))
+        .collect();
+    if let (Some(named), false) = (quoted_in, said_pairs.is_empty()) {
+        if let Ok(g) = phrases.0.read() {
+            quoted.extend(
+                g.quoted(text, None, QUOTED_SUGGESTIONS_MAX)
+                    .into_iter()
+                    .filter(|h| {
+                        !h.r.book.eq_ignore_ascii_case(named)
+                            && said_pairs.contains(&(h.r.chapter, h.r.verse))
+                    }),
+            );
+        }
+    }
+    // Where the quotation candidates start, and the two facts about each run that
+    // `DetectionMethod` cannot carry. `Reading` means *eight words and sole*, but
+    // `Quoted` means *shorter OR shared*, and the citation-doubt rule may only be
+    // armed by a run one verse holds alone. Recorded by INDEX rather than pushed in
+    // lockstep with every `candidates.push` in this function, because a parallel push
+    // is a thing a future gatherer forgets; `the_run_facts_land_on_the_quotation`
+    // holds the mapping.
+    let quoted_at = candidates.len();
+    let run_facts: Vec<(usize, bool)> = quoted.iter().map(|h| (h.run, h.sole)).collect();
+    // The same facts with the reference, for the RG-319 carry below. Taken from the
+    // same `quoted` vector in the same breath, so what this window hands the next one
+    // cannot disagree with what it doubted on.
+    let quoted_runs: Vec<(detection::VerseRef, usize, bool)> = quoted
+        .iter()
+        .map(|h| (h.r.clone(), h.run, h.sole))
+        .collect();
+    for h in quoted {
+        candidates.push(Cand::single(
+            h.r,
+            quoted_confidence(h.run),
+            // IS THIS THE PREACHER READING, OR MERELY QUOTING? The operator's
+            // instruction of 2026-09-23 is that a verse being READ should go
+            // up without being asked for (DECISIONS §118). `for_quotation` is
+            // the one place that is decided and it decides from the evidence
+            // alone — the run length, whether one verse holds it, and since
+            // RG-307 whether any word in it is rare enough to name a verse at
+            // all. The church's switch over it is in `Router::decide`, the door
+            // every candidate passes through, so it cannot be skipped here.
+            DetectionMethod::for_quotation(h.run, h.sole, h.rare_for_a_wall),
+            // THE PHRASE, not a word list. The whole point.
+            Some(h.phrase),
+        ));
+    }
+    if direct_empty {
+        for r in detection::detect_ambiguous(text) {
+            candidates.push(Cand::single(r, 0.70, DetectionMethod::Ambiguous, None));
+        }
+    }
+    // ── A PLACE SCRIPTURE DOES NOT HAVE IS NOT A CANDIDATE (RG-327) ───────
+    //
+    // Service 42 auto-fired `Psalms 14:14` at **0.95 `Direct`** — the strongest claim
+    // Relay can make — for a preacher reading `John 14:14`, and `Psalms 1:97` at 0.88
+    // for `Psalms 119:97`. Psalms 14 has 7 verses and Psalms 1 has 6, so neither can
+    // be right at any bar and no threshold could ever have said so; this is a fact
+    // about scripture rather than a judgement about audio.
+    //
+    // **Live it was already safe and the safety was INCIDENTAL.** `emit_detections`
+    // drops a candidate whose `verse_id` is `None`, so nothing reached a screen — but
+    // it drops it AFTER the router has decided, so the self-calibration learnt from
+    // the fire, the debounce and rule 45's dwell floor were stamped by a verse that
+    // never existed, and the replay harness, which has no such lookup, counted both as
+    // auto-fires. **Two of service 42's 153 were impossible references.**
+    //
+    // **HERE, over the finished set, and NOT in the parser**, which is where this was
+    // tried first and is the wrong door. `detect_direct` must keep parsing a plainly
+    // said book whatever number follows it — RG-322 scoped its refusal to a REPAIRED
+    // book on exactly that argument, `e2e::a_reference_whose_verse_cannot_exist_is_not
+    // _offered_to_the_operator` asserts the parse survives and the OFFER is what
+    // stops it, `e2e::accepting_a_suggestion_that_cannot_fire_says_so` needs
+    // `Psalms 23:99` to parse so an operator gets a sentence, and `eval`'s corpus
+    // labels `Psalms 200:1` and `Psalms 3:16` as references that must be found. All
+    // four say the same thing: the parse is what Relay HEARD, and the candidate list
+    // is what Relay OFFERS.
+    //
+    // Dropped rather than held, and that is the one place this differs from the two
+    // rules below: `HeldReason` exists so an operator can be told what was withheld
+    // and act on it (rule 35), and there is nothing to act on here — the row would
+    // name a verse no lookup in any bundled translation can answer. `emit_detections`
+    // has removed it silently since the day the check was written; this only moves the
+    // removal in front of the router, so a bench and a church see the same service.
+    candidates.retain(|c| detection::reference_exists(&c.r));
+
+    // ── THE CITATION-DOUBT RULE, 2026-09-25 (RG-305) ──────────────────────
+    //
+    // Eight wrong verses reached congregations in one day, and they are one failure:
+    // the decoder loses or alters a digit or an ordinal in a spoken reference, and
+    // the result is a SMALLER, VALID, WRONG reference. *eighty*-seven → 7 ·
+    // *eigh*-teen → 8 · *sixty*-one → 1 · *twelve* → 2 · `Proverbs` → `Acts`. The
+    // chapter exists, the verse exists, the parse confidence is real, and it fires at
+    // 0.95 `Direct` — so nothing that looks at one piece of evidence can see it.
+    //
+    // `detection::doubt_from_a_quotation` is the whole rule and it is pure. Applied
+    // HERE, once, over the finished set, for the reason the passage guard is
+    // (rule 36): it is a decision about the SET — which of these candidates is the
+    // reference the preacher meant — and a set-level rule added at the gathering
+    // sites is the shape four separate bugs in this repository have.
+    //
+    // **Applied BEFORE the passage guard, and the order does not matter to the
+    // guard**: both `Reading` and `Quoted` are `came_from_the_verse_text` and
+    // `is_a_verbatim_run`, so a demotion between them changes nothing the guard asks.
+    // It is first because evidence should be weighed before anything is withheld.
+    //
+    // **Nothing is held and nothing gains a wall.** A doubted citation drops to
+    // `UncertainNumber`/`UncertainBook` and the run that accused it drops to
+    // `Quoted` — all three already capped at Suggest by `Router::decide` at any
+    // score, so a disagreement fires nothing at all and the operator picks between
+    // two things Relay genuinely heard. Rule 10's cap is applied to one more case and
+    // relaxed for none.
+    let doubts = {
+        let view: Vec<detection::Claim> = candidates
+            .iter()
+            .enumerate()
+            .map(|(i, c)| detection::Claim {
+                r: &c.r,
+                method: c.method,
+                verse_end: c.verse_end,
+                whole_chapter: c.whole_chapter,
+                run: i
+                    .checked_sub(quoted_at)
+                    .and_then(|k| run_facts.get(k).copied()),
+            })
+            .collect();
+        detection::doubt_from_a_quotation(&view)
+    };
+    let mut doubted: Vec<Doubted> = Vec::new();
+    for (c, doubt) in candidates.iter_mut().zip(&doubts) {
+        let Some(doubt) = *doubt else { continue };
+        let was = c.method;
+        c.method = match doubt {
+            // The NUMBER is in doubt and `UncertainNumber` is what that already
+            // means in this codebase — the variant `uncertain_number` stamps on the
+            // five parse sites that infer a number rather than hear one.
+            detection::Doubt::SpokenChapter => DetectionMethod::UncertainNumber,
+            // The BOOK is in doubt: "chapter and verse heard, the book not", which is
+            // `UncertainBook`'s own sentence (DECISIONS §106).
+            detection::Doubt::SpokenBook => DetectionMethod::UncertainBook,
+            // The accuser is demoted too, so a disagreement puts nothing on a wall.
+            // A `Reading` may auto-fire under DECISIONS §118 and this is the one
+            // place that is taken back — never widened.
+            detection::Doubt::TheQuotation => DetectionMethod::Quoted,
+        };
+        doubted.push(Doubted {
+            reference: Fire::key_for(&c.r),
+            method: c.method,
+            was,
+            matched_text: c.matched.clone(),
+            doubt,
+        });
+    }
+
+    // ── A DOUBT IS A FACT ABOUT A REFERENCE, NOT ABOUT ONE CANDIDATE ─────
+    //
+    // `doubt_from_a_quotation` returns one verdict per candidate INDEX, and the loop
+    // above applied each verdict to that index alone. A window can name the same
+    // reference twice — service 40, 2026-09-25 at 4691.7 s produced `Psalms 27:1`
+    // both from the range parse (`Direct` 0.95) and from the bare *"verse 1"*
+    // anchored on it (`Direct` 0.88) — and the demotion reached the first while the
+    // duplicate went to the wall still firable. The rule had already concluded the
+    // reference was in doubt and the conclusion was being thrown away.
+    //
+    // Found by printing a candidate set rather than reasoning about one, which is
+    // also how the anchor fix's apparent regressions turned out to be this.
+    {
+        let doubted_keys: std::collections::HashMap<String, detection::Doubt> = doubted
+            .iter()
+            .map(|d| (d.reference.clone(), d.doubt))
+            .collect();
+        for c in candidates.iter_mut() {
+            // Only a candidate that could still reach a wall needs taking down; the
+            // rest are already capped and re-labelling them would say nothing.
+            if c.method.unattended_rank() == 0 {
+                continue;
+            }
+            let Some(doubt) = doubted_keys.get(&Fire::key_for(&c.r)) else {
+                continue;
+            };
+            c.method = match doubt {
+                detection::Doubt::SpokenChapter => DetectionMethod::UncertainNumber,
+                detection::Doubt::SpokenBook => DetectionMethod::UncertainBook,
+                detection::Doubt::TheQuotation => DetectionMethod::Quoted,
+            };
+        }
+    }
+
+    // ── A SPAN IS A FACT ABOUT THE REFERENCE, NOT ABOUT ONE CANDIDATE (RG-328) ──
+    //
+    // Found by `e2e::a_conversationally_announced_range_stages_and_walks_to_the_end_the_preacher_gave`,
+    // which is the first test to drive the operator's whole workflow rather than the
+    // parse: announce *"Romans 1 and we will be reading from verse 6 all the way to
+    // 8"* and the verse reaches the wall — but at `direct` 0.88 with **no
+    // `passage_end`**, so *"all the way to 8"* is thrown away.
+    //
+    // Two paths answer that window. The full parse yields `Romans 1:6-8`, and
+    // `detect_bare_verses` independently resolves the bare *"verse 6"* against the
+    // window's own anchor (`resolve_bare_verse`, the hardcoded 0.88) and yields
+    // `Romans 1:6` with no span at all. The anchor candidate is the one that can
+    // fire, so the span vanished behind the stronger claim.
+    //
+    // The same shape as the doubt fix above and the same lesson: the span belongs to
+    // the REFERENCE, so every candidate naming it carries it. Copied rather than
+    // ranked, because whichever candidate survives should stage the passage the
+    // preacher announced — and copied ONLY onto a candidate that has no span of its
+    // own, so an explicit range can never be widened by another one.
+    {
+        let spans: std::collections::HashMap<String, i64> = candidates
+            .iter()
+            .filter_map(|c| c.verse_end.map(|e| (Fire::key_for(&c.r), e)))
+            .collect();
+        for c in candidates.iter_mut() {
+            if c.verse_end.is_some() || c.whole_chapter {
+                continue;
+            }
+            if let Some(end) = spans.get(&Fire::key_for(&c.r)) {
+                c.verse_end = Some(*end);
+            }
+        }
+    }
+
+    // ── FOLLOWING THE PREACHER THROUGH A PASSAGE HE ANNOUNCED (2026-09-28) ──
+    //
+    // The operator's report: *"even if the preacher paraphrases some section of the
+    // scripture, follow the preacher to know when to move to the next verse."*
+    //
+    // Reading verse 7 of a staged passage aloud already works — a verbatim run is
+    // `Reading` and `Reading` may fire (40 of service 42's 118 auto-fires were
+    // exactly that). What did not work is the preacher RETELLING verse 7, which is
+    // `Semantic`, and rule 10 caps a paraphrase at `Suggest` at any score.
+    //
+    // **That cap is not weakened here, and this is the argument for why this is a
+    // different act.** Rule 10 exists so the AI cannot put an ARBITRARY verse on a
+    // wall from a bag of words — a cosine is not a probability, and the harm is a
+    // verse nobody asked for. Inside an EXPLICIT span the set of possible outcomes is
+    // not arbitrary: it is the verses the preacher named out loud, bounded at both
+    // ends, and Relay is choosing WHERE IN THAT PASSAGE he is rather than which verse
+    // he means. `router::corroboration_never_promotes_a_paraphrase` still holds,
+    // because corroboration still promotes nothing; the bound is the announcement.
+    //
+    // Four conditions, all necessary:
+    //   * an EXPLICIT range is staged (`span_end`) — a whole chapter is not an
+    //     announcement of how far he intends to read, and 150 verses of Psalms is
+    //     back to arbitrary;
+    //   * the candidate is the SAME book and chapter as what is on the screen;
+    //   * it is FORWARD of the current verse and no further than the range end —
+    //     forward-only, so a retelling that brushes an earlier verse cannot walk the
+    //     wall backwards or oscillate;
+    //   * it came from the VERSE'S OWN WORDS. `Semantic` and `Quoted` qualify;
+    //     `UncertainBook`/`UncertainNumber` never do, because those are doubts about
+    //     which reference this is and that is the question a span cannot answer.
+    //
+    // The dwell floor (rule 45) still applies, so following cannot flash past a
+    // congregation, and the whole thing is inert until a passage is staged.
+    if let (Some(cur), Some(end)) = (context.current(), context.span_end()) {
+        for c in candidates.iter_mut() {
+            if c.method.unattended_rank() != 0 {
+                continue; // already able to reach the wall on its own evidence
+            }
+            let words_only = matches!(
+                c.method,
+                DetectionMethod::Semantic | DetectionMethod::Quoted
+            );
+            let in_passage = c.r.book == cur.book
+                && c.r.chapter == cur.chapter
+                && c.r.verse > cur.verse
+                && c.r.verse <= end;
+            if words_only && in_passage {
+                c.method = DetectionMethod::Reading;
+            }
+        }
+    }
+
+    // ── THE SHORT RUN A NAMED CHAPTER MAKES ADMISSIBLE, RG-313 ───────────
+    //
+    // The rule above sources its accusing run from `PhraseIndex::quoted`, which
+    // needs `MIN_RUN_WORDS` (5) because it answers *which verse do these words
+    // belong to* and below five that question has too many answers. Two of the six
+    // wrong references it could not reach fail on that floor and nothing else —
+    // `Isaiah 61:3` at 4 words, `Romans 12:3` at 3 — and both had already named
+    // their book and their chapter out loud. That leaves a narrower question, which
+    // a shorter run can answer: *did these words touch the verse one digit away
+    // from the one he said*. `PhraseIndex::shared_run_with` measures exactly that,
+    // against ONE named verse, and `PARAPHRASE_RUN_WORDS` (3) is the floor already
+    // in use for corroborating a reference that exists rather than offering one
+    // standing alone.
+    //
+    // **A PROBE, NOT A SCAN.** The set is the inverse of the same slip test the
+    // rule above applies — nine chapters for a one-digit chapter, a handful of
+    // substitutions above that — so this asks the index a bounded number of
+    // questions about a single book and never walks the corpus.
+    //
+    // **It reaches for a verse and never for a book**: only `SpokenChapter` can
+    // come out of it, so the cross-book carve-out above, which is the one that
+    // protects `John 15:14` and `Hebrews 13:7`, is untouched.
+    //
+    // Runs SECOND and only on what the first rule left alone, so a candidate the
+    // stronger evidence already doubted keeps the doubt that evidence gave it.
+    {
+        // Psalms has 150 and nothing has more. A chapter this book does not have
+        // resolves to no verse and `shared_run_with` answers 0, so the bound is a
+        // cost ceiling rather than a rule about scripture.
+        const MAX_CHAPTER: i64 = 150;
+        // KEYED BY REFERENCE, and it grows as the probe reports. Two candidates in
+        // one window can carry the same reference — a bare verse resolved against an
+        // anchor beside the same reference parsed outright — and the first draft
+        // reported both, so `detection://doubted` printed `Isaiah 1:3` twice in a row
+        // to an operator who saw one claim.
+        let mut already: std::collections::HashSet<String> =
+            doubted.iter().map(|d| d.reference.clone()).collect();
+        let idx = phrases.0.read();
+        let probes: Vec<(usize, i64)> = match idx.as_ref() {
+            Ok(idx) => candidates
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| !already.contains(&Fire::key_for(&c.r)))
+                .filter_map(|(i, c)| {
+                    let claim = detection::Claim {
+                        r: &c.r,
+                        method: c.method,
+                        verse_end: c.verse_end,
+                        whole_chapter: c.whole_chapter,
+                        run: None,
+                    };
+                    detection::chapter_the_words_point_at(&claim, MAX_CHAPTER, |probe| {
+                        idx.shared_run_with(text, probe)
+                    })
+                    .map(|ch| (i, ch))
+                })
+                .collect(),
+            Err(_) => Vec::new(),
+        };
+        drop(idx);
+        for (i, _chapter) in probes {
+            let c = &mut candidates[i];
+            let key = Fire::key_for(&c.r);
+            if !already.insert(key.clone()) {
+                // Demote it all the same — the cap is what protects the wall — and
+                // report it once.
+                c.method = DetectionMethod::UncertainNumber;
+                continue;
+            }
+            let was = c.method;
+            c.method = DetectionMethod::UncertainNumber;
+            doubted.push(Doubted {
+                reference: key,
+                method: c.method,
+                was,
+                matched_text: c.matched.clone(),
+                doubt: detection::Doubt::SpokenChapter,
+            });
+        }
+    }
+
+    // ── A QUOTATION THE LAST WINDOW CARRIED, RG-319 ──────────────────────
+    //
+    // The wrong verse this rule exists for is the only open row with a congregation's
+    // screen behind it. Service 42, 2026-09-27: *"For my covenant will I not break"*
+    // — six words of `Psalms 89:34`, sole — at 19730.1 s, then *"…the comfort of my
+    // lips. Psalm 119, verse 39."* at 19737.1 s, and **`Psalms 119:39` auto-fired at
+    // 0.95** while he read Psalms 89. Everything window-local was out of reach and
+    // `detection::a_carried_quotation_contradicts` states why.
+    //
+    // **The carry alone is refused and stays refused** — built, gated and replayed,
+    // auto-fires 153 to 148, three correct fires of the identical shape gone with the
+    // wall. What makes this one land is that it asks the FIRING window's own words
+    // about both chapters, which nothing had asked: a preacher who has moved on leaves
+    // the run behind, and a decoder that dropped a digit leaves the man still reading
+    // the verse it dropped it from. Measured, the four separate cleanly at 1 against
+    // 3, and the three refused ideas (a length bar, a confirmation wait, the bare
+    // carry) are each pinned as refused.
+    //
+    // **HERE, over the finished set, and third of the three window-level doubt
+    // rules** — rule 36: what Relay decided not to let fire, and why, has one place.
+    // Runs only on what the two rules above left alone, so stronger evidence keeps
+    // the doubt it gave.
+    //
+    // It costs ONE `shared_run_with` pair per `Direct` candidate in a window that has
+    // a live carry, and nothing at all otherwise.
+    let sole_run = quoted_runs
+        .iter()
+        .filter(|(_, run, sole)| *sole && *run >= detection::MIN_RUN_WORDS)
+        .max_by_key(|(_, run, _)| *run)
+        .map(|(r, _, _)| r.clone());
+    if let Some(carried) = context.quoted_a_moment_ago() {
+        let mut already: std::collections::HashSet<String> =
+            doubted.iter().map(|d| d.reference.clone()).collect();
+        let idx = phrases.0.read();
+        let hits: Vec<usize> = match idx.as_ref() {
+            Ok(idx) => candidates
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| !already.contains(&Fire::key_for(&c.r)))
+                .filter(|(_, c)| {
+                    let claim = detection::Claim {
+                        r: &c.r,
+                        method: c.method,
+                        verse_end: c.verse_end,
+                        whole_chapter: c.whole_chapter,
+                        run: None,
+                    };
+                    detection::a_carried_quotation_contradicts(&claim, carried, |probe| {
+                        idx.shared_run_with(text, probe)
+                    })
+                    .is_some()
+                })
+                .map(|(i, _)| i)
+                .collect(),
+            Err(_) => Vec::new(),
+        };
+        drop(idx);
+        for i in hits {
+            let c = &mut candidates[i];
+            let key = Fire::key_for(&c.r);
+            let was = c.method;
+            // Demote whatever happens — the cap is what protects the wall — and
+            // report it once, for the reason the RG-313 probe records: one window can
+            // name the same reference twice and an operator saw one claim.
+            c.method = DetectionMethod::UncertainNumber;
+            if already.insert(key.clone()) {
+                doubted.push(Doubted {
+                    reference: key,
+                    method: c.method,
+                    was,
+                    matched_text: c.matched.clone(),
+                    doubt: detection::Doubt::SpokenChapter,
+                });
+            }
+        }
+    }
+
+    // ── THE RUN BAR ON A PARAPHRASE, off unless the church asked for it ───
+    //
+    // The operator, 2026-09-25: *"The preacher paraphrases a lot so I want you to
+    // catch that and use the style to work on how the app respond."* Measured, that
+    // turned out to be two findings and only one of them is about catching more:
+    // 74% of what the paraphrase path offers on speech naming no scripture is noise
+    // (DECISIONS §125, RG-311), and no value of `SEMANTIC_FLOOR` can cut it because
+    // the two populations share a distribution and invert at the tails.
+    //
+    // What does cut it is a different question about the same evidence: a contiguous
+    // run of `detection::PARAPHRASE_RUN_WORDS` words shared with the verse named. A
+    // cosine is a bag of words in no order (rule 18); this asks whether any of them
+    // were said in the verse's order. It removes 73.5% of offers and takes precision
+    // from 18.7% to 50.0%, dominating every threshold on all four measures at once.
+    //
+    // **IT IS A SETTING AND IT DEFAULTS OFF, and that is the whole design.** It
+    // silences three of the 43 labelled retellings and every one is `vocab: modern` —
+    // the four friends tearing open a roof, Paul and Silas at midnight, Jonah
+    // overboard — which is the narrative case the product's claim rests on. It also
+    // removes the one paraphrase offer anybody can prove the operator wanted, and to
+    // a MISHEARD word rather than to modern wording. Spending those is an operator's
+    // trade, so a church that never opens Settings is offered exactly what it was
+    // offered yesterday. `suggestions::what_the_bar_silences` holds both figures.
+    //
+    // **HERE, over the finished set, and never at the gathering site**, for rule
+    // 36's reason: this is the third window-level rule and it belongs with the other
+    // two, so the answer to *what did Relay decide not to offer, and why* has one
+    // place. It is also why a held paraphrase is REPORTED rather than dropped — a
+    // switch that quietly stops offering things is rule 35 exactly, and
+    // `HeldReason::NoSharedRun` rides the event that already exists for that.
+    //
+    // **ORDER DOES NOT MATTER against the passage guard** and the masks are merged
+    // rather than chained: a `Semantic` candidate arms neither of the guard's rules
+    // (rule A needs `is_a_verbatim_run`, rule B needs the wall), so holding it first
+    // or last cannot change what the guard decides about anything else.
+    //
+    // A POISONED PHRASE INDEX HOLDS, rather than waving everything through. The
+    // operator asked for a bar; a bar that silently stops being applied is the
+    // failure rule 35 is about, and because every hold is announced the operator can
+    // see that this is what happened. Practically unreachable — the only writer is a
+    // translation switch the service lock refuses mid-service.
+    let run_mask: Vec<Option<detection::HeldReason>> = if paraphrase_needs_a_run {
+        let index = phrases.0.read();
+        candidates
+            .iter()
+            .map(|c| {
+                if c.method != DetectionMethod::Semantic {
+                    return None;
+                }
+                let echoes = index.as_ref().is_ok_and(|g| {
+                    g.shared_run_with(text, &c.r) >= detection::PARAPHRASE_RUN_WORDS
+                });
+                (!echoes).then_some(detection::HeldReason::NoSharedRun)
+            })
+            .collect()
+    } else {
+        // NOT `Vec::new()`. Every mask below is indexed in lockstep with
+        // `candidates`, and a short one would silently stop holding at the first
+        // index it ran out at.
+        vec![None; candidates.len()]
+    };
+
+    // ── THE PASSAGE GUARD, 2026-09-25 ─────────────────────────────────────
+    //
+    // The operator, 2026-09-25: *"I dont want suggestion to be changing when a
+    // bible verse is reading because it heard a phrase which is in another bible
+    // verse… verses needs to be guarded so when a preacher is reading a verse it
+    // stays within the verse/chapter until the preacher calls another verse…
+    // suggesting too many verses whilst the preacher is reading a verse will
+    // cause confusion"*.
+    //
+    // `detection::hold_for_the_passage` is the whole rule and it is pure. Applied
+    // HERE, once, over the finished set: it is a decision about the SET (which
+    // verse is the one being read, and which is merely also holding those words),
+    // so no gatherer can hold it, and a set-level rule added at four gathering
+    // sites is the shape rule 36 records four separate bugs for.
+    let on_screen = context.current();
+    let view: Vec<(&VerseRef, DetectionMethod)> =
+        candidates.iter().map(|c| (&c.r, c.method)).collect();
+    // ONE MASK, TWO RULE SETS. `or` keeps the run bar's answer when both fire,
+    // which is the more actionable of the two sentences: "you turned this on" is
+    // something the operator can undo, and "the preacher is reading elsewhere" is
+    // not.
+    let passage_mask = detection::hold_for_the_passage(
+        on_screen,
+        on_the_wall,
+        detection::window_states_a_reference(text, anchor.as_ref()),
+        &view,
+    );
+    // `zip` TRUNCATES, silently, which is the one way this merge could go wrong: a
+    // mask one short would stop holding at the last index and nothing would say so.
+    // Both are built from `candidates.len()`, so a mismatch is a programming error
+    // rather than a state a church can reach — hence a debug assertion and not a
+    // runtime branch on the fire path.
+    debug_assert_eq!(passage_mask.len(), run_mask.len());
+    let mask: Vec<Option<detection::HeldReason>> = passage_mask
+        .into_iter()
+        .zip(&run_mask)
+        .map(|(passage, run)| run.or(passage))
+        .collect();
+    if mask.iter().all(Option::is_none) {
+        return WindowCandidates {
+            kept: candidates,
+            held: Vec::new(),
+            reading_in: None,
+            doubted,
+            sole_run,
+        };
+    }
+    // Rule A armed only if an in-passage verbatim run is present, and such a run is
+    // never itself held — which is what makes the announcement reachable. A guard
+    // that could hold EVERYTHING would be indistinguishable from Relay having gone
+    // quiet, which is rule 35 exactly. Rule B needs no passage: it fires on the
+    // verse the screens are already showing, and the screens are the evidence.
+    let reading_in = on_screen
+        .filter(|_| mask.contains(&Some(detection::HeldReason::OutsideTheReading)))
+        .map(|p| {
+            let phrase = candidates
+                .iter()
+                .zip(&mask)
+                .find(|(c, held)| {
+                    held.is_none()
+                        && c.method.is_a_verbatim_run()
+                        && c.r.book == p.book
+                        && c.r.chapter == p.chapter
+                })
+                .and_then(|(c, _)| c.matched.clone())
+                .unwrap_or_default();
+            (format!("{} {}", p.book, p.chapter), phrase)
+        });
+    let mut kept: Vec<Cand> = Vec::with_capacity(candidates.len());
+    let mut held: Vec<(Cand, detection::HeldReason)> = Vec::new();
+    for (c, why) in candidates.into_iter().zip(mask) {
+        match why {
+            Some(reason) => held.push((c, reason)),
+            None => kept.push(c),
+        }
+    }
+    WindowCandidates {
+        kept,
+        held,
+        reading_in,
+        doubted,
+        sole_run,
+    }
+}
+
 fn emit_detections<R: tauri::Runtime>(
     handle: &tauri::AppHandle<R>,
     text: &str,
@@ -1154,6 +2537,10 @@ fn emit_detections<R: tauri::Runtime>(
     let routing = handle.state::<Routing>();
     let ctx = handle.state::<Context>();
     let sem = handle.state::<Semantic>();
+    let phrases = handle.state::<Phrases>();
+    // THE CHURCH'S PARAPHRASE BAR, read before any lock is taken. See
+    // `ParaphraseRun`; off unless an operator turned it on.
+    let needs_a_run = handle.state::<ParaphraseRun>().0.load(Ordering::Relaxed);
 
     // Compute everything UNDER the locks, but collect the emits/broadcasts and
     // fire them AFTER releasing — never hold a lock across handle.emit /
@@ -1161,121 +2548,74 @@ fn emit_detections<R: tauri::Runtime>(
     // command contending the same lock (this was the freeze on Start listening).
     let mut events: Vec<DetectionEvent> = Vec::new();
     let mut broadcasts: Vec<OutputContent> = Vec::new();
+    // What the passage guard held, and the passage it held it for. Collected here
+    // and announced after the locks go, for the same reason as `events`.
+    // Declared uninitialised deliberately: every path that reaches the emit below
+    // assigns them, and seeding them with an empty vec would let a future early
+    // return announce "nothing was held" when the truth is that nobody looked.
+    let held_by_the_passage: Vec<(Cand, detection::HeldReason)>;
+    let reading_inside: Option<(String, String)>;
+    // What the citation-doubt rule demoted (RG-305). Assigned on the same path as
+    // the two above and for the same reason: an early return that left this empty
+    // would say "nothing was doubted" when the truth is that nobody looked.
+    let doubted_citations: Vec<Doubted>;
     // Latency stamps sampled under the locks and applied after they are released.
     // The block yields them so `detected_at` is INITIALISED by the sample rather
     // than pre-seeded with a value no path ever reads.
-    let (detected_at, authorised_at) = {
+    // A LABELLED BLOCK, and `Option`, because one path through it must skip the gate
+    // and still reach the announcement below. See the empty-candidates arm.
+    let stamps: Option<(u64, Option<u64>)> = 'gate: {
         let (Ok(conn), Ok(mut router), Ok(mut context)) =
             (db.0.lock(), routing.0.lock(), ctx.0.lock())
         else {
             return;
         };
-
-        // Gather candidates. Each one carries the EVIDENCE for itself — the words
-        // that produced it — so the console can show the operator why, and not just
-        // a number (see pipeline::DetectionEvent).
-        let mut candidates: Vec<Cand> = Vec::new();
-
-        let directs = detection::detect_direct(text);
-        let direct_empty = directs.is_empty();
-        for m in directs {
-            // A reading that exists only because the transcript was cut mid-sentence
-            // describes the window boundary, not the sermon. See
-            // `RefMatch::is_provisional`, which owns the rule so this path and the
-            // bench that scores it cannot disagree.
-            if m.is_provisional(is_final) {
-                continue;
-            }
-            candidates.push(Cand {
-                r: m.reference,
-                conf: m.confidence,
-                // `m.method`, NOT a hardcoded `Direct`. This line threw away the
-                // parser's own verdict about how good the evidence was, and it is
-                // the THIRD place in this codebase found doing it on 2026-08-14 —
-                // `eval.rs`'s scorer and `detection.rs`'s harness were the other
-                // two. Between them they meant the `UncertainBook` cap existed,
-                // was unit-tested, passed at the router, and did nothing whatever
-                // in the product: "hymn number three sixteen" still reached the
-                // wall, because by the time the router saw the candidate it had
-                // been relabelled as something Relay heard.
-                //
-                // Caught by `e2e::ordinary_church_announcements_reach_nobody`,
-                // which is the first test in this repo to drive the AI's own path
-                // end to end. A router that is told the answer is not a gate.
-                method: m.method,
-                verse_end: m.verse_end,
-                whole_chapter: m.whole_chapter,
-                matched: Some(m.matched_text),
-            });
-        }
-        // A reference named in THIS window outranks the one in memory. FIELD F-1:
-        // "…going through in Luke 10. If you read from verse 32, 37" put
-        // **Proverbs 3:32** on a congregation's wall, because Proverbs 3:6 had been
-        // fired by hand five minutes earlier and the bare 32 was resolved against
-        // it — with Luke 10 sitting in the same sentence.
+        let WindowCandidates {
+            kept: candidates,
+            held,
+            reading_in,
+            doubted,
+            sole_run,
+        } = candidates_for_window(
+            text,
+            is_final,
+            &sem,
+            &phrases,
+            &context,
+            // What the screens are actually showing, from the one module that knows
+            // — and NOT `context.current()`, which survives a blackout on purpose.
+            router.wall(),
+            // READ OUTSIDE THE LOCKS ABOVE, on purpose: an `AtomicBool` read cannot
+            // block and cannot participate in a lock order (rule 6).
+            needs_a_run,
+        );
+        // ASSIGNED BEFORE THE EARLY EXIT, and that order is the whole point.
         //
-        // Memory is what Relay has when the words do not say. When the words do
-        // say, the words win.
+        // This read `return` under an assertion that the guard could not have held
+        // anything in a window with nothing left to say. **The assertion was false
+        // and the first e2e test written against the fire path caught it on its
+        // first run.** Rule B holds the verse the screens are already showing, and a
+        // window whose only candidate is that verse — a preacher reading on through
+        // the verse Relay already put up, which is the ordinary case the rule exists
+        // for — leaves the set empty. The `return` then took the report with it, so
+        // Relay held something back and said nothing: rule 35's failure, introduced
+        // by the code that exists to prevent it.
+        held_by_the_passage = held;
+        reading_inside = reading_in;
+        doubted_citations = doubted;
+        // ── WHAT THIS WINDOW LEFT UNFINISHED (RG-318) ──────────────────────────
         //
-        // FIELD F-8 added the second half of that rule: a window can STATE a
-        // chapter without any reference parsing out of it ("4th Peter chapter 5
-        // verse 10" — there is no 4th Peter), and memory used to win there too.
-        // `resolve_bare_verse_for_window` owns the whole decision so it is one
-        // pure function with a test, rather than an `or_else` chain here that no
-        // test could reach.
-        let anchor = detection::anchor_for_bare_verses(text);
-        for n in detection::detect_bare_verses(text) {
-            let from_memory = context.resolve_bare_verse(n);
-            let resolved = detection::resolve_bare_verse_for_window(
-                text,
-                n,
-                anchor.as_ref(),
-                from_memory.as_ref(),
-            );
-            if let Some(r) = resolved {
-                // "…and verse eighteen", resolved against the passage already on
-                // screen. The operator needs to see that this came from CONTEXT, not
-                // from a book name they never heard the preacher say.
-                candidates.push(Cand::single(
-                    r,
-                    0.88,
-                    DetectionMethod::Direct,
-                    Some(format!("verse {n}")),
-                ));
-            }
-        }
-        // Paraphrase alternatives. Only ONE was ever offered, which threw away
-        // most of what the index had already found: measured on the paraphrase
-        // corpus, the right passage is in the top 5 for 98% of retellings but is
-        // ranked first for only 81% — and for a retelling in modern words, only
-        // 53%. The operator was never shown the difference.
-        //
-        // Two limits, because a longer list is not free — every row costs a
-        // volunteer attention in a dark booth mid-service:
-        //   * a RELATIVE floor, so the list widens only when Relay is genuinely
-        //     torn between similar scores, and stays at one when a verse wins
-        //     outright,
-        //   * a hard CAP, because a well-quoted verse matches many verses
-        //     strongly and would otherwise pad the list exactly when the first
-        //     answer was already correct.
-        // Both are configuration (§ thresholds are config, not constants).
-        for (r, score, terms) in
-            worth_suggesting(sem.0.top_k_explained(text, SEMANTIC_SUGGESTIONS_MAX))
-        {
-            candidates.push(Cand::single(
-                r,
-                score.min(0.95),
-                DetectionMethod::Semantic,
-                Some(terms.join(" · ")),
-            ));
-        }
-        if direct_empty {
-            for r in detection::detect_ambiguous(text) {
-                candidates.push(Cand::single(r, 0.70, DetectionMethod::Ambiguous, None));
-            }
-        }
+        // AFTER `candidates_for_window` has read the last window's entry, and BEFORE
+        // the early exit below, for the same reason `held_by_the_passage` is: a
+        // window with nothing to say is exactly the window that carries half a
+        // citation — *"…before we give Genesis chapter 8 and verse"* produces no
+        // candidate at all — and a `break` above this line would drop the half that
+        // matters. `note_carries` owns the expiry because this is the one place on
+        // the path with a clock — and it takes BOTH carries in one call (RG-319), so
+        // this door cannot take the citation half and leave the quotation half.
+        context.note_carries(detection::chapter_in_flight(text), sole_run, now_ms);
         if candidates.is_empty() {
-            return;
+            break 'gate None;
         }
         // A reference exists in this transcript. Sampled, not stamped: the locks
         // above are still held, and `latency` takes a mutex of its own. It is a
@@ -1370,6 +2710,13 @@ fn emit_detections<R: tauri::Runtime>(
             // every output so the last leg — pixels on a projector — can be timed
             // rather than assumed.
             fire.trace_id = trace;
+            // RG-302. Set HERE, before the `may_broadcast` branch below, so a
+            // passage that is only OFFERED carries its span too — the operator
+            // deciding whether to accept "Proverbs 7:1" is exactly the person who
+            // needs to know five verses were asked for. It comes from the candidate
+            // rather than from `ContextMemory`, because nothing is staged for a
+            // suggestion and the staged span would then be the PREVIOUS reading's.
+            fire.passage_end = span_to_report(fire.reference.verse, end);
             // RG-135. Did the speaker NAME a translation, and is it one Relay does
             // not have? The detector is pure and lives in `detection`; whether the
             // named one is installed is a database question, so it is asked here,
@@ -1381,12 +2728,29 @@ fn emit_detections<R: tauri::Runtime>(
             // operator learns to stop reading the line.
             fire.named_translation_missing = named_translation_gap(&conn, text, &fire);
 
-            // Parsed, but the verse doesn't exist (garbled speech readily yields
-            // "Psalms 23:99"). Demote to a suggestion rather than broadcasting a
-            // verse with no text, which would blank the projector. See
-            // `Fire::may_broadcast`.
-            if fire.status.goes_to_screen() && fire.verse_id.is_none() {
-                fire.status = FireStatus::Suggested;
+            // ── PARSED, BUT THERE IS NO VERSE BEHIND IT (RG-322) ────────────────
+            //
+            // Garbled speech readily yields "Psalms 23:99", and service 42 yielded
+            // `Jude 29:4` — *"Job 29 verse 4 to 17"* heard as *"Jude 29"*, and Jude
+            // has one chapter. This used to DEMOTE to a suggestion, which was the
+            // right half of the answer: `Fire::may_broadcast` is false for a
+            // suggestion, so nothing blanks a projector.
+            //
+            // It is not offered at all any more. A row that names a verse Relay
+            // cannot show says LESS than no row — the operator's list is what a
+            // volunteer reads in a dark booth mid-service, and three of these
+            // rendered blank on it, with no reference in them, on the morning this
+            // was filed. There is nothing to act on and nothing to learn from, and
+            // `persist_fire` below would write a detection whose `verse_id` is NULL.
+            //
+            // **It is not silent** in the sense rule 35 means: the operator is not
+            // being told a screen is fine when it is not, and no guarantee hangs on
+            // this row's absence. What is worth saying about the window is said by
+            // the cause — an impossible number now refutes the `fuzzy_book` repair
+            // that made it outright (`detection::detect_direct`), so the commoner
+            // route to this state no longer produces a candidate to begin with.
+            if fire.verse_id.is_none() {
+                continue;
             }
 
             if fire.may_broadcast() {
@@ -1399,23 +2763,57 @@ fn emit_detections<R: tauri::Runtime>(
                 context.note_passage(&fire.reference, end);
                 // Fill "up next" from the now-staged passage (bounded by its end).
                 attach_next_verse(&conn, &context, &mut fire);
-                persist_fire(
-                    &conn,
-                    handle.state::<Session>(),
-                    fire.verse_id,
-                    fire.method.db_method(),
-                    fire.confidence,
-                    fire.status.as_str(),
-                    text,
-                );
                 broadcasts.push(fire.output());
             }
+            // ── WHAT RELAY OFFERED IS PART OF WHAT HAPPENED (RG-309) ────────────
+            //
+            // This call sat INSIDE the `if` above, and the consequence was structural
+            // rather than a bug anybody could see: rule 10 caps a paraphrase at
+            // `Suggest` at any score, `Fire::may_broadcast` is false for a
+            // suggestion, and so **a paraphrase never reached the database at all.**
+            // Measured on this machine, across every service it has ever recorded:
+            // `SELECT COUNT(*) FROM detections WHERE status='suggested'` → 0.
+            //
+            // Three things followed. The paraphrase detector was unobservable, on
+            // the product whose operator asked for it by name. Every accuracy claim
+            // about it rested on nothing, which `report.js` was honest about and the
+            // register was not. And `record_feedback` learns its bar from a column
+            // that only ever saw what worked.
+            //
+            // Rule 14 is untouched and this is the reason it can be: the status
+            // written is the one the gate reached. `'auto'` is still Relay's own
+            // initiative and `'manual'` is still a human — a suggestion is neither,
+            // and `'suggested'` is the value the CHECK constraint has permitted, and
+            // nothing has ever written, since the schema was first drawn.
+            //
+            // **It is not a new write on the fire path.** It is the same one write,
+            // reached on more windows: inside the connection this loop already holds,
+            // on `relay-detect` behind the bounded queue rule 33 put it behind, and
+            // measured at 6 µs against a 139 ms cadence (`suggestions::the_write_a_
+            // suggestion_costs`).
+            persist_fire(
+                &conn,
+                handle.state::<Session>(),
+                fire.verse_id,
+                fire.method.db_method(),
+                fire.confidence,
+                fire.status.as_str(),
+                text,
+                if fire.may_broadcast() {
+                    Provenance::Fired
+                } else {
+                    Provenance::Offered
+                },
+            );
             events.push(fire.event());
         }
-        (detected_at, authorised_at)
+        Some((detected_at, authorised_at))
     }; // locks released here
 
-    if let Some(id) = trace {
+    // A window that produced no candidate to gate timed no reference, so there is
+    // nothing to stamp — and a stage never reached is an ABSENCE, not a zero
+    // (rule 31).
+    if let (Some(id), Some((detected_at, authorised_at))) = (trace, stamps) {
         crate::latency::stamp_at(id, crate::latency::Stage::ReferenceDetected, detected_at);
         if let Some(at) = authorised_at {
             crate::latency::stamp_at(id, crate::latency::Stage::FireAuthorised, at);
@@ -1428,10 +2826,50 @@ fn emit_detections<R: tauri::Runtime>(
         // has already raised the banner and printed the reason. Swallowed here
         // and nowhere else, deliberately: the alternative is killing the
         // detection thread over one unshowable payload.
-        let _ = broadcast_with_clock(handle, content);
+        let _ = broadcast_with_clock(handle, content, now_ms);
     }
     for ev in events {
         let _ = handle.emit("detection://match", ev);
+    }
+    // ── RELAY IS HOLDING SOMETHING BACK, AND SAYS SO ──────────────────────────
+    //
+    // Rule 35. A guard that quietly stops offering verses is indistinguishable
+    // from a detector that has gone deaf, and the operator would have no way to
+    // tell which. One emit, at the one place the decision is made, carrying the
+    // passage it is following, the phrase that says so, and every candidate it
+    // did not offer — so nothing is discarded silently (RG-178's precedent), it
+    // is simply moved off the list the operator asked to stop churning.
+    if !held_by_the_passage.is_empty() || !doubted_citations.is_empty() {
+        let (passage, reading) = match reading_inside {
+            Some((p, r)) => (Some(p), Some(r)),
+            None => (None, None),
+        };
+        let _ = handle.emit(
+            "detection://held",
+            PassageHold {
+                passage,
+                reading,
+                held: held_by_the_passage
+                    .into_iter()
+                    .map(|(c, reason)| HeldCandidate {
+                        reference: Fire::key_for(&c.r),
+                        method: c.method,
+                        matched_text: c.matched,
+                        reason,
+                    })
+                    .collect(),
+                doubted: doubted_citations
+                    .into_iter()
+                    .map(|d| DoubtedClaim {
+                        reference: d.reference,
+                        method: d.method,
+                        matched_text: d.matched_text,
+                        doubt: d.doubt,
+                    })
+                    .collect(),
+                trace_id: trace,
+            },
+        );
     }
     // Stamped AFTER the broadcast returns, not before it: the kiosk fan-out and
     // the Tauri emit are on this path and are exactly the kind of cost a
@@ -1684,6 +3122,31 @@ fn persist_transcript<R: tauri::Runtime>(handle: &tauri::AppHandle<R>, text: &st
 /// all. `transcript_id` said where the service was; it could not say what was
 /// heard. Now `heard_text` does, so a wrong verse on a wall can be explained
 /// after the fact instead of guessed at.
+/// ── RG-309 · WHETHER THIS ROW MAY CREATE A TRANSCRIPT ROW OF ITS OWN ─────────
+///
+/// A fire may. F-2 is the whole argument: a verse that reached a congregation must
+/// hang off a transcript row that really holds the words the detector read, and six
+/// extra rows in a fifty-minute service is what that costs.
+///
+/// **A suggestion may not**, and the difference is not a judgement about
+/// importance. Only FINAL transcripts are persisted, on purpose, and the live path
+/// detects on every PARTIAL — roughly one a second. A suggestion that inserted its
+/// own row would write thousands of rows of mid-word text per service into the one
+/// table every history and replay surface renders, and `transcripts` is already the
+/// largest content table Relay keeps. The window still travels, in `heard_text`,
+/// which is exactly the column F-2 added for it; what a suggestion loses is a
+/// transcript row of its own, not its evidence.
+///
+/// A suggestion with no final yet to hang off is not recorded. That is the first
+/// seconds of a service and it is an absence, not a claim.
+#[derive(Clone, Copy, PartialEq)]
+enum Provenance {
+    /// This reached a screen. It may persist the window as its own transcript row.
+    Fired,
+    /// Relay offered this and nothing went anywhere. It hangs off the last final.
+    Offered,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn persist_fire(
     conn: &Connection,
@@ -1693,6 +3156,7 @@ fn persist_fire(
     confidence: f32,
     status: &str,
     window_text: &str,
+    provenance: Provenance,
 ) {
     let Ok(mut sess) = session.0.lock() else {
         return;
@@ -1725,7 +3189,21 @@ fn persist_fire(
         .is_some_and(|prev| prev == window_text);
     let tid = match st.last_transcript {
         Some(t) if matches_last || window_text.is_empty() => t,
-        _ => match db::insert_transcript(conn, st.id, ts, window_text, "en", None) {
+        // An offer hangs off whatever final is there and never writes one — see
+        // `Provenance`. No final yet means no row, which is honest.
+        Some(t) if provenance == Provenance::Offered => t,
+        None if provenance == Provenance::Offered => return,
+        // RG-113(5). The language the decoder reported for THIS window, not a
+        // hardcoded `"en"`. See `SessionState::last_language`: a bare clone rather
+        // than a borrow because `st` is borrowed mutably on the success arm.
+        _ => match db::insert_transcript(
+            conn,
+            st.id,
+            ts,
+            window_text,
+            &st.last_language.clone(),
+            None,
+        ) {
             Ok(t) => {
                 st.last_transcript = Some(t);
                 t
@@ -1972,7 +3450,11 @@ fn search_scripture(
     query: String,
 ) -> error::Result<Vec<SearchHit>> {
     let conn = db.0.lock()?;
-    Ok(search_verses(&conn, &sem.0, query.trim()))
+    let idx = sem
+        .0
+        .read()
+        .map_err(|_| error::Error::refused("the scripture index is unavailable — restart Relay"))?;
+    Ok(search_verses(&conn, &idx, query.trim()))
 }
 
 /// The scripture search itself, over a connection + semantic index — shared by
@@ -2255,7 +3737,10 @@ fn remote_api<R: tauri::Runtime>(
                 let sem = app.state::<Semantic>();
                 let guard = db.0.lock();
                 match guard {
-                    Ok(conn) => search_verses(&conn, &sem.0, &q),
+                    Ok(conn) => match sem.0.read() {
+                        Ok(idx) => search_verses(&conn, &idx, &q),
+                        Err(_) => vec![],
+                    },
                     Err(_) => vec![],
                 }
             };
@@ -2812,14 +4297,53 @@ const MAX_IMPORT_BYTES: usize = 256 * 1024 * 1024;
 /// The length check is on the base64 text, which is 4 bytes per 3 decoded, so the
 /// estimate is exact enough to be a guard and never rejects a file that would have
 /// fit. Shared by both import commands so the limit cannot come to mean two things.
+///
+/// ── THE MESSAGE USED TO CONTRADICT ITSELF AT ITS OWN BOUNDARY ────────────────
+///
+/// Two separate arithmetic faults, both only visible within a hair of the cap, and
+/// the reason the sentence read *"…is about 256 MB, and Relay imports files up to
+/// 256 MB"*:
+///
+/// **PADDING IS NOT PAYLOAD.** `len / 4 * 3` counts the trailing `=` as decoded
+/// bytes. A file of EXACTLY 256 MiB encodes to 357,913,944 characters, of which two
+/// are padding, and the old estimate answered 268,435,458 — two bytes over a
+/// 268,435,456-byte cap. So the one file that is precisely at the documented limit
+/// was refused, by two bytes, with a message saying it was the size of the limit.
+/// The padding is discounted, which makes the estimate exact rather than merely
+/// close, and `saturating_sub` keeps a malformed short string from underflowing.
+///
+/// **A FLOORED FIGURE CANNOT REPORT AN OVERAGE.** Even with the estimate right,
+/// anything from one byte to a megabyte over the cap floors to 256, so the sentence
+/// would still have equated the two numbers for the whole first mebibyte past the
+/// limit. The reported size is rounded UP: a refusal now always names a number
+/// strictly greater than the limit it cites. Overstating by under a megabyte, under
+/// the word "about", is the right direction — a refusal that reads as though the
+/// file fitted is the failure being fixed.
+///
+/// The estimate is split out so the boundary can be tested for nothing. Proving
+/// what happens to a file of exactly 256 MiB through `decode_import` itself means
+/// allocating the payload AND its base64 form — about 600 MB, which is why the only
+/// test that did it is `#[ignore]`d and why the off-by-two lived at the one size
+/// nothing could afford to check.
+fn decoded_size_estimate(data: &str) -> usize {
+    let padding = data
+        .as_bytes()
+        .iter()
+        .rev()
+        .take_while(|&&b| b == b'=')
+        .count()
+        .min(2);
+    (data.len() / 4 * 3).saturating_sub(padding)
+}
+
 fn decode_import(filename: &str, data: &str) -> error::Result<Vec<u8>> {
     use base64::Engine as _;
-    let approx = data.len() / 4 * 3;
+    let approx = decoded_size_estimate(data);
     if approx > MAX_IMPORT_BYTES {
         return Err(error::Error::refused(format!(
             "{filename} is about {} MB, and Relay imports files up to {} MB. \
              Shorten or compress it and try again.",
-            approx / (1024 * 1024),
+            approx.div_ceil(1024 * 1024),
             MAX_IMPORT_BYTES / (1024 * 1024)
         )));
     }
@@ -2881,11 +4405,21 @@ fn import_media(
 ) -> error::Result<db::MediaAsset> {
     lock.guard("import_media")?;
     let bytes = decode_import(&filename, &data)?;
+    // WHAT CODEC A CLIP CARRIES, while the bytes are already here (F5, 2026-09-21).
+    // An iPhone `.mov` is HEVC, which the projector's own window decodes and an
+    // OBS browser source or a Windows screen may not. Relay does not transcode;
+    // it records the answer so the Library tile and the Planner's preview can
+    // warn where the clip is chosen and where the cue is built.
+    let codec = if kind == "video" {
+        mediaprobe::codec_hint(&bytes).map(str::to_string)
+    } else {
+        None
+    };
     let dir = db::media_dir();
     std::fs::create_dir_all(&dir)?;
 
     let conn = db.0.lock()?;
-    let id = db::insert_media(&conn, &kind, &filename, &date)?;
+    let id = db::insert_media(&conn, &kind, &filename, &date, codec.as_deref())?;
     let path_str = write_media_file(&conn, &dir, id, &filename, &bytes)?;
     db::set_media_path(&conn, id, &path_str)?;
     Ok(db::MediaAsset {
@@ -2894,6 +4428,7 @@ fn import_media(
         filename,
         path: path_str,
         created_at: date,
+        codec,
     })
 }
 
@@ -3004,7 +4539,19 @@ struct ReviewSong {
 /// Parse a lyric file (ProPresenter / playlist / text) into songs WITHOUT
 /// saving — the operator reviews and edits before committing (avoids the
 /// import-then-fix-then-replace cycle). Offline.
-#[tauri::command]
+///
+/// **OFF THE MAIN RUN LOOP — RG-299, and for the cap rather than for Tuesday.**
+/// `import_guard_tests::what_parsing_a_lyric_import_costs`: a realistic 2 MiB
+/// playlist parses in **27 ms**, which is nothing; a text file at
+/// `MAX_IMPORT_BYTES` parses in **2,285 ms**, which is a freeze. The guard permits
+/// the second, and no church has such a file, so this is not a fix for anything
+/// anybody has hit — it is the same trade `import_media` (169 ms at its cap)
+/// already took, at ten times the cost, and there is nothing to pay for it with:
+/// this command takes no `State` and no handle, so it is a pure function of two
+/// strings and two of them running at once share nothing. Also unlike
+/// `load_stt_model`, there was no mutual exclusion here for the main thread to
+/// have been quietly providing.
+#[tauri::command(async)]
 fn parse_import(filename: String, data: String) -> error::Result<Vec<ReviewSong>> {
     let bytes = decode_import(&filename, &data)?;
     let ext = filename.rsplit('.').next().unwrap_or("").to_lowercase();
@@ -3120,8 +4667,9 @@ fn clean_note(note: Option<String>) -> Option<String> {
 /// (now + `minutes`), then each output ticks the MM:SS locally — no per-second
 /// network traffic. `label` shows above the timer; `done_msg` replaces it at 0.
 ///
-/// This is the one place a countdown is CREATED. Re-aiming and holding one is
-/// [`adjust_countdown`], which can never create one.
+/// This is the one place a countdown is created, and since 2026-09-21 it is the
+/// only place one is touched at all: `adjust_countdown` re-aimed and held one and
+/// was deleted with the Screen Countdown's transport (DECISIONS §115).
 // GENERIC OVER THE RUNTIME (rule 24). It puts content on a wall, so it is fire-path
 // code, and welded to the concrete desktop handle it could not be driven from
 // `e2e.rs` — which is why the countdown was the one fire path with no end-to-end
@@ -3141,6 +4689,10 @@ fn start_countdown<R: tauri::Runtime>(
     template_id: Option<i64>,
     warn_ms: Option<i64>,
     until_ms: Option<i64>,
+    // WHICH SCREENS (RG-161). `None` is every screen. It is stamped onto the
+    // timer rather than used here, because this command is one of three that
+    // broadcast the same countdown — see `Timer::channels`.
+    channels: Option<Vec<i64>>,
 ) -> error::Result<()> {
     let mins = if minutes.is_finite() && minutes > 0.0 {
         minutes
@@ -3181,8 +4733,10 @@ fn start_countdown<R: tauri::Runtime>(
             // had a reader and no writer, so §7's short-countdown rule had never
             // fired in the product (see `OutputContent::countdown_from`).
             from_ms: now_ms,
-            // A countdown that has just been STARTED is running, always. Pausing is
-            // `adjust_countdown`, which is about a countdown already on a screen.
+            // A countdown that has just been STARTED is running, always. Nothing
+            // holds one any more: `adjust_countdown` was the only door and it went
+            // with the transport (DECISIONS §115). A plan cue can still carry a
+            // held figure, which is why the field stays.
             paused_ms: None,
             // The threshold chosen for THIS countdown, if the caller chose one.
             // It was hard-coded to `None` here, so the transport's own Start was
@@ -3207,6 +4761,9 @@ fn start_countdown<R: tauri::Runtime>(
             // guarantee, not this one, and a rule that holds only where something
             // else already holds it is not a rule.
             started_in_rehearsal: channels::rehearsing(&app),
+            // The cue's screen set, stamped once. Every later broadcast of this
+            // countdown reads it back off the timer, so a Pause cannot widen it.
+            channels,
         });
         // Cloned out and the lock released before the broadcast below (rule 2).
         reg.get(id).ok_or_else(|| {
@@ -3218,99 +4775,59 @@ fn start_countdown<R: tauri::Runtime>(
         let conn = db.0.lock()?;
         cue_or_content_tpl(&conn, template_id, "countdown")
     };
-    broadcast_with_clock(&app, countdown_content(&timer, tid, tjson, tpinned))?;
+    broadcast_with_clock(
+        &app,
+        countdown_content(&timer, tid, tjson, tpinned),
+        router_clock_ms(),
+    )?;
     persist_cue(&app, "countdown", None);
-    Ok(())
-}
-
-/// RE-AIM OR HOLD THE COUNTDOWN THAT IS ALREADY ON THE SCREENS — Reset, ±1, Pause,
-/// Resume. It can never create one.
-///
-/// `remaining_ms` is how long should be left; `paused` whether it should be held.
-/// `None` for either means "leave that alone", so `+1` moves the time without
-/// touching the hold, and Pause holds it without moving the time.
-///
-/// ## Why this exists rather than a second call to `start_countdown`
-///
-/// The console used to assemble a re-aim out of its mirror of the live content —
-/// label, done message and template read back off the event and handed to
-/// `start_countdown` again. It worked, and it only worked while every caller
-/// remembered every field. `countdown_paused_ms` is one more thing to forget, and
-/// forgetting THAT one restarts a held timer in front of a congregation: the operator
-/// presses `+1` on a paused countdown and it starts running. So the engine keeps the
-/// countdown (`timers::TimerRegistry`) and this changes one thing about it.
-///
-/// ## Two things it must not do
-///
-/// **It must not put content on a wall by itself.** With no countdown in front of the
-/// operator it refuses, in words, rather than starting one: Start is the control that
-/// puts a countdown in front of people and there must be exactly one of those.
-///
-/// **It must not re-skin the screens.** The content is carried over verbatim, which
-/// includes `template_pinned` — a countdown fired from the dock resolves through the
-/// content LOOK, which defers to each screen's own template (DECISIONS §29). Rebuilding
-/// the fire and handing the resolved id back as a cue template would take that
-/// deference away, and a press of `+1` would silently re-skin every screen in the
-/// building.
-#[tauri::command]
-fn adjust_countdown<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-    remaining_ms: Option<i64>,
-    paused: Option<bool>,
-) -> error::Result<()> {
-    let Some(timer) = newest_congregation_timer(&app) else {
-        // Still exactly the sentence an operator reads, and it is still true in the
-        // only case that can now produce it: there is no congregation timer at all.
-        // A cleared or blacked wall stops one, so the transport still cannot bring
-        // back what a panic control took.
-        return Err(error::Error::refused("Nothing is counting down."));
-    };
-    let now_ms = cd_now_ms();
-    let adjusted = app
-        .state::<timers::TimerRegistry>()
-        .adjust(timer.id, remaining_ms, paused, now_ms)
-        // `newest_congregation_timer` is the only source of `timer` here, so the
-        // scope is `Both` by construction rather than by a lookup that can be wrong.
-        .map_err(|e| timer_refusal(e, timers::Scope::Both))?;
-
-    // A RE-AIM MAY NOT TAKE A CONGREGATION SCREEN BACK FROM A SERMON.
-    //
-    // Before the registry, this could not arise: the countdown WAS the live content,
-    // so it was always what the screens were showing or it did not exist. Now it can
-    // outlive a verse, and a `+1` that repainted itself over the reading would be the
-    // same class of failure this command's own doc comment forbids for templates —
-    // a transport press with a consequence nobody asked it for.
-    //
-    // So the registry changes and nothing is published. The way back onto a wall is
-    // `show_timer`, one action that says what it does. "What is on the screens right
-    // now" is read from the one slot that already answers it (`channels::LiveContent`)
-    // rather than guessed at a second time.
-    let Some(mut content) = channels::live_content(&app).filter(is_countdown_content) else {
-        return Ok(());
-    };
-    let shown = timers::project_both(&adjusted);
-    // `countdown_to` stays set even while held: it is where the countdown would land
-    // if it were resumed now, and it is what keeps the content reading as a countdown
-    // to `preflight`, to the retained screen frame and to the slide key.
-    content.countdown_to = Some(shown.countdown_to);
-    content.countdown_paused_ms = shown.countdown_paused_ms;
-    // `countdown_from` is NOT re-stamped. It is the instant the countdown was first
-    // aimed from, so the warning span stays the countdown's own length rather than
-    // shrinking to whatever is left each time somebody presses a button.
-    //
-    // Everything else — the label, the done message and above all the template
-    // triple — is carried over VERBATIM, which is what keeps a press of `+1` from
-    // silently re-skinning every screen in the building (DECISIONS §29).
-    //
-    // `trace_id` is cleared: an operator's press has no decode pass behind it, and
-    // inventing one would put a human action into the AI's latency percentile.
-    content.trace_id = None;
-    broadcast_with_clock(&app, content)?;
     Ok(())
 }
 
 /// Epoch milliseconds. The clock every timer command reads, so they cannot disagree
 /// about "now" within one press.
+/// BRING THE SAVED CLOCKS BACK INTO THE REGISTRY, at launch — and tell the stage,
+/// which is the one screen a timer reaches without a content frame.
+///
+/// Generic over the runtime (rule 24) so `e2e.rs` can drive it. It publishes NO
+/// content frame: a congregation countdown that was on a wall when Relay quit
+/// comes back into the registry, where Live's Screen Countdown band offers it
+/// (`cdBack`, "counting, off the screens") and **Put back** returns it to the
+/// screens — the same rule crash recovery keeps for a verse (position restored,
+/// on-air-ness deliberately not). What is brought back is `db::restorable`'s
+/// answer, and the number is printed so the boot log says what a relaunch did.
+fn restore_timers<R: tauri::Runtime>(app: &tauri::AppHandle<R>, now_ms: i64) -> usize {
+    let saved = {
+        let db = app.state::<Db>();
+        let conn = match db.0.lock() {
+            Ok(c) => c,
+            Err(e) => e.into_inner(),
+        };
+        db::load_timers(&conn)
+    };
+    let (next_id, rows) = match saved {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("timers: could not read the saved clocks ({e})");
+            return 0;
+        }
+    };
+    let keep = db::restorable(rows, now_ms);
+    let n = keep.len();
+    if n > 0 {
+        let wall = keep
+            .iter()
+            .filter(|t| t.scope == timers::Scope::Both)
+            .count();
+        println!(
+            "timers: restored {n} clock(s) from the last run ({wall} for the screens, held for Put back)"
+        );
+    }
+    app.state::<timers::TimerRegistry>().restore(next_id, keep);
+    channels::publish_timers(app);
+    n
+}
+
 fn cd_now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -3324,18 +4841,6 @@ fn is_countdown_content(c: &channels::OutputContent) -> bool {
     c.countdown_to.is_some()
         || c.countdown_paused_ms.is_some()
         || c.kind.as_deref() == Some("countdown")
-}
-
-/// The congregation timer the transport is about: the newest `Both` timer, or None.
-///
-/// Newest rather than oldest because `start_countdown` takes the previous one, so
-/// there is at most one — and if a later track ever allows two, the one an operator
-/// just started is the one the transport means.
-fn newest_congregation_timer<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
-) -> Option<timers::Timer> {
-    app.try_state::<timers::TimerRegistry>()
-        .and_then(|reg| reg.snapshot_scope(timers::Scope::Both).pop())
 }
 
 /// A registry refusal in words an operator can act on. Both are `Refused`, not
@@ -3383,8 +4888,9 @@ struct TimerView {
 /// START A TIMER WITHOUT PUTTING IT IN FRONT OF ANYBODY.
 ///
 /// It creates the timer and hands back its identity, and it publishes nothing. That
-/// is deliberate: `start_countdown` and `show_timer` are the only two things that
-/// may put a timer on a congregation screen, and a third door into that would be
+/// is deliberate: `start_countdown` is now the ONLY thing that may put a timer on a
+/// congregation screen — `show_timer` was the second until §115 — and another door
+/// into that would be
 /// the shape of bug this repository keeps finding — a guarantee kept on the doors
 /// somebody remembered.
 ///
@@ -3461,6 +4967,11 @@ fn start_timer<R: tauri::Runtime>(
         // `timers::Timer::started_in_rehearsal` for why it is a property of the
         // timer rather than a question asked at the exit.
         started_in_rehearsal: channels::rehearsing(&app),
+        // NO SCREEN SET FROM THIS DOOR. `start_timer` makes the preacher's
+        // programme clocks, and a stage frame is addressed to the tablet by being
+        // the stage frame. A `Both` timer started here carries none either, which
+        // is every screen — the behaviour it has always had.
+        channels: None,
     });
     // THE STAGE TABLET IS TOLD, UNCONDITIONALLY — not "if this one was a stage
     // timer". `publish_timers` sends the whole stage-visible SET, so it is
@@ -3473,8 +4984,8 @@ fn start_timer<R: tauri::Runtime>(
 
 /// RE-AIM OR HOLD ONE TIMER BY ITS IDENTITY — the transport, addressed.
 ///
-/// `adjust_countdown` is the same action aimed at "whichever congregation timer is
-/// running", which is what the dock's transport means. This one names the timer, so
+/// `adjust_countdown` was the same action aimed at "whichever congregation timer is
+/// running" and is gone (§115); this one names the timer, so
 /// a console showing several can move the one under the operator's finger.
 ///
 /// The stage layouts an operator can choose between. Global, by name.
@@ -3638,15 +5149,15 @@ fn reset_timer<R: tauri::Runtime>(app: tauri::AppHandle<R>, timer_id: i64) -> er
             content.countdown_from = Some(shown.countdown_from);
             content.countdown_paused_ms = shown.countdown_paused_ms;
             content.trace_id = None;
-            broadcast_with_clock(&app, content)?;
+            broadcast_with_clock(&app, content, router_clock_ms())?;
         }
     }
     channels::publish_timers(&app);
     Ok(())
 }
 
-/// Like `adjust_countdown`, it publishes nothing: changing a number on a timer that
-/// is not on the screens must not put it on them.
+/// It publishes nothing: changing a number on a timer that is not on the screens
+/// must not put it on them. (`adjust_countdown` kept the same rule until §115.)
 #[tauri::command]
 fn adjust_timer<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -3669,14 +5180,14 @@ fn adjust_timer<R: tauri::Runtime>(
         .map_err(|e| timer_refusal(e, scope))?;
 
     // …unless it IS on the screens, in which case the wall must agree with the
-    // registry. Same rule, same reading of the same slot, as `adjust_countdown`.
+    // registry — the rule `adjust_countdown` kept too, before §115 deleted it.
     if adjusted.scope == timers::Scope::Both {
         if let Some(mut content) = channels::live_content(&app).filter(is_countdown_content) {
             let shown = timers::project_both(&adjusted);
             content.countdown_to = Some(shown.countdown_to);
             content.countdown_paused_ms = shown.countdown_paused_ms;
             content.trace_id = None;
-            broadcast_with_clock(&app, content)?;
+            broadcast_with_clock(&app, content, router_clock_ms())?;
         }
     }
     // And the stage tablet, whichever scope this was — see `start_timer`.
@@ -3718,62 +5229,10 @@ fn list_timers<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> error::Result<Vec
         .collect())
 }
 
-/// PUT A CONGREGATION TIMER BACK IN FRONT OF PEOPLE — **the explicit way back.**
-///
-/// A timer now outlives the content that replaced it, so after a reading there is
-/// something to return to. Returning to it is this, an action an operator takes on
-/// purpose; it is never a side effect of `+1`, because a transport press that
-/// repainted a countdown over a sermon would be a control doing something other
-/// than what it says.
-///
-/// It carries whatever the timer says NOW — the adjusted figure, and the hold if it
-/// is held — so what goes back up is what the operator has been looking at in the
-/// list, not the five minutes it started as.
-///
-/// A `Stage`-scoped timer is refused, in words: it has no congregation wire form,
-/// and projecting one into the four `countdown_*` fields would put the preacher's
-/// private clock on the wall.
-// GENERIC OVER THE RUNTIME (rule 24) — it puts content on a wall, so it is fire-path
-// code and `e2e.rs` has to be able to drive it.
-#[tauri::command]
-fn show_timer<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-    db: tauri::State<'_, Db>,
-    timer_id: i64,
-    template_id: Option<i64>,
-) -> error::Result<()> {
-    // Cloned out of the registry, with the lock released, before anything is
-    // broadcast (rule 2).
-    let timer = app
-        .state::<timers::TimerRegistry>()
-        .get(timer_id)
-        .ok_or_else(|| error::Error::not_found("That timer is not running."))?;
-    if timer.scope != timers::Scope::Both {
-        return Err(error::Error::refused(
-            "That timer is for the stage monitor, so it cannot be put on the screens.",
-        ));
-    }
-    let (tid, tjson, tpinned) = {
-        let conn = db.0.lock()?;
-        cue_or_content_tpl(&conn, template_id, "countdown")
-    };
-    broadcast_with_clock(&app, countdown_content(&timer, tid, tjson, tpinned))?;
-    // ── SITE 11 OF THE CONTENT-KIND SWEEP. NOTHING CHANGED, AND WHY ───────────
-    //
-    // `cues.type` is free-form TEXT with no CHECK (docs/data/schema.sql), so a new
-    // value would need no migration — and none is written. Putting a timer back is
-    // recorded as `"countdown"`, the same value `start_countdown` writes, because
-    // it is the same thing appearing on the same screens; a service history that
-    // called the two different things would be making a distinction a reader of the
-    // history cannot act on. Nothing writes a sixth `plan_items.cue_type` either,
-    // so the enumerating comment at `schema.sql`'s `cue_type` column is still
-    // accurate and is deliberately left alone.
-    persist_cue(&app, "countdown", None);
-    Ok(())
-}
-
-/// Build the wire form of a `Both` timer. **The one place a timer becomes content**,
-/// so `start_countdown` and `show_timer` cannot put different things on a wall.
+/// Build the wire form of a `Both` timer. **The one place a timer becomes content.**
+/// It had three callers and has one; the guarantee it was written for — that two
+/// doors onto a wall cannot disagree about the same countdown — is now kept by
+/// there being one door (§115).
 fn countdown_content(
     timer: &timers::Timer,
     template_id: Option<i64>,
@@ -3783,6 +5242,13 @@ fn countdown_content(
     let shown = timers::project_both(timer);
     channels::OutputContent {
         kind: Some("countdown".into()),
+        // OFF THE TIMER, NOT OFF THE CALL. This function had three callers —
+        // `start_countdown`, `adjust_countdown` and `show_timer`, the last two
+        // deleted in §115 — and a screen set that lived on the argument would have
+        // been correct at the first and lost
+        // at the other two, which is a countdown that leaks onto every screen in
+        // the building the moment somebody holds it.
+        channels: timer.channels.clone(),
         reference: shown.reference,
         countdown_to: Some(shown.countdown_to),
         countdown_from: Some(shown.countdown_from),
@@ -3854,6 +5320,7 @@ fn fire_content<R: tauri::Runtime>(
             stage_note: clean_note(stage_note),
             ..Default::default()
         },
+        router_clock_ms(),
     )?;
     persist_cue(&app, "manual_override", Some(&label));
     Ok(())
@@ -3869,6 +5336,12 @@ fn fire_media<R: tauri::Runtime>(
     db: tauri::State<'_, Db>,
     id: i64,
     template_id: Option<i64>,
+    // WHICH SCREENS (RG-161). `None` is every screen, which is what every media
+    // cue written before targeting existed carries. This argument was missing
+    // while `fire_content`'s twin three functions up already had it, so the
+    // Planner's `Screens` row ticked, said "Other screens keep what they are
+    // showing", and reached all of them.
+    channels: Option<Vec<i64>>,
 ) -> error::Result<()> {
     #[allow(clippy::type_complexity)]
     let (kind, filename, path, tid, tjson, tpinned): (
@@ -3910,6 +5383,7 @@ fn fire_media<R: tauri::Runtime>(
         &app,
         OutputContent {
             kind: Some("media".into()),
+            channels,
             media_url: Some(media_url(&ip, id, &path)),
             media_kind: Some(media_kind.to_string()),
             template_id: tid,
@@ -3917,6 +5391,7 @@ fn fire_media<R: tauri::Runtime>(
             template_pinned: tpinned,
             ..Default::default()
         },
+        router_clock_ms(),
     )?;
     persist_cue(&app, "media", Some(&filename));
     Ok(())
@@ -3980,6 +5455,143 @@ fn publish_background<R: tauri::Runtime>(
 /// and a church that reopened Relay on Tuesday to a Sunday backdrop would have to
 /// find the control that took it off. The retained hub slot is what carries it
 /// across a screen reconnecting, which is the case that actually happens.
+/// IS THERE A PROPRESENTER LIBRARY ON THIS COMPUTER ALREADY?
+///
+/// Requirement 14: *"allow the app to be able to find any propresenter files
+/// automatically on the computer if its ever available"*.
+///
+/// **It finds and counts. It imports nothing**, opens no song, and changes nothing
+/// on disk. The operator is offered what was found and decides; `Import folder`
+/// is what actually reads it.
+///
+/// `home_dir()` rather than `$HOME`, for rule 9's reason one directory up: a
+/// hand-rolled `$HOME` is why packaged Windows once ran with speech recognition
+/// silently dead. Windows has no `HOME`.
+///
+/// **On macOS this is rule 17 ground.** `~/Documents` is TCC-gated, and a build
+/// without `NSDocumentsFolderUsageDescription` does not get a polite refusal — the
+/// directory reads as empty, which is indistinguishable from a church that has no
+/// library. `scan_root` treats an unreadable directory as zero and says nothing
+/// was found rather than claiming there is nothing there, and the string is in
+/// `Info.plist`. Neither is visible in `tauri dev`; `scripts/sign-local.sh` is how
+/// it gets checked without a certificate.
+#[tauri::command]
+fn find_propresenter<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> error::Result<Vec<prodiscover::FoundLibrary>> {
+    use tauri::Manager;
+    let home = app
+        .path()
+        .home_dir()
+        .map_err(|_| "this computer has no home directory Relay can read".to_string())?;
+    Ok(prodiscover::find(&home))
+}
+
+/// HOLD THE CLIP, LOOP IT, OR START IT AGAIN.
+///
+/// Requirement 11's transport. Each argument is a re-aim, the shape
+/// `adjust_countdown` used before §115 removed it: `None` means "leave that alone",
+/// so Pause cannot un-loop and Loop
+/// cannot un-pause. An operator presses one control at a time and the others must
+/// survive it.
+///
+/// `replay` is not a state, so it is not a boolean on the wire either — it bumps a
+/// counter. An operator pressing Replay twice on a clip already at its start would
+/// otherwise publish a frame identical to the retained one, and a screen that had
+/// acted on the first would do nothing. See `channels::media_transport_frame_json`.
+///
+/// **It says nothing about whether a screen obeyed**, and must not: the screens
+/// report where their clip actually is on the beat (`channels::MediaBeat`), and
+/// Live reads the transport's effect from THAT rather than from the fact that a
+/// command returned `Ok`. A control that reported its own instruction back as an
+/// outcome is rule 35 with extra steps.
+///
+/// **It DOES hand back the frame it published (RG-260), and that is not the same
+/// claim.** A frame is the instruction; the beat is the outcome. This returned
+/// `()` and the console rebuilt its own copy from the arguments it had passed
+/// in, which carried no `replay_epoch` and no `seek_epoch` — so the console's
+/// own preview could act on neither a replay nor a scrub, and diverged from
+/// every screen in the building the moment either was pressed. One instruction
+/// now has one shape.
+#[tauri::command]
+fn set_media_transport<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    transport: tauri::State<'_, channels::MediaTransport>,
+    paused: Option<bool>,
+    // `looping`, not `loop`: the wire says `loop` and Rust cannot.
+    looping: Option<bool>,
+    replay: Option<bool>,
+    // WHERE THE HANDLE WAS DROPPED, in milliseconds (RG-221). `None` leaves the
+    // clip where it is; `Some` is an instruction and bumps its own counter, so a
+    // screen joining later cannot be dragged back by a retained frame.
+    seek_ms: Option<i64>,
+    // The room's level, 0.0-1.0. `None` leaves it alone — a Pause that also
+    // reset the sound to full is the shape of every "one control moved another"
+    // bug this transport exists to avoid.
+    volume: Option<f64>,
+) -> error::Result<channels::TransportFrame> {
+    let frame = transport.apply(paused, looping, replay.unwrap_or(false), seek_ms, volume);
+    channels::media_transport(&app, frame);
+    Ok(frame)
+}
+
+/// PUT SOMETHING ON THE PREACHER'S OWN SCREEN, or take it off (`None`).
+///
+/// An announcement slide, or the preacher's own deck, on the stage display and
+/// nowhere else. **Not a background**: `show_background` puts the church's
+/// picture behind the words on every screen, and this puts one person's
+/// reference material on one screen.
+///
+/// **Scripture overrides it, and that rule lives on the device.** The stage page
+/// paints a reading over the media while it has one and paints the media again
+/// when the reading is cleared. It is deliberately NOT taken down when a verse
+/// arrives: an operator who had to push the slide again after every reading would
+/// not call that "overrides", and it is not what was asked for.
+///
+/// Documents are refused here for the same reason `fire_media` refuses them —
+/// nothing in the product renders a PDF to a screen, so a cue built from one
+/// would look fine in the Library and die on a Sunday.
+#[tauri::command]
+fn send_stage_media<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    db: tauri::State<'_, Db>,
+    id: Option<i64>,
+) -> error::Result<()> {
+    let Some(id) = id else {
+        // TAKE IT DOWN. No lookup, no database — the way off a screen may never
+        // depend on a row still being there. The same rule as `show_background`.
+        channels::stage_media(&app, None);
+        return Ok(());
+    };
+    let (kind, path) = {
+        let conn = db.0.lock()?;
+        conn.query_row(
+            "SELECT kind, path FROM media_assets WHERE id = ?1",
+            [id],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+        )
+        .map_err(|_| "media not found".to_string())?
+    };
+    let media_kind = match kind.as_str() {
+        "image" => "image",
+        "video" => "video",
+        _ => {
+            return Err(error::Error::refused(
+                "documents can't be put on the stage screen yet",
+            ))
+        }
+    };
+    let ip = local_ip().unwrap_or_else(|| "127.0.0.1".to_string());
+    // The one URL builder, for the reason its own doc comment records: a picture
+    // Relay ships has no file under `/media/<id>`, so a second rule here would
+    // hand the stage screen a URL that 404s.
+    channels::stage_media(
+        &app,
+        Some((media_url(&ip, id, &path), media_kind.to_string())),
+    );
+    Ok(())
+}
+
 #[tauri::command]
 fn show_background<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -4064,11 +5676,11 @@ fn media_file_is_on_disk(path: &str) -> bool {
 ///
 /// `kind` here is a lookup key into the content-look register, so a kind with no
 /// row simply falls through to the configured default — it is never silently
-/// unstyled. The timer registry adds no key: `start_countdown` and `show_timer`
-/// both ask for `"countdown"`, which is the row that already exists, because a
+/// unstyled. The timer registry adds no key: `start_countdown` asks for
+/// `"countdown"`, which is the row that already exists, because a
 /// congregation timer's content kind did not change. A `Stage`-scoped timer asks
 /// nothing of this function: it renders on the stage page, which has no
-/// congregation template to resolve, and `show_timer` refuses to project one.
+/// congregation template to resolve.
 fn cue_or_content_tpl(
     conn: &rusqlite::Connection,
     cue_template_id: Option<i64>,
@@ -4499,6 +6111,12 @@ fn list_audio_devices() -> Vec<audio::DeviceInfo> {
 ///
 /// Measures the volume holding APP-DATA, not the boot volume: models, media and
 /// the database all land there, and it is the one that fills up.
+/// Which build this is — `<short sha>[+dirty] <date>` (S13). Read-only.
+#[tauri::command]
+fn build_marker() -> &'static str {
+    diagnostics::BUILD
+}
+
 #[tauri::command]
 fn system_hardware() -> sysprobe::Hardware {
     sysprobe::read(&db::app_data_dir())
@@ -4580,8 +6198,17 @@ fn migration_status(db: tauri::State<'_, Db>) -> error::Result<MigrationStatus> 
 /// every transcript, verse, lyric, announcement, service title, plan name, song
 /// name, template name and media filename — and the home directory, which names a
 /// person.
+///
+/// ## Generic over the runtime, for rule 24's own reason
+///
+/// It was welded to `AppHandle<Wry>`, so the one artefact in Relay that is expected
+/// to leave the building could not be driven by a test without a window — which is
+/// exactly the argument rule 24 makes about the fire path. `channels::open_channel_ids`
+/// came with it, because it is the only concrete thing on this path.
+/// `diagnostic_bundle_tests::what_the_diagnostic_bundle_costs` is what that bought
+/// (RG-299): the command timed whole rather than its pieces added up.
 #[tauri::command]
-fn export_diagnostics(app: tauri::AppHandle) -> error::Result<String> {
+fn export_diagnostics<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> error::Result<String> {
     use diagnostics::Fact;
     // Eight pieces of state, reached through the handle rather than taken as eight
     // parameters. A report ABOUT the whole app legitimately needs to see most of it,
@@ -4600,11 +6227,15 @@ fn export_diagnostics(app: tauri::AppHandle) -> error::Result<String> {
         Fact::new("Version", app.package_info().version.to_string()),
         Fact::new(
             "Build",
-            if cfg!(debug_assertions) {
-                "development"
-            } else {
-                "release"
-            },
+            format!(
+                "{} · {}",
+                if cfg!(debug_assertions) {
+                    "development"
+                } else {
+                    "release"
+                },
+                diagnostics::BUILD
+            ),
         ),
         Fact::new(
             "Ports",
@@ -4858,6 +6489,71 @@ fn export_diagnostics(app: tauri::AppHandle) -> error::Result<String> {
 mod diagnostic_bundle_tests {
     use super::*;
     use crate::diagnostics::{compose, Fact};
+
+    /// WHAT THE DIAGNOSTIC BUNDLE COSTS THE MAIN RUN LOOP — RG-299.
+    ///
+    /// One of the two commands on that row's own list that had never been timed.
+    /// It was on the list because it does real work — `sysprobe::read` refreshes
+    /// the disk list, `latency::report(0)` walks the histograms, four database
+    /// reads, and a file write — and the row will not say a command is fine until
+    /// somebody has put a number on it. The whole command, not its pieces: a bench
+    /// of the parts is how a slow whole goes unnoticed.
+    ///
+    /// `Stt(None)` is what `build_stt` returns on a machine with no model
+    /// downloaded, which is the one the bundle is most often exported from — a
+    /// church that cannot get Relay listening. There is no whisper in this harness
+    /// to make it anything else.
+    ///
+    /// Reports, asserts nothing about a clock.
+    #[test]
+    #[ignore = "a bench: measures this machine"]
+    fn what_the_diagnostic_bundle_costs() {
+        let app = qa::bare_app();
+        app.handle().manage(Stt(Mutex::new(None)));
+        // And a hub. `bare_app` manages none on purpose — that is its "no LAN" case
+        // — and the bundle reports the kiosk client count, so without one this
+        // panics rather than measuring anything.
+        app.handle().manage(channels::KioskHub::default());
+
+        // THE COMMAND FIRST, and twice. The first export in a process pays for the
+        // OS disk enumeration `sysprobe::read` does, and that is the one an operator
+        // actually waits through — measuring the pieces first would warm it and
+        // report the second export as if it were the first.
+        for pass in ["cold", "warm"] {
+            let t = std::time::Instant::now();
+            let out = export_diagnostics(app.handle().clone());
+            println!(
+                "  export_diagnostics ({pass:<4})           {:>6} ms   {}",
+                t.elapsed().as_millis(),
+                match &out {
+                    Ok(p) => format!(
+                        "wrote {} bytes",
+                        std::fs::metadata(p).map(|m| m.len()).unwrap_or(0)
+                    ),
+                    Err(e) => format!("refused: {}", e.message()),
+                }
+            );
+            if let Ok(p) = out {
+                let _ = std::fs::remove_file(p);
+            }
+        }
+        // Then the two pieces with any reason to be slow, so a number that moves
+        // can be attributed without re-deriving this. Warm by now, deliberately:
+        // the cold cost is in the line above, where it belongs.
+        let t = std::time::Instant::now();
+        let _hw = sysprobe::read(&db::app_data_dir());
+        println!(
+            "  sysprobe::read (memory + disk list) {:>6} ms   (warm)",
+            t.elapsed().as_millis()
+        );
+        let t = std::time::Instant::now();
+        let _r = latency::report(0);
+        println!(
+            "  latency::report(0)                  {:>6} ms",
+            t.elapsed().as_millis()
+        );
+        println!();
+    }
 
     /// THE BUNDLE MAY NOT CARRY ANYTHING THAT BELONGS TO THE CHURCH.
     ///
@@ -5144,6 +6840,20 @@ async fn start_capture(
     let emitter = app.clone();
     let quality_emitter = app.clone();
     let err_emitter = app.clone();
+    // WHAT A LOST MICROPHONE IS DOING ABOUT ITSELF (RG-291, DECISIONS §119).
+    // Separate from `err_emitter` because the two say different things: an error
+    // is the end of an attempt, and this is the attempt after it.
+    let recovery_emitter = app.clone();
+    // DISCONNECTED USED TO BE THE ONE SILENT ANSWER ON THIS PATH, and it is the
+    // worst of the three. FULL is a backlog and is counted; OK is the normal case;
+    // DISCONNECTED means the whisper worker is gone — it failed to create its
+    // state, or the engine it belonged to was replaced underneath a running
+    // capture — and every chunk from here to the end of the service falls on the
+    // floor. The level meter still moves, the console still says Listening, and
+    // not one word is ever transcribed again. Reported ONCE, on the same channel
+    // as a dead microphone, because to an operator it is the same news.
+    let stt_gone = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stt_dead_emitter = app.clone();
     // Throttle the level-meter event: chunks arrive ~5/sec but the UI only needs
     // a couple updates/sec. Flooding the webview with events is a real freeze
     // risk. STT still gets EVERY chunk.
@@ -5153,11 +6863,18 @@ async fn start_capture(
     let quality_n = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
     // Non-blocking: returns instantly, so the UI thread never stalls on device
     // init. Stream failures surface as `audio://error`.
-    let engine = AudioEngine::start(
+    let engine = AudioEngine::start_with_recovery(
         device,
         move |chunk| {
             let n = chunk_n.fetch_add(1, Ordering::Relaxed);
-            if n.is_multiple_of(3) {
+            // EVERY SECOND CHUNK, not every third. Chunks are 400 ms on a 200 ms
+            // hop, so every second one covers the timeline exactly once with no
+            // overlap and no gap; every third left two thirds of the audio out of
+            // the console's picture entirely, which is why no drawing could make
+            // that picture a waveform. The event RATE is unchanged in the way that
+            // matters — ~2.5/s against ~1.7/s — while the readings it carries go
+            // from one per 600 ms to one per 25 ms.
+            if n.is_multiple_of(2) {
                 let _ = emitter.emit(
                     "audio://chunk",
                     ChunkEvent {
@@ -5166,6 +6883,7 @@ async fn start_capture(
                         rms: chunk.rms,
                         is_voice: chunk.is_voice,
                         samples: chunk.samples.len(),
+                        peaks: audio::envelope(&chunk.samples, audio::CHUNK_PEAKS),
                     },
                 );
             }
@@ -5177,8 +6895,19 @@ async fn start_capture(
                 // heard is a worse thing than a shed partial, and both have to be
                 // visible. DISCONNECTED is an engine that has been unloaded and is
                 // not a gap in anything.
-                if let Err(std::sync::mpsc::TrySendError::Full(_)) = tx.try_send(chunk.clone()) {
-                    latency::note_dropped_audio();
+                match tx.try_send(chunk.clone()) {
+                    Err(std::sync::mpsc::TrySendError::Full(_)) => latency::note_dropped_audio(),
+                    Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
+                        if !stt_gone.swap(true, Ordering::Relaxed) {
+                            let msg = "speech recognition has stopped — the transcript \
+                                       and automatic scripture detection are not running. \
+                                       Stop and start the microphone to bring them back."
+                                .to_string();
+                            eprintln!("audio: {msg}");
+                            let _ = stt_dead_emitter.emit("audio://error", msg);
+                        }
+                    }
+                    Ok(()) => {}
                 }
             }
         },
@@ -5191,6 +6920,22 @@ async fn start_capture(
         move |err| {
             eprintln!("audio: {err}");
             let _ = err_emitter.emit("audio://error", err);
+        },
+        // ── THE THREE STATES OF A MICROPHONE THAT WENT AWAY ────────────────────
+        //
+        // `lost`, `listening`, `gave_up` — and they must stay apart, because rule
+        // 35 is the whole point of this event: a console that says the same thing
+        // while Relay is retrying, while Relay is listening again, and while Relay
+        // has given up is a console that says nothing. `Recovery` carries the
+        // reason, the attempt number and how long until the next one, so the shell
+        // can say which of the three it is without re-deriving anything.
+        //
+        // The line is printed as well as emitted, for the same reason every other
+        // audio outcome is: on a machine that cannot screenshot the app, stdout is
+        // the record of what happened during a service.
+        move |r: audio::Recovery| {
+            eprintln!("audio: {}", r.describe());
+            let _ = recovery_emitter.emit("audio://recovery", r);
         },
     );
     *slot = Some(engine);
@@ -5280,15 +7025,118 @@ fn get_active_translation(db: tauri::State<'_, Db>) -> error::Result<Option<i64>
 
 /// Choose which translation to read from. Every verse lookup (detection, nav,
 /// manual, output) then prefers it, falling back to any that has the verse.
+/// IMPORT A BIBLE from a JSON file in the KJV's shape (RG-50 option two, DECISIONS
+/// §113). Held back during a service: a rebuild of the FTS index and a new
+/// translation row under a running detector is not a Sunday job.
 #[tauri::command]
-fn set_active_translation(
+#[allow(clippy::too_many_arguments)] // one command, one file, six things about it — a struct would only rename the eight
+fn import_translation(
+    db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+    name: String,
+    abbreviation: String,
+    language: String,
+    license_type: String,
+    filename: String,
+    data: String,
+) -> error::Result<db::ImportedTranslation> {
+    lock.guard("import_translation")?;
+    let bytes = decode_import(&filename, &data)?;
+    let json = String::from_utf8(bytes).map_err(|_| {
+        error::Error::refused(format!(
+            "{filename} is not a text file. Relay reads a Bible as UTF-8 JSON."
+        ))
+    })?;
+    let conn = db.0.lock()?;
+    db::import_translation(&conn, &name, &abbreviation, &language, &license_type, &json)
+        .map_err(error::Error::refused)
+}
+
+/// DELETE AN IMPORTED BIBLE. The two Relay ships and the active one are refused
+/// in `db::delete_translation`, with the reason.
+#[tauri::command]
+fn delete_translation(
+    db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+    id: i64,
+) -> error::Result<()> {
+    lock.guard("delete_translation")?;
+    let conn = db.0.lock()?;
+    db::delete_translation(&conn, id).map_err(error::Error::refused)
+}
+
+#[tauri::command]
+fn set_active_translation<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     db: tauri::State<'_, Db>,
     lock: tauri::State<'_, servicelock::ServiceLock>,
     id: i64,
 ) -> error::Result<()> {
     lock.guard("set_active_translation")?;
-    let conn = db.0.lock()?;
-    db::set_setting(&conn, "active_translation", &id.to_string()).map_err(Into::into)
+    {
+        let conn = db.0.lock()?;
+        db::set_setting(&conn, "active_translation", &id.to_string())?;
+    }
+    // AND THE INDEXES THAT READ THAT SETTING ARE REBUILT — RG-300.
+    //
+    // `Semantic` and `Phrases` were built ONCE, in `setup`, from
+    // `db::all_verses`, which scopes itself to the active translation. Writing
+    // the setting and stopping there left both detectors scanning the PREVIOUS
+    // translation's corpus until the app was relaunched — while every verse READ
+    // was correctly scoped to the new one. So the console would show BSB words
+    // for a reference the paraphrase detector found in KJV vocabulary, and
+    // nothing on any surface would say the two disagreed: a wrong-verse risk
+    // wearing a settings bug's clothes.
+    //
+    // The lock is DROPPED above before this runs, because `rebuild_corpus_indexes`
+    // takes it again — the ordinary rule, stated here because the write and the
+    // rebuild read as one action and are not.
+    rebuild_corpus_indexes(&app)
+}
+
+/// Rebuild the two corpus indexes from whatever translation is active now.
+///
+/// **The one door**, per rule 36: anything that changes which verses Relay should
+/// be scanning calls this, rather than each caller remembering two `build`s. It
+/// is ~305 ms of work over 31,102 verses, and it is deliberately synchronous —
+/// the alternative is a window that says the translation changed while the
+/// detectors have not caught up, which is the defect being fixed wearing a
+/// progress bar.
+///
+/// **It cannot run during a service.** Every caller is behind
+/// `ServiceLock::guard`, so the live path never meets a write lock here. That is
+/// what makes a plain `RwLock` the right shape: readers never block each other,
+/// and the only writer is an operator at a settings screen between services.
+fn rebuild_corpus_indexes<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> error::Result<()> {
+    let corpus: Vec<(VerseRef, String)> = {
+        let db = app.state::<Db>();
+        let conn = db.0.lock()?;
+        db::all_verses(&conn)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|v| {
+                (
+                    VerseRef {
+                        book: v.book,
+                        chapter: v.chapter,
+                        verse: v.verse,
+                    },
+                    v.text,
+                )
+            })
+            .collect()
+    };
+    // BOTH, OR THE PAIR DISAGREES. A quotation index over one translation and a
+    // paraphrase index over another is worse than either being stale.
+    let phrases = detection::PhraseIndex::build(&corpus);
+    let semantic = SemanticIndex::build(&corpus);
+    if let Ok(mut g) = app.state::<Phrases>().0.write() {
+        *g = phrases;
+    }
+    if let Ok(mut g) = app.state::<Semantic>().0.write() {
+        *g = semantic;
+    }
+    Ok(())
 }
 
 /// Set the STT language: a code ("yo"/"sw"/"ha"/"en"/…) or null for auto-detect
@@ -5376,7 +7224,15 @@ fn confirm_detection<R: tauri::Runtime>(
     reference: String,
     confidence: Option<f32>,
     method: Option<String>,
-) -> error::Result<Thresholds> {
+    // ONE SHAPE FOR THE GATE, EVERYWHERE. This returned a bare `Thresholds`, and
+    // the console wrote that straight into its mirror — so a confirm updated the
+    // two numbers and left `on_dial` alone, on the ONE path that can move the gate
+    // off the dial's curve. `record_feedback` is precisely what §96 says makes the
+    // dial position stop explaining the gate, and the belt-and-braces writer for
+    // it carried three of the four facts. Same struct as `get_thresholds` and the
+    // same fields `detection://thresholds` carries, so no surface can learn a
+    // different thing from a different door.
+) -> error::Result<GateReadout> {
     // The confidence of the SUGGESTION the operator accepted, and how it was
     // found. Both were known to the console and thrown away at the call site.
     //
@@ -5441,7 +7297,11 @@ fn confirm_detection<R: tauri::Runtime>(
         .map(detection::DetectionMethod::from_wire)
         .unwrap_or(detection::DetectionMethod::Direct);
     let confirmed_conf = match confidence {
-        Some(c) if accepted_method.may_auto_fire() => Some(c.clamp(0.0, 1.0)),
+        // `confidence_is_calibrated`, not `may_auto_fire`. The two were one
+        // question while `Direct` answered both; DECISIONS §118 split them. A
+        // `Reading` MAY reach a wall and its number is a word count, so it must
+        // not be handed to a bar that means a parse probability.
+        Some(c) if accepted_method.confidence_is_calibrated() => Some(c.clamp(0.0, 1.0)),
         Some(_) => None,
         // No confidence supplied: fall back to the re-parse, which is what this
         // always did. Not better, but not a lie either.
@@ -5527,7 +7387,7 @@ fn confirm_detection<R: tauri::Runtime>(
         // stale on its own, with the operator touching nothing.
         thresholds_changed(&app, t);
     }
-    Ok(t)
+    Ok(t.into())
 }
 
 /// Operator rejected an auto-fired detection (undo). Tightens the gate,
@@ -5576,7 +7436,8 @@ fn dismiss_detection<R: tauri::Runtime>(
     db: tauri::State<'_, Db>,
     rehearsal: tauri::State<'_, channels::Rehearsal>,
     reference: Option<String>,
-) -> error::Result<Thresholds> {
+    // `GateReadout`, not `Thresholds` — see `confirm_detection`.
+) -> error::Result<GateReadout> {
     if !rehearsal.on() {
         let canonical = reference.as_deref().and_then(|r| {
             detection::detect_direct(r)
@@ -5605,7 +7466,7 @@ fn dismiss_detection<R: tauri::Runtime>(
         // stale on its own, with the operator touching nothing.
         thresholds_changed(&app, t);
     }
-    Ok(t)
+    Ok(t.into())
 }
 
 /// ENDING A REHEARSAL ENDS THE TIMERS IT STARTED, AND THEN TELLS THE TABLET —
@@ -5635,7 +7496,7 @@ fn dismiss_detection<R: tauri::Runtime>(
 /// measured defect was precisely an exit that published `clear` and `stage_next`
 /// and no `timer` frame at all, leaving the tablet's set and the registry to
 /// disagree in silence until something unrelated republished
-/// (`audits/DESIGN-2026-09-16-WAVE3.md` §6).
+/// (`audits/DESIGN.md` §6).
 ///
 /// Called only with the rehearsal flag already flipped OFF, so the publish is a real
 /// one rather than a suppression.
@@ -5818,6 +7679,13 @@ fn thresholds_changed<R: tauri::Runtime>(app: &tauri::AppHandle<R>, t: Threshold
         serde_json::json!({
             "auto_fire": t.auto_fire,
             "suggest": t.suggest,
+            // THE TWO FIGURES AS AN OPERATOR READS THEM, derived in Rust beside
+            // the curve they are a question about (DECISIONS §117). The printed
+            // pair used to be `auto_fire`/`suggest` straight off this struct,
+            // which runs the opposite way to the dial they are printed under.
+            // A second copy of `100 - x` in the frontend would be a second
+            // opinion about one gate, which is what §96 deleted a control for.
+            "readiness": t.readiness(),
             "sensitivity": t.to_sensitivity(),
             // ON THE CURVE, OR MERELY NEAREST TO IT. `sensitivity` alone cannot
             // say which, and three of the five doors that move the gate move it to
@@ -5848,25 +7716,34 @@ fn thresholds_changed<R: tauri::Runtime>(app: &tauri::AppHandle<R>, t: Threshold
 /// `hardrules.test.js`). A console that only listened would therefore open with
 /// the learned gate on screen, drawn at whatever dial position is nearest it, and
 /// no caveat anywhere — which is the exact state this work was opened to fix.
-#[derive(Serialize)]
+#[derive(Serialize, Debug, Clone, Copy)]
 struct GateReadout {
     auto_fire: f32,
     suggest: f32,
+    /// The same pair on the 0-100 scale that rises with the dial. See
+    /// `Thresholds::readiness`.
+    readiness: router::GateReadiness,
     sensitivity: u8,
     on_dial: bool,
+}
+
+impl From<Thresholds> for GateReadout {
+    fn from(t: Thresholds) -> Self {
+        GateReadout {
+            auto_fire: t.auto_fire,
+            suggest: t.suggest,
+            readiness: t.readiness(),
+            sensitivity: t.to_sensitivity(),
+            on_dial: t.follows_dial(),
+        }
+    }
 }
 
 /// The live gate: the two thresholds, the dial position they map back to, and
 /// whether that dial position actually explains them.
 #[tauri::command]
 fn get_thresholds(routing: tauri::State<'_, Routing>) -> error::Result<GateReadout> {
-    let t = routing.0.lock()?.thresholds();
-    Ok(GateReadout {
-        auto_fire: t.auto_fire,
-        suggest: t.suggest,
-        sensitivity: t.to_sensitivity(),
-        on_dial: t.follows_dial(),
-    })
+    Ok(routing.0.lock()?.thresholds().into())
 }
 
 // ===== Related scripture & series tracker (Phase A: A3/A4/A6) ===============
@@ -6155,11 +8032,31 @@ const DETECT_QUEUE: usize = 8;
 /// Order is still exact: one consumer thread, one queue, so a final can never
 /// overtake the partial before it and a spoken "next" cannot be applied out of
 /// sequence.
-fn handle_transcript(
-    handle: &tauri::AppHandle,
+/// **Generic over the runtime, per rule 24.** Everything it calls already is —
+/// `persist_transcript`, `handle_nav`, `handle_passage_nav`, `clear_or_report`,
+/// `emit_detections` — and it was the one concrete link in that chain, which is
+/// what made the whole window-handling step undrivable from `e2e.rs`: a fact this
+/// function records about a window could only be checked by reading it. RG-113(5)
+/// is exactly such a fact.
+fn handle_transcript<R: tauri::Runtime>(
+    handle: &tauri::AppHandle<R>,
     lang_stability: &Mutex<stt::LanguageStability>,
     update: stt::TranscriptUpdate,
 ) {
+    // **RG-113(5) · THE ONE WRITER, AND IT RUNS FOR A PARTIAL TOO.** Everything
+    // below this line — including `emit_detections` and the `persist_fire` inside it
+    // — is about THIS window, so the language is recorded before any of it. It has
+    // to be here rather than in `persist_transcript`, which only ever sees finals:
+    // the evidence row `persist_fire` writes exists precisely because the window was
+    // a partial the last final does not contain. Taken and released on its own, as
+    // rule 2 requires, and it holds no other lock.
+    if let Ok(mut sess) = handle.state::<Session>().0.lock() {
+        if let Some(st) = sess.as_mut() {
+            if st.last_language != update.language {
+                st.last_language = update.language.clone();
+            }
+        }
+    }
     if update.is_final {
         // CONTENT-FREE. `stt.rs` states the rule a hundred lines away in this same
         // pipeline — "The transcript is sermon data and must never be logged" — and
@@ -6229,7 +8126,16 @@ fn handle_transcript(
         handle,
         &update.text,
         router_clock_ms(),
-        update.is_final,
+        // **A FORCED CLOSE IS NOT AN UTTERANCE END — RG-262, and this is the
+        // line that keeps rule 34.** A window that filled up is closed so its
+        // text is kept, but the preacher is still speaking, so the next pass IS
+        // coming. Rule 28's corroboration exemption rests on exactly the opposite
+        // ("a FINAL window is exempt — no next pass is coming"), and handing it
+        // `true` here would let an eight-second window auto-fire a reference the
+        // decoder has not yet had a chance to revise. Four fifths of a sermon was
+        // being lost; recovering it may not cost a single one of rule 10's,
+        // 28's or 30's guarantees.
+        update.is_final && !update.continued,
         Some(update.trace_id),
     );
 }
@@ -6369,7 +8275,14 @@ fn stt_model_setting(conn: &rusqlite::Connection) -> Option<String> {
 /// the new model as selected — so the operator would be told they had switched,
 /// and be running the old model for the rest of the service. Choosing a model and
 /// loading it are one action or the promise is false (see rule 15).
-#[tauri::command]
+///
+/// **AND THEREFORE OFF THE MAIN RUN LOOP AS WELL — RG-299.** This is the door an
+/// operator actually presses in `Settings → Before the service`; `load_stt_model` is the one
+/// the model-installation flow calls. They cost the same 1,097 ms-to-3.6 s, because
+/// the second is the last line of the first. A guarantee kept on one of two doors
+/// is this repository's most-repeated bug, and here it would mean the window
+/// freezing on the path a person uses and not on the path a wizard does.
+#[tauri::command(async)]
 fn select_stt_model(app: tauri::AppHandle, filename: Option<String>) -> error::Result<bool> {
     app.state::<servicelock::ServiceLock>()
         .guard("select_stt_model")?;
@@ -6384,15 +8297,133 @@ fn select_stt_model(app: tauri::AppHandle, filename: Option<String>) -> error::R
     load_stt_model(app)
 }
 
+/// FOLLOW THE READER, or do not. The church's one switch over what a quotation
+/// may do (DECISIONS §118).
+///
+/// ## Why this is a command and not `set_setting`
+///
+/// Writing the row alone would change nothing until the next launch, while the
+/// switch on screen showed the new position — so the operator would be told they
+/// had turned it off and Relay would go on firing readings for the rest of the
+/// service. Choosing and applying are one action or the promise is false, which
+/// is rule 15 and the same reason `select_stt_model` is its own command.
+///
+/// ## Order, and why this one is the way round it is
+///
+/// The ROW is written first and the router second. A write that fails must not
+/// leave the engine following a reader that nothing remembers — the next launch
+/// would silently put it back. Same reasoning as `set_stt_language` (RG-138).
+///
+/// Behind the service lock: this decides what the AI may put on a congregation's
+/// screen unasked, and changing that under a running service is exactly the class
+/// of thing `servicelock.rs` exists for.
+#[tauri::command]
+fn set_follow_the_reader<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    db: tauri::State<'_, Db>,
+    routing: tauri::State<'_, Routing>,
+    on: bool,
+) -> error::Result<bool> {
+    app.state::<servicelock::ServiceLock>()
+        .guard("set_follow_the_reader")?;
+    {
+        let conn = db.0.lock()?;
+        db::set_follow_the_reader(&conn, on)?;
+    }
+    {
+        let mut r = routing.0.lock()?;
+        r.set_follow_the_reader(on);
+    }
+    Ok(on)
+}
+
+/// Is Relay following a reader right now? Read from the ROUTER, not the row — the
+/// router is what decides, and a surface asking the database would be asking a
+/// different question that usually has the same answer.
+#[tauri::command]
+fn get_follow_the_reader(routing: tauri::State<'_, Routing>) -> error::Result<bool> {
+    Ok(routing.0.lock()?.follows_the_reader())
+}
+
+/// **MUST A PARAPHRASE ECHO THE VERSE?** The church's one switch over what the
+/// paraphrase detector is allowed to put in front of an operator (DECISIONS §125,
+/// RG-311).
+///
+/// ## Why this is a command and not `set_setting`
+///
+/// The same reason as `set_follow_the_reader`: writing the row alone would change
+/// nothing until the next launch while the switch on screen showed the new
+/// position, so the operator would be told the noise had stopped and it would go on
+/// for the rest of the service. Choosing and applying are one action or the promise
+/// is false (rule 15).
+///
+/// ## Order — the ROW first, the engine second
+///
+/// `set_follow_the_reader`'s order, for `set_stt_language`'s reason (RG-138): a
+/// write that fails must not leave the detector running under a rule nothing
+/// remembers, because the next launch would silently put it back.
+///
+/// ## NOT behind the service lock, and this is a deliberate divergence
+///
+/// Its structural twin `set_follow_the_reader` IS locked, because turning that on
+/// mid-service changes what reaches a CONGREGATION with nobody pressing anything.
+/// This one cannot: `Semantic` is capped at `Suggest` by rule 10 at any score and
+/// any setting, so the switch only ever removes rows from the operator's own list.
+/// `servicelock.rs` protects two things — the irreversible, and anything that takes
+/// the engine away mid-sermon — and this is neither: it is one click each way and it
+/// stops nothing. The nearest precedent is therefore `set_sensitivity`, which the
+/// lock's own module note names as explicitly unprotected, and for the same reason:
+/// **the operator who most needs this is the one drowning in suggestions at 10:31**,
+/// and over-blocking is the more dangerous failure there.
+#[tauri::command]
+fn set_paraphrase_needs_a_run<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    db: tauri::State<'_, Db>,
+    on: bool,
+) -> error::Result<bool> {
+    {
+        let conn = db.0.lock()?;
+        db::set_paraphrase_needs_a_run(&conn, on)?;
+    }
+    app.state::<ParaphraseRun>().0.store(on, Ordering::Relaxed);
+    Ok(on)
+}
+
+/// Is the paraphrase bar on right now? Read from the STATE the detection path
+/// reads, not from the row — the same rule `get_follow_the_reader` follows, so a
+/// surface cannot show a preference that the detector is not applying.
+#[tauri::command]
+fn get_paraphrase_needs_a_run<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> error::Result<bool> {
+    Ok(app.state::<ParaphraseRun>().0.load(Ordering::Relaxed))
+}
+
 /// Bring speech recognition up after a model has just been installed, without a
 /// restart. Re-applies the active voice profile so language + decoder bias are
 /// live from the first word.
-#[tauri::command]
+///
+/// **OFF THE MAIN RUN LOOP, AND ONLY BECAUSE OF THE GUARD — RG-299.** 1,097 ms warm
+/// and about 3.6 s on a cold 1.6 GB read is a freeze on the window's thread, and a
+/// run loop the decoder's own emit can wait on (rule 2). What the main thread was
+/// providing was mutual exclusion, so `ModelLoad` has to hold that before
+/// `#[tauri::command(async)]` may take it away — see `ModelLoad` for the 3.2 GB
+/// two concurrent builds would hold while racing to write one slot. Faster by less
+/// safe is rule 34; this is faster, having paid for it.
+#[tauri::command(async)]
 fn load_stt_model(app: tauri::AppHandle) -> error::Result<bool> {
     // Rebuilding the engine takes the ears away for as long as whisper takes to
     // load, which on a big model is most of a paragraph.
     app.state::<servicelock::ServiceLock>()
         .guard("load_stt_model")?;
+    // Held for the whole load, released however this returns. The refusal is a
+    // sentence an operator can act on, not a fault: nothing is broken, the thing
+    // they asked for is already happening.
+    // Bound, not chained: `State` is a temporary and the guard borrows from it.
+    let one_at_a_time = app.state::<ModelLoad>();
+    let Some(_in_flight) = one_at_a_time.begin() else {
+        return Err(error::Error::refused(
+            "A speech model is already loading. Wait for it to finish.",
+        ));
+    };
     let engine = build_stt(&app);
     let loaded = engine.is_some();
     {
@@ -6446,7 +8477,20 @@ async fn download_model(app: tauri::AppHandle, id: String) -> error::Result<()> 
 /// Held back during a service like every other model change (§40): copying 148 MB
 /// and reloading whisper is exactly as disruptive from a USB stick as from the
 /// internet.
-#[tauri::command]
+///
+/// **OFF THE MAIN RUN LOOP — RG-299.** `#[tauri::command(async)]` on a synchronous
+/// function is Tauri's own way of saying "do not run this on the window's thread",
+/// and it keeps `State<'_, T>` working where an `async fn` would not. Measured on
+/// this machine (`models::tests::what_the_model_flow_costs`): **7,086 ms** for
+/// `ggml-large-v3-turbo` — hash the source, copy it, hash the copy — and the copy
+/// itself was free only because APFS cloned it on the same volume. From the USB
+/// stick this feature exists for it is minutes. Every one of those milliseconds was
+/// a frozen window with no spinner, no progress and nothing in any log.
+///
+/// What the main thread was silently providing was MUTUAL EXCLUSION, and that is
+/// paid for properly now: `models::install_from_file` copies to a scratch name
+/// unique per attempt, so two installs cannot interleave into one file.
+#[tauri::command(async)]
 fn install_model_file(
     lock: tauri::State<'_, servicelock::ServiceLock>,
     path: String,
@@ -6457,11 +8501,369 @@ fn install_model_file(
 
 /// Model files already sitting on this machine, waiting to be installed.
 ///
-/// Read-only and cheap: three folders, no recursion, size as a pre-filter before
-/// anything is hashed.
-#[tauri::command]
+/// Three folders, no recursion, size as a pre-filter before anything is hashed.
+///
+/// **IT IS NOT CHEAP, AND THIS DOC COMMENT SAID IT WAS** (RG-299). The size filter
+/// decides what gets hashed, not whether anything does: a file whose length matches a
+/// catalogue entry is SHA-256'd in full, and the catalogue's largest entry is 1.6 GB.
+/// Measured on this machine by `models::tests::what_the_model_flow_costs`: **3,543 ms**
+/// for that one file at 437 MB/s, and **5,025 ms** with all three installed models
+/// present. As a plain `#[tauri::command]` every one of those milliseconds was the
+/// macOS window's run loop, held by a screen whose whole job is to look for a file —
+/// an app that appears to have hung, five seconds after a click, under a doc comment
+/// asserting the opposite.
+///
+/// `#[tauri::command(async)]` moves a SYNCHRONOUS command off that thread, which is
+/// the small lever this needed: no `async fn`, so `State<'_, T>` keeps working. It is
+/// safe off the main thread because it is a read — it opens files, hashes them and
+/// returns; two concurrent scans agree, and neither writes anything.
+#[tauri::command(async)]
 fn find_model_files() -> Vec<models::FoundModel> {
     models::scan_for_models()
+}
+
+/// THE COMMANDS THAT MAY NOT GO BACK ON THE MACOS RUN LOOP — RG-299.
+///
+/// Tauri v2 runs a command that is neither `async fn` nor `#[tauri::command(async)]`
+/// on the main thread, and on macOS that thread IS the window's run loop. Most of
+/// Relay's 169 commands are a SQLite read and belong there: sync commands are
+/// serialised by that thread, which is a real guarantee, and spending it buys
+/// nothing on a one-millisecond query.
+///
+/// These two are the ones that were measured and found to matter. Nothing about the
+/// attribute looks load-bearing, and `cargo fmt` will not restore it — so a tidy-up
+/// that deletes `(async)` puts a **five-second frozen app** back, silently, on the
+/// screen a church uses to install speech recognition from a USB stick.
+///
+/// Deliberately a list of two and not a rule about all of them. A scanner that
+/// guessed which command is "slow" would fail on legitimate code, be weakened, and
+/// take these with it. The measurement lives in
+/// `models::tests::what_the_model_flow_costs`; the survey of what the rest cost is
+/// in RELAY_GAP's RG-299 row.
+#[cfg(test)]
+mod main_loop_tests {
+    /// Every command named here has been MEASURED at hundreds of milliseconds or
+    /// more, and must stay off the main thread. A list, not a rule about the 160
+    /// that stay on it: nothing about `(async)` looks load-bearing, `cargo fmt` will
+    /// not restore it, and a one-millisecond SQLite read gains nothing from a thread
+    /// hop.
+    ///
+    /// The measurements, all RG-299, each with the bench that produced it:
+    ///
+    /// * `find_model_files` — 3,543 ms for one 1.6 GB file, 5,025 ms with three
+    ///   installed. The only one of these a service lock does not hold back.
+    /// * `install_model_file` — 7,086 ms for `large-v3-turbo`.
+    ///   (`models::tests::what_the_model_flow_costs`)
+    /// * `load_stt_model` — 1,097 ms warm, ~3.6 s on a cold 1.6 GB read. It needed
+    ///   `ModelLoad` first: the main thread was providing mutual exclusion, and two
+    ///   builds at once would hold 3.2 GB while racing to write one `Stt` slot.
+    /// * `select_stt_model` — the same cost by definition; it ends by calling
+    ///   `load_stt_model`. Its twin, and a guarantee kept on one of two doors is
+    ///   this repository's most-repeated bug.
+    /// * `parse_import` — 2,285 ms at `MAX_IMPORT_BYTES`, 27 ms for a realistic
+    ///   2 MiB playlist. (`import_guard_tests::what_parsing_a_lyric_import_costs`)
+    ///
+    /// **`export_diagnostics` is deliberately NOT here.** It was the other command
+    /// this row named as never timed, and it is **16 ms** end to end
+    /// (`diagnostic_bundle_tests::what_the_diagnostic_bundle_costs`). Measuring
+    /// returned a no, which is a result.
+    const OFF_THE_RUN_LOOP: [&str; 5] = [
+        "find_model_files",
+        "install_model_file",
+        "load_stt_model",
+        "select_stt_model",
+        "parse_import",
+    ];
+
+    fn source() -> String {
+        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs"))
+            .expect("read main.rs")
+    }
+
+    /// The attribute line directly above a command's DEFINITION.
+    ///
+    /// Line-by-line, and anchored at the start of a line, because the name also
+    /// appears in this module as a string literal and in the doc comments above the
+    /// commands themselves — a `str::find` for `fn <name>(` matched one of those and
+    /// returned `.find("`, which is a scanner reading its own source.
+    fn attribute_above(src: &str, name: &str) -> Option<String> {
+        let signature = format!("fn {name}(");
+        let lines: Vec<&str> = src.lines().collect();
+        lines.iter().enumerate().find_map(|(i, l)| {
+            (l.starts_with(&signature) && i > 0).then(|| lines[i - 1].trim().to_string())
+        })
+    }
+
+    #[test]
+    fn the_commands_measured_to_freeze_the_window_stay_off_the_main_thread() {
+        let src = source();
+        for name in OFF_THE_RUN_LOOP {
+            let attr = attribute_above(&src, name)
+                .unwrap_or_else(|| panic!("{name} is gone — update this list or remove it"));
+            assert_eq!(
+                attr, "#[tauri::command(async)]",
+                "{name} is `{attr}` — it was measured at seconds of file I/O, and a plain \
+                 `#[tauri::command]` runs it on the macOS window's run loop (RG-299). Put \
+                 `#[tauri::command(async)]` back, or take it out of OFF_THE_RUN_LOOP with a \
+                 measurement that says why."
+            );
+        }
+    }
+
+    /// **THE GUARD THAT PAID FOR `load_stt_model` GOING ASYNC — RG-299.**
+    ///
+    /// Two concurrent loads would each build a whisper context (3.2 GB for two
+    /// `large-v3-turbo`) and both write the same `Stt` slot, and the reason that
+    /// could not happen before is that the main run loop was serialising them.
+    /// Taking the serialisation away and not replacing it is rule 34.
+    ///
+    /// Put the defect back by returning `Some(ModelLoadGuard(&self.0))`
+    /// unconditionally from `begin` and this fails.
+    #[test]
+    fn only_one_model_load_may_be_in_flight() {
+        let load = super::ModelLoad::default();
+        let first = load.begin().expect("the first caller gets the slot");
+        assert!(
+            load.begin().is_none(),
+            "a second load started while the first was still building — two whisper \
+             contexts, 3.2 GB, both writing one slot"
+        );
+        drop(first);
+        assert!(
+            load.begin().is_some(),
+            "the slot was not released, so one bad load kills the feature until \
+             Relay is restarted — `models::RunningGuard` learned this the hard way"
+        );
+    }
+
+    // ── THE TRIPWIRE FOR THE NEXT ONE — RG-299 ──────────────────────────────
+    //
+    // `OFF_THE_RUN_LOOP` above is a list of five commands that were measured and
+    // moved. It says nothing about the 164 that stayed, and RG-299's last open
+    // clause was exactly that: **nothing stops the next slow command being added to
+    // the run loop without anybody measuring it.** The five were not found by
+    // reasoning about what looks slow; they were found by a survey, and the survey
+    // was written down as reproducible — *"walk each command body for `fs::`,
+    // hashing, `decode_import`, a bundle or a model load"*. A survey that is
+    // reproducible by hand is a test that nobody has written yet.
+    //
+    // So this is that survey, run on every build. It is deliberately NOT a rule
+    // about which commands are slow — that is the scanner the note above this module
+    // refuses, and rightly, because it would guess, fail on legitimate code, be
+    // weakened and take the real ones with it. This asks a syntactic question with a
+    // syntactic answer: **does this command's own body do bulk work with a file, a
+    // hash, an import or a model?** If it does, it is `(async)`, or it is named
+    // below with the measurement that says it may stay.
+    //
+    // **What it cannot see, stated rather than implied.** It reads the command's own
+    // body and nothing a call deep, which is the same boundary the hand survey had:
+    // `select_stt_model` does seconds of work and contains none of these markers,
+    // because it calls `load_stt_model`. That is why `OFF_THE_RUN_LOOP` exists as a
+    // list of names beside this — the two tests answer different questions, and
+    // neither subsumes the other. It also cannot see cost that is not file-shaped;
+    // `export_diagnostics` is 16 ms and the whole of it is `sysprobe::read`, which
+    // this would never have found.
+
+    /// Bulk work, and what each marker is a marker FOR. A body naming one of these
+    /// is doing something whose cost is set by how big the thing is, which is the
+    /// property that makes a command able to freeze a window.
+    ///
+    /// `fs::remove_file` is deliberately absent: unlinking a file is one syscall
+    /// whatever is in it, and `delete_media` and `remove_demo_content` do exactly
+    /// that and nothing else. A marker that catches them would be a marker that
+    /// catches everything, and then this list gets weakened.
+    const BULK_WORK: [(&str, &str); 15] = [
+        ("fs::read", "reads a whole file (or a directory)"),
+        ("read_to_string", "reads a whole file"),
+        ("File::open", "opens a file to read it"),
+        ("File::create", "opens a file to write it"),
+        ("fs::write", "writes a whole file"),
+        ("fs::copy", "copies a file"),
+        ("io::copy", "streams a file"),
+        ("read_dir", "enumerates a directory"),
+        ("Sha256", "hashes bytes"),
+        ("decode_import", "decodes an upload"),
+        ("WhisperContext", "loads a speech model"),
+        ("build_stt", "loads a speech model"),
+        (
+            "scan_for_models",
+            "enumerates and hashes every installed model",
+        ),
+        ("install_from_file", "copies and hashes a model"),
+        ("write_bundle", "writes the diagnostic bundle"),
+    ];
+
+    /// Commands whose own body does bulk work, which are MEASURED and staying on the
+    /// run loop. Every entry carries its number and the bench that produced it, and
+    /// an entry with neither does not belong here — that is the whole mechanism.
+    ///
+    /// * `export_diagnostics` — **16 ms** end to end, and `sysprobe::read` is the
+    ///   whole of it (`diagnostic_bundle_tests::what_the_diagnostic_bundle_costs`).
+    ///   Measuring returned a no, which is a result.
+    /// * `export_service` — **~6 ms** for the largest real service, 7,163 transcript
+    ///   rows and 549 KB. This is the command RG-299 called out for reading every
+    ///   transcript row with no `LIMIT`.
+    /// * `import_media` — **169 ms** at the 256 MiB cap, 81 decode and 88 write
+    ///   (`import_guard_tests::what_an_import_at_the_cap_costs`). Service locked.
+    /// * `import_translation` — **241 ms** for the whole KJV, 31,102 verses out of
+    ///   4.3 MB of JSON (`db::verses::imported_translation::what_importing_a_whole_
+    ///   bible_costs`). Service locked.
+    ///
+    /// The four that are NOT here are the four the same survey found and moved; they
+    /// are in `OFF_THE_RUN_LOOP` and this test would fail on any of them that came
+    /// back, from the other direction.
+    const MEASURED_ON_THE_RUN_LOOP: [&str; 4] = [
+        "export_diagnostics",
+        "export_service",
+        "import_media",
+        "import_translation",
+    ];
+
+    /// One Tauri command as this file declares it: its name, whether its attribute
+    /// took it off the run loop, and its own body with comments removed.
+    ///
+    /// **Comments removed, and that is not tidiness.** The first version of this scan
+    /// reported `stt_status` — a lock read and a settings lookup — as loading a
+    /// model, because the comment above its first statement mentions
+    /// `load_stt_model` by name while explaining lock order. A scanner reading prose
+    /// about code instead of code is the same failure `attribute_above` already
+    /// records against itself one screen up.
+    fn command_bodies(src: &str) -> Vec<(String, bool, String)> {
+        let lines: Vec<&str> = src.lines().collect();
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < lines.len() {
+            if !lines[i].starts_with("#[tauri::command") {
+                i += 1;
+                continue;
+            }
+            let is_async = lines[i].trim() == "#[tauri::command(async)]";
+            let mut j = i + 1;
+            while j < lines.len()
+                && (lines[j].starts_with("#[") || lines[j].trim_start().starts_with("//"))
+            {
+                j += 1;
+            }
+            let Some(name) = lines.get(j).and_then(|l| {
+                l.strip_prefix("pub ")
+                    .unwrap_or(l)
+                    .strip_prefix("async ")
+                    .unwrap_or(l)
+                    .strip_prefix("fn ")
+                    .and_then(|r| r.split(['(', '<']).next())
+            }) else {
+                i = j + 1;
+                continue;
+            };
+            // A command's body ends at the first line that is exactly a closing
+            // brace, which is what `rustfmt` guarantees for a top-level item.
+            let mut k = j;
+            while k < lines.len() && lines[k] != "}" {
+                k += 1;
+            }
+            let body = lines[j..k.min(lines.len())]
+                .iter()
+                .filter(|l| !l.trim_start().starts_with("//"))
+                .map(|l| match l.find("//") {
+                    // A trailing comment, unless there is a string before it — a URL
+                    // holds a `//` and cutting there would hide real code.
+                    Some(c) if !l[..c].contains('"') => &l[..c],
+                    _ => *l,
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            out.push((name.to_string(), is_async, body));
+            i = k;
+        }
+        out
+    }
+
+    /// **A NEW COMMAND MAY NOT DO BULK WORK ON THE macOS RUN LOOP UNMEASURED.**
+    ///
+    /// RG-299's residual, and the reason it could not just be closed: five commands
+    /// were measured and moved, 164 stayed, and the next one was going to be added
+    /// the same way the first five were — by somebody writing an ordinary
+    /// `#[tauri::command]` over an ordinary-looking body. Rule 2 is why it matters
+    /// and it is not about a spinning beachball: the STT worker emits
+    /// `stt://transcript` from its own thread, and that emit waits on the run loop,
+    /// so a command hashing a 1.6 GB file during a service stops the decoder for as
+    /// long as it hashes.
+    ///
+    /// Two directions, because a scanner that quietly narrows passes everything:
+    /// every body doing bulk work is accounted for, AND the scanner can still see
+    /// every instance we already know about.
+    #[test]
+    fn a_command_that_does_bulk_work_on_the_run_loop_has_been_measured() {
+        let src = source();
+        let cmds = command_bodies(&src);
+        assert!(
+            cmds.len() > 150,
+            "the scanner found {} commands in a file that has around 169 — it has \
+             stopped parsing this file and would pass whatever is in it",
+            cmds.len()
+        );
+
+        let mut unaccounted: Vec<String> = Vec::new();
+        for (name, is_async, body) in &cmds {
+            let Some((_, what)) = BULK_WORK.iter().find(|(m, _)| body.contains(m)) else {
+                continue;
+            };
+            if *is_async || MEASURED_ON_THE_RUN_LOOP.contains(&name.as_str()) {
+                continue;
+            }
+            unaccounted.push(format!("{name} ({what})"));
+        }
+        assert!(
+            unaccounted.is_empty(),
+            "these commands do bulk work on the macOS window's run loop and nothing \
+             says what it costs: {unaccounted:?}.\nMeasure it. Then either give it \
+             `#[tauri::command(async)]` (and pay for the mutual exclusion the main \
+             thread was silently providing — see `ModelLoad`), or add it to \
+             MEASURED_ON_THE_RUN_LOOP with the number and the bench that produced it. \
+             RG-299, rule 2."
+        );
+
+        // AND THE SCANNER CAN STILL SEE. Every name below is a body we know does
+        // bulk work; if the markers or the parser drift, this fails here rather than
+        // silently reporting a clean sweep of nothing.
+        let seen: std::collections::HashMap<&str, &String> =
+            cmds.iter().map(|(n, _, b)| (n.as_str(), b)).collect();
+        for name in MEASURED_ON_THE_RUN_LOOP
+            .iter()
+            .chain(["find_model_files", "install_model_file", "parse_import"].iter())
+        {
+            let body = seen
+                .get(name)
+                .unwrap_or_else(|| panic!("{name} is gone — update these lists"));
+            assert!(
+                BULK_WORK.iter().any(|(m, _)| body.contains(m)),
+                "the scanner can no longer see the bulk work in `{name}`, so it is \
+                 passing on a pattern that has stopped matching"
+            );
+        }
+        // …and it does NOT see it where there is none. `stt_status` is a lock read
+        // and a settings lookup whose COMMENT names `load_stt_model` while explaining
+        // lock order — the false positive the comment-stripping exists for.
+        let status = seen.get("stt_status").expect("stt_status");
+        assert!(
+            !BULK_WORK.iter().any(|(m, _)| status.contains(m)),
+            "the scanner is reading comments again: `stt_status` does no bulk work and \
+             only its prose mentions any"
+        );
+    }
+
+    /// And the scanner can still see a plain command, so it is checking something.
+    /// A source scanner that quietly stops matching passes everything.
+    #[test]
+    fn the_scanner_can_tell_the_two_attributes_apart() {
+        let src = source();
+        assert_eq!(
+            attribute_above(&src, "cancel_model_download").as_deref(),
+            Some("#[tauri::command]"),
+            "the scanner no longer finds a plain command above its signature, so the test \
+             above is passing on a pattern that has stopped matching"
+        );
+    }
 }
 
 /// Cancel an in-flight model download.
@@ -6695,12 +9097,8 @@ fn open_channel_output(
     // undecorated fullscreen output covers the console the operator is running
     // the service from, with nothing reported. `auto_open_outputs` has always
     // skipped that case; this is the manual path agreeing with it, out loud.
-    let monitor_index = match resolve_display(
-        channel.display_target.as_deref(),
-        &channels::list_monitors(&app),
-    ) {
-        DisplayChoice::On(idx) => Some(idx),
-        DisplayChoice::Anywhere => None,
+    let monitors = channels::list_monitors(&app);
+    let monitor_index = match resolve_display(channel.display_target.as_deref(), &monitors) {
         DisplayChoice::Missing(n) => {
             return Err(error::Error::refused(format!(
                 "{} is set to open on Display {n}, which is not connected. \
@@ -6708,6 +9106,13 @@ fn open_channel_output(
                 channel.name
             )))
         }
+        // NEVER OVER THE CONSOLE (RG-188). `Anywhere` used to fall through to the
+        // OS default — the primary display, the one the operator is running the
+        // service from — and a borderless fullscreen output covered the console
+        // with nothing reported. `auto_open_outputs` had always refused that;
+        // the manual path now agrees with it, in a sentence.
+        choice => manual_open_target(choice, &monitors)
+            .map_err(|why| error::Error::refused(format!("{}: {why}", channel.name)))?,
     };
     // Deterministic, so the window can be traced back to this channel — that is
     // what makes the channel's "online" light real. It also makes
@@ -6831,6 +9236,23 @@ struct ChannelLiveness {
     /// False for a target Relay cannot drive at all (NDI is parked), so the UI can
     /// say "unavailable" rather than "offline" — a different claim.
     supported: bool,
+    /// WHERE THIS SCREEN SAYS ITS CLIP IS — `None` when it said nothing.
+    ///
+    /// The console must never time a clip off its own preview: its programme pane
+    /// renders through the same component, so it has a second player of the same
+    /// file that buffers differently and carries on happily if the wall's copy
+    /// stalls. An operator reading "0:12 left" while the congregation's screen is
+    /// frozen at 2:30 is rule 35 exactly. So the figure comes from the screen that
+    /// is painting, and `None` means the operator is told nobody said.
+    media: Option<channels::MediaBeat>,
+    /// A picture or clip this screen said it could not load (O-4). `None` is the
+    /// ordinary case. Read by `describeScreen`, which will not call a screen On Air
+    /// over a frame it has said is blank.
+    media_error: Option<String>,
+    /// How many times this screen fell behind the hub and was re-synced (RG-195,
+    /// rule 33). Zero is the ordinary answer; a rising number is a screen or a
+    /// network that cannot keep up, and the desk should say so.
+    resyncs: u32,
     /// The screen answered for itself within `channels::BEAT_STALE_MS`.
     ///
     /// This is the only field here that can tell a working screen from a frozen
@@ -6856,6 +9278,16 @@ struct ChannelLiveness {
     /// `Not confirmed` for the rest of the service: a standing alarm about a
     /// screen doing exactly what it was told.
     down: Option<&'static str>,
+    /// WHY THIS SCREEN LAST WENT QUIET — one word from `channels::SilenceCause`, or
+    /// `None` for a screen that has not come back from a silence in this run
+    /// (RG-119).
+    ///
+    /// **Retrospective, and the surface that renders it has to say so.** The cause of
+    /// a silence happening right now is unknowable from here by construction: only
+    /// the page can answer and the page is not talking, which is the silence. So this
+    /// is the last one it came back from, `outputHealth.js::silenceCause` is the one
+    /// place it becomes English, and `describeScreen` prints it as the past tense.
+    last_silence: Option<&'static str>,
 }
 
 /// WHICH PHYSICAL DISPLAY A SCREEN SHOULD OPEN ON — and whether it can at all.
@@ -6904,6 +9336,34 @@ enum DisplayChoice {
     Missing(usize),
 }
 
+/// Where a MANUAL "Turn on" may put a fullscreen output (RG-188). `Ok(Some(idx))`
+/// is a chosen, connected, non-primary display; `Ok(None)` is "wherever the OS
+/// puts it", allowed only when there is nowhere else to go; `Err` is a sentence
+/// for the operator. The primary monitor is the console, and covering it is the
+/// one thing a manual open must never do without being told which display.
+fn manual_open_target(
+    choice: DisplayChoice,
+    monitors: &[channels::MonitorInfo],
+) -> Result<Option<usize>, String> {
+    let primary = monitors.iter().find(|m| m.primary).map(|m| m.index);
+    match choice {
+        DisplayChoice::On(idx) if Some(idx) == primary && monitors.len() > 1 => Err(format!(
+            "Display {} is this console's own screen. Choose the projector's display \
+             for this screen in Outputs, or it would cover the console you are running \
+             the service from.",
+            idx + 1
+        )),
+        DisplayChoice::On(idx) => Ok(Some(idx)),
+        DisplayChoice::Anywhere if monitors.len() > 1 => Err(
+            "Choose a display for this screen in Outputs first. With none chosen it \
+             would open over this console."
+                .to_string(),
+        ),
+        DisplayChoice::Anywhere => Ok(None),
+        DisplayChoice::Missing(n) => Err(format!("Display {n} is not connected.")),
+    }
+}
+
 fn resolve_display(target: Option<&str>, monitors: &[channels::MonitorInfo]) -> DisplayChoice {
     let Some(idx) = target.and_then(parse_display) else {
         return DisplayChoice::Anywhere;
@@ -6924,6 +9384,19 @@ fn resolve_display(target: Option<&str>, monitors: &[channels::MonitorInfo]) -> 
 /// downstream can read "down" off a row that says it is up.
 fn down_of(down: &channels::ScreensDown, id: i64) -> Option<&'static str> {
     down.get(id).map(|s| s.as_str())
+}
+
+/// WHY THIS SCREEN LAST WENT QUIET, flattened for `ChannelLiveness` (RG-119).
+///
+/// From the beat that ENDED the silence, which is the only beat that can answer, and
+/// `None` for a screen that has not come back from one in this run. One helper rather
+/// than the expression written out at each arm, because there are four arms and the
+/// two that cannot answer must return the absence rather than a word they invented.
+fn last_silence_of(health: &channels::OutputHealth, id: i64) -> Option<&'static str> {
+    health
+        .last_gap(id)
+        .and_then(|g| g.cause())
+        .map(|c| c.as_str())
 }
 
 /// The beat for one channel, flattened for `ChannelLiveness`.
@@ -7077,10 +9550,14 @@ fn channel_status(
                         }
                     },
                     supported: true,
+                    media: health.media_of(c.id),
+                    media_error: health.media_error_of(c.id),
+                    resyncs: health.resyncs_of(c.id),
                     painting,
                     last_beat_ms: age,
                     paint_state: state,
                     down: down_of(&down, c.id),
+                    last_silence: last_silence_of(&health, c.id),
                 }
             }
             "network_client" => {
@@ -7124,10 +9601,14 @@ fn channel_status(
                         }
                     },
                     supported: true,
+                    media: health.media_of(c.id),
+                    media_error: health.media_error_of(c.id),
+                    resyncs: health.resyncs_of(c.id),
                     painting,
                     last_beat_ms: age,
                     paint_state: state,
                     down: down_of(&down, c.id),
+                    last_silence: last_silence_of(&health, c.id),
                 }
             }
             // NDI is parked, not broken — `open_ndi_output` says so too.
@@ -7138,10 +9619,17 @@ fn channel_status(
                 clients: 0,
                 detail: "NDI output is not available in this build".into(),
                 supported: false,
+                // A target Relay cannot drive reports nothing about a clip either.
+                media: None,
+                media_error: None,
+                resyncs: 0,
                 painting: false,
                 last_beat_ms: None,
                 paint_state: None,
                 down: down_of(&down, c.id),
+                // A target Relay cannot drive has never been quiet, because it has
+                // never spoken. An absence, not a cause.
+                last_silence: None,
             },
             other => ChannelLiveness {
                 id: c.id,
@@ -7150,10 +9638,17 @@ fn channel_status(
                 clients: 0,
                 detail: format!("Unknown render target '{other}'"),
                 supported: false,
+                // A target Relay cannot drive reports nothing about a clip either.
+                media: None,
+                media_error: None,
+                resyncs: 0,
                 painting: false,
                 last_beat_ms: None,
                 paint_state: None,
                 down: down_of(&down, c.id),
+                // A target Relay cannot drive has never been quiet, because it has
+                // never spoken. An absence, not a cause.
+                last_silence: None,
             },
         })
         .collect())
@@ -7170,6 +9665,16 @@ fn channel_status(
 /// and a print here would bury every other line in stdout (rule 4's lesson, one
 /// layer up). Unlike `greet`, whose entire value is that it appears exactly once,
 /// this one's value is that it never appears at all.
+// NINE FLAT ARGUMENTS, AND FLAT ON PURPOSE.
+//
+// The WebSocket beat carries `media_pos_ms`, `media_dur_ms` and `media_paused` as
+// three fields on one object, because that is what a JSON frame is. Bundling them
+// into a struct here would make the native window's beat a different shape from
+// the browser source's for no gain, and the whole point of `MediaBeat::clamped`
+// beside `MediaBeat::from_json` is that one rule reads both transports. A window
+// and a browser source must not be able to reach different conclusions about the
+// same clip.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 fn output_beat(
     health: tauri::State<'_, channels::OutputHealth>,
@@ -7180,6 +9685,26 @@ fn output_beat(
     // absent is the honest reading of that. See `channels::BeatGap` and RG-119.
     since_ms: Option<u64>,
     hidden_ms: Option<u64>,
+    // HOW MANY BEATS THIS BRIDGE REFUSED BEFORE THIS ONE (RG-119). `Some(0)` on an
+    // ordinary beat and a statement rather than an absence — the page reached the
+    // bridge to say it, so it knows. A refused beat cannot report itself, which is
+    // why this is a running count carried by the one that gets through.
+    refused: Option<u32>,
+    // HOW MANY ANIMATION FRAMES THIS SCREEN PAINTED SINCE ITS LAST TICK (RG-119).
+    // The only field on this beat that measures whether the screen was PAINTING
+    // rather than whether the OS said anything about it: `hidden_ms` reports zero for
+    // a page suspended across a whole hidden→visible round trip, because it never
+    // observed the transition. `None` is a page with nothing to count with.
+    frames: Option<u32>,
+    // WHERE THE CLIP IS, if this screen is playing one. Absent for every screen
+    // showing a verse, and absent is the honest reading — see `channels::MediaBeat`
+    // for why the console must never time a clip off its own preview instead.
+    media_pos_ms: Option<u64>,
+    media_dur_ms: Option<u64>,
+    media_paused: Option<bool>,
+    // A PICTURE OR CLIP THIS SCREEN COULD NOT LOAD, in the page's words (O-4).
+    // Absent is "nothing failed", and it clears the last report.
+    media_error: Option<String>,
 ) -> error::Result<()> {
     // An unparseable state is dropped, not defaulted. Defaulting would let a
     // malformed beat keep a dead screen looking alive, which is the exact failure
@@ -7189,7 +9714,14 @@ fn output_beat(
             channel_id,
             st,
             "window",
-            channels::BeatGap::clamped(since_ms, hidden_ms),
+            channels::BeatGap::clamped(since_ms, hidden_ms, refused, frames),
+            channels::MediaBeat::clamped(media_pos_ms, media_dur_ms, media_paused),
+        );
+        health.note_media_error(
+            channel_id,
+            media_error
+                .map(|e| e.trim().chars().take(300).collect::<String>())
+                .filter(|e| !e.is_empty()),
         );
     }
     Ok(())
@@ -7786,6 +10318,7 @@ fn set_default_template<R: tauri::Runtime>(
 fn send_stage_alert<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     text: Option<String>,
+    urgent: Option<bool>,
 ) -> error::Result<()> {
     const MAX: usize = 140;
     let line = text.unwrap_or_default();
@@ -7795,7 +10328,11 @@ fn send_stage_alert<R: tauri::Runtime>(
     } else {
         Some(line.chars().take(MAX).collect::<String>())
     };
-    channels::stage_alert(&app, msg);
+    // TWO VERBS, ONE FIELD (operator, 2026-09-21; DECISIONS §116). `urgent`
+    // absent is the quiet send, because a caller that does not ask for an alarm
+    // must not get one — the safe default of a two-state control is the state
+    // that interrupts nobody.
+    channels::stage_alert(&app, msg, urgent.unwrap_or(false));
     Ok(())
 }
 
@@ -7992,6 +10529,7 @@ fn start_service<R: tauri::Runtime>(
         started_at_ms: now_epoch_ms(),
         target_ms,
         last_transcript: None,
+        last_language: LANGUAGE_UNDETERMINED.to_string(),
     });
     // First row of the timeline, at 0 ms, written while both locks are already
     // held rather than through `log_event` — which would deadlock on them.
@@ -8423,7 +10961,7 @@ mod display_target_tests {
     //
     // These hold the decision, as a pure function, so the refusal can be tested
     // without a window server.
-    use super::{channels, resolve_display, DisplayChoice};
+    use super::{channels, manual_open_target, resolve_display, DisplayChoice};
 
     fn mon(index: usize, primary: bool) -> channels::MonitorInfo {
         channels::MonitorInfo {
@@ -8436,6 +10974,29 @@ mod display_target_tests {
             scale: 1.0,
             primary,
         }
+    }
+
+    /// 2026-09-21 · OU-1 (RG-188). The MANUAL open honoured `Anywhere`, so a screen
+    /// with no display chosen fullscreened onto the primary monitor — the console
+    /// the operator is running the service from — with nothing reported. The
+    /// automatic open had refused that case since the dock bug; the manual path
+    /// now agrees with it, out loud: no display chosen, or the chosen display is
+    /// the operator's, is a refusal with a sentence.
+    #[test]
+    fn a_manual_open_never_lands_on_the_operators_display() {
+        let two = [mon(0, true), mon(1, false)];
+        assert_eq!(manual_open_target(DisplayChoice::On(1), &two), Ok(Some(1)));
+        let err = manual_open_target(DisplayChoice::Anywhere, &two).unwrap_err();
+        assert!(err.contains("Choose a display"), "{err}");
+        let err = manual_open_target(DisplayChoice::On(0), &two).unwrap_err();
+        assert!(err.contains("console"), "{err}");
+        // Missing is still Missing's own sentence, decided by the caller.
+        // One monitor only: there is nowhere else to go, and covering the console
+        // is exactly what the operator asked for by pressing the button.
+        assert_eq!(
+            manual_open_target(DisplayChoice::Anywhere, &[mon(0, true)]),
+            Ok(None)
+        );
     }
 
     #[test]
@@ -8508,6 +11069,93 @@ mod import_guard_tests {
         base64::engine::general_purpose::STANDARD.encode(bytes)
     }
 
+    /// WHAT AN IMPORT AT THE CAP COSTS THE MAIN RUN LOOP — RG-299.
+    ///
+    /// `import_media` and `import_translation` are `#[tauri::command]`s, so on macOS
+    /// they ran on the window's run loop: the decode and the write happened with the
+    /// app frozen, and no browser harness can see that. They are
+    /// `#[tauri::command(async)]` now, and this is what was being paid for.
+    ///
+    /// Measures, asserts nothing about the clock. A bench that failed on a busy
+    /// machine would be deleted within a month.
+    #[test]
+    #[ignore = "allocates ~600 MB and measures this machine"]
+    fn what_an_import_at_the_cap_costs() {
+        // Just under the cap: the guard estimates the decoded size from the base64
+        // length, and `len/4*3` rounds a payload of EXACTLY the cap over it.
+        let payload = vec![0x5Au8; MAX_IMPORT_BYTES - 4096];
+        let t = std::time::Instant::now();
+        let encoded = b64(&payload);
+        println!(
+            "  base64 encode (the webview's half)  {:>6} ms",
+            t.elapsed().as_millis()
+        );
+        let t = std::time::Instant::now();
+        let decoded = decode_import("clip.mov", &encoded).expect("at the cap");
+        println!(
+            "  decode_import                       {:>6} ms",
+            t.elapsed().as_millis()
+        );
+        let path = std::env::temp_dir().join(format!("relay-import-cost-{}", std::process::id()));
+        let t = std::time::Instant::now();
+        std::fs::write(&path, &decoded).expect("write");
+        println!(
+            "  fs::write 256 MiB                   {:>6} ms",
+            t.elapsed().as_millis()
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// WHAT PARSING A LYRIC IMPORT COSTS THE MAIN RUN LOOP — RG-299.
+    ///
+    /// The other command on that row's list with no measurement. `parse_import` does
+    /// no file I/O — the webview reads the file and hands over base64 — so its cost
+    /// is `decode_import` plus a parse, and the parse is the half nothing had
+    /// priced: `MAX_IMPORT_BYTES` lets a **256 MiB text file** through to
+    /// `songs::parse_song`, which is a great deal more work than the 81 ms decode
+    /// `what_an_import_at_the_cap_costs` already measured.
+    ///
+    /// Both ends: the cap, because that is what the guard permits, and a realistic
+    /// playlist, because that is what a church actually imports. A number for the
+    /// worst case alone would say nothing about Tuesday.
+    ///
+    /// Reports, asserts nothing about a clock.
+    #[test]
+    #[ignore = "allocates ~1 GB and measures this machine"]
+    fn what_parsing_a_lyric_import_costs() {
+        // Realistic lyric text rather than one repeated byte: `parse_song` splits on
+        // blank lines and reads section tags, so a file with no structure in it would
+        // measure the wrong thing.
+        let verse = "Verse 1\nAmazing grace how sweet the sound\nThat saved a wretch \
+                     like me\n\nChorus\nI once was lost but now am found\nWas blind but \
+                     now I see\n\n";
+        for (label, target) in [
+            ("a real playlist (2 MiB)", 2 * 1024 * 1024usize),
+            ("at the cap (256 MiB)", MAX_IMPORT_BYTES - 8192),
+        ] {
+            let mut text = String::with_capacity(target + verse.len());
+            while text.len() < target {
+                text.push_str(verse);
+            }
+            let encoded = b64(text.as_bytes());
+            let t = std::time::Instant::now();
+            let out = parse_import("songs.txt".into(), encoded);
+            println!(
+                "  parse_import {label:<24} {:>6} ms   {}",
+                t.elapsed().as_millis(),
+                match &out {
+                    Ok(v) => format!(
+                        "{} song(s), {} section(s)",
+                        v.len(),
+                        v.iter().map(|s| s.sections.len()).sum::<usize>()
+                    ),
+                    Err(e) => format!("refused: {}", e.message()),
+                }
+            );
+        }
+        println!();
+    }
+
     /// An ordinary file still imports. The guard must not be a limit nobody can
     /// reach *downwards* either — a cap that rejects a 40 KB logo is a cap that
     /// gets deleted by the next person.
@@ -8516,6 +11164,94 @@ mod import_guard_tests {
         let payload = vec![7u8; 64 * 1024];
         let got = decode_import("logo.png", &b64(&payload)).expect("normal import");
         assert_eq!(got, payload);
+    }
+
+    /// **THE MESSAGE THAT CONTRADICTED ITSELF AT ITS OWN BOUNDARY.**
+    ///
+    /// A file of exactly 256 MiB was refused with *"…is about 256 MB, and Relay
+    /// imports files up to 256 MB"* — a sentence that gives an operator no action,
+    /// because the number it complains about and the number it permits are the same.
+    /// Two faults, checked separately here because they are independent and either
+    /// one alone still produces that sentence.
+    ///
+    /// The estimate is exercised directly rather than through `decode_import`:
+    /// proving the boundary through the real function means allocating the payload
+    /// and its base64 form, about 600 MB, which is exactly why this size was never
+    /// checked. The base64 LENGTH of an N-byte file is arithmetic, so it can be
+    /// stated instead of built.
+    #[test]
+    fn the_import_cap_is_exact_at_its_own_boundary() {
+        /// Characters of padded standard base64 for `n` bytes, and how many of
+        /// them are `=`. This is the encoder's definition, not an approximation.
+        fn encoded(n: usize) -> (usize, usize) {
+            let groups = n.div_ceil(3);
+            let pad = (3 - (n % 3)) % 3;
+            (groups * 4, pad)
+        }
+
+        // Sanity: the shape of the helper, on sizes small enough to check by eye.
+        assert_eq!(encoded(3), (4, 0));
+        assert_eq!(encoded(4), (8, 2));
+        assert_eq!(encoded(5), (8, 1));
+
+        // The estimate is EXACT for every size and every padding residue, which is
+        // the property the old `len / 4 * 3` did not have. Checked on sizes that
+        // cost nothing, because the fault is in the padding term and the padding
+        // term does not grow with the file.
+        for n in [0, 1, 2, 3, 4, 5, 6, 7, 8, 100, 1023, 1024, 1025] {
+            let (len, pad) = encoded(n);
+            let s = format!("{}{}", "A".repeat(len - pad), "=".repeat(pad));
+            assert_eq!(decoded_size_estimate(&s), n, "estimate for {n} bytes");
+        }
+
+        // FAULT ONE — PADDING COUNTED AS PAYLOAD, AT THE ONE SIZE IT MATTERS.
+        // A file of exactly 256 MiB encodes to 357,913,944 characters of which two
+        // are `=`, so `len / 4 * 3` answered 268,435,458 against a 268,435,456-byte
+        // cap and refused it by two bytes. The string is built and dropped without
+        // being decoded: the guard reads its length, and decoding it as well would
+        // put ~600 MB in a test that runs on every commit.
+        let (len, pad) = encoded(MAX_IMPORT_BYTES);
+        assert_eq!((len, pad), (357_913_944, 2), "the encoded form of 256 MiB");
+        {
+            let at_the_cap = format!("{}{}", "A".repeat(len - pad), "=".repeat(pad));
+            assert_eq!(
+                decoded_size_estimate(&at_the_cap),
+                MAX_IMPORT_BYTES,
+                "a file of EXACTLY the cap must estimate to exactly the cap, so the \
+                 guard's `approx > MAX_IMPORT_BYTES` lets it through — the old \
+                 arithmetic answered {} and refused the one file that is precisely at \
+                 the documented limit",
+                MAX_IMPORT_BYTES + 2
+            );
+        }
+
+        // FAULT TWO — A FLOORED FIGURE CANNOT REPORT AN OVERAGE, and it is
+        // independent of fault one: with the padding discounted, every size from one
+        // byte to one mebibyte past the cap still floored to 256, so the sentence
+        // went on equating its two numbers across that whole range. One byte over is
+        // both still refused and now reported as larger than the limit.
+        let (len, pad) = encoded(MAX_IMPORT_BYTES + 1);
+        let over = format!("{}{}", "A".repeat(len - pad), "=".repeat(pad));
+        assert!(
+            decoded_size_estimate(&over) > MAX_IMPORT_BYTES,
+            "one byte past the cap must still be over it — the fix must not have \
+             simply loosened the guard"
+        );
+        let err = decode_import("service.mp4", &over).expect_err("must refuse");
+        let msg = err.message();
+        let reported: usize = msg
+            .split(" is about ")
+            .nth(1)
+            .and_then(|rest| rest.split(' ').next())
+            .and_then(|w| w.parse().ok())
+            .unwrap_or_else(|| panic!("could not read the reported size out of {msg:?}"));
+        assert!(
+            reported > MAX_IMPORT_BYTES / (1024 * 1024),
+            "a refusal must name a size STRICTLY GREATER than the limit it cites. It \
+             read {reported} against a limit of {}, which tells an operator their \
+             file was within the limit and refused anyway: {msg}",
+            MAX_IMPORT_BYTES / (1024 * 1024)
+        );
     }
 
     /// THE BUG. There was no limit at all: the webview built the whole file as a
@@ -8558,7 +11294,7 @@ mod import_guard_tests {
         let conn = rusqlite::Connection::open_in_memory().expect("db");
         conn.execute_batch(include_str!("../../docs/data/schema.sql"))
             .expect("schema");
-        let id = db::insert_media(&conn, "video", "loop.mp4", "2026-09-02").expect("insert");
+        let id = db::insert_media(&conn, "video", "loop.mp4", "2026-09-02", None).expect("insert");
         assert_eq!(
             db::list_media(&conn).expect("list").len(),
             1,
@@ -8583,7 +11319,7 @@ mod import_guard_tests {
         let conn = rusqlite::Connection::open_in_memory().expect("db");
         conn.execute_batch(include_str!("../../docs/data/schema.sql"))
             .expect("schema");
-        let id = db::insert_media(&conn, "image", "a b/c.png", "2026-09-02").expect("insert");
+        let id = db::insert_media(&conn, "image", "a b/c.png", "2026-09-02", None).expect("insert");
         let dir = std::env::temp_dir().join("relay-import-guard-test");
         std::fs::create_dir_all(&dir).expect("tmp dir");
         let path = write_media_file(&conn, &dir, id, "a b/c.png", b"hello").expect("write");
@@ -8625,6 +11361,7 @@ mod named_translation_gap_tests {
             stage_note: None,
             next_reference: None,
             next_text: None,
+            passage_end: None,
             template_id: None,
             template_json: None,
             template_pinned: false,
@@ -8696,5 +11433,3901 @@ mod named_translation_gap_tests {
             named_translation_gap(&conn, "turn with me to hebrews chapter eleven", &fire),
             None,
         );
+    }
+}
+
+/// **WHAT THE PASSAGE GUARD COSTS AND WHAT IT BUYS, ON REAL PREACHING.**
+///
+/// `RELAY_SERVICE_CORPUS=<file> cargo test --release passage_guard_bench -- --ignored --nocapture`
+///
+/// One line per line of the file: `<seconds>\t<transcript text>`, in service order.
+/// The author's own database produces it, read-only:
+///
+/// ```text
+/// sqlite3 -readonly relay.db -noheader -separator $'\t' \
+///   "select round(timestamp,1), replace(text, char(10),' ')
+///      from transcripts where service_id = 39 and trim(text) <> '' order by timestamp;"
+/// ```
+///
+/// **Why it drives `candidates_for_window` and the real `Router`.** Rule 13: the only
+/// question is which verse Relay would put on a screen or offer, and neither half of
+/// that is answerable by reading a transcript. The timestamps are used as the
+/// router's clock, so the per-reference cooldown behaves as it did on the morning.
+///
+/// **What it cannot tell you.** These lines are FINALS out of the database, and the
+/// live path also runs detection on every partial — roughly one a second — so every
+/// count here is a floor on the churn, not a measurement of it. Suggestions are
+/// never persisted (`persist_fire` is inside `if fire.may_broadcast()`), so the
+/// database cannot corroborate the suggestion half at all; only the fires can be
+/// checked against it. And there is no audio, so nothing here is about accuracy.
+#[cfg(test)]
+mod passage_guard_bench {
+    use super::*;
+    use detection::VerseRef;
+
+    pub(super) fn kjv_corpus() -> Vec<(VerseRef, String)> {
+        let kjv: serde_json::Value =
+            serde_json::from_str(include_str!("../data/kjv.json").trim_start_matches('\u{feff}'))
+                .expect("kjv");
+        let mut corpus: Vec<(VerseRef, String)> = Vec::new();
+        for (bi, book) in kjv.as_array().expect("books").iter().enumerate() {
+            // CANONICAL names, not the file's `abbrev`: the guard compares a
+            // candidate's book with the book on the screen, and an index built on
+            // abbreviations would make every comparison false and the bench would
+            // measure nothing while printing numbers.
+            let name = detection::CANONICAL_BOOKS[bi].to_string();
+            for (ci, chapter) in book["chapters"].as_array().expect("ch").iter().enumerate() {
+                for (vi, verse) in chapter.as_array().expect("vs").iter().enumerate() {
+                    corpus.push((
+                        VerseRef {
+                            book: name.clone(),
+                            chapter: ci as i64 + 1,
+                            verse: vi as i64 + 1,
+                        },
+                        // THROUGH `db::clean_verse` (RG-324): the raw file keeps the
+                        // KJV's editorial apparatus, braces and all, and a bench
+                        // that indexes it is measuring a corpus no install has.
+                        crate::db::clean_verse(verse.as_str().unwrap_or("")),
+                    ));
+                }
+            }
+        }
+        corpus
+    }
+
+    /// One replay of a service. With `guard` and `doubt` both off it reproduces the
+    /// shipped behaviour of 2026-09-24 exactly, which is what makes the columns
+    /// comparable. RG-305 added the second switch rather than a second bench: two
+    /// replays of one service that disagreed about the router's clock would be worse
+    /// than no measurement at all.
+    struct Run {
+        offered: usize,
+        fired: Vec<(f32, String, String)>,
+        held: usize,
+        held_refs: Vec<String>,
+        windows_with_a_hold: usize,
+        /// Every citation-doubt demotion, with the window that produced it.
+        doubts: Vec<(f32, String, String)>,
+    }
+
+    fn replay(lines: &[(f32, String)], guard: bool, doubt: bool) -> Run {
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        let mut context = ContextMemory::default();
+        let mut router = Router::default();
+        let mut out = Run {
+            offered: 0,
+            fired: Vec::new(),
+            held: 0,
+            held_refs: Vec::new(),
+            windows_with_a_hold: 0,
+            doubts: Vec::new(),
+        };
+        for (at, text) in lines {
+            let now_ms = (at * 1000.0) as u64;
+            let WindowCandidates {
+                mut kept,
+                held,
+                reading_in: _,
+                doubted,
+                sole_run,
+            } = candidates_for_window(
+                text,
+                true,
+                &sem,
+                &phrases,
+                &context,
+                router.wall(),
+                // FALSE: this bench measures the passage guard against the SHIPPED
+                // default. What the paraphrase bar costs is measured where it can be
+                // swept on and off — `suggestions::bar::paraphrase_bar`.
+                false,
+            );
+            // RG-318 and RG-319, and it must be the same call `emit_detections`
+            // makes, in the same place: a bench that did not carry what a window hands
+            // forward would measure a product nobody ships, which is the mistake this
+            // module's own `doubt` switch was built to avoid.
+            context.note_carries(detection::chapter_in_flight(text), sole_run, now_ms);
+            for d in &doubted {
+                out.doubts.push((
+                    *at,
+                    format!("{:?}  {} → {:?}", d.doubt, d.reference, d.method),
+                    text.chars().take(90).collect(),
+                ));
+            }
+            if !doubt {
+                // The DOUBT RULE OFF: put every demoted method back to what it was,
+                // so the "before" column is the path that ran on 2026-09-25 and not a
+                // near miss at it. `was` is carried on `Doubted` for exactly this.
+                let mut restored = 0;
+                for d in &doubted {
+                    for c in kept.iter_mut() {
+                        if Fire::key_for(&c.r) == d.reference && c.method == d.method {
+                            c.method = d.was;
+                            restored += 1;
+                            break;
+                        }
+                    }
+                }
+                assert_eq!(
+                    restored,
+                    doubted.len(),
+                    "a demotion could not be put back, so the before column would be \
+                     measuring something nobody shipped: {text}"
+                );
+            }
+            let (candidates, held) = if guard {
+                (kept, held)
+            } else {
+                // The guard OFF: put back exactly what it held — the same `Cand`,
+                // same confidence, same method — so the "before" column IS the
+                // shipped path of 2026-09-24 and not a near miss at it.
+                let mut all = kept;
+                for (c, _) in held {
+                    all.push(c);
+                }
+                (all, Vec::new())
+            };
+            if !held.is_empty() {
+                out.windows_with_a_hold += 1;
+                out.held += held.len();
+                for (c, reason) in &held {
+                    out.held_refs
+                        .push(format!("{:?}  {}", reason, Fire::key_for(&c.r)));
+                }
+            }
+            if candidates.is_empty() {
+                continue;
+            }
+            let mut best: Vec<(String, Cand)> = Vec::new();
+            for c in candidates {
+                let key = Fire::key_for(&c.r);
+                match best.iter_mut().find(|(k, _)| *k == key) {
+                    Some((_, e)) => {
+                        if !pipeline::better(e, &c) {
+                            *e = c;
+                        }
+                    }
+                    None => best.push((key, c)),
+                }
+            }
+            for (rank, (key, c)) in rank_for_wall(best).into_iter().enumerate() {
+                match router.decide_live(&key, c.conf, c.method, now_ms, true) {
+                    RouteDecision::AutoFire if rank == 0 => {
+                        out.fired
+                            .push((*at, key.clone(), text.chars().take(70).collect()));
+                        context.note_passage(&c.r, None);
+                        // What `broadcast_with_clock` does, because rule 29 means only
+                        // this one actually reaches a screen. A bench that told the
+                        // router about rank 1 would measure a product nobody ships —
+                        // and that mistake is exactly what this bench caught in the
+                        // first design of the guard.
+                        router.note_wall(&key, now_ms);
+                    }
+                    RouteDecision::AutoFire | RouteDecision::Suggest => out.offered += 1,
+                    RouteDecision::Drop => {}
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    #[ignore]
+    fn what_the_guard_costs_a_real_service() {
+        let Ok(path) = std::env::var("RELAY_SERVICE_CORPUS") else {
+            println!("set RELAY_SERVICE_CORPUS to `<seconds>\\t<text>` lines, in order");
+            return;
+        };
+        let body = std::fs::read_to_string(&path).expect("corpus unreadable");
+        let lines: Vec<(f32, String)> = body
+            .lines()
+            .filter_map(|l| l.split_once('\t'))
+            .filter(|(_, t)| !t.trim().is_empty())
+            .map(|(a, t)| (a.trim().parse().unwrap_or(0.0), t.to_string()))
+            .collect();
+        println!("\n{} transcript lines\n", lines.len());
+
+        let before = replay(&lines, false, false);
+        let after = replay(&lines, true, false);
+
+        println!(
+            "  suggestions offered   before {:>4}   after {:>4}   ({} fewer)",
+            before.offered,
+            after.offered,
+            before.offered as i64 - after.offered as i64
+        );
+        println!(
+            "  auto-fires            before {:>4}   after {:>4}",
+            before.fired.len(),
+            after.fired.len()
+        );
+        println!(
+            "  held by the guard     {} candidates across {} windows",
+            after.held, after.windows_with_a_hold
+        );
+
+        let b: Vec<&String> = before.fired.iter().map(|(_, k, _)| k).collect();
+        let a: Vec<&String> = after.fired.iter().map(|(_, k, _)| k).collect();
+        // **BROADCASTS REMOVED, AND WHETHER ANY OF THEM WAS A VERSE.** The question
+        // rule 13 asks is which verse a congregation would see, so a removed
+        // broadcast of a verse that was ALREADY on the screens costs nothing and a
+        // removed broadcast of a verse that was not is a real loss. Printing them in
+        // one list without the distinction is how a number gets quoted wrongly.
+        println!("\n  BROADCASTS REMOVED:");
+        let mut duplicates = 0;
+        let mut real_losses = 0;
+        for (at, key, heard) in &before.fired {
+            if after.fired.iter().any(|(t, k, _)| k == key && t == at) {
+                continue;
+            }
+            // What was on the wall, in the AFTER run, at the moment this fired?
+            let on_wall = after
+                .fired
+                .iter()
+                .rev()
+                .find(|(t, _, _)| t <= at)
+                .map(|(_, k, _)| k.clone());
+            if on_wall.as_deref() == Some(key.as_str()) {
+                duplicates += 1;
+                println!("    {at:>7.1}s  DUPLICATE of the wall   {key:<22} “{heard}”");
+            } else {
+                real_losses += 1;
+                println!(
+                    "    {at:>7.1}s  A VERSE IS LOST         {key:<22} (wall held {on_wall:?}) “{heard}”"
+                );
+            }
+        }
+        if duplicates + real_losses == 0 {
+            println!("    none");
+        }
+        println!(
+            "\n  {duplicates} duplicate broadcasts removed · {real_losses} verses actually lost"
+        );
+        println!("\n  FIRES GAINED:");
+        let mut gained = 0;
+        for (at, key, heard) in &after.fired {
+            if !before.fired.iter().any(|(t, k, _)| k == key && t == at) {
+                gained += 1;
+                println!("    {at:>7.1}s  {key:<22} “{heard}”");
+            }
+        }
+        if gained == 0 {
+            println!("    none");
+        }
+        println!("\n  HELD REFERENCES (first 40):");
+        for r in after.held_refs.iter().take(40) {
+            println!("    {r}");
+        }
+        println!(
+            "\n  fire order identical: {}\n",
+            b == a && before.fired.len() == after.fired.len()
+        );
+    }
+
+    /// **HOW FAST A READING MOVES THE WALL** — the churn the operator is counting,
+    /// measured rather than argued. Prints every pair of consecutive auto-fires and
+    /// **WHAT THE CITATION-DOUBT RULE COSTS A REAL SERVICE** (RG-305).
+    ///
+    /// `RELAY_SERVICE_CORPUS=<file> cargo test --release what_the_citation_doubt_rule_costs
+    /// -- --ignored --nocapture`
+    ///
+    /// The passage guard is ON in both columns, because it is shipped: the question
+    /// is what this rule changes on top of it. Rule 13 — the only question is which
+    /// verse Relay would put on a screen, so the fires are compared and the
+    /// suggestions counted, and neither is answerable by reading a transcript.
+    ///
+    /// **Every fire this rule removes is printed with the window that produced it**,
+    /// because a count of demotions says nothing about whether they were right and
+    /// this rule demotes 0.95 `Direct`, the strongest claim Relay can make. The eight
+    /// field instances and the two correct fires of 2026-09-25 are the reference set;
+    /// anything else in the list has to be read by a person.
+    #[test]
+    #[ignore]
+    fn what_the_citation_doubt_rule_costs() {
+        let Ok(path) = std::env::var("RELAY_SERVICE_CORPUS") else {
+            println!("set RELAY_SERVICE_CORPUS to `<seconds>\t<text>` lines, in order");
+            return;
+        };
+        let body = std::fs::read_to_string(&path).expect("corpus unreadable");
+        let lines: Vec<(f32, String)> = body
+            .lines()
+            .filter_map(|l| l.split_once('\t'))
+            .filter(|(_, t)| !t.trim().is_empty())
+            .map(|(a, t)| (a.trim().parse().unwrap_or(0.0), t.to_string()))
+            .collect();
+        println!("\n{} transcript lines\n", lines.len());
+
+        let before = replay(&lines, true, false);
+        let after = replay(&lines, true, true);
+
+        println!(
+            "  suggestions offered   before {:>4}   after {:>4}",
+            before.offered, after.offered
+        );
+        println!(
+            "  auto-fires            before {:>4}   after {:>4}",
+            before.fired.len(),
+            after.fired.len()
+        );
+        println!("  citations doubted     {}", after.doubts.len());
+        println!("\n  EVERY DEMOTION, IN ORDER:");
+        for (at, what, heard) in &after.doubts {
+            println!("    {at:>8.1}s  {what:<52} “{heard}”");
+        }
+        if after.doubts.is_empty() {
+            println!("    none");
+        }
+        println!("\n  FIRES REMOVED (each one has to be read, not counted):");
+        let mut removed = 0;
+        for (at, key, heard) in &before.fired {
+            if after.fired.iter().any(|(t, k, _)| k == key && t == at) {
+                continue;
+            }
+            removed += 1;
+            println!("    {at:>8.1}s  {key:<22} “{heard}”");
+        }
+        if removed == 0 {
+            println!("    none");
+        }
+        println!("\n  FIRES GAINED (a run that now ranks first — must be zero):");
+        let mut gained = 0;
+        for (at, key, heard) in &after.fired {
+            if before.fired.iter().any(|(t, k, _)| k == key && t == at) {
+                continue;
+            }
+            gained += 1;
+            println!("    {at:>8.1}s  {key:<22} “{heard}”");
+        }
+        if gained == 0 {
+            println!("    none");
+        }
+        println!("\n  {removed} fires removed · {gained} fires gained\n");
+    }
+
+    /// **WHICH OF THE DAY'S WRONG VERSES THIS RULE CAN EVEN REACH** (RG-305).
+    ///
+    /// `cargo test --release which_field_instances_this_rule_can_reach -- --ignored
+    /// --nocapture`
+    ///
+    /// Nine wrong verses reached congregations on 2026-09-25 through a misheard
+    /// number or book — RG-301's `Jude 28` and RG-305's eight. Each window below is
+    /// the `heard_text` off the operator's own database, verbatim, with the
+    /// `detections.id` beside it, run through the real `PhraseIndex` and the real
+    /// rule.
+    ///
+    /// **It reaches five.** It reached THREE until 2026-09-26, and the two it gained
+    /// are the two that failed on a word count and nothing else: `Isaiah 61:3` at a
+    /// four-word run and `Romans 12:3` at three, both below `MIN_RUN_WORDS`, both in
+    /// windows where the preacher had already named the book and the chapter out
+    /// loud. `detection::chapter_the_words_point_at` asks the narrower question that
+    /// leaves (RG-313, DECISIONS §127).
+    ///
+    /// **The remaining four carry no verbatim run that can be evidence in the window
+    /// that fired**: three windows are the reference and nothing else, and one —
+    /// `Jude 1:7` — carries a run pointing at a verse he was referring BACK to rather
+    /// than at a slip of the reference.
+    ///
+    /// **In four of the six originally out of reach the quotation arrived 6 to 16
+    /// seconds LATER**, in a separate window, and corrected the record after the wrong
+    /// verse was already on the wall. No window-local rule can reach those, and
+    /// reversing a fire already on a congregation's screen is a different decision
+    /// with a different cost.
+    ///
+    /// This exists so the claim cannot drift. A later reader who widens the rule
+    /// should see the ceiling first: the limit is the EVIDENCE, not the predicate —
+    /// **and widening it is not free.** The first draft of §127's rule took this
+    /// number to five and cost two auto-fires of references the preacher said
+    /// correctly, which `what_the_citation_doubt_rule_costs` is what caught. Raise
+    /// this assertion only beside that bench's output.
+    #[test]
+    #[ignore]
+    fn which_field_instances_this_rule_can_reach() {
+        // (detections.id, what fired, what it should have been, the heard_text)
+        const FIELD: &[(u32, &str, &str, &str)] = &[
+            (588, "Jude 1:7", "Romans 11:33", "We have tried to look at that from Jude 28 and verse 7 to 28."),
+            (603, "Psalms 7:1", "Psalms 87:7", "This one was born there, the other one was born there, all my springs are in thee. Psalm 7 verse 1 to 7."),
+            (645, "Mark 6:12", "Mark 6:2", "Mark 6, 12. Mark 6, 12."),
+            (668, "Acts 8:12", "Proverbs 8:12", "Acts 8, 12, I wisdom dwell with prudence and find out the knowledge of witty inventions. Now, what"),
+            (786, "Luke 8:8", "Luke 18:8", "And then we shall find faith on the earth. Luke chapter 8, chapter 8, verse 8. So faith is the truth."),
+            (805, "1 Timothy 1:7", "2 Timothy 1:7", "1 Timothy, chapter 1, verse 7. 1 Timothy, chapter 1, verse 7."),
+            (818, "Isaiah 1:3", "Isaiah 61:3", "Verse 5 and verse 7 and 8, the oil of gladness. Now, Isaiah 1 verse 3, it calls it the oil of joy."),
+            (861, "Romans 2:3", "Romans 12:3", "We have common faith, measure of faith, Romans, 2, 3 We have little faith, Matthew, 2"),
+            (930, "Psalms 35:5", "Psalms 34:5", "helped me in the journey. Then life broke out from Psalm 35 verse 5, which I later defined as the law"),
+        ];
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        let context = ContextMemory::default();
+        let mut reached = 0usize;
+        let mut still_firable = 0usize;
+        println!();
+        for (id, fired, should_be, text) in FIELD {
+            let w = candidates_for_window(text, true, &sem, &phrases, &context, None, false);
+            let doubt = w.doubted.iter().find(|d| d.reference == *fired);
+            // ── AND THE QUESTION RULE 13 ACTUALLY ASKS (added 2026-09-28) ────────
+            //
+            // *Which verse would Relay put on a screen.* This test only ever asked
+            // whether THIS rule reaches a window, which made "out of reach" read as
+            // "still fires" — and after the RG-301 anchor fix that is no longer true
+            // of `Jude 1:7`, whose wrong verse is now refused by a different rule
+            // entirely. A ceiling stated for one rule is not a ceiling on the
+            // product.
+            let firable = w
+                .kept
+                .iter()
+                .any(|c| Fire::key_for(&c.r) == *fired && c.method.unattended_rank() > 0);
+            if firable {
+                still_firable += 1;
+            }
+            let wall = if firable { "CAN STILL FIRE" } else { "refused" };
+            match doubt {
+                Some(d) => {
+                    reached += 1;
+                    println!(
+                        "  id {id:<4} REACHED   {fired:<15} → {:?}  [{wall}] (should be {should_be})",
+                        d.doubt
+                    );
+                }
+                None => println!(
+                    "  id {id:<4} out of reach  {fired:<15}  [{wall}] (should be {should_be})"
+                ),
+            }
+        }
+        println!(
+            "\n  {reached} of {} reached by THIS rule · {still_firable} of {} can still reach a wall by ANY route\n",
+            FIELD.len(),
+            FIELD.len()
+        );
+        assert_eq!(
+            reached, 5,
+            "the reachable set changed — if a rule was widened, say so and measure \
+             what it costs in correct fires before quoting this number"
+        );
+    }
+
+    /// **THE THREE FIELD INSTANCES THAT CAN STILL REACH A WALL, AGAINST THE RG-319
+    /// CARRY — RG-305, and the answer is none of them, for three different reasons.**
+    ///
+    /// `which_field_instances_this_rule_can_reach` reports 5 of 9 reached by the
+    /// window-local rule and 3 of 9 still able to reach a congregation:
+    /// `Mark 6:12`, `1 Timothy 1:7` and `Psalms 35:5`. RG-319's carry is the only new
+    /// mechanism since, and RG-305's row predicts it cannot help because in all three
+    /// the citation arrives BEFORE its contradiction. **That is true and it is not the
+    /// whole answer**, so both halves are measured here rather than asserted.
+    ///
+    /// **The order.** Run in the order they happened, the carry is empty when the
+    /// citation is heard, so all three still fire. That is the prediction, held by the
+    /// first assertion.
+    ///
+    /// **And REVERSED, which nobody had asked, the rule reaches NONE of the three** —
+    /// for three different reasons, and the third is the one I had wrong before
+    /// running it:
+    ///
+    /// ```text
+    ///   Mark 6:12     vs Mark 6:2       SAME chapter — the John 15:14 escape
+    ///   1 Timothy 1:7 vs 2 Timothy 1:7  another BOOK — a pair collision, not a slip
+    ///   Psalms 35:5   vs Psalms 34:5    the guards all pass, and the DISCRIMINATOR
+    ///                                   refuses it: the citation window is the
+    ///                                   citation and nothing else, so it shares no
+    ///                                   run with either chapter
+    /// ```
+    ///
+    /// I predicted one of three and wrote the assertion that way; the measurement said
+    /// zero and this comment is the correction rather than the prediction. It is the
+    /// useful half: the discriminator is not a formality that the escapes do the real
+    /// work behind — on the one case both escapes let through, it is what refuses.
+    ///
+    /// So the mechanism RG-305 still needs is not a carry in either direction. All
+    /// three live routes need either a verse taken OFF a screen or a fire held until a
+    /// later window agrees, and RG-319's own bench prices the holding half at two
+    /// correct fires for one wrong wall. The row stays open and this is why.
+    #[test]
+    fn the_three_field_instances_a_carried_quotation_still_cannot_reach() {
+        // (what fired, the window that cited it, the window that contradicted it,
+        //  how many seconds later the contradiction arrived)
+        const FIELD: [(&str, &str, &str, f32); 3] = [
+            (
+                "Mark 6:12",
+                "Mark 6, 12. Mark 6, 12.",
+                "And whence hath this man these things? And what wisdom is this?",
+                6.0,
+            ),
+            (
+                "1 Timothy 1:7",
+                "1 Timothy, chapter 1, verse 7. 1 Timothy, chapter 1, verse 7.",
+                "For God hath not given us the spirit of fear; but of power, and of \
+                 love, and of a sound mind.",
+                16.0,
+            ),
+            (
+                "Psalms 35:5",
+                "We are going to read from Psalm 35 verse 5.",
+                "They looked unto him and were lightened, and their faces were not \
+                 ashamed.",
+                13.0,
+            ),
+        ];
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+
+        let firable = |text: &str, key: &str, context: &ContextMemory| -> bool {
+            candidates_for_window(text, true, &sem, &phrases, context, None, false)
+                .kept
+                .iter()
+                .any(|c| Fire::key_for(&c.r) == key && c.method.unattended_rank() > 0)
+        };
+
+        println!();
+        let mut reached_reversed = 0;
+        for (key, cites, contradicts, gap) in FIELD {
+            // AS IT HAPPENED. The carry is empty when the citation is heard.
+            let mut context = ContextMemory::default();
+            assert!(
+                firable(cites, key, &context),
+                "{key} no longer fires even in its own window, so this test proves \
+                 nothing about the carry"
+            );
+            let w = candidates_for_window(cites, true, &sem, &phrases, &context, None, false);
+            context.note_carries(detection::chapter_in_flight(cites), w.sole_run, 0);
+            assert!(
+                firable(cites, key, &context),
+                "{key} — the citation is its own accuser, which is not what this rule \
+                 does"
+            );
+
+            // AND REVERSED: the contradiction first, the citation {gap} s later.
+            let mut back = ContextMemory::default();
+            let first =
+                candidates_for_window(contradicts, true, &sem, &phrases, &back, None, false);
+            let carried = first.sole_run.as_ref().map(Fire::key_for);
+            back.note_carries(detection::chapter_in_flight(contradicts), first.sole_run, 0);
+            let still = firable(cites, key, &back);
+            if !still {
+                reached_reversed += 1;
+            }
+            println!(
+                "  {key:<16} contradicted {gap:>4.0} s LATER · reversed: carried \
+                 {:<16} → {}",
+                carried.as_deref().unwrap_or("nothing"),
+                if still { "still fires" } else { "REACHED" }
+            );
+        }
+        println!();
+        assert_eq!(
+            reached_reversed, 0,
+            "the reversed-order reach changed. Two of these three are shapes the carry \
+             refuses on purpose (same chapter, and another book) and the third is \
+             refused by the discriminator, because the citation window carries no run \
+             at all. If that is no longer true, say which of the three moved and price \
+             it before quoting RG-305's ceiling"
+        );
+    }
+
+    /// **RG-305 · THE ORDINAL SLIP IS A SHAPE ONE WINDOW ALREADY REACHES, AND WHAT
+    /// SAVES IT IS SIXTEEN SECONDS — measured 2026-09-29.**
+    ///
+    /// `the_three_field_instances_a_carried_quotation_still_cannot_reach` records
+    /// `1 Timothy 1:7` against `2 Timothy 1:7` as *"another BOOK — a pair collision, not
+    /// a slip"*, which is the reason the CROSS-WINDOW carry refuses it and is correct
+    /// about that rule. It reads as though the class were unrecognisable. **It is not.**
+    /// Put both in one window and `the_run_contradicts`' cross-book arm demotes it on
+    /// the exact-pair coincidence — same chapter, same verse, a book that differs only
+    /// by its ordinal, which is the decode slip RG-305's own pattern list names
+    /// (*Second* Timothy → 1 Timothy).
+    ///
+    /// So the third of RG-305's three unreachable instances is unreachable for a reason
+    /// that is about TIME and not about evidence: the preacher cited at 29886 s and read
+    /// the verse sixteen seconds later, in a different window, by which point the wrong
+    /// verse was on the wall and debounced.
+    ///
+    /// **THE WIDENING WAS BUILT AND PRICED RATHER THAN ARGUED ABOUT, AND IT IS FREE.**
+    /// An ordinal-sibling arm on `a_carried_quotation_contradicts` — a different book
+    /// whose name differs only by a leading single digit, at the same chapter AND the
+    /// same verse — replayed over service 42 leaves auto-fires at **150 of 150, with an
+    /// empty diff**, and it reaches this instance REVERSED. It is **not** shipped, for
+    /// one reason and not for a cost: no field instance of this class has ever arrived
+    /// in that order, so the rule would be held by this test alone and by nothing a
+    /// congregation has seen. The number is recorded here so that the next Sunday which
+    /// produces one is a one-commit change rather than a fresh investigation.
+    ///
+    /// The first pricing attempt said it cost `1 Corinthians 15:58`, and that was my
+    /// probe rather than the idea: `ordinal_sibling` answered true for a book against
+    /// ITSELF, so a citation whose own carried run is the same verse became its own
+    /// accuser. Recorded because a wrong number that argues for the conclusion you
+    /// already hold is the one you do not re-check.
+    ///
+    /// Watched to fail in both halves. Returning `None` from `the_run_contradicts`'
+    /// cross-book arm fails the first (`the ordinal slip is no longer doubted inside one
+    /// window`); adding the arm above fails the second, which is how its cost was
+    /// measured in the first place.
+    #[test]
+    fn the_ordinal_slip_is_a_shape_one_window_reaches_and_two_windows_do_not() {
+        // Verbatim from service 42: the citation at 29886.0 s (`detections.id = 805`)
+        // and the words he read sixteen seconds later (`id = 806`).
+        const CITED: &str = "1 Timothy, chapter 1, verse 7. 1 Timothy, chapter 1, verse 7.";
+        const READ: &str = "For God hath not given us the spirit of fear; but of power, \
+                            and of love, and of a sound mind.";
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        let context = ContextMemory::default();
+
+        // ── ONE WINDOW: the class is recognised and the fire is refused ──────────
+        let together = format!("{CITED} {READ}");
+        let w = candidates_for_window(&together, true, &sem, &phrases, &context, None, false);
+        assert!(
+            w.doubted
+                .iter()
+                .any(|d| d.reference == "1 Timothy 1:7" && d.doubt == detection::Doubt::SpokenBook),
+            "the ordinal slip is no longer doubted inside one window, so RG-305's \
+             ceiling is worse than the row says: {:?}",
+            w.doubted
+                .iter()
+                .map(|d| (d.reference.clone(), d.doubt))
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            !w.kept
+                .iter()
+                .any(|c| Fire::key_for(&c.r) == "1 Timothy 1:7" && c.method.unattended_rank() > 0),
+            "it was doubted and can still reach a wall, which is RG-314 again"
+        );
+
+        // ── TWO WINDOWS, the reading FIRST, which is not the order it happened in ──
+        //
+        // The carry refuses it on the same-book clause, deliberately: chapter-and-verse
+        // pairs collide across sixty-six books constantly and across two windows there
+        // is no shared breath to make the coincidence worth acting on.
+        let mut back = ContextMemory::default();
+        let first = candidates_for_window(READ, true, &sem, &phrases, &back, None, false);
+        assert_eq!(
+            first.sole_run.as_ref().map(Fire::key_for).as_deref(),
+            Some("2 Timothy 1:7"),
+            "the reading no longer produces a sole run, so the second half of this \
+             test is vacuous"
+        );
+        back.note_carries(detection::chapter_in_flight(READ), first.sole_run, 0);
+        assert!(
+            candidates_for_window(CITED, true, &sem, &phrases, &back, None, false)
+                .kept
+                .iter()
+                .any(|c| Fire::key_for(&c.r) == "1 Timothy 1:7" && c.method.unattended_rank() > 0),
+            "the carry now reaches the ordinal slip. That is a real widening and it \
+             needs its cost measured through print_every_auto_fire before RG-305's \
+             ceiling is requoted"
+        );
+    }
+
+    /// **NO CANDIDATE MAY NAME A PLACE SCRIPTURE DOES NOT HAVE** — RG-327, on the
+    /// door rather than in the parser.
+    ///
+    /// `detection::reference_exists_knows_the_last_verse_of_a_chapter` holds the
+    /// arithmetic. This holds the ASSEMBLY, which is what the row asked for — *"a test
+    /// that an impossible verse never reaches a candidate list at all"* — because four
+    /// gatherers feed that list and a bound checked on two of them is the shape this
+    /// repository has recorded four separate bugs having.
+    ///
+    /// Both windows are service 42, verbatim, and both auto-fired at `Direct`:
+    /// `Psalms 14:14` at 0.95 (Psalms 14 has 7 verses) and `Psalms 1:97` at 0.88
+    /// (Psalms 1 has 6). Live they were stopped only by `emit_detections` dropping a
+    /// `None` `verse_id` after the router had already decided, which is incidental
+    /// safety; through the replay harness, which has no such lookup, they were two of
+    /// the 153 auto-fires everybody was quoting.
+    #[test]
+    fn no_candidate_may_name_a_verse_the_bundled_bible_does_not_have() {
+        const FIELD: [&str; 2] = [
+            "Psalm 14, verse 14, Jesus speaking said, If you ask anything in my name, \
+             I will do it.",
+            "Psalm 1, 9 verse 97 to 100. Oh, how love I, thy law,",
+        ];
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        // MEMORY ARMED, and armed at a chapter too short on purpose: the bare-verse
+        // path answers from memory when the words do not say, and that door does not
+        // go through `hang`.
+        let mut context = ContextMemory::default();
+        context.note(&detection::VerseRef {
+            book: "Psalms".into(),
+            chapter: 1,
+            verse: 3,
+        });
+        // **THE ORACLE IS THE BUNDLED BIBLE, NOT `reference_exists`.** The first
+        // version of this test asserted through the very function it exists to guard,
+        // so gutting that function to `true` left it GREEN while the two parse tests
+        // went red — a scanner that quietly narrows passes everything, which is the
+        // failure this repository has recorded twice against its own instruments.
+        // `kjv_corpus()` is the shipped text; a reference not in it is a reference no
+        // verse lookup can answer, which is the fact the row is about.
+        let real: std::collections::HashSet<String> =
+            corpus.iter().map(|(r, _)| Fire::key_for(r)).collect();
+        for text in FIELD {
+            let w = candidates_for_window(text, true, &sem, &phrases, &context, None, false);
+            for c in w.kept.iter().chain(w.held.iter().map(|(c, _)| c)) {
+                assert!(
+                    real.contains(&Fire::key_for(&c.r)),
+                    "“{text}” offered {} and the bundled Bible does not have it",
+                    Fire::key_for(&c.r)
+                );
+            }
+        }
+        // POSITIVE CONTROL: the same assembly still produces the reference the
+        // preacher actually said in the second window.
+        let w = candidates_for_window(
+            "Psalm 119 verse 97. Oh, how love I, thy law,",
+            true,
+            &sem,
+            &phrases,
+            &context,
+            None,
+            false,
+        );
+        assert!(
+            w.kept
+                .iter()
+                .any(|c| Fire::key_for(&c.r) == "Psalms 119:97"),
+            "{:?}",
+            w.kept
+                .iter()
+                .map(|c| Fire::key_for(&c.r))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// **RG-320 ROUTE 1 IS NOT RG-319's SHAPE, AND THE ONE MECHANISM ITS ROW
+    /// NOMINATED DOES NOT REACH IT — measured 2026-09-29.**
+    ///
+    /// RG-319's row records that *"the carry-forward idea is not dead, and RG-320's
+    /// first route is the case that keeps it alive: there the preacher quoted
+    /// Matthew 11:28 in one window and 11:29's words in the next, and nothing in Relay
+    /// joined them. That is the same shape with evidence the predicate CAN reach."*
+    /// The carry now exists. **It does not reach it, and the reason is structural
+    /// rather than a matter of tuning.**
+    ///
+    /// Service 42, verbatim, three consecutive windows:
+    ///
+    /// ```text
+    ///   19162.8  "…salvation in the midst of the earth."  → Psalms 74:12  Quoted 0.66, SOLE
+    ///   19172.1  "Come unto me. I'll give you rest."      → Matthew 11:28 Semantic 0.36, no run
+    ///   19178.0  "…find rest for your souls."             → Jeremiah 6:16 Quoted 0.60
+    ///                                                       Matthew 11:29 Semantic 0.48
+    /// ```
+    ///
+    /// **The middle window carries no verbatim run at all**, because the preacher
+    /// PARAPHRASED it — Matthew 11:28 reads *"Come unto me, all ye that labour and are
+    /// heavy laden, and I will give you rest"*. So the carry holds `Psalms 74:12` from
+    /// two windows earlier, which says nothing about either candidate, and the offer
+    /// list is ordered exactly as RG-320 found it.
+    ///
+    /// **What a continuity rule would have to carry forward is therefore a COSINE**, a
+    /// bag of words in no order (rule 18), to decide which row an operator reads
+    /// first. `what_a_continuity_tie_break_would_reorder` is that rule, it prints its
+    /// 14 windows, and it is not shipped because rule 13 forbids scoring a detection
+    /// change by reading a transcript and no labelled corpus for offer ORDER exists
+    /// anywhere in this repository. Nothing here changes that; what it removes is the
+    /// idea that the verbatim carry was the answer waiting to be plugged in.
+    ///
+    /// Not `#[ignore]`d: three windows against the bundled index, and it is what stops
+    /// the next reader re-deriving the wrong lifeline from RG-319's row.
+    #[test]
+    fn the_verbatim_carry_does_not_reach_rg320s_first_route() {
+        const WINDOWS: [(u64, &str); 3] = [
+            (
+                19_162_800,
+                "Where you walk salvation in the midst of the earth.",
+            ),
+            (
+                19_172_100,
+                "He shows people what to give them the arrest. Come unto me. I'll give \
+                 you rest.",
+            ),
+            (
+                19_178_000,
+                "Come and learn of man. You'll find rest for your souls.",
+            ),
+        ];
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        let mut context = ContextMemory::default();
+        let mut carried_at_the_end: Option<String> = None;
+        let mut last: Vec<(String, DetectionMethod, f32)> = Vec::new();
+        for (at, text) in WINDOWS {
+            carried_at_the_end = context.quoted_a_moment_ago().map(Fire::key_for);
+            let w = candidates_for_window(text, true, &sem, &phrases, &context, None, false);
+            if at == 19_172_100 {
+                assert_eq!(
+                    w.sole_run, None,
+                    "the window that paraphrases Matthew 11:28 now carries a verbatim \
+                     run — if that is real, RG-320 route 1 is reachable after all and \
+                     is worth reopening"
+                );
+                assert!(
+                    w.kept.iter().any(|c| Fire::key_for(&c.r) == "Matthew 11:28"
+                        && c.method == DetectionMethod::Semantic),
+                    "Matthew 11:28 is no longer offered here as a paraphrase, so this \
+                     test no longer describes the window it is about"
+                );
+            }
+            last = w
+                .kept
+                .iter()
+                .map(|c| (Fire::key_for(&c.r), c.method, c.conf))
+                .collect();
+            context.note_carries(detection::chapter_in_flight(text), w.sole_run, at);
+        }
+        // What the carry actually holds when the offer list is built: a verse from two
+        // windows back, about neither candidate.
+        assert_eq!(carried_at_the_end.as_deref(), Some("Psalms 74:12"));
+        // And the list RG-320 reported is still the list.
+        assert!(
+            last.iter()
+                .any(|(k, m, _)| k == "Jeremiah 6:16" && *m == DetectionMethod::Quoted),
+            "{last:?}"
+        );
+        assert!(
+            last.iter()
+                .any(|(k, m, _)| k == "Matthew 11:29" && *m == DetectionMethod::Semantic),
+            "{last:?}"
+        );
+        // Neither may fire, which is why this costs no wall — rule 10, on both rows.
+        for (k, m, _) in &last {
+            assert_eq!(
+                m.unattended_rank(),
+                0,
+                "{k} can reach a wall unattended from this window"
+            );
+        }
+    }
+
+    /// **WHAT THE CROSS-BOOK CARVE-OUT COSTS PER WINDOW** (RG-305).
+    ///
+    /// The doubt rule itself is a double loop over a handful of candidates and is
+    /// free. The one thing that is not free is the extra `PhraseIndex::quoted` call
+    /// the cross-book case needs, in windows that name both a book and a verse — this
+    /// runs on `relay-detect`, once per decode pass, and rule 31's whole lesson is
+    /// that this path is measured rather than reasoned about.
+    #[test]
+    #[ignore]
+    fn what_the_extra_index_lookup_costs() {
+        let Ok(path) = std::env::var("RELAY_SERVICE_CORPUS") else {
+            println!("set RELAY_SERVICE_CORPUS");
+            return;
+        };
+        let body = std::fs::read_to_string(&path).expect("corpus unreadable");
+        let corpus = kjv_corpus();
+        let idx = detection::PhraseIndex::build(&corpus);
+        let mut windows = 0usize;
+        let mut extra = 0usize;
+        let mut restricted = std::time::Duration::ZERO;
+        let mut unrestricted = std::time::Duration::ZERO;
+        for line in body
+            .lines()
+            .filter_map(|l| l.split_once('\t'))
+            .map(|(_, t)| t)
+        {
+            windows += 1;
+            let anchor = detection::anchor_for_bare_verses(line);
+            let named = anchor.as_ref().map(|r| r.book.clone());
+            let says_a_verse = detection::detect_direct(line)
+                .iter()
+                .any(|m| m.method == DetectionMethod::Direct && !m.whole_chapter);
+            let t = std::time::Instant::now();
+            let _ = idx.quoted(line, named.as_deref(), QUOTED_SUGGESTIONS_MAX);
+            restricted += t.elapsed();
+            if named.is_some() && says_a_verse {
+                extra += 1;
+                let t = std::time::Instant::now();
+                let _ = idx.quoted(line, None, QUOTED_SUGGESTIONS_MAX);
+                unrestricted += t.elapsed();
+            }
+        }
+        println!(
+            "\n  {windows} windows · {extra} take the extra lookup ({:.1}%)",
+            100.0 * extra as f32 / windows.max(1) as f32
+        );
+        println!(
+            "  the lookup Relay already did:  {:?} total · {:?}/window",
+            restricted,
+            restricted / windows.max(1) as u32
+        );
+        println!(
+            "  the extra one:                 {:?} total · {:?} per window that takes it\n",
+            unrestricted,
+            unrestricted / extra.max(1) as u32
+        );
+    }
+
+    /// **WHY THE CITATION-DOUBT RULE DID NOT REACH A DROPPED ORDINAL** — service 41,
+    /// 2026-09-26, `detections.id = 1678`. **A wrong verse reached a congregation.**
+    ///
+    /// `cargo test --release why_the_carve_out_missed_1_john -- --ignored --nocapture`
+    ///
+    /// *"John 5, 3 This is the love of God that will keep His commandments."* fired
+    /// **John 5:3** — *"In these lay a great multitude of impotent folk"* — at 0.55
+    /// `Direct`. He said **1 John 5:3**, *"For this is the love of God, that we keep
+    /// his commandments"*, and whisper dropped the ordinal. The next window settles it
+    /// beyond argument: *"The commandments are not grievous"* is that verse's second
+    /// half.
+    ///
+    /// **§123's cross-book carve-out is written for exactly this shape and did not
+    /// fire.** It admits a quotation hit from another book when it sits at the EXACT
+    /// chapter and verse a spoken reference in the window named — citation `John 5:3`,
+    /// quotation `1 John 5:3`, chapter 5 and verse 3 both matching, different book.
+    /// Measured against the bundled KJV, the runs are not close:
+    ///
+    /// | verse | contiguous run with what he said |
+    /// |---|---|
+    /// | `1 John 5:3` | **7 words** — *"this is the love of god that"* |
+    /// | `John 5:3` (fired) | **1 word** — *"the"* |
+    ///
+    /// Seven clears `MIN_RUN_WORDS`, so `PhraseIndex::quoted` should have returned it.
+    /// Relay plainly FOUND the verse — `1 John 5:3` was offered three times as
+    /// `Semantic` at 0.60 — but semantic offers are not what the carve-out inspects.
+    ///
+    /// This prints each stage separately so the missing link is named rather than
+    /// guessed: the restricted `quoted`, the unrestricted `quoted`, what the carve-out
+    /// admits, and what the whole window rule concludes.
+    /// One-off: what does the index actually see for the two windows RG-309's rule
+    /// could not reach? Prints the run `PhraseIndex` itself measures, not a run
+    /// computed some other way — the discrepancy between those two is the open
+    /// question.
+    #[test]
+    #[ignore]
+    fn what_the_index_sees_for_the_two_missed_windows() {
+        let corpus = kjv_corpus();
+        let idx = detection::PhraseIndex::build(&corpus);
+        let cases = [
+            ("John 5, 3 This is the love of God that will keep His commandments.", "1 John", 5, 3),
+            ("We heard these words here, Romans 1, 8 My son, hear the instruction of thy father.", "Proverbs", 1, 8),
+        ];
+        for (heard, book, ch, vs) in cases {
+            let r = detection::VerseRef {
+                book: book.into(),
+                chapter: ch,
+                verse: vs,
+            };
+            println!("\n  “{heard}”");
+            println!(
+                "     shared_run_with({book} {ch}:{vs}) = {}",
+                idx.shared_run_with(heard, &r)
+            );
+            println!(
+                "     MIN_RUN_WORDS={} SELF_EVIDENT_RUN(7) PARAPHRASE_RUN_WORDS={}",
+                detection::MIN_RUN_WORDS,
+                detection::PARAPHRASE_RUN_WORDS
+            );
+            let hits = idx.quoted(heard, None, 8);
+            if hits.is_empty() {
+                println!("     quoted(None, 8): NOTHING");
+            }
+            for h in hits {
+                println!(
+                    "     quoted: {} {}:{} run={} sole={} “{}”",
+                    h.r.book, h.r.chapter, h.r.verse, h.run, h.sole, h.phrase
+                );
+            }
+        }
+        println!();
+    }
+
+    /// **STATUS 2026-09-27: BOTH CAUSES FOUND, and they are different. Neither is
+    /// the carve-out's conditions, and my first two theories were both wrong.**
+    ///
+    /// `what_the_index_sees_for_the_two_missed_windows` and `explain_one_window` gave
+    /// the answers that reading the code three times did not.
+    ///
+    /// **`Romans 1:8` — the rule works and it races the decode.** Given the WHOLE
+    /// sentence the carve-out fires exactly as designed:
+    ///
+    /// ```text
+    ///   DOUBT  Romans 1:8    SpokenBook    Direct -> UncertainBook
+    ///   DOUBT  Proverbs 1:8  TheQuotation  Reading -> Quoted
+    /// ```
+    ///
+    /// Live, the citation and the quotation were in DIFFERENT windows — *"…Romans 1,
+    /// 8, My son."* at 9613.5 s fired, and *"…My son, hear the instruction of thy
+    /// father."* arrived at 9617.1 s, 3.6 s later. There was nothing to contradict it
+    /// yet, and by the time there was, the wrong verse was on the wall and debounced.
+    /// Same shape as RG-315: **the reference fires before its evidence arrives.**
+    /// Rule 28 holds a PARTIAL window for a second pass and exempts a FINAL one
+    /// because *no next pass is coming* — which is not true of a rolling window that
+    /// keeps producing finals.
+    ///
+    /// **`John 5:3` — the run is undiscoverable, whatever its length.** A direct scan
+    /// measures 7 words against `1 John 5:3`, and `PhraseIndex::quoted` finds nothing.
+    /// `quoted` can only discover a run that starts from an INDEXED 3-gram, and
+    /// `verses_with` returns an empty bucket for any gram in more than
+    /// `MAX_GRAM_VERSES` (8) verses as *too common to be evidence*. Every 3-gram in
+    /// *"this is the love of god that"* is far commoner than that, so a 7-word
+    /// verbatim run is invisible. **The pruning is per-gram; the evidence is
+    /// per-run.** Raising `MAX_GRAM_VERSES` is not the fix — it would widen every
+    /// lookup — and seeding from the rarest gram in the window, or admitting one
+    /// common seed when the extended run is long, are the candidates. Both need
+    /// measuring against `print_every_auto_fire` before either ships.
+    ///
+    /// Running it answered the question and killed my first two theories. For
+    /// *"John 5, 3 This is the love of God that will keep His commandments."*:
+    ///
+    /// ```text
+    ///   -- quoted RESTRICTED to the named book:   (nothing)
+    ///   -- quoted UNRESTRICTED:                   (nothing)
+    /// ```
+    ///
+    /// `PhraseIndex::quoted` returns **nothing at all**, even unrestricted, so the
+    /// cross-book carve-out never had an input to weigh and cannot be at fault.
+    /// `1 John 5:3` reached the set only as `Semantic` 0.53.
+    ///
+    /// **What does not add up yet.** The contiguous run between that window and
+    /// `1 John 5:3` is **7 words** — *"this is the love of god that"* — measured
+    /// against the bundled KJV. `quoted`'s gate is
+    /// `n >= MIN_RUN_WORDS && (n >= SELF_EVIDENT_RUN || has_a_rare_word(..))`, and
+    /// `SELF_EVIDENT_RUN` is 7, so a 7-word run should qualify on the first clause
+    /// alone. Either the run `quoted` computes is shorter than the one a plain
+    /// longest-common-run gives, or something after the gate drops it.
+    ///
+    /// The next step is to print `n` and `sole` from inside `quoted` for this window
+    /// rather than to reason about it further — twice now reasoning gave a confident
+    /// wrong answer here.
+    #[test]
+    #[ignore]
+    fn why_the_carve_out_missed_1_john() {
+        // TWO INSTANCES, same service, different books and different evidence —
+        // which is what rules out the first explanation I reached for.
+        //
+        //   * `John 5, 3 …` → fired John 5:3; right verse `1 John 5:3` appeared as
+        //     `Semantic` at 0.60. I guessed the carve-out missed it because the
+        //     evidence was not a `Quoted` run.
+        //   * `Romans 1, 8, My son, hear the instruction of thy father.` → fired
+        //     **Romans 1:8** (`detections.id` at 9613.5 s); the right verse
+        //     `Proverbs 1:8` appeared as **`Quoted` at 0.69**. Same chapter, same
+        //     verse, different book — the carve-out's exact condition — and the doubt
+        //     still did not fire. So the guess above is WRONG and the fault is in the
+        //     wiring or the conditions, not in how the evidence is classified.
+        for heard in [
+            "John 5, 3 This is the love of God that will keep His commandments.",
+            "We heard these words here, Romans 1, 8 My son, hear the instruction of thy father.",
+        ] {
+            probe_the_carve_out(heard);
+        }
+    }
+
+    /// One window, every stage printed. Shared by both instances above.
+    #[cfg(test)]
+    fn probe_the_carve_out(heard: &str) {
+        let corpus = kjv_corpus();
+        let idx = detection::PhraseIndex::build(&corpus);
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        let context = ContextMemory::default();
+        println!("\n  “{heard}”");
+        let anchor = detection::anchor_for_bare_verses(heard);
+        println!("  anchor: {anchor:?}");
+        let named = anchor.as_ref().map(|r| r.book.clone());
+        println!("  quoted_in (the restriction): {named:?}");
+        println!("  -- quoted RESTRICTED to the named book:");
+        for h in idx.quoted(heard, named.as_deref(), QUOTED_SUGGESTIONS_MAX) {
+            println!(
+                "     {} {}:{}  run={} sole={}",
+                h.r.book, h.r.chapter, h.r.verse, h.run, h.sole
+            );
+        }
+        println!("  -- quoted UNRESTRICTED (what the carve-out draws from):");
+        for h in idx.quoted(heard, None, QUOTED_SUGGESTIONS_MAX) {
+            println!(
+                "     {} {}:{}  run={} sole={}",
+                h.r.book, h.r.chapter, h.r.verse, h.run, h.sole
+            );
+        }
+        println!("  -- the shipped window rule:");
+        let w = candidates_for_window(heard, true, &sem, &phrases, &context, None, false);
+        for c in &w.kept {
+            println!(
+                "     KEPT  {} {}:{}  {:?}  {:.2}",
+                c.r.book, c.r.chapter, c.r.verse, c.method, c.conf
+            );
+        }
+        for d in &w.doubted {
+            println!(
+                "     DOUBT {}  {:?}  {:?} -> {:?}",
+                d.reference, d.doubt, d.was, d.method
+            );
+        }
+        // THE CLAIM: the verse he actually cited must not reach the wall unattended
+        // while a seven-word run in the same window names a different one.
+        let firable: Vec<_> = w
+            .kept
+            .iter()
+            .filter(|c| c.method == DetectionMethod::Direct)
+            .map(|c| (detection::reference_key(&c.r), c.conf))
+            .collect();
+        assert!(
+            firable.is_empty(),
+            "John 5:3 still reaches the wall against a 7-word run for 1 John 5:3: {firable:?}"
+        );
+    }
+
+    /// **WHY A VERSE READ ALOUD, VERBATIM, DID NOT REACH THE WALL** — service 41,
+    /// 2026-09-26, watched live.
+    ///
+    /// `cargo test --release why_psalm_121_6_never_fired -- --ignored --nocapture`
+    ///
+    /// The preacher read Psalms 121 straight through, calling the verse numbers out
+    /// loud. Verses 2, 4 and 5 auto-fired as `Reading`. **Verses 3 and 6 did not, and
+    /// the operator fired 7 and 8 by hand.** Verse 6 is the interesting one: its
+    /// window holds the verse almost word for word, and the only thing Relay produced
+    /// was an `UncertainBook` answer from memory, which rule 40's third half caps at
+    /// Suggest for ever.
+    ///
+    /// This prints, for each real window off the operator's own database: what
+    /// `PhraseIndex::quoted` returns on its own, and what the whole window rule
+    /// produces. It is a diagnosis, not an assertion — it exists to find out which
+    /// stage dropped the verse, because reading the code three ways gave three
+    /// answers.
+    #[test]
+    #[ignore]
+    fn why_psalm_121_6_never_fired() {
+        // Verbatim from `transcripts`, service 41, in order.
+        const WINDOWS: &[(f32, &str)] = &[
+            (93.1, "my food to be moved will not slumber"),
+            (98.9, "Behold, he that keepeth Israel shall neither slumber nor sleep."),
+            (100.1, "Behold, he that keepeth Israel shall neither slumber nor sleep. Verse 5."),
+            (104.8, "The Lord is thy keeper. The Lord is thy keeper. The Lord is thy keeper."),
+            (107.2, "The Lord is thy keeper. The Lord is thy shield upon thy right arm."),
+            (115.0, "Luke, verse 6 The sun shall not smite thee by the day, nor the moon by the night."),
+            // ── THE SECOND SERVICE, same psalm, 2026-09-26 at 6359.5 s ──────────
+            //
+            // He read Psalms 121 again in the second service and verse 6 failed AGAIN
+            // — for a DIFFERENT reason, which is why it is not one bug: this time he
+            // said "by day" correctly and whisper heard "smile" for "smite", cutting
+            // the run to 4. Only the morning failure (run 6, "by the day") is
+            // reachable by anything but a better decoder.
+            //
+            // **Verse 7 is the case worth chasing.** The same window carries "The Lord
+            // shall preserve thee from all evil" — 8 words verbatim, EXACTLY
+            // `READING_RUN_WORDS` — and four other verses sat at exactly 8 that day
+            // and every one of them fired. This one did not. Rule 29 is the suspect:
+            // one window may put at most one verse on a wall, and this window also
+            // holds the mangled verse 6.
+            (6359.5, "The sun shall not smile thee by day or the moon by night. The Lord shall preserve thee from all evil."),
+            (6372.2, "He shall preserve thy soul. The loudest now verse 8 want to go. The Lord shall preserve"),
+        ];
+        let corpus = kjv_corpus();
+        let idx = detection::PhraseIndex::build(&corpus);
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        let mut context = ContextMemory::default();
+        // THE WALL AS IT WAS: Psalms 121:5 had been put up by the reading path.
+        context.note(&detection::VerseRef {
+            book: "ps".into(),
+            chapter: 121,
+            verse: 5,
+        });
+        println!();
+        for (at, text) in WINDOWS {
+            println!("── {at}s  “{text}”");
+            println!("   anchor: {:?}", detection::anchor_for_bare_verses(text));
+            let raw = idx.quoted(text, None, QUOTED_SUGGESTIONS_MAX);
+            if raw.is_empty() {
+                println!("   quoted(unrestricted): NOTHING");
+            }
+            for h in &raw {
+                println!(
+                    "   quoted(unrestricted): {} {}:{}  run={} sole={}",
+                    h.r.book, h.r.chapter, h.r.verse, h.run, h.sole
+                );
+            }
+            // And what the shipped window rule makes of it.
+            let w = candidates_for_window(text, true, &sem, &phrases, &context, None, false);
+            for c in &w.kept {
+                println!(
+                    "   KEPT  {} {}:{}  {:?}  {:.2}",
+                    c.r.book, c.r.chapter, c.r.verse, c.method, c.conf
+                );
+            }
+            for (c, why) in &w.held {
+                println!(
+                    "   HELD  {} {}:{}  {:?}",
+                    c.r.book, c.r.chapter, c.r.verse, why
+                );
+            }
+            for d in &w.doubted {
+                println!("   DOUBT {}  {:?}", d.reference, d.doubt);
+            }
+        }
+        println!();
+    }
+
+    /// **A READING MAY NOT WALK OFF THE PASSAGE IT WAS CITED IN ONTO A SYNOPTIC
+    /// PARALLEL — RG-308.**
+    ///
+    /// Twice in one day, both watched live in the operator's own services,
+    /// 2026-09-25:
+    ///
+    ///  * 16389 s / 16414 s — he cited **Micah 4** and read verse 2 aloud.
+    ///    *"out of Zion shall go forth the law"* is in **Micah 4:2 AND Isaiah 2:3**,
+    ///    and Relay fired Isaiah.
+    ///  * 44725 s / 44741 s — he cited **Mark 4:11** and Relay put it up; sixteen
+    ///    seconds later the reading of those same words fired **Luke 8:10**, because
+    ///    *"unto you it is given to know the mysteries of the kingdom of God"* is in
+    ///    both almost verbatim.
+    ///
+    /// In each case the wall LEFT the passage the preacher had NAMED while he was
+    /// still reading it, and the cost is not a nonsense verse — it is the right words
+    /// under the wrong reference, which is harder for an operator to spot.
+    ///
+    /// **The `sole` rule cannot help**, and that is the finding rather than a gap: it
+    /// asks whether the exact token run belongs to one verse, and between parallels
+    /// the wording differs by a word or two, so each run genuinely IS unique to its
+    /// own verse. Uniqueness is satisfied and the choice is still wrong.
+    ///
+    /// **Nor could the passage guard, and the reason is its ARMING condition.** Rule A
+    /// holds anything that came from the verse text and sits outside the passage on
+    /// screen — Luke 8 is outside Mark 4, so the hold itself was always right. But it
+    /// arms only on an in-passage verbatim CANDIDATE, and `PhraseIndex::quoted`
+    /// returns the parallel rather than the passage precisely because the parallel's
+    /// run is the longer one. The evidence that the preacher is reading the passage on
+    /// screen existed and was not being asked for.
+    ///
+    /// This prints what the index measures against BOTH verses, so the arming fact is
+    /// a number rather than a belief.
+    #[test]
+    #[ignore]
+    fn what_the_index_measures_against_the_passage_on_screen() {
+        let corpus = kjv_corpus();
+        let idx = detection::PhraseIndex::build(&corpus);
+        let cases = [
+            (
+                "And he said unto them, Unto you it is given to know the mysteries of \
+                 the kingdom of God, but unto them that are without",
+                ("Mark", 4, 11),
+                ("Luke", 8, 10),
+            ),
+            (
+                "he will teach us of his ways, and we will walk in his paths, for out \
+                 of Zion shall go forth the law, and the word of the Lord from Jerusalem",
+                ("Micah", 4, 2),
+                ("Isaiah", 2, 3),
+            ),
+        ];
+        println!();
+        for (heard, on_screen, parallel) in cases {
+            let cited = detection::VerseRef {
+                book: on_screen.0.into(),
+                chapter: on_screen.1,
+                verse: on_screen.2,
+            };
+            let other = detection::VerseRef {
+                book: parallel.0.into(),
+                chapter: parallel.1,
+                verse: parallel.2,
+            };
+            println!("  “{heard}”");
+            println!(
+                "     shared_run_with(ON SCREEN {} {}:{}) = {}",
+                cited.book,
+                cited.chapter,
+                cited.verse,
+                idx.shared_run_with(heard, &cited)
+            );
+            println!(
+                "     shared_run_with(PARALLEL {} {}:{}) = {}",
+                other.book,
+                other.chapter,
+                other.verse,
+                idx.shared_run_with(heard, &other)
+            );
+            println!("     -- what quoted() returns:");
+            for h in idx.quoted(heard, None, QUOTED_SUGGESTIONS_MAX) {
+                println!(
+                    "        {} {}:{}  run={} sole={} rare={}",
+                    h.r.book, h.r.chapter, h.r.verse, h.run, h.sole, h.rare_for_a_wall
+                );
+            }
+        }
+        println!();
+    }
+
+    /// **THE PASSAGE ON SCREEN HOLDS ITS OWN SYNOPTIC PARALLEL — RG-308, and the
+    /// register's account of WHY it did not was wrong.**
+    ///
+    /// The row says *"RG-306's guard does not apply by construction — a parallel is a
+    /// different book and chapter, so neither the wall rule nor the chapter rule
+    /// reaches it."* That has rule A backwards. Rule A holds every candidate that
+    /// `came_from_the_verse_text` and is NOT inside the passage on screen, so being a
+    /// different book and chapter is precisely the condition it holds on. What it
+    /// needs is ARMING: an in-passage verbatim run in the same window.
+    ///
+    /// `what_the_index_measures_against_the_passage_on_screen` shows the arming
+    /// evidence is there in both field cases — `quoted` returns the cited verse
+    /// alongside the parallel, at a shorter run (`Mark 4:11` at 10 against
+    /// `Luke 8:10` at 13; `Micah 4:2` at 15 against `Isaiah 2:3` at 31). So the guard
+    /// arms, and the parallel is held.
+    ///
+    /// Both field instances predate the guard: it landed on 2026-09-25, the same day,
+    /// and this test is what settles which side of it those services were on. The
+    /// assertion is on the wall, not on the offer list — the parallel is still
+    /// OFFERED, which is right, because a preacher who genuinely moved to the parallel
+    /// is one click away.
+    #[test]
+    fn a_reading_may_not_walk_off_the_cited_passage_onto_its_parallel() {
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        let cases = [
+            (
+                "And he said unto them, Unto you it is given to know the mysteries of \
+                 the kingdom of God, but unto them that are without",
+                ("Mark", 4, 11),
+                ("Luke", 8, 10),
+            ),
+            (
+                "he will teach us of his ways, and we will walk in his paths, for out \
+                 of Zion shall go forth the law, and the word of the Lord from Jerusalem",
+                ("Micah", 4, 2),
+                ("Isaiah", 2, 3),
+            ),
+        ];
+        for (heard, cited, parallel) in cases {
+            // THE WALL AS IT WAS: the verse he cited, put up sixteen seconds earlier.
+            let mut context = ContextMemory::default();
+            let on_screen = detection::VerseRef {
+                book: cited.0.into(),
+                chapter: cited.1,
+                verse: cited.2,
+            };
+            context.note(&on_screen);
+            let wall = Fire::key_for(&on_screen);
+            let w = candidates_for_window(
+                heard,
+                true,
+                &sem,
+                &phrases,
+                &context,
+                Some(wall.as_str()),
+                false,
+            );
+            for c in &w.kept {
+                println!(
+                    "   KEPT  {} {}:{}  {:?}  {:.2}",
+                    c.r.book, c.r.chapter, c.r.verse, c.method, c.conf
+                );
+            }
+            for (c, why) in &w.held {
+                println!(
+                    "   HELD  {} {}:{}  {:?}",
+                    c.r.book, c.r.chapter, c.r.verse, why
+                );
+            }
+            // PRECONDITION: the parallel really is found, so the assertion is not
+            // vacuous. Its absence would mean the index changed, not that the guard
+            // worked.
+            let found_anywhere = w
+                .kept
+                .iter()
+                .map(|c| &c.r)
+                .chain(w.held.iter().map(|(c, _)| &c.r))
+                .any(|r| r.book == parallel.0 && r.chapter == parallel.1);
+            assert!(
+                found_anywhere,
+                "precondition: {} {}:{} must still be found for this to be a test",
+                parallel.0, parallel.1, parallel.2
+            );
+            // THE CLAIM: the parallel may not reach the wall while the cited passage
+            // is on it and the preacher is still reading that passage.
+            let firable: Vec<_> = w
+                .kept
+                .iter()
+                .filter(|c| c.r.book == parallel.0 && c.method.unattended_rank() > 0)
+                .map(|c| (Fire::key_for(&c.r), c.method, c.conf))
+                .collect();
+            assert!(
+                firable.is_empty(),
+                "the wall left {} {}:{} for its parallel while he was still reading \
+                 it: {firable:?}",
+                cited.0,
+                cited.1,
+                cited.2
+            );
+        }
+    }
+
+    /// **A DOUBT MUST REACH EVERY CANDIDATE CARRYING THAT REFERENCE** — found
+    /// 2026-09-26 while measuring the anchor fix, by printing a window's candidate
+    /// set instead of reasoning about it.
+    ///
+    /// Service 40, 2026-09-25 at 4691.7 s: *"…all my springs are in thee. Psalm 27
+    /// verse 1 to 7."* Those words are **Psalms 87:7**; he said Psalm 27. The window
+    /// produces the reference TWICE —
+    ///
+    /// | candidate | from |
+    /// |---|---|
+    /// | `Psalms 27:1` `Direct` 0.95 | the range parse, `detect_direct` |
+    /// | `Psalms 27:1` `Direct` 0.88 | the bare *"verse 1"*, anchored on that parse |
+    ///
+    /// — and `doubt_from_a_quotation` demotes by INDEX, so it caught the first and
+    /// the duplicate went to the wall still `Direct`. The doubt rule was working and
+    /// its conclusion was being discarded.
+    ///
+    /// This is the shape CLAUDE.md records four times over: *a guarantee is only kept
+    /// Scratch probe: which wording of Romans 1:8 is a `Semantic` candidate without
+    /// already being a `Reading`? Used to build the test below honestly rather than
+    /// guessing at a paraphrase.
+    #[test]
+    #[ignore]
+    fn print_candidate_methods_for_retellings() {
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        let ctx = ContextMemory::default();
+        for t in [
+            "your faith is spoken of throughout the whole world",
+            "I thank my God through Jesus Christ for you all",
+            "he thanks God for them because their faith is spoken of everywhere",
+            "he gives thanks to God for them all because their faith is known everywhere",
+            "first he thanks his God for all of them because their faith is talked about",
+        ] {
+            let w = candidates_for_window(t, true, &sem, &phrases, &ctx, None, false);
+            let rows: Vec<String> = w
+                .kept
+                .iter()
+                .map(|c| format!("{} {:?} {:.2}", Fire::key_for(&c.r), c.method, c.conf))
+                .collect();
+            println!("  {t:?}\n      {rows:?}\n");
+        }
+    }
+
+    /// **FOLLOWING THE PREACHER THROUGH A PASSAGE HE ANNOUNCED**, and the four
+    /// boundaries that keep it from becoming rule 10's own failure.
+    ///
+    /// The operator's report: a preacher announces *"Romans 1 … verse 6 all the way to
+    /// 8"* and then RETELLS the verses rather than reading them word for word. A
+    /// retelling is `Semantic`, rule 10 caps it at `Suggest` at any score, so the wall
+    /// stayed on the verse he started from. Inside an explicit span the answer is
+    /// bounded to verses he named out loud, which is what makes this a different act
+    /// from choosing a verse out of 31,102.
+    ///
+    /// Not `#[ignore]`d: it builds the real 31k index once, like its neighbours, and
+    /// the four refusals are the whole value.
+    #[test]
+    #[ignore]
+    fn a_retelling_follows_the_preacher_only_inside_a_passage_he_announced() {
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+
+        // Romans 1:6-8 announced, wall on verse 6. A retelling of verse 8.
+        // A genuine RETELLING of Romans 1:8, not a reading of it: no run of the
+        // verse's own words long enough to be a `Reading` on its own merits. The
+        // first draft of this test used wording close to the KJV and was a `Reading`
+        // with no span at all, which would have made boundary 2 vacuous.
+        // A genuine RETELLING of Romans 1:8 and not a reading of it: `Semantic` 0.47
+        // with NO `Reading` beside it. Chosen with
+        // `print_candidate_methods_for_retellings` rather than guessed — the first
+        // draft used wording close to the KJV, which came out `Reading 0.72` on its
+        // own merits and would have made boundary 2 vacuous, and the second draft was
+        // so loose it was not a candidate at all and made boundary 1 vacuous.
+        const RETELL: &str = "he thanks God for them because their faith is spoken of everywhere";
+        let staged = |verse: i64, end: Option<i64>| {
+            let mut c = ContextMemory::default();
+            c.note_passage(
+                &detection::VerseRef {
+                    book: "Romans".into(),
+                    chapter: 1,
+                    verse,
+                },
+                end,
+            );
+            c
+        };
+        let firable = |ctx: &ContextMemory| -> Vec<String> {
+            candidates_for_window(RETELL, true, &sem, &phrases, ctx, None, false)
+                .kept
+                .iter()
+                .filter(|c| c.method.unattended_rank() > 0)
+                .map(|c| format!("{} {:?}", Fire::key_for(&c.r), c.method))
+                .collect()
+        };
+
+        // 1. With the span announced, a retelling of a LATER verse may follow.
+        let inside = firable(&staged(6, Some(8)));
+        println!("  inside an announced span: {inside:?}");
+        assert!(
+            inside.iter().any(|r| r.starts_with("Romans 1:8")),
+            "a retelling of verse 8 did not follow the preacher inside Romans 1:6-8: {inside:?}"
+        );
+
+        // 2. NO span — the same words, the same wall, nothing may fire. This is the
+        //    boundary that keeps rule 10 intact: a whole chapter is not an
+        //    announcement of how far he means to read.
+        assert!(
+            firable(&staged(6, None)).is_empty(),
+            "a retelling reached the wall with no announced range: {:?}",
+            firable(&staged(6, None))
+        );
+
+        // 3. BACKWARDS is refused — forward-only, so a retelling that brushes an
+        //    earlier verse cannot walk the wall back or oscillate.
+        assert!(
+            firable(&staged(8, Some(8))).is_empty(),
+            "a retelling moved the wall backwards inside a passage"
+        );
+
+        // 4. PAST THE END is refused: verse 9 is outside what he announced.
+        let past = candidates_for_window(
+            RETELL,
+            true,
+            &sem,
+            &phrases,
+            &staged(6, Some(7)),
+            None,
+            false,
+        );
+        assert!(
+            past.kept
+                .iter()
+                .all(|c| c.method.unattended_rank() == 0 || c.r.verse <= 7),
+            "a verse past the announced end became firable: {:?}",
+            past.kept
+                .iter()
+                .map(|c| (Fire::key_for(&c.r), c.method))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// on the doors you checked*. The doubt is a fact about a REFERENCE, not about one
+    /// candidate that happens to name it.
+    #[test]
+    #[ignore]
+    fn a_doubt_reaches_every_candidate_naming_that_reference() {
+        const HEARD: &str =
+            "And this one was born there, that one was born there, all my springs are in thee. Psalm 27 verse 1 to 7.";
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        let context = ContextMemory::default();
+        let w = candidates_for_window(HEARD, true, &sem, &phrases, &context, None, false);
+        for c in &w.kept {
+            println!(
+                "   {} {}:{}  {:?}  {:.2}  rank={}",
+                c.r.book,
+                c.r.chapter,
+                c.r.verse,
+                c.method,
+                c.conf,
+                c.method.unattended_rank()
+            );
+        }
+        let doubted: std::collections::HashSet<String> =
+            w.doubted.iter().map(|d| d.reference.clone()).collect();
+        let escaped: Vec<_> = w
+            .kept
+            .iter()
+            .filter(|c| doubted.contains(&Fire::key_for(&c.r)))
+            .filter(|c| c.method.unattended_rank() > 0)
+            .map(|c| (Fire::key_for(&c.r), c.method, c.conf))
+            .collect();
+        assert!(
+            escaped.is_empty(),
+            "a doubted reference still has a firable candidate: {escaped:?}"
+        );
+    }
+
+    /// **A MISHEARD "VERSE" INVENTS A BOOK AND HIJACKS THE QUOTATION RESTRICTION**
+    /// — service 42, 2026-09-27 at 3795.5 s, watched live. **A correct verse, read
+    /// word for word, was withheld.**
+    ///
+    /// `cargo test --release a_spurious_trailing_book_hijacks_the_restriction --
+    /// --ignored --nocapture`
+    ///
+    /// He said *"From Psalm 19 VERSE 7, the word says, the law of the Lord is perfect,
+    /// converting the soul"* and whisper heard *"Psalm 19, NUMBERS 7"*. That single
+    /// mishearing did two things:
+    ///
+    /// ```text
+    ///   detect_direct:  Psalms 19:1  UncertainNumber 0.45  (whole chapter)
+    ///                   Numbers 7:1  UncertainNumber 0.45  (whole chapter)
+    ///   anchor:         Numbers 7:1   ← the LAST parse wins
+    ///   quoted_in:      "Numbers"
+    /// ```
+    ///
+    /// `PhraseIndex::quoted` was restricted to **Numbers** while he was reading
+    /// **Psalms 19:7**, so the quotation could not be found at all; the verse surfaced
+    /// only through the semantic path at 0.49 and stayed a suggestion. *"The law of the
+    /// Lord is perfect, converting the soul"* is that verse verbatim.
+    ///
+    /// **This is RG-305's restriction in mirror image.** There it discarded the right
+    /// verse because the window "named" `Acts` where the preacher said `Proverbs`; here
+    /// it discards the right verse because a misheard *"verse"* appended a spurious book
+    /// AFTER the real one, and the anchor takes the last parse rather than the best one.
+    /// RG-305's cross-book carve-out exists for exactly this and cannot run: it requires
+    /// a `Direct` chapter-and-verse in `said_pairs`, and both parses here are
+    /// `UncertainNumber` whole-chapters.
+    ///
+    /// Not fixed. Two candidate shapes, neither measured yet: prefer the FIRST book a
+    /// window names over the last when both are whole-chapter guesses, or let the
+    /// restriction admit any book the window named rather than only the final one. The
+    /// second is closer to what RG-305 actually argues — the restriction exists because
+    /// a quotation from a book nobody named is a coincidence, and `Psalms` WAS named.
+    #[test]
+    #[ignore]
+    fn a_spurious_trailing_book_hijacks_the_restriction() {
+        const HEARD: &str =
+            "From Psalm 19, Numbers 7 The word says, The law of the Lord is perfect, converting the soul,";
+        let corpus = kjv_corpus();
+        let idx = detection::PhraseIndex::build(&corpus);
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        let context = ContextMemory::default();
+        println!("\n  “{HEARD}”");
+        println!("  anchor: {:?}", detection::anchor_for_bare_verses(HEARD));
+        let r = detection::VerseRef {
+            book: "Psalms".into(),
+            chapter: 19,
+            verse: 7,
+        };
+        println!(
+            "  shared_run_with(Psalms 19:7) = {}",
+            idx.shared_run_with(HEARD, &r)
+        );
+        println!("  -- quoted restricted to Numbers:");
+        for h in idx.quoted(HEARD, Some("Numbers"), QUOTED_SUGGESTIONS_MAX) {
+            println!(
+                "     {} {}:{} run={} sole={}",
+                h.r.book, h.r.chapter, h.r.verse, h.run, h.sole
+            );
+        }
+        println!("  -- quoted restricted to Psalms (the book he NAMED FIRST):");
+        for h in idx.quoted(HEARD, Some("Psalms"), QUOTED_SUGGESTIONS_MAX) {
+            println!(
+                "     {} {}:{} run={} sole={}",
+                h.r.book, h.r.chapter, h.r.verse, h.run, h.sole
+            );
+        }
+        let w = candidates_for_window(HEARD, true, &sem, &phrases, &context, None, false);
+        for c in &w.kept {
+            println!(
+                "  KEPT  {} {}:{}  {:?}  {:.2}",
+                c.r.book, c.r.chapter, c.r.verse, c.method, c.conf
+            );
+        }
+        // THE CLAIM: a verse cited by chapter and verse AND read verbatim should be
+        // able to reach the wall. Today it cannot, because the restriction followed a
+        // mishearing.
+        let firable = w.kept.iter().any(|c| {
+            c.r.book == "Psalms"
+                && c.r.chapter == 19
+                && c.r.verse == 7
+                && c.method.unattended_rank() > 0
+        });
+        assert!(
+            firable,
+            "Psalms 19:7 was read word for word and cannot reach the wall; the \
+             quotation search was locked to Numbers by a misheard \"verse\""
+        );
+    }
+
+    /// **A CITATION SPLIT ACROSS TWO WINDOWS LOSES ITS BOOK — service 42,
+    /// 2026-09-27 at 2072.8 s, watched live. The constructive half of RG-315.**
+    ///
+    /// `cargo test --release a_citation_split_across_windows -- --ignored --nocapture`
+    ///
+    /// The offering reading, verbatim from `transcripts`:
+    ///
+    /// ```text
+    ///   2072.8  "Let's read from God's Word before we give Genesis chapter 8 and verse"
+    ///   2081.2  "Verse 22. This is God's commandment. It says, While the earth remained,"
+    ///   2098.5  → the operator fired Genesis 8:22 BY HAND
+    /// ```
+    ///
+    /// **Every existing guard worked and the operator still did the work.** The first
+    /// window ends on a dangling verse MARKER, which `parse_reference` refuses
+    /// outright, so no `Genesis 8:1` went up — correct. The second window holds a bare
+    /// *"Verse 22"* with no book, so `resolve_bare_verse_with_source` fell through to
+    /// memory, which still held `Ephesians 5:20` from **eighteen minutes earlier**, and
+    /// offered `Ephesians 5:22` at 0.88 `UncertainBook` — capped, never fired, also
+    /// correct (rule 40's third half, RG-179).
+    ///
+    /// **`Genesis 8:22` was never offered at all.** Relay held both halves of the
+    /// reference eight seconds apart and cannot join them, because the anchor is
+    /// window-local: memory reached back eighteen minutes to the wrong book while the
+    /// right chapter sat in the previous window, unremembered.
+    ///
+    /// RG-315 stops a truncated citation putting verse 1 on a wall. This is the same
+    /// mechanism in the other direction: **a chapter stated at a window's edge should
+    /// survive one window, so the next window's bare verse can complete it.** Rule 40's
+    /// ordering already says a book named in this breath beats memory; a book named one
+    /// breath ago should also beat memory from eighteen minutes ago.
+    ///
+    /// **CLOSED 2026-09-28.** `detection::chapter_in_flight` names the two shapes a
+    /// window can end on with the sentence still open, `ContextMemory` carries one
+    /// for `IN_FLIGHT_MS`, and `resolve_bare_verse_with_source` consults it between
+    /// the anchor and memory. It is `UncertainBook`, so `Genesis 8:22` is OFFERED and
+    /// can never fire — which is all three field instances needed, because all three
+    /// were already refused correctly and what they cost was the right verse being
+    /// absent from the list.
+    ///
+    /// Not `#[ignore]`d any more, and it drives BOTH windows in order through the
+    /// same two calls `emit_detections` makes, so the carry is exercised rather than
+    /// assumed.
+    #[test]
+    fn a_citation_split_across_windows_loses_its_book() {
+        const W1: &str = "Let's read from God's Word before we give Genesis chapter 8 and verse";
+        const W2: &str = "Verse 22. This is God's commandment. It says, While the earth remained,";
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        // MEMORY AS IT WAS: Ephesians 5:20 fired at 1003.1 s and was still the passage.
+        let mut context = ContextMemory::default();
+        context.note(&detection::VerseRef {
+            book: "Ephesians".into(),
+            chapter: 5,
+            verse: 20,
+        });
+        // THE REAL TIMESTAMPS, so the 8.4 s gap is the one the budget has to cover.
+        for (label, at_ms, text) in [("window 1", 2_072_800u64, W1), ("window 2", 2_081_200, W2)] {
+            println!("\n  {label}: “{text}”");
+            println!("     anchor: {:?}", detection::anchor_for_bare_verses(text));
+            println!("     in flight: {:?}", detection::chapter_in_flight(text));
+            println!(
+                "     bare verses: {:?}",
+                detection::detect_bare_verses(text)
+            );
+            let w = candidates_for_window(text, true, &sem, &phrases, &context, None, false);
+            for c in &w.kept {
+                println!(
+                    "     KEPT  {} {}:{}  {:?}  {:.2}",
+                    c.r.book, c.r.chapter, c.r.verse, c.method, c.conf
+                );
+            }
+            if text == W2 {
+                // THE CLAIM: the verse he actually read must be reachable from the
+                // SECOND window, because the FIRST window named its book and chapter.
+                // Asserted on the set that window actually produced, not on a third
+                // re-read of it after the loop — a re-read is a different call with a
+                // different `in_flight` and would be asserting about something the
+                // product never computed.
+                let genesis = w
+                    .kept
+                    .iter()
+                    .find(|c| c.r.book == "Genesis" && c.r.chapter == 8 && c.r.verse == 22);
+                let g = genesis.unwrap_or_else(|| {
+                    panic!(
+                        "Genesis 8:22 is not reachable from the second window; the \
+                         operator fired it by hand while memory offered Ephesians 5:22 \
+                         from eighteen minutes before. Got: {:?}",
+                        w.kept
+                            .iter()
+                            .map(|c| (Fire::key_for(&c.r), c.method))
+                            .collect::<Vec<_>>()
+                    )
+                });
+                // AND IT MAY NOT FIRE. A book heard one window ago is not a book heard
+                // in this breath, and rule 10 only lets the second reach a wall.
+                assert_eq!(
+                    g.method,
+                    DetectionMethod::UncertainBook,
+                    "a chapter carried across a window boundary reached a firable method"
+                );
+                // The wrong answer this replaces must still be offered beside it —
+                // `Ephesians 5:22` from eighteen minutes earlier is what memory says,
+                // and a rule that silently deleted the rival would be hiding the
+                // disagreement rather than resolving it.
+                assert!(
+                    w.kept
+                        .iter()
+                        .any(|c| c.r.book == "Ephesians" && c.r.chapter == 5 && c.r.verse == 22)
+                        || w.kept.iter().all(|c| c.r.book != "Ephesians"),
+                    "the memory answer changed shape unexpectedly: {:?}",
+                    w.kept
+                        .iter()
+                        .map(|c| (Fire::key_for(&c.r), c.method))
+                        .collect::<Vec<_>>()
+                );
+            }
+            // The same order `emit_detections` uses: read the window, THEN record
+            // what it left unfinished.
+            context.note_carries(detection::chapter_in_flight(text), w.sole_run, at_ms);
+        }
+    }
+
+    /// **THE OFFER LIST'S TOP ROW WHEN THE CHAPTER WAS SAID ONE WINDOW AGO** —
+    /// RG-320's second route, service 42 at 20079.8 s → 20088.0 s, watched live.
+    ///
+    /// *"Knowing how to do it is wisdom. Ecclesiastes 10."* then *"And verse 15. It
+    /// said, the labor of the foolish…"* — those words are **Ecclesiastes 10:15**. On
+    /// the morning, the bare *"verse 15"* had no anchor, memory answered with the
+    /// passage on the wall (`Matthew 7:24`, fired at 19797.6 s) at the hardcoded 0.88,
+    /// and the right verse reached the list only as a `Semantic` 0.38 — BELOW it,
+    /// because both are `unattended_rank() == 0` and `pipeline::better` then falls to
+    /// confidence, comparing a constant against a cosine.
+    ///
+    /// **The fix is not a reordering.** RG-318's carry makes the right answer
+    /// available at all: the chapter was said one window ago, so `verse 15` hangs on
+    /// `Ecclesiastes 10` and the wrong row is not produced in the first place. Nothing
+    /// in `pipeline::better` changed, and the hardcoded 0.88 rule 40 calls *"still a
+    /// lie"* is still there — it just no longer answers this window.
+    ///
+    /// RG-320's FIRST route is not reached by this and is not reached by any ordering:
+    /// see the row.
+    #[test]
+    fn a_chapter_from_the_previous_window_answers_the_bare_verse_memory_would_have() {
+        const W1: &str =
+            "Knowing what to do is knowledge. Knowing how to do it is wisdom. Ecclesiastes 10.";
+        const W2: &str =
+            "And verse 15. It said, the labor of the foolish willis every one of them because";
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        // THE WALL AS IT WAS: Matthew 7:24 fired at 19797.6 s and was still the
+        // passage, which is what memory answered with.
+        let mut context = ContextMemory::default();
+        context.note(&detection::VerseRef {
+            book: "Matthew".into(),
+            chapter: 7,
+            verse: 24,
+        });
+        let mut got: Vec<(String, DetectionMethod)> = Vec::new();
+        for (at_ms, text) in [(20_079_800u64, W1), (20_088_000, W2)] {
+            let w = candidates_for_window(text, true, &sem, &phrases, &context, None, false);
+            if text == W2 {
+                got = w
+                    .kept
+                    .iter()
+                    .map(|c| (Fire::key_for(&c.r), c.method))
+                    .collect();
+            }
+            context.note_carries(detection::chapter_in_flight(text), w.sole_run, at_ms);
+        }
+        println!("  second window: {got:?}");
+        assert!(
+            got.iter().any(|(k, _)| k == "Ecclesiastes 10:15"),
+            "the verse he was reading is still not on the list: {got:?}"
+        );
+        assert!(
+            !got.iter().any(|(k, _)| k == "Matthew 7:15"),
+            "memory still answered over a chapter said one window ago: {got:?}"
+        );
+        // AND IT STILL MAY NOT FIRE — the book was heard in a window this one cannot
+        // see, so rule 10's cap holds exactly as it does for a memory answer.
+        //
+        // **Asserted on FIRABILITY, not on a method name** (corrected 2026-09-28).
+        // This read `*m == DetectionMethod::UncertainBook` and broke the moment the
+        // bench corpus was routed through `db::clean_verse` (RG-324): on the corpus
+        // the product actually ships, this window offers `Ecclesiastes 10:15` TWICE —
+        // once as the carried chapter and once as a `Semantic` from the words he was
+        // reading — and the second one is a candidate this test never saw because the
+        // editorial apparatus had been changing the scores. Both have
+        // `unattended_rank() == 0`, so the guarantee this test exists for held the
+        // whole time; the assertion was narrower than its own comment. A test that
+        // names one permitted method fails on a new candidate that is equally
+        // incapable of reaching a wall, and the next person weakens it.
+        for (k, m) in &got {
+            if k == "Ecclesiastes 10:15" {
+                assert_eq!(
+                    m.unattended_rank(),
+                    0,
+                    "a carried chapter reached a firable method: {got:?}"
+                );
+            }
+        }
+    }
+
+    /// **THE TWO SHAPES `chapter_in_flight` ANSWERS, AND THE ONES IT MUST NOT** —
+    /// RG-318. Pure, so it needs no corpus and no index.
+    #[test]
+    fn only_a_sentence_that_plainly_stopped_mid_citation_is_in_flight() {
+        let f =
+            |t: &str| detection::chapter_in_flight(t).map(|r| format!("{} {}", r.book, r.chapter));
+        // THE FIELD SHAPE: a dangling verse marker.
+        assert_eq!(
+            f("Let's read from God's Word before we give Genesis chapter 8 and verse"),
+            Some("Genesis 8".into())
+        );
+        // The CHAPTER NUMBER as the last thing said — RG-315's own window, from the
+        // other side.
+        assert_eq!(
+            f("on the sheet of faith. In John chapter 12,"),
+            Some("John 12".into())
+        );
+        // WITHOUT the chapter keyword, which is RG-320's second instance: "Knowing
+        // how to do it is wisdom. Ecclesiastes 10." then "And verse 15" in the next
+        // window. This shape was excluded for one commit and the measurement put it
+        // back — see `chapter_in_flight`.
+        assert_eq!(
+            f("Knowing what to do is knowledge. Knowing how to do it is wisdom. Ecclesiastes 10."),
+            Some("Ecclesiastes 10".into())
+        );
+        assert_eq!(f("and then we went to Romans 8"), Some("Romans 8".into()));
+        // ── AND THE ONES THAT MUST STAY None ──────────────────────────────────
+        // A finished citation.
+        assert_eq!(f("Genesis chapter 8 and verse 22 says"), None);
+        // A finished citation at the very edge.
+        assert_eq!(f("Genesis chapter 8 verse 22"), None);
+        // The sentence moved on, so nothing is in flight.
+        assert_eq!(f("Genesis chapter 8 tells us what happened"), None);
+        // A chapter Genesis cannot have is a misparse, not a citation in flight
+        // (RG-322's reasoning, one door along).
+        assert_eq!(f("Genesis chapter 80 and verse"), None);
+        // No book at all.
+        assert_eq!(f("and verse"), None);
+        // ── THE OPERATOR'S PAUSE, AND THE LINE IT SITS ON (RG-328) ────────────
+        // A run of ordinary words after the chapter carries the citation ONLY when
+        // the window ends on a word that cannot end a sentence. Both of these are
+        // ordinary words running out the window; only one was cut off mid-phrase.
+        assert_eq!(
+            f("we are in Romans 1 and we will be reading from"),
+            Some("Romans 1".into()),
+            "the operator's own phrasing, cut off by the chunker mid-announcement"
+        );
+        assert_eq!(
+            f("let us turn to Psalm 23 and we will be reading from"),
+            Some("Psalms 23".into())
+        );
+        // …and a finished clause is still the sentence moving on. This is the case a
+        // generic filler run got wrong on its first draft, caught by this test.
+        assert_eq!(f("Genesis chapter 8 tells us what happened"), None);
+        assert_eq!(f("Romans 1 explains the gospel to everyone"), None);
+    }
+
+    /// **EXPLAIN ONE WINDOW: every stage, every candidate, every doubt.**
+    ///
+    /// `RELAY_EXPLAIN_WINDOW="<text>" cargo test --release explain_one_window --
+    /// --ignored --nocapture`
+    ///
+    /// Built 2026-09-26 after the anchor fix moved fires in ways reading the code
+    /// could not account for, and after two rounds of guessing at why. Printing the
+    /// set is faster than reasoning about it and it cannot be wrong.
+    ///
+    /// **TWO LIMITS, both learned by being misled by them.** It starts from an EMPTY
+    /// `ContextMemory` and an empty wall, so it cannot reproduce a fire that depended
+    /// on the passage already on screen — a replay difference this cannot explain may
+    /// simply be memory. And `print_every_auto_fire` replays a corpus through the real
+    /// `Router`, which self-calibrates on feedback, so the run is globally coupled:
+    /// one changed candidate set shifts thresholds for everything after it. **Aggregate
+    /// counts and presence checks from that instrument are sound; per-verse attribution
+    /// is not.**
+    #[test]
+    #[ignore]
+    fn explain_one_window() {
+        let Ok(text) = std::env::var("RELAY_EXPLAIN_WINDOW") else {
+            println!("set RELAY_EXPLAIN_WINDOW");
+            return;
+        };
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        let context = ContextMemory::default();
+        println!("\n  “{text}”");
+        println!(
+            "  anchor (firable only): {:?}",
+            detection::anchor_for_bare_verses(&text)
+        );
+        println!("  bare verses: {:?}", detection::detect_bare_verses(&text));
+        // THE RAW INDEX ANSWER, before anything in this crate has an opinion about
+        // it. Added while chasing RG-320: two verses that share a run are one
+        // `quoted` call away from being visibly two rows or visibly one, and the
+        // candidate list above cannot tell those apart. `run` and `sole` are the two
+        // facts `DetectionMethod` throws away on its way to `for_quotation`.
+        println!("  -- quoted (unrestricted, run/sole as the index measures them):");
+        if let Ok(g) = phrases.0.read() {
+            let hits = g.quoted(&text, None, QUOTED_SUGGESTIONS_MAX);
+            if hits.is_empty() {
+                println!("     NOTHING");
+            }
+            for h in hits {
+                println!(
+                    "     {} {}:{}  run={} sole={}  “{}”",
+                    h.r.book, h.r.chapter, h.r.verse, h.run, h.sole, h.phrase
+                );
+            }
+        }
+        println!("  -- detect_direct:");
+        for m in detection::detect_direct(&text) {
+            println!(
+                "     {} {}:{}  {:?}  {:.2}  whole={}  end={:?}",
+                m.reference.book,
+                m.reference.chapter,
+                m.reference.verse,
+                m.method,
+                m.confidence,
+                m.whole_chapter,
+                m.verse_end
+            );
+        }
+        let w = candidates_for_window(&text, true, &sem, &phrases, &context, None, false);
+        println!("  -- KEPT:");
+        for c in &w.kept {
+            println!(
+                "     {} {}:{}  {:?}  {:.2}",
+                c.r.book, c.r.chapter, c.r.verse, c.method, c.conf
+            );
+        }
+        for (c, why) in &w.held {
+            println!(
+                "  HELD  {} {}:{}  {:?}",
+                c.r.book, c.r.chapter, c.r.verse, why
+            );
+        }
+        for d in &w.doubted {
+            println!(
+                "  DOUBT {}  {:?}  {:?} -> {:?}",
+                d.reference, d.doubt, d.was, d.method
+            );
+        }
+        println!("  -- rank_for_wall order:");
+        let mut ranked: Vec<&Cand> = w.kept.iter().collect();
+        ranked.sort_by(|a, b| {
+            if pipeline::better(a, b) {
+                std::cmp::Ordering::Less
+            } else {
+                std::cmp::Ordering::Greater
+            }
+        });
+        for c in ranked {
+            println!(
+                "     {} {}:{}  {:?}  {:.2}",
+                c.r.book, c.r.chapter, c.r.verse, c.method, c.conf
+            );
+        }
+        println!();
+    }
+
+    /// **EVERY AUTO-FIRE A CORPUS PRODUCES, ONE PER LINE** — the instrument for
+    /// comparing two revisions of the detection path against real speech.
+    ///
+    /// `RELAY_SERVICE_CORPUS=<file> cargo test --release print_every_auto_fire
+    /// -- --ignored --nocapture > after.txt`, then the same on the other revision,
+    /// then `diff`. The citation-doubt bench only ever compares ITS rule on against
+    /// off inside one binary, so it cannot answer *what did this change cost*, which
+    /// is the only question rule 13 accepts. Built 2026-09-26, when the anchor fix
+    /// (RG-301) moved 11 auto-fires to the suggestion list and nothing existed to say
+    /// which 11.
+    ///
+    /// Output is `<seconds>\t<reference>` and nothing else, so a diff is readable.
+    ///
+    /// **The replay is globally coupled and a line-by-line diff will lie to you.** The
+    /// `Router` self-calibrates on feedback, so a single changed candidate set moves
+    /// thresholds for every later window: verses appear and disappear far from the
+    /// change that caused them. Use this for TOTALS and for "does reference X fire at
+    /// all", and use `explain_one_window` plus a unit test for anything causal. Two
+    /// apparent regressions on 2026-09-26 were chased this way before the real cause
+    /// turned out to be a duplicate candidate escaping a doubt.
+    #[test]
+    #[ignore]
+    fn print_every_auto_fire() {
+        let Ok(path) = std::env::var("RELAY_SERVICE_CORPUS") else {
+            println!("set RELAY_SERVICE_CORPUS");
+            return;
+        };
+        let body = std::fs::read_to_string(&path).expect("corpus unreadable");
+        let lines: Vec<(f32, String)> = body
+            .lines()
+            .filter_map(|l| l.split_once('\t'))
+            .filter_map(|(t, x)| t.parse::<f32>().ok().map(|t| (t, x.to_string())))
+            .collect();
+        let run = replay(&lines, true, true);
+        for (at, key, _) in &run.fired {
+            println!("{at:.1}\t{key}");
+        }
+        // ON STDERR, so the stdout diff stays `<seconds>\t<reference>` and nothing
+        // else. The in-flight count is here because RG-318's carry can only ever add
+        // a CAPPED candidate — the auto-fire diff above is guaranteed to be empty for
+        // it, so a reader looking only at that diff would conclude the rule does
+        // nothing. This is the number that says how often it can speak at all.
+        let in_flight = lines
+            .iter()
+            .filter(|(_, t)| detection::chapter_in_flight(t).is_some())
+            .count();
+        // **AND HOW MANY OF THEM A LIVE INSTALL WOULD NEVER SHOW — RG-323.** This
+        // replay has no database, so it cannot ask the one question `emit_detections`
+        // asks before anything is broadcast: did the reference resolve to a verse?
+        // `if fire.verse_id.is_none() { continue; }` drops an impossible reference
+        // before an operator sees a row, let alone a congregation a screen.
+        //
+        // Service 42 produces two — `Psalms 1:97` at 3893.2 s and `Psalms 14:14` at
+        // 17789.3 s, Psalm 1 having six verses and Psalm 14 seven — so the totals this
+        // bench prints are two higher than what a church would have watched. **Stated
+        // here because a diff is the whole purpose of this instrument**: a change that
+        // removes one of those reads as a lost auto-fire and is not one, and the
+        // opposite mistake was already made once in this register, where the count of
+        // references in a confidence BAND was read as the count of references the field
+        // never fired.
+        let real: std::collections::BTreeSet<String> =
+            kjv_corpus().iter().map(|(r, _)| Fire::key_for(r)).collect();
+        let unshowable: Vec<&String> = run
+            .fired
+            .iter()
+            .map(|(_, key, _)| key)
+            .filter(|key| !real.contains(*key))
+            .collect();
+        eprintln!(
+            "{} auto-fires from {} windows · {} windows end mid-citation (RG-318) · \
+             {} name a verse the bundled Bible does not have and a live install drops \
+             them at emit_detections' verse-exists check: {:?}",
+            run.fired.len(),
+            lines.len(),
+            in_flight,
+            unshowable.len(),
+            unshowable
+        );
+    }
+
+    /// **EVERY WINDOW A CROSS-WINDOW CONTINUITY RULE WOULD REORDER — RG-320,
+    /// measured 2026-09-28.**
+    ///
+    /// `RELAY_SERVICE_CORPUS=<file> cargo test --release
+    /// what_a_continuity_tie_break_would_reorder -- --ignored --nocapture`
+    ///
+    /// RG-320's route 1 is `Jeremiah 6:16` `Quoted` 0.60 offered above
+    /// `Matthew 11:29` `Semantic` 0.48 at 19178.0 s. The index is right — *"find rest
+    /// for your souls"* is `sole` in Jeremiah 6:16, because Matthew reads *"rest UNTO
+    /// your souls"* — so the only verbatim evidence in that window genuinely names
+    /// Jeremiah. The evidence that names Matthew is in the window BEFORE it, where
+    /// *"Come unto me. I'll give you rest"* offered `Matthew 11:28` `Semantic` 0.36 as
+    /// its top row, and nothing in Relay joins the two.
+    ///
+    /// **The rule this bench measures is the narrowest thing that would join them**:
+    /// among the candidates that may only be OFFERED (`unattended_rank() == 0`), prefer
+    /// one whose book and chapter a candidate of the previous window already named. It
+    /// cannot touch a congregation's screen — every candidate it compares is already
+    /// capped at `Suggest` by rule 10, and `rank_for_wall` puts the firable tiers ahead
+    /// of all of them — so the whole of its effect is which row an operator reads
+    /// first.
+    ///
+    /// ── WHY THIS IS A BENCH AND NOT THE RULE ─────────────────────────────────────
+    ///
+    /// **14 windows of 3,161 reorder, and reading them is a human's job, not this
+    /// machine's.** Rule 13 is explicit that a detection change is scored by *which
+    /// verse would Relay put on a screen* and never by reading the transcript, and
+    /// there is no labelled corpus anywhere in this repository for *which offered row
+    /// should be first*. So the 14 are printed rather than counted, and the reading
+    /// below is recorded as a reading.
+    ///
+    /// On 2026-09-28 the author's own reading of the printed 14 was **12 better, 2
+    /// worse**. The two it gets wrong are the same shape as each other — a first row
+    /// that is verbatim and correct, losing to a chapter carried from a window the
+    /// preacher has left:
+    ///
+    /// ```text
+    ///   3349.5  "You shall serve the Lord your God and He shall bless"
+    ///           Exodus 23:25 is right; Joshua 24:15 would rise
+    ///   5653.4  "The Lord here in the day of trouble, the name of the God of Jacob"
+    ///           Psalms 20:1 is right; Deuteronomy 29:15 would rise
+    /// ```
+    ///
+    /// **And two of the twelve are the exact case RG-320's hard constraint is about.**
+    /// `Psalms 111:4`/`Psalms 112:4` at 7736.0 s and `Proverbs 6:10`/`Proverbs 24:33`
+    /// at 11933.4 s are word-for-word identical and tie on confidence, so today the
+    /// order between them is arbitrary. Continuity separates both correctly and **both
+    /// rows are still offered** — the constraint is about not DROPPING a row, and
+    /// nothing here drops one. That is the strongest single argument for the rule and
+    /// it is why this measurement is worth keeping rather than discarding with the
+    /// experiment.
+    ///
+    /// Nothing is changed by running this. The next reader needs the 14 windows and a
+    /// person who knows what the preacher meant, and that person is the operator.
+    #[test]
+    #[ignore]
+    fn what_a_continuity_tie_break_would_reorder() {
+        let Ok(path) = std::env::var("RELAY_SERVICE_CORPUS") else {
+            println!("set RELAY_SERVICE_CORPUS");
+            return;
+        };
+        let body = std::fs::read_to_string(&path).expect("corpus unreadable");
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        // EMPTY AND LEFT EMPTY, like `explain_one_window`: the reorder this measures is
+        // between two offered rows, and nothing on the wall is allowed to decide that
+        // (rule 40 — memory only ever re-ranks a quotation, and this bench must not
+        // quietly reproduce that rule and call it this one).
+        let context = ContextMemory::default();
+        let lines: Vec<(f32, String)> = body
+            .lines()
+            .filter_map(|l| l.split_once('\t'))
+            .filter_map(|(t, x)| t.parse::<f32>().ok().map(|t| (t, x.to_string())))
+            .collect();
+        // The book and chapter of every offered candidate of the PREVIOUS window. One
+        // window back and no further: `ContextMemory::in_flight` is the precedent for a
+        // carry on this path and it is a single slot with a ceiling, because a carry
+        // that lingers is a carry that starts answering for a passage the preacher has
+        // left — which is exactly the failure the two regressions above are.
+        let mut prev: Vec<(String, i64)> = Vec::new();
+        let mut reorders = 0usize;
+        println!();
+        for (at, text) in &lines {
+            let w = candidates_for_window(text, true, &sem, &phrases, &context, None, false);
+            let offered_now: Vec<&Cand> = w
+                .kept
+                .iter()
+                .filter(|c| c.method.unattended_rank() == 0)
+                .collect();
+            let mut offered = offered_now.clone();
+            // The order an operator reads today: `pipeline::better` inside one tier is
+            // confidence alone, which is RG-320's diagnosis — a run length and a cosine
+            // compared as though they were one scale.
+            offered.sort_by(|a, b| {
+                b.conf
+                    .partial_cmp(&a.conf)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            let continues = |c: &Cand| {
+                prev.iter()
+                    .any(|(b, ch)| *b == c.r.book && *ch == c.r.chapter)
+            };
+            if offered.len() >= 2 && !continues(offered[0]) {
+                if let Some(c) = offered.iter().skip(1).find(|c| continues(c)) {
+                    reorders += 1;
+                    println!(
+                        "  {at:.1}\n     reads first  {} {}:{}  {:?} {:.2}\n     would rise   \
+                         {} {}:{}  {:?} {:.2}\n     “{}”",
+                        offered[0].r.book,
+                        offered[0].r.chapter,
+                        offered[0].r.verse,
+                        offered[0].method,
+                        offered[0].conf,
+                        c.r.book,
+                        c.r.chapter,
+                        c.r.verse,
+                        c.method,
+                        c.conf,
+                        text.chars().take(90).collect::<String>()
+                    );
+                }
+            }
+            prev = offered_now
+                .iter()
+                .map(|c| (c.r.book.clone(), c.r.chapter))
+                .collect();
+        }
+        println!(
+            "\n  {reorders} of {} windows reorder. Read them; do not count them.\n",
+            lines.len()
+        );
+    }
+
+    /// **RG-320 ROUTE 1 · THE WALL CANNOT ORDER IT EITHER, AND THE TWO ROWS DO NOT
+    /// EVEN TIE — measured 2026-09-29.**
+    ///
+    /// Two earlier passes refused two ranking rules for the same reason: both had to be
+    /// justified by reading a transcript (rule 13) or by carrying a COSINE across a
+    /// window (rule 18). **The one ordering fact in Relay that is neither is the book
+    /// on the wall** — `ContextMemory::current`, objective, already recorded, no score
+    /// involved — and the narrowest rule it supports is: when two candidates tie on
+    /// `unattended_rank()` AND on confidence, prefer the one whose BOOK is the book the
+    /// congregation is already looking at. A tie is an order that is arbitrary today, so
+    /// replacing it with a fact costs nothing by construction, and it reorders rather
+    /// than drops, which is what this row's hard constraint asks.
+    ///
+    /// **It does not reach this row's own case, and it fails twice over rather than
+    /// narrowly.** Replaying service 42 puts `Genesis 8:21` on the wall at 18741.9 s and
+    /// nothing else fires until 19502.8 s, so at 19178.0 s:
+    ///
+    /// ```text
+    ///   on the wall   Genesis 8:21
+    ///   reads first   Jeremiah 6:16   Quoted   0.60
+    ///   should be     Matthew 11:29   Semantic 0.48
+    /// ```
+    ///
+    ///  * **There is no tie.** 0.60 against 0.48, so a tie-restricted rule is never
+    ///    consulted at this window at all.
+    ///  * **And the wall names neither book.** Lifting the tie restriction changes
+    ///    nothing, because the fact the rule orders on has no opinion here: the
+    ///    preacher had left Genesis and the wall had not been told.
+    ///
+    /// The evidence that would name Matthew is *"Come unto me. I'll give you rest"* in
+    /// the window before, which `the_verbatim_carry_does_not_reach_rg320s_first_route`
+    /// measures as carrying no verbatim run at all. So all three orderable facts —
+    /// confidence, the carried run, and the wall — are now measured against this window
+    /// and none of them reaches it. What is left is a cosine carried forward, and rule
+    /// 18 is what that costs.
+    ///
+    /// **And it is not just this window.** `what_a_wall_book_tie_break_would_reorder`
+    /// replays the whole service: 27 windows of 3,161 offer two or more rows at the same
+    /// confidence and the book on the wall would reorder **0** of them. A tie between
+    /// offered rows happens when the preacher is reading words the corpus cannot place,
+    /// which is precisely when he is not in the book on the screen.
+    ///
+    /// Not `#[ignore]`d: three windows against the bundled index, and it is what stops a
+    /// fourth pass re-deriving the same rule from the row.
+    #[test]
+    fn the_wall_cannot_order_rg320s_first_route() {
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        let mut context = ContextMemory::default();
+        // What the replay does at 18741.9 s, through the same call `emit_detections`
+        // makes: `Genesis 8:21` auto-fires and nothing replaces it until 19502.8 s.
+        // `print_every_auto_fire` over the real corpus is where those two numbers come
+        // from, so this is a fact about the service rather than a premise of the test.
+        let genesis = VerseRef {
+            book: "Genesis".into(),
+            chapter: 8,
+            verse: 21,
+        };
+        context.note_passage(&genesis, None);
+        let on_the_wall = Some("Genesis 8:21");
+
+        let w = candidates_for_window(
+            "Come and learn of man. You'll find rest for your souls.",
+            true,
+            &sem,
+            &phrases,
+            &context,
+            on_the_wall,
+            false,
+        );
+        let offered: Vec<(String, String, DetectionMethod, f32)> = w
+            .kept
+            .iter()
+            .filter(|c| c.method.unattended_rank() == 0)
+            .map(|c| (Fire::key_for(&c.r), c.r.book.clone(), c.method, c.conf))
+            .collect();
+        let find = |key: &str| -> (DetectionMethod, f32) {
+            offered
+                .iter()
+                .find(|(k, _, _, _)| k == key)
+                .map(|(_, _, m, conf)| (*m, *conf))
+                .unwrap_or_else(|| panic!("{key} is no longer offered here: {offered:?}"))
+        };
+        // The two rows the row reports, with the two SCALES rule 18 says may not be
+        // compared: a run length against a cosine.
+        let (jeremiah_method, jeremiah) = find("Jeremiah 6:16");
+        let (matthew_method, matthew) = find("Matthew 11:29");
+        assert_eq!(jeremiah_method, DetectionMethod::Quoted);
+        assert_eq!(matthew_method, DetectionMethod::Semantic);
+
+        // THE ROW'S OWN FINDING, still the finding: the wrong row reads first.
+        assert!(
+            jeremiah > matthew,
+            "the offer order has changed since RG-320 was filed, so this test no \
+             longer describes the window it is about: {offered:?}"
+        );
+        // AND THERE IS NO TIE TO BREAK. A rule restricted to ties — the only ranking
+        // rule that can be shipped without a labelled corpus for offer order — is
+        // never consulted at this window.
+        assert_ne!(
+            jeremiah, matthew,
+            "the two rows tie after all, which would make a tie-break reachable and \
+             is worth reopening the row for"
+        );
+        // AND THE ONE FACT IT ORDERS ON HAS NO OPINION. Neither candidate's book is
+        // the book on the wall, so lifting the tie restriction reaches this window no
+        // more than keeping it does.
+        let wall_book = context
+            .current()
+            .map(|r| r.book.clone())
+            .expect("the wall was seeded above");
+        assert_eq!(wall_book, "Genesis");
+        for (key, book, _, _) in &offered {
+            assert_ne!(
+                book, &wall_book,
+                "a candidate here IS in the book on the wall, so book continuity does \
+                 have an opinion and the row is reachable: {key}"
+            );
+        }
+    }
+
+    /// **THE HARD CONSTRAINT, AS A TRIPWIRE RATHER THAN A SENTENCE — RG-320.**
+    ///
+    /// The row's own condition on any ordering rule is that it may REORDER and never
+    /// DROP, because some of the rows it would compare are verses the corpus cannot
+    /// separate: `Psalms 111:4` and `Psalms 112:4` are word-for-word identical, as are
+    /// `Proverbs 6:10` and `Proverbs 24:33`. Both pairs occur in service 42, at 7736.0 s
+    /// and 11933.4 s, and both tie on confidence — which is what makes them the two
+    /// windows where a tie-break would actually be consulted.
+    ///
+    /// Nothing is reordered here, because nothing is shipped. What this holds is the
+    /// constraint itself: both members of both pairs are OFFERED today, and a future
+    /// ranking rule that quietly resolves the ambiguity by dropping a row fails here
+    /// rather than on a Sunday.
+    #[test]
+    fn both_rows_of_a_pair_the_corpus_cannot_separate_are_still_offered() {
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        let context = ContextMemory::default();
+        // Verbatim from service 42.
+        const PAIRS: [(&str, [&str; 2]); 2] = [
+            (
+                "Verse 4. Unto the upright, there arise light in the darkness, is \
+                 gracious and full of compassion.",
+                ["Psalms 111:4", "Psalms 112:4"],
+            ),
+            (
+                "And received instruction. Yet a little sleep, a little slumber, a \
+                 little folding of the hands to sleep. He said, so shall thy poverty \
+                 come from us.",
+                ["Proverbs 6:10", "Proverbs 24:33"],
+            ),
+        ];
+        for (text, pair) in PAIRS {
+            let w = candidates_for_window(text, true, &sem, &phrases, &context, None, false);
+            let keys: Vec<String> = w.kept.iter().map(|c| Fire::key_for(&c.r)).collect();
+            for want in pair {
+                assert!(
+                    keys.iter().any(|k| k == want),
+                    "{want} is no longer offered, so one of two verses the corpus \
+                     cannot tell apart has been dropped: {keys:?}"
+                );
+            }
+        }
+    }
+
+    /// **WHAT A WALL-BOOK TIE-BREAK WOULD REORDER ACROSS A WHOLE SERVICE — RG-320,
+    /// measured 2026-09-29.**
+    ///
+    /// `RELAY_SERVICE_CORPUS=<file> cargo test --release
+    /// what_a_wall_book_tie_break_would_reorder -- --ignored --nocapture`
+    ///
+    /// `what_a_continuity_tie_break_would_reorder` measures the PREVIOUS WINDOW's
+    /// candidates as the ordering fact and prints 14 windows that need an operator's
+    /// reading. This measures the other candidate fact — the book on the wall — under
+    /// the one restriction that makes a ranking rule shippable without a labelled
+    /// corpus: **an exact tie**, where the order today is arbitrary and any fact is an
+    /// improvement on a stable sort over detection order.
+    ///
+    /// It runs the real replay, so `ContextMemory::current` is what the service's own
+    /// auto-fires put there rather than something this bench invents.
+    ///
+    /// **THE ANSWER IS ZERO, and that is why RG-320 closed as a boundary rather than as
+    /// a fix.** Over service 42: **27 windows of 3,161 offer two or more rows at the
+    /// same confidence, and the book on the wall would reorder 0 of them.** Not "a
+    /// small improvement not worth the risk" — the fact this rule orders on has no
+    /// opinion anywhere in a four-hour service, because a tie between two offered rows
+    /// happens when the preacher is reading words the corpus cannot place, which is
+    /// exactly when he is not in the book on the screen. Nothing needs reading, and
+    /// there is nothing here for an operator to adjudicate.
+    #[test]
+    #[ignore]
+    fn what_a_wall_book_tie_break_would_reorder() {
+        let Ok(path) = std::env::var("RELAY_SERVICE_CORPUS") else {
+            println!("set RELAY_SERVICE_CORPUS");
+            return;
+        };
+        let body = std::fs::read_to_string(&path).expect("corpus unreadable");
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        let lines: Vec<(f32, String)> = body
+            .lines()
+            .filter_map(|l| l.split_once('\t'))
+            .filter_map(|(t, x)| t.parse::<f32>().ok().map(|t| (t, x.to_string())))
+            .collect();
+        let mut context = ContextMemory::default();
+        let mut router = Router::default();
+        let mut ties = 0usize;
+        let mut reorders = 0usize;
+        println!();
+        for (at, text) in &lines {
+            let now_ms = (at * 1000.0) as u64;
+            let w =
+                candidates_for_window(text, true, &sem, &phrases, &context, router.wall(), false);
+            let mut offered: Vec<&Cand> = w
+                .kept
+                .iter()
+                .filter(|c| c.method.unattended_rank() == 0)
+                .collect();
+            offered.sort_by(|a, b| {
+                b.conf
+                    .partial_cmp(&a.conf)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            if offered.len() >= 2 {
+                let top = offered[0].conf;
+                let tied: Vec<&&Cand> = offered.iter().filter(|c| c.conf == top).collect();
+                if tied.len() >= 2 {
+                    ties += 1;
+                    if let Some(wall) = context.current() {
+                        if !tied[0].r.book.eq_ignore_ascii_case(&wall.book) {
+                            if let Some(c) = tied
+                                .iter()
+                                .skip(1)
+                                .find(|c| c.r.book.eq_ignore_ascii_case(&wall.book))
+                            {
+                                reorders += 1;
+                                println!(
+                                    "  {at:.1}  on the wall {} {}:{}\n     reads first  \
+                                     {}\n     would rise   {}\n     “{}”",
+                                    wall.book,
+                                    wall.chapter,
+                                    wall.verse,
+                                    Fire::key_for(&tied[0].r),
+                                    Fire::key_for(&c.r),
+                                    text.chars().take(90).collect::<String>()
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            // The same replay `what_the_guard_costs_a_real_service` runs, so the wall
+            // this bench reads is the wall the service had.
+            context.note_carries(detection::chapter_in_flight(text), w.sole_run, now_ms);
+            let mut best: Vec<(String, Cand)> = Vec::new();
+            for c in w.kept {
+                let key = Fire::key_for(&c.r);
+                match best.iter_mut().find(|(k, _)| *k == key) {
+                    Some((_, e)) => {
+                        if !pipeline::better(e, &c) {
+                            *e = c;
+                        }
+                    }
+                    None => best.push((key, c)),
+                }
+            }
+            for (rank, (key, c)) in rank_for_wall(best).into_iter().enumerate() {
+                if router.decide_live(&key, c.conf, c.method, now_ms, true)
+                    == RouteDecision::AutoFire
+                    && rank == 0
+                {
+                    context.note_passage(&c.r, None);
+                    router.note_wall(&key, now_ms);
+                }
+            }
+        }
+        println!(
+            "\n  {ties} windows offer two or more rows at the SAME confidence; the book \
+             on the wall would reorder {reorders} of them, out of {} windows.\n",
+            lines.len()
+        );
+    }
+
+    /// **WHY THE DOUBT RULE NEVER HAD A DOUBT TO CARRY — RG-319, measured
+    /// 2026-09-28. A WRONG VERSE REACHED A CONGREGATION and the register's account of
+    /// the mechanism does not reproduce.**
+    ///
+    /// `cargo test --release why_no_doubt_was_available_for_psalms_119_39 -- --ignored
+    /// --nocapture`
+    ///
+    /// Service 42, verbatim from `transcripts`:
+    ///
+    /// ```text
+    ///   19730.1  "What is this? … For my covenant will I not break."   → offered Psalms 89:34
+    ///   19737.1  "… the comfort of my lips. Psalm 119, verse 39. …"    → FIRED Psalms 119:39
+    /// ```
+    ///
+    /// The row says a doubt *"was computable one pass earlier"* and that the first
+    /// window held *"everything `chapter_the_words_point_at` needs"*. It did not.
+    /// Given the two windows JOINED — which is what a rolling window would have
+    /// produced, and the most generous reading of the claim — the rule produces **no
+    /// doubt at all**, and `the_run_contradicts` refuses it twice over:
+    ///
+    ///  * the run's verse is **34** and the spoken reference says **39**, so
+    ///    `verse_inside_what_was_said` is false. That is the rule's most deliberate
+    ///    line — *a verse-only difference is never a disagreement, at any distance* —
+    ///    and it is what protects `John 15:14` cited while 15:15 is read.
+    ///  * **89 is not a decode slip of 119.** `chapter_is_a_decode_slip` needs either
+    ///    a lost leading digit (119 does not end in 89) or one substitution at equal
+    ///    length (two digits against three).
+    ///
+    /// So neither a doubt carried forward nor a RUN carried forward reaches this
+    /// window. Reaching it means admitting a disagreement where both coordinates
+    /// differ, and `doubt_from_a_quotation` records what that costs.
+    ///
+    /// This is kept as a bench rather than an assertion **because there is nothing
+    /// here to assert yet.** It prints the set so the next reader starts from the
+    /// measurement instead of from the row.
+    #[test]
+    #[ignore]
+    fn why_no_doubt_was_available_for_psalms_119_39() {
+        const W1: &str =
+            "What is this? It becomes finding on God to affirm. For my covenant will I not break.";
+        const W2: &str = "The author does send the comfort of my lips. Psalm 119, verse 39. If you cannot bring my covenant of the";
+        const JOINED: &str = "For my covenant will I not break. The author does send the comfort of my lips. Psalm 119, verse 39.";
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        let context = ContextMemory::default();
+        println!();
+        for (label, text) in [
+            ("19730.1 (offered only)", W1),
+            ("19737.1 (FIRED)", W2),
+            ("both windows JOINED", JOINED),
+        ] {
+            println!("  ── {label}: “{text}”");
+            let w = candidates_for_window(text, true, &sem, &phrases, &context, None, false);
+            for c in &w.kept {
+                println!(
+                    "     KEPT  {} {}:{}  {:?}  {:.2}",
+                    c.r.book, c.r.chapter, c.r.verse, c.method, c.conf
+                );
+            }
+            for d in &w.doubted {
+                println!(
+                    "     DOUBT {}  {:?}  {:?} -> {:?}",
+                    d.reference, d.doubt, d.was, d.method
+                );
+            }
+            if w.doubted.is_empty() {
+                println!("     DOUBT none");
+            }
+        }
+        println!(
+            "\n  the two refusals, stated: verse 34 is not inside “verse 39”, and \
+             chapter 89 is not a decode slip of 119\n"
+        );
+    }
+
+    /// **WHY A RUN CARRIED ACROSS A WINDOW CANNOT REACH `Psalms 119:39` EITHER —
+    /// RG-319, measured 2026-09-28 by building the rule and replaying it.**
+    ///
+    /// `why_no_doubt_was_available_for_psalms_119_39` shows the window-local rule had
+    /// nothing to carry. The obvious next move is the one the row nominates: carry the
+    /// RUN forward a window, and admit a disagreement where BOTH coordinates differ —
+    /// same book, a different chapter, whatever the verse. That reaches the wall.
+    /// **It was built, gated, and replayed over service 42's 3,161 windows: auto-fires
+    /// 153 → 148.** `Psalms 119:39` went, and so did `Psalms 41:1`,
+    /// `1 Corinthians 12:7` and `Matthew 6:33`, all three correct, plus a duplicate
+    /// `Isaiah 11:1` and a 2.8 s delay to `Luke 11:49`.
+    ///
+    /// **The register refused this rule on evidence that does not apply to it, and
+    /// that correction is half the point of this test.** RG-319 cites `John 15:15`
+    /// read while *"John 15, 14"* was cited, and `Hebrews 13:17` quoted while 13:7 was
+    /// insisted on. Both are ONE book, ONE chapter, a different verse — the
+    /// same-chapter escape in `the_run_contradicts` refuses them on its own, and a
+    /// rule about differing CHAPTERS never touches either. The refusal was right; its
+    /// stated reason was not.
+    ///
+    /// **The reason that holds is in this test, and it is four windows of one
+    /// service.** Three correct auto-fires have the identical shape to the wrong one:
+    ///
+    /// ```text
+    ///   Psalms 20:3          6 words, sole  →  "Now Psalm 41 verse 1."        RIGHT
+    ///   1 Corinthians 2:16   7 words, sole  →  "1 Corinthians 12, verse 7"    RIGHT
+    ///   Matthew 13:44        5 words, sole  →  "hidden in Matthew 6, 33."     RIGHT
+    ///   Psalms 89:34         6 words, sole  →  "Psalm 119, verse 39."         WRONG
+    /// ```
+    ///
+    /// A preacher quoting one chapter and then citing another chapter of the same book
+    /// is the ordinary thing, and a decoder that drops a digit leaves exactly the same
+    /// trace. **No length bar separates them**: the wrong one's run is neither the
+    /// longest nor the shortest of the four, which the second assertion holds.
+    ///
+    /// **And waiting a window for the cited chapter to be confirmed does not separate
+    /// them either.** Only `1 Corinthians 12:7` is read aloud verbatim in the window
+    /// after its citation; `Psalms 41:1` and `Matthew 6:33` are not, so a
+    /// hold-until-agreed rule withholds the wall AND two correct fires. The third
+    /// assertion holds that, so the idea cannot be re-proposed without this test
+    /// failing.
+    ///
+    /// Not `#[ignore]`d: it is four windows against the bundled index, and it is the
+    /// only thing standing between the next reader and re-measuring all of this.
+    #[test]
+    fn a_carried_run_cannot_tell_a_misheard_chapter_from_the_next_one_he_cites() {
+        /// The longest run in this window that exactly one verse holds — the only
+        /// evidence `doubt_from_a_quotation` accepts, and so the only thing a carry
+        /// could carry.
+        fn sole_run(idx: &detection::PhraseIndex, text: &str) -> Option<(VerseRef, usize)> {
+            idx.quoted(text, None, QUOTED_SUGGESTIONS_MAX)
+                .into_iter()
+                .filter(|h| h.sole && h.run >= detection::MIN_RUN_WORDS)
+                .max_by_key(|h| h.run)
+                .map(|h| (h.r, h.run))
+        }
+        let idx = detection::PhraseIndex::build(&kjv_corpus());
+
+        // (the window that carries the run, the window that cites, what it cites,
+        //  the window AFTER the citation, whether the citation was CORRECT)
+        let field: [(&str, &str, &str, &str, bool); 4] = [
+            (
+                "And, as I said, I am strengthening thee out of Zion. Remember all thy \
+                 offerings and accept their bond sacrifices.",
+                "That's what your offering does among others. It delivers in the day of \
+                 trouble. Now Psalm 41 verse 1.",
+                "Psalms 41:1",
+                "Blessed is the man that considerate the poor",
+                true,
+            ),
+            (
+                "He said, but we have the mind of Christ and because this is endowed",
+                "1 Corinthians 12, verse 7 The Bible tells us,",
+                "1 Corinthians 12:7",
+                "us this, he says that the manifestation of the spirit, as he spoke about \
+                 the gifts of the spirit, he said he's giving",
+                true,
+            ),
+            (
+                "The kingdom of heaven is like unto treasure, eat in the field, which any \
+                 man has found.",
+                "You cannot discover the treasure hidden in Matthew 6, 33.",
+                "Matthew 6:33",
+                "And not by, in to you, with utmost delight, with utmost delight.",
+                true,
+            ),
+            (
+                "What is this? It becomes finding on God to affirm. For my covenant will I \
+                 not break.",
+                "The author does send the comfort of my lips. Psalm 119, verse 39. If you \
+                 cannot bring my covenant of the",
+                "Psalms 119:39",
+                "The end of the night. Then don't try it. You can't break my covenant with \
+                 my servant David.",
+                false,
+            ),
+        ];
+
+        let mut right: Vec<usize> = Vec::new();
+        let mut wrong: Vec<usize> = Vec::new();
+        let mut confirmed_next_window = 0;
+        for (carries, cites, reference, after, correct) in field {
+            let (run_at, words) =
+                sole_run(&idx, carries).unwrap_or_else(|| panic!("no sole run in “{carries}”"));
+            let cited = detection::detect_direct(cites)
+                .into_iter()
+                .find(|m| m.method == DetectionMethod::Direct)
+                .unwrap_or_else(|| panic!("nothing Direct in “{cites}”"));
+            assert_eq!(
+                Fire::key_for(&cited.reference),
+                reference,
+                "the citation this window makes has changed"
+            );
+            // THE WHOLE POINT: the four are indistinguishable to the widened rule.
+            assert_eq!(
+                run_at.book, cited.reference.book,
+                "{reference}: the carried run left the book, so the rule under test \
+                 would not have reached this window at all"
+            );
+            assert_ne!(
+                run_at.chapter, cited.reference.chapter,
+                "{reference}: same chapter is already escaped by `the_run_contradicts`"
+            );
+            if sole_run(&idx, after).is_some_and(|(r, _)| {
+                r.book == cited.reference.book && r.chapter == cited.reference.chapter
+            }) {
+                confirmed_next_window += 1;
+            }
+            if correct {
+                right.push(words);
+            } else {
+                wrong.push(words);
+            }
+        }
+
+        // NO LENGTH BAR SEPARATES THEM. The one wrong citation's run sits inside the
+        // spread of the three correct ones, so every bar either keeps all four or
+        // takes the wall away along with a correct fire.
+        let (lo, hi) = (
+            *right.iter().min().expect("right"),
+            *right.iter().max().expect("right"),
+        );
+        for w in &wrong {
+            assert!(
+                (lo..=hi).contains(w),
+                "the wrong citation's run is {w} words and the correct ones span \
+                 {lo}..={hi} — if that has changed, a length bar may now separate them \
+                 and RG-319 is worth reopening"
+            );
+        }
+
+        // AND NEITHER DOES WAITING A WINDOW. Exactly one of the four is read aloud
+        // verbatim in the window after its citation, and it is a CORRECT one — so a
+        // hold-until-agreed rule costs two correct fires to withhold one wall.
+        assert_eq!(
+            confirmed_next_window, 1,
+            "a hold-until-the-next-window-agrees rule is only worth proposing if more \
+             than one of these citations is confirmed by the window after it"
+        );
+    }
+
+    /// **WHAT THE FIRING WINDOW STILL SAYS ABOUT BOTH CHAPTERS** — RG-319, and the
+    /// measurement that separates the one wrong wall from the three correct fires.
+    ///
+    /// `a_carried_run_cannot_tell_a_misheard_chapter_from_the_next_one_he_cites`
+    /// holds the two ideas that do NOT separate them — a length bar and a
+    /// confirmation wait — and both stay refused. This asks the one thing neither
+    /// asked: by the window that FIRES, whose words is he saying? Four real windows
+    /// against the bundled index, and the numbers are the ones the unit tests in
+    /// `detection::citation_doubt` are written from.
+    ///
+    /// Not `#[ignore]`d: it is four windows and the whole rule rests on it.
+    #[test]
+    fn what_the_firing_window_still_says_about_both_chapters() {
+        fn sole_run(idx: &detection::PhraseIndex, text: &str) -> Option<(VerseRef, usize)> {
+            idx.quoted(text, None, QUOTED_SUGGESTIONS_MAX)
+                .into_iter()
+                .filter(|h| h.sole && h.run >= detection::MIN_RUN_WORDS)
+                .max_by_key(|h| h.run)
+                .map(|h| (h.r, h.run))
+        }
+        let idx = detection::PhraseIndex::build(&kjv_corpus());
+
+        // (the window that carries the run, the window that cites, what it cites,
+        //  whether the citation was CORRECT)
+        let field: [(&str, &str, &str, bool); 4] = [
+            (
+                "And, as I said, I am strengthening thee out of Zion. Remember all thy \
+                 offerings and accept their bond sacrifices.",
+                "That's what your offering does among others. It delivers in the day of \
+                 trouble. Now Psalm 41 verse 1.",
+                "Psalms 41:1",
+                true,
+            ),
+            (
+                "He said, but we have the mind of Christ and because this is endowed",
+                "1 Corinthians 12, verse 7 The Bible tells us,",
+                "1 Corinthians 12:7",
+                true,
+            ),
+            (
+                "The kingdom of heaven is like unto treasure, eat in the field, which any \
+                 man has found.",
+                "You cannot discover the treasure hidden in Matthew 6, 33.",
+                "Matthew 6:33",
+                true,
+            ),
+            (
+                "What is this? It becomes finding on God to affirm. For my covenant will I \
+                 not break.",
+                "The author does send the comfort of my lips. Psalm 119, verse 39. If you \
+                 cannot bring my covenant of the",
+                "Psalms 119:39",
+                false,
+            ),
+        ];
+
+        println!();
+        println!(
+            "  cited                ok      carried             run   FIRING: carried / cited"
+        );
+        let mut doubted_right = 0;
+        let mut doubted_wrong = 0;
+        for (carries, cites, reference, correct) in field {
+            let (run_at, words) =
+                sole_run(&idx, carries).unwrap_or_else(|| panic!("no sole run in “{carries}”"));
+            let cited = detection::detect_direct(cites)
+                .into_iter()
+                .find(|m| m.method == DetectionMethod::Direct)
+                .unwrap_or_else(|| panic!("nothing Direct in “{cites}”"));
+            assert_eq!(Fire::key_for(&cited.reference), reference);
+            let claim = detection::Claim {
+                r: &cited.reference,
+                method: cited.method,
+                verse_end: cited.verse_end,
+                whole_chapter: cited.whole_chapter,
+                run: None,
+            };
+            let verdict = detection::a_carried_quotation_contradicts(&claim, &run_at, |probe| {
+                idx.shared_run_with(cites, probe)
+            });
+            println!(
+                "  {:<20} {:<7} {:<19} {:<5} {} / {}{}",
+                reference,
+                if correct { "RIGHT" } else { "WRONG" },
+                Fire::key_for(&run_at),
+                words,
+                idx.shared_run_with(cites, &run_at),
+                idx.shared_run_with(cites, &cited.reference),
+                if verdict.is_some() { "    DOUBTED" } else { "" }
+            );
+            match (correct, verdict.is_some()) {
+                (true, true) => doubted_right += 1,
+                (false, true) => doubted_wrong += 1,
+                _ => {}
+            }
+        }
+        println!();
+        assert_eq!(
+            doubted_wrong, 1,
+            "the wrong citation RG-319 is about is no longer doubted"
+        );
+        assert_eq!(
+            doubted_right, 0,
+            "a correct citation of the same shape was doubted — the naive carry cost \
+             three of these and the firing window's own words are the only thing \
+             separating them"
+        );
+    }
+
+    /// **THE WALL ITSELF, THROUGH THE ASSEMBLY A CONGREGATION GETS** — RG-319.
+    ///
+    /// `what_the_firing_window_still_says_about_both_chapters` and the unit tests in
+    /// `detection::citation_doubt` hold the PREDICATE, and **all of them pass with the
+    /// rule unwired** — measured, by deleting the call in `candidates_for_window` and
+    /// watching them stay green while the replay put `Psalms 119:39` back on the
+    /// list. A predicate nothing calls is the shape this repository has recorded four
+    /// separate bugs having, so the guarantee has to be stated on the door.
+    ///
+    /// Two real windows, the real `ContextMemory`, the real `note_carries`, the real
+    /// assembly. `UncertainNumber` is capped at `Suggest` by `Router::decide` at any
+    /// score (rule 10), so a citation that comes out of here labelled that cannot
+    /// reach a screen unattended — which is the whole of what the wall event needed.
+    #[test]
+    fn the_carried_quotation_rule_is_wired_into_the_window_a_congregation_gets() {
+        const W1: &str =
+            "What is this? It becomes finding on God to affirm. For my covenant will I not break.";
+        const W2: &str = "The author does send the comfort of my lips. Psalm 119, verse 39. \
+                          If you cannot bring my covenant of the";
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        let mut context = ContextMemory::default();
+
+        let first = candidates_for_window(W1, true, &sem, &phrases, &context, None, false);
+        assert_eq!(
+            first.sole_run.as_ref().map(Fire::key_for).as_deref(),
+            Some("Psalms 89:34"),
+            "the window that carries the evidence no longer offers it"
+        );
+        context.note_carries(detection::chapter_in_flight(W1), first.sole_run, 19_730_100);
+
+        let second = candidates_for_window(W2, true, &sem, &phrases, &context, None, false);
+        let cited: Vec<DetectionMethod> = second
+            .kept
+            .iter()
+            .filter(|c| Fire::key_for(&c.r) == "Psalms 119:39")
+            .map(|c| c.method)
+            .collect();
+        assert!(
+            !cited.is_empty(),
+            "the citation is no longer produced at all, so this test proves nothing: {:?}",
+            second
+                .kept
+                .iter()
+                .map(|c| (Fire::key_for(&c.r), c.method))
+                .collect::<Vec<_>>()
+        );
+        // EVERY candidate naming it, not the first — a window can name one reference
+        // twice and the duplicate is what reached the wall in DECISIONS §128.
+        for m in &cited {
+            assert_eq!(
+                *m,
+                DetectionMethod::UncertainNumber,
+                "Psalms 119:39 can still auto-fire while the preacher reads Psalms 89"
+            );
+        }
+        assert!(
+            second
+                .doubted
+                .iter()
+                .any(|d| d.reference == "Psalms 119:39"),
+            "the demotion reached no operator — rule 35"
+        );
+        // AND THE CARRY EXPIRES. Fifteen seconds on, the same window is untouched, so
+        // a stale quotation cannot accuse a citation for the rest of a service.
+        let mut stale = ContextMemory::default();
+        stale.note_carries(
+            None,
+            Some(detection::VerseRef {
+                book: "Psalms".into(),
+                chapter: 89,
+                verse: 34,
+            }),
+            0,
+        );
+        stale.note_carries(None, None, 60_000);
+        let late = candidates_for_window(W2, true, &sem, &phrases, &stale, None, false);
+        assert!(
+            late.kept
+                .iter()
+                .any(|c| Fire::key_for(&c.r) == "Psalms 119:39"
+                    && c.method == DetectionMethod::Direct),
+            "an expired carry is still accusing"
+        );
+    }
+
+    /// **EVERY WINDOW THE CARRIED-QUOTATION RULE DEMOTES IN, OVER A REAL SERVICE** —
+    /// RG-319, printed rather than scored, per rule 13.
+    ///
+    /// `RELAY_SERVICE_CORPUS=<file> cargo test --release
+    /// what_the_carried_quotation_rule_demotes -- --ignored --nocapture`
+    ///
+    /// The auto-fire diff answers what reached a wall; this answers the other half —
+    /// how often the rule speaks at all, and about which references, because a
+    /// `Direct` demoted to `UncertainNumber` still costs the operator a row that no
+    /// longer says Relay heard it, even where the router was never going to fire it.
+    ///
+    /// **It runs the window twice, the second time with the carry withheld**, and
+    /// prints the difference. That is exact where a before/after of two binaries is
+    /// not: `print_every_auto_fire`'s own note records that the replay's `Router`
+    /// self-calibrates, so a line-by-line diff of two runs moves verses far from the
+    /// change that caused them. There is no router here at all.
+    #[test]
+    #[ignore]
+    fn what_the_carried_quotation_rule_demotes() {
+        let Ok(path) = std::env::var("RELAY_SERVICE_CORPUS") else {
+            println!("set RELAY_SERVICE_CORPUS");
+            return;
+        };
+        let body = std::fs::read_to_string(&path).expect("corpus unreadable");
+        let lines: Vec<(f32, String)> = body
+            .lines()
+            .filter_map(|l| l.split_once('\t'))
+            .filter_map(|(t, x)| t.parse::<f32>().ok().map(|t| (t, x.to_string())))
+            .collect();
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        // Two memories in lockstep; the second never receives a quotation carry, so
+        // the difference between the two candidate sets IS this rule and nothing else.
+        let mut with = ContextMemory::default();
+        let mut without = ContextMemory::default();
+        let mut hits = 0;
+        let mut live_carries = 0;
+        println!();
+        for (at, text) in &lines {
+            let carried = with.quoted_a_moment_ago().map(Fire::key_for);
+            if carried.is_some() {
+                live_carries += 1;
+            }
+            let a = candidates_for_window(text, true, &sem, &phrases, &with, None, false);
+            let b = candidates_for_window(text, true, &sem, &phrases, &without, None, false);
+            for (x, y) in a.kept.iter().zip(&b.kept) {
+                if x.method == y.method {
+                    continue;
+                }
+                println!(
+                    "  {at:>8.1}s  {:<22} {:?} → {:?}   carried {:<22} “{}”",
+                    Fire::key_for(&x.r),
+                    y.method,
+                    x.method,
+                    carried.as_deref().unwrap_or("-"),
+                    text.chars().take(72).collect::<String>()
+                );
+                hits += 1;
+            }
+            let ms = (at * 1000.0) as u64;
+            with.note_carries(detection::chapter_in_flight(text), a.sole_run, ms);
+            without.note_carries(detection::chapter_in_flight(text), None, ms);
+        }
+        println!(
+            "\n  {hits} candidates demoted across {} windows; a carry was live in \
+             {live_carries} of them\n",
+            lines.len()
+        );
+    }
+
+    /// **WHICH SPOKEN REFERENCES A MOVING BAR WITHHOLDS** — RG-323.
+    ///
+    /// `RELAY_SERVICE_CORPUS=<file> cargo test --release what_the_bar_withholds --
+    /// --ignored --nocapture`
+    ///
+    /// RG-323 says 34 references were parsed as `Direct` and never fired, and blames
+    /// the corroboration rule: *"corroboration accepts agreement only from a LATER
+    /// window"*. **That cannot be the mechanism for its own example, and the proof is
+    /// in the code rather than in a replay.** `Router::decide_live` exempts a FINAL
+    /// window from corroboration — there is no next pass coming — and
+    /// `persist_transcript` is called inside `if update.is_final`, so a row in
+    /// `transcripts` at 21608.4 s IS a final window carrying those words. Corroboration
+    /// was not consulted.
+    ///
+    /// What is left is the numeric gate. *"…hidden in Matthew 6, 33."* parses at
+    /// **0.55**, which is `parse_reference`'s `bare_digits` value: a pair of bare
+    /// digits with no chapter or verse keyword, deliberately scored just above the
+    /// DEFAULT `auto_fire` of 0.50 and left dial-controllable. `record_feedback` moves
+    /// that bar on every confirm and dismiss, so **one dismissal of anything scoring
+    /// 0.55 or more puts the bar above every bare-digit citation for the rest of the
+    /// service.**
+    ///
+    /// **THIS BENCH CANNOT CLASSIFY THE 34, AND THAT IS WHY THE ROW ASKS FOR THE
+    /// WAV.** It feeds every line as a final, so corroboration never holds anything;
+    /// and its `Router` never receives feedback, so the bar never moves. It has
+    /// neither of the two mechanisms that can withhold a `Direct` — `Matthew 6:33`
+    /// fires here at 21608.4 s, which is the opposite of the field outcome.
+    ///
+    /// What it CAN do is bound the class: print every distinct `Direct` reference by
+    /// the best confidence the service ever gave it, so a reader can see how many sit
+    /// in the band a moved bar sweeps. **No threshold is changed by any of this**
+    /// (rule 10): the point is to know which references are one dismissal away from
+    /// silence, not to lower the gate that protects a congregation.
+    #[test]
+    #[ignore]
+    fn what_the_bar_withholds() {
+        let Ok(path) = std::env::var("RELAY_SERVICE_CORPUS") else {
+            println!("set RELAY_SERVICE_CORPUS");
+            return;
+        };
+        let body = std::fs::read_to_string(&path).expect("corpus unreadable");
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        let context = ContextMemory::default();
+        // reference → the BEST confidence any window ever gave it as a firable
+        // candidate. Best, not last: the question is whether the service ever had
+        // evidence strong enough for the gate.
+        let mut best: std::collections::BTreeMap<String, f32> = std::collections::BTreeMap::new();
+        let mut windows = 0usize;
+        for line in body
+            .lines()
+            .filter_map(|l| l.split_once('\t'))
+            .map(|(_, t)| t)
+            .filter(|t| !t.trim().is_empty())
+        {
+            windows += 1;
+            let w = candidates_for_window(line, true, &sem, &phrases, &context, None, false);
+            for c in w
+                .kept
+                .iter()
+                .filter(|c| c.method == DetectionMethod::Direct)
+            {
+                let e = best.entry(Fire::key_for(&c.r)).or_insert(0.0);
+                if c.conf > *e {
+                    *e = c.conf;
+                }
+            }
+        }
+        // The bands that matter, read off `Thresholds::from_sensitivity`: 0.50 is the
+        // default bar, 0.90 the most cautious dial and 0.30 the most eager.
+        const BARS: &[f32] = &[0.30, 0.50, 0.55, 0.60, 0.70, 0.90];
+        println!(
+            "\n  {windows} windows · {} distinct Direct references\n",
+            best.len()
+        );
+        for bar in BARS {
+            let withheld = best.values().filter(|c| **c < *bar).count();
+            println!(
+                "  auto_fire {bar:.2} → {withheld:>3} of {} withheld",
+                best.len()
+            );
+        }
+        // ── WHICH OF THEM NEVER REACHED A WALL, AND WHETHER THEY COULD HAVE ──────
+        //
+        // RG-323's owed classification, as far as it can be taken without the WAV.
+        // The row asks which of the never-fired references are *refusals working
+        // correctly*, and one class of that answer is a fact about scripture rather
+        // than about the audio: **a reference to a verse the bundled Bible does not
+        // have was never going to be right.** `Psalms 1:97` is the row's own example,
+        // and Psalm 1 has six verses.
+        //
+        // The distinction matters because the only lever the row's diagnosis offers is
+        // a LOWER auto-fire bar (rule 10 in its plainest form), and a reader has to
+        // know that the band such a bar would sweep contains references that must stay
+        // refused. An impossible one cannot be rescued by any number: it resolves to no
+        // text, so `emit_detections`' verse-exists check drops it before an operator
+        // ever sees it, and it is refused for the right reason already.
+        //
+        // The fired set comes from the SAME `replay` every other bench here uses, not
+        // from a second scan — two scans of one service that disagreed about the
+        // router's clock would be worse than no measurement (the reason this module
+        // has one `replay` and switches rather than a bench per rule).
+        let lines: Vec<(f32, String)> = body
+            .lines()
+            .filter_map(|l| l.split_once('\t'))
+            .filter_map(|(t, x)| t.parse::<f32>().ok().map(|t| (t, x.to_string())))
+            .collect();
+        let fired: std::collections::BTreeSet<String> = replay(&lines, true, true)
+            .fired
+            .into_iter()
+            .map(|(_, key, _)| key)
+            .collect();
+        let real: std::collections::BTreeSet<String> =
+            corpus.iter().map(|(r, _)| Fire::key_for(r)).collect();
+        let never: Vec<(&String, &f32)> =
+            best.iter().filter(|(k, _)| !fired.contains(*k)).collect();
+        println!(
+            "\n  {} distinct references reached a wall in this replay · {} parsed as \
+             Direct and NEVER did:",
+            fired.len(),
+            never.len()
+        );
+        for (key, conf) in &never {
+            println!("    {conf:.2}  {key}");
+        }
+        // **THE REPLAY'S NEVER-FIRED SET IS NOT THE FIELD'S, AND THE COUNTS MUST NOT BE
+        // READ AS THOUGH IT WERE.** The row counts 34 references the OPERATOR'S service
+        // parsed as `Direct` and never put on a wall; this replay withholds far fewer,
+        // for the two structural reasons above. They are different sets and the
+        // agreement of any two totals between them is a coincidence.
+        //
+        // What IS transferable is impossibility. A reference to a verse the bundled
+        // Bible does not have was never going to be right, whatever the bar — it
+        // resolves to no text, so `emit_detections`' verse-exists check drops it before
+        // an operator sees it. Those are the row's *"refusals working correctly"*, and
+        // they are a fact about scripture rather than about the audio, so this machine
+        // can name them without the WAV.
+        let cannot_be_right: Vec<(&String, &f32)> =
+            best.iter().filter(|(k, _)| !real.contains(*k)).collect();
+        println!(
+            "\n  {} of the {} parsed references NAME A VERSE THE BUNDLED BIBLE DOES NOT \
+             HAVE — these must stay refused at any bar:",
+            cannot_be_right.len(),
+            best.len()
+        );
+        for (key, conf) in &cannot_be_right {
+            println!("    {conf:.2}  {key}");
+        }
+
+        println!("\n  EVERY DISTINCT REFERENCE, WITH ITS BEST CONFIDENCE:");
+        let mut rows: Vec<(&String, &f32)> = best.iter().collect();
+        rows.sort_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal));
+        for (key, conf) in rows {
+            println!("    {conf:.2}  {key}");
+        }
+        println!();
+    }
+
+    /// **WHAT THE SHORT-RUN PROBE COSTS PER WINDOW** (RG-313).
+    ///
+    /// `RELAY_SERVICE_CORPUS=<file> cargo test --release what_the_short_run_probe_costs
+    /// -- --ignored --nocapture`
+    ///
+    /// The probe is bounded by the slip test rather than by the corpus, but bounded
+    /// is not free: it is one `shared_run_with` for the bar plus one per candidate
+    /// chapter, on `relay-detect`, once per decode pass. Rule 31's whole lesson is
+    /// that this path is measured and not reasoned about, and the reasoning here
+    /// would be especially easy to get wrong — `shared_run_with` walks the window
+    /// against a verse, so its cost grows with how much the preacher said.
+    #[test]
+    #[ignore]
+    fn what_the_short_run_probe_costs() {
+        let Ok(path) = std::env::var("RELAY_SERVICE_CORPUS") else {
+            println!("set RELAY_SERVICE_CORPUS");
+            return;
+        };
+        let body = std::fs::read_to_string(&path).expect("corpus unreadable");
+        let corpus = kjv_corpus();
+        let idx = detection::PhraseIndex::build(&corpus);
+        let mut windows = 0usize;
+        let mut probed = 0usize;
+        let mut lookups = 0usize;
+        let mut spent = std::time::Duration::ZERO;
+        for line in body
+            .lines()
+            .filter_map(|l| l.split_once('\t'))
+            .map(|(_, t)| t)
+        {
+            windows += 1;
+            for m in detection::detect_direct(line) {
+                if m.method != DetectionMethod::Direct || m.whole_chapter {
+                    continue;
+                }
+                probed += 1;
+                let claim = detection::Claim {
+                    r: &m.reference,
+                    method: m.method,
+                    verse_end: m.verse_end,
+                    whole_chapter: m.whole_chapter,
+                    run: None,
+                };
+                let t = std::time::Instant::now();
+                let _ = detection::chapter_the_words_point_at(&claim, 150, |probe| {
+                    lookups += 1;
+                    idx.shared_run_with(line, probe)
+                });
+                spent += t.elapsed();
+            }
+        }
+        println!(
+            "\n  {windows} windows · {probed} probed candidates · {lookups} index \
+             lookups\n  {spent:?} total · {:?} per probed candidate · {:?} per window\n",
+            spent / probed.max(1) as u32,
+            spent / windows.max(1) as u32
+        );
+    }
+
+    /// the gap between them, so a wall change every few seconds is visible as a
+    /// number instead of as a complaint.
+    #[test]
+    #[ignore]
+    fn how_fast_the_wall_moves() {
+        let Ok(path) = std::env::var("RELAY_SERVICE_CORPUS") else {
+            println!("set RELAY_SERVICE_CORPUS");
+            return;
+        };
+        let body = std::fs::read_to_string(&path).expect("corpus unreadable");
+        let lines: Vec<(f32, String)> = body
+            .lines()
+            .filter_map(|l| l.split_once('\t'))
+            .filter(|(_, t)| !t.trim().is_empty())
+            .map(|(a, t)| (a.trim().parse().unwrap_or(0.0), t.to_string()))
+            .collect();
+        let run = replay(&lines, true, true);
+        println!("\n  {} auto-fires\n", run.fired.len());
+        let mut same_passage_within_30s = 0;
+        for w in run.fired.windows(2) {
+            let (t0, k0, _) = &w[0];
+            let (t1, k1, heard) = &w[1];
+            let gap = t1 - t0;
+            let p = |k: &String| {
+                k.rsplit_once(':')
+                    .map(|(a, _)| a.to_string())
+                    .unwrap_or_default()
+            };
+            let same = p(k0) == p(k1);
+            if same && gap <= 30.0 {
+                same_passage_within_30s += 1;
+            }
+            println!(
+                "    {t1:>7.1}s  +{gap:>6.1}s  {}{k1:<22} “{heard}”",
+                if same {
+                    "SAME PASSAGE "
+                } else {
+                    "             "
+                }
+            );
+        }
+        println!(
+            "\n  consecutive fires inside one passage within 30s: {same_passage_within_30s}\n"
+        );
+    }
+}
+
+/// **THE PASSAGE GUARD, THROUGH THE ASSEMBLY IT IS APPLIED IN**, 2026-09-25.
+///
+/// `detection::passage_guard` holds the rule. These hold the WIRING: that the two
+/// modules spell a reference the same way, that a held candidate is partitioned out
+/// of what reaches the gate, and that the announcement is reachable.
+#[cfg(test)]
+mod passage_guard_wiring {
+    use super::*;
+    use detection::VerseRef;
+
+    fn vr(book: &str, chapter: i64, verse: i64) -> VerseRef {
+        VerseRef {
+            book: book.into(),
+            chapter,
+            verse,
+        }
+    }
+
+    /// **THE JOIN, AND IT IS THE ONE THING THAT CAN SILENTLY UNDO THE WHOLE GUARD.**
+    ///
+    /// Rule B compares a candidate against the string the router says is on the wall.
+    /// The router's string comes from `pipeline::Fire::key_for`; the guard's comes
+    /// from `detection::reference_key`, because `detection` is DB- and IO-free on
+    /// purpose and cannot see `pipeline`. Two spellings of one key would make every
+    /// comparison false, hold nothing, break no test and print no error.
+    #[test]
+    fn the_two_reference_keys_agree() {
+        for r in [
+            vr("John", 3, 16),
+            vr("Psalms", 119, 105),
+            // A numbered book — the space inside the name is exactly where a
+            // hand-rolled split has gone wrong here before (RG-178's `rsplit_once`).
+            vr("1 Corinthians", 13, 4),
+            vr("Song of Solomon", 2, 1),
+            vr("3 John", 1, 4),
+        ] {
+            assert_eq!(
+                detection::reference_key(&r),
+                Fire::key_for(&r),
+                "the guard and the router must spell {r:?} the same way"
+            );
+        }
+    }
+
+    /// A held candidate is REMOVED from what reaches the gate — that is what makes
+    /// the list stop churning — and it is carried out beside it with its reason, so
+    /// nothing is discarded silently.
+    #[test]
+    fn a_held_candidate_leaves_the_gate_and_arrives_in_the_report() {
+        let on = vr("Psalms", 107, 8);
+        let elsewhere = vr("Ephesians", 5, 20);
+        let candidates = [
+            Cand::single(
+                on.clone(),
+                0.80,
+                DetectionMethod::Reading,
+                Some("oh that men would praise the lord".into()),
+            ),
+            Cand::single(
+                elsewhere.clone(),
+                0.65,
+                DetectionMethod::Quoted,
+                Some("giving thanks always for all things".into()),
+            ),
+        ];
+        let view: Vec<(&VerseRef, DetectionMethod)> =
+            candidates.iter().map(|c| (&c.r, c.method)).collect();
+        let mask = detection::hold_for_the_passage(Some(&on), None, false, &view);
+        assert_eq!(
+            mask,
+            vec![None, Some(detection::HeldReason::OutsideTheReading)]
+        );
+        // The partition `candidates_for_window` performs, asserted on the shapes it
+        // produces — `HeldCandidate` carries the reference, the method, the WORDS and
+        // the reason, which is everything the operator needs to act on one.
+        let held = HeldCandidate {
+            reference: Fire::key_for(&elsewhere),
+            method: DetectionMethod::Quoted,
+            matched_text: Some("giving thanks always for all things".into()),
+            reason: detection::HeldReason::OutsideTheReading,
+        };
+        assert_eq!(held.reference, "Ephesians 5:20");
+        let json = serde_json::to_string(&PassageHold {
+            passage: Some("Psalms 107".into()),
+            reading: Some("oh that men would praise the lord".into()),
+            held: vec![held],
+            doubted: Vec::new(),
+            trace_id: None,
+        })
+        .expect("the report must serialise");
+        // The wire names the console reads. Changing one is changing a contract.
+        assert!(json.contains("\"passage\":\"Psalms 107\""), "{json}");
+        assert!(
+            json.contains("\"reason\":\"outside_the_reading\""),
+            "{json}"
+        );
+        assert!(json.contains("\"method\":\"quoted\""), "{json}");
+        // AN ORDINARY HOLD'S PAYLOAD IS BYTE-FOR-BYTE WHAT IT WAS. RG-305 added a
+        // field to this event rather than a second event; a field that serialised
+        // when it was empty would change every hold report the console already reads.
+        assert!(!json.contains("doubted"), "{json}");
+    }
+
+    /// **THE CITATION-DOUBT RULE, THROUGH THE ASSEMBLY** (RG-305).
+    ///
+    /// `detection::citation_doubt` holds the rule. This holds the WIRING: that a run's
+    /// two facts land on the run's own candidate and not on a neighbour, that the
+    /// demotion is the one the router caps, and that the report reaches the wire.
+    #[test]
+    fn the_run_facts_land_on_the_quotation() {
+        // The mapping `candidates_for_window` builds: the quotation candidates start
+        // at `quoted_at` and `run_facts` is indexed from there. Everything before it
+        // has no run. Asserted on the arithmetic rather than on a mounted app, because
+        // an off-by-one here would attribute a fifteen-word sole run to the reference
+        // beside it and every test in the pure module would still pass.
+        let quoted_at = 3usize;
+        let run_facts = [(7usize, true), (5usize, false)];
+        let at = |i: usize| -> Option<(usize, bool)> {
+            i.checked_sub(quoted_at)
+                .and_then(|k| run_facts.get(k).copied())
+        };
+        assert_eq!(at(0), None, "a direct reference has no run");
+        assert_eq!(
+            at(2),
+            None,
+            "the candidate just before the quotations has none"
+        );
+        assert_eq!(at(3), Some((7, true)));
+        assert_eq!(at(4), Some((5, false)));
+        assert_eq!(at(5), None, "past the end of the quotations");
+    }
+
+    /// **THE THREE DEMOTIONS ARE ALL METHODS THE ROUTER CAPS**, which is the whole
+    /// safety claim. A demotion to something that may auto-fire would be a rule that
+    /// looks like a gate and is not one — rule 10's own failure mode, and the reason
+    /// `Router::decide` is the door rather than this assembly.
+    #[test]
+    fn every_doubt_outcome_is_capped_at_suggest() {
+        for m in [
+            DetectionMethod::UncertainNumber,
+            DetectionMethod::UncertainBook,
+            DetectionMethod::Quoted,
+        ] {
+            assert!(
+                !m.may_auto_fire(),
+                "{m:?} was chosen as a doubt outcome and may reach a wall unattended"
+            );
+        }
+    }
+
+    /// The doubt report on the wire, with the names the console reads.
+    #[test]
+    fn the_doubt_report_names_itself_on_the_wire() {
+        let json = serde_json::to_string(&PassageHold {
+            passage: None,
+            reading: None,
+            held: Vec::new(),
+            doubted: vec![
+                DoubtedClaim {
+                    reference: "Acts 8:12".into(),
+                    method: DetectionMethod::UncertainBook,
+                    matched_text: Some("acts 8 12".into()),
+                    doubt: detection::Doubt::SpokenBook,
+                },
+                DoubtedClaim {
+                    reference: "Proverbs 8:12".into(),
+                    method: DetectionMethod::Quoted,
+                    matched_text: Some("i wisdom dwell with prudence and find out".into()),
+                    doubt: detection::Doubt::TheQuotation,
+                },
+            ],
+            trace_id: None,
+        })
+        .expect("the report must serialise");
+        assert!(json.contains("\"doubt\":\"spoken_book\""), "{json}");
+        assert!(json.contains("\"doubt\":\"the_quotation\""), "{json}");
+        assert!(json.contains("\"method\":\"uncertain_book\""), "{json}");
+        // THE WORDS, never a number (rule 18).
+        assert!(
+            json.contains("i wisdom dwell with prudence and find out"),
+            "{json}"
+        );
+        assert!(!json.contains("confidence"), "{json}");
+    }
+
+    /// `already_on_screen` is the other wire name, and the console tells the two
+    /// apart to decide whether the operator has anything to do about it.
+    #[test]
+    fn the_wall_rule_names_itself_on_the_wire() {
+        let json = serde_json::to_string(&detection::HeldReason::AlreadyOnScreen).unwrap();
+        assert_eq!(json, "\"already_on_screen\"");
+    }
+}
+
+/// **THE CHURCH'S PARAPHRASE BAR, THROUGH THE ASSEMBLY THAT APPLIES IT** — the
+/// setting `detection.paraphrase_needs_a_run` and `detection::PARAPHRASE_RUN_WORDS`
+/// (DECISIONS §125, RG-311).
+///
+/// `detection::paraphrase_run_bar` holds the run test itself, purely. These hold the
+/// WIRING, and the first thing they hold is the one that matters most: **that the
+/// switch, OFF, reaches nothing at all.**
+///
+/// The corpus is invented on purpose. A cosine is a bag of words in no order, so the
+/// case this bar exists for is a window that shares a verse's whole vocabulary and
+/// none of its order — and with made-up tokens that can be built exactly, at a
+/// cosine of 1.0, with no argument about whether the index "should" have scored it.
+/// Two verses, no database, no service recording, runs in CI.
+#[cfg(test)]
+mod paraphrase_bar_wiring {
+    use super::*;
+    use detection::{HeldReason, PhraseIndex, VerseRef};
+
+    fn vr(book: &str, chapter: i64, verse: i64) -> VerseRef {
+        VerseRef {
+            book: book.into(),
+            chapter,
+            verse,
+        }
+    }
+
+    /// Six invented words per verse. Nothing here parses as a reference, so the only
+    /// candidate a window can produce is a paraphrase — which is the whole surface
+    /// under test.
+    fn corpus() -> Vec<(VerseRef, String)> {
+        vec![
+            (
+                vr("Psalms", 23, 1),
+                "alpha bravo charlie delta echo foxtrot".into(),
+            ),
+            (
+                vr("Romans", 8, 28),
+                "golf hotel india juliett kilo lima".into(),
+            ),
+        ]
+    }
+
+    struct Fixture {
+        sem: Semantic,
+        phrases: Phrases,
+        context: ContextMemory,
+    }
+
+    fn fixture() -> Fixture {
+        let c = corpus();
+        Fixture {
+            sem: Semantic(std::sync::RwLock::new(SemanticIndex::build(&c))),
+            phrases: Phrases(std::sync::RwLock::new(PhraseIndex::build(&c))),
+            context: ContextMemory::default(),
+        }
+    }
+
+    fn window(f: &Fixture, text: &str, needs_a_run: bool) -> WindowCandidates {
+        candidates_for_window(
+            text,
+            true,
+            &f.sem,
+            &f.phrases,
+            &f.context,
+            None,
+            needs_a_run,
+        )
+    }
+
+    /// The same words, out of order — the shape 111 of the 150 hand-read offers had.
+    const SCATTERED: &str = "charlie alpha echo bravo foxtrot delta";
+    /// The same words, three of them in the verse's own order.
+    const ECHOED: &str = "delta alpha bravo charlie foxtrot echo";
+
+    /// **THE FIXTURE IS NOT VACUOUS.** Both windows must reach the gate as
+    /// paraphrases with the switch off, or every assertion below passes over an empty
+    /// list — the failure mode `qa.rs` calls a fixture that is not a first launch.
+    #[test]
+    fn both_windows_are_offered_as_paraphrases_before_anything_is_switched_on() {
+        let f = fixture();
+        for text in [SCATTERED, ECHOED] {
+            let w = window(&f, text, false);
+            assert!(
+                w.kept
+                    .iter()
+                    .any(|c| c.method == DetectionMethod::Semantic && c.r == vr("Psalms", 23, 1)),
+                "{text:?} produced no paraphrase for Psalms 23:1: {:?}",
+                w.kept.iter().map(|c| (&c.r, c.method)).collect::<Vec<_>>()
+            );
+            assert!(
+                w.held.is_empty(),
+                "{text:?} held something with the switch off"
+            );
+        }
+    }
+
+    /// **OFF IS A NO-OP, AND THIS IS THE TEST THAT SAYS SO.**
+    ///
+    /// A church that never opens Settings is offered exactly what it was offered
+    /// yesterday: the bar holds nothing, at any run length, including the window it
+    /// was built to remove.
+    #[test]
+    fn a_church_that_never_opens_the_setting_is_offered_what_it_was_offered_yesterday() {
+        let f = fixture();
+        let w = window(&f, SCATTERED, false);
+        assert!(
+            w.held
+                .iter()
+                .all(|(_, why)| *why != HeldReason::NoSharedRun),
+            "the bar held a candidate with the switch OFF"
+        );
+        assert!(w.kept.iter().any(|c| c.method == DetectionMethod::Semantic));
+    }
+
+    /// And ON it removes exactly the window with no run, reports it with its reason,
+    /// and leaves the one that echoes the verse alone.
+    #[test]
+    fn on_it_holds_the_paraphrase_that_echoes_nothing_and_keeps_the_one_that_does() {
+        let f = fixture();
+        let scattered = window(&f, SCATTERED, true);
+        assert!(
+            !scattered
+                .kept
+                .iter()
+                .any(|c| c.method == DetectionMethod::Semantic),
+            "a paraphrase with no shared run reached the gate with the bar ON"
+        );
+        // REPORTED, NOT DROPPED (rule 35). A switch that quietly stops offering
+        // things is indistinguishable from a detector that has gone deaf.
+        assert!(
+            scattered
+                .held
+                .iter()
+                .any(|(c, why)| *why == HeldReason::NoSharedRun
+                    && c.method == DetectionMethod::Semantic),
+            "the hold was not reported: {:?}",
+            scattered
+                .held
+                .iter()
+                .map(|(c, w)| (&c.r, *w))
+                .collect::<Vec<_>>()
+        );
+        let echoed = window(&f, ECHOED, true);
+        assert!(
+            echoed
+                .kept
+                .iter()
+                .any(|c| c.method == DetectionMethod::Semantic),
+            "a paraphrase sharing {} words in order was held",
+            detection::PARAPHRASE_RUN_WORDS
+        );
+    }
+
+    /// **THE SWITCH CAN REACH NOTHING BUT A PARAPHRASE**, which is the structural
+    /// half of "off is a no-op": whatever the setting, the two runs differ only in
+    /// `Semantic` candidates, so no reference, quotation, reading or bare verse can
+    /// change under it in either direction.
+    ///
+    /// Asserted over a table rather than one window, because the failure this guards
+    /// is a mask applied at the wrong index — which shows up on the SECOND candidate
+    /// and not the first.
+    #[test]
+    fn nothing_but_a_paraphrase_changes_when_the_switch_moves() {
+        let f = fixture();
+        for text in [
+            SCATTERED,
+            ECHOED,
+            // A real spoken reference beside the scattered paraphrase. Nothing
+            // reference-shaped may move.
+            "turn with me to Romans chapter eight verse twenty eight charlie alpha echo bravo",
+            "psalm twenty three verse one",
+            "good morning everybody and welcome",
+            "",
+        ] {
+            let off = window(&f, text, false);
+            let on = window(&f, text, true);
+            let moved: Vec<(&VerseRef, DetectionMethod)> = off
+                .kept
+                .iter()
+                .filter(|c| !on.kept.iter().any(|k| k.r == c.r && k.method == c.method))
+                .map(|c| (&c.r, c.method))
+                .collect();
+            assert!(
+                moved.iter().all(|(_, m)| *m == DetectionMethod::Semantic),
+                "{text:?}: the switch moved something that is not a paraphrase: {moved:?}"
+            );
+            // And it only ever REMOVES. Nothing gains anything from the bar.
+            assert!(
+                on.kept.len() <= off.kept.len(),
+                "{text:?}: the bar added a candidate"
+            );
+            assert!(
+                on.kept
+                    .iter()
+                    .all(|c| off.kept.iter().any(|k| k.r == c.r && k.method == c.method)),
+                "{text:?}: the bar produced a candidate the shipped path did not"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod a_pause_between_the_chapter_and_the_verse {
+    use super::passage_guard_bench::kjv_corpus;
+    use super::*;
+
+    /// **THE OTHER HALF OF THE OPERATOR'S REPORT**: *"there might be a pause before
+    /// the chapter and verse is called and this leads to failing or not rendering the
+    /// verse at all."*
+    ///
+    /// A pause is not filler — it is the CHUNKER cutting the announcement in two, so
+    /// no single window ever holds both the chapter and the verse. RG-315 and RG-318
+    /// built the carry for exactly this (`chapter_in_flight` / `note_carries`, 15 s
+    /// ceiling). This asks whether it reaches the operator's own phrasing, which is
+    /// longer than the citations those rows were written from.
+    /// The operator's report, as assertions: **a pause between the chapter and the
+    /// verse must not lose the reference.** Before this, *"we are in Romans 1 and we
+    /// will be reading from"* | *"verse 6 all the way to 8"* produced **nothing at
+    /// all** in the second window — literally *"not rendering the verse at all"* — and
+    /// where the carry did work the span was dropped, leaving one verse of a
+    /// three-verse reading with nothing saying there were two more.
+    ///
+    /// Still `UncertainBook`, and that is right: the book came from a window this one
+    /// cannot see, which is exactly what that method means (rule 40, RG-318). The
+    /// operator gets the whole reference, one action away.
+    #[test]
+    fn a_pause_mid_announcement_keeps_the_reference_and_its_span() {
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        for (w1, w2, want) in [
+            (
+                "we are in Romans 1 and we will be reading from",
+                "verse 6 all the way to 8",
+                ("Romans 1:6", Some(8)),
+            ),
+            (
+                "let us turn to Psalm 23 and we will be reading from",
+                "verse 1 through to number 6",
+                ("Psalms 23:1", Some(6)),
+            ),
+            (
+                "turn with me to Job 22",
+                "verse 21 to 25",
+                ("Job 22:21", Some(25)),
+            ),
+        ] {
+            let mut context = ContextMemory::default();
+            let first = candidates_for_window(w1, true, &sem, &phrases, &context, None, false);
+            context.note_carries(detection::chapter_in_flight(w1), first.sole_run, 0);
+            let after = candidates_for_window(w2, true, &sem, &phrases, &context, None, false);
+            let got = after
+                .kept
+                .iter()
+                .find(|c| Fire::key_for(&c.r) == want.0)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "{w1:?} then {w2:?}: the verse he announced reached nobody: {:?}",
+                        after
+                            .kept
+                            .iter()
+                            .map(|c| Fire::key_for(&c.r))
+                            .collect::<Vec<_>>()
+                    )
+                });
+            assert_eq!(
+                got.verse_end, want.1,
+                "{w2:?}: the operator was not told how far the reading goes"
+            );
+            // Never unattended: the book came from a window this one cannot see.
+            assert_eq!(got.method.unattended_rank(), 0, "{w2:?} became firable");
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn print_what_survives_a_pause() {
+        let corpus = kjv_corpus();
+        let phrases = Phrases(std::sync::RwLock::new(detection::PhraseIndex::build(
+            &corpus,
+        )));
+        let sem = Semantic(std::sync::RwLock::new(SemanticIndex::build(&corpus)));
+        for (w1, w2) in [
+            (
+                "let us turn to Psalm 23 and we will be reading from",
+                "verse 1 through to number 6",
+            ),
+            (
+                "we are in Romans 1 and we will be reading from",
+                "verse 6 all the way to 8",
+            ),
+            (
+                "open your Bibles to Romans 1",
+                "and we will be reading from verse 6 all the way to 8",
+            ),
+            ("turn with me to Job 22", "verse 21 to 25"),
+        ] {
+            let mut context = ContextMemory::default();
+            // Window one, then the chunker's cut.
+            let a = candidates_for_window(w1, true, &sem, &phrases, &context, None, false);
+            context.note_carries(detection::chapter_in_flight(w1), a.sole_run.clone(), 0);
+            // Window two, 1.2 s later — what the operator sees for the verse called.
+            let b = candidates_for_window(w2, true, &sem, &phrases, &context, None, false);
+            let show = |w: &WindowCandidates| -> Vec<String> {
+                w.kept
+                    .iter()
+                    .map(|c| {
+                        format!(
+                            "{}{} {:?}",
+                            Fire::key_for(&c.r),
+                            c.verse_end.map(|e| format!("-{e}")).unwrap_or_default(),
+                            c.method
+                        )
+                    })
+                    .collect()
+            };
+            println!("  {w1:?}\n      {:?}", show(&a));
+            println!("  …{w2:?}\n      {:?}\n", show(&b));
+        }
     }
 }

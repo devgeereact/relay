@@ -396,9 +396,11 @@ describe('R2-H · the end of the plan', () => {
     expect(stepFrom(items, 2, 2, 1)).toBe(null);
   });
 
-  it('and stepLive swallows that null without a word', () => {
+  it('and stepLive says so at the end, rather than swallowing the null (RG-199)', () => {
+    // It used to `return` in silence. The VERSE half of the same key names all
+    // four of its outcomes; the plan half said nothing at either end.
     const body = live.slice(live.indexOf('async function stepLive'));
-    expect(body.slice(0, 220)).toContain('if (!to) return;');
+    expect(body.slice(0, 900)).toMatch(/if \(!to\) \{[\s\S]*flash\([^)]*plan[^)]*\)[\s\S]*return;/);
     // Its VERSE-mode twin, three lines above, always speaks.
     const step = live.slice(live.indexOf('async function step(dir)'), live.indexOf('async function stepLive'));
     expect(step).toContain('flash(notice)');

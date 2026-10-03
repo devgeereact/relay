@@ -189,7 +189,25 @@ pub fn delete_channel(conn: &Connection, id: i64) -> rusqlite::Result<()> {
 
 /// Seed the default output channels (idempotent — only when empty). Template ids
 /// 1..4 match the seeded templates.
+///
+/// **IT ENSURES `role` FIRST, AND THAT IS NOT DEFENSIVE TIDYING — RG-326.**
+/// `baseline_forward_fill` reaches this on a pre-versioning database, and
+/// `docs/data/schema-baseline.sql` has no `role` column on `output_channels`.
+/// `ensure_channel_role` is a line in `ensure_tables`, which `baseline_forward_fill`
+/// calls only AFTER this block, so the INSERT below ran against the old table and
+/// failed with `table output_channels has no column named role` — propagated out
+/// of `migrate`, at boot, before there is a window on which to say why. Rule 25's
+/// failure by a different road, and the third time this road has been taken:
+/// `seed_templates` carries the same line for the same reason (`seed_key`), and
+/// `ensure_tables` opens with `ensure_app_settings` for the third instance.
+///
+/// **The guarantee goes on the DOOR, not in the room** (rule 36): a seed that
+/// names a column is the one thing that knows it names it, so putting the sniff
+/// in each caller is the version that will be missing from the next caller.
+/// `ensure_channel_role` is idempotent and retryable, so a second call in the same
+/// boot costs one pragma read and its back-fill sees an empty table and no-ops.
 pub(super) fn seed_channels(conn: &Connection) -> rusqlite::Result<()> {
+    ensure_channel_role(conn)?;
     let channels: &[(&str, &str, i64, Option<&str>)] = &[
         // "0", not "Display 1": `display_target` is parsed as a monitor INDEX, and
         // the human-readable form silently failed to parse, so the seeded main

@@ -281,6 +281,61 @@ describe('RG-76 · the mechanically checkable hard-way rules', () => {
     ).toMatch(/fn broadcast_with_clock/);
   });
 
+  // ── RG-321, the clock the dwell floor measures on ─────────────────────────
+  it('rule 45 — the dwell floor measures on ONE clock, and the content door reads none of its own (RG-321)', () => {
+    // NOT a numbered CLAUDE.md rule; named after the finding, so that file's own
+    // counting instructions keep answering what they claim to.
+    //
+    // The wall's dwell floor compares "when did the wall last change" against the
+    // `now_ms` the router was handed. **Those have to be the same clock or the
+    // difference is not a duration at all.** The first version of the floor took its
+    // own reading of `router_clock_ms()` inside `broadcast_with_clock`, and in
+    // production that IS the function the gate is given — so it was correct for a
+    // reason no test could see. Anywhere the two readings differed, the subtraction
+    // saturated to 0, which reads as *"the wall changed this instant"*: the strongest
+    // possible hold, over a pair of numbers that cannot be compared.
+    //
+    // It was not hypothetical. It made a pre-existing guarantee with nothing to do
+    // with the floor — `e2e::a_spoken_reference_cuts_through_a_reading`, whose two
+    // windows are twenty-nine seconds apart against a four-second floor — fail or
+    // pass depending on which other tests had already run in the same process. A
+    // green suite over a nondeterministic guarantee is worse than a red one, which is
+    // why this is a source scan and not another test case: the suite demonstrably
+    // cannot be relied on to catch it.
+    //
+    // Two halves of one rule. The door takes NO reading of its own…
+    const body = (() => {
+      const lines = mainRs.split('\n');
+      const start = lines.findIndex((l) => /^fn broadcast_with_clock/.test(l));
+      expect(start, 'broadcast_with_clock is gone or was renamed').toBeGreaterThan(-1);
+      const rest = lines.slice(start + 1);
+      const end = rest.findIndex((l) => /^\}/.test(l));
+      return rest.slice(0, end === -1 ? rest.length : end).join('\n');
+    })();
+    expect(
+      body,
+      'the content door read a clock of its own again — it must use the `gate_clock_ms` it is handed',
+    ).not.toMatch(/router_clock_ms\s*\(/);
+
+    // …and the ONE unattended caller hands it the reading its own gate decision was
+    // made on. Every operator-driven caller passes a fresh `router_clock_ms()`, which
+    // is right for them: nothing else in the process has a clock to disagree with.
+    const lines = mainRs.split('\n');
+    const start = lines.findIndex((l) => /^fn emit_detections/.test(l));
+    expect(start, 'emit_detections is gone or was renamed').toBeGreaterThan(-1);
+    const rest = lines.slice(start + 1);
+    const end = rest.findIndex((l) => /^\}/.test(l));
+    const detect = rest.slice(0, end === -1 ? rest.length : end);
+    const calls = detect.filter((l) => /broadcast_with_clock\s*\(/.test(l));
+    expect(calls.length, 'the detect loop no longer reaches the content door').toBeGreaterThan(0);
+    for (const call of calls) {
+      expect(
+        call,
+        'the detect loop must pass its own `now_ms` to the door, never a second reading of the clock',
+      ).toMatch(/broadcast_with_clock\([^)]*\bnow_ms\b/);
+    }
+  });
+
   // ── RG-166, the predicate this repository corrected once and half applied ──
   it('RG-166 — no countdown is gated on `layout.lowerThird`', () => {
     // NOT a numbered CLAUDE.md rule, and deliberately named after the finding so

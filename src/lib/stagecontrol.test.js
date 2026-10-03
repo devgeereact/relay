@@ -34,6 +34,9 @@
 //   npx vitest run src/lib/stagecontrol.test.js
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { tick } from 'svelte';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { codeOnly } from './codeonly.js';
 
 const Stage = (await import('../Stage.svelte')).default;
 
@@ -74,9 +77,15 @@ async function open() {
   await tick();
   socket.onopen?.();
   await tick();
-  // The control panel is behind its own toggle.
-  const toggle = [...host.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Control');
-  expect(toggle, 'no Control toggle on the stage page').toBeTruthy();
+  // The panel opens from the SEARCH button on the transport bar (RG-246). The
+  // Hold that guarded it went with the header: a bar that is always there needs
+  // no guard, because nothing on it fires to a screen by itself — the verse a
+  // press puts up is one the preacher chose from the results.
+  const toggle = host.querySelector('.sctl-find');
+  expect(
+    toggle,
+    `no search button; buttons are ${JSON.stringify([...host.querySelectorAll('button')].map((b) => b.getAttribute('aria-label') || b.textContent.trim()))}`,
+  ).toBeTruthy();
   toggle.click();
   await tick();
   await tick();
@@ -187,5 +196,62 @@ describe('a read-only request keeps its plain words', () => {
     await settle();
     expect(said()).toContain('Search failed');
     expect(said().toLowerCase()).not.toContain('did not answer');
+  });
+});
+
+describe('the search panel takes the reading’s room', () => {
+  // THE THIRD INSTANCE OF RG-247's FAULT, found the same way: rendered at
+  // 390x844 against the running backend, with the panel open over a reading.
+  // `.ctl` is a static row in the column and the reading is another, so the two
+  // split the screen — the verse was clipped THROUGH THE MIDDLE OF A LINE at
+  // y=197, under a search box, on the page a preacher reads from.
+  //
+  // A message already yields the reading's room (RG-247) and the programme rail
+  // already stands down for this panel. The reading was the one that did not.
+  it('no reading is rendered while the panel is open', async () => {
+    await open();
+    socket.onmessage({
+      data: JSON.stringify({
+        kind: 'content',
+        content_kind: 'scripture',
+        reference: 'John 3:16',
+        text: 'For God so loved the world',
+      }),
+    });
+    await tick();
+    expect(host.querySelector('.ctl'), 'the panel is not open').toBeTruthy();
+    expect(host.querySelector('.verse'), 'the reading is behind the panel').toBeNull();
+  });
+
+  it('and the panel takes the room, rather than leaving a hole under it', () => {
+    // MEASURED at 390x844: with `flex: 0 0 auto` and the reading no longer
+    // rendered, nothing in the column grew, so 130px of black sat BELOW the
+    // transport bar. `max-height: 60dvh` went with it — it was a ceiling for a
+    // panel sharing the screen with a reading, and there is no reading now.
+    const FILE = readFileSync(resolve('src/Stage.svelte'), 'utf8');
+    const style = FILE.slice(FILE.lastIndexOf('<style>'));
+    const from = style.indexOf('.ctl {');
+    const rule = codeOnly(style.slice(from, style.indexOf('}', from)));
+    expect(rule, 'the panel does not grow into the room it took').toMatch(/flex:\s*1 1 0/);
+    expect(rule, 'a ceiling written for a panel that shared the screen').not.toMatch(
+      /max-height:\s*60dvh/,
+    );
+  });
+
+  it('and it comes back when the panel is shut', async () => {
+    await open();
+    socket.onmessage({
+      data: JSON.stringify({
+        kind: 'content',
+        content_kind: 'scripture',
+        reference: 'John 3:16',
+        text: 'For God so loved the world',
+      }),
+    });
+    await tick();
+    host.querySelector('.sctl-find').click();
+    await tick();
+    expect(host.querySelector('.ctl')).toBeNull();
+    expect(host.querySelector('.verse'), 'the reading did not come back').toBeTruthy();
   });
 });

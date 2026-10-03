@@ -1,13 +1,13 @@
 <script>
   // The boot screen — the first thing a church ever sees.
   //
-  // ORIGINAL REFERENCE: docs/design/relay-splash-screen.png. This screen now
-  // DELIBERATELY DIVERGES from it — the 2026-09-15 design pass took out a
-  // false status badge, three feature bullets, a glowing divider and a pulse
-  // glyph that the reference draws. Per CLAUDE.md, the references are not a
-  // spec: where a reference and the stylesheet disagree, the stylesheet is
-  // what shipped. The reasons are below, so the PNG can still be read as the
-  // starting point rather than as a thing this file has drifted away from.
+  // There WAS a rendered reference for this screen; it was deleted on
+  // 2026-09-21, and this screen had already deliberately diverged from it — the
+  // 2026-09-15 design pass took out a false status badge, three feature bullets,
+  // a glowing divider and a pulse glyph that the reference drew. The references
+  // were never a spec: where one and the stylesheet disagreed, the stylesheet
+  // was what shipped, which is why deleting them changed nothing. The reasons
+  // for each removal are below, and they are the part worth keeping.
   //
   // It is DECORATION OVER A FACT, never a fact of its own. It covers the shell
   // only while the engine is being attached, and App.svelte drops it on a hard

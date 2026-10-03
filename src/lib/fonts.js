@@ -1,6 +1,6 @@
 // Self-hosted fonts (offline-first — bundled by Vite, never fetched at runtime).
 // Shared by every entry point (console + output windows). Weights match the
-// design system in app.css / docs/design.
+// design system in app.css, which is the whole of it.
 import '@fontsource/space-grotesk/500.css';
 import '@fontsource/space-grotesk/600.css';
 import '@fontsource/space-grotesk/700.css';

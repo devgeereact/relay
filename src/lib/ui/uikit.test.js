@@ -18,6 +18,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { tick } from 'svelte';
 import Button from './Button.svelte';
+import Switch from './Switch.svelte';
 import IconButton from './IconButton.svelte';
 import Menu from './Menu.svelte';
 import MenuItem from './MenuItem.svelte';
@@ -132,6 +133,65 @@ describe('Button', () => {
     expect(btn().getAttribute('title')).toBe(null);
     expect(btn().getAttribute('aria-describedby')).toBe(null);
     expect(host.querySelector('.sr-only')).toBe(null);
+  });
+});
+
+// ── SWITCH — the other half of the gap the Button closed (RG-168) ──────────
+//
+// `disabledReason` went onto every button in Settings on 2026-09-18 and the
+// switches could not follow, because there was nothing for them to go through:
+// `app.css` publishes `.r-switch` and `src/lib/ui/` published no `Switch`. The
+// measured instance is **Send crash reports** — `disabled={!$capture.available ||
+// !!crashReadFailed}` on a raw `<button class="r-switch">` with no `title` and no
+// `aria-describedby`, so the control that decides whether anything leaves this
+// machine sat at 45% opacity and said nothing.
+//
+// A switch is not a button and this component does not pretend otherwise: it owns
+// `role="switch"` and `aria-checked`, which a caller writing `.r-switch` by hand
+// has to remember and twice did not have to. The look is app.css's, unchanged.
+describe('Switch', () => {
+  const sw = () => host.querySelector('button');
+
+  it('draws the shared switch and states which way it is thrown', () => {
+    mount(Switch, { checked: true, label: 'Safe mode' });
+    expect(sw().classList.contains('r-switch')).toBe(true);
+    expect(sw().classList.contains('on')).toBe(true);
+    expect(sw().getAttribute('role')).toBe('switch');
+    expect(sw().getAttribute('aria-checked')).toBe('true');
+    expect(sw().getAttribute('aria-label')).toBe('Safe mode');
+  });
+
+  it('an off switch says so rather than leaving the state to the class', () => {
+    mount(Switch, { checked: false, label: 'Safe mode' });
+    expect(sw().classList.contains('on')).toBe(false);
+    expect(sw().getAttribute('aria-checked')).toBe('false');
+  });
+
+  it('a disabled switch says why, on BOTH channels — RG-168', () => {
+    mount(Switch, { checked: false, label: 'Send crash reports', disabled: true,
+      disabledReason: 'Relay’s engine is not answering.' });
+    expect(sw().disabled).toBe(true);
+    expect(sw().getAttribute('title')).toBe('Relay’s engine is not answering.');
+    const id = sw().getAttribute('aria-describedby');
+    expect(id, 'no aria-describedby').toBeTruthy();
+    const described = host.querySelector(`#${id}`);
+    expect(described, 'aria-describedby points at nothing').toBeTruthy();
+    expect(described.textContent).toContain('Relay’s engine is not answering.');
+  });
+
+  it('but a working switch is not given a tooltip about a problem it does not have', () => {
+    mount(Switch, { checked: false, label: 'x', disabled: false, disabledReason: 'Not now.' });
+    expect(sw().getAttribute('title')).toBe(null);
+    expect(sw().getAttribute('aria-describedby')).toBe(null);
+    expect(host.querySelector('.sr-only')).toBe(null);
+  });
+
+  it('a switch with no label is a dead control, so the name is required', () => {
+    // The same claim `IconButton` makes below, for the same reason: a switch
+    // renders no text of its own, so without a name a screen reader announces
+    // "button" and nothing else.
+    const src = readFileSync(resolve(process.cwd(), 'src/lib/ui/Switch.svelte'), 'utf8');
+    expect(src).toMatch(/aria-label=\{label\}/);
   });
 });
 

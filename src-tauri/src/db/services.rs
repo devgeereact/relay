@@ -18,6 +18,9 @@ pub struct ServiceSummary {
     pub duration_secs: f64,
     pub verses: i64,
     pub overrides: i64,
+    /// The build that ran it (`diagnostics::BUILD`), `None` for a row from before
+    /// the column existed (S13).
+    pub build: Option<String>,
 }
 
 /// A transcript line in a service detail view.
@@ -60,10 +63,20 @@ pub struct ServiceDetection {
 /// Create a service and return its id.
 pub fn create_service(conn: &Connection, date: &str, title: &str) -> rusqlite::Result<i64> {
     conn.execute(
-        "INSERT INTO services (date, title) VALUES (?1, ?2)",
-        (date, title),
+        "INSERT INTO services (date, title, build) VALUES (?1, ?2, ?3)",
+        (date, title, crate::diagnostics::BUILD),
     )?;
     Ok(conn.last_insert_rowid())
+}
+
+/// `services.build` — which build ran a service (S13, 2026-09-21). Additive and
+/// retryable: a duplicate column is the second boot, not a fault.
+pub fn ensure_service_build(conn: &Connection) -> rusqlite::Result<()> {
+    match conn.execute("ALTER TABLE services ADD COLUMN build TEXT", []) {
+        Ok(_) => Ok(()),
+        Err(e) if super::plans::is_duplicate_column(&e) => Ok(()),
+        Err(e) => Err(e),
+    }
 }
 
 /// Insert a transcript line; returns its id.
@@ -153,7 +166,8 @@ pub fn list_services(conn: &Connection) -> rusqlite::Result<Vec<ServiceSummary>>
                    JOIN transcripts t ON t.id = d.transcript_id
                   WHERE t.service_id = s.id),
                 (SELECT COUNT(*) FROM cues c
-                  WHERE c.service_id = s.id AND c.type = 'manual_override')
+                  WHERE c.service_id = s.id AND c.type = 'manual_override'),
+                s.build
            FROM services s
           ORDER BY s.id DESC",
     )?;
@@ -165,6 +179,7 @@ pub fn list_services(conn: &Connection) -> rusqlite::Result<Vec<ServiceSummary>>
             duration_secs: r.get(3)?,
             verses: r.get(4)?,
             overrides: r.get(5)?,
+            build: r.get(6)?,
         })
     })?;
     rows.collect()
@@ -189,7 +204,17 @@ pub fn service_transcripts(
     rows.collect()
 }
 
-/// Fired detections for a service, in order.
+/// **EVERY detection for a service, in order — fires AND offers (RG-309).**
+///
+/// This doc said *"Fired detections"* and was right until `status = 'suggested'`
+/// became reachable. It is now the forensic list: the whole record of what the AI
+/// claimed, each row carrying `heard_text`, which is the only way a paraphrase the
+/// operator never answered can be judged afterwards.
+///
+/// **Its two readers must not treat them alike.** `report.js::splitDetections` is
+/// the one place the two are separated, and `History.svelte` renders the fires under
+/// *Detected verses* with the offers named as a count beside it. A surface that
+/// renders this list whole is claiming ~8,000 verses reached a screen.
 pub fn service_detections(
     conn: &Connection,
     service_id: i64,
@@ -223,8 +248,19 @@ pub fn service_detections(
     rows.collect()
 }
 
-/// How many times a verse has already fired in a service (Phase A6 — the
-/// series/repeat tracker). Counts only detections that actually fired.
+/// How many times a verse has already been ON A SCREEN in a service (Phase A6 —
+/// the series/repeat tracker).
+///
+/// **It asks `status`, and it used to ask `fired_at IS NOT NULL` (RG-309.)** That
+/// was a correct proxy for exactly as long as every row in `detections` was a fire:
+/// `persist_fire` ran only inside `if fire.may_broadcast()`. It now also records
+/// what the AI merely OFFERED, with a real timestamp — because when a suggestion
+/// was made is part of the record — so the proxy started answering a different
+/// question, and this tracker would have told an operator a verse had already been
+/// up four times when the AI had guessed at it four times and nothing had moved.
+///
+/// `status` is the column that says what happened and is the one the router learns
+/// from (rule 14). Asking it directly is what this always meant.
 pub fn count_verse_in_service(
     conn: &Connection,
     service_id: i64,
@@ -234,7 +270,8 @@ pub fn count_verse_in_service(
         "SELECT COUNT(*)
            FROM detections d
            JOIN transcripts t ON t.id = d.transcript_id
-          WHERE t.service_id = ?1 AND d.verse_id = ?2 AND d.fired_at IS NOT NULL",
+          WHERE t.service_id = ?1 AND d.verse_id = ?2
+            AND d.status IN ('auto', 'manual')",
         (service_id, verse_id),
         |r| r.get(0),
     )
@@ -374,15 +411,28 @@ pub fn service_timeline(conn: &Connection, service_id: i64) -> rusqlite::Result<
         out.push(r?);
     }
 
-    // A detection's `status` is the useful kind here — auto, suggested, dismissed
-    // or manual — because "the AI fired this" and "a human fired this" are the two
-    // facts a replay is trying to separate.
+    // A detection's `status` is the useful kind here — because "the AI fired this"
+    // and "a human fired this" are the two facts a replay is trying to separate.
+    //
+    // ── AND ONLY THE ROWS THAT REACHED A SCREEN (RG-309) ────────────────────
+    //
+    // This is the ONE ordered record of what happened, rendered as a list and
+    // indexed into for the replay. Until suggestions were persisted every
+    // `detections` row was a fire, so taking them all was taking what happened.
+    // A 16-hour service offers in the region of 8,000 suggestions against 365
+    // fires, so unfiltered this record would be 95% things that did NOT happen,
+    // and the replay's index would land almost anywhere.
+    //
+    // Nothing is lost by leaving them out. `service_detections` returns every
+    // offer with its evidence — that is what RG-309 built — and the Sunday
+    // report counts them from there rather than from here.
     let mut de = conn.prepare(
         "SELECT COALESCE(d.fired_at, t.timestamp) * 1000.0, d.status, v.book, v.chapter, v.verse
            FROM detections d
            JOIN transcripts t ON t.id = d.transcript_id
            LEFT JOIN verses v ON v.id = d.verse_id
           WHERE t.service_id = ?1
+            AND d.status IN ('auto', 'manual')
           ORDER BY d.id",
     )?;
     for r in de.query_map([service_id], |r| {
@@ -635,6 +685,7 @@ mod timeline_tests {
         )
         .unwrap();
         ensure_service_events(&conn).unwrap();
+        ensure_service_build(&conn).unwrap();
         conn
     }
 
@@ -1296,5 +1347,28 @@ mod index_tests {
             plan.contains("idx_transcripts_service"),
             "the planner still scans transcripts: {plan}"
         );
+    }
+
+    /// A SERVICE RECORDS THE BUILD THAT RAN IT (S13). `FIELD.md` (was `FIELD-2026-09-20.md`) §0:
+    /// "Build under test: not recorded by Relay." Now it is, on the row, so an
+    /// audit reading the database a day later can name the commit rather than
+    /// infer it from a file's timestamp.
+    #[test]
+    fn a_service_records_the_build_that_ran_it() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::init_fresh(&conn).unwrap();
+        ensure_service_build(&conn).unwrap(); // retryable, rule 25: a second boot
+        conn.execute(
+            "INSERT INTO services (id, date, title) VALUES (1, '2026-08-30', 'Before')",
+            [],
+        )
+        .unwrap();
+        let id = create_service(&conn, "2026-09-27", "Sunday").unwrap();
+        let list = list_services(&conn).unwrap();
+        let row = list.iter().find(|s| s.id == id).unwrap();
+        assert_eq!(row.build.as_deref(), Some(crate::diagnostics::BUILD));
+        // A row from before the column reads as an absence, never as this build.
+        let old = list.iter().find(|s| s.id == 1).unwrap();
+        assert_eq!(old.build, None);
     }
 }

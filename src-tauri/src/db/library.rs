@@ -197,6 +197,10 @@ pub struct MediaAsset {
     pub filename: String,
     pub path: String,
     pub created_at: String,
+    /// The codec family a clip's container named at import (`mediaprobe`), or
+    /// `None` for a picture, a document, a clip imported before the probe, or a
+    /// container that named nothing this sniff knows. `None` is never "fine".
+    pub codec: Option<String>,
 }
 
 /// Create the media table if missing. Idempotent.
@@ -209,13 +213,36 @@ pub fn ensure_media(conn: &Connection) -> rusqlite::Result<()> {
             path       TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL DEFAULT ''
          );",
-    )
+    )?;
+    // Added 2026-09-21 (F5). Nullable, so an install from before the probe reads
+    // its old rows back as "not probed", which is the truth.
+    add_media_column(conn, "codec", "TEXT")
+}
+
+/// Add a column to `media_assets` if it is not there yet. Retryable (rule 25):
+/// a `pragma_table_info` probe first, and "duplicate column name" treated as
+/// done, so a boot interrupted between the two cannot brick the next one.
+fn add_media_column(conn: &Connection, name: &str, decl: &str) -> rusqlite::Result<()> {
+    let present: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('media_assets') WHERE name = ?1",
+        [name],
+        |r| r.get(0),
+    )?;
+    if present > 0 {
+        return Ok(());
+    }
+    match conn.execute_batch(&format!(
+        "ALTER TABLE media_assets ADD COLUMN {name} {decl};"
+    )) {
+        Err(e) if super::plans::is_duplicate_column(&e) => Ok(()),
+        other => other,
+    }
 }
 
 /// All media assets, newest first.
 pub fn list_media(conn: &Connection) -> rusqlite::Result<Vec<MediaAsset>> {
     let mut stmt = conn.prepare(
-        "SELECT id, kind, filename, path, created_at FROM media_assets ORDER BY id DESC",
+        "SELECT id, kind, filename, path, created_at, codec FROM media_assets ORDER BY id DESC",
     )?;
     let rows = stmt.query_map([], |r| {
         Ok(MediaAsset {
@@ -224,6 +251,7 @@ pub fn list_media(conn: &Connection) -> rusqlite::Result<Vec<MediaAsset>> {
             filename: r.get(2)?,
             path: r.get(3)?,
             created_at: r.get(4)?,
+            codec: r.get(5)?,
         })
     })?;
     rows.collect()
@@ -235,10 +263,11 @@ pub fn insert_media(
     kind: &str,
     filename: &str,
     date: &str,
+    codec: Option<&str>,
 ) -> rusqlite::Result<i64> {
     conn.execute(
-        "INSERT INTO media_assets (kind, filename, created_at) VALUES (?1, ?2, ?3)",
-        (kind, filename, date),
+        "INSERT INTO media_assets (kind, filename, created_at, codec) VALUES (?1, ?2, ?3, ?4)",
+        (kind, filename, date, codec),
     )?;
     Ok(conn.last_insert_rowid())
 }
@@ -282,4 +311,36 @@ pub fn delete_media(conn: &Connection, id: i64) -> rusqlite::Result<Option<Strin
     tx.execute("DELETE FROM media_assets WHERE id = ?1", [id])?;
     tx.commit()?;
     Ok(path)
+}
+
+#[cfg(test)]
+mod codec_column {
+    use super::*;
+
+    /// 2026-09-21 · F5. `media_assets` gains `codec`, nullable, written by the
+    /// import probe. An install from before the column must gain it on boot
+    /// (idempotently, rule 25) and read its old rows back with `codec: None`.
+    #[test]
+    fn a_media_table_predating_the_codec_column_gains_it() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE media_assets (
+                id INTEGER PRIMARY KEY, kind TEXT NOT NULL, filename TEXT NOT NULL,
+                path TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT ''
+             );
+             INSERT INTO media_assets (kind, filename) VALUES ('video', 'old.mov');",
+        )
+        .unwrap();
+        ensure_media(&conn).unwrap();
+        ensure_media(&conn).unwrap(); // twice: retryable
+        let rows = list_media(&conn).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].codec, None);
+        let id = insert_media(&conn, "video", "new.mov", "2026-09-21", Some("hevc")).unwrap();
+        let rows = list_media(&conn).unwrap();
+        assert_eq!(
+            rows.iter().find(|r| r.id == id).unwrap().codec.as_deref(),
+            Some("hevc")
+        );
+    }
 }

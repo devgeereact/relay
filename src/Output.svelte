@@ -1,6 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   import { DEFAULT_TEMPLATE, builtinById } from './lib/templates.js';
+  import { sameHostMediaUrl } from './lib/outputurl.js';
   import TemplateRender from './lib/TemplateRender.svelte';
   import { parseTemplateOverride } from './lib/templates.js';
   import {
@@ -13,9 +14,11 @@
     setCountdownWarnDefault,
   } from './lib/layers.js';
   import { acceptsStageMessage, roleOf } from './lib/channelroles.js';
+  import { readTimerSize } from './lib/stagelayout.js';
+  import { railScale } from './lib/bigstagetimer.js';
   import { resolveTokens } from './lib/styletokens.js';
   import { markOutput } from './lib/latency.js';
-  import { startBeat, paintState } from './lib/outputHealth.js';
+  import { startBeat, paintState, BEAT_INTERVAL_MS } from './lib/outputHealth.js';
 
   // Two modes, ONE renderer (TemplateRender): desktop (Tauri — DB template,
   // live edits over events) and kiosk/OBS (plain browser — built-in template by
@@ -205,7 +208,86 @@
   // content it would be broadcast to every screen, and the only thing between it
   // and a lobby TV would be which layers that TV's template happens to have.
   let roles = {};
+  /**
+   * HOW BIG THE OPERATOR ASKED THIS SCREEN'S CLOCK TO BE — RG-265.
+   *
+   * `normal` until a `stage_zones` frame says otherwise, which is what a layout
+   * saved before the key existed and an install that never opened the control
+   * both mean.
+   */
+  let timerSize = 'normal';
   let stageMessage = '';
+  /** Note or alarm (DECISIONS §116). False is the safe default on every door. */
+  let stageUrgent = false;
+  /**
+   * WHERE THIS SCREEN'S CLIP IS — `{ pos_ms, dur_ms, paused }`, or `null`.
+   *
+   * Written by `TemplateRender` from the element that is actually playing, and
+   * read once per beat. It is deliberately NOT derived from the content frame: the
+   * frame says which clip was sent, and this says where that clip has got to on
+   * this screen, which is the only one of the two an operator can time a cue
+   * against.
+   */
+  let mediaReport = null;
+  /**
+   * THE PICTURE OR CLIP THIS SCREEN COULD NOT LOAD, in words, or `null` (O-4).
+   * Rides the beat so the desk stops calling this screen On Air over a blank
+   * frame. The renderer reports; this only carries.
+   */
+  let mediaError = null;
+  const noteMediaError = (e) => {
+    mediaError = e ? `${e.kind} not loading · ${e.url}` : null;
+  };
+  /**
+   * WHAT THE OPERATOR HAS ASKED THE CLIP TO DO — `{ paused, loop, replayEpoch }`.
+   *
+   * `null` until somebody asks for something, which is the default a clip is fired
+   * with: playing, not looping.
+   */
+  let mediaTransport = null;
+  const noteMedia = (m) => {
+    mediaReport = m;
+  };
+  /**
+   * A CLIP THAT HAS COME OFF REPORTS NOTHING, AND THAT NEEDS SAYING OUT LOUD.
+   *
+   * When the content changes from a clip to a verse the `<video>` is destroyed, and
+   * a destroyed element fires no event — so the last position it reported would sit
+   * here for the rest of the service and the console would count down a clip nobody
+   * is watching. The frame that replaced it is the thing that knows, so the clearing
+   * happens here rather than being waited for.
+   */
+  $: if (!shownContent?.media_url) mediaReport = null;
+  /**
+   * A TRANSPORT BELONGS TO THE CLIP IT WAS PRESSED FOR.
+   *
+   * The hub empties its retained copy on any content frame, and this is the same
+   * decision on this side. Without it a screen would carry a Pause across a fire
+   * and the next video would arrive already held, with nothing in the product to
+   * say why — and a reconnect would not correct it, because there would be no
+   * retained frame left to send.
+   */
+  $: if (!shownContent?.media_url) mediaTransport = null;
+  // ── THE STAGE TIMERS ────────────────────────────────────────────────────────
+  //
+  // `r6-contracts.test.js` recorded `timer: false` for this page, with a reason
+  // that is still true word for word: *"Sermon · 4:12 left" behind a preacher is
+  // the running order in front of the whole building.* That sentence is about a
+  // CONGREGATION screen. A screen holding `role === 'stage'` is not one
+  // (DECISIONS §89), which is why this is now a role gate rather than an absence
+  // and why the safety argument survives whole.
+  //
+  // THE SET IS HELD, THE RENDER IS GATED - and the difference from `stageMessage`
+  // above is deliberate rather than sloppy. A Stage Message is a private sentence
+  // and is refused at the door, never assigned on a screen that may not have it.
+  // The programme is the same frame the hub sends every client, so holding it
+  // buys the page nothing it did not already receive, and gating the RENDER is
+  // what makes the guarantee ORDERING-PROOF: `channel_roles` happens to precede
+  // the retained `timer` frame on hello today, and a refusal at the door would
+  // silently depend on that staying true for the rest of the service.
+  //
+  // One derived value feeds the one prop, so there is a single door (rule 36).
+  let stageTimerSet = [];
 
   // ── THE OPERATOR TOOK THIS SCREEN OUT OF THE WALL ───────────────────────────
   //
@@ -272,6 +354,15 @@
   $: shownBackdrop = downMode ? null : backdrop;
   $: shownBlack = black || downMode === 'black';
   $: myRole = roleOf(roles, channelId);
+  // ONLY A STAGE, and only a screen the operator has left in the wall. The second
+  // half is the same reasoning as `shownContent` and `shownBackdrop` above: a
+  // screen that has been taken down paints nothing, and a programme rail left
+  // standing on it would be half taken down.
+  $: shownProgramme = acceptsStageMessage(myRole) && !downMode ? stageTimerSet : [];
+  // AND THE MESSAGE GOES DOWN WITH THE SCREEN TOO, for the same reason and by the
+  // same mechanism - derived, never written, so coming back up has something to
+  // come back to.
+  $: shownStageMessage = downMode ? '' : stageMessage;
   /**
    * The role map has changed. ONE writer, called from both doors, because a
    * screen that stops being a stage must lose the message AT ONCE: an operator
@@ -289,6 +380,33 @@
   function applyRoles(next) {
     roles = next && typeof next === 'object' ? next : {};
     if (!acceptsStageMessage(roleOf(roles, channelId))) stageMessage = '';
+    // The programme needs no line here: `shownProgramme` is derived from
+    // `myRole`, so a screen that stops being the stage loses the rail in the same
+    // reactive pass, before anything paints. The Stage Message cannot be handled
+    // that way - see the note at `stageTimerSet` for the difference.
+  }
+
+  /**
+   * A PANIC CONTROL TAKES THE STAGE MESSAGE WITH IT - DECISIONS §91.
+   *
+   * `Stage.svelte` clears its own `alert` on exactly these two kinds and says at
+   * the line why: the panel IS the screen, so a survivor meant an operator
+   * pressed `B`, whose whole meaning is *every output goes opaque black*, and the
+   * preacher's screen stayed the brightest thing in the room under a control the
+   * console had just reported succeeding.
+   *
+   * This page used to keep the text and merely stop rendering it - the layer
+   * stack went away with `content` and nothing reset the state - so the next
+   * verse fired painted a private word nobody had re-sent (RG-156). It reset
+   * nothing because nothing on this page was full-bleed; the alert panel is, so
+   * the reset is now load-bearing rather than tidy.
+   *
+   * ONE WRITER, called from both kinds, because the harsher control must never do
+   * less than the milder one. A rail of Stage Timers is deliberately NOT touched:
+   * §91's line is between a thing that SAYS something and a thing that COUNTS.
+   */
+  function takeDownStageMessage() {
+    stageMessage = '';
   }
 
   // ── THE OPERATOR'S TRANSITION OVERRIDE, SNAPSHOTTED (DECISIONS §84) ──────────
@@ -357,7 +475,8 @@
   // rule is shared and only the wire shape differs.
   $: kindLook = channelLookTemplate(channelLooks, channelId, content?.kind, lookCache);
   $: activeTemplate =
-    resolveOutputTemplate(t, override, !!content?.template_pinned, defaultTpl, kindLook) ||
+    // `myRole` (RG-272): a pinned plan cue may not redesign a STAGE screen.
+    resolveOutputTemplate(t, override, !!content?.template_pinned, defaultTpl, kindLook, content?.kind, myRole) ||
     DEFAULT_TEMPLATE;
   // Set on mount; a no-op until then so onDestroy is safe if mounting threw.
   let stopBeat = () => {};
@@ -382,6 +501,59 @@
   let unlisten = [];
   let ws = null;
   let kioskClosed = false;
+  let kioskHost = 'localhost';
+  // ── A SOCKET IS NOT A SCREEN (RG-193, 2026-09-21) ──────────────────────────
+  // `output.html` reconnected only on `onclose`/`onerror`, and a half-open socket
+  // — wifi roaming, a sleeping kiosk, a NAT timeout — fires neither. The last
+  // frame stood for the rest of a service while the desk read "Not responding".
+  // The stage page has kept this rule since DECISIONS §100: three unanswered
+  // beats and the socket is replaced. Same constant, same reason, on the door
+  // that faces the room.
+  const HOST_SAMPLES = 5;
+  const STALE_AFTER_MS = BEAT_INTERVAL_MS * 3;
+  let hostSamples = [];
+  /** Relay's clock minus this screen's, a median of the last five acks (RG-194). */
+  let hostOffsetMs = 0;
+  let lastAckAt = null;
+  let beatingSince = null;
+  let staleTimer = null;
+  $: expectsAck = channelId > 0;
+  function noteHostClock(at) {
+    if (typeof at !== 'number' || !Number.isFinite(at)) return;
+    const seen = Date.now();
+    lastAckAt = seen;
+    hostSamples = [...hostSamples, at - seen].slice(-HOST_SAMPLES);
+    const sorted = [...hostSamples].sort((a, b) => a - b);
+    hostOffsetMs = sorted[Math.floor(sorted.length / 2)];
+  }
+  /** Drop whatever socket there is and open a fresh one, now. */
+  function reconnectNow() {
+    if (kioskClosed) return;
+    if (ws) {
+      const old = ws;
+      ws = null;
+      old.onclose = null; // the retry path must not race this one
+      try { old.close(); } catch { /* already gone */ }
+    }
+    lastAckAt = null;
+    beatingSince = Date.now();
+    connectKiosk(kioskHost);
+  }
+  function staleTick() {
+    if (!expectsAck || !ws || ws.readyState !== 1) return;
+    const since = lastAckAt ?? beatingSince;
+    if (since === null) return;
+    if (Date.now() - since > STALE_AFTER_MS) reconnectNow();
+  }
+  const onWake = () => {
+    if (typeof document !== 'undefined' && document.hidden) return;
+    const since = lastAckAt ?? beatingSince;
+    if (expectsAck && ws && ws.readyState === 1 && since !== null && Date.now() - since > STALE_AFTER_MS) {
+      reconnectNow();
+    } else if (!ws || ws.readyState === 3) {
+      reconnectNow();
+    }
+  };
   // Video sound is enabled on the NATIVE output window only (the one running on
   // the operator's machine, wired to the house speakers). The kiosk/OBS page is
   // a browser source: OBS captures and mixes its audio itself, so unmuting there
@@ -671,7 +843,7 @@
       // `TemplateRender` reads it off the content. The list is the reason this door
       // has dropped fields before (`next_reference`), so a field added to the wire
       // and not added here is a kiosk screen disagreeing with the wall beside it.
-      content = { kind: m.content_kind, reference: m.reference, text: m.text, translation: m.translation, media_url: m.media_url, media_kind: m.media_kind, template_id: m.template_id, template_json: m.template_json, template_pinned: m.template_pinned, countdown_to: m.countdown_to, countdown_from: m.countdown_from, countdown_paused_ms: m.countdown_paused_ms, countdown_done: m.countdown_done, countdown_warn_ms: m.countdown_warn_ms, stage_note: m.stage_note, next_reference: m.next_reference, next_text: m.next_text, service_started_at: m.service_started_at, service_target_ms: m.service_target_ms };
+      content = { kind: m.content_kind, reference: m.reference, text: m.text, translation: m.translation, media_url: sameHostMediaUrl(m.media_url, location.hostname), media_kind: m.media_kind, template_id: m.template_id, template_json: m.template_json, template_pinned: m.template_pinned, countdown_to: m.countdown_to, countdown_from: m.countdown_from, countdown_paused_ms: m.countdown_paused_ms, countdown_done: m.countdown_done, countdown_warn_ms: m.countdown_warn_ms, stage_note: m.stage_note, next_reference: m.next_reference, next_text: m.next_text, service_started_at: m.service_started_at, service_target_ms: m.service_target_ms, media_started_at: m.media_started_at };
       // THE CONFIGURED DEFAULT, which this page cannot read for itself.
       applyWarnDefault(m.countdown_warn_default_ms);
       visible = true;
@@ -699,6 +871,27 @@
       // frame cannot say "there is none now" and a screen that missed it would
       // carry the picture for the rest of the service.
       applyBackdrop(m.media_url, m.media_kind);
+    } else if (m.kind === 'timer') {
+      // THE WHOLE SET, OR NOTHING. A frame whose `timers` is missing or is not a
+      // list is read as an empty programme rather than thrown on: this page has
+      // no backend and cannot verify who is on the other end of its socket
+      // (docs/SECURITY.md T4), and one throw inside `applyMessage` would kill
+      // every frame after it - the reading included - for the rest of the
+      // service. The same words, and the same reason, as `Stage.svelte`'s branch.
+      //
+      // Deliberately NOT cleared by `clear` or `black` below: the congregation's
+      // timers go with the congregation's screens and the preacher's programme
+      // stays, because the programme is not something a congregation was ever
+      // looking at (DECISIONS §91).
+      stageTimerSet = Array.isArray(m.timers) ? m.timers : [];
+      // AND THE CONFIGURED WARNING WINDOW RIDES WITH THE SET. This is the frame
+      // that can reach a stage screen FIRST - a Stage Timer runs during the
+      // notices, before anything has been fired - so reading it here is what
+      // stops the rail warning at a figure nothing on the machine holds
+      // (RG-149(c)). The twin of the `countdown_warn_default_ms` line in the
+      // content branch above; a guarantee kept on one of two doors is the
+      // mistake this file counts seven times.
+      applyWarnDefault(m.warn_default_ms);
     } else if (m.kind === 'clear') {
       // A PANIC CONTROL NEVER TRANSITIONS. `clear` and `black` do not touch
       // `appliedTransition`, and `TemplateRender` has no `out:` transition at all
@@ -709,8 +902,10 @@
       // AND IT TAKES THE BACKGROUND. `Clear screens` means everything, and the
       // background is part of everything.
       backdrop = null;
+      takeDownStageMessage();
     } else if (m.kind === 'black') {
       black = true;
+      takeDownStageMessage();
       // On a band channel, blacking out means the band goes away — the camera
       // must not be covered.
       if (isBand) visible = false;
@@ -741,6 +936,43 @@
       // WHAT EVERY SCREEN IS FOR. Sent on every hello and whenever it changes, so
       // this page can answer the only question it asks of it: am I the stage?
       applyRoles(m.roles);
+    } else if (m.kind === 'media_transport') {
+      // WHAT THE CLIP IS DOING. Applied to the element by `TemplateRender`, never
+      // by re-mounting it — re-mounting to pause would restart the clip from zero,
+      // which is the opposite of what Pause means.
+      //
+      // Not role-gated, unlike the stage frames: this changes what a screen is
+      // ALREADY showing rather than putting something new in front of somebody, so
+      // there is nothing here a congregation screen should be spared. A screen with
+      // no clip up has no video to apply it to and ignores it by construction.
+      mediaTransport = {
+        paused: !!m.paused,
+        loop: !!m.loop,
+        replayEpoch: Number.isFinite(m.replay_epoch) ? m.replay_epoch : null,
+        // The scrub and the room's level (RG-221). Counted apart from the replay,
+        // for the reason `mediatransport.js` records: one epoch for both would
+        // swallow a scrub made immediately after a replay.
+        seekEpoch: Number.isFinite(m.seek_epoch) ? m.seek_epoch : null,
+        seekMs: Number.isFinite(m.seek_ms) ? m.seek_ms : null,
+        volume: Number.isFinite(m.volume) ? m.volume : null,
+      };
+      // AND A SCRUB MOVES THE SYNC BASELINE WITH IT (RG-220). Without this the
+      // corrector pulls the clip back to where the clock says it should be
+      // within two seconds, so the operator's own drag visibly undoes itself.
+      if (Number.isFinite(m.started_at) && content?.media_url) {
+        content = { ...content, media_started_at: m.started_at };
+      }
+    } else if (m.kind === 'stage_zones') {
+      // THE OPERATOR'S STAGE LAYOUT REACHES THE BIG SCREEN TOO (RG-265).
+      // `stage.html` has honoured Timer size since RG-240 and this page never
+      // asked, so an operator who set Huge for the platform monitor moved the
+      // phone and nothing else — a control reporting success over a screen it
+      // did not touch, which is rule 35 in a different coat.
+      //
+      // The hub addresses no client (DECISIONS §35), so every page is sent
+      // every screen's layout and picks its own out by id.
+      const mine = m.zones?.[String(channelId)] ?? m.zones?.[channelId];
+      timerSize = readTimerSize(mine);
     } else if (m.kind === 'stage_alert') {
       // ONLY A STAGE. No role is not a stage — a lobby TV and a streaming feed
       // both arrive here with no role at all, and a filter whose default is yes
@@ -749,6 +981,7 @@
       // hub does not retain it (rule 43, FRAME_VERDICTS).
       if (!acceptsStageMessage(myRole)) return;
       stageMessage = (m.text || '').trim();
+      stageUrgent = !!m.urgent;
     } else if (m.kind === 'channel_template') {
       // This screen's assigned template was changed. Filter by our channel (the
       // hub broadcasts to all; each client applies only its own) — live, no re-copy.
@@ -762,13 +995,20 @@
       // Applies to the channel template AND to a matching on-screen override, so
       // editing the template that a live verse is using re-renders it at once.
       applyTemplateUpdate(m.id, m.template);
+    } else if (m.kind === 'beat_ack') {
+      // The hub answers every beat with its clock (DECISIONS §100). This is how
+      // the page knows the socket is alive AND what o'clock Relay thinks it is.
+      noteHostClock(m.at);
     }
   }
 
   function connectKiosk(host) {
     if (kioskClosed) return;
+    kioskHost = host;
+    if (ws && ws.readyState <= 1) return; // one socket at a time
     try {
       ws = new WebSocket(`ws://${host}:8031`);
+      if (beatingSince === null) beatingSince = Date.now();
       ws.onopen = () => {
         // Ask the hub for this channel's real template.
         try {
@@ -791,6 +1031,7 @@
         }
       };
       ws.onclose = () => {
+        ws = null;
         if (!kioskClosed) setTimeout(() => connectKiosk(host), 1500);
       };
       ws.onerror = () => {
@@ -918,6 +1159,25 @@
           applyRoles(e.payload?.roles);
         }),
       );
+      // BOTH DOORS, and this one was MISSING (RG-156). `channels::stage_alert`
+      // published to the kiosk hub and emitted nothing, so a screen wired as a
+      // native window and given the `stage` role heard no Stage Message at all —
+      // while the console reported one sent. The failure direction is silence,
+      // which is why nobody had met it: it takes a church to put a confidence
+      // monitor on HDMI rather than on the network, and then nothing says a word.
+      //
+      // THE SAME PREDICATE, not a second one. `acceptsStageMessage` is asked here
+      // exactly as it is asked in the socket branch above, because the two doors
+      // are answering one question and a second expression of it is the thing that
+      // drifts. No role is not a stage: a lobby TV and a streaming feed arrive
+      // with no role at all, and a filter whose default is yes is not a filter.
+      unlisten.push(
+        await listen('output://stage_alert', (e) => {
+          if (!acceptsStageMessage(myRole)) return;
+          stageMessage = (e.payload?.text || '').trim();
+          stageUrgent = !!e.payload?.urgent;
+        }),
+      );
       // BOTH DOORS, for the seventh time in this file, and here the cost of one
       // door is two screens in one room wearing different templates for the same
       // verse. An operator who changes a look mid-service must see it move on the
@@ -961,6 +1221,9 @@
     //
     // `ws` is read through a getter: the kiosk socket is replaced on every
     // reconnect, so a captured reference would keep beating into a dead one.
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onWake);
+    if (typeof window !== 'undefined') window.addEventListener('online', onWake);
+    staleTimer = setInterval(staleTick, 1000);
     stopBeat = startBeat({
       channelId,
       // WHAT THIS SCREEN IS ACTUALLY SHOWING, not what it was last told. A screen
@@ -969,6 +1232,11 @@
       // an alarm about a screen doing exactly what it was told (rule 35).
       getState: () => paintState({ black: shownBlack, visible: !!shownContent, content }),
       getWs: () => ws,
+      // WHERE THIS SCREEN'S CLIP IS. Read once per beat rather than per frame, and
+      // `null` whenever there is no clip — see `noteMedia`.
+      getMedia: () => mediaReport,
+      // WHAT THIS SCREEN COULD NOT LOAD, or nothing. See `noteMediaError`.
+      getMediaError: () => mediaError,
     });
   });
   onDestroy(() => {
@@ -976,6 +1244,9 @@
     // beat from it would say "still painting" about a screen that is closing.
     stopBeat();
     unlisten.forEach((u) => u());
+    if (staleTimer) clearInterval(staleTimer);
+    if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onWake);
+    if (typeof window !== 'undefined') window.removeEventListener('online', onWake);
     kioskClosed = true;
     if (ws) ws.close();
   });
@@ -986,7 +1257,15 @@
   content={shownContent}
   backdrop={shownBackdrop}
   audio={isDesktop}
-  stageMessage={stageMessage}
+  stageMessage={shownStageMessage}
+  timerScale={railScale(timerSize)}
+  stageClip={myRole === 'stage'}
+  {stageUrgent}
+  programme={shownProgramme}
+  onMedia={noteMedia}
+  onMediaError={noteMediaError}
+  {hostOffsetMs}
+  {mediaTransport}
   transitionOverride={appliedTransition} />
 <!-- BLACKOUT NEVER BLACKS OUT A LOWER THIRD. On a keyed channel "black" would
      paint an opaque rectangle over the live camera — the opposite of what the

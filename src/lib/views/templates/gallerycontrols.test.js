@@ -318,3 +318,58 @@ describe('an import shows the template it just imported', () => {
 // `.r-seg` instances elsewhere are checked against, and the next segmented
 // control to be written should state `role="group"` for the same reason.
 
+
+// 2026-09-21 · T-8 (RG-189). *Test on screens* fired John 3:16 to every live output
+// in ONE unguarded click from a browsing workspace, with only a tooltip between
+// the operator and the congregation. DECISIONS §26 authorised it "to check a
+// template before a service" and never asked the during-a-service question.
+// Now: two presses (rule 41's arm/confirm), and none at all while a service is
+// being recorded unless rehearsal is on — the one state in which the fire
+// cannot reach a congregation.
+describe('Test on screens is armed, and held back during a service', () => {
+  let stores;
+  beforeEach(async () => {
+    baseMocks();
+    stores = await import('../../stores/capture.js');
+    stores.serviceLock.set({ engaged: false, held_back: [] });
+    stores.rehearsing.set(false);
+  });
+  const testBtn = () => [...host.querySelectorAll('button')].find((b) => /Test on screens|Fire John 3:16|Testing/.test(b.textContent));
+
+  it('the first press arms, the second fires, and nothing fires on the first', async () => {
+    mount();
+    await drain();
+    cards()[0].click();
+    await drain();
+    const b = testBtn();
+    expect(b, 'the control is rendered').toBeTruthy();
+    b.click();
+    await drain();
+    expect(invoke.mock.calls.some(([c]) => c === 'manual_fire'), 'one press reached the wall').toBe(false);
+    expect(testBtn().textContent).toMatch(/Fire John 3:16/);
+    testBtn().click();
+    await drain();
+    expect(invoke.mock.calls.some(([c]) => c === 'manual_fire')).toBe(true);
+  });
+
+  it('is disabled while a service is being recorded, and says why', async () => {
+    stores.serviceLock.set({ engaged: true, held_back: [] });
+    mount();
+    await drain();
+    cards()[0].click();
+    await drain();
+    const b = testBtn();
+    expect(b.disabled).toBe(true);
+    expect(b.title).toMatch(/service/i);
+  });
+
+  it('…unless rehearsal is on, because then nothing reaches a congregation', async () => {
+    stores.serviceLock.set({ engaged: true, held_back: [] });
+    stores.rehearsing.set(true);
+    mount();
+    await drain();
+    cards()[0].click();
+    await drain();
+    expect(testBtn().disabled).toBe(false);
+  });
+});

@@ -49,13 +49,21 @@ if (!existsSync(HOOK_SCRIPT)) {
 }
 
 let settings = {};
-if (existsSync(SETTINGS)) {
-  try {
-    settings = JSON.parse(readFileSync(SETTINGS, 'utf8'));
-  } catch (e) {
+let hadSettings = false;
+// ATTEMPT, don't ask — the same reasoning as the backup further down, which
+// already says it. `existsSync` here and `writeFileSync` at the end are the two
+// halves CodeQL pairs as `js/file-system-race`, and it points at the write.
+try {
+  settings = JSON.parse(readFileSync(SETTINGS, 'utf8'));
+  hadSettings = true;
+} catch (e) {
+  if (e.code !== 'ENOENT') {
     // Never overwrite a file we could not read. A malformed settings file is
-    // somebody's broken session, not an invitation to replace it.
-    say(`✗ ${SETTINGS} is not valid JSON (${e.message}). Fix it first; nothing was written.`);
+    // somebody's broken session, not an invitation to replace it — and neither
+    // is one we were refused permission to open.
+    const why =
+      e instanceof SyntaxError ? `is not valid JSON (${e.message})` : `could not be read (${e.message})`;
+    say(`✗ ${SETTINGS} ${why}. Fix it first; nothing was written.`);
     process.exit(1);
   }
 }
@@ -102,7 +110,22 @@ try {
   mkdirSync(dirname(SETTINGS), { recursive: true });
 }
 
-writeFileSync(SETTINGS, `${JSON.stringify(settings, null, 2)}\n`);
+const body = `${JSON.stringify(settings, null, 2)}\n`;
+if (hadSettings) {
+  writeFileSync(SETTINGS, body);
+} else {
+  // EXCLUSIVE CREATE, closing the last of the race. The read above found no
+  // settings file and the backup above therefore made none — so if one appeared
+  // in between, a plain write would clobber somebody's session with no copy of
+  // it anywhere. `wx` fails instead, and re-running does the merge properly.
+  try {
+    writeFileSync(SETTINGS, body, { flag: 'wx' });
+  } catch (e) {
+    if (e.code !== 'EEXIST') throw e;
+    say(`✗ ${SETTINGS} appeared while this script was running. Nothing was written — re-run it.`);
+    process.exit(1);
+  }
+}
 say('✓ Registered the Relay fast-gate hook in .claude/settings.json.');
 say('  It runs on edits to the fire path and the contract surfaces, reports, and never blocks.');
 say('  Restart Claude Code (or start a new session) for it to take effect.');

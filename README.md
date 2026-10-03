@@ -6,7 +6,7 @@
 
 Built out into a lightweight presentation suite: a **Content Library** (saved scripture, songs with a slide-flow editor + named arrangements, media, announcements, service history), a **Service Planner** (Mission-Control run editor over a unified cue model — scripture, song, media, announcement, countdown — with drag-reorder, per-cue stage notes, and plan duplication), **FTS5 + semantic scripture search**, **per-content-type templates** with a WYSIWYG editor, verse **auto-fit**, crossfade transitions, blackout, a **pre-service countdown timer**, and the full KJV corpus (66 books, 31,102 verses, bundled offline, translator glosses and subscriptions stripped). Next: African-language STT fine-tunes, neural paraphrase embedder, NDI, document (PDF/PPTX) presentation, real-service hardening.
 
-**Relay has never shipped. As of 2026-08-31 the decision is NO-GO for general release and GO for a supervised pilot** — two churches, named operators, every service watched by somebody who can take the wall back by hand. Not because of a known defect (every P0 and P1 from the last full audit is closed) but because on 2026-08-30 Relay put a verse nobody said in front of a real congregation, **word error rate has never been measured in any language**, **neither platform has a code-signing certificate** (every release so far is unsigned), and nobody but the author has ever run a service on it. The full decision and the five conditions that convert it into a general release are [docs/qa/RELAY_GAP.md](docs/qa/RELAY_GAP.md) §24.
+**Relay has never shipped. The release decision (NO-GO for general release, GO for a supervised pilot) and every condition on it live in one place, [docs/qa/RELAY_GAP.md](docs/qa/RELAY_GAP.md) §24, and are not restated here.** Taken 2026-08-31 — two churches, named operators, every service watched by somebody who can take the wall back by hand. Not because of a known defect (every P0 and P1 from the last full audit is closed) but because on 2026-08-30 Relay put a verse nobody said in front of a real congregation, **word error rate has never been measured in any language**, **neither platform has a code-signing certificate** (every release so far is unsigned), and nobody but the author has ever run a service on it. The full decision and the five conditions that convert it into a general release are [docs/qa/RELAY_GAP.md](docs/qa/RELAY_GAP.md) §24.
 
 ## Start here
 
@@ -16,7 +16,7 @@ Built out into a lightweight presentation suite: a **Content Library** (saved sc
 3. `CLAUDE.md` — working conventions and non-negotiable constraints; read first if you're using an AI coding agent in this repo.
 4. `docs/PROMPT.md` — the build-phase reference (the module docs cite its phase numbers); the full brief now lives in `docs/SPEC.md`.
 5. `docs/SPEC.md` — canonical technical spec (original brief). `docs/DECISIONS.md` — every major decision, with reasoning.
-6. **[docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md)** — tokens, type, and the four colours that carry a promise (amber = on air, amethyst = rehearsal, cyan = a guess, grey = cued). Read before touching any UI. `docs/design/` holds the rendered screen references.
+6. **[docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md)** — tokens, type, and the four colours that carry a promise (amber = on air, amethyst = rehearsal, cyan = a guess, grey = cued). Read before touching any UI.
 
 ## Tech stack
 

@@ -134,6 +134,25 @@ pub struct Timer {
     /// vanishes from the preacher's tablet mid-sermon with nothing to say why.
     #[serde(default)]
     pub started_in_rehearsal: bool,
+    /// WHICH SCREENS THIS TIMER IS FOR — `None` is every screen (RG-161).
+    ///
+    /// **A property of the timer rather than an argument to the broadcast**, and
+    /// that is the whole design. A congregation countdown leaves by three doors,
+    /// not one: `start_countdown` puts it up, `adjust_countdown` rebroadcasts it
+    /// on every Pause, Resume, Reset and ±1, and `show_timer` puts it back. A set
+    /// carried on the first call only would be worse than none at all — the
+    /// countdown would start on the streaming screen alone and leak onto every
+    /// screen in the building the moment somebody held it.
+    ///
+    /// So it is stamped once, by the creator, and read by `project_both`'s
+    /// caller, exactly as `scope`, `warn_ms` and `started_in_rehearsal` already
+    /// are. `Scope::Stage` timers never carry one: the stage frame is addressed
+    /// to the tablet by being the stage frame.
+    ///
+    /// `serde(default)` for an older or hand-built payload, which reads as every
+    /// screen — the same meaning a timer started before targeting existed has.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channels: Option<Vec<i64>>,
 }
 
 /// Why an adjustment was refused. Both are refusals an operator can act on, not
@@ -232,9 +251,15 @@ struct Inner {
     timers: HashMap<TimerId, Timer>,
 }
 
+/// WHERE A CHANGE GOES ONCE IT HAS HAPPENED: the whole registry, after every
+/// mutation. `main.rs` installs one that writes the rows to the database
+/// (`db::save_timers`) on its own thread; tests install a counter. A snapshot
+/// rather than a delta, so a message lost on the way is repaired by the next.
+pub type Sink = Box<dyn Fn(TimerId, Vec<Timer>) + Send + Sync>;
+
 /// The timers, and the answers to questions about them.
 #[derive(Default)]
-pub struct TimerRegistry(Mutex<Inner>);
+pub struct TimerRegistry(Mutex<Inner>, Mutex<Option<Sink>>);
 
 impl TimerRegistry {
     /// The lock, with a poisoned one recovered rather than propagated — see the
@@ -243,10 +268,77 @@ impl TimerRegistry {
         self.0.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// Install the sink every mutation reports to. Persistence was the one thing
+    /// this registry did not do (F28): a relaunch mid-service lost every clock,
+    /// including one a congregation was watching.
+    pub fn set_sink(&self, sink: Sink) {
+        *self.1.lock().unwrap_or_else(|e| e.into_inner()) = Some(sink);
+    }
+
+    /// TELL THE SINK, with no lock held. Called by every mutator after it has
+    /// released `inner` — the sink may take a database lock, and rule 2's shape
+    /// (a lock held across a call that wants another) is the same deadlock here
+    /// as it is across an emit. On the MUTATORS, not the call sites (rule 36):
+    /// `every_mutation_is_announced_to_the_sink_once` enumerates them.
+    fn announce(&self) {
+        let (next_id, timers) = {
+            let g = self.inner();
+            let mut all: Vec<Timer> = g.timers.values().cloned().collect();
+            all.sort_by_key(|t| t.id);
+            (g.next_id, all)
+        };
+        if let Some(sink) = self.1.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+            sink(next_id, timers);
+        }
+    }
+
+    /// PUT SAVED ROWS BACK, at launch, before anything is announced. `next_id`
+    /// resumes from the saved counter or from the highest restored id, whichever
+    /// is larger: an id handed out twice is a `+1` on the timer the operator can
+    /// see moving one they cannot. Restoring is not publishing — nothing here
+    /// reaches a screen (DECISIONS §112).
+    pub fn restore(&self, next_id: TimerId, timers: Vec<Timer>) {
+        let mut g = self.inner();
+        let top = timers.iter().map(|t| t.id).max().unwrap_or(0);
+        g.next_id = g.next_id.max(next_id).max(top);
+        for t in timers {
+            g.timers.insert(t.id, t);
+        }
+    }
+
     /// Put a timer in the registry and hand back its identity. **The only creator.**
     /// The `id` field of the argument is ignored and replaced.
     pub fn start(&self, timer: Timer) -> TimerId {
         let mut g = self.inner();
+        // ONE CLOCK ON A PREACHER'S SCREEN, AND THE NEWEST WINS (RG-250).
+        //
+        // The operator: *"any new timer overrides the existing timer"*. A stage
+        // rail that carries two clocks makes the person reading it decide which
+        // one they are working to, mid-sermon, from a platform — and the rail
+        // divides its width between them, so setting a second timer makes the
+        // first one smaller as well as ambiguous.
+        //
+        // HERE rather than at the doors, per rule 36. A stage timer can be
+        // started from a plan cue, from the dock, from the timer desk and from a
+        // room being applied; a rule kept at four of those is a rule missing
+        // from the fifth, which is this repository's most-repeated defect.
+        //
+        // `Scope::Both` is deliberately exempt: that is the congregation's
+        // countdown on a wall, and a sermon clock must not take it down.
+        // `restore` does not come through here, so a launch still puts every
+        // saved row back.
+        //
+        // AND A REHEARSAL MAY NOT EAT A REAL CLOCK. The rule matches on the
+        // rehearsal stamp as well as the scope, or rehearsing would take the
+        // sermon clock off the registry — the exact harm RG-150 exists to
+        // prevent, arriving from the other direction. Nothing is shown twice
+        // while a rehearsal is on, because `publish_timers` suppresses the frame
+        // for the whole of one.
+        if timer.scope == Scope::Stage {
+            let rehearsing = timer.started_in_rehearsal;
+            g.timers
+                .retain(|_, t| t.scope != Scope::Stage || t.started_in_rehearsal != rehearsing);
+        }
         g.next_id += 1;
         let id = g.next_id;
         // A timer with no configured length takes the one it was aimed for, so
@@ -264,6 +356,8 @@ impl TimerRegistry {
                 ..timer
             },
         );
+        drop(g);
+        self.announce();
         id
     }
 
@@ -311,7 +405,10 @@ impl TimerRegistry {
         // trying to replace.
         let figure = t.target_ms - now_ms;
         t.paused_ms = t.paused_ms.map(|_| figure);
-        Ok(t.clone())
+        let out = t.clone();
+        drop(g);
+        self.announce();
+        Ok(out)
     }
 
     /// The timer with that id, cloned, or None.
@@ -321,7 +418,11 @@ impl TimerRegistry {
 
     /// Take one timer. True if there was one to take.
     pub fn stop(&self, id: TimerId) -> bool {
-        self.inner().timers.remove(&id).is_some()
+        let took = self.inner().timers.remove(&id).is_some();
+        if took {
+            self.announce();
+        }
+        took
     }
 
     /// Take every timer in one scope and no other, reporting how many. A panic
@@ -338,7 +439,59 @@ impl TimerRegistry {
         for id in &doomed {
             g.timers.remove(id);
         }
+        drop(g);
+        if !doomed.is_empty() {
+            self.announce();
+        }
         doomed.len()
+    }
+
+    /// TAKE EVERY TIMER IN ONE SCOPE THAT IS STILL RUNNING, reporting how many —
+    /// RG-269.
+    ///
+    /// The same shape as [`Self::stop_scope`] and for the same reason: it reads two
+    /// facts that are ON the timer — its scope, and whether it is held — and asks
+    /// nothing of a clock, a database or a screen. There is no `now_ms` here on
+    /// purpose. A clock past zero is still running, and "has it finished" is a
+    /// question this rule does not need to ask to answer correctly.
+    ///
+    /// **A HELD TIMER IS NOT A RUNNING ONE**, which is the whole distinction the
+    /// caller wants. `paused_ms` is the figure somebody deliberately parked, and a
+    /// parked figure is the same figure whenever it comes back; a running one is a
+    /// deadline, and a deadline that has passed unattended is the harm.
+    ///
+    /// Its one caller is `main::stop_clocks_a_relaunch_would_paint`, which is where
+    /// the reasoning about WHICH scope lives.
+    pub fn stop_running(&self, scope: Scope) -> usize {
+        let mut g = self.inner();
+        let doomed: Vec<TimerId> = g
+            .timers
+            .values()
+            .filter(|t| t.scope == scope && t.paused_ms.is_none())
+            .map(|t| t.id)
+            .collect();
+        for id in &doomed {
+            g.timers.remove(id);
+        }
+        drop(g);
+        if !doomed.is_empty() {
+            self.announce();
+        }
+        doomed.len()
+    }
+
+    /// THE WHOLE REGISTRY, AS THE SINK WOULD SEE IT — the counter and the rows.
+    ///
+    /// For a caller that must write the registry on ITS OWN thread rather than
+    /// through the sink. There is exactly one: the clean-exit hook, because the
+    /// sink hands its snapshot to a persistence thread and a process that is
+    /// quitting does not wait for that thread to drain. Everything else uses the
+    /// sink, which is the rule rather than the exception (DECISIONS §112).
+    pub fn saveable(&self) -> (TimerId, Vec<Timer>) {
+        let g = self.inner();
+        let mut all: Vec<Timer> = g.timers.values().cloned().collect();
+        all.sort_by_key(|t| t.id);
+        (g.next_id, all)
     }
 
     /// TAKE EVERY TIMER THAT WAS STARTED INSIDE A REHEARSAL, reporting how many —
@@ -378,6 +531,10 @@ impl TimerRegistry {
             .collect();
         for id in &doomed {
             g.timers.remove(id);
+        }
+        drop(g);
+        if !doomed.is_empty() {
+            self.announce();
         }
         doomed.len()
     }
@@ -432,7 +589,10 @@ impl TimerRegistry {
         t.target_ms = now_ms + next;
         t.paused_ms = hold.then_some(next);
         // `from_ms` is NOT re-stamped — see `Timer`.
-        Ok(t.clone())
+        let out = t.clone();
+        drop(g);
+        self.announce();
+        Ok(out)
     }
 
     /// Every timer, oldest first. The order is by identity, which is the order they
@@ -497,6 +657,7 @@ mod tests {
             until_ms: None,
             plan_item_id: None,
             started_in_rehearsal: false,
+            channels: None,
         }
     }
 
@@ -512,6 +673,99 @@ mod tests {
     /// re-stamped by a re-aim but `target_ms` is, so `target_ms - from_ms`
     /// grows by five minutes every time `+5` is pressed — a perfectly good span
     /// for the warning rule and useless as a configured length.
+    /// A PREACHER'S SCREEN CARRIES ONE CLOCK, AND THE NEWEST ONE WINS.
+    ///
+    /// The operator, watching the built page: *"when a timer is already running
+    /// and another is set, let the new timer set to be the main timer cancelling
+    /// the old one.... only one timer.... any new timer overrides the existing
+    /// timer"*.
+    ///
+    /// The rule is here rather than at the doors that call `start`, per rule 36:
+    /// a second stage timer can be created from a plan cue, from the dock, from
+    /// the timer desk and from a room being applied, and a rule kept at four
+    /// doors is a rule missing from the fifth.
+    ///
+    /// **`Scope::Both` is untouched**, and the assertion below says so. That is
+    /// the congregation's countdown, which is a different thing on a different
+    /// screen; making a stage clock cancel it would take a countdown off a wall
+    /// because somebody timed a sermon.
+    #[test]
+    fn a_new_stage_timer_replaces_the_stage_timer_that_was_running() {
+        let now = 1_000_000;
+        let reg = TimerRegistry::default();
+        let congregation = reg.start(five(now, Scope::Both));
+        let first = reg.start(five(now, Scope::Stage));
+        let second = reg.start(five(now + 30_000, Scope::Stage));
+
+        let stage = reg.snapshot_scope(Scope::Stage);
+        assert_eq!(
+            stage.iter().map(|t| t.id).collect::<Vec<_>>(),
+            vec![second],
+            "the preacher's screen is carrying more than one clock"
+        );
+        assert!(
+            reg.get(first).is_none(),
+            "the replaced timer is still in the registry, so something can still adjust it"
+        );
+        assert!(
+            reg.get(congregation).is_some(),
+            "a stage timer took the congregation's countdown down with it"
+        );
+    }
+
+    /// A REHEARSAL MAY NOT EAT THE REAL CLOCK — RG-250 meeting RG-150.
+    ///
+    /// The replacement rule and the rehearsal sandbox pull in opposite
+    /// directions, and the first draft let the rehearsal win: entering a
+    /// rehearsal and starting a stage timer took the sermon clock off the
+    /// registry, which is precisely the harm RG-150 exists to prevent, arriving
+    /// from the other direction. Watched to reproduce before the stamp was added
+    /// to the rule.
+    ///
+    /// Nothing is ever shown twice: `channels::publish_timers` suppresses the
+    /// stage frame for the whole of a rehearsal.
+    #[test]
+    fn a_rehearsal_timer_does_not_replace_the_real_stage_timer() {
+        let now = 1_000_000;
+        let reg = TimerRegistry::default();
+        let real = reg.start(five(now, Scope::Stage));
+        let rehearsed = reg.start(Timer {
+            started_in_rehearsal: true,
+            ..five(now, Scope::Stage)
+        });
+
+        assert!(
+            reg.get(real).is_some(),
+            "a rehearsal took the clock a real service was running"
+        );
+        // And the rule still holds WITHIN the rehearsal.
+        let second_rehearsed = reg.start(Timer {
+            started_in_rehearsal: true,
+            ..five(now + 1_000, Scope::Stage)
+        });
+        assert!(reg.get(rehearsed).is_none(), "two rehearsal clocks at once");
+        assert!(reg.get(second_rehearsed).is_some());
+        assert!(
+            reg.get(real).is_some(),
+            "and the real one is still untouched"
+        );
+    }
+
+    /// RESTORING IS NOT STARTING. Every saved row goes back at launch — the
+    /// replacement rule is about an operator setting a second clock, and applying
+    /// it to a restore would silently drop rows the last session recorded.
+    #[test]
+    fn restoring_saved_rows_does_not_apply_the_replacement_rule() {
+        let now = 1_000_000;
+        let reg = TimerRegistry::default();
+        let mut a = five(now, Scope::Stage);
+        a.id = 7;
+        let mut b = five(now, Scope::Stage);
+        b.id = 9;
+        reg.restore(9, vec![a, b]);
+        assert_eq!(reg.snapshot_scope(Scope::Stage).len(), 2);
+    }
+
     #[test]
     fn reset_restores_the_length_the_timer_was_started_at() {
         let now = 1_000_000;
@@ -867,7 +1121,11 @@ mod tests {
             configured_ms: 0,
             until_ms: None,
             plan_item_id: Some(7),
-            ..five(now, Scope::Stage)
+            // `Both`, so this test keeps asserting the BINDING rather than
+            // colliding with RG-250's one-stage-clock rule. `for_plan_item` asks
+            // about `plan_item_id` and never about scope, so the subject is
+            // unchanged; two Stage timers simply cannot coexist any more.
+            ..five(now, Scope::Both)
         };
         reg.start(other_cue);
         assert_eq!(
@@ -882,7 +1140,10 @@ mod tests {
             until_ms: None,
             plan_item_id: Some(42),
             label: "Sermon".into(),
-            ..five(now, Scope::Stage)
+            // `Both` throughout, for the reason the cue above records: the
+            // subject is which timer a CUE finds, and two Stage timers for one
+            // cue cannot coexist since RG-250.
+            ..five(now, Scope::Both)
         });
         assert_eq!(reg.for_plan_item(42).map(|t| t.id), Some(mine));
         assert_eq!(
@@ -898,7 +1159,7 @@ mod tests {
             configured_ms: 0,
             until_ms: None,
             plan_item_id: Some(42),
-            ..five(now, Scope::Stage)
+            ..five(now, Scope::Both)
         });
         assert_eq!(reg.for_plan_item(42).map(|t| t.id), Some(again));
 
@@ -1157,10 +1418,18 @@ mod tests {
         let now = 1_000_000;
         let reg = TimerRegistry::default();
 
-        let real = reg.start(five(now, Scope::Stage));
+        // `Both`, and the reason is worth stating: since RG-250 a new STAGE timer
+        // replaces the stage timer that was running, so a stage clock predating a
+        // rehearsal would be taken by the rehearsal's own stage clock and this
+        // test would be asserting that rule rather than this one. The subject
+        // here is the STAMP — `stop_started_in_rehearsal` consults
+        // `started_in_rehearsal` and nothing else — and a `Both` timer exercises
+        // it exactly as well.
+        let real = reg.start(five(now, Scope::Both));
         let rehearsed = [
             reg.start(Timer {
                 started_in_rehearsal: true,
+                channels: None,
                 ..five(now, Scope::Stage)
             }),
             // A congregation timer started in a rehearsal is one of these too. The
@@ -1170,6 +1439,7 @@ mod tests {
             // held it.
             reg.start(Timer {
                 started_in_rehearsal: true,
+                channels: None,
                 ..five(now, Scope::Both)
             }),
         ];
@@ -1219,5 +1489,171 @@ mod tests {
             project_both(&five(now, Scope::Both)).countdown_warn_ms,
             None
         );
+    }
+
+    // ── PERSISTENCE: EVERY MUTATION IS ANNOUNCED, ONCE (F28, RG-208) ────────
+    //
+    // The registry was a `Mutex<HashMap>` and nothing else, so a relaunch mid-
+    // service lost every clock, including one a congregation was watching. The
+    // repair is a SINK the registry calls after every mutation, with the whole
+    // registry — a snapshot, not a delta, so a dropped message is repaired by the
+    // next one. The sink is on the MUTATORS (rule 36: the choke point, not the
+    // call sites), and this test enumerates them so a seventh mutator that
+    // forgets to announce fails here rather than on a Sunday.
+    type Seen = std::sync::Arc<std::sync::Mutex<Vec<(TimerId, usize)>>>;
+    fn counting_sink() -> (Seen, Sink) {
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let s = seen.clone();
+        let sink: Sink = Box::new(move |next_id, timers: Vec<Timer>| {
+            s.lock().unwrap().push((next_id, timers.len()));
+        });
+        (seen, sink)
+    }
+
+    #[test]
+    fn every_mutation_is_announced_to_the_sink_once() {
+        let now = 1_000_000;
+        let reg = TimerRegistry::default();
+        let (seen, sink) = counting_sink();
+        reg.set_sink(sink);
+        let count = || seen.lock().unwrap().len();
+
+        let a = reg.start(five(now, Scope::Both));
+        assert_eq!(count(), 1, "start announces");
+        reg.adjust(a, Some(120_000), None, now).unwrap();
+        assert_eq!(count(), 2, "adjust announces");
+        reg.reset(a, now).unwrap();
+        assert_eq!(count(), 3, "reset announces");
+        let b = reg.start(five(now, Scope::Stage));
+        assert_eq!(count(), 4);
+        assert!(reg.stop(b));
+        assert_eq!(count(), 5, "stop announces");
+        assert!(!reg.stop(b), "a second stop of the same id takes nothing");
+        assert_eq!(count(), 5, "…and announces nothing: nothing changed");
+        reg.stop_scope(Scope::Both);
+        assert_eq!(count(), 6, "stop_scope announces");
+        reg.stop_scope(Scope::Both);
+        assert_eq!(count(), 6, "an empty stop_scope announces nothing");
+        let mut r = five(now, Scope::Stage);
+        r.started_in_rehearsal = true;
+        reg.start(r);
+        reg.stop_started_in_rehearsal();
+        assert_eq!(count(), 8, "stop_started_in_rehearsal announces");
+        let c = reg.start(five(now, Scope::Stage));
+        assert_eq!(count(), 9);
+        reg.stop_running(Scope::Stage);
+        assert_eq!(count(), 10, "stop_running announces");
+        reg.stop_running(Scope::Stage);
+        assert_eq!(count(), 10, "an empty stop_running announces nothing");
+        let _ = c;
+
+        // The snapshot handed over is the WHOLE registry, and carries next_id.
+        let (next_id, len) = *seen.lock().unwrap().last().unwrap();
+        assert_eq!(len, 0);
+        assert_eq!(
+            next_id, 4,
+            "four ids were handed out and none may be reused"
+        );
+    }
+
+    /// A CLEAN EXIT TAKES THE CLOCKS A RELAUNCH WOULD PAINT BY ITSELF — RG-269.
+    ///
+    /// The operator: *"When Application close clear all active timer running or
+    /// if not its running it should display on the right output...stage"*. A
+    /// stage clock left running was written by the sink, restored by the next
+    /// launch and published to the stage without anybody asking for it, so the
+    /// preacher's screen came up counting from a moment that had passed.
+    ///
+    /// The registry's half of that is one rule and it asks nothing of a clock but
+    /// the two facts on the timer itself: its scope, and whether it is held. No
+    /// `now_ms`, no database, no screen. Which timers this is applied TO is
+    /// `main::stop_clocks_a_relaunch_would_paint`, and the reasoning for the two
+    /// deliberate exemptions is written there.
+    #[test]
+    fn a_clean_exit_takes_the_running_stage_clocks_and_nothing_else() {
+        let now = 1_000_000;
+        let reg = TimerRegistry::default();
+        // RESTORED rather than started: `start` evicts an older stage clock
+        // (RG-250), and this rule has to be true of a registry carrying several.
+        let running = Timer {
+            id: 1,
+            ..five(now, Scope::Stage)
+        };
+        let held = Timer {
+            id: 2,
+            paused_ms: Some(now + 60_000),
+            ..five(now, Scope::Stage)
+        };
+        let wall = Timer {
+            id: 3,
+            ..five(now, Scope::Both)
+        };
+        let wall_held = Timer {
+            id: 4,
+            paused_ms: Some(now),
+            ..five(now, Scope::Both)
+        };
+        reg.restore(4, vec![running, held, wall, wall_held]);
+
+        assert_eq!(
+            reg.stop_running(Scope::Stage),
+            1,
+            "it must report what it took"
+        );
+        assert!(
+            reg.get(1).is_none(),
+            "a running stage clock survived a clean exit and comes back counting"
+        );
+        assert!(
+            reg.get(2).is_some(),
+            "a HELD clock is a figure somebody parked, not a clock that ran all night"
+        );
+        assert!(
+            reg.get(3).is_some(),
+            "the congregation countdown is DECISIONS §112's and no relaunch paints it"
+        );
+        assert!(reg.get(4).is_some());
+        assert_eq!(
+            reg.stop_running(Scope::Stage),
+            0,
+            "a second pass takes nothing"
+        );
+    }
+
+    #[test]
+    fn a_refused_adjust_announces_nothing() {
+        let now = 1_000_000;
+        let reg = TimerRegistry::default();
+        let (seen, sink) = counting_sink();
+        reg.set_sink(sink);
+        let a = reg.start(five(now, Scope::Both));
+        assert!(reg.adjust(a, Some(500), None, now).is_err());
+        assert!(reg.adjust(99, None, None, now).is_err());
+        assert_eq!(seen.lock().unwrap().len(), 1, "only the start was a change");
+    }
+
+    /// RESTORE KEEPS IDS MONOTONIC. A relaunch that restored timers 1 and 2 and
+    /// then handed out id 1 again would be the reused-id failure the registry
+    /// refuses to have: a `+1` on the timer the operator can see moving one they
+    /// cannot. `next_id` is restored with the rows, and never below the highest
+    /// id among them.
+    #[test]
+    fn restore_never_hands_out_a_restored_id_again() {
+        let now = 1_000_000;
+        let reg = TimerRegistry::default();
+        let mut a = five(now, Scope::Stage);
+        a.id = 4;
+        let mut b = five(now, Scope::Both);
+        b.id = 7;
+        reg.restore(2, vec![a, b]); // a stale next_id below the rows is corrected
+        assert_eq!(
+            reg.snapshot().iter().map(|t| t.id).collect::<Vec<_>>(),
+            vec![4, 7]
+        );
+        // `Both`: this is about the id counter, and starting a Stage timer would
+        // now evict the restored Stage row the last assertion is about (RG-250).
+        let c = reg.start(five(now, Scope::Both));
+        assert_eq!(c, 8, "the next id is above every restored one");
+        assert_eq!(reg.get(4).map(|t| t.scope), Some(Scope::Stage));
     }
 }

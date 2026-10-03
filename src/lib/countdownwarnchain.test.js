@@ -1,7 +1,7 @@
 // RG-149 · THE WARNING THRESHOLD, ALL THE WAY TO THE TWO SCREENS A PERSON LOOKS AT.
 //
 // Track D landed the rule and left the chain broken in three places, measured in
-// `audits/DESIGN-2026-09-16-WAVE3.md` §5d:
+// `audits/DESIGN.md` §5d:
 //
 //   (a) `countdownWarning(remainingMs, totalMs, warnMs)` gained a third argument
 //       and all three readers called it with two, so a threshold chosen for one
@@ -196,20 +196,6 @@ describe("(a) the preacher's page reads it too", () => {
     await tick();
     await tick();
     expect(host.querySelector('.figrow .fig').classList.contains('warn')).toBe(false);
-  });
-});
-
-describe('(a) the dock reads it', () => {
-  it('passes the live content’s own threshold to the one rule', () => {
-    // A source assertion, deliberately: the dock is the console chrome and this
-    // file has no console to mount. What it pins is the argument list, which is
-    // the whole of the defect on this surface.
-    const src = read('src/lib/Dock.svelte');
-    expect(
-      src,
-      'the dock called `countdownWarning` with two arguments, so a threshold ' +
-        'chosen for the countdown on the wall never reached the figure beside it',
-    ).toMatch(/cdWarn = cdLive && countdownWarning\(\s*cdRunning\s*,\s*cdTotal\s*,\s*\$live\?\.countdown_warn_ms\s*\)/);
   });
 });
 

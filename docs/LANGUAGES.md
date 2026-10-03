@@ -204,6 +204,18 @@ from whisper.cpp.
 sermon audio.** Shipping an unmeasured model and calling it an African-language
 feature would be a marketing claim, not an engineering one.
 
+**And the same standard now holds for the models Relay DOES offer** (RG-116,
+2026-09-28). The download catalogue used to describe one of them as the *"best
+choice for African languages"* and another as hearing *"more accurately, especially
+over a poor microphone"*. Nobody had measured either, in any language, over any
+microphone — the sentence above forbids exactly that claim, and the panel where a
+church picks a model was making it anyway. Both are gone. `models.rs` now carries
+what is measured (`decode_ms`, `cadence_ms`, and wrong-verse counts scored through
+the router) and says **never measured** where nothing is, which is the honest answer
+for three of the five entries. Word error rate is still unmeasured in every language
+and none of this changes that; it is which verse would reach a wall, which is a
+different and smaller question.
+
 ---
 
 ## What would actually move the needle

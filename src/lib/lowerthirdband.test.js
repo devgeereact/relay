@@ -23,12 +23,10 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { BUILTINS } from './templates.js';
+import { codeOnly } from './codeonly.js';
 
 const src = readFileSync(resolve(process.cwd(), 'src/lib/TemplateRender.svelte'), 'utf8');
-const code = src
-  .replace(/<!--[\s\S]*?-->/g, '')
-  .replace(/\/\*[\s\S]*?\*\//g, '')
-  .replace(/^\s*\/\/.*$/gm, '');
+const code = codeOnly(src);
 
 describe('a lower third paints its band', () => {
   it('panelBg answers for the band case before it can fall through', () => {

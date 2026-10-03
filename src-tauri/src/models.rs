@@ -86,7 +86,63 @@ pub struct ModelInfo {
     /// transcript that thins out, an hour into a service, having done nothing wrong
     /// except pick the model that said it was more accurate.
     pub caution: Option<String>,
+    /// **WHAT ONE DECODE COSTS — 8 s window, ONE machine.** `None` means this model
+    /// has never been measured at all, which is a real answer and must be shown as
+    /// one rather than left blank. See `MEASURED_ON`.
+    ///
+    /// `docs/qa/audits/PERF.md` §1, frozen 2026-08-30.
+    pub decode_ms: Option<u32>,
+    /// **WHAT THE OPERATOR ACTUALLY FEELS**, which is not the decode time: how long
+    /// they wait between one transcript update and the next. `None` where nothing has
+    /// been measured.
+    ///
+    /// `docs/qa/audits/PERF.md` §2. It is a whole number of `audio::HOP_MS` chunker
+    /// hops and must stay one — rule 32: audio arrives in 200 ms lumps and in no
+    /// other size, so a cadence finer than that is unachievable and one between two
+    /// hops costs two. `the_published_cadence_is_a_whole_number_of_chunker_hops`
+    /// holds that against the real constant rather than against a number written
+    /// here.
+    ///
+    /// **Not derived from `decode_ms`, deliberately, and the gap is worth knowing.**
+    /// `ceil(597 / 200)` is three hops; PERF §2 and CLAUDE.md rule 32 both publish
+    /// **four** for `large-v3-turbo`, and the field measured 968 ms p50 — nearly
+    /// five. The published figure sits between the arithmetic and the room, and
+    /// quoting it is honest where re-deriving it would be inventing a fourth answer
+    /// to a question three documents already answer the same way.
+    pub cadence_ms: Option<u32>,
+    /// **WHAT IT COSTS TO GET IT WRONG, measured through the router** — which is the
+    /// only question SPEC sets a bar for (rule 13: the question is never how good the
+    /// transcript looks, it is which verse would reach a wall).
+    ///
+    /// `None` means **never measured**, and that is the single most important value
+    /// in this struct. Three of the five catalogue entries carry it. Until RG-116 this
+    /// field did not exist and the gap was filled with prose — *"hears them more
+    /// accurately"*, *"best choice for African languages"* — assertions nobody had
+    /// evidence for, on the screen where a church picks how well Relay will hear
+    /// their preacher. A sentence that sounds like a measurement is worse than an
+    /// admission, because an operator cannot tell it from one.
+    ///
+    /// Word error rate is still unmeasured in every language and nothing here
+    /// changes that (`docs/LANGUAGES.md`). This is wrong-verse evidence, not accuracy
+    /// over audio.
+    pub accuracy: Option<&'static str>,
+    /// Filled in by `catalog()`: the machine `decode_ms`/`cadence_ms` were measured
+    /// on, present exactly when there is a figure to qualify.
+    ///
+    /// It travels WITH the numbers rather than being a sentence the console keeps of
+    /// its own, so a surface cannot render "5 updates a second" without saying where
+    /// that came from — and `None` cannot be mistaken for "measured everywhere".
+    pub measured_on: Option<&'static str>,
 }
+
+/// The machine every `decode_ms` and `cadence_ms` in this catalogue was measured on.
+///
+/// It is part of the figure, not a footnote. `docs/qa/audits/PERF.md` §5: the same
+/// `large-v3-turbo` that decodes in 597 ms here took **~1710 ms on CPU**, which is
+/// slower than real time and cannot keep up with a sermon at all. A church laptop
+/// without a GPU backend is the case rule 27 exists for, and `caution` is what
+/// speaks to it.
+pub const MEASURED_ON: &str = "an Apple Silicon Mac with graphics acceleration";
 
 /// The catalogue.
 ///
@@ -101,7 +157,7 @@ pub struct ModelInfo {
 /// ── WHY THERE IS MORE THAN `base` HERE ──────────────────────────────────────
 ///
 /// Relay shipped only `base` — the smallest useful whisper — for its entire life,
-/// while `docs/qa/audits/PRODUCT-2026-07-13.md` called African-language accuracy the biggest
+/// while `docs/qa/audits/SUPERSEDED.md` called African-language accuracy the biggest
 /// weakness in the product. Those two facts were never connected, because nothing
 /// had ever measured what a larger model buys. `stt::bench::engine_shootout` is
 /// that measurement, and these are the models it has to choose between.
@@ -122,7 +178,7 @@ const CATALOG: &[ModelInfo] = &[
         // 2026-09-06 figures are in the detail because this is the screen where the
         // choice is actually made, and the operator was previously told the trade in
         // milliseconds only (`stt.rs`, the lag warning).
-        detail: "Understands English plus Yoruba, Swahili and Hausa, including switching between them mid-sentence. Runs on any laptop, and it is the least accurate model offered here: in one real service it heard 5 of 9 spoken references correctly, where the largest model heard 3 of 3 the same morning.",
+        detail: "Understands English plus Yoruba, Swahili and Hausa, including switching between them mid-sentence. Runs on any laptop.",
         url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin",
         sha256: "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe",
         bytes: 147_951_465,
@@ -130,12 +186,32 @@ const CATALOG: &[ModelInfo] = &[
         needs_acceleration: false,
         installed: false,
         caution: None,
+        measured_on: None, // catalog() fills this in beside the figures
+        decode_ms: Some(59),
+        cadence_ms: Some(200),
+        // The figures the row was filed over, both of them, because they disagree in
+        // magnitude and agree in direction and an operator is entitled to both.
+        // FIELD 2026-09-06 is one live service; the bench replay is the same 85.5
+        // minutes of that church's own audio put through this model and `turbo`, so
+        // it is the only comparison where the audio is held still.
+        accuracy: Some(
+            "The least accurate model Relay has measured, and the gap is not small. \
+             In one real service it heard 5 of 9 spoken references correctly — four \
+             wrong verses, against the 5 in 100 this product sets as its limit. \
+             Replayed over 85.5 minutes of the same church's recording it got 4 of 8, \
+             with 3 wrong verses that could have reached a screen; the largest model \
+             got 6 of 8 with 2 on the same audio.",
+        ),
     },
     ModelInfo {
         id: "base.en",
         filename: "ggml-base.en.bin",
         label: "English only",
-        detail: "Slightly sharper on English, but cannot understand any other language.",
+        // "Slightly sharper on English" was the old wording and Relay has never
+        // measured it. What IS certain about this model is the thing it cannot do,
+        // and on a product whose normal case is English mixed mid-sentence with a
+        // local language that is the sentence that decides.
+        detail: "Cannot understand Yoruba, Swahili or Hausa at all — including a single word of one in an English sentence, which is the ordinary way people preach. English only.",
         url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin",
         sha256: "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002",
         bytes: 147_964_211,
@@ -143,12 +219,22 @@ const CATALOG: &[ModelInfo] = &[
         needs_acceleration: false,
         installed: false,
         caution: None,
+        measured_on: None, // catalog() fills this in beside the figures
+        decode_ms: None,
+        cadence_ms: None,
+        accuracy: None,
     },
     ModelInfo {
         id: "small",
         filename: "ggml-small.bin",
         label: "Multilingual, larger",
-        detail: "Understands the same languages as the recommended model but hears them more accurately, especially over a poor microphone. Three times the download, and needs a reasonably quick computer.",
+        // IT SAID "hears them more accurately, especially over a poor microphone".
+        // Nobody has measured that, in any language, over any microphone. The one
+        // attempt returned 1 of 8 and was WITHDRAWN as invalid — it had measured
+        // whisper's language election wandering rather than the model — so this is
+        // the row in the catalogue with the strongest claim and the least evidence.
+        // What IS measured is the cadence, and it is the reason this model matters.
+        detail: "Understands the same languages as the recommended model, and three times the download.",
         url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin",
         sha256: "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",
         bytes: 487_601_967,
@@ -156,12 +242,33 @@ const CATALOG: &[ModelInfo] = &[
         needs_acceleration: false,
         installed: false,
         caution: None,
+        measured_on: None, // catalog() fills this in beside the figures
+        decode_ms: Some(152),
+        cadence_ms: Some(200),
+        // **FOUND NOTHING ON REAL CHURCH AUDIO, AND THE LAG WARNING POINTS HERE.**
+        // First per-model measurement through `stt::bench::engine_shootout`, on 200 s
+        // of a real service with six hand-labelled references, five signal
+        // conditions: `small` **0 of 30**, `base` 2, `large-v3-turbo` 8. This is one
+        // slice of one service on one machine and it is not a ranking — but it is the
+        // only accuracy evidence `small` has, and it does not support the sentence in
+        // `stt.rs` that recommends this model when the decoder falls behind.
+        accuracy: Some(
+            "Found 0 of 30 references on 200 s of real preaching (six references, five \
+             signal conditions) where `large-v3-turbo` found 8 and `base` 2. One slice \
+             of one service — not a ranking, and the only accuracy figure this model has",
+        ),
     },
     ModelInfo {
         id: "large-v3-turbo-q5_0",
         filename: "ggml-large-v3-turbo-q5_0.bin",
         label: "Most accurate that still fits a modest laptop",
-        detail: "The most accurate model, compressed so it downloads and loads in about a third of the space. Best choice for African languages. Works best on a computer with graphics acceleration.",
+        // "Best choice for African languages" was here, and it was an assertion
+        // nobody has ever tested: word error rate has never been measured in any
+        // language (`docs/LANGUAGES.md`), and the quantised build specifically has
+        // never been run through the bench at all. A compressed model is also not
+        // simply a smaller copy of an accurate one — quantisation costs something,
+        // and how much is exactly what nobody here knows.
+        detail: "The largest model, compressed so it downloads and loads in about a third of the space. Works best on a computer with graphics acceleration.",
         url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin",
         sha256: "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2",
         bytes: 574_041_195,
@@ -169,12 +276,16 @@ const CATALOG: &[ModelInfo] = &[
         needs_acceleration: true,
         installed: false,
         caution: None,
+        measured_on: None, // catalog() fills this in beside the figures
+        decode_ms: None,
+        cadence_ms: None,
+        accuracy: None,
     },
     ModelInfo {
         id: "large-v3-turbo",
         filename: "ggml-large-v3-turbo.bin",
         label: "Most accurate",
-        detail: "The best speech recognition Relay can run, uncompressed. A 1.6 GB download, and it needs a fast computer with graphics acceleration to keep up with a live sermon.",
+        detail: "The largest model Relay can run, uncompressed. A 1.6 GB download, and it needs a fast computer with graphics acceleration to keep up with a live sermon.",
         url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin",
         sha256: "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69",
         bytes: 1_624_555_275,
@@ -182,6 +293,20 @@ const CATALOG: &[ModelInfo] = &[
         needs_acceleration: true,
         installed: false,
         caution: None,
+        measured_on: None, // catalog() fills this in beside the figures
+        decode_ms: Some(597),
+        cadence_ms: Some(800),
+        // The best-measured model, stated as a measurement and not as a superlative —
+        // the old `detail` called it "the best speech recognition Relay can run",
+        // which claims something about audio nobody has scored.
+        accuracy: Some(
+            "The most accurate model Relay has measured. In one real service it heard \
+             3 of 3 spoken references correctly with no wrong verse. Replayed over \
+             85.5 minutes of a church's recording it got 6 of 8, with 2 wrong verses \
+             that could have reached a screen, against the recommended model's 4 of 8 \
+             and 3 on the same audio. It also caught both references the live run got \
+             wrong, which the smaller model missed.",
+        ),
     },
 ];
 
@@ -212,6 +337,11 @@ pub fn catalog() -> Vec<ModelInfo> {
                  have tested this one on this computer."
                     .to_string()
             }),
+            // RG-116. The provenance rides with the figure, so no surface can print
+            // "5 transcript updates a second" without saying what that was measured
+            // on — and a model with no figure carries no provenance either, which is
+            // how "never measured" stays distinguishable from "measured here".
+            measured_on: m.decode_ms.map(|_| MEASURED_ON),
             ..m.clone()
         })
         .collect()
@@ -562,12 +692,48 @@ pub fn install_from_file(source: &std::path::Path) -> Result<String, String> {
 
     // Same atomic dance as the download: copy to `.part`, then rename. A copy
     // interrupted half way must never leave a file whisper would try to load.
-    let part = dir.join(format!("{}.part", model.filename));
-    let _ = std::fs::remove_file(&part);
-    std::fs::copy(&src, &part).map_err(|e| format!("Could not copy the model: {e}"))?;
+    //
+    // THE SCRATCH NAME IS UNIQUE PER ATTEMPT — RG-299. It used to be
+    // `<filename>.part`, one path for every invocation, which was safe only because
+    // a synchronous `#[tauri::command]` runs on the macOS main run loop and is
+    // therefore serialised by it. That serialisation was the guarantee, and nothing
+    // said so: the price of it was a 7-second frozen window on a 1.6 GB model
+    // (`tests::what_the_model_flow_costs`), and the moment the command is allowed off
+    // that thread two installs would copy into the same file and `rename` whichever
+    // finished first — a model that passed its checksum as two interleaved halves.
+    //
+    // A unique name removes the dependency instead of documenting it. The `remove_file`
+    // that used to clear the shared path is gone with it: there is nothing to clear,
+    // and it was the line that made a concurrent attempt destructive rather than
+    // merely wasteful.
+    let part = dir.join(format!(
+        "{}.{}-{}.part",
+        model.filename,
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    // AND EVERY EXIT PATH CLEANS IT UP. With one shared name, the next attempt's
+    // `remove_file` was the cleanup; with a unique one there is no next attempt to do
+    // it, so each failure removes its own scratch file. A crash or a kill mid-copy
+    // still leaves one behind, exactly as the download path does, and it is harmless:
+    // `stt::resolve_model` looks for catalogue filenames and `scan_for_models` matches
+    // on the exact byte count, which a partial copy does not have.
+    if let Err(e) = std::fs::copy(&src, &part) {
+        let _ = std::fs::remove_file(&part);
+        return Err(format!("Could not copy the model: {e}"));
+    }
     // Re-hashed at the destination, because the thing that gets loaded is the copy,
     // and a failing USB stick can produce a good read followed by a bad one.
-    let landed = sha256_file(&part)?;
+    let landed = match sha256_file(&part) {
+        Ok(h) => h,
+        Err(e) => {
+            let _ = std::fs::remove_file(&part);
+            return Err(e);
+        }
+    };
     if !landed.eq_ignore_ascii_case(model.sha256) {
         let _ = std::fs::remove_file(&part);
         return Err(
@@ -576,8 +742,10 @@ pub fn install_from_file(source: &std::path::Path) -> Result<String, String> {
                 .into(),
         );
     }
-    std::fs::rename(&part, &final_path)
-        .map_err(|e| format!("Could not finish installing the model: {e}"))?;
+    if let Err(e) = std::fs::rename(&part, &final_path) {
+        let _ = std::fs::remove_file(&part);
+        return Err(format!("Could not finish installing the model: {e}"));
+    }
     println!("models: installed {} from a file", final_path.display());
     Ok(model.id.to_string())
 }
@@ -673,6 +841,257 @@ fn sha256_file(path: &PathBuf) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── RG-116 · PRICING THE TRADE WHERE THE CHOICE IS MADE ───────────────────
+    //
+    // The P0. A church picks a speech model on this catalogue, and what they were
+    // shown was prose: "hears them more accurately", "best choice for African
+    // languages", "the best speech recognition Relay can run". Nobody had measured
+    // any of it. Meanwhile the two things that HAVE been measured — how often the
+    // transcript updates, and how many wrong verses reached a wall — lived in a
+    // frozen audit and a register nobody running a service reads.
+    //
+    // FIELD 2026-09-06: the same morning ran `large-v3-turbo` (3 of 3 correct) and
+    // then `ggml-base` (5 of 9 — four wrong verses, a 44% wrong-verse rate against
+    // SPEC's 5% bar), and the operator switched between them on Relay's own printed
+    // advice, which named milliseconds only.
+
+    /// A catalogue row may state a measured figure or admit it has none. What it may
+    /// not do is imply one in prose.
+    ///
+    /// The three phrases enumerated here are the actual sentences that shipped, not
+    /// a guess at what a bad sentence might look like. A comparative about hearing
+    /// ("more accurate", "sharper", "best") is a claim about word error rate, and
+    /// word error rate has never been measured in any language — `docs/LANGUAGES.md`
+    /// says so and must not be softened. The place to make such a claim is
+    /// `accuracy`, where it has to carry its evidence with it.
+    #[test]
+    fn no_catalogue_row_asserts_an_accuracy_it_cannot_evidence() {
+        // Substrings that only ever appear in an unevidenced comparative. "accurate"
+        // alone is not one: `accuracy` uses it and cites the measurement.
+        const UNEVIDENCED: &[&str] = &[
+            "more accurately",
+            "more accurate",
+            "most accurate",
+            "best speech recognition",
+            "best choice",
+            "sharper",
+            "hears them better",
+        ];
+        for m in CATALOG {
+            let lower = m.detail.to_lowercase();
+            for phrase in UNEVIDENCED {
+                assert!(
+                    !lower.contains(phrase),
+                    "`{}`'s description claims {phrase:?} — that is a word-error-rate \
+                     claim, and word error rate has never been measured in any \
+                     language. Put it in `accuracy` with its evidence, or do not say \
+                     it.",
+                    m.id
+                );
+            }
+        }
+    }
+
+    /// **THE CADENCE IS THE HALF NOBODY WAS TOLD, and it is not a decode time.**
+    ///
+    /// Rule 32 / `docs/qa/audits/PERF.md` §2: the worker's step is a whole number of
+    /// `audio::HOP_MS` chunker hops, because audio arrives in 200 ms lumps and in no
+    /// other size. A figure finer than one hop is unachievable and one between two
+    /// hops costs two, so a published cadence that is not a multiple of the real
+    /// constant is describing a machine that does not exist.
+    ///
+    /// Held against `audio::HOP_MS` itself rather than against 200, so changing the
+    /// hop fails here instead of silently making every figure on this screen wrong.
+    #[test]
+    fn the_published_cadence_is_a_whole_number_of_chunker_hops() {
+        let hop = crate::audio::HOP_MS;
+        let mut priced = 0;
+        for m in CATALOG {
+            let Some(cadence) = m.cadence_ms else {
+                continue;
+            };
+            priced += 1;
+            assert_eq!(
+                cadence % hop,
+                0,
+                "`{}` publishes a {cadence}ms cadence and audio arrives in {hop}ms \
+                 hops — that rate cannot happen",
+                m.id
+            );
+            assert!(
+                m.decode_ms.is_some(),
+                "`{}` prices a cadence with no decode measurement behind it",
+                m.id
+            );
+        }
+        assert!(
+            priced >= 3,
+            "only {priced} models carry a cadence — the scanner has stopped seeing \
+             the catalogue"
+        );
+    }
+
+    /// **`small` IS FREE, AND THE CATALOGUE MUST BE ABLE TO SAY SO.**
+    ///
+    /// PERF §2 calls this the most useful sentence in the document: 152 ms and 59 ms
+    /// both round up to the same single 200 ms hop, so `small` is the larger model at
+    /// the same update rate. It is also the model the in-product lag warning now
+    /// points at (`stt.rs`), so the figure the console shows and the figure that
+    /// advice rests on have to be the same figure.
+    #[test]
+    fn the_larger_model_that_costs_no_cadence_is_visible_as_one() {
+        let get = |id: &str| find(id).expect("a catalogued model");
+        let base = get("base");
+        let small = get("small");
+        let turbo = get("large-v3-turbo");
+        assert_eq!(
+            small.cadence_ms, base.cadence_ms,
+            "`small` and `base` land in the same hop — that is the whole reason \
+             `small` is the model the lag warning recommends"
+        );
+        assert!(
+            small.decode_ms > base.decode_ms,
+            "`small` costs more decode than `base`; if it did not, PERF §2's point \
+             would be a different point"
+        );
+        assert!(
+            turbo.cadence_ms > base.cadence_ms,
+            "`turbo`'s cadence is the cost this row exists to price — a church that \
+             chose it chose a quarter of the update rate and nothing told them"
+        );
+    }
+
+    /// A figure with no provenance is not a figure. `MEASURED_ON` rides with the
+    /// numbers because the same `turbo` that decodes in 597 ms here took ~1710 ms on
+    /// CPU — slower than real time, unable to keep up with a sermon at all — and an
+    /// operator reading "1.25 updates a second" on a church laptop is reading about
+    /// somebody else's machine.
+    #[test]
+    fn a_priced_model_says_what_machine_it_was_priced_on() {
+        for m in catalog() {
+            assert_eq!(
+                m.measured_on.is_some(),
+                m.decode_ms.is_some(),
+                "`{}` has a figure without provenance, or provenance without a \
+                 figure",
+                m.id
+            );
+        }
+    }
+
+    /// **AND THE ADMISSION IS THE POINT.** Two of the five entries have never been
+    /// scored for accuracy. `small` was a third until 2026-09-29, when
+    /// `stt::bench::engine_shootout` scored it on 200 s of real preaching and it found
+    /// **nothing at all** — which is worth more than the admission it replaces, and is
+    /// evidence against the sentence in `stt.rs` that recommends this model when the
+    /// decoder falls behind.
+    ///
+    /// This test exists so that a future pass cannot quietly fill those three in with
+    /// something plausible. If one gains a real measurement, this number moves and
+    /// whoever moves it has to say which bench produced it.
+    #[test]
+    fn the_models_never_scored_are_named_and_the_rest_carry_their_bench() {
+        let unmeasured: Vec<&str> = CATALOG
+            .iter()
+            .filter(|m| m.accuracy.is_none())
+            .map(|m| m.id)
+            .collect();
+        assert_eq!(
+            unmeasured,
+            // `small` LEFT this list on 2026-09-29, and the bench that moved it is
+            // `stt::bench::engine_shootout` over 200 s of service 42 with six
+            // hand-labelled references and five signal conditions: 0 of 30, against
+            // `large-v3-turbo` 8 and `base` 2. One slice, one service, one machine —
+            // which is why the figure on the card says so rather than reading as a
+            // ranking.
+            vec!["base.en", "large-v3-turbo-q5_0"],
+            "the set of never-measured models changed. If one was measured, say \
+             where; if one was filled in without a measurement, do not."
+        );
+        // And the two that ARE scored say so through the router's question — which
+        // verse would reach a wall — rather than through a transcript adjective.
+        for m in CATALOG.iter().filter(|m| m.accuracy.is_some()) {
+            let a = m.accuracy.unwrap();
+            assert!(
+                a.contains(" of "),
+                "`{}`'s accuracy line quotes no count: {a:?}",
+                m.id
+            );
+        }
+    }
+
+    /// HOW LONG DOES THE MODEL FLOW HOLD THE MAIN RUN LOOP — RG-299.
+    ///
+    /// `find_model_files` and `install_model_file` were `#[tauri::command]`s with no
+    /// `async`, so on macOS they ran on the window's run loop: while they worked the
+    /// app was frozen, and no browser harness can see that. `find_model_files` hashes
+    /// any file whose SIZE matches a catalogue entry, and the catalogue's largest
+    /// entry is 1.6 GB; `install_model_file` hashes the source, copies it, and hashes
+    /// the copy.
+    ///
+    /// These are the numbers on this machine rather than a claim about them. Both
+    /// commands are `#[tauri::command(async)]` now, so the cost is a wait and not a
+    /// freeze — the cost itself is unchanged, and a slower disk or a USB stick makes
+    /// it worse.
+    ///
+    /// Reports and asserts nothing about the clock: a bench that failed on a busy
+    /// machine would be deleted within a month.
+    #[test]
+    #[ignore = "measures this machine's disk; needs at least one installed model"]
+    fn what_the_model_flow_costs() {
+        let dir = crate::stt::model_install_dir();
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            eprintln!("no model folder at {} — nothing to measure", dir.display());
+            return;
+        };
+        let mut biggest: Option<(PathBuf, u64, u128)> = None;
+        let mut scan_total = 0u128;
+        for entry in rd.flatten() {
+            let path = entry.path();
+            let Ok(meta) = entry.metadata() else { continue };
+            if !meta.is_file() || meta.len() < 1_000_000 {
+                continue;
+            }
+            let t = std::time::Instant::now();
+            let _ = sha256_file(&path);
+            let ms = t.elapsed().as_millis();
+            scan_total += ms;
+            let mb = meta.len() as f64 / 1_048_576.0;
+            println!(
+                "  sha256 {:<28} {:>8.0} MB  {:>6} ms  ({:.0} MB/s)",
+                path.file_name().unwrap_or_default().to_string_lossy(),
+                mb,
+                ms,
+                mb / (ms as f64 / 1000.0).max(0.001),
+            );
+            if biggest.as_ref().is_none_or(|(_, n, _)| meta.len() > *n) {
+                biggest = Some((path, meta.len(), ms));
+            }
+        }
+        let Some((big, bytes, hash_ms)) = biggest else {
+            eprintln!("no model files in {} — nothing to measure", dir.display());
+            return;
+        };
+        println!("  find_model_files, every size-match present: {scan_total} ms");
+        // The third cost in `install_from_file`, between the two hashes.
+        let tmp = std::env::temp_dir().join(format!("relay-model-copy-{}", std::process::id()));
+        let t = std::time::Instant::now();
+        let copied = std::fs::copy(&big, &tmp).is_ok();
+        let copy_ms = t.elapsed().as_millis();
+        let _ = std::fs::remove_file(&tmp);
+        if copied {
+            println!(
+                "  fs::copy {:>8.0} MB  {copy_ms} ms",
+                bytes as f64 / 1_048_576.0
+            );
+            println!(
+                "  install_model_file for it = hash {hash_ms} + copy {copy_ms} + hash \
+                 {hash_ms} = {} ms",
+                hash_ms * 2 + copy_ms
+            );
+        }
+    }
 
     /// A FILE IS IDENTIFIED BY ITS CONTENT, NOT ITS NAME.
     ///
@@ -1085,6 +1504,38 @@ mod config_boots {
                 || body.to_lowercase().contains("this computer"),
             "the usage string must say what happens to the audio — it is the one thing \
              a church actually wants to know: {body:?}"
+        );
+
+        // AND THE SECOND TCC STRING, which fails more quietly than the first.
+        //
+        // macOS gates `~/Documents` the same way it gates the microphone, but the
+        // failure is worse to diagnose: a hardened-runtime build without this key
+        // does not get a refusal it can report, the directory simply reads as
+        // EMPTY. So `find_propresenter` would answer "no library here" on a machine
+        // with 726 songs in it, and nothing in any log would say why. Same trap as
+        // rule 17, same invisibility under `tauri dev`, same repair.
+        let docs = plist
+            .split("NSDocumentsFolderUsageDescription")
+            .nth(1)
+            .expect(
+                "no NSDocumentsFolderUsageDescription — ~/Documents reads as EMPTY under the \
+                 hardened runtime, so finding a ProPresenter library silently finds nothing",
+            )
+            .split("<string>")
+            .nth(1)
+            .and_then(|s| s.split("</string>").next())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        assert!(
+            docs.len() > 40,
+            "the Documents usage string is missing or too thin to explain anything: {docs:?}"
+        );
+        // It must say what Relay wants in there. "Relay needs access to Documents"
+        // tells a volunteer nothing they can act on.
+        assert!(
+            docs.to_lowercase().contains("propresenter") || docs.to_lowercase().contains("song"),
+            "the Documents usage string must say what Relay is looking for: {docs:?}"
         );
     }
 }

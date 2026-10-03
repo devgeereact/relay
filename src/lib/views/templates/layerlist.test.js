@@ -417,6 +417,18 @@ describe('S1 · drag to reorder, driven through the arrows that already work', (
   });
 });
 
+/**
+ * Readability moved to the inspector's STYLE tab (RG-231).
+ *
+ * It was the biggest thing in the LEFT column and the least used, folded under a
+ * list about something else entirely. Nothing about the panel changed — only
+ * which tab it sits behind — so every assertion below is untouched.
+ */
+async function openStyle() {
+  [...host.querySelectorAll('.te-scope button')].find((b) => b.textContent.trim() === 'Style')?.click();
+  await settle();
+}
+
 describe('S1 · the readability panel folds, and its one visible line is a real status line', () => {
   const withStyle = (style) => ({ ...structuredClone(TEMPLATE), style });
 
@@ -442,6 +454,7 @@ describe('S1 · the readability panel folds, and its one visible line is a real 
   it('starts folded — the essay is one row until it is asked for', async () => {
     mountStyled({});
     await settle();
+    await openStyle();
     const toggle = host.querySelector('.te-legtoggle');
     expect(toggle, 'no readability heading').toBeTruthy();
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
@@ -452,10 +465,27 @@ describe('S1 · the readability panel folds, and its one visible line is a real 
   it('and opens to exactly what was there before, caveat included', async () => {
     mountStyled({});
     await settle();
+    await openStyle();
     host.querySelector('.te-legtoggle').click();
     await settle();
     expect(host.querySelector('.te-legtoggle').getAttribute('aria-expanded')).toBe('true');
-    expect([...host.querySelectorAll('.te-legrow')].length).toBe(3);
+    // FOUR ROWS, and the fourth is deliberate rather than a leak. The subject of
+    // this test is the FOLD — that opening the disclosure gives back everything
+    // the panel used to render unconditionally — and a bare count could not say
+    // which rows those were. So the rows are named: the three this test was
+    // written for, plus the countdown row added with requirement 12
+    // (`legibility.js::checkCountdownWarn`), which appears because this fixture
+    // declares no `layout.shows` and `templateShows` reads an absent list as
+    // "shows everything" — the same reader `TemplateRender` uses to decide
+    // whether the digits reach the screen at all. A template that lists its kinds
+    // and omits `countdown` gets three rows, which `countdowntype.test.js` holds
+    // across the whole shelf.
+    expect([...host.querySelectorAll('.te-legrow b')].map((b) => b.textContent)).toEqual([
+      'Verse',
+      'Reference',
+      'From the back',
+      'Countdown, last minute',
+    ]);
     expect(host.querySelector('#te-scr')).toBeTruthy();
     expect(host.querySelector('#te-back')).toBeTruthy();
     expect(host.textContent).toMatch(/Neither has been checked against a projector/i);
@@ -468,6 +498,7 @@ describe('S1 · the readability panel folds, and its one visible line is a real 
     // precisely the defect the rule names.
     mountStyled({ background: '#000000', verseColor: '#0a0a0a', refColor: '#0b0b0b' });
     await settle();
+    await openStyle();
     const bad = host.querySelector('.te-legsum');
     expect(bad.textContent.trim()).toMatch(/to look at/);
     expect(bad.classList.contains('bad')).toBe(true);
@@ -475,6 +506,7 @@ describe('S1 · the readability panel folds, and its one visible line is a real 
     host.remove();
     mountStyled({ background: '#000000', verseColor: '#ffffff', refColor: '#ffffff' });
     await settle();
+    await openStyle();
     const ok = host.querySelector('.te-legsum');
     expect(ok.textContent.trim()).not.toMatch(/to look at/);
     expect(ok.classList.contains('bad')).toBe(false);
@@ -486,6 +518,7 @@ describe('S1 · the readability panel folds, and its one visible line is a real 
     // nothing on screen able to turn them off.
     mountStyled({});
     await settle();
+    await openStyle();
     host.querySelector('.te-legtoggle').click();
     await settle();
     [...host.querySelectorAll('.te-legbtn')][0].click();
@@ -517,26 +550,36 @@ describe('S1 · the inspector opens on the selected object, not on the template'
 
   const sections = () => [...host.querySelectorAll('.te-designbody .te-sec')].map((h) => h.textContent.trim());
 
-  it('puts the object\'s own groups first and the template\'s facts last', async () => {
+  it('opens on the object, and the template is not in the column at all', async () => {
+    // RG-217 finished what this case started. The panel already opened on the
+    // object; the template's facts still sat at the foot of the SAME scroller,
+    // separated by a rule — and a rule is not a boundary an operator scrolling a
+    // long column notices. They are behind their own tab now, so "last" became
+    // "elsewhere" and the assertion changed shape with it.
     mount();
     await settle();
     rowFor('Plate').click();
     await settle();
     const s = sections();
-    expect(s[0], 'the panel still opens on the template').not.toBe('Template');
-    // `Template` is the trailing GROUP, not necessarily the last heading in it:
-    // task 8 gave `Content this template renders` its own `<h3 class="te-sec">`
-    // nested inside the Template group, so the group's last two headings are
-    // `Template` then its own subheading, in that order.
-    expect(s.slice(s.indexOf('Template')), 'the template group is not at the foot').toEqual([
-      'Template',
-      'Content this template renders',
-    ]);
-    expect(s).toContain('Position');
+    expect(s, 'the template is still a section of a layer').not.toContain('Template');
+    // The KIND's own controls are the Style tab's since RG-231 — Content answers
+    // what the object is, Style how it looks.
+    await openStyle();
+    expect(sections()).toContain('Shape');
+    // The geometry left this column entirely in RG-230: it has its own tab now,
+    // beside the stacking order, rather than being a shut group under everything
+    // else. The object column is the object's own reading.
+    expect(host.textContent).not.toMatch(/Where does it sit\?/);
+    expect(
+      [...host.querySelectorAll('.te-scope button')].some((b) => b.textContent.trim() === 'Position'),
+      'the geometry went nowhere',
+    ).toBe(true);
   });
 
-  it('and the template controls are all still there, in one section', async () => {
+  it('and the template controls are all still there, behind the Template tab', async () => {
     mount();
+    await settle();
+    [...host.querySelectorAll('.te-scope button')].find((b) => /template/i.test(b.textContent)).click();
     await settle();
     expect(host.querySelector('#te-name'), 'the template name field went missing').toBeTruthy();
     // ONE register here now, not two. `Used for` — the global content-look
@@ -612,6 +655,7 @@ describe('S1 · the alignment strip writes percentages, and only where they mean
   it('does not share a name with the inspector row that aligns the words inside the object', async () => {
     mount();
     await settle();
+    await openStyle();
     rowFor('Verse').click();
     await settle();
 
