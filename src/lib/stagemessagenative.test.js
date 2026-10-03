@@ -276,17 +276,33 @@ describe('a quiet word and an alarm are different things — DECISIONS §116', (
 describe('the quiet word is SEEN on the big screen as well — RG-268', () => {
   const RENDER = readFileSync(resolve(process.cwd(), 'src/lib/TemplateRender.svelte'), 'utf8');
   const STYLE = RENDER.slice(RENDER.indexOf('<style>'));
-  /** The CSS block of one selector, or '' if it is gone. */
+  /**
+   * The CSS block of one selector. THROWS rather than returning '' when the
+   * selector is gone, because most of the assertions below are negative
+   * (`.not.toContain`, `.not.toMatch`) and every one of them passes vacuously
+   * on an empty string — so renaming a class would have turned this whole block
+   * green while the big screen painted anything it liked. The guard is in the
+   * helper and NOT at the call sites, per rule 36: a check added at six call
+   * sites is the one that will be missing from the seventh.
+   *
+   * It escapes every regex metacharacter rather than only `.`, which is what
+   * CodeQL flags as incomplete sanitization: a selector carrying a `[attr]`,
+   * a `+` or a `>` would otherwise be compiled as a PATTERN instead of matched
+   * as a name, and the miss would land as a vacuous pass, not an error.
+   */
   const rule = (sel) => {
-    const m = STYLE.match(new RegExp(`${sel.replace(/[.]/g, '\\.')}\\s*\\{([^}]*)\\}`));
-    return m ? m[1] : '';
+    const escaped = sel.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&');
+    const m = STYLE.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`));
+    if (!m) {
+      throw new Error(`no CSS rule for '${sel}' in TemplateRender.svelte — renamed or removed`);
+    }
+    return m[1];
   };
 
   it('the words are the red the operator asked for, not the grey they missed', () => {
     // The whole of the operator's complaint in one assertion. `color: #fff` on a
     // black plate is what the screenshot showed.
     const r = rule('.lmsg-v');
-    expect(r, 'there is no element carrying the words on their own').not.toBe('');
     expect(r, 'the words are still painted in a colour the preacher missed').toMatch(
       /var\(--v-red/,
     );
@@ -296,7 +312,6 @@ describe('the quiet word is SEEN on the big screen as well — RG-268', () => {
     // A border the operator can see from a platform, rather than the hairline
     // `rgba(255,255,255,.22)` that read as part of the slide.
     const r = rule('.lmsg');
-    expect(r).not.toBe('');
     expect(r, 'no left rule — the strip is still an unmarked plate').toMatch(
       /border-left:[^;]*var\(--v-red/,
     );
