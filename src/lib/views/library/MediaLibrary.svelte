@@ -34,12 +34,19 @@
   import Loading from '../../ui/Loading.svelte';
   import { humanError } from '../../errors.js';
   import { safeMode } from '../../boot/boot.js';
-  import { live, screenBlack, rehearsing, background } from '../../stores/capture.js';
+  import {
+    live,
+    screenBlack,
+    rehearsing,
+    background,
+    stageMedia,
+  } from '../../stores/capture.js';
   import {
     listMedia,
     deleteMedia,
     fireMedia,
     showBackground,
+    sendStageMedia,
     localIp,
     readErrors,
   } from '../../stores/capture.js';
@@ -189,6 +196,42 @@
    * operator watching a wall that did not change.
    */
   let settingBg = 0;
+  /**
+   * PUT IT ON THE PREACHER'S SCREEN, or take it off.
+   *
+   * A different thing from a background and the hint beside it says so: a
+   * backdrop goes behind the words on every screen, this goes on ONE screen, for
+   * ONE person, and a congregation never sees it.
+   *
+   * Documents are refused here as well as in the engine. The engine's refusal is
+   * the one that matters; this one stops the operator pressing a control that was
+   * always going to say no.
+   */
+  let settingStage = 0;
+  async function toStage(m) {
+    if (!m || m.kind === 'document' || missing[m.id] || $safeMode) return;
+    settingStage = m.id;
+    error = '';
+    msg = '';
+    try {
+      await sendStageMedia(m.id);
+      msg = `${m.filename} is on the preacher's screen — scripture will cover it`;
+    } catch (e) {
+      error = humanError(e);
+    }
+    settingStage = 0;
+  }
+  async function offStage() {
+    error = '';
+    msg = '';
+    try {
+      await sendStageMedia(null);
+      msg = "The preacher's screen is clear";
+    } catch (e) {
+      error = humanError(e);
+    }
+  }
+
   async function setAsBackground(m) {
     if (m.kind === 'document' || missing[m.id] || $safeMode) return;
     settingBg = m.id;
@@ -335,6 +378,30 @@
             class="r-btn sm ghost"
             disabled={!$background}
             on:click={clearBackgroundNow}>Clear background</button>
+        </div>
+        <!-- NO APOSTROPHE IN THE `title` TEMPLATE LITERAL BELOW.
+             `scripts/qa-inventory.mjs` scans this file as text, and an apostrophe
+             inside a `${}` template literal in an attribute makes it lose the rest
+             of the tag — so a button with a perfectly good `on:click` was reported
+             as having no handler. The same class of trap as the opening tag that
+             cannot be written inside a comment. Reworded rather than worked
+             around, because "on the stage screen" is the clearer label anyway. -->
+        <p class="ml-hint">
+          A slide goes to the preacher's screen only. Scripture covers it while a
+          reading is up and it comes back when the reading is cleared.
+        </p>
+        <div class="ml-bgrow">
+          <button
+            class="r-btn sm"
+            disabled={!selectedPicture || settingStage === selectedPicture?.id || $safeMode}
+            title={selectedPicture
+              ? `Put ${selectedPicture.filename} on the stage screen`
+              : 'Pick a picture in the grid first'}
+            on:click={() => toStage(selectedPicture)}>Send to stage</button>
+          <button
+            class="r-btn sm ghost"
+            disabled={$stageMedia == null}
+            on:click={offStage}>Take off stage</button>
         </div>
         <p class="ml-hint">
           Import handles pictures, video and documents. A document can be stored

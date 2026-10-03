@@ -37,6 +37,7 @@
     saveTemplateQuiet,
     snapshotTemplateVersion,
     serviceLock,
+    rehearsing,
     deleteTemplate,
     listOutputChannels,
     exportTemplate,
@@ -392,8 +393,29 @@
   // Fire a sample verse to the LIVE screens using the selected template (Decision
   // §26). A real fire — the operator clears it with Esc. testErr shows a failure.
   let testErr = '';
+  // TWO PRESSES, AND NONE DURING A SERVICE (RG-189, rule 41). This fired John
+  // 3:16 to every live output in one unguarded click from a browsing workspace.
+  // The first press arms and names what the second will do; the arm expires on
+  // its own so a control cannot sit cocked. While a service is being recorded the
+  // control is disabled with the reason — unless rehearsal is on, the one state
+  // in which nothing here can reach a congregation (DECISIONS §18).
+  let testArmed = false;
+  let testArmTimer = null;
+  $: testHeld = !!$serviceLock?.engaged && !$rehearsing;
+  function disarmTest() {
+    testArmed = false;
+    if (testArmTimer) clearTimeout(testArmTimer);
+    testArmTimer = null;
+  }
   async function testOnScreens() {
     testErr = '';
+    if (testHeld) return;
+    if (!testArmed) {
+      testArmed = true;
+      testArmTimer = setTimeout(disarmTest, 6000);
+      return;
+    }
+    disarmTest();
     try {
       await testTemplateOnOutputs(sel.id);
     } catch (e) {
@@ -766,10 +788,15 @@
             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
             Full screen
           </button>
-          <button class="r-btn ghost sm" on:click={testOnScreens} disabled={!$capture.available}
-            title="Fires sample scripture to the live screens using this template — clear it with Esc.">
+          <button class="r-btn ghost sm" class:armed={testArmed} on:click={testOnScreens} disabled={!$capture.available || testHeld}
+            aria-pressed={testArmed}
+            title={testHeld
+              ? 'Held back while a service is being recorded. Turn on Rehearsal to test without reaching the congregation.'
+              : testArmed
+                ? 'Press again to put John 3:16 on the live screens with this template. Esc clears it.'
+                : 'Press twice to fire sample scripture to the live screens using this template — clear it with Esc.'}>
             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3v18l15-9L5 3Z"/></svg>
-            Test on screens
+            {testArmed ? 'Fire John 3:16 to the screens?' : 'Test on screens'}
           </button>
         </div>
         {#if testErr}<p class="tg-testerr" role="alert">{testErr}</p>{/if}

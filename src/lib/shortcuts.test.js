@@ -460,3 +460,44 @@ describe('the cheatsheet must not lie', () => {
     }
   });
 });
+
+// 2026-09-21 · Live D1. The `[role=dialog]` guard lived INSIDE the Escape branch,
+// so `A`, `D`, the arrows and Space kept acting on the view underneath an open
+// dialog. Opening "Why this match?" on the third claim and pressing `A` accepted
+// the FIRST claim — the keyboard half of the bug `Live.svelte` had fixed for the
+// buttons. `→` was worse: it stepped the plan while the operator read a panel.
+describe('context keys yield to an open dialog', () => {
+  let clearScreens, blackScreen, teardown, ctx;
+
+  beforeEach(() => {
+    document.body.innerHTML = '<div role="dialog">why this match?</div>';
+    cheatsheet.set(false);
+    ctx = { accept: vi.fn(), dismiss: vi.fn(), next: vi.fn(), prev: vi.fn() };
+    registerContext(ctx);
+    clearScreens = vi.fn();
+    blackScreen = vi.fn();
+    teardown = installShortcuts({ clearScreens, blackScreen });
+  });
+  afterEach(() => teardown?.());
+
+  it('A, D, the arrows and Space act on nothing while a dialog is open', () => {
+    for (const key of ['a', 'd', 'ArrowRight', 'ArrowLeft', 'PageDown', 'PageUp', ' ']) press(key);
+    expect(ctx.accept).not.toHaveBeenCalled();
+    expect(ctx.dismiss).not.toHaveBeenCalled();
+    expect(ctx.next).not.toHaveBeenCalled();
+    expect(ctx.prev).not.toHaveBeenCalled();
+  });
+
+  it('but B is a panic key and still blacks the room', () => {
+    press('b');
+    expect(blackScreen).toHaveBeenCalledOnce();
+  });
+
+  it('and with the dialog gone the keys come back', () => {
+    document.body.innerHTML = '';
+    press('a');
+    press('ArrowRight');
+    expect(ctx.accept).toHaveBeenCalledOnce();
+    expect(ctx.next).toHaveBeenCalledOnce();
+  });
+});

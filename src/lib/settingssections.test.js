@@ -29,6 +29,7 @@ import path from 'node:path';
 // this suite on Node 20, 22 and 24 precisely because runtime differences have
 // bitten here before.
 import { CONTENT_KINDS } from './layers.js';
+import { codeOnly } from './codeonly.js';
 
 const ROOT = path.resolve(__dirname, '../..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
@@ -45,11 +46,7 @@ const STYLE = SRC.slice(SRC.indexOf('<style>'));
 // sentences reports the removed control as still present, which is a false
 // finding about a fix, and the fix is to scan what renders rather than to stop
 // writing the explanation down.
-const strip = (s) =>
-  s
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^\s*\/\/.*$/gm, '');
+const strip = (s) => codeOnly(s);
 const CODE = strip(SRC);
 const MARKUP_ONLY = strip(MARKUP);
 /** The `<script>` block with its commentary removed — see the note above. */
@@ -130,7 +127,7 @@ describe('§11 · eight sections, in the order an operator needs them', () => {
       return MARKUP_ONLY.slice(i, after.length ? after[0] : MARKUP_ONLY.length);
     };
     // General's five rows.
-    expect(sectionOf('ready'), 'safe mode').toMatch(/aria-label="Safe mode"/);
+    expect(sectionOf('ready'), 'safe mode').toMatch(/label="Safe mode"/);
     expect(sectionOf('ready'), 'screens at launch').toMatch(/Screens at launch/);
     expect(sectionOf('room'), 'service length').toMatch(/aria-label="Service length in minutes"/);
     expect(sectionOf('start'), 'application language').toMatch(/aria-label="Application language"/);
@@ -291,10 +288,8 @@ describe('acceptance 1 · no setting writes a preference nothing reads', () => {
     // `[^<]`, not `[^>]`: an arrow function in `on:click` carries a `>`, so a
     // scanner bounded by the first `>` stops in the middle of the handler and
     // reads a truncated tag. Attributes contain no `<`, so the close tag is the
-    // honest boundary.
-    const switches = [...MARKUP_ONLY.matchAll(/<button\b[^<]*?role="switch"[^<]*?><\/button>/g)].map(
-      (m) => m[0],
-    );
+    // honest boundary — `/>` since these went through `ui/Switch` (RG-168).
+    const switches = [...MARKUP_ONLY.matchAll(/<Switch\b[^<]*?\/>/g)].map((m) => m[0]);
     // The guard on the instrument: a scanner that finds nothing passes anything.
     expect(switches.length, 'Settings renders at least one switch').toBeGreaterThan(0);
     for (const s of switches) {
@@ -321,6 +316,15 @@ describe('acceptance 1 · no setting writes a preference nothing reads', () => {
     expect(STYLE).not.toMatch(/\.s-toggle\{/);
     expect(STYLE).not.toMatch(/\.s-knob\{/);
     expect(APPCSS).toMatch(/\.r-switch\{[^}]*width:38px;\s*height:21px/);
+    // …and the page reaches it through the component rather than by remembering
+    // the class, which is the same move the buttons made (RG-168). A raw
+    // `.r-switch` here is a switch that can forget `role`, `aria-checked` or the
+    // reason it is disabled — and one of the three did forget the last of them.
+    expect(
+      MARKUP_ONLY,
+      'a hand-rolled .r-switch is back — use ui/Switch, which carries the reason',
+    ).not.toMatch(/<button\b[^<]*class="r-switch"/);
+    expect(SCRIPT).toMatch(/import Switch from '\.\.\/ui\/Switch\.svelte'/);
   });
 
   // ── E1 · §12 · ONE INSTRUMENT, AND IT IS ACTUALLY USED ────────────────────
@@ -348,19 +352,21 @@ describe('acceptance 1 · no setting writes a preference nothing reads', () => {
 
     for (const b of BINARY) {
       it(`${b.label} is a switch, not a sentence on a button`, () => {
-        // NOT `[^>]*` for the attributes: an arrow function contains a `>`, so
-        // a tag scanner written that way stops at `() =` and silently reports
-        // that a switch has no handler. It ends at `></button>`, which is what
-        // actually closes one of these.
+        // THROUGH THE COMPONENT since 2026-09-21 (RG-168). `role`, `aria-checked`
+        // and `class="r-switch"` moved into `ui/Switch` and are asserted there
+        // (`uikit.test.js`), which is the point of it: three call sites each had
+        // to remember all three, and the one that mattered most forgot the
+        // reason a disabled switch owes the operator.
+        //
+        // NOT `[^>]*` for the attributes: an arrow function contains a `>`, so a
+        // tag scanner written that way stops at `() =` and silently reports that
+        // a switch has no handler. It ends at `/>`, which is what closes one of
+        // these now.
         const sw = MARKUP_ONLY.match(
-          new RegExp(`<button\\b[^<]*?aria-label="${b.label}"[^<]*?></button>`),
+          new RegExp(`<Switch\\b[^<]*?label="${b.label}"[^<]*?/>`),
         )?.[0];
         expect(sw, `no switch labelled “${b.label}”`).toBeTruthy();
-        // The shared instrument from `app.css`, never a local one.
-        expect(sw).toMatch(/class="r-switch"/);
-        // Announced as a switch, and its state readable without sight.
-        expect(sw).toMatch(/role="switch"/);
-        expect(sw).toMatch(/aria-checked=\{/);
+        expect(sw).toMatch(/checked=\{/);
         expect(sw).toMatch(new RegExp(`on:click=[^<]*${b.handler}`));
       });
     }
@@ -482,11 +488,13 @@ describe('acceptance 2 · the update line still reports the CHANNEL', () => {
   });
 
   // The mirror of the assertion above: `.s-netbad` → rose is pinned, but
-  // nothing pinned `.s-netwarn` → amethyst, so recolouring it to amber (rule
+  // nothing pinned `.s-netwarn`'s colour, so recolouring it to amber (rule
   // 18's colour reserved for ON AIR, on a page that is never on air) would
-  // leave every other test green.
-  it('the caution class is amethyst, not the colour reserved for ON AIR', () => {
-    expect(STYLE).toMatch(/\.s-netwarn\{[^}]*--v-amethyst/);
+  // leave every other test green. It was amethyst until 2026-09-21, borrowed
+  // because the palette had no caution ink; it wears `--v-caution` now (§111).
+  it('the caution class is the caution ink, not the colour reserved for ON AIR', () => {
+    expect(STYLE).toMatch(/\.s-netwarn\{[^}]*--v-caution/);
+    expect(STYLE).not.toMatch(/\.s-netwarn\{[^}]*--v-amber/);
   });
 });
 
@@ -940,7 +948,7 @@ describe('a Settings control says which of its outcomes happened', () => {
     expect(
       MARKUP_ONLY,
       'An inline amber in Settings. Amber means ON AIR; use .s-netbad (rose, a ' +
-        'failure) or .s-netwarn (amethyst, a caution).',
+        'failure) or .s-netwarn (the caution ink).',
     ).not.toMatch(/--v-amber/);
   });
 
@@ -1036,7 +1044,16 @@ describe('a Settings control says which of its outcomes happened', () => {
     // The declaration is not a write; every assignment after it must be one.
     const writes = SCRIPT_ONLY.match(/(?<!let )savedDsn\s*=/g) ?? [];
     expect(writes.length, 'savedDsn is written in more than one place').toBe(1);
-    expect(SCRIPT_ONLY).toMatch(/function acceptCrash\(landed\)[\s\S]{0,160}savedDsn = landed/);
+    // 400, not 160, and the number moved with the stripper rather than with the
+    // code (RG-169). `codeOnly` BLANKS a comment instead of deleting it, so every
+    // offset and line number in the result still matches the real file — which is
+    // the whole reason it exists, and which means a bounded window now has to span
+    // the comment's footprint as well as its absence. The three-line guard comment
+    // inside `acceptCrash` is 266 characters of that footprint. Measured, not
+    // guessed: widen this when the function grows, and do not widen it to make a
+    // failure go away, because the bound is what stops this matching a
+    // `savedDsn = landed` somewhere else entirely.
+    expect(SCRIPT_ONLY).toMatch(/function acceptCrash\(landed\)[\s\S]{0,400}savedDsn = landed/);
   });
 });
 
@@ -1167,13 +1184,12 @@ describe('the Update status row does not let its own sentence eat the name', () 
 // as still in progress. That is the precedence the component fixes once.
 describe('the component kit, and what adopting it buys', () => {
   it('no button on this page is hand-rolled any more', () => {
-    // `.r-switch` is deliberately NOT in this claim: §12's one instrument is a
-    // switch, `src/lib/ui/` publishes no `Switch`, and hand-writing a `title` at
-    // each call site is the drift §12 exists to stop — this file already asserts
-    // that Settings defines no switch of its own. So the gap is NAMED rather than
-    // glossed: RG-166 files the one measured instance (Send crash reports,
-    // disabled on `!$capture.available` with nothing said) and what closing it
-    // would take.
+    // `.r-switch` WAS deliberately outside this claim, and the exclusion cited
+    // RG-166 — a row about a countdown painting over a live camera. The row it
+    // meant is RG-168, and a citation that resolves to the wrong thing is worse
+    // than an uncited claim: it reads as evidence. Both halves are closed now.
+    // `ui/Switch` exists, the three switches go through it, and the assertion in
+    // *"Settings defines no switch of its own"* holds the absence of a raw one.
     const raw = [...MARKUP_ONLY.matchAll(/<button\b[^>]*class="([^"]*)"/g)]
       .map((m) => m[1])
       .filter((c) => /\br-btn\b/.test(c));
@@ -1181,6 +1197,23 @@ describe('the component kit, and what adopting it buys', () => {
       [],
     );
     expect(MARKUP_ONLY.match(/<Button\b/g).length).toBeGreaterThan(15);
+  });
+
+  it('and every disabled SWITCH says why as well — RG-168, the other half', () => {
+    // The gap the button half left open. `Send crash reports` is the measured
+    // instance: `disabled={!$capture.available || !!crashReadFailed}` on a raw
+    // `.r-switch` with no `title` and no `aria-describedby`, on the one control
+    // that decides whether anything leaves this machine.
+    const switches = [...MARKUP_ONLY.matchAll(/<Switch\b[\s\S]*?\/>/g)].map((m) => m[0]);
+    // FIVE since 2026-09-25: `Paraphrase must echo the verse` joined `Follow the
+    // reader` (2026-09-23, DECISIONS §118), safe mode, latency and crash reports.
+    // The count is exact rather than a floor because its job is catching a scanner
+    // that quietly stopped seeing them.
+    expect(switches.length, 'no switches found at all — the scanner narrowed').toBe(5);
+    const silent = switches
+      .filter((b) => /\bdisabled(?![-\w])/.test(b) && !/disabledReason=/.test(b))
+      .map((b) => b.replace(/\s+/g, ' ').slice(0, 80));
+    expect(silent, 'a disabled switch owes the operator a reason').toEqual([]);
   });
 
   it('and every disabled button says why, through the component that reaches both channels', () => {
@@ -1228,4 +1261,31 @@ describe('the component kit, and what adopting it buys', () => {
       /\{:else if !langsAsked\}/,
     );
   });
+
+  // S13 (2026-09-21): which BUILD is running is a fact the field audit could not
+  // recover — a version is shared by every build of a branch. The marker sits
+  // beside the version on This machine, from the one command that carries it.
+  it('This machine names the build beside the version (S13)', () => {
+    expect(MARKUP_ONLY).toMatch(/rw-nvk">Version<[\s\S]{0,400}\{buildMarker/);
+    expect(SCRIPT).toMatch(/buildMarker\s*=\s*await\s+getBuildMarker\(\)/);
+  });
+
+  // RG-50 OPTION TWO (2026-09-21): a licensed Bible cannot be bundled, so a church
+  // brings its own file. The control lives beside the translation list; the
+  // delete is two presses; the bundled two cannot be deleted from here at all.
+  it('Scripture offers a Bible import beside the translation list, and a two-press delete for an imported one', () => {
+    const tr = MARKUP_ONLY.slice(
+      MARKUP_ONLY.indexOf('<div class="rw-group">Bible translations</div>'),
+      MARKUP_ONLY.indexOf('<div class="rw-group">Language coverage</div>'),
+    );
+    expect(tr).toMatch(/type="file"[^>]*accept="\.json[^"]*"/);
+    expect(tr).toMatch(/Import a Bible/);
+    expect(tr, 'the delete must be armed first').toMatch(/trDeleteArmed === tr\.id/);
+    expect(tr, 'the bundled two are not deletable from here').toMatch(/!isBundled\(tr\)/);
+    expect(SCRIPT).toMatch(/await importTranslation\(/);
+    expect(SCRIPT).toMatch(/await deleteTranslation\(/);
+    // The footer no longer says "Only the KJV is bundled".
+    expect(tr).not.toMatch(/Only public-domain <b>KJV<\/b> is bundled/);
+  });
 });
+

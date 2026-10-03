@@ -1,6 +1,8 @@
 // THE TIMER RUNS BARE — who supplies the words beside the clock.
 //
-// `Dock.svelte` hard-coded them. Every countdown an operator started from the
+// `Dock.svelte` hard-coded them (the transport has since moved to
+// `views/Live.svelte`; the defect and the fix are unchanged). Every countdown an
+// operator started from the
 // console said "Service begins in", and "Welcome" at zero, and no interface
 // anywhere in Relay could type anything else. The words are PAYLOAD, not
 // template: they ride in `content.reference` (`main::start_countdown`) and a
@@ -72,6 +74,11 @@ describe('the store invents no words for a caller that supplies none', () => {
     // it: this test's claim is that the store INVENTS nothing, and `null` is what
     // "nobody chose a warning threshold" looks like. Loosening the equality to
     // let an unexamined field through would retire the claim to save the test.
+    //
+    // `channels` joined it the same way (RG-161), and is named here for the same
+    // reason. `null` is every screen, which is what a caller that named none
+    // means; `[]` would be no screen, which is the opposite. See
+    // `cuechannels.test.js`.
     expect(startArgs()).toEqual({
       minutes: 5,
       label: '',
@@ -79,6 +86,7 @@ describe('the store invents no words for a caller that supplies none', () => {
       templateId: null,
       warnMs: null,
       untilMs: null,
+      channels: null,
     });
   });
 
@@ -94,53 +102,8 @@ describe('the store invents no words for a caller that supplies none', () => {
       templateId: 7,
       warnMs: null,
       untilMs: null,
+      channels: null,
     });
-  });
-});
-
-// ── 2 · THE DOCK ────────────────────────────────────────────────────────────
-//
-// Reintroduce by putting the two constants back at `Dock.svelte`'s `press`:
-//   startCountdown(r.broadcastMs / 60_000, 'Service begins in', 'Welcome')
-describe('the dock starts a bare timer', () => {
-  let host;
-  let app;
-
-  beforeEach(() => {
-    invoke.mockReset();
-    invoke.mockImplementation((cmd) => {
-      if (cmd === 'list_templates') return Promise.resolve([]);
-      return Promise.resolve(null);
-    });
-    cap.live.set(null);
-    cap.stageAlert.set(null);
-    cap.capture.update((s) => ({ ...s, available: true }));
-    cap.templates.set([]);
-  });
-
-  afterEach(() => {
-    app?.$destroy();
-    host?.remove();
-    app = host = null;
-  });
-
-  itMounted('Start asks for digits alone — the console has no words to give', async () => {
-    const Dock = (await import('./Dock.svelte')).default;
-    host = document.createElement('div');
-    document.body.appendChild(host);
-    app = new Dock({ target: host, props: {} });
-    await settle();
-
-    const start = [...host.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Start');
-    expect(start, 'the dock draws a Start button').toBeTruthy();
-    expect(start.disabled).toBe(false);
-    start.click();
-    await settle();
-
-    const args = startArgs();
-    expect(args, 'Start reached `start_countdown`').toBeTruthy();
-    expect(args.label, 'the console supplied words it has no field for').toBe('');
-    expect(args.doneMsg, 'the console supplied a done message it has no field for').toBe('');
   });
 });
 

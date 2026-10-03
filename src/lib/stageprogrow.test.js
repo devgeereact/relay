@@ -1,7 +1,7 @@
 // THE PROGRAMME ROW'S OWN GEOMETRY, ON THE PREACHER'S SCREEN.
 //
 // Three defects were measured in a real layout engine by the wave 3 browser pass
-// (`docs/qa/audits/DESIGN-2026-09-16-WAVE3.md` §8 and §9) and filed as RG-147 and
+// (`docs/qa/audits/DESIGN.md` §8 and §9) and filed as RG-147 and
 // RG-154. This file is what holds them shut afterwards.
 //
 // ── WHAT THIS FILE CAN AND CANNOT PROVE, PLAINLY ────────────────────────────────
@@ -30,6 +30,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { formatCountdown } from './layers.js';
+import { codeOnly } from './codeonly.js';
 
 const ROOT = path.resolve(__dirname, '../..');
 
@@ -40,10 +41,7 @@ const ROOT = path.resolve(__dirname, '../..');
 function styleOf(file) {
   const src = fs.readFileSync(path.join(ROOT, file), 'utf8');
   const at = src.indexOf('<style>');
-  return src
-    .slice(at, src.lastIndexOf('</style>'))
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/\s+/g, ' ');
+  return codeOnly(src.slice(at, src.lastIndexOf('</style>'))).replace(/\s+/g, ' ');
 }
 
 /** The body of the first rule with this exact selector.
@@ -231,7 +229,10 @@ describe('RG-154 — the height cap measures something that exists', () => {
     // The honest fix the register asked for: the row's ceiling and the digits'
     // cap are the same measurement, so they cannot drift, and the unit is one
     // that actually resolves. `dvh` is the page's own frame (`.sr` is `100dvh`).
-    expect(PROGROW).toMatch(/--progmax:\s*[\d.]+dvh/);
+    expect(PROGROW).toMatch(// `calc(20dvh * var(--tmul))` since RG-240: the operator's size multiplies the
+    // row's ceiling, because `.tval` is capped against it and would otherwise
+    // ignore the setting entirely — RG-223 in a second place.
+    /--progmax:\s*calc\([\d.]+dvh \* var\(--tmul/);
     expect(PROGROW).toMatch(/max-height:\s*var\(--progmax\)/);
     expect(TVAL).toMatch(/calc\(\s*var\(--progmax\)\s*\*\s*[\d.]+\s*\)/);
   });
@@ -239,7 +240,17 @@ describe('RG-154 — the height cap measures something that exists', () => {
 
 describe('RG-148 — the stage row wears the one warning rule', () => {
   it('reads the threshold rather than inventing a fourth one', () => {
-    const src = fs.readFileSync(path.join(ROOT, 'src/Stage.svelte'), 'utf8');
+    // THE RULE DID NOT MOVE; THE FILE DID. The derivation this asserts against was
+    // `Stage.svelte`'s reactive block until `output.html` gained a programme rail
+    // of its own (requirement 2b), at which point keeping it in a component would
+    // have meant a second copy of exactly this expression in `TemplateRender` —
+    // which is the defect this case exists to prevent, one surface along. Both
+    // files are read, so the assertion still fails if the three-argument call
+    // disappears from the product, and cannot pass because it was quietly moved
+    // somewhere nobody is looking.
+    const src =
+      fs.readFileSync(path.join(ROOT, 'src/Stage.svelte'), 'utf8') +
+      fs.readFileSync(path.join(ROOT, 'src/lib/timers.js'), 'utf8');
     // The per-timer override is the whole point: `warn_ms` rides every timer
     // frame and had no reader on this page. Three arguments, one rule.
     expect(src).toMatch(/countdownWarning\(\s*r\.ms\s*,\s*countdownTotalMs\(\s*t\s*\)\s*,\s*t\?\.warn_ms\s*\)/);
@@ -271,11 +282,15 @@ describe('RG-148 — the stage row wears the one warning rule', () => {
     const noPref = mediaBlocks(CSS, 'prefers-reduced-motion: no-preference');
     const reduce = mediaBlocks(CSS, 'prefers-reduced-motion: reduce');
 
-    const pulse = CSS.indexOf('.tmr.warn .tval { animation: cdwarn');
+    // ON `over` SINCE 2026-09-21, not on `warn`. It pulsed for the whole warning
+    // window — routinely five minutes — which is a pulse an operator stops seeing
+    // before the moment it exists for. The steady red keeps the window;
+    // `timers.js::programmeRows` carries the narrower fact.
+    const pulse = CSS.indexOf('.tmr.over .tval { animation: cdwarn');
     expect(pulse, 'the programme row never pulses').toBeGreaterThan(-1);
     expect(inside(noPref, pulse), 'the pulse is given to a viewer who asked for no motion').toBe(true);
 
-    const glow = /\.tmr\.warn \.tval \{ text-shadow: [^}]*\}/.exec(CSS);
+    const glow = /\.tmr\.over \.tval \{ text-shadow: [^}]*\}/.exec(CSS);
     expect(glow, 'no reduced-motion fallback on the programme row').toBeTruthy();
     expect(inside(reduce, glow.index)).toBe(true);
     expect(glow[0], 'a second opinion about red').toMatch(/244, ?81, ?91/);

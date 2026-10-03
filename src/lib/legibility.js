@@ -27,6 +27,8 @@
 // available reference points and they are reported as guidance, never as a pass
 // mark — and `verdict` carries that caveat rather than leaving it in a doc.
 
+import { templateShows } from './layers.js';
+
 /** Parse `#rgb`, `#rrggbb`, or `rgb()/rgba()`. Returns null for anything else. */
 export function parseColor(c) {
   if (typeof c !== 'string') return null;
@@ -149,6 +151,57 @@ export function checkContrast(style = {}, content = null, which = 'verse') {
       ratio < CONTRAST_GOOD
         ? `Readable at this size (${ratio.toFixed(1)}:1), though not by much.`
         : `Good contrast (${ratio.toFixed(1)}:1).`,
+  };
+}
+
+/**
+ * ══ THE COUNTDOWN'S LAST MINUTE, WHICH NO VERDICT HERE COULD SEE ════════════
+ *
+ * These checks review the colours a TEMPLATE declares. A countdown in its last
+ * minute is painted in a red the template never declared and never chose:
+ * `TemplateRender`'s `CD_WARN`, hard-coded, applied over whatever ground the
+ * template happens to have. So the one tool in the product that answers "can the
+ * back row read this" was silent about the most time-critical thing Relay puts on
+ * a wall — and silent in the reassuring direction, which is rule 35's own shape.
+ *
+ * A red background is not hypothetical: the warning red on a deep red or a mid
+ * grey is a countdown that simply stops being readable at the moment it matters
+ * most, and nothing anywhere would have said so.
+ *
+ * DISTANCE needs nothing, and that is worth stating rather than leaving as an
+ * omission. The countdown paints at TWICE the declared verse size
+ * (`TemplateRender` renders `.countdown` at `verseSize * 2`), so the verse is
+ * always the binding constraint and `checkDistance`'s verdict is already
+ * conservative for the digits. Adding a second, easier distance row would only
+ * teach an operator that this panel says yes a lot.
+ *
+ * The hex is stated here because a stylesheet cannot import and this module
+ * cannot read one; `countdowntype.test.js` holds it equal to the renderer's own
+ * `CD_WARN` and to the CSS rule, in the same way `countdownwarnmotion.test.js`
+ * already holds the four surfaces to one red.
+ */
+export const COUNTDOWN_WARN_COLOR = '#f4515b';
+
+/** The countdown paints at twice the declared verse size. One home for the 2. */
+export const COUNTDOWN_SIZE_MULTIPLIER = 2;
+
+/**
+ * Can the last minute of a countdown be read on this template's ground?
+ *
+ * Deliberately NOT a second set of rules: it is `checkContrast` with the warning
+ * red substituted for the verse colour, so the thresholds, the three states and
+ * the `unknown` honesty are the same ones everything else here uses. Only the
+ * wording says which question was asked.
+ */
+export function checkCountdownWarn(style = {}, content = null) {
+  const c = checkContrast({ ...style, verseColor: COUNTDOWN_WARN_COLOR }, content, 'verse');
+  if (c.state === 'unknown') return c;
+  return {
+    ...c,
+    note:
+      c.state === 'low'
+        ? `In its last minute the countdown turns red, and that red is close in brightness to what is behind it (${c.ratio.toFixed(1)}:1). That is the moment somebody most needs to read it.`
+        : `The last-minute red reads against this background (${c.ratio.toFixed(1)}:1).`,
   };
 }
 
@@ -302,23 +355,34 @@ const layers_ = (ls) => ls.filter((L) => L && L.visible !== false);
  * caller cannot forget to and quietly get three `unknown`s.
  */
 export function reviewTemplate(template = {}, content = null, room = {}) {
-  return review(styleOfTemplate(template), content, room);
+  // ASKED ONLY OF A LOOK THAT CAN SHOW ONE. A row that is always there is a row
+  // nobody reads, and a scripture-only template warned about a countdown it
+  // cannot display is the fastest way to teach an operator to ignore this panel.
+  // `templateShows` is the same reader `TemplateRender` uses to decide whether
+  // the digits reach the screen at all, so the row and the render cannot disagree.
+  return review(styleOfTemplate(template), content, room, {
+    countdown: templateShows(template, 'countdown'),
+  });
 }
 
-export function review(style = {}, content = null, room = {}) {
+export function review(style = {}, content = null, room = {}, { countdown = false } = {}) {
   const verse = checkContrast(style, content, 'verse');
   const reference = checkContrast(style, content, 'ref');
   const distance = checkDistance(style, room);
-  const problems = [verse, reference, distance].filter(
-    (c) => c.state === 'low' || c.state === 'small',
-  );
+  // Null, not a fourth `unknown`: "nothing here shows a countdown" and "Relay
+  // cannot work out the contrast" are different answers and the caller renders
+  // them differently — one is an absent row, the other is a row that says so.
+  const countdownWarn = countdown ? checkCountdownWarn(style, content) : null;
+  const checks = [verse, reference, distance, ...(countdownWarn ? [countdownWarn] : [])];
+  const problems = checks.filter((c) => c.state === 'low' || c.state === 'small');
   return {
     verse,
     reference,
     distance,
+    countdownWarn,
     // `unknown` is not a problem and it is not a pass — it is the third answer, and
     // the caller has to render it as its own thing.
-    unknowns: [verse, reference, distance].filter((c) => c.state === 'unknown').length,
+    unknowns: checks.filter((c) => c.state === 'unknown').length,
     problems: problems.length,
     caveat: CAVEAT,
   };

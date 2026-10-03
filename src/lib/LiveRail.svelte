@@ -85,6 +85,7 @@
   import EmptyState from './ui/EmptyState.svelte';
   import ErrorState from './ui/ErrorState.svelte';
   import Loading from './ui/Loading.svelte';
+  import ChapterPicker from './ui/ChapterPicker.svelte';
 
   /** Stage one chapter in the slide grid. Never fires. */
   export let onChapter = () => {};
@@ -165,15 +166,38 @@
   let hits = [];
   let hitsFor = null;
   let searchT;
+  let songsT;
+
+  /**
+   * THE ONE DELAY THIS BOX KEEPS, for both halves of it.
+   *
+   * It was a bare `220` inside `armSearch` and the songs half had no delay at
+   * all — which is how one `<input>` came to treat the same keystroke two
+   * different ways. Named once so the two cannot drift apart again.
+   */
+  const SEARCH_MS = 220;
 
   onMount(loadBooks);
-  onDestroy(() => clearTimeout(searchT));
+  onDestroy(() => {
+    clearTimeout(searchT);
+    clearTimeout(songsT);
+  });
 
   async function loadBooks() {
     booksLoaded = false;
     books = (await listBooks()) ?? [];
     booksLoaded = true;
   }
+
+  /**
+   * WHICH QUERY THE LIST IN FRONT OF THE OPERATOR IS AN ANSWER TO.
+   *
+   * The scripture half has always checked this before publishing — "a slow search
+   * must not label itself with a query the operator has since typed past" — and
+   * this half did not, so two calls answering out of order left the older query's
+   * songs on screen under the newer query's text. Same guarantee, same box.
+   */
+  let songsFor = null;
 
   /**
    * The song list, fetched the first time the Songs half is opened and on every
@@ -184,13 +208,42 @@
    * operator think their library is gone.
    */
   async function loadSongs(query) {
+    const text = String(query ?? '').trim();
+    songsFor = text;
     songsLoaded = false;
     songsAsked = true;
-    const text = String(query ?? '').trim();
-    songs = (text ? await searchSongs(text) : await listSongs()) ?? [];
+    const rows = (text ? await searchSongs(text) : await listSongs()) ?? [];
+    if (songsFor !== text) return; // typed past — a later call owns the list now
+    songs = rows;
     songsLoaded = true;
   }
-  $: if (tab === 'songs') loadSongs(q);
+
+  /**
+   * DEBOUNCED, FOR THE SAME REASON THE SCRIPTURE HALF IS — and it is the same box.
+   *
+   * `$: if (tab === 'songs') loadSongs(q)` ran on every keystroke, and a keystroke
+   * here is not cheap: Tauri runs a `#[tauri::command]` that is not `async fn` on
+   * the MAIN THREAD, `search_songs` is one of those, and it takes the app-wide
+   * `Db` mutex and runs `title LIKE '%…%' OR author LIKE '%…%'` with a correlated
+   * `COUNT(*)` per row. On macOS the main thread is the UI run loop and that lock
+   * is the one the detect thread holds while it persists a transcript line, so
+   * "amazing grace" typed at speed was thirteen table scans and thirteen lock
+   * waits on the thread that draws the window — measured, `livesearchrail.test.js`.
+   *
+   * AN EMPTY BOX IS NOT TYPING. It is the tab opening, or the operator clearing
+   * the field, and making them wait out a delay meant for a keyboard is the
+   * opposite of what the delay is for — so that one call goes straight through.
+   */
+  function armSongs(text) {
+    clearTimeout(songsT);
+    const query = String(text ?? '').trim();
+    if (!query) {
+      loadSongs('');
+      return;
+    }
+    songsT = setTimeout(() => loadSongs(query), SEARCH_MS);
+  }
+  $: if (tab === 'songs') armSongs(q);
 
   function setTab(next) {
     if (tab === next) return;
@@ -221,7 +274,7 @@
         hits = rows ?? [];
         hitsFor = asked;
       }
-    }, 220);
+    }, SEARCH_MS);
   }
   $: armSearch(q, tab);
 
@@ -275,10 +328,12 @@
    */
   function reveal() {
     bodyEl?.querySelector('.lr-row[aria-expanded="true"]')?.scrollIntoView?.({ block: 'nearest' });
-    bodyEl?.querySelector('.lr-chip[aria-current="true"]')?.scrollIntoView?.({ block: 'nearest' });
+    // `.cp-chip` — the picker's own class, since the grid moved into
+    // `ui/ChapterPicker.svelte` (RG-216). A selector left pointing at the old
+    // class would fail silently and the rail would simply stop scrolling to the
+    // chapter, which is the quietest kind of regression.
+    bodyEl?.querySelector('.cp-chip[aria-current="true"]')?.scrollIntoView?.({ block: 'nearest' });
   }
-
-  const chapterList = (n) => Array.from({ length: Math.max(0, n) }, (_, i) => i + 1);
 
   // Single press = the whole job; double press = stage the chapter and nothing
   // more. ONE arbiter, the grid's, so a double can never also fire — the
@@ -404,31 +459,28 @@
           <span class="lr-k r-mono">{b.chapters}</span>
         </button>
         {#if openBook === b.book}
-          <div class="lr-chapters">
-            <!-- WHAT A PRESS DOES, SAID WHERE THE PRESS HAPPENS. The search half
-                 above carries its own, different sentence, and the two are
-                 deliberately not the same: §9 makes a single press on a SEARCH
-                 HIT send the verse to the programme, while browsing only ever
-                 opens a chapter in the grid. One legend over both meanings is
-                 the sentence that reads the same whether or not a congregation
-                 is looking at something (rule 35). -->
-            <p class="lr-cap lr-chapcap">Opens in the grid · no screen changes</p>
-            <div class="lr-chips">
-              {#each chapterList(b.chapters) as c}
-                <button
-                  class="lr-chip"
-                  {disabled}
-                  aria-current={openedChapter?.book === b.book && openedChapter?.chapter === c
-                    ? 'true'
-                    : undefined}
-                  title={openedChapter?.book === b.book && openedChapter?.chapter === c
-                    ? `${b.book} ${c} — the chapter you opened from here`
-                    : `Open ${b.book} ${c} in the slide grid — nothing reaches a screen`}
-                  on:click={() => stage(b.book, c)}
-                  aria-label={`${b.book} chapter ${c}`}>{c}</button>
-              {/each}
-            </div>
-          </div>
+          <!-- THE SHARED PICKER (RG-216). The grid and every rule in it left this
+               file for `ui/ChapterPicker.svelte` so the Library could have the
+               same one rather than a copy that agrees today and drifts next year.
+               WHAT A PRESS DOES stays here, because it is different on the two
+               surfaces: the search half above sends a verse to the programme,
+               while browsing only ever opens a chapter in the grid, and one
+               legend over both meanings is the sentence that reads the same
+               whether or not a congregation is looking at something (rule 35).
+
+               THE STANDING CAPTION IS GONE (RG-261), on the operator's
+               instruction. The promise it made is not: every chapter carries it
+               on its own `openTitle`, which is where somebody asking "what does
+               this do" actually looks — on the control, rather than in a legend
+               over a grid of a hundred and fifty of them that an operator has
+               read every Sunday since the panel existed. -->
+          <ChapterPicker
+            book={b.book}
+            count={b.chapters}
+            current={openedChapter?.book === b.book ? openedChapter.chapter : null}
+            {disabled}
+            openTitle={(bk, c) => `Open ${bk} ${c} in the slide grid — nothing reaches a screen`}
+            onPick={(c) => stage(b.book, c)} />
         {/if}
       {:else}
         {#if !booksLoaded}
@@ -530,6 +582,8 @@
     font-family: var(--f-mono); font-size: var(--v-fs-cap); letter-spacing: var(--v-tr-caps);
     color: var(--v-dim);
   }
+  /* A LIST ROW — a book, or a song. Pressing it opens or stages; it is a line
+     in a list rather than an action with a shape of its own. */
   .lr-row {
     display: flex; align-items: center; gap: 7px; width: 100%; text-align: left;
     padding: 5px 7px; border: 0; border-radius: var(--v-r-sm); cursor: pointer;
@@ -562,53 +616,7 @@
     text-transform: uppercase; color: var(--v-dim);
   }
 
-  /* ── THE CHAPTER PICKER ────────────────────────────────────────────────────
-     A FIXED GRID, NOT A WRAP. These were a `flex-wrap` of chips sized by their
-     own labels — `min-width:22px` plus `padding:0 5px` — so a one-digit chapter
-     and a two-digit one drew different boxes, every row held a different count,
-     and no column lined up with the one above it. Reading 119 out of 150 meant
-     reading every chip on the way. `auto-fill` + `1fr` gives every cell the same
-     width at any rail width, so the rows line up and a chapter can be found by
-     counting columns.
-
-     A CHAPTER CHIP IS NOT A BUTTON-IN-A-ROW, which is why it is not `.r-btn`:
-     it is a fixed square cell in a numeric picker, sized by the grid rather than
-     by its label, and `.r-btn`'s 11px of side padding is the exact property that
-     made these ragged. It draws `.r-btn`'s rest and hover fills so it still
-     belongs to the same family. */
-  .lr-chapters { padding: 2px 8px 8px; }
-  .lr-chapcap { padding: 2px 0 4px; }
-  .lr-chips {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(26px, 1fr));
-    gap: 3px;
-    /* BOUNDED, so a long book does not bury the list it came from. Psalms has
-       150 chapters — 25 rows at this width — and inline in the rail's one
-       scroller that pushed the 47 books after it clean off the column. The
-       picker scrolls itself; the book list stays where the operator left it. */
-    max-height: 168px; overflow-y: auto;
-    scrollbar-width: thin; scrollbar-color: var(--v-surf3) transparent;
-  }
-  .lr-chips::-webkit-scrollbar { width: 6px; }
-  .lr-chips::-webkit-scrollbar-thumb { background: var(--v-surf3); border-radius: var(--v-r-round); }
-  .lr-chip {
-    display: grid; place-items: center;
-    width: 100%; height: 24px; padding: 0;
-    border-radius: var(--v-r-sm); cursor: pointer;
-    background: var(--v-surf2); border: 1px solid var(--v-500); color: var(--v-dim);
-    font-family: var(--f-mono); font-size: var(--v-fs-cap);
-    /* Tabular figures, or 1 and 11 sit at different optical centres inside cells
-       that are finally the same size. */
-    font-variant-numeric: tabular-nums;
-  }
-  .lr-chip:hover:not(:disabled) { background: var(--v-surf3); border-color: var(--v-sel-line); color: var(--v-txt); }
-  .lr-chip:disabled { opacity: .5; cursor: not-allowed; }
-  /* WHERE YOU WERE. Steel — the colour of the thing being worked on. NEVER
-     amber, which means ON AIR, and never cyan, which means the AI guessed: this
-     marks a chapter this rail opened into the grid, which is not a claim about
-     any screen. */
-  .lr-chip[aria-current='true'] {
-    background: var(--v-sel-soft); border-color: var(--v-sel-line);
-    color: var(--v-txt); font-weight: 600;
-  }
+  /* THE CHAPTER PICKER's grid, its chips and every rule behind them moved into
+     `ui/ChapterPicker.svelte` (RG-216), with the reasoning, so the Library could
+     mount the same picker instead of growing a copy of it. */
 </style>

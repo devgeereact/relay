@@ -125,7 +125,8 @@ ${installers.map((f) => `     ${basename(f)}`).join('\n')}
    listening, and it stays on your computer — Relay never sends anything anywhere.
 
 3. OPEN RELAY
-   Go to Settings, then Network. Under the list of models you will see
+   Go to Settings, then "Before the service". Under the list of models you will
+   see
    "Found on this computer" with an Install button. Press it.
 
    Relay checks the file is exactly the one it expects before it uses it, so if

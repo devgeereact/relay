@@ -43,6 +43,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { tick } from 'svelte';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { codeOnly } from './codeonly.js';
 
 const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a) => invoke(...a) }));
@@ -184,9 +185,9 @@ describe('the duplicated run surface is gone, and stays gone', () => {
   // file mounts a component, so `import.meta.url` is the jsdom document's URL and
   // not a `file:` one.
   const code = () =>
-    readFileSync(join(process.cwd(), 'src/lib/views/library/LiveOutputRail.svelte'), 'utf8')
-      .replace(/<!--[\s\S]*?-->/g, ' ')
-      .replace(/(^|\s)\/\/[^\n]*/g, ' ');
+    codeOnly(
+      readFileSync(join(process.cwd(), 'src/lib/views/library/LiveOutputRail.svelte'), 'utf8'),
+    );
 
   it('renders no programme monitor, no HEARD panel and no transcript', () => {
     mount({ queue: [A] });

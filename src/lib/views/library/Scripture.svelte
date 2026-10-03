@@ -165,7 +165,7 @@
   function queueChecked() {
     const add = deck
       .filter((d) => checked.has(d.reference) && !queue.some((q) => q.reference === d.reference))
-      .map((d) => ({ reference: d.reference, text: d.text }));
+      .map((d) => ({ reference: d.reference, text: d.text, kind: 'scripture' })); // tagged (RG-185)
     if (add.length) onQueueChange([...queue, ...add]);
     msg = `Queued ${add.length} verse${add.length === 1 ? '' : 's'}`;
     checked = new Set();

@@ -178,6 +178,25 @@ pub struct OutputContent {
     /// that is supposed to describe the AI's path.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trace_id: Option<u64>,
+    /// WHEN RELAY SENT THIS CLIP, on Relay's own clock (ms since the epoch).
+    ///
+    /// The baseline every screen corrects itself against (RG-220). The operator
+    /// asked for *"all media in sync"* and chose the two things Relay can
+    /// honestly do: every screen STARTS together and is pulled back when it
+    /// drifts. Frame-exact playback across independent browsers on church wifi
+    /// is not one of them.
+    ///
+    /// It is a fact about the SENDING, so it is stamped at the one door content
+    /// leaves by (`main::broadcast_with_clock`, rule 36) rather than at each
+    /// path that can put a picture up — a media path added next year carries it
+    /// by construction. Every page already knows Relay's clock through
+    /// `beat_ack`, so each one works out where the clip should be and seeks
+    /// itself; nothing is elected, and no screen has to wait for a round trip.
+    ///
+    /// `None` for content with no clip, and for anything built before this
+    /// existed: `mediasync::syncSeek` corrects nothing without it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub media_started_at: Option<i64>,
 }
 
 /// A connected physical display, shaped for the Channels UI. `index` is the
@@ -419,7 +438,7 @@ pub fn channel_id_of(label: &str) -> Option<i64> {
 /// Channel ids that currently have a native output window open. This is a fact
 /// about the running app, not a stored flag — `output_channels.status` is written
 /// once at insert and never updated, so it has always read `offline`.
-pub fn open_channel_ids(app: &tauri::AppHandle) -> Vec<i64> {
+pub fn open_channel_ids<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Vec<i64> {
     app.webview_windows()
         .into_keys()
         .filter_map(|k| channel_id_of(&k))
@@ -591,6 +610,121 @@ struct Beat {
     transport: &'static str,
     /// What the SCREEN'S OWN CLOCK said about the gap before this beat.
     gap: BeatGap,
+    /// WHERE THE CLIP IS, according to the screen that is playing it.
+    ///
+    /// `None` is "this screen said nothing about media", which is true of every
+    /// screen showing a verse and of every screen that has not been taught to
+    /// report. It is never defaulted to zero: a defaulted position reads as "the
+    /// clip is at the start", which is a claim, and the operator would be told a
+    /// clip had 4:12 left when nothing was playing at all.
+    media: Option<MediaBeat>,
+}
+
+/// A screen's account of the clip it is playing, carried on the beat it already
+/// sends.
+///
+/// **The console must not time a clip from its own copy.** Its programme pane
+/// renders through the same component, so it has a second video element playing
+/// the same file — and that one is not the wall. It buffers differently, it starts
+/// at a different instant, and if the wall's copy stalls the console's carries
+/// happily on. An operator reading "0:12 left" off the console while the
+/// congregation's screen is frozen at 2:30 is rule 35 exactly: a status line that
+/// cannot detect its own failure.
+///
+/// So the numbers come from the screen that is painting, on the beat that already
+/// says whether it is painting at all, and when no screen reports the console says
+/// it does not know rather than doing the arithmetic itself.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+pub struct MediaBeat {
+    pub pos_ms: u64,
+    pub dur_ms: u64,
+    pub paused: bool,
+}
+
+impl MediaBeat {
+    /// Read a screen's media report off a JSON beat.
+    ///
+    /// The same discipline as `BeatGap::from_json` and for the same reason: a
+    /// number that is not a sane non-negative integer is dropped, and a report
+    /// with no duration is dropped whole. A duration of zero is not a clip that
+    /// takes no time, it is a screen that has not finished loading one, and
+    /// "0:00 left" over a clip that has barely started is worse than saying
+    /// nothing.
+    /// The same reading, from the native window's command arguments rather than
+    /// from a JSON frame. One rule, two transports — the shape `BeatGap::clamped`
+    /// already takes, so a window and a browser source cannot come to different
+    /// conclusions about the same clip.
+    pub fn clamped(pos_ms: Option<u64>, dur_ms: Option<u64>, paused: Option<bool>) -> Option<Self> {
+        let dur_ms = dur_ms.filter(|d| *d > 0 && *d <= GAP_CLAMP_MS)?;
+        let pos_ms = pos_ms.filter(|p| *p <= GAP_CLAMP_MS)?.min(dur_ms);
+        Some(MediaBeat {
+            pos_ms,
+            dur_ms,
+            paused: paused.unwrap_or(false),
+        })
+    }
+
+    fn from_json(v: &serde_json::Value) -> Option<Self> {
+        let num = |k: &str| {
+            v.get(k)
+                .and_then(|n| n.as_u64())
+                .filter(|n| *n <= GAP_CLAMP_MS)
+        };
+        let dur_ms = num("media_dur_ms").filter(|d| *d > 0)?;
+        let pos_ms = num("media_pos_ms")?.min(dur_ms);
+        Some(MediaBeat {
+            pos_ms,
+            dur_ms,
+            paused: v
+                .get("media_paused")
+                .and_then(|b| b.as_bool())
+                .unwrap_or(false),
+        })
+    }
+}
+
+/// THE FRAMES A LAGGING SCREEN IS HANDED AGAIN (RG-195, 2026-09-21). The three
+/// that decide what a screen shows — the global retained frame, this screen's
+/// own targeted frame if it has one, and which screens are down — in the order
+/// hello sends them, so a screen that fell behind ends up where a screen that
+/// just joined would. Configuration frames (roles, looks, shows, templates) are
+/// not re-sent: they rarely change mid-service and the next change republishes.
+pub fn resync_frames(
+    last_screen: &Mutex<Option<String>>,
+    last_screen_by_channel: &Mutex<HashMap<i64, String>>,
+    screens_down: &Mutex<String>,
+    channel: Option<i64>,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Some(f) = last_screen.lock().ok().and_then(|g| g.clone()) {
+        out.push(f);
+    }
+    if let Some(ch) = channel {
+        if let Some(f) = last_screen_by_channel
+            .lock()
+            .ok()
+            .and_then(|m| m.get(&ch).cloned())
+        {
+            out.push(f);
+        }
+    }
+    if let Ok(g) = screens_down.lock() {
+        out.push(g.clone());
+    }
+    out
+}
+
+/// A screen's account of a picture or clip that did not load, off a JSON beat.
+/// Bounded, because a page on the LAN must not be able to push a novel into the
+/// desk's status row; absent when the beat says nothing, which is the honest
+/// reading of a screen whose media loaded (or that shows none).
+pub fn media_error_from_json(v: &serde_json::Value) -> Option<String> {
+    const MAX: usize = 300;
+    let s = v.get("media_error")?.as_str()?.trim();
+    if s.is_empty() {
+        return None;
+    }
+    Some(s.chars().take(MAX).collect())
 }
 
 /// The screen's account of its own silence, carried on the beat that ends it.
@@ -618,15 +752,114 @@ struct Beat {
 /// LAN socket, so they are clamped at the door and dropped if they are not
 /// non-negative integers. A number here can only ever be evidence in a timeline
 /// entry; nothing routes, gates or fires on it.
+/// * `refused` — how many beats the page handed to the Tauri bridge and the bridge
+///   THREW on, since the last one that got through (RG-119, 2026-09-29). The two
+///   numbers above can distinguish "the page was not running" from "the page was
+///   running and Relay did not get the beats"; they cannot say WHY the second one
+///   happened, and the only place a beat can be lost on its way out is one bare
+///   `catch {}` in `outputHealth.js`. A swallowed error on the one path that tells
+///   an operator whether a screen is alive is rule 35 with the page as the badge.
+///   **A refused beat cannot report itself**, so the count rides on the next beat
+///   that lands, which is the same shape as `since_ms` and safe for the same
+///   reason. `Some(0)` is a statement and not an absence: this page reached the
+///   bridge, so it knows nothing was refused. `None` means it did not say — a kiosk
+///   page over the WebSocket, where there is no bridge to refuse anything.
+/// * `frames` — how many animation frames the page painted during the gap (RG-119,
+///   2026-09-29). **This is the field that stopped `hidden_ms == 0` being read as
+///   "the page was visible".** It is not: `hiddenMs` on the page only ever accrues
+///   from a `visibilitychange` listener, so a page suspended across a whole
+///   hidden→visible round trip observes no transition at all and reports *never
+///   hidden* over a gap of any length. Measured in `outputhealth.test.js`, not
+///   argued. An animation frame needs nobody's cooperation: a composited page gets
+///   them at the display's rate and an occluded or suspended one gets none, so this
+///   answers the question the badge actually claims — *was this screen painting?*
+///   `None` is a page with nothing to count with, under the same rule as the rest.
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub struct BeatGap {
     pub since_ms: Option<u64>,
     pub hidden_ms: Option<u64>,
+    pub refused: Option<u32>,
+    pub frames: Option<u32>,
+}
+
+/// WHY A SCREEN WENT QUIET — the classification RG-119 was missing (2026-09-29).
+///
+/// `output_lost` was one word over at least four situations, which is rule 35 with
+/// the service record as the badge: a timeline reading the same for a projector that
+/// died and for a laptop window that went behind a terminal says nothing about
+/// either. Two of these five mean the congregation was looking at a stale screen and
+/// three mean the screen never stopped and Relay's record of it was wrong. They want
+/// opposite responses.
+///
+/// **Retrospective by construction, and that is not a weakness to be designed
+/// around.** Only the page can answer, and it can only answer on the beat that ends
+/// its silence, so nothing here can classify an outage that is still happening — see
+/// `describeScreen`, which labels it as the past tense it is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SilenceCause {
+    /// The OS told the page it was hidden, and that accounts for the gap. Not
+    /// painting: a window behind another window, or a display that slept.
+    Occluded,
+    /// A long gap, nothing told the page, and it painted no more often than it
+    /// failed to tick. The OS was not running it, and did not say so.
+    Frozen,
+    /// A long gap and the page painted right through it. The screen was fine and the
+    /// beat timer was starved — the one outcome no other field here could find, and
+    /// the one where reporting a loss was wrong.
+    Throttled,
+    /// The page ticked on time and handed beats to a bridge that threw them.
+    BridgeRefused,
+    /// The page ticked on time, nothing refused anything, and Relay still has no
+    /// beat. Neither the page nor the bridge: the command, or the poll.
+    Unreached,
+}
+
+impl SilenceCause {
+    /// The word that crosses to the console and into the timeline entry. A closed
+    /// set, mirrored by `SILENCE_CAUSE` in `outputHealth.js`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SilenceCause::Occluded => "occluded",
+            SilenceCause::Frozen => "frozen",
+            SilenceCause::Throttled => "throttled",
+            SilenceCause::BridgeRefused => "bridge_refused",
+            SilenceCause::Unreached => "unreached",
+        }
+    }
+
+    /// The sentence a timeline entry ends with. One per cause, deliberately, so a
+    /// reader who greps the record cannot get two classes in one bucket.
+    fn said(self) -> &'static str {
+        match self {
+            SilenceCause::Occluded => "the OS had hidden this page",
+            SilenceCause::Frozen => "the page was not being run, and nothing told it so",
+            SilenceCause::Throttled => "the page kept painting and only its clock stopped",
+            SilenceCause::BridgeRefused => {
+                "the page ticked on time and Relay's bridge threw its beats away"
+            }
+            SilenceCause::Unreached => "the page ticked on time and Relay got nothing",
+        }
+    }
 }
 
 /// A day. Anything longer is a broken clock or a hostile client, and either way it
 /// is not evidence about a service.
 const GAP_CLAMP_MS: u64 = 24 * 60 * 60 * 1000;
+
+/// The most refused beats that will be believed — `MAX_REFUSED_REPORTED` in
+/// `outputHealth.js`, clamped again here because this arrives from a page and one of
+/// the two transports is an unauthenticated LAN socket. A larger figure is dropped
+/// to `None` rather than saturated: a number nobody can have produced is not
+/// evidence, and an absence says so where a ceiling would read as a measurement.
+const REFUSED_CLAMP: u32 = 9999;
+
+/// The most animation frames that will be believed on one beat —
+/// `MAX_FRAMES_REPORTED` in `outputHealth.js`, clamped again here for the same reason
+/// the refusal count is. Ten million is about forty-six hours at sixty hertz, so it
+/// is out of reach inside a gap `GAP_CLAMP_MS` will accept at all. Anything above it
+/// is dropped to `None`: a number nobody can have produced is not evidence, and an
+/// absence says so where a ceiling would read as a measurement.
+const FRAMES_CLAMP: u32 = 10_000_000;
 
 impl BeatGap {
     /// Read the two numbers off a JSON beat. Anything that is not a non-negative
@@ -643,30 +876,126 @@ impl BeatGap {
         BeatGap {
             since_ms: field("since_ms"),
             hidden_ms: field("hidden_ms"),
+            // A browser source has no bridge, so nothing over this transport ever
+            // sets it. Read anyway, under the same clamp, because one rule reading
+            // both transports is what stops a window and a browser source reaching
+            // different conclusions about the same screen.
+            refused: v
+                .get("refused")
+                .and_then(|n| n.as_u64())
+                .and_then(|n| u32::try_from(n).ok())
+                .filter(|n| *n <= REFUSED_CLAMP),
+            // A browser source CAN count frames — it is being composited by OBS or by
+            // a kiosk browser like any other page — so unlike `refused` this one is
+            // real over both transports.
+            frames: v
+                .get("frames")
+                .and_then(|n| n.as_u64())
+                .and_then(|n| u32::try_from(n).ok())
+                .filter(|n| *n <= FRAMES_CLAMP),
         }
     }
 
     /// Same rule for the Tauri bridge, where the value arrives already typed.
-    pub fn clamped(since_ms: Option<u64>, hidden_ms: Option<u64>) -> Self {
+    pub fn clamped(
+        since_ms: Option<u64>,
+        hidden_ms: Option<u64>,
+        refused: Option<u32>,
+        frames: Option<u32>,
+    ) -> Self {
         BeatGap {
             since_ms: since_ms.filter(|ms| *ms <= GAP_CLAMP_MS),
             hidden_ms: hidden_ms.filter(|ms| *ms <= GAP_CLAMP_MS),
+            refused: refused.filter(|n| *n <= REFUSED_CLAMP),
+            frames: frames.filter(|n| *n <= FRAMES_CLAMP),
         }
     }
 
+    /// WHICH OF THE FIVE THIS SILENCE WAS, or `None` when the page said nothing at
+    /// all about it (its first beat, or a page too old to carry the fields).
+    ///
+    /// **Every boundary here is derived from the beat interval.** There is no new
+    /// number on this path and there must not be one: a threshold invented to sort
+    /// these would be a threshold somebody later moves to make a symptom quieter,
+    /// which is the thing rules 10, 28, 30 and 34 all keep saying.
+    ///
+    /// The order is the order, and it is the safe direction first:
+    ///
+    /// 1. **Told hidden.** If the OS said hidden for all but at most one tick of the
+    ///    gap, the page was not being rendered whatever else is true, and the
+    ///    congregation was looking at a stale frame. That is the outage, and it wins
+    ///    even over a refusal — the safe direction is the one that still reports one.
+    /// 2. **Refused.** A page that reached the bridge to report a refusal
+    ///    demonstrably ran, so this cannot be a page that was not running.
+    /// 3. **A gap Relay would have called a silence** (more than `BEAT_STALE_MS`, the
+    ///    same window `painting` judges by, so this cannot disagree with the badge
+    ///    that produced the event). Then the frames decide: painted more often than
+    ///    it failed to tick → the renderer was alive and the clock was not; anything
+    ///    less, including a page that could not count, → it was not being run.
+    /// 4. **Otherwise** the page ticked on time and Relay has no beat, and neither
+    ///    the page nor the bridge is the answer.
+    pub fn cause(&self) -> Option<SilenceCause> {
+        let since = self.since_ms?;
+        if self
+            .hidden_ms
+            .is_some_and(|h| h > 0 && h.saturating_add(BEAT_INTERVAL_MS) >= since)
+        {
+            return Some(SilenceCause::Occluded);
+        }
+        if self.refused.is_some_and(|n| n > 0) {
+            return Some(SilenceCause::BridgeRefused);
+        }
+        if since > BEAT_STALE_MS {
+            let missed_ticks = since / BEAT_INTERVAL_MS;
+            return Some(match self.frames {
+                Some(f) if u64::from(f) > missed_ticks => SilenceCause::Throttled,
+                _ => SilenceCause::Frozen,
+            });
+        }
+        Some(SilenceCause::Unreached)
+    }
+
     /// One phrase for a timeline entry, or `None` when the screen said nothing.
-    /// Content-free by construction: two durations and no text from anywhere.
+    /// Content-free by construction: durations, counts, and no text from anywhere.
+    ///
+    /// **It ends with the verdict, and the verdict is a different sentence per
+    /// class** (RG-119, 2026-09-29). The numbers were already here and the record
+    /// still read the same for four different faults, because nobody reading a
+    /// timeline is going to do this arithmetic — which is rule 35's own complaint
+    /// about a badge, one layer down, on the line an audit actually opens. The
+    /// numbers stay in front of it as the evidence for it.
     pub fn describe(&self) -> Option<String> {
         let since = self.since_ms?;
         let secs = |ms: u64| (ms as f64 / 1000.0).round() as u64;
-        Some(match self.hidden_ms {
+        let mut s = match self.hidden_ms {
             Some(h) if h > 0 => format!(
                 "screen's own clock: silent {}s, hidden {}s",
                 secs(since),
                 secs(h)
             ),
             _ => format!("screen's own clock: silent {}s, never hidden", secs(since)),
-        })
+        };
+        // ONLY WHEN THERE WERE SOME. A `refused 0` on every recovery in the record
+        // would be nine characters of noise on the line an audit reads, and the
+        // question this answers is none-versus-some. An absence (a kiosk page, which
+        // has no bridge) prints nothing either, and for the stronger reason: it did
+        // not say, and a `0` there would be Relay answering on its behalf.
+        if let Some(n) = self.refused.filter(|n| *n > 0) {
+            s.push_str(&format!(", bridge refused {n} beats"));
+        }
+        // FRAMES ARE PRINTED EVEN AT ZERO, and that is the opposite rule to the one
+        // above, on purpose. `refused 0` is the ordinary case and says nothing;
+        // `0 frames` is the whole finding — it is what separates a page the OS
+        // stopped from one that painted throughout — and an absence here is a page
+        // that could not count, which must not read as a page that painted nothing.
+        if let Some(f) = self.frames {
+            s.push_str(&format!(", {f} frames painted"));
+        }
+        if let Some(c) = self.cause() {
+            s.push_str(" — ");
+            s.push_str(c.said());
+        }
+        Some(s)
     }
 }
 
@@ -705,6 +1034,17 @@ impl BeatGap {
 #[derive(Clone, Default)]
 pub struct OutputHealth {
     beats: Arc<Mutex<HashMap<i64, Beat>>>,
+    /// WHAT A SCREEN SAID ABOUT A PICTURE OR CLIP IT COULD NOT LOAD (2026-09-21,
+    /// O-4 / M-3). A 404, a codec the webview cannot decode and a CSP refusal
+    /// were one observable event — nothing — while the beat still said `content`
+    /// and the desk printed On Air in amber over a blank frame. The page now says
+    /// so on the beat it already sends, and a beat that says nothing clears it.
+    media_errors: Arc<Mutex<HashMap<i64, String>>>,
+    /// HOW OFTEN A SCREEN FELL BEHIND AND WAS RE-SYNCED (RG-195, rule 33). A kiosk
+    /// client that lagged past the broadcast buffer used to skip frames in
+    /// silence — a `clear` among them was a panic control that never landed on
+    /// that screen. Counted, and shown, like every other shed on the path.
+    resyncs: Arc<Mutex<HashMap<i64, u32>>>,
     /// What was last REPORTED about each channel, so an edge can be detected and
     /// written to the service timeline exactly once.
     ///
@@ -719,33 +1059,95 @@ pub struct OutputHealth {
     /// Cleared the moment the channel detaches, so a window reopened later starts
     /// its grace again rather than inheriting one from an hour ago.
     first_seen: Arc<Mutex<HashMap<i64, std::time::Instant>>>,
+    /// THE GAP OFF THE BEAT THAT ENDED A SILENCE, kept until another silence
+    /// replaces it (RG-119, 2026-09-28).
+    ///
+    /// **The instrument built to answer this row could lose the answer to a race
+    /// with its own poll.** `BeatGap` is stored on the beat and overwritten by the
+    /// next one, and a running page beats every `BEAT_INTERVAL_MS` — so the number
+    /// that says how long the page was really quiet survives only until the beat
+    /// two seconds behind it, while `channel_status` (the only edge detector, on
+    /// its own 2 s `setInterval`) may not have noticed the recovery yet. Lose that
+    /// race and the recovery is logged with the gap of an ORDINARY beat, which is
+    /// *one interval* — and *one interval* is exactly the reading this row treats
+    /// as evidence that the page kept ticking and Relay lost the beats.
+    ///
+    /// So the artefact is indistinguishable from the finding it corrupts, which is
+    /// rule 35's own shape one level down: an instrument whose failure looks
+    /// identical to its success. Service 21 (2026-09-14) recorded seven
+    /// Main-screen recoveries, three of them *"silent 2s, never hidden"* — and a
+    /// beat that lost this race says precisely that whatever the page measured.
+    ///
+    /// Kept rather than consumed: a recovery is always preceded by the beat that
+    /// ended its silence, so the retained value is always the right one for the
+    /// most recent outage, and there is nothing for a consuming read to protect.
+    silence_ended: Arc<Mutex<HashMap<i64, BeatGap>>>,
 }
 
 impl OutputHealth {
     /// Record that the screen for `channel_id` is alive and painting `state`.
     /// A lock poisoned by a panicking reader must not take the wall's status with
     /// it: a lost beat degrades to "silent", which is the safe direction.
-    pub fn beat(&self, channel_id: i64, state: PaintState, transport: &'static str, gap: BeatGap) {
+    pub fn beat(
+        &self,
+        channel_id: i64,
+        state: PaintState,
+        transport: &'static str,
+        gap: BeatGap,
+        media: Option<MediaBeat>,
+    ) {
         if channel_id <= 0 {
             return;
         }
-        if let Ok(mut m) = self.beats.lock() {
-            m.insert(
-                channel_id,
-                Beat {
-                    at: std::time::Instant::now(),
-                    state,
-                    transport,
-                    gap,
-                },
-            );
+        // Did this beat END A SILENCE? Answered from Relay's own clock, because
+        // that is the same condition under which `transition` will report a
+        // recovery, so the gap kept below always pairs with the entry it is written
+        // into. A channel's FIRST beat is deliberately not a silence ending: there
+        // was no outage to account for, and `transition` never reports one.
+        // One lock at a time — see `transition`.
+        let ended_a_silence = match self.beats.lock() {
+            Ok(mut m) => {
+                let was_stale = m
+                    .get(&channel_id)
+                    .map(|b| b.at.elapsed().as_millis() as u64 > BEAT_STALE_MS)
+                    .unwrap_or(false);
+                m.insert(
+                    channel_id,
+                    Beat {
+                        at: std::time::Instant::now(),
+                        state,
+                        transport,
+                        gap,
+                        media,
+                    },
+                );
+                was_stale
+            }
+            Err(_) => false,
+        };
+        if ended_a_silence {
+            if let Ok(mut m) = self.silence_ended.lock() {
+                m.insert(channel_id, gap);
+            }
         }
     }
 
-    /// What the screen's own clock said about the silence before its last beat.
+    /// What the screen's own clock said about the silence it last came back from.
     /// `None` for a channel that has never beaten, which is an absence and not a
     /// zero gap. See `BeatGap`, and RG-119 for why it is recorded at all.
+    ///
+    /// **The beat that ends a silence is preferred over the latest beat** (RG-119,
+    /// 2026-09-28). Both are "what the screen said", and only one of them is about
+    /// the outage: a page that comes back beats again two seconds later with an
+    /// ordinary one-interval gap, and `channel_status` polls on its own 2 s timer,
+    /// so the number this row exists to read was a coin toss against the poll. See
+    /// `silence_ended` for what that cost the row's own evidence.
     pub fn last_gap(&self, channel_id: i64) -> Option<BeatGap> {
+        if let Ok(m) = self.silence_ended.lock() {
+            if let Some(g) = m.get(&channel_id) {
+                return Some(*g);
+            }
+        }
         let m = self.beats.lock().ok()?;
         Some(m.get(&channel_id)?.gap)
     }
@@ -760,6 +1162,68 @@ impl OutputHealth {
     }
 
     /// True only if this channel reported within `BEAT_STALE_MS`.
+    /// WHERE THIS SCREEN SAYS ITS CLIP IS, or `None`.
+    ///
+    /// Only from a beat that is still fresh. A stale beat's media report is the
+    /// same lie as a stale paint state: an operator would be shown a clip counting
+    /// down on a screen that stopped answering a minute ago, and the countdown is
+    /// the one thing they are timing the next cue against.
+    /// A screen lagged and was handed the retained frames again. Counted per
+    /// channel; never reset for the life of the process, because a number that
+    /// goes back to zero hides the service it happened in.
+    pub fn note_resync(&self, channel_id: i64) {
+        if channel_id <= 0 {
+            return;
+        }
+        if let Ok(mut m) = self.resyncs.lock() {
+            *m.entry(channel_id).or_insert(0) += 1;
+        }
+    }
+
+    pub fn resyncs_of(&self, channel_id: i64) -> u32 {
+        self.resyncs
+            .lock()
+            .ok()
+            .and_then(|m| m.get(&channel_id).copied())
+            .unwrap_or(0)
+    }
+
+    /// Record, or clear, the media failure a screen reported on its latest beat.
+    pub fn note_media_error(&self, channel_id: i64, error: Option<String>) {
+        if channel_id <= 0 {
+            return;
+        }
+        if let Ok(mut m) = self.media_errors.lock() {
+            match error {
+                Some(e) => {
+                    m.insert(channel_id, e);
+                }
+                None => {
+                    m.remove(&channel_id);
+                }
+            }
+        }
+    }
+
+    /// The media failure a still-answering screen last reported, if any. A stale
+    /// screen's report is dropped with the rest of its beat: "not responding" is
+    /// the truer thing to say about it.
+    pub fn media_error_of(&self, channel_id: i64) -> Option<String> {
+        if !self.painting(channel_id) {
+            return None;
+        }
+        self.media_errors.lock().ok()?.get(&channel_id).cloned()
+    }
+
+    pub fn media_of(&self, channel_id: i64) -> Option<MediaBeat> {
+        let m = self.beats.lock().ok()?;
+        let b = m.get(&channel_id)?;
+        if b.at.elapsed().as_millis() as u64 > BEAT_STALE_MS {
+            return None;
+        }
+        b.media
+    }
+
     pub fn painting(&self, channel_id: i64) -> bool {
         matches!(self.read(channel_id), Some((age, _, _)) if age <= BEAT_STALE_MS)
     }
@@ -769,6 +1233,12 @@ impl OutputHealth {
     /// one that would read as freshly silent.
     pub fn forget(&self, channel_id: i64) {
         if let Ok(mut m) = self.beats.lock() {
+            m.remove(&channel_id);
+        }
+        // And the silence it last came back from. A window the operator closed and
+        // reopened is a new screen's worth of evidence; quoting an outage from
+        // before it existed would be the same lie as inheriting its stale beat.
+        if let Ok(mut m) = self.silence_ended.lock() {
             m.remove(&channel_id);
         }
         self.forget_transition(channel_id);
@@ -946,6 +1416,159 @@ impl CountdownWarnDefault {
     }
 }
 
+/// WHAT THE CLIP ON THE SCREENS HAS BEEN ASKED TO DO.
+///
+/// Held here rather than derived from the retained frame, for the reason
+/// `adjust_countdown` keeps its own state: the operator changes ONE of these at a
+/// time. Pause must not un-loop, and Loop must not un-pause. A caller says nothing
+/// about the fields it is not touching, which needs somewhere to read the others
+/// back from.
+///
+/// It is reset when a clip is fired, and by the panic controls, in the same place
+/// the retained frame is emptied — one door, so the state and the wire cannot come
+/// to different conclusions about whether the clip is held.
+#[derive(Default)]
+pub struct MediaTransport {
+    inner: Mutex<MediaTransportState>,
+}
+
+#[derive(Clone, Copy)]
+struct MediaTransportState {
+    paused: bool,
+    looping: bool,
+    /// Only ever goes up. See `media_transport_frame_json`: replay is an event,
+    /// and an event expressed as a boolean cannot be sent twice.
+    replay_epoch: u64,
+    /// The same shape as `replay_epoch`, and counted APART from it (RG-221). One
+    /// counter for both would swallow a scrub made immediately after a replay,
+    /// which is exactly the pair of presses an operator makes when a clip started
+    /// in the wrong place.
+    seek_epoch: u64,
+    /// Where the last scrub put it, in milliseconds.
+    seek_ms: i64,
+    /// THE ROOM'S LEVEL, 0.0–1.0, and deliberately NOT cleared by `reset`: an
+    /// operator who turned a clip down for a quiet room did not mean "for this
+    /// clip only", where `paused` and `looping` genuinely are per clip.
+    volume: f64,
+}
+
+impl Default for MediaTransportState {
+    /// Full volume, because a clip that arrives silent with nothing to say why is
+    /// the worse of the two defaults. `f64::default()` is 0.0, which is why this
+    /// is written out rather than derived.
+    fn default() -> Self {
+        Self {
+            paused: false,
+            looping: false,
+            replay_epoch: 0,
+            seek_epoch: 0,
+            seek_ms: 0,
+            volume: 1.0,
+        }
+    }
+}
+
+/// What every screen is told about the clip it is playing.
+///
+/// `Serialize` because the console is handed this same frame back by
+/// `set_media_transport` (RG-260). It used to rebuild its own copy out of the
+/// arguments it had passed in — `{paused, loop, volume}` — so its preview was
+/// handed an object with no epochs at all and could act on neither a replay nor
+/// a scrub. Two shapes for one instruction is two things that can disagree, and
+/// they did, on the surface an operator watches to decide what the room is
+/// seeing.
+///
+/// **It is still not an outcome.** A frame is the INSTRUCTION; the beat
+/// (`MediaBeat`) is what says whether a screen obeyed, and Live reads the effect
+/// from there. `serde(rename_all = "camelCase")` so the console receives the
+/// field names its own player rule already reads.
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransportFrame {
+    pub paused: bool,
+    pub looping: bool,
+    pub replay_epoch: u64,
+    pub seek_epoch: u64,
+    pub seek_ms: i64,
+    pub volume: f64,
+    /// THE BASELINE A SCRUB IMPLIES (RG-220, RG-221), or `None` when this frame
+    /// carries no scrub. Without it the sync corrector would undo the operator's
+    /// own drag within two seconds: they move the handle, the picture jumps back,
+    /// and the app looks broken.
+    pub started_at: Option<i64>,
+}
+
+impl MediaTransport {
+    /// Apply what the caller actually said, leave the rest, and hand back the whole
+    /// state to publish. `replay` bumps the counter.
+    pub fn apply(
+        &self,
+        paused: Option<bool>,
+        looping: Option<bool>,
+        replay: bool,
+        seek_ms: Option<i64>,
+        volume: Option<f64>,
+    ) -> TransportFrame {
+        let mut g = match self.inner.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if let Some(p) = paused {
+            g.paused = p;
+        }
+        if let Some(l) = looping {
+            g.looping = l;
+        }
+        if let Some(v) = volume {
+            // Clamped here as well as at the receiver. A value outside 0–1 throws
+            // on a real media element, and a frame nobody can apply is worse than
+            // a level slightly off what was asked for.
+            g.volume = v.clamp(0.0, 1.0);
+        }
+        if replay {
+            g.replay_epoch = g.replay_epoch.saturating_add(1);
+            // STARTING IT AGAIN MEANS IT IS RUNNING. An operator who presses
+            // Replay on a held clip means "play it from the top", not "seek to the
+            // top and stay stopped" — and the second reading leaves a frozen first
+            // frame on a wall with the transport saying it was actioned.
+            g.paused = false;
+        }
+        let mut started_at = None;
+        if let Some(at) = seek_ms {
+            g.seek_epoch = g.seek_epoch.saturating_add(1);
+            g.seek_ms = at.max(0);
+            // AND THE SYNC BASELINE MOVES WITH IT. RG-220 pulls every screen onto
+            // the instant Relay sent the clip; a scrub that did not restate that
+            // instant would be corrected away within the tolerance, so the
+            // operator's own drag would visibly undo itself.
+            started_at = Some(now_epoch_ms() - g.seek_ms);
+        }
+        TransportFrame {
+            paused: g.paused,
+            looping: g.looping,
+            replay_epoch: g.replay_epoch,
+            seek_epoch: g.seek_epoch,
+            seek_ms: g.seek_ms,
+            volume: g.volume,
+            started_at,
+        }
+    }
+
+    /// Back to a clip that has just been fired: playing, not looping. The epoch is
+    /// deliberately NOT reset — it is a monotonic instruction counter, and winding
+    /// it back would let a later replay publish a number a screen has already seen.
+    pub fn reset(&self) {
+        let mut g = match self.inner.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        g.paused = false;
+        g.looping = false;
+        // The VOLUME survives, and that is the one difference between the three.
+        // See the field's own note: the sound level is a fact about the room.
+    }
+}
+
 /// The configured warning window, for a publisher that has an app handle. None
 /// when nothing is configured OR when the state is not managed (headless tests,
 /// early boot) — an absence, which the far side reads as "keep the shipped minute"
@@ -1031,6 +1654,9 @@ pub(crate) fn kiosk_content_json(content: &OutputContent) -> String {
         // — the last leg of the latency chain, over the real church network. See
         // `OutputContent::trace_id` and the `rendered` message the hub accepts.
         "trace_id": content.trace_id,
+        // WHEN RELAY SENT THE CLIP (RG-220). Every screen corrects itself
+        // against this and Relay's clock, which `beat_ack` already gives them.
+        "media_started_at": content.media_started_at,
     })
     .to_string()
 }
@@ -1158,6 +1784,134 @@ fn background_retention(msg: &str) -> Option<Option<String>> {
         return None;
     }
     Some((!msg.contains(r#""media_url":null"#)).then(|| msg.to_string()))
+}
+
+/// SOMETHING FOR THE PREACHER TO LOOK AT, ON THE STAGE SCREEN ONLY.
+///
+/// An announcement slide, or the preacher's own deck, put where only they can see
+/// it. `media_url: null` takes it down, the same shape `background` uses and for
+/// the same reason: one door for up and down means the two cannot disagree about
+/// which is in force.
+///
+/// **It is not a congregation background and must never be confused with one.**
+/// `background` is the church's picture behind the words on every screen; this is
+/// one person's reference material on one screen, and the only reason it is
+/// retained at all is that a stage tablet reconnecting mid-sermon would otherwise
+/// come back blank (rule 43).
+fn stage_media_frame_json(url: Option<&str>, kind: Option<&str>) -> String {
+    serde_json::json!({
+        "kind": "stage_media",
+        "media_url": url,
+        "media_kind": kind,
+        // WHEN IT STARTED, on Relay's clock, so the preacher's copy is corrected
+        // against the same instant as the congregation's (RG-220). Without it
+        // the stage countdown added in RG-213 is about a different moment from
+        // the one everybody else is watching, which is the third of the three
+        // things "all media in sync" could mean and the one the operator said
+        // mattered most.
+        //
+        // `null` when the slide is being taken DOWN: there is nothing to be in
+        // sync with, and a stamp there would be a fact about an absence.
+        "started_at": url.map(|_| now_epoch_ms()),
+    })
+    .to_string()
+}
+
+/// Relay's own clock, in epoch milliseconds — the baseline a screen corrects
+/// against. `0` before the UNIX epoch, which never happens, so no caller has to
+/// handle an error.
+fn now_epoch_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// Is this the frame that decides what MEDIA a stage screen is holding?
+///
+/// `contains`, not `starts_with`, for the reason recorded on `is_screen_frame`:
+/// `serde_json` orders map keys alphabetically, so a prefix check here would break
+/// the moment a field sorting before `kind` is added.
+fn is_stage_media_frame(msg: &str) -> bool {
+    msg.contains(r#""kind":"stage_media""#)
+}
+
+/// Leave the stage media alone, take it down, or become it.
+///
+/// The same three answers as `background_retention`, and the take-down arm is here
+/// for the same reason: `clear` and `black` are published through the one door, so
+/// a panic control takes the preacher's slide with the wall by construction rather
+/// than by a second message somebody has to remember to send.
+///
+/// **A READING DOES NOT APPEAR HERE, and that is the precedence rule.** Scripture
+/// overrides stage media on the screen; it does not destroy it. The device paints
+/// the reading over the media while it has one and paints the media again when the
+/// reading is cleared. Taking the media down when a verse arrived would make the
+/// operator push it again after every reading, which is not what "overrides" means.
+fn stage_media_retention(msg: &str) -> Option<Option<String>> {
+    if is_wipe_frame(msg) {
+        return Some(None);
+    }
+    if !is_stage_media_frame(msg) {
+        return None;
+    }
+    Some((!msg.contains(r#""media_url":null"#)).then(|| msg.to_string()))
+}
+
+/// WHAT THE OPERATOR HAS ASKED THE CLIP TO DO — held, looping, or started again.
+///
+/// **`replay_epoch` is a counter and not a flag**, and that is the whole of why
+/// this works. "Start it again" is not a state a screen can be in; it is an event,
+/// and an event expressed as a boolean cannot be sent twice. An operator pressing
+/// Replay a second time on a clip already at its start would publish a frame
+/// identical to the retained one, and a screen that had acted on the first would
+/// do nothing at all. A number that only goes up is an instruction every time.
+fn media_transport_frame_json(f: TransportFrame) -> String {
+    serde_json::json!({
+        "kind": "media_transport",
+        "paused": f.paused,
+        "loop": f.looping,
+        "replay_epoch": f.replay_epoch,
+        // A SCRUB IS AN EVENT, exactly as a replay is, and counted apart from it
+        // (RG-221). `seek_ms` is where the handle was dropped; a screen acts on
+        // an epoch it has not seen and ignores one it has, so a retained frame
+        // cannot drag a screen that joins an hour later back to the start.
+        "seek_epoch": f.seek_epoch,
+        "seek_ms": f.seek_ms,
+        // The room's level, 0.0–1.0.
+        "volume": f.volume,
+        // The baseline the scrub implies, when this frame carries one (RG-220).
+        "started_at": f.started_at,
+    })
+    .to_string()
+}
+
+/// Is this the frame that says what the clip on the screens is doing?
+///
+/// `contains`, not `starts_with`, for the reason recorded on `is_screen_frame`.
+fn is_media_transport_frame(msg: &str) -> bool {
+    msg.contains(r#""kind":"media_transport""#)
+}
+
+/// Leave the transport alone, take it away, or become it.
+///
+/// Three answers again, and a fourth trigger the other retained frames do not
+/// have: **a new CONTENT frame clears it**. A clip is started at its beginning and
+/// playing, always, so a transport retained across a fire would hand the next
+/// video a church put up already held, because somebody paused a different one
+/// twenty minutes earlier. Nothing in the product would say why.
+///
+/// `clear` and `black` empty it too, with everything else they take.
+fn media_transport_retention(msg: &str) -> Option<Option<String>> {
+    if is_screen_frame(msg) {
+        // Content, clear and black alike: the transport belongs to the clip that
+        // was showing, and all three of those replace it.
+        return Some(None);
+    }
+    if !is_media_transport_frame(msg) {
+        return None;
+    }
+    Some(Some(msg.to_string()))
 }
 
 /// The frame a hub sends when every screen is following the wall.
@@ -1593,13 +2347,79 @@ pub fn stage_next<R: tauri::Runtime>(
 ///
 /// Suppressed in a rehearsal, like every other publisher here — see `stage_next`
 /// for what that cost the one time it was missed.
-pub fn stage_alert<R: tauri::Runtime>(app: &tauri::AppHandle<R>, text: Option<String>) {
+pub fn stage_alert<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    text: Option<String>,
+    urgent: bool,
+) {
     if rehearsing(app) {
         println!("rehearsal: stage_alert SUPPRESSED — nothing left the machine");
         return;
     }
-    let json = serde_json::json!({ "kind": "stage_alert", "text": text }).to_string();
+    // ── QUIET OR URGENT, AND THE DIFFERENCE IS THE WHOLE POINT ───────────────
+    //
+    // There was one rendering: a full-bleed flashing red panel. So "wrap up in
+    // five" arrived as the same emergency as "stop, there is a medical
+    // incident", and an alarm spent on ordinary business stops being an alarm.
+    // `urgent` is false for a note, which lands as fixed text where the
+    // template puts it, and true for the panel (DECISIONS §116).
+    let json =
+        serde_json::json!({ "kind": "stage_alert", "text": &text, "urgent": urgent }).to_string();
     publish_kiosk(app, json);
+    // ── THE SECOND DOOR, AND WHY IT IS NOT A WIDENING (RG-156) ───────────────
+    //
+    // This published to the kiosk hub and nothing else, so a screen wired as a
+    // `native_window` and given the `stage` role received NOTHING. The seeded
+    // `Stage display` is a `network_client`, so it took a church configuring a
+    // confidence monitor on HDMI to meet it — and then the failure is silence:
+    // the console reports a Stage Message sent, and the preacher is never told
+    // something the operator believes they have been told. That is rule 35 from
+    // the engine end rather than the badge end.
+    //
+    // **The guarantee does not move.** It never rested on this door being shut —
+    // it rests on `channelroles::acceptsStageMessage`, which `Output.svelte` asks
+    // before painting, at the kiosk door and now at this one, from ONE function.
+    // It could not rest on the door: the hub cannot address a client either
+    // (DECISIONS §35), so every congregation browser source has always been sent
+    // this frame and has always refused it. A Tauri emit reaches every webview on
+    // exactly the same terms.
+    //
+    // Nothing a congregation renderer binds rides on it: the payload is the text
+    // and nothing else, `OutputContent` has no stage-message field, and
+    // `e2e::r5_a_word_to_the_preacher_reaches_no_congregation_channel` asserts
+    // both of those about both doors.
+    let _ = app.emit(
+        "output://stage_alert",
+        serde_json::json!({ "text": text, "urgent": urgent }),
+    );
+}
+
+/// PUT SOMETHING ON THE PREACHER'S SCREEN, or take it off (`None`).
+///
+/// Suppressed in a rehearsal like every other publisher here: a rehearsal reaches
+/// no screen, and a slide appearing on a platform during one is the exact defect
+/// `stage_next` shipped with.
+pub fn stage_media<R: tauri::Runtime>(app: &tauri::AppHandle<R>, media: Option<(String, String)>) {
+    if rehearsing(app) {
+        println!("rehearsal: stage_media SUPPRESSED — nothing left the machine");
+        return;
+    }
+    let json = match &media {
+        Some((url, kind)) => stage_media_frame_json(Some(url), Some(kind)),
+        None => stage_media_frame_json(None, None),
+    };
+    publish_kiosk(app, json);
+}
+
+/// TELL THE SCREENS WHAT TO DO WITH THE CLIP THEY ARE ALREADY PLAYING.
+///
+/// Not rehearsal-gated, and deliberately rather than by omission. Every other
+/// publisher here PUTS something in front of somebody; this one changes what is
+/// already there. In a rehearsal nothing is on a real screen to change, so the
+/// frame reaches nobody — and gating it would only mean an operator rehearsing the
+/// transport found the buttons dead with nothing to say why.
+pub fn media_transport<R: tauri::Runtime>(app: &tauri::AppHandle<R>, frame: TransportFrame) {
+    publish_kiosk(app, media_transport_frame_json(frame));
 }
 
 /// THE WIRE FORM OF THE PROGRAMME TIMERS — the whole stage-visible set, every time.
@@ -2011,6 +2831,18 @@ pub struct KioskHub {
     /// all (the gate is at `set_background`), so there is nothing of a rehearsal
     /// to replay here either.
     last_background: Arc<Mutex<Option<String>>>,
+    /// WHAT THE PREACHER'S OWN SCREEN IS HOLDING — see `stage_media_retention`.
+    ///
+    /// Its own slot for the same reason as the background's: it is neither a screen
+    /// frame nor a timer, so retaining it in `last_screen` would replace the verse
+    /// and hand the next screen to join a picture over a blank wall.
+    last_stage_media: Arc<Mutex<Option<String>>>,
+    /// WHAT THE CLIP ON THE SCREENS IS DOING — held, looping, and which replay.
+    ///
+    /// Its own slot, and the only one a CONTENT frame reaches into: a clip is
+    /// always started at its beginning and playing, so a transport that outlived
+    /// the clip it belonged to would hand the next video to a church already held.
+    last_media_transport: Arc<Mutex<Option<String>>>,
     /// THE SCREENS THE OPERATOR HAS TAKEN OUT OF THE WALL — `{"4":"clear"}`.
     ///
     /// ITS OWN SLOT, NOT `last_screen`, and this is the fifth time that sentence
@@ -2068,6 +2900,8 @@ impl Default for KioskHub {
             channel_shows: Arc::new(Mutex::new("{}".to_string())),
             last_timers: Arc::new(Mutex::new(None)),
             last_background: Arc::new(Mutex::new(None)),
+            last_stage_media: Arc::new(Mutex::new(None)),
+            last_media_transport: Arc::new(Mutex::new(None)),
             // THE EMPTY FRAME, not an empty map. This slot holds a frame ready to
             // send, so seeding it with `{}` would put a bare object on the wire on
             // every hello before anything was ever taken down — a message with no
@@ -2179,6 +3013,23 @@ impl KioskHub {
                 *last = next;
             }
         }
+        // A FIFTH SLOT, on the background's argument exactly: its own slot because
+        // it is neither a screen frame nor a timer, and reached by the panic
+        // controls because `clear` and `black` come through this door too.
+        if let Some(next) = stage_media_retention(&msg) {
+            if let Ok(mut last) = self.last_stage_media.lock() {
+                *last = next;
+            }
+        }
+        // A SIXTH SLOT, and the only one a CONTENT frame empties. Every other
+        // retention here is cleared by a panic control alone; this one goes with
+        // the next thing fired as well, because the transport belongs to the clip
+        // rather than to the service.
+        if let Some(next) = media_transport_retention(&msg) {
+            if let Ok(mut last) = self.last_media_transport.lock() {
+                *last = next;
+            }
+        }
         // A FOURTH SLOT, and the same disjointness argument. A `screen_state` frame
         // is neither a screen frame nor a timer — it says which screens the
         // operator has taken OUT of the wall, which is a fact about screens rather
@@ -2204,6 +3055,14 @@ impl KioskHub {
         self.last_timers.clone()
     }
     /// Shared handle to the retained background, for the WS task's hello.
+    pub fn last_media_transport_handle(&self) -> Arc<Mutex<Option<String>>> {
+        self.last_media_transport.clone()
+    }
+
+    pub fn last_stage_media_handle(&self) -> Arc<Mutex<Option<String>>> {
+        self.last_stage_media.clone()
+    }
+
     pub fn last_background_handle(&self) -> Arc<Mutex<Option<String>>> {
         self.last_background.clone()
     }
@@ -2668,6 +3527,8 @@ pub async fn run_kiosk_server(
     last_transition: TransitionSlot,
     last_timers: Arc<Mutex<Option<String>>>,
     last_background: Arc<Mutex<Option<String>>>,
+    last_stage_media: Arc<Mutex<Option<String>>>,
+    last_media_transport: Arc<Mutex<Option<String>>>,
     screens_down: Arc<Mutex<String>>,
     look_ids: Arc<Mutex<Vec<i64>>>,
     health: OutputHealth,
@@ -2712,6 +3573,8 @@ pub async fn run_kiosk_server(
         let last_transition = last_transition.clone();
         let last_timers = last_timers.clone();
         let last_background = last_background.clone();
+        let last_stage_media = last_stage_media.clone();
+        let last_media_transport = last_media_transport.clone();
         let screens_down = screens_down.clone();
         let look_ids = look_ids.clone();
         let health = health.clone();
@@ -2740,6 +3603,9 @@ pub async fn run_kiosk_server(
                 Ok(Err(_)) | Err(_) => return,
             };
             let (mut write, mut read) = ws.split();
+            // WHICH SCREEN THIS SOCKET IS, from its hello, so a lagging client can be
+            // handed its own retained frame again (RG-195).
+            let mut hello_channel: Option<i64> = None;
             // Dropped when this task ends by ANY route — break, error, or panic —
             // which is what keeps the online count from drifting upward over a
             // service as kiosk screens reconnect.
@@ -2765,7 +3631,32 @@ pub async fn run_kiosk_server(
                                 break;
                             }
                         }
-                        Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(broadcast::error::RecvError::Lagged(_)) => {
+                            // RE-SYNC, NOT SKIP (RG-195). The frames this client
+                            // missed may include the one that decides what it
+                            // shows — a `clear` is a panic control, and a panic
+                            // control that did not land on one screen with nothing
+                            // saying so is rule 15's exact failure. Hand it what a
+                            // screen that just joined would get, and count it.
+                            if let Some(ch) = hello_channel {
+                                health.note_resync(ch);
+                            }
+                            for f in resync_frames(
+                                &last_screen,
+                                &last_screen_by_channel,
+                                &screens_down,
+                                hello_channel,
+                            ) {
+                                if write
+                                    .send(tokio_tungstenite::tungstenite::Message::Text(f))
+                                    .await
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                            continue;
+                        }
                         Err(_) => break,
                     },
                     incoming = read.next() => match incoming {
@@ -2820,7 +3711,14 @@ pub async fn run_kiosk_server(
                                             .and_then(|s| s.as_str())
                                             .and_then(PaintState::parse),
                                     ) {
-                                        health.beat(ch, st, "kiosk", BeatGap::from_json(&v));
+                                        health.beat(
+                                            ch,
+                                            st,
+                                            "kiosk",
+                                            BeatGap::from_json(&v),
+                                            MediaBeat::from_json(&v),
+                                        );
+                                        health.note_media_error(ch, media_error_from_json(&v));
                                         // ── AND THE SCREEN IS TOLD THE TIME ──
                                         //
                                         // Answered here, INSIDE the parse, so an
@@ -2944,6 +3842,7 @@ pub async fn run_kiosk_server(
                                     if let Some(ch) =
                                         v.get("channel").and_then(|c| c.as_i64()).filter(|c| *c > 0)
                                     {
+                                        hello_channel = Some(ch);
                                         let mine = channel_tpls
                                             .lock()
                                             .ok()
@@ -3146,6 +4045,47 @@ pub async fn run_kiosk_server(
                                     let backdrop =
                                         last_background.lock().ok().and_then(|b| b.clone());
                                     if let Some(frame) = backdrop {
+                                        let _ = write
+                                            .send(tokio_tungstenite::tungstenite::Message::Text(frame))
+                                            .await;
+                                    }
+                                    // AND THE PREACHER'S OWN SLIDE, if one is up.
+                                    //
+                                    // Rule 43, for the one screen in the building
+                                    // that is not a congregation screen: a stage
+                                    // tablet whose wifi dropped mid-sermon came back
+                                    // with the reading and no slide, and stayed that
+                                    // way until the operator happened to push it
+                                    // again. Sent BEFORE the content below, on the
+                                    // same ordering rule as the backdrop: the device
+                                    // paints a reading over the media, so the media
+                                    // has to be there first for the reading to be
+                                    // over anything.
+                                    //
+                                    // It can never undo a panic control, because
+                                    // `clear` and `black` empty this slot at the
+                                    // retention door rather than being filtered out
+                                    // here.
+                                    let stage_media_frame =
+                                        last_stage_media.lock().ok().and_then(|m| m.clone());
+                                    if let Some(frame) = stage_media_frame {
+                                        let _ = write
+                                            .send(tokio_tungstenite::tungstenite::Message::Text(frame))
+                                            .await;
+                                    }
+                                    // AND WHAT THE CLIP IS DOING, if one is held or
+                                    // looping. A screen that rejoined mid-service
+                                    // would otherwise start the clip playing while
+                                    // every other screen sat held — and the operator
+                                    // who pressed Pause would be watching one screen
+                                    // disobey with nothing to say why.
+                                    //
+                                    // Emptied by the next fire as well as by a panic
+                                    // control, so this can only ever describe the
+                                    // clip that is actually up.
+                                    let transport_frame =
+                                        last_media_transport.lock().ok().and_then(|t| t.clone());
+                                    if let Some(frame) = transport_frame {
                                         let _ = write
                                             .send(tokio_tungstenite::tungstenite::Message::Text(frame))
                                             .await;
@@ -4558,6 +5498,8 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -4627,6 +5569,8 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -4719,6 +5663,8 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -4778,6 +5724,8 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -4866,6 +5814,8 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -4969,6 +5919,8 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -5058,6 +6010,8 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -5225,6 +6179,8 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -5283,6 +6239,72 @@ mod tests {
         );
     }
 
+    /// A SLIDE ON THE PREACHER'S SCREEN CARRIES THE INSTANT IT WAS SENT (RG-220).
+    ///
+    /// The operator asked for *"all media in sync"* and chose the two things
+    /// Relay can honestly do: every screen starts together and is corrected when
+    /// it drifts. The correction is each screen's own and needs one fact from
+    /// here — when the clip started, on Relay's clock. The page cannot infer it:
+    /// it knows when the FRAME arrived, which is a fact about the network.
+    ///
+    /// Taking the slide DOWN carries no instant, because there is nothing to be
+    /// in sync with and a stamp on an absence is a claim about nothing.
+    #[test]
+    fn a_stage_slide_says_when_relay_sent_it_and_a_removal_does_not() {
+        let up: serde_json::Value = serde_json::from_str(&stage_media_frame_json(
+            Some("http://x/media/7"),
+            Some("video"),
+        ))
+        .unwrap();
+        let at = up["started_at"]
+            .as_i64()
+            .expect("no instant on a stage slide");
+        // A real clock, not a zero: `now_epoch_ms` falls back to 0 only before
+        // the UNIX epoch, and a 0 here would sync every screen to 1970.
+        assert!(
+            at > 1_600_000_000_000,
+            "started_at is not a wall clock: {at}"
+        );
+
+        let down: serde_json::Value =
+            serde_json::from_str(&stage_media_frame_json(None, None)).unwrap();
+        assert!(
+            down["started_at"].is_null(),
+            "taking a slide down claimed an instant: {down}"
+        );
+    }
+
+    /// AND SO DOES A CLIP ON THE CONGREGATION'S SCREENS.
+    ///
+    /// The same fact by the other door. `kiosk_content_json` is the wire form
+    /// every browser source receives, and a field missing from it is the exact
+    /// bug this function's own doc comment records about `next_reference`.
+    #[test]
+    fn a_kiosk_content_frame_carries_the_instant_the_clip_started() {
+        let content = OutputContent {
+            kind: Some("media".into()),
+            media_url: Some("http://x/media/7".into()),
+            media_kind: Some("video".into()),
+            media_started_at: Some(1_700_000_000_000),
+            ..Default::default()
+        };
+        let v: serde_json::Value = serde_json::from_str(&kiosk_content_json(&content)).unwrap();
+        assert_eq!(v["media_started_at"], 1_700_000_000_000i64);
+
+        // A verse has no clip, so it claims no instant — `syncSeek` corrects
+        // nothing without one, and a stamp here would be a fact about nothing.
+        let verse = OutputContent {
+            kind: Some("scripture".into()),
+            reference: "John 3:16".into(),
+            ..Default::default()
+        };
+        let v: serde_json::Value = serde_json::from_str(&kiosk_content_json(&verse)).unwrap();
+        assert!(
+            v["media_started_at"].is_null(),
+            "a verse claimed a clip start"
+        );
+    }
+
     /// THE LIST IS A BOUND, NOT A CACHE.
     ///
     /// Every id here becomes a `template` frame in every hello reply, and a
@@ -5338,6 +6360,8 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -5507,6 +6531,71 @@ mod tests {
             r#"{"kind":"channel_shows","shows":{"1":["scripture"]}}"#
         ));
     }
+    /// A CLIP'S POSITION IS ONLY WORTH WHAT THE BEAT CARRYING IT IS WORTH.
+    ///
+    /// Requirement 11. The console must never time a clip off its own preview —
+    /// its programme pane holds a second player of the same file, and if the
+    /// wall's copy stalls the console's carries on. So the figure comes off the
+    /// beat, and a stale beat's figure is refused with the rest of it.
+    #[test]
+    fn a_stale_beat_says_nothing_about_a_clip() {
+        let h = OutputHealth::default();
+        h.beat(
+            4,
+            PaintState::Content,
+            "kiosk",
+            BeatGap::default(),
+            Some(MediaBeat {
+                pos_ms: 12_000,
+                dur_ms: 240_000,
+                paused: false,
+            }),
+        );
+        assert_eq!(h.media_of(4).map(|m| m.pos_ms), Some(12_000));
+        // And a channel nobody has reported for says nothing rather than zero.
+        assert_eq!(h.media_of(99), None);
+    }
+
+    /// ZERO IS NOT A CLIP THAT TAKES NO TIME.
+    ///
+    /// It is a player that has not loaded one yet. "0:00 left" over a clip that has
+    /// barely started is worse than saying nothing, because the operator acts on
+    /// it — that figure is what the next cue is timed against.
+    #[test]
+    fn a_report_with_no_duration_is_dropped_whole() {
+        let j = |s: &str| serde_json::from_str::<serde_json::Value>(s).expect("json");
+        assert_eq!(
+            MediaBeat::from_json(&j(r#"{"media_pos_ms":0,"media_dur_ms":0}"#)),
+            None
+        );
+        assert_eq!(MediaBeat::from_json(&j(r#"{"media_pos_ms":10}"#)), None);
+        assert_eq!(MediaBeat::from_json(&j(r#"{}"#)), None);
+        // And the same rule through the other transport, because a window and a
+        // browser source must not disagree about the same clip.
+        assert_eq!(MediaBeat::clamped(Some(0), Some(0), None), None);
+        assert_eq!(MediaBeat::clamped(Some(10), None, None), None);
+    }
+
+    /// A NUMBER OFF THE LAN IS STILL UNTRUSTED INPUT — and a position past the end
+    /// of its own clip is the shape that reaches an operator as a negative
+    /// countdown.
+    #[test]
+    fn a_position_past_the_end_is_clamped_to_the_end() {
+        let j = |s: &str| serde_json::from_str::<serde_json::Value>(s).expect("json");
+        let m = MediaBeat::from_json(&j(r#"{"media_pos_ms":999999,"media_dur_ms":5000}"#))
+            .expect("a clip with a real duration");
+        assert_eq!(m.pos_ms, 5_000);
+        assert_eq!(
+            MediaBeat::clamped(Some(999_999), Some(5_000), None).map(|m| m.pos_ms),
+            Some(5_000)
+        );
+        // Beyond a day is a broken clock or a hostile client, and neither is
+        // evidence about a service. The same clamp `BeatGap` already applies.
+        assert_eq!(
+            MediaBeat::clamped(Some(0), Some(GAP_CLAMP_MS + 1), None),
+            None
+        );
+    }
 
     /// Every `kind` this module publishes, and whether it decides what a screen
     /// is SHOWING. `true` here means the hub retains it and replays it to a
@@ -5535,6 +6624,15 @@ mod tests {
         ("black", true),
         ("stage_next", false),
         ("stage_alert", false),
+        // The preacher's own slide. Not a screen frame: it has its own slot, so
+        // retaining it here would replace the verse and hand the next screen to
+        // join a picture over a blank wall. Scripture overrides it on the DEVICE,
+        // which is a rule about painting and not about retention.
+        ("stage_media", false),
+        // What the clip is DOING. Not a screen frame: it has its own slot, and
+        // retaining it here would replace the verse with a pause instruction and
+        // hand the next screen to join a blank wall.
+        ("media_transport", false),
         ("template", false),
         // Configuration, not content. It is retained — in its OWN slot, and
         // replayed on hello from there — because a screen that joins late must not
@@ -5749,6 +6847,20 @@ mod tests {
             true,
             "a word to the preacher is for a person, and a rehearsal has no person \
              waiting for it",
+        ),
+        (
+            "media_transport",
+            false,
+            "it changes what is ALREADY on a screen rather than putting something \
+             there, so in a rehearsal it reaches nobody by construction — and \
+             gating it would only mean an operator rehearsing the transport found \
+             the buttons dead with nothing to say why",
+        ),
+        (
+            "stage_media",
+            true,
+            "the preacher's own slide is for a person on a platform, and a slide \
+             appearing there during a rehearsal is `stage_next`'s defect again",
         ),
         (
             "publish_timers",
@@ -6165,6 +7277,8 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -6237,6 +7351,8 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -6404,6 +7520,7 @@ mod tests {
             until_ms: None,
             plan_item_id: None,
             started_in_rehearsal: false,
+            channels: None,
         }
     }
 
@@ -6774,6 +7891,8 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -6842,6 +7961,8 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -6916,6 +8037,8 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -7108,6 +8231,8 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -7163,6 +8288,82 @@ mod tests {
     /// must also draw no reply — otherwise an unparseable beat would be
     /// distinguishable from a parseable one by whether an answer came back,
     /// which is a probe this read-only server does not owe anybody.
+    /// 2026-09-21 · RG-182, through the real hub: a beat naming a picture the
+    /// screen could not load reaches `OutputHealth`, and the next clean beat
+    /// clears it. The pure reader is tested above; this is the wiring.
+    #[tokio::test]
+    async fn a_beat_naming_a_media_failure_reaches_the_desk_through_the_real_hub() {
+        use futures_util::{SinkExt, StreamExt};
+        let port = free_port();
+        let hub = KioskHub::default();
+        let health = OutputHealth::default();
+        tokio::spawn(run_kiosk_server(
+            log_only(),
+            hub.sender(),
+            hub.templates_handle(),
+            hub.clients_handle(),
+            hub.default_template_handle(),
+            hub.channel_roles_handle(),
+            hub.channel_looks_handle(),
+            hub.channel_templates_handle(),
+            hub.channel_shows_handle(),
+            hub.last_screen_handle(),
+            hub.last_screen_by_channel_handle(),
+            hub.last_transition_handle(),
+            hub.last_timers_handle(),
+            hub.last_background_handle(),
+            hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
+            hub.screens_down_handle(),
+            hub.look_ids_handle(),
+            health.clone(),
+            port,
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
+            .await
+            .expect("connect");
+        let (mut write, mut read) = ws.split();
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"kind":"beat","channel":2,"state":"content","media_error":"image not loading · http://10.0.0.5:8032/media/3"}"#
+                    .to_string(),
+            ))
+            .await
+            .expect("send beat");
+        // Wait for the ack: that is the hub saying it has read the beat.
+        let mut acked = false;
+        for _ in 0..HELLO_FRAMES {
+            let Ok(Some(Ok(msg))) =
+                tokio::time::timeout(std::time::Duration::from_secs(2), read.next()).await
+            else {
+                break;
+            };
+            if msg
+                .into_text()
+                .unwrap_or_default()
+                .contains(r#""kind":"beat_ack""#)
+            {
+                acked = true;
+                break;
+            }
+        }
+        assert!(acked, "the beat was never acknowledged");
+        assert_eq!(
+            health.media_error_of(2).as_deref(),
+            Some("image not loading · http://10.0.0.5:8032/media/3"),
+            "the desk never learned what the screen said about its picture"
+        );
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"kind":"beat","channel":2,"state":"content"}"#.to_string(),
+            ))
+            .await
+            .expect("send clean beat");
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        assert_eq!(health.media_error_of(2), None, "a clean beat must clear it");
+    }
+
     #[tokio::test]
     async fn a_beat_that_does_not_parse_is_not_answered() {
         let port = free_port();
@@ -7182,6 +8383,8 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -7253,6 +8456,8 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -7366,6 +8571,8 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -7482,6 +8689,8 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -7551,6 +8760,8 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -7631,6 +8842,8 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -7697,6 +8910,8 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -7962,6 +9177,8 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             OutputHealth::default(),
@@ -8025,6 +9242,8 @@ mod tests {
             hub.last_transition_handle(),
             hub.last_timers_handle(),
             hub.last_background_handle(),
+            hub.last_stage_media_handle(),
+            hub.last_media_transport_handle(),
             hub.screens_down_handle(),
             hub.look_ids_handle(),
             health.clone(),
@@ -8183,7 +9402,7 @@ mod rehearsal_tests {
     #[test]
     fn a_beat_makes_a_screen_painting_and_carries_what_it_said() {
         let h = OutputHealth::default();
-        h.beat(7, PaintState::Content, "window", BeatGap::default());
+        h.beat(7, PaintState::Content, "window", BeatGap::default(), None);
         assert!(h.painting(7));
         let (age, state, transport) = h.read(7).expect("just beat");
         assert!(age < 1_000);
@@ -8196,11 +9415,68 @@ mod rehearsal_tests {
     /// `output.html` defaults `?channel=` to 0 when it is opened as a raw preview.
     /// Recording a beat for it would invent a screen nobody configured, and it
     /// would then appear in a status view as an output going silent.
+    /// 2026-09-21 · O-4 / M-3. A screen whose picture did not load must not read
+    /// On Air. The page says so on the beat; the desk must be able to read it back,
+    /// and a later beat that says nothing must clear it (the failure healed, or a
+    /// new clip replaced it).
+    #[test]
+    fn a_beat_carries_a_media_failure_and_a_clean_beat_clears_it() {
+        let h = OutputHealth::default();
+        h.beat(7, PaintState::Content, "window", BeatGap::default(), None);
+        h.note_media_error(7, Some("video not loading · http://x:8032/media/1".into()));
+        assert_eq!(
+            h.media_error_of(7).as_deref(),
+            Some("video not loading · http://x:8032/media/1")
+        );
+        h.beat(7, PaintState::Content, "window", BeatGap::default(), None);
+        h.note_media_error(7, None);
+        assert_eq!(h.media_error_of(7), None);
+    }
+
+    /// …and the kiosk door reads the same field off the JSON frame.
+    #[test]
+    fn a_kiosk_beat_names_its_media_failure() {
+        let v: serde_json::Value = serde_json::from_str(
+            r#"{"kind":"beat","channel":3,"state":"content","media_error":"image not loading · http://x:8032/media/3"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            media_error_from_json(&v).as_deref(),
+            Some("image not loading · http://x:8032/media/3")
+        );
+        let clean: serde_json::Value =
+            serde_json::from_str(r#"{"kind":"beat","channel":3,"state":"content"}"#).unwrap();
+        assert_eq!(media_error_from_json(&clean), None);
+        // Bounded: a page cannot push a novel through the desk's status row.
+        let long = format!(
+            r#"{{"kind":"beat","channel":3,"state":"content","media_error":"{}"}}"#,
+            "x".repeat(5000)
+        );
+        let long: serde_json::Value = serde_json::from_str(&long).unwrap();
+        assert!(media_error_from_json(&long).unwrap().len() <= 300);
+    }
+
+    /// 2026-09-21 · O-3 (RG-195). A kiosk client that fell more than the
+    /// broadcast buffer behind hit `RecvError::Lagged` and silently skipped
+    /// frames — a `clear` among them is a panic control that did not land on one
+    /// screen. Rule 33: every queue on the path counts what it sheds. The count
+    /// rides the status row so the desk can say "this screen was re-synced".
+    #[test]
+    fn a_lagging_screen_is_counted_and_the_count_survives_a_beat() {
+        let h = OutputHealth::default();
+        assert_eq!(h.resyncs_of(7), 0);
+        h.note_resync(7);
+        h.note_resync(7);
+        h.beat(7, PaintState::Content, "kiosk", BeatGap::default(), None);
+        assert_eq!(h.resyncs_of(7), 2);
+        assert_eq!(h.resyncs_of(8), 0, "another screen is not blamed");
+    }
+
     #[test]
     fn a_preview_with_no_channel_reports_nothing() {
         let h = OutputHealth::default();
-        h.beat(0, PaintState::Content, "window", BeatGap::default());
-        h.beat(-1, PaintState::Content, "window", BeatGap::default());
+        h.beat(0, PaintState::Content, "window", BeatGap::default(), None);
+        h.beat(-1, PaintState::Content, "window", BeatGap::default(), None);
         assert!(h.read(0).is_none());
         assert!(h.read(-1).is_none());
     }
@@ -8250,7 +9526,7 @@ mod rehearsal_tests {
     #[test]
     fn a_screen_that_answered_and_then_went_quiet_is_reported_at_once() {
         let h = OutputHealth::default();
-        h.beat(9, PaintState::Content, "window", BeatGap::default());
+        h.beat(9, PaintState::Content, "window", BeatGap::default(), None);
         assert_eq!(
             h.transition(9),
             None,
@@ -8264,7 +9540,7 @@ mod rehearsal_tests {
             b.at = std::time::Instant::now() - std::time::Duration::from_millis(BEAT_STALE_MS * 2);
         }
         assert_eq!(h.transition(9), Some(false));
-        h.beat(9, PaintState::Content, "window", BeatGap::default());
+        h.beat(9, PaintState::Content, "window", BeatGap::default(), None);
         assert_eq!(h.transition(9), Some(true));
     }
 
@@ -8277,7 +9553,7 @@ mod rehearsal_tests {
     #[test]
     fn a_beat_carries_what_the_screen_said_about_its_own_silence() {
         let h = OutputHealth::default();
-        h.beat(9, PaintState::Content, "window", BeatGap::default());
+        h.beat(9, PaintState::Content, "window", BeatGap::default(), None);
         assert_eq!(h.last_gap(9), Some(BeatGap::default()));
         assert_eq!(
             h.last_gap(9).and_then(|g| g.describe()),
@@ -8289,22 +9565,111 @@ mod rehearsal_tests {
             9,
             PaintState::Content,
             "window",
-            BeatGap::clamped(Some(641_000), Some(641_000)),
+            BeatGap::clamped(Some(641_000), Some(641_000), Some(0), None),
+            None,
         );
         assert_eq!(
             h.last_gap(9).and_then(|g| g.describe()).as_deref(),
-            Some("screen's own clock: silent 641s, hidden 641s")
+            Some("screen's own clock: silent 641s, hidden 641s — the OS had hidden this page")
         );
 
         h.beat(
             9,
             PaintState::Content,
             "window",
-            BeatGap::clamped(Some(2_000), Some(0)),
+            BeatGap::clamped(Some(2_000), Some(0), Some(0), None),
+            None,
         );
         assert_eq!(
             h.last_gap(9).and_then(|g| g.describe()).as_deref(),
-            Some("screen's own clock: silent 2s, never hidden")
+            Some(
+                "screen's own clock: silent 2s, never hidden — the page ticked on time and \
+                 Relay got nothing"
+            )
+        );
+    }
+
+    /// THE BEAT THAT ENDS A SILENCE IS THE ONE WITH THE ANSWER ON IT (RG-119).
+    ///
+    /// A page that comes back beats again every `BEAT_INTERVAL_MS`, and each of
+    /// those says *one interval* because that is what it measured. `channel_status`
+    /// — the only edge detector — polls on its own 2 s timer, so the beat carrying
+    /// the outage survived only until the next one, and whether the recovery entry
+    /// got it was a race.
+    ///
+    /// **Lose that race and the record reads *"silent 2s, never hidden"*, which is
+    /// precisely the reading RG-119 treats as evidence that the page kept ticking
+    /// and Relay lost the beats.** Service 21 has seven Main-screen recoveries and
+    /// three of them say exactly that. An artefact that is indistinguishable from
+    /// the finding it corrupts is rule 35 one level down.
+    ///
+    /// Put the defect back by deleting the `silence_ended` branch from `last_gap`
+    /// and this fails with "silent 2s" over a page that reported 24 seconds.
+    #[test]
+    fn the_gap_that_ended_a_silence_survives_the_beats_that_follow_it() {
+        let h = OutputHealth::default();
+        // A screen beating normally.
+        h.beat(
+            9,
+            PaintState::Content,
+            "window",
+            BeatGap::clamped(Some(2_000), Some(0), Some(0), None),
+            None,
+        );
+        // It goes quiet long enough for Relay to notice.
+        {
+            let mut m = h.beats.lock().expect("lock");
+            let b = m.get_mut(&9).expect("beat");
+            b.at = std::time::Instant::now() - std::time::Duration::from_millis(BEAT_STALE_MS * 2);
+        }
+        assert_eq!(h.transition(9), Some(false), "the loss is noticed");
+
+        // It comes back and says how long it was really silent — then goes on
+        // beating, twice, before the 2 s poll notices the recovery.
+        h.beat(
+            9,
+            PaintState::Content,
+            "window",
+            BeatGap::clamped(Some(24_000), Some(0), Some(0), None),
+            None,
+        );
+        for _ in 0..2 {
+            h.beat(
+                9,
+                PaintState::Content,
+                "window",
+                BeatGap::clamped(Some(2_000), Some(0), Some(0), None),
+                None,
+            );
+        }
+        assert_eq!(h.transition(9), Some(true), "the recovery is noticed");
+        assert_eq!(
+            h.last_gap(9).and_then(|g| g.describe()).as_deref(),
+            Some(
+                "screen's own clock: silent 24s, never hidden — the page was not being run, \
+                 and nothing told it so"
+            ),
+            "the recovery was logged with an ordinary beat's gap, so the record says \
+             the page was quiet for one interval when it said twenty-four seconds"
+        );
+
+        // AND IT DOES NOT OUTLIVE ITS SCREEN. A window the operator closed and
+        // reopened must not be quoted an outage from before it existed.
+        h.forget(9);
+        h.beat(
+            9,
+            PaintState::Content,
+            "window",
+            BeatGap::clamped(Some(2_000), Some(0), Some(0), None),
+            None,
+        );
+        assert_eq!(
+            h.last_gap(9).and_then(|g| g.describe()).as_deref(),
+            Some(
+                "screen's own clock: silent 2s, never hidden — the page ticked on time and \
+                 Relay got nothing"
+            ),
+            "a reopened window inherited the last window's outage"
         );
     }
 
@@ -8331,8 +9696,285 @@ mod rehearsal_tests {
             BeatGap::from_json(&serde_json::json!({"since_ms": 4000, "hidden_ms": 4000})),
             BeatGap {
                 since_ms: Some(4_000),
-                hidden_ms: Some(4_000)
+                hidden_ms: Some(4_000),
+                refused: None,
+                frames: None,
             }
+        );
+        // AND THE REFUSAL COUNT OBEYS THE SAME RULE (RG-119). A ceiling would read
+        // as a measurement; an absence says the number was not believed.
+        for bad in [
+            serde_json::json!({"since_ms": 4000, "refused": -1}),
+            serde_json::json!({"since_ms": 4000, "refused": "11"}),
+            serde_json::json!({"since_ms": 4000, "refused": REFUSED_CLAMP as u64 + 1}),
+            serde_json::json!({"since_ms": 4000, "refused": u64::MAX}),
+        ] {
+            assert_eq!(
+                BeatGap::from_json(&bad).refused,
+                None,
+                "not evidence: {bad}"
+            );
+        }
+        assert_eq!(
+            BeatGap::from_json(&serde_json::json!({"since_ms": 4000, "refused": 11})).refused,
+            Some(11)
+        );
+    }
+
+    /// **A BEAT THE BRIDGE REFUSED IS NAMED, AND A BEAT IT DID NOT IS NOT — RG-119.**
+    ///
+    /// The two readings this row could not tell apart are *"the page ticked on time
+    /// and Relay did not get the beats because something refused them"* and *"the
+    /// page ticked on time and Relay did not get the beats and nothing refused
+    /// anything"*. Both were `silent 2s, never hidden`, because the only place a
+    /// beat can be refused on the way out was a bare `catch {}` in `outputHealth.js`
+    /// and it said nothing to anybody. They want different next steps — one is the
+    /// bridge, the other is the command or the console's poll — so the record has to
+    /// separate them or the next service is no more decisive than the last four.
+    ///
+    /// Three things are asserted, and the middle one is the one an audit will lean
+    /// on: a refusal is on the line, a zero is NOT (nine characters of noise on
+    /// every recovery in the record would get the field deleted within a month), and
+    /// an absence is not a zero — a kiosk page has no bridge and Relay does not
+    /// answer on its behalf.
+    ///
+    /// Put the defect back by deleting the `refused` branch from `BeatGap::describe`
+    /// and the first case reads exactly like the second.
+    #[test]
+    fn a_recovery_says_whether_the_bridge_refused_the_beats_it_did_not_get() {
+        let refused = BeatGap::clamped(Some(2_000), Some(0), Some(11), None);
+        assert_eq!(
+            refused.describe().as_deref(),
+            Some(
+                "screen's own clock: silent 2s, never hidden, bridge refused 11 beats — the \
+                 page ticked on time and Relay's bridge threw its beats away"
+            ),
+            "the page ticked on time and eleven of its beats were thrown away by the \
+             bridge, and the record has to say so — that is the whole of this field"
+        );
+        assert_eq!(
+            BeatGap::clamped(Some(2_000), Some(0), Some(0), None)
+                .describe()
+                .as_deref(),
+            Some(
+                "screen's own clock: silent 2s, never hidden — the page ticked on time and \
+                 Relay got nothing"
+            ),
+            "an ordinary recovery grew a `refused 0`"
+        );
+        assert_eq!(
+            BeatGap::clamped(Some(2_000), Some(0), None, None)
+                .describe()
+                .as_deref(),
+            Some(
+                "screen's own clock: silent 2s, never hidden — the page ticked on time and \
+                 Relay got nothing"
+            ),
+            "a screen that has no bridge to be refused by was answered for"
+        );
+        // It travels the whole way a gap travels: kept off the beat that ended the
+        // silence, so it pairs with the entry rather than racing the console's poll.
+        let h = OutputHealth::default();
+        h.beat(4, PaintState::Content, "window", BeatGap::default(), None);
+        {
+            let mut m = h.beats.lock().expect("lock");
+            let b = m.get_mut(&4).expect("beat");
+            b.at = std::time::Instant::now() - std::time::Duration::from_millis(BEAT_STALE_MS * 2);
+        }
+        assert_eq!(h.transition(4), Some(false));
+        h.beat(4, PaintState::Content, "window", refused, None);
+        h.beat(
+            4,
+            PaintState::Content,
+            "window",
+            BeatGap::clamped(Some(2_000), Some(0), Some(0), None),
+            None,
+        );
+        assert_eq!(h.transition(4), Some(true));
+        assert_eq!(
+            h.last_gap(4).and_then(|g| g.describe()).as_deref(),
+            Some(
+                "screen's own clock: silent 2s, never hidden, bridge refused 11 beats — the \
+                 page ticked on time and Relay's bridge threw its beats away"
+            ),
+            "the refusal count was overwritten by the ordinary beat behind it, which \
+             is the race `silence_ended` exists to lose to nothing"
+        );
+    }
+
+    /// ONE WORD OVER FIVE SITUATIONS IS NOT A STATUS (RG-119, rule 35, 2026-09-29).
+    ///
+    /// `output_lost` read identically for a projector that died, a window that went
+    /// behind a terminal, a page the OS stopped without saying so, a bridge throwing
+    /// beats away, and beats that simply never arrived. The numbers to tell them
+    /// apart were on the beat and nobody reading a timeline was ever going to do the
+    /// arithmetic — which is rule 35's own complaint about a badge, one layer down,
+    /// on the line an audit opens.
+    ///
+    /// **The claim here is PAIRWISE DIFFERENCE, not five exact strings.** A test that
+    /// only pinned the wording would still pass if two classes were given the same
+    /// sentence, which is the defect. Put any two `SilenceCause::said` arms on one
+    /// string, or delete the `cause()` clause from `describe`, and this goes red.
+    #[test]
+    fn each_of_the_five_silences_reads_differently_in_the_record() {
+        // Every one of these is a shape taken from `service_events` in the operator's
+        // own database, except `throttled`, which is the shape the frame count exists
+        // to be able to find and which no service has yet produced.
+        let cases = [
+            // Service 42, Main screen and STAGE MONITOR together: the OS said hidden
+            // for the whole gap, to the second. Eleven recoveries on record look like
+            // this and every one of them is a screen that genuinely was not painting.
+            (
+                BeatGap::clamped(Some(1_369_000), Some(1_369_000), Some(0), Some(0)),
+                SilenceCause::Occluded,
+            ),
+            // Service 42, Main screen at 89412.3 s: visible as far as the page could
+            // tell, and silent for 207 seconds. `hidden_ms == 0` is NOT "it was
+            // visible" — see `BeatGap::frames` — and 0 frames says it was not being
+            // rendered whatever the OS said.
+            (
+                BeatGap::clamped(Some(207_000), Some(0), Some(0), Some(0)),
+                SilenceCause::Frozen,
+            ),
+            // The same gap with the page painting right through it. The screen was
+            // fine, only its clock stopped, and reporting a loss for it was wrong.
+            (
+                BeatGap::clamped(Some(207_000), Some(0), Some(0), Some(12_400)),
+                SilenceCause::Throttled,
+            ),
+            // The page ticked on time and handed eleven beats to a bridge that threw
+            // them. Relay's fault, and the screen never stopped.
+            (
+                BeatGap::clamped(Some(2_000), Some(0), Some(11), Some(120)),
+                SilenceCause::BridgeRefused,
+            ),
+            // Service 42 again, and service 21 seven times: one interval, nothing
+            // refused, and Relay still has no beat. Neither the page nor the bridge.
+            (
+                BeatGap::clamped(Some(2_000), Some(0), Some(0), Some(120)),
+                SilenceCause::Unreached,
+            ),
+        ];
+        for (gap, want) in cases {
+            assert_eq!(gap.cause(), Some(want), "classified wrongly: {gap:?}");
+            let phrase = gap
+                .describe()
+                .expect("a gap with a since_ms describes itself");
+            assert!(
+                phrase.contains(want.said()),
+                "the record does not carry the verdict: {phrase}"
+            );
+        }
+
+        // THE SENTENCES THEMSELVES, PAIRWISE, and this is the assertion that carries
+        // the claim. **Comparing the whole phrases does not** — the first version of
+        // this test did, and it stayed green with two causes sharing one sentence,
+        // because the numbers in front of them differed. A test that cannot fail is a
+        // theory that was never tested (rule 40), so the numbers are excluded and only
+        // the verdict is compared.
+        //
+        // Listed rather than derived, because Rust cannot enumerate an enum: a sixth
+        // cause added without a line here leaves `said()`'s match non-exhaustive and
+        // the compiler asks for it, which is the forcing function this relies on.
+        const ALL: [SilenceCause; 5] = [
+            SilenceCause::Occluded,
+            SilenceCause::Frozen,
+            SilenceCause::Throttled,
+            SilenceCause::BridgeRefused,
+            SilenceCause::Unreached,
+        ];
+        for (i, a) in ALL.iter().enumerate() {
+            for b in ALL.iter().skip(i + 1) {
+                assert_ne!(
+                    a.said(),
+                    b.said(),
+                    "{a:?} and {b:?} tell an operator the same thing, and they are not the \
+                     same thing — one word over several situations is the whole of RG-119"
+                );
+                assert_ne!(
+                    a.as_str(),
+                    b.as_str(),
+                    "two causes cross to the console as one word"
+                );
+            }
+        }
+
+        // AND A SCREEN THAT SAID NOTHING IS STILL QUOTED AS SAYING NOTHING. The
+        // classification must not manufacture a cause out of an absence: a page too
+        // old to carry these fields, or on its first beat, has no verdict to give.
+        assert_eq!(BeatGap::default().cause(), None);
+        assert_eq!(BeatGap::default().describe(), None);
+    }
+
+    /// THE FRAME COUNT IS THE ONLY THING HERE THAT ASKS WHETHER THE SCREEN PAINTED.
+    ///
+    /// `hidden_ms` asks whether the OS SAID anything, and the answer is `0` both for
+    /// a page that was visible and for a page suspended across the whole hidden →
+    /// visible round trip, because `hiddenMs` on the page only ever accrues from a
+    /// `visibilitychange` that was dispatched. So the register's second family —
+    /// *"silent 207s, never hidden"*, read as a page that was visible and not
+    /// ticking — was resting on a reading the instrument could not support.
+    ///
+    /// An animation frame needs nobody's cooperation. Delete the `frames` arm from
+    /// `cause()` and the throttled case below becomes `Frozen`, which is the opposite
+    /// verdict about the same screen: not painting, when it painted throughout.
+    #[test]
+    fn frames_separate_a_page_the_os_stopped_from_one_that_painted_throughout() {
+        let long = 300_000;
+        assert_eq!(
+            BeatGap::clamped(Some(long), Some(0), Some(0), Some(0)).cause(),
+            Some(SilenceCause::Frozen),
+            "a page that painted nothing for five minutes was not painting"
+        );
+        assert_eq!(
+            BeatGap::clamped(Some(long), Some(0), Some(0), Some(18_000)).cause(),
+            Some(SilenceCause::Throttled),
+            "a page that painted eighteen thousand frames was painting, and saying \
+             otherwise is the badge being wrong in the other direction"
+        );
+        // A PAGE THAT CANNOT COUNT IS NOT A PAGE THAT PAINTED NOTHING — but it does
+        // not get the benefit of the doubt either. `Frozen` is the safe direction: it
+        // still reports the outage, and the phrase omits the frame count entirely so
+        // an audit can see the verdict was reached without one.
+        let cannot_count = BeatGap::clamped(Some(long), Some(0), Some(0), None);
+        assert_eq!(cannot_count.cause(), Some(SilenceCause::Frozen));
+        let phrase = cannot_count.describe().expect("describes itself");
+        assert!(
+            !phrase.contains("frames"),
+            "a page that did not count frames was quoted a frame count: {phrase}"
+        );
+
+        // AND A KIOSK PAGE IS NOT SLANDERED BY ANY OF IT. A browser source has no
+        // bridge, so it never sends `refused` at all — `None`, not zero — and nothing
+        // may read that absence as a refusal. It CAN count frames, because OBS and a
+        // kiosk browser composite a page like anything else, so the other four
+        // verdicts are open to it.
+        let kiosk = BeatGap::from_json(&serde_json::json!({
+            "since_ms": 2_000, "hidden_ms": 0, "frames": 118
+        }));
+        assert_eq!(kiosk.refused, None, "a page with no bridge invented one");
+        assert_eq!(
+            kiosk.cause(),
+            Some(SilenceCause::Unreached),
+            "a screen with no bridge to refuse anything was blamed for a refusal"
+        );
+
+        // A NUMBER OFF THE LAN IS STILL UNTRUSTED INPUT, and the ceiling is dropped
+        // to an absence rather than saturated — a figure nobody can have produced is
+        // not evidence, and an absence says so where a cap would read as a count.
+        for bad in [
+            serde_json::json!({"since_ms": 4_000, "frames": -1}),
+            serde_json::json!({"since_ms": 4_000, "frames": "120"}),
+            serde_json::json!({"since_ms": 4_000, "frames": FRAMES_CLAMP as u64 + 1}),
+            serde_json::json!({"since_ms": 4_000, "frames": u64::MAX}),
+        ] {
+            assert_eq!(BeatGap::from_json(&bad).frames, None, "not evidence: {bad}");
+        }
+        assert_eq!(
+            BeatGap::from_json(&serde_json::json!({"since_ms": 4_000, "frames": 0})).frames,
+            Some(0),
+            "ZERO IS THE FINDING, not a missing field: it is what separates a page \
+             the OS stopped from one that painted throughout"
         );
     }
 
@@ -8345,7 +9987,7 @@ mod rehearsal_tests {
     #[test]
     fn forgetting_a_channel_resets_it_to_no_answer_yet() {
         let h = OutputHealth::default();
-        h.beat(3, PaintState::Black, "kiosk", BeatGap::default());
+        h.beat(3, PaintState::Black, "kiosk", BeatGap::default(), None);
         assert!(h.painting(3));
         h.forget(3);
         assert!(h.read(3).is_none());
@@ -8382,8 +10024,8 @@ mod rehearsal_tests {
     #[test]
     fn the_latest_beat_wins() {
         let h = OutputHealth::default();
-        h.beat(2, PaintState::Content, "window", BeatGap::default());
-        h.beat(2, PaintState::Black, "kiosk", BeatGap::default());
+        h.beat(2, PaintState::Content, "window", BeatGap::default(), None);
+        h.beat(2, PaintState::Black, "kiosk", BeatGap::default(), None);
         let (_, state, transport) = h.read(2).expect("beat");
         assert_eq!(state, PaintState::Black);
         assert_eq!(transport, "kiosk");

@@ -167,7 +167,7 @@ fn seed_bundled_backgrounds(conn: &Connection) -> rusqlite::Result<()> {
         if present.is_some() {
             continue;
         }
-        let id = super::library::insert_media(conn, "image", file, "")?;
+        let id = super::library::insert_media(conn, "image", file, "", None)?;
         super::library::set_media_path(conn, id, &path)?;
     }
     Ok(())

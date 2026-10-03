@@ -1,4 +1,7 @@
 <script>
+  // THE FRAME IS ASKED FOR (RG-279). `preload="metadata"` sizes the element
+  // and paints nothing; the fragment is what pulls one frame.
+  import { posterUrl } from '../../posterframe.js';
   /**
    * THE LIBRARY INSPECTOR — what is true of the thing in hand (REBRAND §10).
    *
@@ -119,7 +122,16 @@
     }
     onQueueChange([
       ...queue,
-      { reference: item.reference, text: item.words, mediaId: item.mediaId ?? null },
+      // TAGGED (RG-185). `fireQueued` refuses an untagged row rather than guessing,
+      // and this door queued four kinds with no tag, so stage-then-fire from the
+      // Library threw for everything but a picture. The Inspector's own `kind`
+      // vocabulary says `notice`; the fire path's says `announce`.
+      {
+        reference: item.reference,
+        text: item.words,
+        mediaId: item.mediaId ?? null,
+        kind: item.kind === 'notice' ? 'announce' : item.kind,
+      },
     ]);
     msg = `${item.title} is cued — it is not on a screen`;
   }
@@ -170,7 +182,7 @@
         {#if item.media}
           {#if item.mediaKind === 'video'}
             <!-- svelte-ignore a11y-media-has-caption -->
-            <video src={item.media} preload="metadata" muted playsinline></video>
+            <video src={posterUrl(item.media)} preload="metadata" muted playsinline></video>
           {:else}
             <img src={item.media} alt="" />
           {/if}

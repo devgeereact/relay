@@ -24,6 +24,7 @@ mod songs;
 mod stage;
 mod starter;
 mod templates;
+mod timers;
 mod verses;
 
 pub use channels::*;
@@ -37,6 +38,7 @@ pub use songs::*;
 pub use stage::*;
 pub use starter::*;
 pub use templates::*;
+pub use timers::*;
 pub use verses::*;
 
 use rusqlite::{Connection, OptionalExtension};
@@ -53,8 +55,12 @@ use templates::{
     ensure_templates_name_real_families, ensure_themes_are_inlined, reset_builtin_templates,
     seed_templates,
 };
+// Re-exported rather than merely imported: `suggestions::kjv_corpus` builds every
+// bench corpus in this crate through it, because the raw `data/kjv.json` is the KJV
+// WITH its editorial apparatus and is not what any index the product builds contains
+// (RG-324).
 #[cfg(test)]
-use verses::clean_verse;
+pub(crate) use verses::clean_verse;
 use verses::{rebuild_verses_fts, reimport_full_kjv, seed};
 
 /// The canonical schema, baked into the binary at compile time.
@@ -69,7 +75,7 @@ const SCHEMA: &str = include_str!("../../../docs/data/schema.sql");
 /// and for nothing else — so every install made by v0.1.0-2, -3 or -4 (which
 /// stamp `user_version = 2` on creation) would have kept the six-verse-short,
 /// mis-numbered Bible for ever. A rung is what reaches an operator's file.
-pub const SCHEMA_VERSION: i64 = 5;
+pub const SCHEMA_VERSION: i64 = 6;
 
 fn user_version(conn: &Connection) -> rusqlite::Result<i64> {
     conn.query_row("PRAGMA user_version", [], |r| r.get(0))
@@ -132,6 +138,16 @@ fn run_migrations(conn: &Connection, from: i64) -> rusqlite::Result<()> {
     // into. A rung that has run cannot be edited; it can only be followed.
     if from < 5 {
         ensure_no_note_text_in_verses(conn, NoteDelimiters::Guillemets)?;
+    }
+    // v6: `detections.method` says WHICH detector, not one of two words.
+    //
+    // It must be a rung and not a `baseline_forward_fill` line for the reason the
+    // v2 and v3 comments above both record. It must be AFTER v2, because it
+    // rebuilds the table from a column list that includes `heard_text`, and v2 is
+    // what adds that column — the ladder gives that ordering for nothing, which is
+    // the argument for the ladder.
+    if from < 6 {
+        ensure_detection_method_names_its_detector(conn)?;
     }
     Ok(())
 }
@@ -214,7 +230,11 @@ fn ensure_corpus_repair(conn: &Connection) -> rusqlite::Result<()> {
     // An install that has not imported a Bible at all is not a broken corpus —
     // it is a database `baseline_forward_fill` or `seed` will fill. Repairing
     // here would be a 31,102-row import on a machine that asked for none.
-    let have: i64 = conn.query_row("SELECT COUNT(*) FROM verses", [], |r| r.get(0))?;
+    // THE KJV ALONE (RG-50): a second bundled translation shares the table.
+    let Some(kjv) = verses::kjv_id(conn)? else {
+        return Ok(());
+    };
+    let have: i64 = verses::verse_count_for(conn, kjv)?;
     if have == 0 {
         return Ok(());
     }
@@ -223,8 +243,8 @@ fn ensure_corpus_repair(conn: &Connection) -> rusqlite::Result<()> {
         .query_row(
             "SELECT COUNT(*) FROM verses
               WHERE book = 'Genesis' AND chapter = 30 AND verse = 27
-                AND text NOT LIKE '%tarry%'",
-            [],
+                AND text NOT LIKE '%tarry%' AND translation_id = ?1",
+            [kjv],
             |r| r.get::<_, i64>(0),
         )
         .unwrap_or(0)
@@ -300,8 +320,10 @@ fn baseline_forward_fill(conn: &Connection) -> rusqlite::Result<()> {
         // church that installed Relay last month has "Matthew 22:37" pointing at
         // the words of 22:38 until this rung runs. It re-imports once, then the
         // count matches and it never runs again.
-        if verse_count(conn)? != 31_102 {
-            reimport_full_kjv(conn)?;
+        if let Some(kjv) = verses::kjv_id(conn)? {
+            if verses::verse_count_for(conn, kjv)? != 31_102 {
+                reimport_full_kjv(conn)?;
+            }
         }
         // One-time re-clean: DBs imported before the gloss stripper baked the KJV
         // marginal notes ("... Heb. ...") into the verse text. Re-import to strip.
@@ -384,14 +406,15 @@ fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
     // resolve. Both are retryable (rule 25) and neither leaves a scratch table.
     ensure_stage_layouts(conn)?;
     ensure_channel_stage_layout(conn)?;
-    // RETIRE BEFORE SEEDING, not after. The seed became five families this wave and
-    // the rows they replaced are removed from installs that already have them. But
-    // seeds insert BY NAME and only when absent, and one retired shelf row shares
-    // the name `Lower Third · Scripture` with a new family member. Seeding first
-    // would see that name present, skip the family member, and this would then
-    // delete the old row: a family one member short until the next boot. Their bytes
-    // differ, so a name-plus-bytes match tells them apart either way; this is about
-    // ordering, not about matching. See templates.rs for the three conditions.
+    ensure_timers(conn)?; // the registry's rows, so a relaunch keeps every clock (F28)
+                          // RETIRE BEFORE SEEDING, not after. The seed became five families this wave and
+                          // the rows they replaced are removed from installs that already have them. But
+                          // seeds insert BY NAME and only when absent, and one retired shelf row shares
+                          // the name `Lower Third · Scripture` with a new family member. Seeding first
+                          // would see that name present, skip the family member, and this would then
+                          // delete the old row: a family one member short until the next boot. Their bytes
+                          // differ, so a name-plus-bytes match tells them apart either way; this is about
+                          // ordering, not about matching. See templates.rs for the three conditions.
     ensure_retired_presets_are_gone(conn)?;
     ensure_preset_templates(conn)?; // ready-to-use preset designs (additive, by name)
                                     // …and correct the one seeded value that additive-by-name cannot reach: see
@@ -418,9 +441,11 @@ fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
     ensure_service_plans(conn)?; // Planner
     ensure_songs(conn)?; // Lyrics
     ensure_saved_scripture(conn)?; // Library
+    ensure_bsb_translation(conn)?; // the second bundled Bible (RG-50, DECISIONS §110)
     ensure_media(conn)?;
     ensure_announcements(conn)?;
     ensure_service_events(conn)?; // the service timeline + latency snapshots
+    ensure_service_build(conn)?; // which build ran each service (S13)
     ensure_environment_profiles(conn)?; // a room, remembered
     ensure_history_indexes(conn)?; // the foreign keys every history query walks
                                    // The demo ledger. The TABLE is created for every install; nothing puts a row
@@ -544,15 +569,29 @@ pub fn active_translation_id(conn: &Connection) -> rusqlite::Result<i64> {
 /// that do not exist — `media` (it is `media_assets`) and `template_active`
 /// (it is a COLUMN, `templates.console_active`). The screen would have reported
 /// them as applied regardless, which is precisely the failure being fixed.
+/// **AND IT NAMES EVERY TABLE THE SCHEMA CREATES — RG-113(7).** It named eighteen
+/// of twenty-six, and `schema_report` can only report what it is asked about, so the
+/// screen drew a full set of ticks whether or not the other eight existed. The filed
+/// row named four; the test that replaced the hand-list found **eight**, and the
+/// worst is `verses_fts` — the whole of scripture search — over which this screen
+/// would have read green. Completeness is now pinned by
+/// `the_migration_screen_asks_about_every_table_the_schema_creates`, which reads
+/// `schema.sql` rather than a list somebody remembered, because a list checked
+/// against the names we happened to think of is this same bug one size smaller.
 pub const MIGRATION_TABLES: &[(&str, &str)] = &[
     ("Core tables", "detections"),
     ("Detection evidence", "detections.heard_text"),
     ("Service history", "services"),
     ("Transcripts", "transcripts"),
+    ("Translations", "translations"),
     ("Scripture", "verses"),
+    ("Scripture search index", "verses_fts"),
     ("Templates", "templates"),
     ("Console-active templates", "templates.console_active"),
     ("Output channels", "output_channels"),
+    ("Per-screen content looks", "channel_looks"),
+    ("Stage layouts", "stage_layouts"),
+    ("Programme timers", "timers"),
     ("Voice profiles", "voice_profiles"),
     ("App settings", "app_settings"),
     ("Service plans", "service_plans"),
@@ -560,13 +599,16 @@ pub const MIGRATION_TABLES: &[(&str, &str)] = &[
     ("Plan sections", "plan_items.section_title"),
     ("Plan running times", "plan_items.duration_sec"),
     ("Songs", "songs"),
+    ("Song sections", "song_sections"),
     ("Song arrangements", "song_arrangements"),
     ("Saved scripture", "saved_scripture"),
     ("Media", "media_assets"),
     ("Announcements", "announcements"),
+    ("Operator action log", "cues"),
     ("Service timeline", "service_events"),
     ("Latency history", "perf_samples"),
     ("Room profiles", "environment_profiles"),
+    ("Demo content ledger", "demo_content"),
 ];
 
 /// Does a table — or a `table.column` — exist right now?
@@ -710,6 +752,16 @@ fn ensure_manual_detection_status(conn: &Connection) -> rusqlite::Result<()> {
              SELECT id, transcript_id, verse_id, method, confidence, status, fired_at FROM detections;
          DROP TABLE detections;
          ALTER TABLE detections_new RENAME TO detections;
+         -- RG-113(1). THE INDEXES BELONG TO THE TABLE BEING DROPPED, so they go
+         -- with it — and `ensure_history_indexes` has already run by the time this
+         -- rung does (`ensure_tables` calls it; this is called after), so nothing
+         -- puts them back. Every history query, the replay, the timeline merge and
+         -- `delete_service` then full-scan the two tables that grow without limit
+         -- for as long as a church keeps using Relay, for the rest of that boot,
+         -- silently, returning on the next one. `IF NOT EXISTS` keeps the batch
+         -- retryable per rule 25, and the definitions are `schema.sql`'s own.
+         CREATE INDEX IF NOT EXISTS idx_detections_transcript ON detections(transcript_id);
+         CREATE INDEX IF NOT EXISTS idx_detections_verse ON detections(verse_id);
          COMMIT;",
     );
 
@@ -728,6 +780,99 @@ fn ensure_manual_detection_status(conn: &Connection) -> rusqlite::Result<()> {
         let _ = conn.execute_batch("DROP TABLE IF EXISTS detections_new;");
     }
 
+    conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+    res
+}
+
+/// **`detections.method` NAMES THE DETECTOR — RG-309, the v6 rung.**
+///
+/// The column was `CHECK (method IN ('direct', 'semantic'))` and
+/// `DetectionMethod::db_method` collapsed seven variants into those two words:
+/// `Quoted` and `Reading` both persisted as `semantic` alongside a real TF-IDF
+/// paraphrase, and `Ambiguous`, `UncertainBook` and `UncertainNumber` all
+/// persisted as `direct` alongside a reference Relay genuinely heard. `db_method`'s
+/// own doc comment filed that as a KNOWN GAP: *"a church auditing a wrong verse can
+/// see WHAT was heard but cannot tell a followed reading from a paraphrase by this
+/// column alone."*
+///
+/// It became load-bearing the moment suggestions started being recorded. The
+/// question the record exists to answer — **what did the paraphrase detector do
+/// during a real sermon?** — is not askable of a column where `semantic` means
+/// paraphrase OR quotation OR followed reading, and 2,325 of one service's 2,790
+/// suggestion episodes were that value.
+///
+/// **The vocabulary is not new.** It is `DetectionMethod::wire()` — exactly what
+/// the console has spoken since DECISIONS §21, and what `detect.js`'s
+/// `methodBadgeKey`, `methodNoteKey` and `showsConfidence` already branch on. So
+/// the archive starts speaking the language the live surface already speaks, and
+/// `History.svelte`'s existing helpers become correct on an archive row for the
+/// first time rather than needing new ones.
+///
+/// **Existing rows are not rewritten and must not be.** A row that says `semantic`
+/// was written before this and genuinely cannot be resolved further — guessing
+/// which of the three it was would be inventing evidence, which is the one thing
+/// this column exists to prevent. They keep their word; `direct` and `semantic`
+/// stay legal values for ever.
+///
+/// ## Retryable, per rule 25
+///
+/// SQLite cannot `ALTER` a `CHECK`, so this is a rebuild, and it is the same shape
+/// as `ensure_manual_detection_status` for the same reasons: `DROP TABLE IF EXISTS`
+/// the scratch table FIRST (a previous attempt that died mid-rebuild leaves it
+/// behind, and a bare `CREATE` then fails on every subsequent boot, for ever,
+/// before the window is shown), and `ROLLBACK` on failure so the following
+/// `PRAGMA foreign_keys = ON` does not run inside a dangling transaction where it
+/// is a documented no-op.
+///
+/// **And it recreates the two indexes, which is RG-113 item 1.** A rebuild takes
+/// `idx_detections_transcript` and `idx_detections_verse` with the old table;
+/// `ensure_history_indexes` has already run by then, so without this the indexes
+/// every history query walks are missing for the rest of that boot.
+/// `ensure_manual_detection_status` had the same omission and it was a filed
+/// finding; it recreates them too now, pinned by
+/// `the_detections_rebuild_puts_its_indexes_back`. **Any future rebuild of this
+/// table must do the same** — the rule belongs to the shape, not to either rung.
+fn ensure_detection_method_names_its_detector(conn: &Connection) -> rusqlite::Result<()> {
+    let ddl: Option<String> = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='detections'",
+            [],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let Some(ddl) = ddl else { return Ok(()) };
+    if ddl.contains("'uncertain_number'") {
+        return Ok(()); // already migrated
+    }
+    // foreign_keys must be toggled OUTSIDE a transaction to take effect.
+    conn.execute_batch("PRAGMA foreign_keys = OFF;")?;
+    let res = conn.execute_batch(
+        "BEGIN;
+         DROP TABLE IF EXISTS detections_new;
+         CREATE TABLE detections_new (
+             id            INTEGER PRIMARY KEY,
+             transcript_id INTEGER NOT NULL REFERENCES transcripts(id),
+             verse_id      INTEGER REFERENCES verses(id),
+             method        TEXT NOT NULL CHECK (method IN (
+                               'direct', 'semantic', 'quoted', 'reading',
+                               'ambiguous', 'uncertain_book', 'uncertain_number')),
+             confidence    REAL NOT NULL,
+             status        TEXT NOT NULL CHECK (status IN ('auto', 'suggested', 'dismissed', 'manual')),
+             fired_at      REAL,
+             heard_text    TEXT
+         );
+         INSERT INTO detections_new (id, transcript_id, verse_id, method, confidence, status, fired_at, heard_text)
+             SELECT id, transcript_id, verse_id, method, confidence, status, fired_at, heard_text FROM detections;
+         DROP TABLE detections;
+         ALTER TABLE detections_new RENAME TO detections;
+         CREATE INDEX IF NOT EXISTS idx_detections_transcript ON detections(transcript_id);
+         CREATE INDEX IF NOT EXISTS idx_detections_verse ON detections(verse_id);
+         COMMIT;",
+    );
+    if res.is_err() {
+        let _ = conn.execute_batch("ROLLBACK;");
+        let _ = conn.execute_batch("DROP TABLE IF EXISTS detections_new;");
+    }
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     res
 }
@@ -911,6 +1056,134 @@ mod tests {
         );
     }
 
+    /// **RG-113(7) · THE MIGRATION SCREEN MUST NOT BE GREEN OVER A MISSING TABLE.**
+    ///
+    /// `MIGRATION_TABLES` named eighteen of the schema's twenty-six tables, and
+    /// `schema_report` can only report what it is asked about — so the Database
+    /// Migration screen drew a full set of ticks whether or not the other eight
+    /// existed. The filed row names four and the worst of them is `verses_fts`,
+    /// which is the whole of scripture search: a database missing it reads GREEN on
+    /// the one screen whose job is to say the upgrade landed.
+    ///
+    /// **This test is on the LIST and not on the four**, because a list checked
+    /// against the names we happened to think of is the failure being fixed one size
+    /// smaller. `schema.sql` IS the shipped baseline (it is `include_str!`d), so it
+    /// is the authority, and anything it creates that the screen does not ask about
+    /// fails here. The exemption set is deliberately EMPTY: if a future table has a
+    /// reason not to be reported, the reason goes in here where somebody has to
+    /// write it down.
+    #[test]
+    fn the_migration_screen_asks_about_every_table_the_schema_creates() {
+        // Tables and virtual tables, straight out of the baseline the binary ships.
+        let mut in_schema: Vec<&str> = SCHEMA
+            .lines()
+            .filter_map(|l| {
+                let l = l.trim_start();
+                let rest = l
+                    .strip_prefix("CREATE TABLE ")
+                    .or_else(|| l.strip_prefix("CREATE VIRTUAL TABLE "))?;
+                rest.split_whitespace()
+                    .next()
+                    .map(|n| n.trim_end_matches('('))
+            })
+            .collect();
+        in_schema.sort_unstable();
+        in_schema.dedup();
+        assert!(
+            in_schema.len() > 20,
+            "the scanner stopped seeing the schema ({} tables) — a scanner that \
+             quietly narrows passes everything",
+            in_schema.len()
+        );
+
+        // A table the screen deliberately does not report, each with its reason.
+        // Empty on purpose. Adding one is a decision, not a tidy-up.
+        const EXEMPT: &[(&str, &str)] = &[];
+
+        let asked: Vec<&str> = MIGRATION_TABLES
+            .iter()
+            .map(|(_, object)| object.split('.').next().unwrap_or(object))
+            .collect();
+        let missing: Vec<&str> = in_schema
+            .iter()
+            .copied()
+            .filter(|t| !asked.contains(t) && !EXEMPT.iter().any(|(e, _)| e == t))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "the Database Migration screen would read green over these: {missing:?}"
+        );
+    }
+
+    /// **AND EVERY ONE OF THEM ARRIVES ON A DATABASE THAT PREDATES IT — RG-113(7).**
+    ///
+    /// The other half, and the half that makes widening `MIGRATION_TABLES` safe
+    /// rather than reckless. `updates::preflight` reads the same list, so naming a
+    /// table that a fresh install creates and an UPGRADE does not would turn a blind
+    /// screen into one that reports a fault on every machine that has run an older
+    /// build — and, on the schema check, could refuse the very update that fixes it.
+    ///
+    /// Same shape as `every_column_an_upgrade_adds_reaches_a_database_that_predates_it`:
+    /// make a fresh install OLD by removing what the upgrade path is responsible for,
+    /// then run the upgrade and see what comes back.
+    #[test]
+    fn every_table_the_screen_names_reaches_a_database_that_predates_it() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn, true).expect("fresh install");
+
+        // Make it old — in the eight places this row widened the list. The other
+        // eighteen were already being reported and are covered by
+        // `schema_report_finds_every_table_on_a_fresh_database`; removing THEM makes
+        // a database no upgrade path claims to accept (`migrate(_, false)` upgrades a
+        // real old schema, it does not rebuild a gutted one), which would be testing
+        // a state no church can be in.
+        //
+        // A table SQLite refuses to drop is skipped rather than counted as tested, so
+        // the assertion is over what was ACTUALLY removed.
+        // Six of the eight. `translations` and `cues` are in `schema-baseline.sql` —
+        // they have existed since the first schema Relay ever had, so every database
+        // it can open already has them and nothing needs to create them. The other
+        // six arrived later and must therefore arrive by `ensure_*`.
+        const WIDENED: &[&str] = &[
+            "verses_fts",
+            "channel_looks",
+            "stage_layouts",
+            "timers",
+            "song_sections",
+            "demo_content",
+        ];
+        let mut dropped = Vec::new();
+        for t in WIDENED {
+            if conn
+                .execute_batch(&format!("DROP TABLE IF EXISTS {t}"))
+                .is_ok()
+            {
+                dropped.push(*t);
+            }
+        }
+        assert!(
+            dropped.len() >= WIDENED.len() - 1,
+            "only {:?} of the widened tables could be removed, so this test proves \
+             almost nothing",
+            dropped
+        );
+        set_user_version(&conn, 0).unwrap();
+
+        migrate(&conn, false).expect("upgrade an old database");
+
+        let (_, _, rows) = schema_report(&conn).unwrap();
+        let missing: Vec<&str> = rows
+            .iter()
+            .filter(|(label, t, present)| !present && dropped.contains(t) && !label.is_empty())
+            .map(|(_, t, _)| *t)
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "the migration screen would report these missing on every machine that \
+             has run an older build: {missing:?}"
+        );
+    }
+
     #[test]
     fn schema_report_notices_a_missing_column() {
         // `templates.console_active` is a COLUMN rung, not a table one. Naming it
@@ -1047,6 +1320,55 @@ mod tests {
             .expect("a crashed previous attempt must be retryable");
 
         assert!(manual_is_allowed(&conn));
+    }
+
+    /// **RG-113(1) · A REBUILD TAKES THE INDEXES WITH IT.**
+    ///
+    /// `ensure_manual_detection_status` drops `detections` and renames the scratch
+    /// table over it. `idx_detections_transcript` and `idx_detections_verse` belong
+    /// to the table being dropped, so they go with it — and `ensure_history_indexes`
+    /// has already run by the time this rung does (`ensure_tables` calls it; this
+    /// runs after), so nothing puts them back. Every history query, the replay, the
+    /// timeline merge and `delete_service` then full-scan **the two tables that grow
+    /// without limit for as long as a church keeps using Relay**, for the rest of
+    /// that boot, silently, returning on the next one.
+    ///
+    /// The v6 rung modelled on this one already recreates them
+    /// (`the_v6_rebuild_is_retryable_and_widens_the_vocabulary`) and its doc comment
+    /// names this omission as a filed finding. This is that finding.
+    #[test]
+    fn the_detections_rebuild_puts_its_indexes_back() {
+        let conn = db_with_old_detections();
+        // The state a real boot is in when this rung runs: `ensure_history_indexes`
+        // has been and gone, so the indexes exist and nothing will create them again.
+        crate::db::services::ensure_history_indexes(&conn).unwrap();
+        for idx in ["idx_detections_transcript", "idx_detections_verse"] {
+            assert_eq!(
+                index_count(&conn, idx),
+                1,
+                "{idx} should exist before the rebuild"
+            );
+        }
+
+        ensure_manual_detection_status(&conn).unwrap();
+
+        for idx in ["idx_detections_transcript", "idx_detections_verse"] {
+            assert_eq!(
+                index_count(&conn, idx),
+                1,
+                "{idx} did not survive the rebuild — every history query full-scans \
+                 for the rest of this boot and nothing says so"
+            );
+        }
+    }
+
+    fn index_count(conn: &Connection, name: &str) -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?1",
+            [name],
+            |r| r.get(0),
+        )
+        .unwrap()
     }
 
     /// RG-113(2) — the two pragmas that decide what happens when two things want
@@ -2204,6 +2526,7 @@ mod tests {
         "demo.rs",
         "starter.rs",
         "verses.rs",
+        "timers.rs",
     ];
 
     #[test]
@@ -2246,6 +2569,7 @@ mod tests {
             include_str!("demo.rs"),
             include_str!("starter.rs"),
             include_str!("verses.rs"),
+            include_str!("timers.rs"),
         ];
         assert_eq!(
             SOURCES.len(),
@@ -2410,6 +2734,7 @@ mod tests {
             include_str!("demo.rs"),
             include_str!("starter.rs"),
             include_str!("verses.rs"),
+            include_str!("timers.rs"),
         ];
         assert_eq!(
             SOURCES.len(),
@@ -2804,6 +3129,182 @@ mod tests {
         );
     }
 
+    /// **THE v6 REBUILD AGAINST THE AUTHOR'S OWN DATABASE.**
+    ///
+    /// `RELAY_REAL_DB=<a COPY> cargo test the_v6_rung_on_a_real_database -- --ignored --nocapture`
+    ///
+    /// A migration tested only against a schema this crate just created is a
+    /// migration tested against the one database that cannot need it. This one runs
+    /// the whole ladder against a copy of a real 21 MB install holding 960
+    /// detections across 40 services, and prints what changed. **A COPY** — it
+    /// writes, and the real file is read-only to every other instrument here.
+    #[test]
+    #[ignore]
+    fn the_v6_rung_on_a_real_database() {
+        let Ok(path) = std::env::var("RELAY_REAL_DB") else {
+            println!("set RELAY_REAL_DB to a COPY of a real relay.db");
+            return;
+        };
+        let conn = Connection::open(&path).expect("open");
+        let before: i64 = conn
+            .query_row("SELECT COUNT(*) FROM detections", [], |r| r.get(0))
+            .expect("count");
+        let was = user_version(&conn).unwrap_or(-1);
+        migrate(&conn, false).expect("the ladder");
+        let after: i64 = conn
+            .query_row("SELECT COUNT(*) FROM detections", [], |r| r.get(0))
+            .expect("count");
+        println!(
+            "\n  user_version {was} -> {}",
+            user_version(&conn).unwrap_or(-1)
+        );
+        println!("  detections {before} -> {after}");
+        assert_eq!(before, after, "the rebuild lost rows");
+        let mut st = conn
+            .prepare("SELECT method, status, COUNT(*) FROM detections GROUP BY 1,2")
+            .expect("prep");
+        let rows: Vec<(String, String, i64)> = st
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .expect("q")
+            .filter_map(Result::ok)
+            .collect();
+        for (m, s, n) in &rows {
+            println!("    {m:<18} {s:<10} {n}");
+        }
+        // The new vocabulary is accepted on the real file.
+        let tid: i64 = conn
+            .query_row("SELECT id FROM transcripts LIMIT 1", [], |r| r.get(0))
+            .expect("a transcript");
+        insert_detection(
+            &conn,
+            tid,
+            None,
+            "quoted",
+            0.6,
+            "suggested",
+            Some(1.0),
+            Some("x"),
+        )
+        .expect("the widened CHECK must take a real wire name");
+        for idx in ["idx_detections_transcript", "idx_detections_verse"] {
+            let n: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?1",
+                    [idx],
+                    |r| r.get(0),
+                )
+                .expect("idx");
+            assert_eq!(n, 1, "{idx} is missing after the rebuild");
+        }
+        println!("  indexes intact, widened CHECK accepts `quoted`\n");
+    }
+
+    /// **RG-309 · THE v6 REBUILD, FROM A REAL PRE-MIGRATION DATABASE, TWICE, WITH
+    /// A LEFTOVER SCRATCH TABLE IN THE WAY.**
+    ///
+    /// Rule 25 is the whole of this test. The three things that turned
+    /// `ensure_manual_detection_status` into a brick are each reproduced here rather
+    /// than trusted: a `detections_new` left behind by an attempt that died
+    /// mid-rebuild, a second run on an already-migrated database, and the indexes a
+    /// `DROP TABLE` silently takes with it (RG-113 item 1).
+    #[test]
+    fn the_method_vocabulary_migration_is_retryable_and_keeps_its_indexes() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_fresh(&conn).unwrap();
+        let sid = create_service(&conn, "Old", "2026-09-01").unwrap();
+
+        // The PRE-v6 table, as it exists in every database recorded before this —
+        // including the author's, which holds 960 of these rows.
+        conn.execute_batch(
+            "PRAGMA foreign_keys = OFF;
+             DROP TABLE detections;
+             CREATE TABLE detections (
+                 id            INTEGER PRIMARY KEY,
+                 transcript_id INTEGER NOT NULL REFERENCES transcripts(id),
+                 verse_id      INTEGER REFERENCES verses(id),
+                 method        TEXT NOT NULL CHECK (method IN ('direct', 'semantic')),
+                 confidence    REAL NOT NULL,
+                 status        TEXT NOT NULL CHECK (status IN ('auto', 'suggested', 'dismissed', 'manual')),
+                 fired_at      REAL,
+                 heard_text    TEXT
+             );
+             PRAGMA foreign_keys = ON;",
+        )
+        .unwrap();
+        let tid =
+            insert_transcript(&conn, sid, 1.0, "romans eight twenty eight", "en", None).unwrap();
+        insert_detection(
+            &conn,
+            tid,
+            None,
+            "semantic",
+            0.41,
+            "auto",
+            Some(1.0),
+            Some("romans eight twenty eight"),
+        )
+        .unwrap();
+        // A previous attempt that died mid-rebuild. Without the `DROP TABLE IF
+        // EXISTS` this is the row that bricks every subsequent boot, for ever,
+        // before the window is shown.
+        conn.execute_batch("CREATE TABLE detections_new (wrong INTEGER);")
+            .unwrap();
+
+        ensure_detection_method_names_its_detector(&conn).unwrap();
+        // Idempotent: it runs on a database it has already migrated.
+        ensure_detection_method_names_its_detector(&conn).unwrap();
+
+        // The pre-existing row survives, with its evidence, and keeps its word.
+        let rows = service_detections(&conn, sid).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].method, "semantic");
+        assert_eq!(
+            rows[0].heard_text.as_deref(),
+            Some("romans eight twenty eight")
+        );
+
+        // …and the new vocabulary is accepted, which is the point of the rebuild.
+        for m in [
+            "quoted",
+            "reading",
+            "ambiguous",
+            "uncertain_book",
+            "uncertain_number",
+        ] {
+            insert_detection(&conn, tid, None, m, 0.5, "suggested", Some(2.0), Some("x"))
+                .unwrap_or_else(|e| panic!("method {m:?} rejected after the migration: {e}"));
+        }
+        // Widened, not dropped.
+        assert!(
+            insert_detection(&conn, tid, None, "nonsense", 0.5, "suggested", None, None).is_err(),
+            "the CHECK was dropped rather than widened"
+        );
+        // THE INDEXES. A rebuild takes them with the old table and
+        // `ensure_history_indexes` has already run by the time this rung does, so
+        // without recreating them here every history query does a full scan for the
+        // rest of that boot. That omission is a filed finding against the migration
+        // this one is modelled on.
+        for idx in ["idx_detections_transcript", "idx_detections_verse"] {
+            let n: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?1",
+                    [idx],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(n, 1, "{idx} did not survive the rebuild");
+        }
+        // And the scratch table is gone rather than left for the next boot.
+        let scratch: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name='detections_new'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(scratch, 0, "detections_new was left behind");
+    }
+
     /// Exercises the ACTUAL rebuild path, from a real pre-migration database —
     /// an existing install with a service already recorded in it. A migration
     /// that is only ever tested against a fresh schema is not tested at all.
@@ -2928,6 +3429,329 @@ mod tests {
         assert!(object_present(&conn, "detections.heard_text").unwrap());
     }
 
+    /// **RG-326 · A DATABASE BUILT FROM THE OLDEST SCHEMA RELAY CLAIMS TO
+    /// UPGRADE FROM MUST ACTUALLY UPGRADE.**
+    ///
+    /// The two tests above both start from `init_fresh` — today's `schema.sql` —
+    /// and then make it *look* old, either by dropping the columns an `ALTER` is
+    /// responsible for or by re-creating one table by hand. That is a simulation
+    /// of an old database, and a good one, but it can only ever remove what
+    /// somebody thought to name. It cannot notice a SEED in
+    /// `baseline_forward_fill` that writes a column the real old schema never
+    /// had, because the simulated database still carries every other column of
+    /// today's.
+    ///
+    /// `docs/data/schema-baseline.sql` is the real thing, and until this test
+    /// existed **nothing anywhere ran `migrate` against it**. Its first run failed
+    /// inside `seed_channels` with `table output_channels has no column named
+    /// role` — a hard error out of `migrate`, before the window is shown, on the
+    /// one path a church already running Relay takes. The app would not start, and
+    /// there would be no screen on which to say why.
+    ///
+    /// This is also the §27 launch-gate row *"a database from a released build
+    /// survives the corpus repair"*, which had never been done.
+    fn baseline_db() -> Connection {
+        const BASELINE: &str = include_str!("../../../docs/data/schema-baseline.sql");
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(BASELINE).unwrap();
+        // A pre-versioning database is v0 BY DEFINITION — SQLite's default for a
+        // file nothing has stamped. Asserted rather than set, so this fixture
+        // cannot drift into exercising the `else` arm of `migrate` by accident.
+        assert_eq!(
+            user_version(&conn).unwrap(),
+            0,
+            "the baseline must take the v0 arm of `migrate`"
+        );
+        conn
+    }
+
+    fn table_names(conn: &Connection) -> Vec<String> {
+        let mut v: Vec<String> = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn a_database_from_the_oldest_schema_upgrades_instead_of_failing_at_boot() {
+        let conn = baseline_db();
+
+        // Preconditions, stated rather than assumed: this is what "old" means.
+        assert!(
+            !object_present(&conn, "output_channels.role").unwrap(),
+            "precondition: the baseline has no output_channels.role"
+        );
+        let seeded: i64 = conn
+            .query_row("SELECT COUNT(*) FROM output_channels", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(seeded, 0, "precondition: the baseline seeds no channels");
+
+        // THE REAL BOOT PATH. `open()` differs from this only by the file.
+        migrate(&conn, false).expect(
+            "a pre-versioning database must upgrade — this is the boot path every \
+             existing install takes, and a failure here is an app that does not start",
+        );
+
+        assert_eq!(
+            user_version(&conn).unwrap(),
+            SCHEMA_VERSION,
+            "an upgraded database must be stamped, or it re-runs the v0 sniffs for ever"
+        );
+
+        // The seed DID happen, and the column it wanted is there carrying the
+        // roles a fresh install would have. Either candidate fix has to satisfy
+        // both halves: a seed that silently wrote no rows passes a column check
+        // on its own.
+        let names: Vec<String> = conn
+            .prepare("SELECT name FROM output_channels ORDER BY id")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(
+            names,
+            vec![
+                "Main screen".to_string(),
+                "Stage display".to_string(),
+                "Streaming".to_string(),
+                "Lobby screen".to_string(),
+            ],
+            "the four default screens must reach an upgraded install"
+        );
+        let main: Option<String> = conn
+            .query_row(
+                "SELECT role FROM output_channels WHERE name = 'Main screen'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            main.as_deref(),
+            Some("main"),
+            "an upgraded install must know which screen is the wall"
+        );
+        let stage: Option<String> = conn
+            .query_row(
+                "SELECT role FROM output_channels WHERE name = 'Stage display'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(stage.as_deref(), Some("stage"));
+        let roled: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM output_channels WHERE role IS NOT NULL",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(roled, 2, "Streaming and the lobby TV carry no role");
+
+        // Every object the Database Migration screen advertises, on the oldest
+        // database there is — not only the ones a hand-written list remembered.
+        let (_, _, rows) = schema_report(&conn).unwrap();
+        let missing: Vec<&str> = rows
+            .iter()
+            .filter(|(_, _, present)| !present)
+            .map(|(_, t, _)| *t)
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "upgrading the oldest database leaves these objects absent: {missing:?}"
+        );
+    }
+
+    /// …AND IT IS RETRYABLE (rule 25). A migration that only works on a database
+    /// nothing has half-migrated is not retryable, and the scar this rule is named
+    /// for — a leftover `detections_new` that failed every subsequent boot, for
+    /// ever, before the window was shown — came from exactly that.
+    #[test]
+    fn upgrading_the_oldest_database_is_retryable_and_idempotent() {
+        let conn = baseline_db();
+        migrate(&conn, false).expect("first upgrade");
+        let after_first = table_names(&conn);
+
+        // A second boot of an already-upgraded database is a no-op, not an error,
+        // and must not double-seed.
+        migrate(&conn, false).expect("re-booting an upgraded database");
+        let channels: i64 = conn
+            .query_row("SELECT COUNT(*) FROM output_channels", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(channels, 4, "the second boot re-seeded the screens");
+        assert_eq!(
+            after_first,
+            table_names(&conn),
+            "the second boot changed the schema"
+        );
+
+        // AND THE INTERRUPTED CASE. A boot that died after the v0 sniffs ran but
+        // before the version was stamped comes back as v0 with the work already
+        // done. It must take the whole v0 path again rather than fail on what is
+        // already there.
+        set_user_version(&conn, 0).unwrap();
+        migrate(&conn, false).expect(
+            "a database whose first upgrade died before the version was stamped must \
+             be able to take the whole v0 path again",
+        );
+        let channels: i64 = conn
+            .query_row("SELECT COUNT(*) FROM output_channels", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(channels, 4, "the retry re-seeded the screens");
+        assert!(
+            !table_names(&conn).iter().any(|t| t.ends_with("_new")),
+            "a scratch table survived a retry — rule 25's exact failure"
+        );
+    }
+
+    /// **§27 · A DATABASE FROM A RELEASED BUILD SURVIVES THE CORPUS REPAIR.**
+    ///
+    /// The launch-gate row, and the reason the two tests above are not enough on
+    /// their own: an EMPTY baseline takes the *seed* branch of every sniff in
+    /// `baseline_forward_fill`, and a church's database takes the *other* branch of
+    /// each one. `kjv_id` returns `None` on an empty database, so the corpus repair
+    /// — the single most destructive thing in the whole function, a `DELETE FROM
+    /// verses` and a 31,102-row re-import — is skipped entirely and never once
+    /// exercised against the oldest schema.
+    ///
+    /// So this builds what a released build actually left behind: the baseline
+    /// schema, a KJV, verses in the old short numbering, the four screens already
+    /// present with no `role`, the built-in templates in the pre-cqw `vw` format,
+    /// and one recorded service whose detection points at a verse. Every sniff
+    /// therefore takes its non-empty branch, `ensure_channel_role` reaches its
+    /// BACK-FILL rather than the seed, and the service record has something to
+    /// lose.
+    #[test]
+    fn a_released_build_database_survives_the_corpus_repair() {
+        let conn = baseline_db();
+
+        // A KJV with the old, short, WRONGLY-NUMBERED corpus. Two verses is
+        // enough: the sniff is `count != 31_102`, so any number but that one takes
+        // the repair branch.
+        conn.execute(
+            "INSERT INTO translations (id, name, abbreviation, language, license_type)
+             VALUES (1, 'King James Version', 'KJV', 'en', 'public domain')",
+            [],
+        )
+        .unwrap();
+        conn.execute_batch(
+            "INSERT INTO verses (id, translation_id, book, chapter, verse, text)
+               VALUES (1, 1, 'John', 3, 16, 'the words that used to be here'),
+                      (2, 1, 'Romans', 8, 28, 'and these');
+             INSERT INTO services (id, date, title) VALUES (1, '2026-01-04', 'Morning');
+             INSERT INTO transcripts (id, service_id, timestamp, text, language)
+               VALUES (1, 1, 12.5, 'for god so loved the world', 'en');
+             INSERT INTO detections (id, transcript_id, verse_id, method, confidence, status, fired_at)
+               VALUES (1, 1, 1, 'direct', 0.91, 'auto', 13.0);",
+        )
+        .unwrap();
+
+        // The built-in templates as the old seed wrote them — sizes in `vw`, which
+        // is what `reset_builtin_templates` exists to correct, and the four screens
+        // already pointing at them with NO role column at all.
+        conn.execute_batch(
+            "INSERT INTO templates (id, name, region_config_json, style_json) VALUES
+               (1, 'Full Screen', '{\"regions\":[\"verse_text\",\"reference\"]}', '{\"verseSize\":\"4.6vw\"}'),
+               (2, 'Lower Third', '{\"regions\":[\"verse_text\",\"reference\"],\"align\":\"left\",\"lowerThird\":true}', '{\"verseSize\":\"3.0vw\"}'),
+               (3, 'Stage', '{\"regions\":[\"verse_text\"]}', '{\"verseSize\":\"5.0vw\"}'),
+               (4, 'Lobby Warm', '{\"regions\":[\"verse_text\"]}', '{\"verseSize\":\"4.0vw\"}');
+             INSERT INTO output_channels (id, name, render_target, template_id, display_target, status) VALUES
+               (1, 'Main screen',   'native_window',  1, '0',  'offline'),
+               (2, 'Stage display', 'network_client', 2, NULL, 'offline'),
+               (3, 'Streaming',     'network_client', 3, NULL, 'offline'),
+               (4, 'Lobby screen',  'network_client', 4, NULL, 'offline');",
+        )
+        .unwrap();
+
+        migrate(&conn, false).expect(
+            "a database from a released build must survive the whole v0 path — §27's \
+             launch-gate row, and the one shape no test reached",
+        );
+
+        // The corpus repair ran, and it ran to completion.
+        let verses: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM verses WHERE translation_id = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(verses, 31_102, "the corpus repair did not complete");
+
+        // …and the service record kept its reference across the re-import. Nulling
+        // `verse_id` is how the DELETE gets past the foreign key; leaving it null
+        // is silent loss of every reference in every service ever recorded.
+        let restored: Option<String> = conn
+            .query_row(
+                "SELECT v.book || ' ' || v.chapter || ':' || v.verse
+                   FROM detections d JOIN verses v ON v.id = d.verse_id WHERE d.id = 1",
+                [],
+                |r| r.get(0),
+            )
+            .optional()
+            .unwrap();
+        assert_eq!(
+            restored.as_deref(),
+            Some("John 3:16"),
+            "the repair lost what a past service fired"
+        );
+
+        // The BACK-FILL branch of `ensure_channel_role`, not the seed: the rows
+        // were already there, so the column was added under them and the two
+        // roles recognised by name.
+        let roles: Vec<(String, Option<String>)> = conn
+            .prepare("SELECT name, role FROM output_channels ORDER BY id")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(
+            roles,
+            vec![
+                ("Main screen".to_string(), Some("main".to_string())),
+                ("Stage display".to_string(), Some("stage".to_string())),
+                ("Streaming".to_string(), None),
+                ("Lobby screen".to_string(), None),
+            ],
+            "an upgraded install must know which screen is the wall and which is the platform"
+        );
+        let channels: i64 = conn
+            .query_row("SELECT COUNT(*) FROM output_channels", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(channels, 4, "the upgrade seeded a second set of screens");
+
+        // Nothing the migration screen advertises is absent, and the file is
+        // stamped so none of the above runs a second time.
+        let (_, _, rows) = schema_report(&conn).unwrap();
+        let missing: Vec<&str> = rows
+            .iter()
+            .filter(|(_, _, present)| !present)
+            .map(|(_, t, _)| *t)
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "objects absent after upgrading: {missing:?}"
+        );
+        assert_eq!(user_version(&conn).unwrap(), SCHEMA_VERSION);
+
+        // And booting it again is a no-op.
+        migrate(&conn, false).expect("second boot");
+        let verses: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM verses WHERE translation_id = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(verses, 31_102);
+    }
+
     /// Every object the Database Migration screen claims must actually be
     /// reachable by the migration path an existing install takes. A rung added to
     /// the v0-only branch passes every other test in this file and ships broken.
@@ -3018,7 +3842,7 @@ mod tests {
 
         let text: String = conn
             .query_row(
-                "SELECT text FROM verses WHERE book = 'Genesis' AND chapter = 30 AND verse = 27",
+                "SELECT text FROM verses WHERE book = 'Genesis' AND chapter = 30 AND verse = 27 AND translation_id = (SELECT id FROM translations WHERE abbreviation = 'KJV')",
                 [],
                 |r| r.get(0),
             )
@@ -3046,7 +3870,7 @@ mod tests {
         let broken = "In that day also he shall come even to thee from Assyria. \
                       {and from the fortified cities: or, even to the fortified cities}";
         conn.execute(
-            "UPDATE verses SET text = ?1 WHERE book = 'Micah' AND chapter = 7 AND verse = 12",
+            "UPDATE verses SET text = ?1 WHERE book = 'Micah' AND chapter = 7 AND verse = 12 AND translation_id = (SELECT id FROM translations WHERE abbreviation = 'KJV')",
             [broken],
         )
         .unwrap();
@@ -3058,7 +3882,7 @@ mod tests {
 
         let text: String = conn
             .query_row(
-                "SELECT text FROM verses WHERE book = 'Micah' AND chapter = 7 AND verse = 12",
+                "SELECT text FROM verses WHERE book = 'Micah' AND chapter = 7 AND verse = 12 AND translation_id = (SELECT id FROM translations WHERE abbreviation = 'KJV')",
                 [],
                 |r| r.get(0),
             )
@@ -3080,7 +3904,7 @@ mod tests {
         init_fresh(&conn).unwrap();
 
         conn.execute(
-            "UPDATE verses SET text = ?1 WHERE book = 'Hebrews' AND chapter = 13 AND verse = 25",
+            "UPDATE verses SET text = ?1 WHERE book = 'Hebrews' AND chapter = 13 AND verse = 25 AND translation_id = (SELECT id FROM translations WHERE abbreviation = 'KJV')",
             ["Grace be with you all. Amen. «Written to the Hebrews from Italy, by Timothy.»"],
         )
         .unwrap();
@@ -3091,7 +3915,7 @@ mod tests {
 
         let text: String = conn
             .query_row(
-                "SELECT text FROM verses WHERE book = 'Hebrews' AND chapter = 13 AND verse = 25",
+                "SELECT text FROM verses WHERE book = 'Hebrews' AND chapter = 13 AND verse = 25 AND translation_id = (SELECT id FROM translations WHERE abbreviation = 'KJV')",
                 [],
                 |r| r.get(0),
             )
@@ -3118,7 +3942,7 @@ mod tests {
         init_fresh(&conn).unwrap();
 
         conn.execute(
-            "UPDATE verses SET text = ?1 WHERE book = 'Hebrews' AND chapter = 13 AND verse = 25",
+            "UPDATE verses SET text = ?1 WHERE book = 'Hebrews' AND chapter = 13 AND verse = 25 AND translation_id = (SELECT id FROM translations WHERE abbreviation = 'KJV')",
             ["Grace be with you all. Amen. «Written to the Hebrews from Italy, by Timothy.»"],
         )
         .unwrap();
@@ -3128,7 +3952,7 @@ mod tests {
 
         let text: String = conn
             .query_row(
-                "SELECT text FROM verses WHERE book = 'Hebrews' AND chapter = 13 AND verse = 25",
+                "SELECT text FROM verses WHERE book = 'Hebrews' AND chapter = 13 AND verse = 25 AND translation_id = (SELECT id FROM translations WHERE abbreviation = 'KJV')",
                 [],
                 |r| r.get(0),
             )
@@ -3377,7 +4201,7 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         init_fresh(&conn).unwrap();
         let plan = create_plan(&conn, "Sunday", "2026-07-12").unwrap();
-        let m = insert_media(&conn, "image", "slide.png", "2026-07-12").unwrap();
+        let m = insert_media(&conn, "image", "slide.png", "2026-07-12", None).unwrap();
         add_plan_item(
             &conn,
             plan,

@@ -87,11 +87,38 @@ async function open(channel = 2) {
 }
 
 const send = (frame) => socket.onmessage({ data: JSON.stringify(frame) });
-const zoneButton = (label) =>
-  [...host.querySelectorAll('button')].find((b) => b.textContent.trim() === label);
-const openPanel = async () => {
-  [...host.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Zones').click();
-  await tick();
+/**
+ * WHAT THE SCREEN IS SHOWING, read off the screen (RG-241).
+ *
+ * These cases used to read the zone state off the Zones panel's own buttons.
+ * The panel left the phone — it was one tap from the screen a preacher reads
+ * mid-sermon — so the state is read where it now shows: in what the page paints.
+ * That is the better instrument in any case. A pressed toggle was a claim about
+ * the layout; a rendered region is the layout.
+ */
+const showing = (sel) => !!host.querySelector(sel);
+/**
+ * A verse and a clock, so every zone this file asks about has something to draw.
+ *
+ * A zone with nothing in it renders nothing whether it is switched on or off, so
+ * without this the assertions below would pass for the wrong reason — which is
+ * the one risk of reading state off the screen instead of off a toggle.
+ */
+const CONTENT_FRAME = {
+  kind: 'content',
+  content_kind: 'scripture',
+  reference: 'Romans 8:28',
+  text: 'And we know that all things work together for good.',
+};
+const TIMER_FRAME = {
+  kind: 'timer',
+  warn_default_ms: 60_000,
+  timers: [{ id: 1, label: 'Sermon', countdown_to: Date.now() + 240_000, countdown_from: Date.now() }],
+};
+const ZONE_MARK = {
+  Reading: '.reading',
+  'Stage Timer': '.progrow',
+  'Stage Note': '.noterow',
 };
 
 describe('a screen the operator has not given a layout', () => {
@@ -99,20 +126,22 @@ describe('a screen the operator has not given a layout', () => {
     // The arrangement a church may already be running. Nothing may erase it.
     localStorage.setItem('relay.stage.zones', JSON.stringify({ ...ALL_ON, programme: false }));
     await open();
-    await openPanel();
-    const btn = zoneButton('Stage Timer');
-    expect(btn.getAttribute('aria-pressed')).toBe('false');
-    expect(btn.disabled, 'the device lost control of its own zones').toBe(false);
+    send(CONTENT_FRAME);
+    send(TIMER_FRAME);
+    await tick();
+    expect(showing(ZONE_MARK['Stage Timer']), 'a stored arrangement was erased').toBe(false);
   });
 
-  it('lets the device change them, as it always could', async () => {
+  it('and the device can no longer change them — that is the point (RG-241)', async () => {
+    // The assertion turned over. The picker was one tap from the screen a
+    // preacher is reading, and on an unassigned screen it wrote `localStorage`:
+    // the person the screen exists for could switch off the clock they were
+    // relying on and nobody at the desk would know.
     await open();
-    await openPanel();
-    const btn = zoneButton('Stage Timer');
-    const before = btn.getAttribute('aria-pressed');
-    btn.click();
-    await tick();
-    expect(zoneButton('Stage Timer').getAttribute('aria-pressed')).not.toBe(before);
+    expect(
+      [...host.querySelectorAll('button')].map((b) => b.textContent.trim()),
+      'the zone picker is still on the phone',
+    ).not.toContain('Zones');
   });
 });
 
@@ -122,18 +151,22 @@ describe('a screen the operator HAS given a layout', () => {
     localStorage.setItem('relay.stage.zones', JSON.stringify(ALL_ON));
     zonesReply = { 2: TIMER_FOCUS };
     await open();
-    await openPanel();
-    expect(zoneButton('Reading').getAttribute('aria-pressed')).toBe('false');
-    expect(zoneButton('Stage Timer').getAttribute('aria-pressed')).toBe('true');
+    send(CONTENT_FRAME);
+    send(TIMER_FRAME);
+    await tick();
+    expect(showing('.reading'), 'the device preference beat the desk').toBe(false);
+    expect(showing('.progrow'), 'the desk asked for the rail and did not get it').toBe(true);
   });
 
-  it('takes the toggles away from the device, and says why', async () => {
-    // A disabled control that says nothing is a broken control.
+  it('and there is nothing on the phone left to take away', async () => {
+    // This used to assert that an assigned layout DISABLED the device's toggles
+    // and said why. There are no toggles now, on any screen, so the guarantee is
+    // kept by absence — which is stronger than a disabled control, and is why
+    // the sentence explaining the disabling went with them.
     zonesReply = { 2: TIMER_FOCUS };
     await open();
-    await openPanel();
-    expect(zoneButton('Reading').disabled).toBe(true);
-    expect(host.textContent).toMatch(/desk has given this screen a layout/i);
+    expect(host.querySelector('.zonepanel')).toBeNull();
+    expect(host.textContent).not.toMatch(/desk has given this screen a layout/i);
   });
 
   it('is only about ITS OWN screen', async () => {
@@ -143,28 +176,30 @@ describe('a screen the operator HAS given a layout', () => {
     zonesReply = { 9: TIMER_FOCUS };
     localStorage.setItem('relay.stage.zones', JSON.stringify(ALL_ON));
     await open(2);
-    await openPanel();
-    expect(zoneButton('Reading').getAttribute('aria-pressed')).toBe('true');
-    expect(zoneButton('Reading').disabled).toBe(false);
+    send(CONTENT_FRAME);
+    send(TIMER_FRAME);
+    await tick();
+    expect(showing('.reading'), 'this screen wore another screen’s layout').toBe(true);
   });
 
   it('follows a change made while the screen is already open', async () => {
     await open();
+    send(CONTENT_FRAME);
+    send(TIMER_FRAME);
     send({ kind: 'stage_zones', zones: { 2: TIMER_FOCUS } });
     await tick();
-    await openPanel();
-    expect(zoneButton('Reading').getAttribute('aria-pressed')).toBe('false');
+    expect(showing('.reading')).toBe(false);
   });
 
   it('hands the screen back to the device when the assignment is cleared', async () => {
     localStorage.setItem('relay.stage.zones', JSON.stringify(ALL_ON));
     zonesReply = { 2: TIMER_FOCUS };
     await open();
+    send(CONTENT_FRAME);
+    send(TIMER_FRAME);
     send({ kind: 'stage_zones', zones: {} });
     await tick();
-    await openPanel();
-    expect(zoneButton('Reading').getAttribute('aria-pressed')).toBe('true');
-    expect(zoneButton('Reading').disabled, 'the device never got its toggles back').toBe(false);
+    expect(showing('.reading'), 'the screen was left wearing a layout nobody assigned').toBe(true);
   });
 });
 
@@ -175,8 +210,10 @@ describe('what a broken read must not do', () => {
     globalThis.fetch = vi.fn(async () => { throw new TypeError('Failed to fetch'); });
     localStorage.setItem('relay.stage.zones', JSON.stringify(ALL_ON));
     await open();
-    await openPanel();
-    expect(zoneButton('Reading').getAttribute('aria-pressed')).toBe('true');
+    send(CONTENT_FRAME);
+    send(TIMER_FRAME);
+    await tick();
+    expect(showing('.reading')).toBe(true);
   });
 
   it('treats an empty layout as no layout, not as show-nothing', async () => {
@@ -185,14 +222,18 @@ describe('what a broken read must not do', () => {
     zonesReply = { 2: {} };
     localStorage.setItem('relay.stage.zones', JSON.stringify({ ...ALL_ON, reading: false }));
     await open();
-    await openPanel();
+    send(CONTENT_FRAME);
+    send(TIMER_FRAME);
+    await tick();
     // The device said reading OFF. If `{}` were treated as a layout, the
-    // key-by-key merge would hand back the DEFAULT (on) and lock the toggles —
-    // which on a default install looks exactly like the fallback it replaced.
-    // So this asserts the device's own value survived, not merely that
-    // something is on.
-    expect(zoneButton('Reading').getAttribute('aria-pressed')).toBe('false');
-    expect(zoneButton('Reading').disabled, 'an empty entry took the toggles away').toBe(false);
+    // key-by-key merge would hand back the DEFAULT (on) — which on a default
+    // install looks exactly like the fallback it replaced. So this asserts the
+    // device's own value survived, not merely that something is on.
+    expect(showing('.reading'), 'an empty layout was treated as a layout').toBe(false);
+    // There are no toggles to take away since RG-241; what an empty entry must
+    // not do is start LOOKING like a layout, and the line above is the whole of
+    // that claim now.
+    expect(showing('.progrow'), 'an empty entry blanked the screen').toBe(true);
     expect(host.textContent).not.toMatch(/desk has given this screen a layout/i);
   });
 });

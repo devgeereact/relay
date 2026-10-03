@@ -45,10 +45,62 @@
     dropIndex,
     reorderTo,
     planChannelsOf,
+    sectionBands,
   } from '../plan.js';
+  // Picking cues out of the running order, and the words on a control that
+  // deletes them. One door for all three modifier combinations; see the module.
+  import {
+    selectionAfterClick,
+    selectionAfterRemoval,
+    deleteLabel,
+    deletedMessage,
+    addedMessage,
+    orderWithDuplicateInPlace,
+  } from '../planselect.js';
+  // ONE RULE FOR "WHICH SCREENS", SHARED WITH THE CONSOLE BAND. The inspector's
+  // `toggleCueChannel` and the countdown add block below both mean the same thing
+  // by ticking a screen, including what happens when the last one is ticked back
+  // on, and Live's Screen Countdown band means it too. Stated once, in the pure
+  // module, rather than three times.
+  import { toggleScreen } from '../countdown.js';
+  // THE SHARED URL BUILDER, and it has to be shared. `main.rs::media_url` builds
+  // this for every output screen and `bundledbackgrounds.js` mirrors that rule for
+  // the surfaces that show the file itself — the Library's media pane, and now
+  // this inspector. A picture Relay SHIPS has no file under `/media/<id>` at all
+  // (DECISIONS §90), so a hand-rolled copy here would render every seeded
+  // background as a broken-image box in a preview that claims to be the wall.
+  import { mediaUrl } from '../bundledbackgrounds.js';
+  import MediaThumb from '../ui/MediaThumb.svelte';
+  // THE TWO BLOCKS THAT CAME OUT OF THIS FILE. The add panel's local filter and
+  // its four payload builders, and the pointer drag's paint arithmetic. Both were
+  // already self-contained and both were untestable where they were: a payload
+  // literal five lines deep in an async handler, and a neighbour's offset three
+  // lines deep in a pointermove handler that needs a laid-out list and a mouse.
+  // `plannerblocks.test.js` holds them, and holds that this file still calls them
+  // rather than keeping a second copy of the rules.
+  import {
+    filterMedia,
+    filterAnnouncements,
+    verseCue,
+    mediaCuePayload,
+    announceCuePayload,
+    countdownCuePayload,
+  } from '../planneradd.js';
+  import { dragFrame } from '../plannerdrag.js';
+  // Dropping a file straight onto the running order. The triage, the gap the
+  // operator is shown, and the order it produces — see the module for why a
+  // document is refused at the drop rather than at the fire.
+  import {
+    triageDrop,
+    refusalMessage,
+    dropGapAt,
+    orderWithDropAt,
+    droppedMessage,
+  } from '../plannerdrop.js';
   import {
     capture,
     templates,
+    localIp,
     listPlans,
     createPlan,
     deletePlan,
@@ -70,6 +122,12 @@
     getSong,
     listArrangements,
     listMedia,
+    // The import path that already exists, reached from a drop instead of from a
+    // file dialog. `fileToBase64` is the choke point that holds MAX_IMPORT_BYTES
+    // (CLAUDE.md rule 36's shape), so a dropped file gets the same refusal a
+    // chosen one does, with no second guard written here.
+    importMedia,
+    fileToBase64,
     listAnnouncements,
     loadTemplates,
     readErrors,
@@ -85,6 +143,14 @@
   let openPlan = null;
   let items = [];
   let selId = null; // cue loaded in the inspector
+  // MULTI-SELECT, so a run of cues can go at once (Requirement 8). `picked` is
+  // what a bulk action is about and `anchor` is where a Shift-range extends FROM;
+  // both are ordinary ids, and `planselect.selectionAfterClick` is the one place
+  // that decides what a click does to them. `selId` stays what it always was —
+  // the cue the inspector is showing — because the panel is about ONE cue and
+  // saying otherwise would make its Template and Screens controls ambiguous.
+  let picked = [];
+  let anchor = null;
 
   /**
    * The lengths a cue may ask for, in minutes. A fixed list rather than a text
@@ -117,6 +183,14 @@
   }
   let leftMode = 'cues'; // 'cues' | 'add'
   let inspTab = 'general'; // 'general' | 'slides' | 'notes'
+  // HOW MANY CUES THIS VISIT TO THE ADD PANEL HAS PUT IN THE PLAN.
+  //
+  // The add path's friction is the toggle and the search, not the commit — and
+  // the reason an operator toggles BACK is to check that the clicks landed. The
+  // count and the name of the last one are what answer that without leaving the
+  // panel, and the way back out is one button beside them rather than a hunt for
+  // the segmented control at the top of the pane.
+  let added = 0;
 
   // one search (add mode) — scripture + songs + media together
   let addQ = '';
@@ -124,6 +198,12 @@
   let addSongs = [];
   let addMedia = [];
   let allMedia = []; // full media library, filtered locally by the query
+  // The host the preview's thumbnails are served from — the app's HTTP server on
+  // 8032, never the Vite port, which does not exist in a packaged build. Same
+  // default and same fallback as the Library's media pane: `localhost` works on
+  // this machine, and the LAN address is fetched so the URL shown here is the one
+  // an output screen would use.
+  let mediaHost = 'localhost';
   let addAnnounce = [];
   let allAnnounce = []; // full announcement list, filtered locally
   let addSearching = false;
@@ -223,12 +303,23 @@
     // reading "Click again" about a plan nobody is looking at is a control whose
     // words have stopped describing its state.
     disarmPlanDelete();
+    disarmCueDelete();
     openPlan = p;
     selId = null;
+    // A selection is about a plan, so it does not survive opening another one —
+    // and neither does an armed delete, which would otherwise be pointing at a
+    // cue that is no longer on screen.
+    picked = [];
+    anchor = null;
+    added = 0;
     leftMode = 'cues';
     inspTab = 'general';
     msg = '';
     allMedia = await listMedia().catch(() => []);
+    // A failed lookup leaves `localhost`, which is correct on this machine — the
+    // preview is never worth failing a plan over.
+    const ip = await localIp().catch(() => null);
+    if (ip) mediaHost = ip;
     allAnnounce = await listAnnouncements().catch(() => []);
     await loadItems();
     if (items.length) selId = items[0].id;
@@ -252,8 +343,10 @@
     if (!q) {
       addVerses = [];
       addSongs = [];
-      addMedia = allMedia.slice(0, 8); // recent media when the box is empty
-      addAnnounce = allAnnounce.slice(0, 8);
+      // Recent, not empty — the panel opens before anybody types. `planneradd.js`
+      // owns the rule and the limit so an empty box can never become no results.
+      addMedia = filterMedia(allMedia, '');
+      addAnnounce = filterAnnouncements(allAnnounce, '');
       return;
     }
     // try/finally so a failed search always releases the spinner — otherwise the
@@ -263,48 +356,40 @@
       const [v, s] = await Promise.all([searchScripture(q), searchSongs(q)]);
       addVerses = v;
       addSongs = s;
-      const ql = q.toLowerCase();
-      addMedia = allMedia.filter((m) => m.filename.toLowerCase().includes(ql));
-      addAnnounce = allAnnounce.filter(
-        (a) => a.title.toLowerCase().includes(ql) || a.body.toLowerCase().includes(ql),
-      );
+      addMedia = filterMedia(allMedia, q);
+      addAnnounce = filterAnnouncements(allAnnounce, q);
     } catch (e) {
       err = humanError(e);
     } finally {
       addSearching = false;
     }
   }
-  async function addVerse(v) {
-    const payload = {
-      book: v.book,
-      chapter: v.chapter,
-      verse: v.verse,
-      reference: v.reference,
-      text: v.text,
-      translation: v.translation,
-    };
+  /**
+   * ONE DOOR ONTO `add_plan_item`, taking a built cue.
+   *
+   * The four result kinds each spelled their own `addPlanItem(plan, type, label,
+   * payload)` call, so the type, the label and the payload were three arguments a
+   * call site could pair wrongly. `planneradd.js` builds all three together and
+   * this hands them over in one shape, which is also what the drop path uses —
+   * a fifth way in that cannot disagree with the other four.
+   */
+  async function commitCue(built) {
     await act(async () => {
-      await addPlanItem(openPlan.id, 'scripture', v.reference, payload);
+      await addPlanItem(openPlan.id, built.cue_type, built.label, built.payload);
       await loadItems();
       await refresh();
+      // SAY WHAT LANDED. The add path's measured friction is the toggle and the
+      // search, not the commit — but a commit with no acknowledgement is WHY an
+      // operator toggles back to the running order to check, which is the toggle
+      // friction arriving by another route. One click, one named cue, said in the
+      // panel the click happened in (`.sp-addnote`, not the pane head).
+      msg = addedMessage(built.label);
+      added += 1;
     });
   }
-  async function addMediaCue(m) {
-    const payload = { media_id: m.id, kind: m.kind, filename: m.filename };
-    await act(async () => {
-      await addPlanItem(openPlan.id, 'media', m.filename, payload);
-      await loadItems();
-      await refresh();
-    });
-  }
-  async function addAnnounceCue(a) {
-    const payload = { announce_id: a.id, title: a.title, body: a.body };
-    await act(async () => {
-      await addPlanItem(openPlan.id, 'announce', a.title || 'Announcement', payload);
-      await loadItems();
-      await refresh();
-    });
-  }
+  const addVerse = (v) => commitCue(verseCue(v));
+  const addMediaCue = (m) => commitCue(mediaCuePayload(m));
+  const addAnnounceCue = (a) => commitCue(announceCuePayload(a));
   // THE WORDS BESIDE THE CLOCK ARE THE OPERATOR'S, AND THIS IS WHERE THEY ARE
   // TYPED. Both fields were written here as constants — 'Service begins in' and
   // 'Welcome' — with no control anywhere in Relay to edit them, so every church
@@ -315,16 +400,48 @@
   let cdAddMin = 5;
   let cdAddLabel = '';
   let cdAddDone = '';
+  // ── AND WHICH SCREENS, AT THE MOMENT IT IS BUILT (2026-09-20) ────────────
+  //
+  // The inspector's `Screens` row has been able to aim any cue since RG-161, and
+  // it still can — this changes nothing about that door. What it adds is the
+  // question being asked where the answer is known: a pre-service countdown is
+  // aimed at the streaming screen, and the operator knows that while they are
+  // typing the length, not after hunting for a row in an inspector they have to
+  // select the new cue to see.
+  //
+  // The operator's instruction of 2026-09-20 asked for the Screen Countdown out
+  // of Quick tools and *"only where it is actually needed: the pre-service
+  // countdown for the service going online"*. This is the half of that which is
+  // a Tuesday job; the console band on Live is the half that is a Sunday one.
+  //
+  // `null` is every screen and is the default, for the same reason it is on the
+  // inspector row and in the console band: "all of them" has one spelling, and a
+  // list naming every screen silently stops including a screen added later.
+  /** @type {number[]|null} */
+  let cdAddChannels = null;
+  /** The rule is `countdown.js`'s, shared with the console band and the row below. */
+  function toggleCdAddChannel(id) {
+    cdAddChannels = toggleScreen(cdAddChannels, id, screens);
+  }
   async function addCountdownCue() {
-    const m = Number(cdAddMin) || 5;
-    const payload = { minutes: m, label: cdAddLabel.trim(), done: cdAddDone.trim() };
+    const built = countdownCuePayload(cdAddMin, cdAddLabel, cdAddDone);
     await act(async () => {
-      await addPlanItem(openPlan.id, 'countdown', `Countdown · ${m} min`, payload);
+      await addPlanItem(openPlan.id, built.cue_type, built.label, built.payload);
       // A countdown is the one cue type whose length is known at build time, so it
       // seeds its own duration instead of making the operator retype it.
       await loadItems();
       const added = items[items.length - 1];
-      if (added) await setPlanDuration(added.id, m * 60);
+      // `built.seconds` and not `m * 60`: the payload builder owns the arithmetic
+      // now (`planneradd.js`), so the cue's length and its stated duration come
+      // from one place rather than from two that agree today.
+      if (added) await setPlanDuration(added.id, built.seconds);
+      // THE AIM IS A SECOND WRITE, NOT A THIRD DOOR. `addPlanItem` cannot express
+      // a screen set, so the cue is created and then aimed through the SAME
+      // `setPlanChannels` the inspector row uses — one command, two surfaces, so
+      // the two cannot come to different conclusions about what `null` means.
+      // Skipped entirely when the answer is "every screen", because that is what
+      // a cue with no `channels_json` already says.
+      if (added && cdAddChannels) await setPlanChannels(added.id, cdAddChannels);
       await loadItems();
       await refresh();
     });
@@ -354,14 +471,201 @@
     });
   }
 
-  async function remove(id, ev) {
-    ev.stopPropagation();
+  // ── DELETING, FROM THE ROW IT IS ABOUT (Requirement 8) ────────────────────
+  //
+  // A cue could only be removed from the INSPECTOR, so taking three cues out was
+  // three select-then-travel round trips across the desk. The operator's line:
+  // *"do not hide destructive deletion behind ambiguity, but do not add friction
+  // that slows a live operator either."*
+  //
+  // NOT AMBIGUOUS — the control names the cue when there is one and counts them
+  // when there are several (`planselect.deleteLabel`), and the arming step is a
+  // state the BUTTON reports rather than a dialog appearing somewhere else.
+  // RULE 41 rules out the shortcut: Tauri's webview does not implement
+  // `confirm()`, so a two-step delete guarded by one deletes NOTHING and reports
+  // success. Same in-app arm/confirm as the plan rail above and `TemplateGallery`.
+  //
+  // NOT SLOW — one press arms, the second within 3s does it, and the arm is keyed
+  // by what it is about so it can never fire on the wrong cue. It also times out:
+  // an arm left standing is a destructive control one stray press away from
+  // firing, minutes later, about a cue nobody is looking at.
+  let cueDelArm = null; // an id, or the string 'picked' for the whole selection
+  let cueDelArmT;
+  function disarmCueDelete() {
+    clearTimeout(cueDelArmT);
+    cueDelArm = null;
+  }
+  function armCueDelete(key) {
+    cueDelArm = key;
+    clearTimeout(cueDelArmT);
+    cueDelArmT = setTimeout(() => (cueDelArm = null), 3000);
+  }
+
+  /**
+   * Take `ids` out of the plan. The ONE door, so the row control, the bulk
+   * control and the inspector's Delete cannot arrive at three different answers
+   * about what happens to the selection afterwards.
+   *
+   * The removals run in sequence rather than in parallel: `reorder_plan` and
+   * `remove_plan_item` both rewrite positions, and a plan is small enough that
+   * the wait is invisible while a half-applied batch is not.
+   */
+  async function removeCues(ids) {
+    const list = (ids ?? []).filter((n) => n != null);
+    if (!list.length) return;
+    const label = list.length === 1 ? items.find((i) => i.id === list[0])?.label ?? '' : '';
+    // Decided BEFORE the delete, against the order the operator was looking at.
+    const land = selectionAfterRemoval(items, list);
+    disarmCueDelete();
     await act(async () => {
-      await removePlanItem(id);
-      if (selId === id) selId = items[0]?.id ?? null;
+      for (const id of list) await removePlanItem(id);
+      picked = [];
+      anchor = null;
+      selId = land;
       await loadItems();
       await refresh();
+      msg = deletedMessage(list.length, label);
     });
+  }
+  function remove(id, ev) {
+    ev?.stopPropagation?.();
+    return removeCues([id]);
+  }
+
+  /**
+   * A click on a cue row. The ONE place a click reaches the picked set.
+   *
+   * `selId` is set on EVERY click, including the modified ones: the inspector is
+   * about one cue and it should be about the one last touched, so an operator
+   * building a run can still read what they are picking. The picked set is what
+   * a bulk action is about, and `planselect.selectionAfterClick` decides it.
+   *
+   * ⌘ on macOS and Ctrl elsewhere, both accepted rather than branched on the
+   * platform — a laptop with an external Windows keyboard is a real church, and
+   * neither key means anything else on this row.
+   */
+  function pick(id, ev) {
+    const additive = Boolean(ev?.metaKey || ev?.ctrlKey);
+    const range = Boolean(ev?.shiftKey);
+    const next = selectionAfterClick({ picked, anchor, items, id, additive, range });
+    picked = next.picked;
+    anchor = next.anchor;
+    selId = id;
+    // A new selection is a new subject, so an arm aimed at the old one stands
+    // down rather than waiting to be confirmed by a press meant for something else.
+    if (cueDelArm !== null) disarmCueDelete();
+  }
+  // ── DROP A FILE STRAIGHT ONTO THE RUNNING ORDER (Requirement 13) ──────────
+  //
+  // There was no file drop anywhere in `src/`. Putting a picture in a plan meant
+  // Library → Import → file dialog → the media review sheet → back here → Add cue
+  // → search the filename → click. This is the same import path (`fileToBase64` →
+  // `importMedia`) reached from a drag instead, with no new Rust and no new Tauri
+  // capability.
+  //
+  // IT CANNOT COLLIDE WITH THE REORDER, which was deliberately migrated OFF
+  // HTML5 drag onto pointer events. A file dragged from the operating system
+  // fires `dragenter`/`dragover`/`drop` and never `pointerdown`, so the two never
+  // see each other's events — and `dropAt` is held at null while a row is in hand
+  // anyway, because an insertion marker and a half-finished reorder on screen at
+  // once is two answers to "where will this land".
+  //
+  // `dragover` MUST `preventDefault()` or the webview navigates to the file and
+  // the console is simply gone, mid-build, with no way back but a relaunch.
+  let dropAt = null; // the gap index the marker is drawn at, or null when not over
+  let dropBusy = false;
+  let dropDepth = 0; // enter/leave nest: a child element's `dragleave` is not a leave
+
+  /** Does this drag carry FILES? A row being dragged inside the app does not. */
+  function dragHasFiles(e) {
+    const t = e?.dataTransfer;
+    if (!t) return false;
+    if (t.types && typeof t.types.includes === 'function') return t.types.includes('Files');
+    return Boolean(t.files?.length);
+  }
+
+  function onFileOver(e) {
+    if (!openPlan || drag || !dragHasFiles(e)) return;
+    // Without this the browser opens the file and the console is gone.
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    const rows = [...(e.currentTarget?.querySelectorAll?.('.sp-row') ?? [])].map((r) =>
+      r.getBoundingClientRect(),
+    );
+    dropAt = dropGapAt(rows, e.clientY);
+  }
+  function onFileEnter(e) {
+    if (!openPlan || drag || !dragHasFiles(e)) return;
+    dropDepth += 1;
+  }
+  function onFileLeave() {
+    dropDepth = Math.max(0, dropDepth - 1);
+    if (!dropDepth) dropAt = null;
+  }
+
+  /**
+   * The drop itself.
+   *
+   * Refusals are reported and the rest still land — a mixed drop is not
+   * all-or-nothing, because refusing the batch over one PDF makes an operator
+   * drag the pictures again. The size refusal is NOT re-implemented here:
+   * `fileToBase64` throws it before it allocates anything, and `humanError`
+   * prints that shape verbatim.
+   *
+   * Every file is imported, then every cue is added, and THEN one `reorder_plan`
+   * puts them where the marker was. The marker's gap is an index into the order
+   * as it was BEFORE the adds, which is the list the operator was looking at.
+   */
+  async function onFileDrop(e) {
+    if (!openPlan || drag || !dragHasFiles(e)) return;
+    e.preventDefault();
+    const at = dropAt;
+    dropDepth = 0;
+    dropAt = null;
+    const { accept, refused } = triageDrop(e.dataTransfer?.files);
+    if (!accept.length) {
+      err = refusalMessage(refused) || 'Nothing in that drop could become a cue.';
+      return;
+    }
+    const before = items.map((i) => i.id);
+    dropBusy = true;
+    await act(async () => {
+      try {
+        const newIds = [];
+        for (const { file, kind } of accept) {
+          // `import_media` answers the whole `media_assets` row, so the library
+          // the inspector's preview looks the asset up in is kept in step here
+          // rather than by a second `list_media` round trip.
+          const asset = await importMedia(kind, file.name, await fileToBase64(file));
+          if (asset) allMedia = [...allMedia, asset];
+          const built = mediaCuePayload(asset ?? { id: null, kind, filename: file.name });
+          const id = await addPlanItem(openPlan.id, built.cue_type, built.label, built.payload);
+          if (id != null) newIds.push(id);
+        }
+        await loadItems();
+        const order = orderWithDropAt(items.map((i) => i.id), newIds, at ?? before.length);
+        if (order.length && order.join() !== items.map((i) => i.id).join()) {
+          await reorderPlan(openPlan.id, order);
+          await loadItems();
+        }
+        if (newIds.length) selId = newIds[0];
+        await refresh();
+        msg = droppedMessage(newIds.length);
+        // A refusal alongside a success is still news. `err` is the rose slot and
+        // outranks `msg` in the head, which is the right way round: the operator
+        // can see the cues that landed, and cannot see the file that did not.
+        if (refused.length) err = refusalMessage(refused);
+      } finally {
+        dropBusy = false;
+      }
+    });
+  }
+
+  /** Put the selection down without touching the plan. */
+  function clearPicked() {
+    picked = [];
+    anchor = null;
+    disarmCueDelete();
   }
   async function move(id, dir, ev) {
     ev.stopPropagation();
@@ -417,16 +721,13 @@
   function onDragMove(e) {
     if (!drag) return;
     drag.dy = e.clientY - drag.y0;
-    const shift = Math.round(drag.dy / drag.h);
+    // The ARITHMETIC is `plannerdrag.dragFrame`; this writes the styles. A still
+    // row comes back as exactly 0 and its style is CLEARED rather than set to
+    // `translateY(0px)` — the each block is keyed, so a leftover inline transform
+    // would paint the new order shifted by a row.
+    const frame = dragFrame(drag.rows.length, drag.from, drag.h, drag.dy);
     drag.rows.forEach((r, i) => {
-      if (i === drag.from) {
-        r.style.transform = `translateY(${drag.dy}px)`;
-        return;
-      }
-      let t = 0;
-      if (shift > 0 && i > drag.from && i <= drag.from + shift) t = -drag.h;
-      if (shift < 0 && i < drag.from && i >= drag.from + shift) t = drag.h;
-      r.style.transform = t ? `translateY(${t}px)` : '';
+      r.style.transform = frame[i] ? `translateY(${frame[i]}px)` : '';
     });
   }
 
@@ -482,6 +783,12 @@
   // Both derived from the ordered cue list, never stored beside it, so a section
   // can never claim cues the transport does not actually walk.
   $: sections = sectionsOf(items);
+  // THE BANDS, parallel to `sections` and derived from the same list. Grouping is
+  // a fact about the plan; banding is a fact about how it is drawn, which is why
+  // the two are separate functions — see `plan.js::sectionBands` for what the two
+  // colours mean, what happens at section seven, and why colour is never the only
+  // signal here.
+  $: bands = sectionBands(sections);
   $: runtime = planRuntime(items);
   $: railPlans = planQ.trim()
     ? plans.filter((p) => p.title.toLowerCase().includes(planQ.trim().toLowerCase()))
@@ -563,15 +870,19 @@
       await loadItems();
     });
   }
-  /** Tick or untick one screen, starting from "every screen" if nothing is set. */
+  /**
+   * Tick or untick one screen, starting from "every screen" if nothing is set.
+   *
+   * THE RULE IS `countdown.js`'S, not this function's — including the part that
+   * matters most, which is going back to NULL when every screen is ticked again:
+   * "all of them" has one spelling, and an explicit list of every screen would
+   * silently stop including a screen added later. It was written here first and
+   * moved on 2026-09-20, when the countdown add block above and Live's Screen
+   * Countdown band both needed it; three copies of that rule is three chances for
+   * one of them to mean something else by a tick.
+   */
   function toggleCueChannel(id) {
-    const from = cueChannels ?? screens.map((c) => c.id);
-    const next = from.includes(id) ? from.filter((n) => n !== id) : [...from, id];
-    // Back to NULL when every screen is ticked again: "all of them" has one
-    // spelling, and an explicit list of every screen would silently stop
-    // including a screen added later.
-    const all = screens.length > 0 && next.length === screens.length;
-    return saveChannels(all ? null : next);
+    return saveChannels(toggleScreen(cueChannels, id, screens));
   }
 
   async function saveTimer(ev) {
@@ -590,11 +901,29 @@
       await loadItems();
     });
   }
-  /** Copy a cue in place — the quickest way to a second cue of the same shape. */
+  /**
+   * Copy a cue IN PLACE — beside the one it was copied from.
+   *
+   * This comment has always said "in place" and the code has always appended to
+   * the end of the plan. On a fourteen-cue running order that is a cue appearing
+   * somewhere the operator is not looking, in whatever section the plan happens
+   * to finish in, which then has to be dragged back up past everything.
+   *
+   * `add_plan_item` appends and there is no command that inserts, so the fix is
+   * the reorder that already exists: add, then hand `reorder_plan` the order with
+   * the new id lifted out of the tail and dropped in after its original.
+   * `planselect.orderWithDuplicateInPlace` owns the arithmetic and refuses to
+   * guess when either id is missing — a reorder built from a guess persists.
+   *
+   * The copy's SECTION then comes out right by construction: `add_plan_item`
+   * takes no `section_title`, and `sectionsOf` reads an empty one as "still in the
+   * section above".
+   */
   async function duplicateCue() {
     if (!selCue) return;
+    const sourceId = selCue.id;
     await act(async () => {
-      await addPlanItem(
+      const newId = await addPlanItem(
         openPlan.id,
         selCue.cue_type,
         selCue.label,
@@ -602,6 +931,24 @@
         selCue.template_id,
       );
       await loadItems();
+      const order = orderWithDuplicateInPlace(items.map((i) => i.id), sourceId, newId);
+      // Only when it actually moves something. A `reorder_plan` that rewrites the
+      // order it was already in is a write nobody asked for.
+      if (order.length && order.join() !== items.map((i) => i.id).join()) {
+        await reorderPlan(openPlan.id, order);
+        await loadItems();
+      }
+      // THE WHOLE CUE, NOT ITS FIRST WRITE (RG-204). `addPlanItem` inserts type,
+      // label, payload and template; duration, timer binding and screens are
+      // second writes, and a duplicate that dropped them lost a countdown's
+      // five minutes and its screen set. Replayed from the source, in the order
+      // the add panel writes them.
+      if (newId != null) {
+        if (selCue.duration_sec) await setPlanDuration(newId, selCue.duration_sec);
+        if (selCue.timer_minutes != null) await setPlanTimer(newId, selCue.timer_minutes);
+        if (selCue.channels_json) await setPlanChannels(newId, planChannelsOf(selCue.channels_json));
+        selId = newId;
+      }
       await refresh();
     });
   }
@@ -631,6 +978,68 @@
   // The inspector preview goes through TemplateRender — the ONE renderer used by
   // the fullscreen output and the Templates editor — so what the operator sees
   // here is what the wall will show, by construction rather than by resemblance.
+  // THE MEDIA CUE'S ASSET, resolved out of the library already in hand.
+  //
+  // A media cue's whole content is a picture, and this inspector used to answer
+  // "what does this put on the wall?" with its filename. `TemplateRender` could
+  // paint it all along — it branches on `content.media_kind` and reads
+  // `content.media_url` — so the only thing missing was the lookup and the two
+  // fields. `allMedia` is already loaded for the Add-cue search, so this costs
+  // no extra call.
+  //
+  // `found` is a real three-way answer, not a truthiness test: a cue with no
+  // `media_id` at all (an older or hand-edited payload) is not the same as one
+  // pointing at a row that has been DELETED, and only the second is a defect
+  // worth naming a file over. `plan.js::previewState` turns this into the
+  // sentence, because the verdict lives there with the other four.
+  $: selMedia = (() => {
+    if (selCue?.cue_type !== 'media') return null;
+    const p = payloadOf(selCue);
+    if (p.media_id == null) return null;
+    const row = allMedia.find((m) => m.id === p.media_id) || null;
+    return { found: Boolean(row), filename: p.filename || selCue.label, row, kind: p.kind || 'image' };
+  })();
+
+  // ── THE PICTURE ON THE ROW (RG-215) ───────────────────────────────────────
+  //
+  // The same three-way answer `selMedia` makes for the inspector, for any cue in
+  // the running order: no `media_id` at all, a row that has been DELETED, and a
+  // resolved one are different things, and only the third has a URL. Guessing
+  // one from the id would paint a broken picture for the second, which is a
+  // worse answer than no picture — a thumbnail is a claim that this is what the
+  // cue puts on a screen.
+  //
+  // `allMedia` is already loaded for the Add-cue search, so no row costs a call.
+  const cueThumb = (c, rows, host) => {
+    if (c?.cue_type !== 'media') return null;
+    const p = payloadOf(c);
+    if (p.media_id == null) return null;
+    const row = rows.find((m) => m.id === p.media_id);
+    // A document has no frame to paint, and `fire_media` refuses to put one on a
+    // screen in any case.
+    if (!row || row.kind === 'document') return null;
+    return { url: mediaUrl(host, row), kind: p.kind === 'video' ? 'video' : 'image' };
+  };
+
+  /**
+   * THE PICTURE A SLIDE IN THE INSPECTOR SHOWS — RG-264.
+   *
+   * `cueThumb`'s rule, read off the SLIDE rather than off the cue: the Slides
+   * tab walks `slidesOf`'s output, and a song or a scripture cue yields several
+   * slides of which none is media. `plan.js` already puts `media_id` and
+   * `media_kind` on the slide it builds; this is their first reader.
+   *
+   * Null for a deleted asset and for a document — no frame to paint, and
+   * `fire_media` refuses to put one on a screen in any case — so a missing
+   * picture falls back to the words rather than to a broken image.
+   */
+  const slideThumb = (s, rows, host) => {
+    if (s?.media_id == null) return null;
+    const row = rows.find((m) => m.id === s.media_id);
+    if (!row || row.kind === 'document') return null;
+    return { url: mediaUrl(host, row), kind: s.media_kind === 'video' ? 'video' : 'image' };
+  };
+
   $: previewContent = !selCue
     ? null
     : selCue.cue_type === 'scripture'
@@ -639,14 +1048,27 @@
           text: payloadOf(selCue).text || '',
           translation: payloadOf(selCue).translation || '',
         }
-      : { reference: selCue.label, text: selSlides[0]?.text || '', translation: '' };
+      : selMedia?.found
+        ? {
+            reference: selCue.label,
+            text: '',
+            translation: '',
+            // The two fields `TemplateRender` actually reads. Built by the shared
+            // builder so this preview and the wall cannot disagree about where a
+            // file lives.
+            media_url: mediaUrl(mediaHost, selMedia.row),
+            media_kind: selMedia.kind === 'video' ? 'video' : 'image',
+          }
+        : { reference: selCue.label, text: selSlides[0]?.text || '', translation: '' };
 
   // What the preview may honestly claim. `plan.js` owns the verdict so the four
   // situations it separates are testable without a component (CLAUDE.md rule 35):
   // a media or countdown cue draws its own content at fire time; a scripture, song
   // or notice cue with nothing to typeset is a cue that would put NOTHING in front
   // of a congregation, which is different news and must not read the same.
-  $: pv = previewState(selCue, Boolean(previewContent?.text));
+  // A media cue has no TEXT and never will, so `hasText` can never speak for it —
+  // which is why the resolved asset is passed alongside rather than folded in.
+  $: pv = previewState(selCue, Boolean(previewContent?.text), selMedia);
 </script>
 
 <!-- Escape closes the arrangement picker, from anywhere — bound at the window rather
@@ -779,7 +1201,7 @@
       {#if openPlan}
         <div class="r-seg sp-toolseg">
           <button class:on={leftMode === 'cues'} on:click={() => (leftMode = 'cues')}>Running order</button>
-          <button class:on={leftMode === 'add'} on:click={() => { leftMode = 'add'; if (!addQ.trim()) { addMedia = allMedia.slice(0, 8); addAnnounce = allAnnounce.slice(0, 8); } }}>＋ Add cue</button>
+          <button class:on={leftMode === 'add'} on:click={() => { leftMode = 'add'; added = 0; msg = ''; if (!addQ.trim()) { addMedia = filterMedia(allMedia, ''); addAnnounce = filterAnnouncements(allAnnounce, ''); } }}>＋ Add cue</button>
         </div>
         <button class="r-btn ghost sm" disabled={!items.length} on:click={addSection}>＋ Section</button>
       {/if}
@@ -805,15 +1227,44 @@
       </div>
     {:else}
       {#if leftMode === 'cues'}
-        <div class="rw-panebody sp-tablewrap">
+        <!-- THE DROP ZONE is the whole running order, including the empty-plan
+             placeholder inside it, so a picture can be dropped onto a plan that
+             has nothing in it yet. The handlers ignore anything that is not a
+             FILE drag and anything arriving while a row is in hand, so the
+             pointer-based reorder underneath is untouched.
+             `role="presentation"` and the a11y-ignore: this is not a control and
+             does not claim to be one. Everything it does is reachable without a
+             mouse through ＋ Add cue → the media search, which is the path it is
+             a shortcut for — a drop cannot be a keyboard's only route to
+             anything. -->
+        <!-- svelte-ignore a11y-no-static-element-interactions -->
+        <div class="rw-panebody sp-tablewrap" class:dropping={dropAt !== null}
+          role="presentation"
+          on:dragenter={onFileEnter}
+          on:dragover={onFileOver}
+          on:dragleave={onFileLeave}
+          on:drop={onFileDrop}>
           {#if items.length}
-            {#each sections as sec (sec.items[0].id)}
+            {#each sections as sec, si (sec.items[0].id)}
               <!-- A section heading is a CAPTION and a hairline to the right edge,
                    not a container: `sectionsOf` derives the grouping from the same
                    ordered list the transport walks, so a heading can never claim a
-                   cue the plan does not have in it. -->
+                   cue the plan does not have in it.
+                   THE BAND (`plan.js::sectionBands`). Two hues, alternating, and
+                   they say one thing: this is a different section from the one
+                   above. Never a kind, never a state — the colours a running
+                   service needs are all spoken for. The ORDINAL beside the name is
+                   what survives greyscale, so the running order loses the banding
+                   and nothing else when the colour is gone. An untitled leading
+                   group gets `null`: no number, no ink, because numbering a group
+                   the operator never named invents a section. -->
+              {@const band = bands[si]}
               {#if sec.title}
-                <div class="sp-sec">
+                <div class="sp-sec" style={band ? `--sec-ink:${band.ink};--sec-line:${band.line}` : ''}>
+                  {#if band}
+                    <span class="sp-secn r-mono"
+                      ><span class="sr-only">Section&nbsp;</span>{band.ordinal}</span>
+                  {/if}
                   <span class="sp-seccap">{sec.title}</span>
                   <span class="sp-secln"></span>
                 </div>
@@ -821,16 +1272,30 @@
 
               {#each sec.items as c (c.id)}
                 {@const n = items.findIndex((i) => i.id === c.id)}
+                <!-- WHERE THE DROPPED FILE WILL LAND, shown before the mouse is
+                     released. The gap is `plannerdrop.dropGapAt`, the same number
+                     the insertion afterwards uses, so the marker cannot promise a
+                     position the reorder does not deliver. It carries WORDS as
+                     well as a line: a 2px rule is not a signal on its own, and
+                     this one appears over a list the operator is mid-drag on. -->
+                {#if dropAt === n}
+                  <div class="sp-mark"><span class="sp-markw r-mono">Drop here</span></div>
+                {/if}
                 <div class="sp-row" class:sel={c.id === selId} class:dragging={dragId === c.id}
-                  on:click={() => (selId = c.id)} role="button" tabindex="0"
-                  aria-pressed={c.id === selId}
+                  class:inband={Boolean(band)} class:picked={picked.includes(c.id)}
+                  style={band ? `--sec-ink:${band.ink}` : ''}
+                  on:click={(e) => pick(c.id, e)} role="button" tabindex="0"
+                  aria-pressed={c.id === selId || picked.includes(c.id)}
                   on:keydown={(e) => {
                     // A role="button" must answer to Enter AND Space; this one only
                     // took Enter, so it was focusable but half-operable. preventDefault
                     // on Space, or the page scrolls under the operator instead.
+                    // The MODIFIERS come through here too, so a keyboard operator
+                    // can build the same run a mouse can — the event carries
+                    // `shiftKey`/`metaKey` whichever device produced it.
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault();
-                      selId = c.id;
+                      pick(c.id, e);
                     }
                   }}>
                   <!-- The grip is a real control, not a decoration with a cursor.
@@ -844,10 +1309,12 @@
                     type="button"
                     aria-label="Reorder {c.label} — drag, or use arrow up and arrow down"
                     on:pointerdown={(e) => onGripDown(c.id, e)}
-                    on:click|stopPropagation={() => (selId = c.id)}
-                    on:keydown|stopPropagation={(e) => {
-                      if (e.key === 'ArrowUp' && n > 0) { e.preventDefault(); move(c.id, -1, e); }
-                      else if (e.key === 'ArrowDown' && n < items.length - 1) { e.preventDefault(); move(c.id, 1, e); }
+                    on:click|stopPropagation={(e) => pick(c.id, e)}
+                    on:keydown={(e) => {
+                      // Only the keys this grip uses stop here (RG-198); Esc and B
+                      // go on to the shell.
+                      if (e.key === 'ArrowUp' && n > 0) { e.preventDefault(); e.stopPropagation(); move(c.id, -1, e); }
+                      else if (e.key === 'ArrowDown' && n < items.length - 1) { e.preventDefault(); e.stopPropagation(); move(c.id, 1, e); }
                     }}>
                     <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor" aria-hidden="true"><circle cx="2" cy="2" r="1.1"/><circle cx="8" cy="2" r="1.1"/><circle cx="2" cy="7" r="1.1"/><circle cx="8" cy="7" r="1.1"/><circle cx="2" cy="12" r="1.1"/><circle cx="8" cy="12" r="1.1"/></svg>
                   </button>
@@ -856,6 +1323,14 @@
                        (`TAXONOMY_INK`, CLAUDE.md rule 18), so the WORD is the
                        taxonomy and `chipOf` never truncates it. -->
                   <span class="sp-ck r-mono">{chipOf(c.cue_type)}</span>
+                  <!-- WHAT THIS CUE PUTS ON A SCREEN, for the one cue type whose
+                       whole content is a picture. `null` for every other kind and
+                       for an asset that is no longer there, so the row never
+                       paints a claim it cannot keep. -->
+                  {#if cueThumb(c, allMedia, mediaHost)}
+                    {@const th = cueThumb(c, allMedia, mediaHost)}
+                    <span class="sp-thumb"><MediaThumb url={th.url} kind={th.kind} size={30} /></span>
+                  {/if}
                   <!-- One line unless the cue actually has something extra to say.
                        A subtitle under every row doubled the row height and
                        squeezed the cue name — the one thing an operator scans for. -->
@@ -869,16 +1344,56 @@
                     {/if}
                   </span>
                   <span class="sp-dur r-mono">{fmtDuration(c.duration_sec)}</span>
+                  <!-- DELETE, ON THE ROW IT IS ABOUT. Two presses, never a native
+                       `confirm()` (rule 41 — the Tauri webview returns false
+                       without showing anything, so a delete guarded by one deletes
+                       nothing and reports success). The ACCESSIBLE NAME names the
+                       cue and states which press this is, so the control is never
+                       a bare glyph and never ambiguous about what it will take.
+                       `stopPropagation` so arming a delete does not also re-pick
+                       the row and throw away a selection the operator built. -->
+                  <button
+                    class="sp-del r-focus"
+                    class:arm={cueDelArm === c.id}
+                    type="button"
+                    aria-label={deleteLabel(1, c.label, cueDelArm === c.id)}
+                    title={deleteLabel(1, c.label, cueDelArm === c.id)}
+                    on:click|stopPropagation={() => (cueDelArm === c.id ? removeCues([c.id]) : armCueDelete(c.id))}
+                    >
+                    {#if cueDelArm === c.id}
+                      <span class="sp-delarm r-mono" aria-hidden="true">AGAIN</span>
+                    {:else}
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M5 5l14 14M19 5L5 19"/></svg>
+                    {/if}
+                  </button>
                 </div>
               {/each}
             {/each}
+            <!-- The last gap: below every row. Outside the section loop, so it
+                 belongs to the plan rather than to whichever section happens to
+                 be last. -->
+            {#if dropAt === items.length}
+              <div class="sp-mark"><span class="sp-markw r-mono">Drop here</span></div>
+            {/if}
           {:else if $readErrors.planItems}
             <!-- RG-95, last two surfaces. `planItems` swallowed to `[]`, so a read
                  that failed said "Empty plan" about a plan the operator spent an
                  evening building. -->
             <ErrorState error={$readErrors.planItems} onRetry={loadItems} />
           {:else}
-            <div class="sp-drop r-mono">Empty plan — use ＋ Add cue.</div>
+            <!-- An EMPTY plan is a drop target too, and it says so — a placeholder
+                 that only ever names one way in would have an operator hunting for
+                 a file dialog with the file already under their hand. -->
+            <div class="sp-drop r-mono" class:over={dropAt !== null}>
+              {#if dropAt !== null}
+                Drop to add it as the first cue.
+              {:else}
+                Empty plan — use ＋ Add cue, or drop a picture or a video here.
+              {/if}
+            </div>
+          {/if}
+          {#if dropBusy}
+            <div class="sp-drophint r-mono" role="status">Importing the dropped file…</div>
           {/if}
         </div>
       {:else}
@@ -913,6 +1428,38 @@
             <input id="sp-cddone" class="r-input sp-cdw" maxlength="60" bind:value={cdAddDone}
               placeholder="Optional — e.g. Welcome" />
             <p class="sp-fhelp sp-cdhelp">Leave both blank for a timer that shows the digits alone.</p>
+            <!-- ── AND WHICH SCREENS (2026-09-20) ────────────────────────────
+                 A pre-service countdown usually belongs on one screen — the
+                 stream — and the operator knows which one while they are
+                 building the cue. The inspector's `Screens` row still aims any
+                 cue and this does not replace it; it asks the question where the
+                 answer is known, through the same `setPlanChannels`.
+
+                 EVERY SCREEN IS THE DEFAULT and is shown as a real choice, not
+                 as nothing ticked. A screen a cue does NOT name keeps showing
+                 whatever it already had, so this narrows what the cue reaches
+                 and can never blank one. -->
+            {#if screens.length}
+              <div class="r-lbl sp-cdwlbl">Screens</div>
+              <div class="sp-cdchset" role="group" aria-label="Screens for this countdown">
+                {#each screens as c (c.id)}
+                  <button
+                    class="r-btn ghost sm sp-cdch"
+                    class:on={(cdAddChannels ?? screens.map((x) => x.id)).includes(c.id)}
+                    aria-pressed={(cdAddChannels ?? screens.map((x) => x.id)).includes(c.id)}
+                    on:click={() => toggleCdAddChannel(c.id)}>{c.name}</button>
+                {/each}
+              </div>
+              <p class="sp-fhelp sp-cdhelp">
+                {#if cdAddChannels == null}
+                  Every screen.
+                {:else if cdAddChannels.length === 0}
+                  No screen — this cue would reach nothing.
+                {:else}
+                  Other screens keep what they are showing.
+                {/if}
+              </p>
+            {/if}
           </div>
           <div class="sp-results">
             {#if addSearching}
@@ -938,6 +1485,12 @@
               {#each addMedia as m (m.id)}
                 <button class="sp-result r-focus" on:click={() => addMediaCue(m)}>
                   <span class="sp-dot" style="background:{TYPE.media.color};"></span>
+                  <!-- The same rule as the running order, one size up: this is
+                       where a background is CHOSEN, and choosing one by filename
+                       is how the wrong picture gets into a plan. -->
+                  {#if m.kind !== 'document'}
+                    <span class="sp-thumb"><MediaThumb url={mediaUrl(mediaHost, m)} kind={m.kind === 'video' ? 'video' : 'image'} size={34} /></span>
+                  {/if}
                   <span class="sp-resbody"><span class="sp-resref">{m.filename}</span><span class="sp-restext r-mono">{m.kind}</span></span>
                   <span class="sp-plus">＋</span>
                 </button>
@@ -960,6 +1513,54 @@
       {/if}
     {/if}
 
+    <!-- WHAT THE ADD PANEL HAS PUT IN THE PLAN, AND THE WAY BACK.
+         The measured friction on the add path is the toggle and the search, not
+         the commit — one click per result row already adds a cue. But a commit
+         with no acknowledgement is exactly WHY an operator toggles back to the
+         running order to check, which is the toggle friction arriving by another
+         route. This says what landed and how many, in the panel the click
+         happened in, and puts the way out beside it rather than back up at the
+         segmented control. Nothing here adds friction to the commit: it appears
+         after the first add and is never in the way of the second. -->
+    {#if openPlan && leftMode === 'add' && added}
+      <div class="rw-panefoot sp-addnote">
+        <span class="sp-msg r-mono" role="status">{msg}</span>
+        <span class="rw-spring"></span>
+        <span class="sp-hm r-mono">{added} added</span>
+        <button class="r-btn primary sm" on:click={() => { leftMode = 'cues'; msg = ''; }}>
+          Done — see the running order
+        </button>
+      </div>
+    {/if}
+
+    <!-- THE CAVEAT. Outside every `{#if}` above, so it is on screen while a plan
+         is loading, while none is open, in both left modes and on an empty plan —
+         and outside the scroller, so a long running order cannot push it off. It
+         is the sentence that says what this whole workspace is, and the two
+         places it lived before could each hide it: a toolbar note with a
+         `display:none` below 1240px, then a page standfirst that cost two rows of
+         a desk. A caveat that can disappear is not a caveat. -->
+    <!-- THE SELECTION BAR, above the caveat and outside the scroller for the same
+         reason the caveat is: an action about cues that may have scrolled out of
+         sight has to stay where the operator can see how many it is about. It is
+         only mounted when MORE THAN ONE cue is picked — a single pick is what a
+         plain click has always done, and putting a bulk control over it would be
+         a destructive button that is permanently on screen meaning something
+         different depending on state nobody can read. -->
+    {#if openPlan && leftMode === 'cues' && picked.length > 1}
+      <div class="rw-panefoot sp-picked">
+        <span class="sp-pickedn r-mono">{picked.length} cues selected</span>
+        <span class="rw-spring"></span>
+        <button class="r-btn ghost sm" on:click={clearPicked}>Clear selection</button>
+        <!-- Two presses, and the label states which one this is and what it will
+             take. Never a native `confirm()` — rule 41. -->
+        <button class="r-btn ghost sm sp-raildel" class:arm={cueDelArm === 'picked'}
+          on:click={() => (cueDelArm === 'picked' ? removeCues(picked) : armCueDelete('picked'))}>
+          {deleteLabel(picked.length, '', cueDelArm === 'picked')}
+        </button>
+      </div>
+    {/if}
+
     <!-- THE CAVEAT. Outside every `{#if}` above, so it is on screen while a plan
          is loading, while none is open, in both left modes and on an empty plan —
          and outside the scroller, so a long running order cannot push it off. It
@@ -969,8 +1570,9 @@
          a desk. A caveat that can disappear is not a caveat. -->
     <div class="rw-panefoot sp-caveat">
       <p>
-        {#if leftMode === 'cues'}Drag <b>⠿</b> to reorder. {/if}Build only — nothing here
-        reaches an output. Run it in <b>Live</b>.
+        {#if leftMode === 'cues'}Drag <b>⠿</b> to reorder. Shift-click for a run, ⌘/Ctrl-click to
+          pick several. Drop a picture or a video anywhere on the list to add it there.
+          {/if}Build only — nothing here reaches an output. Run it in <b>Live</b>.
       </p>
     </div>
   </section>
@@ -1036,6 +1638,13 @@
                of a congregation (CLAUDE.md rule 35). -->
           <div class="sp-noslide" class:warn={pv.state === 'empty' || pv.state === 'unknown'}>
             <p class="sp-noslidemsg">{pv.message}</p>
+          </div>
+        {/if}
+        {#if pv.warning}
+          <!-- THE CODEC WARNING (F5). Shown beside a cue that renders fine HERE and
+               may paint nothing on a browser screen; `previewState` decides. -->
+          <div class="sp-noslide warn" role="status">
+            <p class="sp-noslidemsg">{pv.warning}</p>
           </div>
           <p class="sp-fhelp">Nothing here is on air.</p>
         {/if}
@@ -1196,8 +1805,21 @@
           </div>
           <div class="sp-slides">
             {#each selSlides as s, i}
+              <!-- A MEDIA SLIDE LOOKS LIKE ITS PICTURE (RG-264). `slidesOf`
+                   gives a media slide `text: ''` by construction, so this
+                   printed `{s.text || s.label}` — the file name, dim grey on a
+                   dark card. `IMG_3427.mov` tells nobody which clip that is, and
+                   this is the tab an operator opens to check what a cue puts up.
+
+                   `cueThumb`'s rule read off the SLIDE rather than the cue, so a
+                   deleted asset paints nothing here exactly as it does on the
+                   running order, and the URL is built by the one builder. -->
+              {@const th = slideThumb(s, allMedia, mediaHost)}
               <div class="sp-slide">
                 <span class="sp-slidetag" style="color:{slideAccent(s.tag)};border-color:{slideAccent(s.tag)}">{s.tag}</span>
+                {#if th}
+                  <span class="sp-slidepic"><MediaThumb url={th.url} kind={th.kind} size={34} /></span>
+                {/if}
                 <span class="sp-slidetext">{s.text || s.label}</span>
                 <span class="sp-slideidx r-mono">{String(i + 1).padStart(2, '0')}</span>
               </div>
@@ -1231,7 +1853,14 @@
   <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-noninteractive-element-interactions -->
   <div class="sp-arrback" role="presentation" on:click={() => (arrPick = null)}>
     <div class="sp-arrsheet" role="dialog" aria-modal="true" aria-label="Choose arrangement" use:trapFocus
-      on:click|stopPropagation on:keydown|stopPropagation>
+      on:click|stopPropagation
+      on:keydown={(e) => {
+        // Rule 44 (RG-198): an overlay that disarms Escape must consume it. This
+        // was a bare `|stopPropagation` under `trapFocus`, so Escape never reached
+        // the window handler that closes the sheet, and `shortcuts.js` had already
+        // stood down for the dialog. Every other key passes through untouched.
+        if (e.key === 'Escape') { e.stopPropagation(); arrPick = null; }
+      }}>
       <div class="sp-arrtitle">Add “{arrPick.song.title}”</div>
       <div class="r-lbl sp-arrsub">Choose an arrangement</div>
       <button class="sp-arropt r-focus" on:click={() => commitSong(arrPick.song, null)}>
@@ -1352,7 +1981,20 @@
     border:1px solid transparent; border-radius:var(--v-r-sm);
     margin:0 6px 2px; width:calc(100% - 12px);
     transition:background var(--v-dur) var(--v-ease), border-color var(--v-dur) var(--v-ease); }
+  /* A ROW INSIDE A NUMBERED SECTION carries a left edge in that section's ink.
+     It is an EDGE — a shape that is present or absent — before it is a hue: a row
+     in a section looks different from a row outside one with every colour
+     stripped out, which is what keeps the band from being the only signal. The
+     heading above it has scrolled away on a long plan and this has not, so it is
+     also the answer to "which section am I looking at?" halfway down.
+
+     `border-left-color` rather than a pseudo-element, so it rides the row's own
+     transform during a drag and cannot be left behind by one. */
+  .sp-row.inband{ border-left-width:2px; border-left-color:var(--sec-ink); padding-left:9px; }
   .sp-row:hover:not(.sel){ background:var(--v-surf2); border-color:var(--v-line); }
+  /* Hover and selection paint the other three edges; the band keeps its own, or a
+     row would lose which section it is in at the moment it is pointed at. */
+  .sp-row.inband:hover, .sp-row.inband.sel, .sp-row.inband.dragging{ border-left-color:var(--sec-ink); }
   /* Selection is steel blue — the thing you are working on (docs/REBRAND.md §1).
      It is NOT amber: amber means a cue is live on the wall, and a cue merely
      being edited on a Tuesday is not. */
@@ -1395,16 +2037,104 @@
   .sp-cuenote svg{ flex:0 0 auto; }
   .sp-dur{ flex:0 0 auto; font-family:var(--f-mono); font-size:var(--v-fs-cap); color:var(--v-faint);
     font-variant-numeric:tabular-nums; }
-  .sp-drop{ padding:22px; text-align:center; font-size:var(--v-fs-b2); color:var(--v-faint); }
+  .sp-drop{ padding:22px; text-align:center; font-size:var(--v-fs-b2); color:var(--v-faint);
+    border:1px dashed transparent; border-radius:var(--v-r-lg); margin:6px;
+    transition:border-color var(--v-dur) var(--v-ease), color var(--v-dur) var(--v-ease); }
+  .sp-drop.over{ border-color:var(--v-sel-line); color:var(--v-txt); background:var(--v-sel-soft); }
 
-  /* A section heading: a caption and a hairline that runs to the right edge. It
-     was a sticky bar with an amber rule down its left side — amber, on a build
-     surface, for a heading. The line is the furniture; the word is the heading. */
+  /* ── A FILE OVER THE RUNNING ORDER ─────────────────────────────────────────
+     STEEL, not a new colour and not a promise one: a drop target is the thing you
+     are working on, which is exactly what `--v-sel` means here and on every other
+     desk (docs/REBRAND.md §1). It is emphatically not amber — a file being
+     dragged over a build surface has nothing to do with a congregation.
+
+     The marker carries WORDS. A 2px rule appearing under a moving cursor is not a
+     signal on its own, and this is the whole of the promise the drop makes about
+     where the cue will land. */
+  .sp-tablewrap.dropping{ box-shadow:inset 0 0 0 1px var(--v-sel-line); }
+  .sp-mark{ position:relative; display:flex; align-items:center; gap:8px;
+    height:2px; margin:2px 8px; background:var(--v-sel); border-radius:1px; }
+  .sp-markw{ position:absolute; left:0; top:-8px; padding:1px 5px;
+    font-size:var(--v-fs-cap); line-height:1.2; font-weight:600; letter-spacing:.04em;
+    color:var(--v-sel-ink); background:var(--v-sel-fill); border-radius:var(--v-r-sm);
+    white-space:nowrap; }
+  .sp-drophint{ padding:8px 12px; font-size:var(--v-fs-cap); color:var(--v-dim); }
+
+  /* THE ROW'S DELETE. Always present, never hidden behind a hover: "do not hide
+     destructive deletion behind ambiguity" cuts both ways, and a control that
+     only exists while the pointer is over it is a control a keyboard operator has
+     to discover. It is QUIET at rest — the same metadata ink as the duration
+     beside it — and rose the moment it is reached for, which is where the
+     destructive colour belongs (it is genuinely destructive, so this is the one
+     promise colour this pane is entitled to).
+
+     ARMED it stops being a glyph and says AGAIN, in words, at the same width, so
+     the row does not reflow between the two presses an operator is making in
+     quick succession. The accessible name carries the whole sentence either way
+     ("Delete “Welcome” — click again"), because the glyph never could. */
+  .sp-del{ flex:0 0 auto; display:grid; place-items:center; min-width:22px; height:18px;
+    padding:0 4px; background:transparent; border:1px solid transparent;
+    border-radius:var(--v-r-sm); color:var(--v-500); cursor:pointer;
+    transition:color var(--v-dur) var(--v-ease), background var(--v-dur) var(--v-ease),
+      border-color var(--v-dur) var(--v-ease); }
+  .sp-row:hover .sp-del{ color:var(--v-faint); }
+  .sp-del:hover{ color:var(--v-red); border-color:var(--v-red-line); background:var(--v-red-soft); }
+  .sp-del:focus-visible{ outline:2px solid var(--v-sel); outline-offset:1px; color:var(--v-red); }
+  .sp-del.arm{ color:var(--v-red); border-color:var(--v-red); background:var(--v-red-soft); }
+  .sp-delarm{ font-size:var(--v-fs-cap); font-weight:700; letter-spacing:.04em; }
+
+  /* A PICKED ROW is steel — the thing you are working on — and it is a FILL plus
+     a left mark rather than a colour alone, so a run of picked cues is a
+     continuous block an operator can see the ends of. It is deliberately the same
+     family as `.sel` and not a sixth colour: selection and multi-selection are the
+     same idea at two sizes, and the running order already spends its one free
+     accent on the section band. */
+  .sp-row.picked{ background:var(--v-sel-soft); border-color:var(--v-sel-line); }
+  .sp-row.picked.sel{ border-color:var(--v-sel); }
+  .sp-row.inband.picked{ border-left-color:var(--sec-ink); }
+
+  /* The bar that appears once more than one cue is picked. A pane FOOTER, outside
+     the scroller, for the same reason the caveat is: an action about cues that
+     may have scrolled out of sight must stay where the count can be read. */
+  .sp-picked{ flex-direction:row; align-items:center; gap:8px; padding:7px 12px; }
+  .sp-pickedn{ font-size:var(--v-fs-cap); color:var(--v-txt); font-weight:600; }
+  /* The add panel's acknowledgement, same shape. */
+  .sp-addnote{ flex-direction:row; align-items:center; gap:8px; padding:7px 12px; }
+  .sp-addnote .sp-msg{ max-width:none; }
+
+  /* A section heading: a NUMBER, a caption and a hairline that runs to the right
+     edge. It was a sticky bar with an amber rule down its left side — amber, on a
+     build surface, for a heading. The line is the furniture; the word is the
+     heading; and the number is what the colour cannot say on its own.
+
+     THE BAND. `--sec-ink` and `--sec-line` are set on this element by the view
+     from `plan.js::sectionBands` — two hues, alternating by the section's
+     position, repeating from section three. They are the only two the colour law
+     leaves free, and they carry NO promise: the band says "a different section
+     from the one above" and nothing about what any cue is or what any screen is
+     doing. See the doc comment on `sectionBands` for why there are two and what
+     happens at section seven.
+
+     A heading with no band (the untitled leading group) sets neither variable and
+     falls back to the hairline it always had — `--sec-line` is unset there, so
+     `var(--sec-line, var(--v-line))` is the furniture again and the group is
+     plainly not a numbered section. */
   .sp-sec{ display:flex; align-items:center; gap:8px; padding:10px 12px 4px; }
+  /* The ordinal. Tabular digits in the section's own ink, over its own soft fill,
+     with a real border so the badge is a SHAPE before it is a colour: in
+     greyscale it is still a boxed number beside a heading. `sr-only` makes the
+     accessible name "Section 3" rather than the digit alone, which a screen
+     reader would announce with no idea what it counts. */
+  .sp-secn{ flex:0 0 auto; display:inline-grid; place-items:center;
+    min-width:17px; height:15px; padding:0 4px; border-radius:var(--v-r-sm);
+    font-size:var(--v-fs-cap); line-height:1; font-weight:700;
+    font-variant-numeric:tabular-nums;
+    color:var(--sec-ink, var(--v-faint));
+    border:1px solid var(--sec-line, var(--v-line2)); }
   .sp-seccap{ flex:0 0 auto; font-family:var(--f-mono); font-size:var(--v-fs-cap);
     line-height:var(--v-lh-cap); font-weight:600; letter-spacing:var(--v-tr-caps);
     text-transform:uppercase; color:var(--v-faint); }
-  .sp-secln{ flex:1; height:1px; background:var(--v-line); }
+  .sp-secln{ flex:1; height:1px; background:var(--sec-line, var(--v-line)); }
 
   /* THE CAVEAT — a pane footer, never a media query. See the markup. */
   .sp-caveat{ padding:8px 12px; }
@@ -1446,6 +2176,10 @@
      heading above each group names the kind, and a dot that borrowed a colour
      would be the taxonomy painting a promise again. */
   .sp-dot{ width:6px; height:6px; border-radius:2px; flex:0 0 auto; }
+  /* The thumbnail is a wrapper the list owns, not a class inside the component:
+     the component answers "what does this file look like" and the list answers
+     "where does it sit in a row". */
+  .sp-thumb{ flex:0 0 auto; display:block; }
 
   .sp-results{ display:flex; flex-direction:column; }
   /* A SEARCH RESULT ROW, not a button. Two lines — a reference and the opening
@@ -1494,6 +2228,13 @@
      set rather than an action, so `on` is its whole visual job. */
   .sp-ch.on{ background:var(--v-sel); color:var(--v-txt); }
   .sp-chset{ display:flex; flex-wrap:wrap; gap:4px; }
+  /* The add block's own screen choice. The SAME shape as the inspector row's
+     above — one ghost button per screen, `.on` for ticked — because it is the
+     same question, asked earlier; two shapes for one question is how an operator
+     comes to believe they are two settings. */
+  .sp-cdchset{ display:flex; flex-wrap:wrap; gap:4px; margin:2px 0 0; }
+  .sp-cdch{ max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .sp-cdch.on{ background:var(--v-sel); color:var(--v-txt); }
   .sp-chrow{ align-items:flex-start; }
   .sp-chnote{ display:block; margin-top:4px; font-size:var(--v-fs-cap); }
     .sp-tmrsel{ max-width:172px; }
@@ -1571,6 +2312,9 @@
     display:flex; align-items:center; }
   .sp-slidetag{ position:absolute; left:10px; top:9px; font-family:var(--f-mono); font-size:var(--v-fs-cap); font-weight:700;
     letter-spacing:.06em; padding:2px 5px; border-radius:var(--v-r-sm); border:1px solid currentColor; }
+  /* THE PICTURE SITS BETWEEN THE TAG AND THE WORDS (RG-264), so the row still
+     reads tag · what · number and a slide with no picture keeps its shape. */
+  .sp-slidepic{ flex:0 0 auto; display:flex; align-items:center; }
   .sp-slidetext{ font-size:var(--v-fs-b2); line-height:1.45; color:var(--v-dim); white-space:pre-line;
     display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
   .sp-slideidx{ position:absolute; right:10px; bottom:7px; font-size:var(--v-fs-cap); color:var(--v-500); }

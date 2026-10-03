@@ -13,6 +13,7 @@
     "windows": [
       {
         "title": "Relay",
+      "dragDropEnabled": false,
         "fullscreen": true,
         "width": 1320,
         "height": 860,

@@ -138,6 +138,8 @@ pub const PROTECTED: &[(&str, &str)] = &[
     ("delete_announcement", "deleting an announcement"),
     ("delete_media", "deleting a media file"),
     ("delete_voice_profile", "deleting a voice profile"),
+    ("delete_translation", "deleting a Bible translation"),
+    ("import_translation", "importing a Bible translation"),
     ("delete_service", "erasing a recorded service"),
     // Removing the demo set deletes plans, songs, notices, saved verses and a
     // media file in one press — the most irreversible thing on this list per click,
@@ -146,6 +148,14 @@ pub const PROTECTED: &[(&str, &str)] = &[
     // ── Takes the engine away mid-sermon ────────────────────────────────────
     ("download_model", "downloading a speech model"),
     ("select_stt_model", "changing the speech model"),
+    // Not the engine — what the engine is ALLOWED TO DO with what it hears.
+    // Turning "follow the reader" on or off changes what may reach a
+    // congregation's screen with nobody pressing anything, which is the one
+    // decision on this list that is invisible until it has already happened.
+    (
+        "set_follow_the_reader",
+        "changing whether Relay follows a reader",
+    ),
     ("load_stt_model", "reloading the speech model"),
     (
         "install_model_file",
@@ -214,16 +224,21 @@ mod tests {
         "fire_media",
         "show_background",
         "start_countdown",
-        "adjust_countdown",
+        // `adjust_countdown` and `show_timer` were here until 2026-09-21 and are
+        // gone from the product (DECISIONS §115): the Screen Countdown left Live for
+        // the second time and they lost their only caller. This test is what said
+        // so — it asserts that every name here is a REGISTERED command, so a
+        // guarantee about something that no longer exists fails rather than reading
+        // as cover.
+        //
         // A timer control is a live control: it changes a number a congregation or a
-        // preacher is looking at, and `show_timer` puts one on a wall. The lock may
-        // never reach any of them — an operator mid-service who cannot stop a clock
-        // that is counting down to the wrong thing has no way out of it.
+        // preacher is looking at. The lock may never reach any of them — an operator
+        // mid-service who cannot stop a clock that is counting down to the wrong
+        // thing has no way out of it.
         "start_timer",
         "adjust_timer",
         "stop_timer",
         "list_timers",
-        "show_timer",
         "set_detection_enabled",
         "set_sensitivity",
         "open_channel_output",

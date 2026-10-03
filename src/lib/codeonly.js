@@ -76,6 +76,59 @@ export function codeOnly(text) {
       i = j + 1;
       continue;
     }
+    // A REGEX LITERAL IS SKIPPED, exactly like a quoted run above and for the
+    // same reason: `/<!--[\s\S]*?-->/` is a PATTERN, not a comment. Without
+    // this, the scan walked into the literal, found the `<!--` inside it, and
+    // blanked to the `-->` — so `.replace(/<!--…-->/g, '')` came out as
+    // `.replace(/               /g, '')` and THE RG-169 SWEEP COULD NOT SEE THE
+    // ONE THING IT FORBIDS. `viewrouters.test.js` hand-rolled that chain and the
+    // sweep reported clean; CodeQL was the only instrument that could see it.
+    // That is this repository's most-repeated fault inside the instrument built
+    // to stop it, so the fix is here and not in the sweep.
+    //
+    // Conservative on purpose: only a `/` whose previous non-space character
+    // makes a literal unambiguous. Anything else is left to be division, so the
+    // cost of a miss is a comment kept — a false alarm, never a blind spot.
+    // `//` and `/*` are comment markers and are handled below; a regex literal
+    // can begin with neither (an empty `//` is a comment, and a literal `*` must
+    // be escaped). Without this, `foo(  // note` read its comment as a pattern
+    // and the comment survived the strip.
+    if (c === '/' && text[i + 1] !== '/' && text[i + 1] !== '*') {
+      // Newlines are skipped too, because the sweeps in `codeonly.test.js` are
+      // written `.filter((f) =>\n  /replace\\(\\/<!--/.test(…))` — the literal
+      // begins a line and its `=>` is on the one before. Missing that case let
+      // the scan walk into THAT pattern, find the `<!--` in it and blank to the
+      // next `-->`: the 7 KB bug, in the file that exists to prevent it.
+      //
+      // The set is every character after which division is IMPOSSIBLE. An
+      // identifier, a `)`, a `]` or a digit is deliberately absent, so `a / b`
+      // and `foo()\n/ 2` stay division and the ASI ambiguity is never guessed at.
+      let k = i - 1;
+      while (k >= 0 && (text[k] === ' ' || text[k] === '\t' || text[k] === '\r' || text[k] === '\n'))
+        k -= 1;
+      if (k >= 0 && '(,=:[!&|>;{'.includes(text[k])) {
+        let j = i + 1;
+        let inClass = false;
+        while (j < text.length) {
+          const d = text[j];
+          if (d === '\\') {
+            j += 2;
+            continue;
+          }
+          if (d === '\n') break; // an unterminated literal ends at the line
+          if (inClass) {
+            if (d === ']') inClass = false;
+          } else if (d === '[') {
+            inClass = true;
+          } else if (d === '/') {
+            break;
+          }
+          j += 1;
+        }
+        i = j + 1;
+        continue;
+      }
+    }
     if (text.startsWith('<!--', i)) {
       const end = text.indexOf('-->', i + 4);
       const stop = end === -1 ? text.length : end + 3;
@@ -99,6 +152,55 @@ export function codeOnly(text) {
       continue;
     }
     i += 1;
+  }
+  return out.join('');
+}
+
+/**
+ * The same text with every `<tag …> … </tag>` block blanked, its own tags
+ * included — so a scanner asking "what MARKUP does this file paint" does not
+ * read a `<button>` named in a `<script>` JSDoc or a `.lmsg` in a stylesheet.
+ *
+ * ── WHY THIS IS NOT `.replace(/<style[\s\S]*?<\/style>/g, '')` ───────────────
+ *
+ * Four scanners hand-rolled that regex and CodeQL raised `js/bad-tag-filter` on
+ * three of them. The complaint is narrow and correct: `<\/style>` does not match
+ * `</style >` or `</style\n>`, both of which a browser closes, so one stray
+ * space leaves the whole block in the text and every heading, button and class
+ * inside it is read as markup. That direction cries wolf rather than going
+ * blind, which is the cheap one — and `codeonly.js` already says at the top that
+ * cheap is still wrong.
+ *
+ * It also blanks rather than deletes, like `codeOnly`, so offsets and line
+ * numbers in the result still match the real file.
+ */
+export function withoutBlock(text, tag) {
+  const out = text.split('');
+  const lower = text.toLowerCase();
+  const open = `<${tag}`;
+  const close = `</${tag}`;
+  let i = 0;
+  while (i < text.length) {
+    const a = lower.indexOf(open, i);
+    if (a === -1) break;
+    // The whole tag NAME has to match: `<styles>` is a different element, and a
+    // prefix match would blank from it to the next `</style>` — the 7 KB bug's
+    // shape in another costume.
+    const after = lower[a + open.length];
+    if (after !== undefined && after !== '>' && after !== '/' && !/\s/.test(after)) {
+      i = a + open.length;
+      continue;
+    }
+    const c = lower.indexOf(close, a + open.length);
+    // An unterminated block runs to the end of the text, which is what a browser
+    // does with one as well.
+    let stop = text.length;
+    if (c !== -1) {
+      const gt = lower.indexOf('>', c + close.length);
+      stop = gt === -1 ? text.length : gt + 1;
+    }
+    for (let j = a; j < stop; j += 1) if (out[j] !== '\n') out[j] = ' ';
+    i = stop;
   }
   return out.join('');
 }

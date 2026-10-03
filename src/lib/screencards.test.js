@@ -48,13 +48,26 @@ const TEMPLATES = [
   {
     id: 7,
     name: 'Classic Serif',
-    layout: { layers: [{ id: 'bg', type: 'background', fill: '#101018' }] },
+    // A background AND a verse layer. The background alone was enough while the
+    // only question was "does a slide render at all"; asking WHICH slide a card
+    // is painting (RG-211) needs a layer that puts the words on it.
+    layout: {
+      layers: [
+        { id: 'bg', type: 'background', fill: '#101018' },
+        { id: 'v', type: 'text', bind: 'verse', x: 6, y: 20, w: 88, h: 50, size: 4 },
+      ],
+    },
     style: { verseSize: 6 },
   },
   {
     id: 8,
     name: 'Nocturne',
-    layout: { layers: [{ id: 'bg', type: 'background', fill: '#000010' }] },
+    layout: {
+      layers: [
+        { id: 'bg', type: 'background', fill: '#000010' },
+        { id: 'v', type: 'text', bind: 'verse', x: 6, y: 20, w: 88, h: 50, size: 4 },
+      ],
+    },
     style: { verseSize: 5 },
   },
 ];
@@ -444,5 +457,85 @@ describe('§5 · the inspector answers for the screen in hand', () => {
     // one-press delete guarded by one deletes nothing and reports success.
     expect(invoke.mock.calls.some(([c]) => c === 'delete_channel')).toBe(false);
     expect(del.textContent).toMatch(/Click again/);
+  });
+});
+
+// ── A CARD MAY NOT PAINT WHAT ITS SCREEN IS NOT SHOWING (RG-211) ─────────────
+//
+// The cards were the wall's renderer fed the wall's content, which is right for
+// a screen that is answering and wrong for every screen that is not. A screen
+// that had stopped answering painted the verse that fired after it died, in
+// full, under a badge reading **Not responding**; a screen the operator had
+// taken down painted the programme it had been taken out of. Current content
+// beneath a dead badge is rule 35 in a new place — the card argues with its own
+// label, and the label is the half an operator does not look at.
+describe('§5 · what a card paints follows its own screen, not the programme', () => {
+  const textOf = (card) => card.querySelector('.ch-frame')?.textContent ?? '';
+
+  /** Put a verse on the wall, as `fire` does. */
+  const onAir = (reference, text) => live.set({ reference, text, translation: 'KJV', kind: 'scripture' });
+
+  itMounted('a healthy screen paints the verse that is on the programme', async () => {
+    const el = await mountOutputs();
+    channelHealth.set({ 1: row({ id: 1 }), 2: row({ id: 2, name: 'Streaming' }) });
+    onAir('Romans 8:28', 'And we know that all things work together for good');
+    await settle();
+    expect(textOf(cardFor(el, 'Main screen'))).toContain('work together for good');
+  });
+
+  itMounted('a screen that stopped answering keeps its LAST frame and says it is old', async () => {
+    // THE FINDING, in the order it happens on a Sunday: both screens are painting
+    // the first verse, one drops off the network, the next verse fires. The card
+    // for the dead screen must still show the verse it was last known to have —
+    // not the one it never received.
+    const el = await mountOutputs();
+    channelHealth.set({ 1: row({ id: 1 }), 2: row({ id: 2, name: 'Streaming' }) });
+    onAir('Romans 8:28', 'all things work together for good');
+    await settle();
+    expect(textOf(cardFor(el, 'Streaming'))).toContain('work together for good');
+
+    channelHealth.set({
+      1: row({ id: 1 }),
+      2: row({ id: 2, name: 'Streaming', painting: false, last_beat_ms: 30000 }),
+    });
+    onAir('Psalms 23:1', 'The LORD is my shepherd');
+    await settle();
+
+    const dead = cardFor(el, 'Streaming');
+    expect(dead.querySelector('.r-badge').textContent).toContain('Not responding');
+    expect(textOf(dead), 'a verse this screen never received was painted on its card').not.toContain(
+      'my shepherd',
+    );
+    expect(textOf(dead), 'the last frame it WAS known to have is gone too').toContain(
+      'work together for good',
+    );
+    expect(dead.querySelector('.ch-stale'), 'nothing said the frame was old').toBeTruthy();
+    // And the healthy screen beside it moved on, which is what makes the stale
+    // card readable as stale rather than as the app having stopped.
+    expect(textOf(cardFor(el, 'Main screen'))).toContain('my shepherd');
+  });
+
+  itMounted('a screen the operator took down paints nothing while a verse is live', async () => {
+    const el = await mountOutputs();
+    channelHealth.set({
+      1: row({ id: 1 }),
+      2: row({ id: 2, name: 'Streaming', down: 'clear', paint_state: 'clear' }),
+    });
+    onAir('Romans 8:28', 'all things work together for good');
+    await settle();
+    const taken = cardFor(el, 'Streaming');
+    expect(taken.querySelector('.r-badge').textContent).toContain('Taken down');
+    expect(textOf(taken)).not.toContain('work together for good');
+  });
+
+  itMounted('with nothing on the programme every card still shows the sample', async () => {
+    // The other direction, and the reason `blank` is not simply "paint nothing":
+    // on a Tuesday there IS no programme, and a grid of empty boxes tells an
+    // operator nothing about the looks they came here to compare.
+    const el = await mountOutputs();
+    channelHealth.set({ 1: row({ id: 1 }) });
+    live.set(null);
+    await settle();
+    expect(textOf(cardFor(el, 'Main screen'))).toContain('For God so loved the world');
   });
 });

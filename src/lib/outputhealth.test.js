@@ -23,10 +23,15 @@ import {
   SCREEN_BADGE,
   BEAT_INTERVAL_MS,
   BEAT_GRACE_MS,
+  MAX_REFUSED_REPORTED,
+  MAX_FRAMES_REPORTED,
+  SILENCE_CAUSE,
+  silenceCause,
   PAINT_STATES,
   screenSwitch,
   screenReporting,
 } from './outputHealth.js';
+import { codeOnly } from './codeonly.js';
 
 const ROOT = path.resolve(__dirname, '../..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
@@ -276,9 +281,139 @@ describe('startBeat', () => {
     stop();
     // The first beat of a page's life has no previous tick, so it says nothing
     // about a gap rather than claiming a zero one (RG-119).
+    //
+    // The three media fields are NAMED here rather than the equality being
+    // loosened, for the reason `timerwords.test.js` gives about its own payload:
+    // this test's claim is that the page invents nothing, and `null` is what "this
+    // screen is not playing a clip" looks like. Letting an unexamined field
+    // through would retire the claim to save the test.
     expect(sent).toEqual([
-      ['output_beat', { channelId: 3, state: 'content', sinceMs: null, hiddenMs: null }],
+      [
+        'output_beat',
+        {
+          channelId: 3,
+          state: 'content',
+          sinceMs: null,
+          hiddenMs: null,
+          mediaPosMs: null,
+          mediaDurMs: null,
+          mediaPaused: null,
+          // …and the media failure it did not have (O-4): named, for the same reason.
+          mediaError: null,
+          // …and the beats the bridge did not refuse (RG-119). ZERO rather than
+          // null, and that asymmetry is the field's whole claim: this page reached
+          // the bridge to say it, so it KNOWS none were refused, where `null` is
+          // reserved for a page that cannot know.
+          refused: 0,
+          // …and NO frame count, which is the other asymmetry and the opposite one:
+          // the first beat of a page's life has no gap to count frames across, so
+          // there is nothing to report. A zero here would say the screen painted
+          // nothing, which is the finding this field exists to make, and inventing it
+          // on a page that has only just opened would put it in the record for free.
+          frames: null,
+        },
+      ],
     ]);
+  });
+
+  it('counts the beats the bridge REFUSED and names them on the next one that lands', async () => {
+    // **RG-119.** `sendOverBridge` was one `try` with one bare `catch {}`, so a
+    // native window that was alive, painting and ticking on time — and whose
+    // `output_beat` call was being thrown away — was indistinguishable in the
+    // service record from a page the OS had frozen. Both are "no beat arrived", and
+    // `since_ms` alone cannot separate them: a page that ticks every two seconds
+    // into a refusing bridge reports a two-second gap on the beat that finally
+    // lands, which is exactly what a page that came back from being frozen for two
+    // seconds reports. The counter is what makes the next service decisive.
+    //
+    // Reintroduce the defect by dropping `refused` from the payload, or by resetting
+    // it in the `catch`, and this goes red.
+    vi.useFakeTimers();
+    let refuse = true;
+    const sent = [];
+    const stop = startBeat({
+      channelId: 6,
+      getState: () => 'content',
+      invoke: async (cmd, args) => {
+        if (refuse) throw new Error('bridge gone');
+        sent.push(args);
+      },
+    });
+    // Three ticks the bridge throws on. Nothing reaches Relay, which is right —
+    // rule 2, silence is the message — and nothing is reported yet, because the only
+    // way to report a refused beat is over the thing that refused it.
+    await vi.advanceTimersByTimeAsync(BEAT_INTERVAL_MS * 2);
+    expect(sent).toEqual([]);
+    refuse = false;
+    await vi.advanceTimersByTimeAsync(BEAT_INTERVAL_MS);
+    stop();
+    vi.useRealTimers();
+
+    expect(sent.length).toBeGreaterThanOrEqual(1);
+    expect(sent[0].refused).toBe(3);
+    expect(sent[0].sinceMs).toBeLessThan(BEAT_INTERVAL_MS * 2);
+  });
+
+  it('a beat that lands CLEARS the count, so one outage is not reported twice', async () => {
+    vi.useFakeTimers();
+    let refuse = true;
+    const sent = [];
+    const stop = startBeat({
+      channelId: 7,
+      getState: () => 'content',
+      invoke: async (cmd, args) => {
+        if (refuse) throw new Error('bridge gone');
+        sent.push(args);
+      },
+    });
+    await vi.advanceTimersByTimeAsync(BEAT_INTERVAL_MS);
+    refuse = false;
+    await vi.advanceTimersByTimeAsync(BEAT_INTERVAL_MS * 3);
+    stop();
+    vi.useRealTimers();
+    expect(sent[0].refused).toBe(2);
+    // Everything after it is an ordinary beat about nothing, and says so. A count
+    // that accumulated for the life of the page would put the same outage on every
+    // recovery in the record.
+    for (const a of sent.slice(1)) expect(a.refused).toBe(0);
+  });
+
+  it('a page with no bridge and no socket still reports nothing and still ticks', async () => {
+    // The designed silent case, and the one the refusal count must not disturb. A
+    // kiosk page whose socket is down falls through to the bridge, and there is no
+    // bridge: the right behaviour is to send nothing and let the beat go stale
+    // (rule 2), not to throw (rule 1) and not to stop ticking.
+    //
+    // The distinction the counter actually rests on is worth stating here because it
+    // is easy to get backwards, and the first version of this code did:
+    // `@tauri-apps/api/core` is BUNDLED into `output.html`, so the dynamic import
+    // RESOLVES in a plain browser exactly as it does in the native window, and it is
+    // `invoke` that then throws `window.__TAURI_INTERNALS__ is undefined`. Keying the
+    // count on the import would have made every OBS browser source count a refusal
+    // per tick for a fault it does not have. `bridgeAttached()` asks the honest
+    // question instead. A kiosk page can never DELIVER a count (it never lands a
+    // bridge beat), so the guard is about what the number means rather than about
+    // noise reaching the record — which is why this test claims the silence and not
+    // the arithmetic.
+    vi.useFakeTimers();
+    const before = globalThis.window?.__TAURI_INTERNALS__;
+    if (globalThis.window) delete globalThis.window.__TAURI_INTERNALS__;
+    const landed = [];
+    let ticks = 0;
+    const stop = startBeat({
+      channelId: 8,
+      getState: () => {
+        ticks += 1;
+        return 'content';
+      },
+      getWs: () => ({ readyState: 3, send: () => landed.push(1) }),
+    });
+    await vi.advanceTimersByTimeAsync(BEAT_INTERVAL_MS * 4);
+    stop();
+    vi.useRealTimers();
+    expect(landed).toEqual([]);
+    expect(ticks).toBeGreaterThan(4);
+    if (globalThis.window && before !== undefined) globalThis.window.__TAURI_INTERNALS__ = before;
   });
 
   it('the first beat omits the gap entirely on the socket, and later ones carry it', async () => {
@@ -407,6 +542,223 @@ describe('startBeat', () => {
   });
 });
 
+describe('what the page can and cannot know about its own silence (RG-119)', () => {
+  /** A `requestAnimationFrame` a test can pump, since jsdom composites nothing. */
+  function fakeFrames() {
+    const before = {
+      raf: globalThis.requestAnimationFrame,
+      cancel: globalThis.cancelAnimationFrame,
+    };
+    let queue = [];
+    globalThis.requestAnimationFrame = (cb) => queue.push(cb);
+    globalThis.cancelAnimationFrame = () => {};
+    return {
+      /** Paint `n` frames, each of which lets the page re-request the next. */
+      paint(n) {
+        for (let i = 0; i < n; i += 1) {
+          const due = queue;
+          queue = [];
+          for (const cb of due) cb(0);
+        }
+      },
+      restore() {
+        globalThis.requestAnimationFrame = before.raf;
+        globalThis.cancelAnimationFrame = before.cancel;
+      },
+    };
+  }
+
+  it('a page hidden with no visibilitychange says NEVER HIDDEN — so never-hidden is not visible', async () => {
+    // **THE MEASUREMENT THIS ROW'S SECOND FAMILY WAS RESTING ON, AND IT DOES NOT
+    // HOLD.** `service_events` for service 42 carries `silent 207s, never hidden` on
+    // Main screen, and the register read that as a page that was VISIBLE and whose
+    // interval did not fire — the one family that is the opposite of an occluded
+    // window and wants the opposite fix.
+    //
+    // `hidden_ms` cannot support that reading. It only ever accrues inside the
+    // `visibilitychange` listener, so it measures OBSERVED TRANSITIONS and not
+    // visibility. A page suspended across a whole hidden -> visible round trip
+    // observes none: the state at resume equals the state at freeze, so there is no
+    // transition to dispatch from the page's own point of view. Held hidden here for
+    // a hundred intervals with the event withheld, every beat still says never
+    // hidden.
+    //
+    // Nothing is "fixed" by this test and no timer moved. What it retires is a
+    // reading, which is why the frame count below exists.
+    vi.useFakeTimers();
+    const frames = [];
+    const ws = { readyState: 1, send: (f) => frames.push(JSON.parse(f)) };
+    const stop = startBeat({ channelId: 4, getState: () => 'content', getWs: () => ws });
+    const spy = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+    vi.advanceTimersByTime(BEAT_INTERVAL_MS * 100);
+    spy.mockRestore();
+    stop();
+    vi.useRealTimers();
+
+    const after = frames.slice(1);
+    expect(after.length).toBeGreaterThan(50);
+    for (const f of after) expect(f.hidden_ms).toBe(0);
+  });
+
+  it('counts the frames the screen actually painted, and a zero is the finding', async () => {
+    // The field that answers the question the badge makes a claim about. An
+    // animation frame needs no cooperation from the OS: a composited page gets them
+    // at the display's rate and an occluded or suspended one gets none, so a count
+    // separates a page that was not being rendered from one that painted throughout
+    // and whose clock alone stopped. Those are opposite verdicts about the same
+    // screen and `hidden_ms` cannot tell them apart — see the test above.
+    //
+    // Reintroduce the defect by dropping `frames` from `gap()` and Rust classifies
+    // every long silence as a frozen page, including the ones that painted.
+    vi.useFakeTimers();
+    const raf = fakeFrames();
+    const sent = [];
+    const stop = startBeat({
+      channelId: 6,
+      getState: () => 'content',
+      invoke: async (cmd, args) => sent.push(args),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    // Nothing painted across the first interval. ZERO, not absent: the page counted.
+    await vi.advanceTimersByTimeAsync(BEAT_INTERVAL_MS);
+    expect(sent[1].frames).toBe(0);
+    // Five frames across the next one.
+    raf.paint(5);
+    await vi.advanceTimersByTimeAsync(BEAT_INTERVAL_MS);
+    expect(sent[2].frames).toBe(5);
+    // And the count is PER GAP, not cumulative — a running total would make one
+    // outage's frames arrive on every recovery after it, which is the mistake the
+    // refusal count is already written against.
+    await vi.advanceTimersByTimeAsync(BEAT_INTERVAL_MS);
+    expect(sent[3].frames).toBe(0);
+    stop();
+    raf.restore();
+    vi.useRealTimers();
+  });
+
+  it('a page with nothing to count with says nothing rather than zero', async () => {
+    // An absence is "did not say" and a zero is "counted, and there were none". Only
+    // one of those is true of a page with no `requestAnimationFrame`, and Rust's
+    // classifier reads the difference: an absent count falls to the safe verdict
+    // without claiming the screen painted nothing.
+    vi.useFakeTimers();
+    const before = globalThis.requestAnimationFrame;
+    delete globalThis.requestAnimationFrame;
+    const frames = [];
+    const ws = { readyState: 1, send: (f) => frames.push(JSON.parse(f)) };
+    const stop = startBeat({ channelId: 4, getState: () => 'content', getWs: () => ws });
+    vi.advanceTimersByTime(BEAT_INTERVAL_MS);
+    stop();
+    globalThis.requestAnimationFrame = before;
+    vi.useRealTimers();
+    expect(frames[1]).not.toHaveProperty('frames');
+    expect(Number.isInteger(frames[1].since_ms)).toBe(true);
+  });
+
+  it('the frame count crosses the bridge too, so a window and a browser source agree', async () => {
+    // Both transports or neither. A guarantee kept on one of two doors is this
+    // repository's most-repeated bug, and the native window is the door every long
+    // silence on record came through.
+    vi.useFakeTimers();
+    const raf = fakeFrames();
+    const sent = [];
+    const stop = startBeat({
+      channelId: 6,
+      getState: () => 'content',
+      invoke: async (cmd, args) => sent.push(args),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sent[0].frames).toBe(null);
+    raf.paint(3);
+    await vi.advanceTimersByTimeAsync(BEAT_INTERVAL_MS);
+    expect(sent[1].frames).toBe(3);
+    stop();
+    raf.restore();
+    vi.useRealTimers();
+  });
+
+  it('the cause words are one closed set held in two languages', () => {
+    // A word Rust can emit that this file cannot render is a screen the console says
+    // nothing about; a word this file knows that Rust never sends is a branch no
+    // service can reach. Both are silent, so they are pinned rather than trusted.
+    const rs = read('src-tauri/src/channels.rs');
+    const words = [...rs.matchAll(/SilenceCause::\w+ => "([a-z_]+)",/g)].map((m) => m[1]);
+    expect(words.length).toBeGreaterThan(0);
+    expect([...new Set(words)].sort()).toEqual(Object.keys(SILENCE_CAUSE).sort());
+    // Every one of them resolves to a sentence, and no two say the same thing — the
+    // JS half of the claim that one word no longer covers several situations.
+    const said = Object.keys(SILENCE_CAUSE).map((w) => silenceCause(w));
+    for (const s of said) expect(typeof s).toBe('string');
+    expect(new Set(said).size).toBe(said.length);
+    // And a word this file does not know is not rendered. It originates on a page,
+    // one of whose transports is an unauthenticated LAN socket (DECISIONS §35).
+    expect(silenceCause('everything is fine')).toBe(null);
+    expect(silenceCause(undefined)).toBe(null);
+  });
+
+  it('the frame ceiling is one decision held in two languages', () => {
+    // Same reasoning as the refusal cap: a page ceiling ABOVE Rust's would be worse
+    // than none, because everything over the door's clamp is dropped to an absence
+    // and the field would fail silent in the case it exists for.
+    const rs = read('src-tauri/src/channels.rs');
+    const clamp = Number(/FRAMES_CLAMP: u32 = ([\d_]+)/.exec(rs)[1].replace(/_/g, ''));
+    expect(MAX_FRAMES_REPORTED).toBe(clamp);
+  });
+});
+
+describe('a recovery says WHICH silence it was, and says it in the past tense', () => {
+  it('names the last cause on a screen that has gone quiet again', () => {
+    // On a one-monitor desk the honest answer is usually "the same thing as last
+    // time": a window behind a terminal. An operator who is told that is deciding
+    // about their layout; one who reads **Not responding** with nothing beside it is
+    // deciding about a projector, which is a different and more expensive decision.
+    const d = describeScreen(
+      row({ painting: false, last_beat_ms: 207_000, last_silence: 'occluded' }),
+      ON_AIR,
+    );
+    expect(d.label).toBe('Not responding');
+    expect(SCREEN_BADGE[d.kind]).toBe('rose');
+    expect(d.note).toMatch(/last answered 207s ago/);
+    // PAST TENSE, and labelled. The cause of the silence happening right now cannot
+    // be known from here — only the page can say and the page is not talking, which
+    // IS the silence. Printing it as a diagnosis of the current outage would be a
+    // status line stating something it cannot check.
+    expect(d.note).toMatch(/previously: the OS had hidden this page/);
+  });
+
+  it('says nothing about a cause when the screen has never reported one', () => {
+    const d = describeScreen(row({ painting: false, last_beat_ms: 30_000 }), ON_AIR);
+    expect(d.note).toBe('last answered 30s ago');
+    expect(d.note).not.toMatch(/previously/);
+    // And a word this file does not know is an absence, not a rendered string.
+    const bogus = describeScreen(
+      row({ painting: false, last_beat_ms: 30_000, last_silence: 'all good' }),
+      ON_AIR,
+    );
+    expect(bogus.note).toBe('last answered 30s ago');
+  });
+
+  it('a screen that is answering still says what its last silence was', () => {
+    // The Outputs inspector's Reporting row is where an operator checks one screen,
+    // and it is the only place the record's own classification is visible while the
+    // app is running. A screen back On Air after a bridge refusal was never broken;
+    // one back after an occlusion was showing a stale frame. The badge is the same
+    // and the finding is not.
+    const r = screenReporting(row({ last_silence: 'bridge_refused' }));
+    expect(r.word).toBe('yes');
+    expect(r.note).toMatch(/screen: content/);
+    expect(r.note).toMatch(/last silence: the page ticked on time and Relay's bridge/);
+    expect(screenReporting(row()).note).not.toMatch(/last silence/);
+  });
+
+  it('never invents a cause for a screen Relay cannot even drive', () => {
+    for (const st of [null, row({ supported: false, online: false }), row({ online: false })]) {
+      const r = screenReporting(st);
+      expect(r.note).not.toMatch(/previously|last silence/);
+    }
+  });
+});
+
 describe('the beat interval is one decision held in two languages', () => {
   it('matches channels::BEAT_INTERVAL_MS, and leaves three beats of grace', () => {
     // The JS ticks and Rust judges. If they drift, either every healthy screen
@@ -422,6 +774,18 @@ describe('the beat interval is one decision held in two languages', () => {
     // three-beats-of-grace arithmetic itself is pinned on the Rust side, where it
     // can be evaluated instead of pattern-matched.
     expect(rs).toMatch(/BEAT_STALE_MS: u64 = BEAT_INTERVAL_MS \* 3/);
+  });
+
+  it('the refusal cap is one decision held in two languages too (RG-119)', () => {
+    // The page caps what it counts and Rust caps what it believes, and the two
+    // have to be the same number or one of them is doing nothing. A page cap
+    // ABOVE Rust's would be worse than nothing: every beat over the ceiling is
+    // dropped to `None` at the door, so a screen with a genuinely wedged bridge
+    // would say NOTHING about it — the field failing silent in exactly the case
+    // it exists for.
+    const rs = read('src-tauri/src/channels.rs');
+    const clamp = Number(/REFUSED_CLAMP: u32 = ([\d_]+)/.exec(rs)[1].replace(/_/g, ''));
+    expect(MAX_REFUSED_REPORTED).toBe(clamp);
   });
 });
 
@@ -484,11 +848,7 @@ describe('screenReporting — the heartbeat claim, and the two it must not colla
  * "ipc.test.js was wrong twice" failure in miniature: it looks exhaustive while
  * checking nothing. Precedent and prior art: `screenpreview.test.js`.
  */
-const code = (src) =>
-  src
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^\s*\/\/.*$/gm, '');
+const code = (src) => codeOnly(src);
 
 describe('both surfaces read the same fact', () => {
   it('Live and Outputs decide from the backend`s `painting`, not from global state', () => {
@@ -620,5 +980,133 @@ describe('a screen that stops answering is named, not numbered', () => {
     const decl = line.slice(0, line.indexOf(';'));
     expect(decl).toMatch(/st\.name/);
     expect(decl).not.toMatch(/=>\s*st\.id\b/);
+  });
+});
+
+// 2026-09-21 · O-4 / M-3. A screen whose picture did not load must not be called
+// On Air. The page says so on the beat it already sends; the desk reads it.
+describe('a screen whose media failed to load', () => {
+  it('carries the failure on the beat, both doors', async () => {
+    vi.useFakeTimers();
+    const frames = [];
+    const ws = { readyState: 1, send: (f) => frames.push(JSON.parse(f)) };
+    const sent = [];
+    // The kiosk door: a socket takes the beat.
+    const stop = startBeat({
+      channelId: 6,
+      getState: () => 'content',
+      getWs: () => ws,
+      getMediaError: () => 'picture not loading · http://10.0.0.5:8032/media/3',
+    });
+    stop();
+    expect(frames[0].media_error).toBe('picture not loading · http://10.0.0.5:8032/media/3');
+    // The native door: no socket, so the bridge takes it.
+    const stop2 = startBeat({
+      channelId: 6,
+      getState: () => 'content',
+      invoke: async (cmd, args) => sent.push([cmd, args]),
+      getMediaError: () => 'picture not loading · http://10.0.0.5:8032/media/3',
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    stop2();
+    vi.useRealTimers();
+    expect(sent[0][1].mediaError).toBe('picture not loading · http://10.0.0.5:8032/media/3');
+  });
+
+  it('is not On Air on the desk, and the note names the failure', () => {
+    const st = row({ media_error: 'picture not loading · http://10.0.0.5:8032/media/3' });
+    const d = describeScreen(st, ON_AIR);
+    expect(d.kind).toBe('down');
+    expect(d.label).toBe('Not painting the picture');
+    expect(d.note).toContain('media/3');
+  });
+
+  it('and a screen with no failure is still On Air', () => {
+    expect(describeScreen(row({ media_error: null }), ON_AIR).kind).toBe('onair');
+  });
+});
+
+// ── WHAT A CARD MAY PAINT — the same verdict, one field further (RG-211) ─────
+//
+// The Outputs workspace renders every screen through the wall's own renderer,
+// and fed every card the SAME content: the live programme when a service was
+// running, a stand-in verse when one was not. So a screen that had stopped
+// answering painted the verse that fired thirty seconds after it died, under a
+// badge reading **Not responding** — current content beneath a dead badge,
+// which is rule 35 in a new place. A blacked-out screen did the same.
+//
+// The decision is not a second rule beside `describeScreen`; it is the same
+// verdict saying one more thing, because two rules is how the badge and the
+// picture come to disagree.
+describe('shows — what the card under this badge may paint', () => {
+  const kinds = (st, wall = ON_AIR, waited = 0) => describeScreen(st, wall, waited).shows;
+
+  it('a screen that is painting content shows the content', () => {
+    expect(kinds(row())).toBe('content');
+  });
+
+  it('a screen that has stopped answering shows its LAST frame, not the current one', () => {
+    // The whole finding. `stale` is the instruction to the card: paint what this
+    // screen was last known to be showing and say that it is old.
+    expect(kinds(row({ painting: false, last_beat_ms: 30000 }))).toBe('stale');
+    expect(kinds(row({ painting: false, last_beat_ms: null }), ON_AIR, BEAT_GRACE_MS + 1)).toBe(
+      'stale',
+    );
+  });
+
+  it('a screen the operator took down paints nothing, whatever is on the programme', () => {
+    expect(kinds(row({ down: 'clear' }))).toBe('blank');
+    expect(kinds(row({ down: 'black', paint_state: 'black' }))).toBe('blank');
+  });
+
+  it('a blackout and a cleared wall paint nothing', () => {
+    expect(kinds(row({ paint_state: 'black' }), { rehearsing: false, live: true, black: true })).toBe(
+      'blank',
+    );
+    expect(kinds(row({ paint_state: 'clear' }), { rehearsing: false, live: false, black: false })).toBe(
+      'blank',
+    );
+  });
+
+  it('a rehearsal paints nothing, because nothing of a rehearsal reaches a screen', () => {
+    expect(kinds(row(), { rehearsing: true, live: true, black: false })).toBe('blank');
+  });
+
+  it('when the two claims disagree, the SCREEN’S word decides what the card paints', () => {
+    // The badge already says the screen disagrees. The picture must follow the
+    // screen rather than Relay's belief, or the card argues with its own badge.
+    expect(kinds(row({ paint_state: 'clear' }))).toBe('blank');
+    expect(kinds(row({ paint_state: null }))).toBe('unknown');
+  });
+
+  it('a screen that has said nothing yet paints nothing and does not pretend', () => {
+    expect(kinds(row({ painting: false, last_beat_ms: null }), ON_AIR, 1000)).toBe('unknown');
+    expect(kinds(row({ online: false }))).toBe('blank');
+    expect(kinds(row({ supported: false }))).toBe('blank');
+  });
+
+  it('a picture that failed still shows the slide — the badge carries the failure', () => {
+    // `media_error` means the page IS painting and one element inside it is not.
+    // Blanking the card would hide the rest of the slide, which is the part that
+    // tells the operator which cue is up.
+    expect(kinds(row({ media_error: 'picture not loading · /media/3' }))).toBe('content');
+  });
+
+  it('every verdict says what may be painted — a card can never be left guessing', () => {
+    const all = [
+      [row(), ON_AIR, 0],
+      [row({ painting: false, last_beat_ms: 30000 }), ON_AIR, 0],
+      [row({ painting: false, last_beat_ms: null }), ON_AIR, 1000],
+      [row({ online: false }), ON_AIR, 0],
+      [row({ supported: false }), ON_AIR, 0],
+      [row({ down: 'clear' }), ON_AIR, 0],
+      [row({ media_error: 'x' }), ON_AIR, 0],
+      [row({ paint_state: 'clear' }), ON_AIR, 0],
+      [row(), { rehearsing: true, live: true, black: false }, 0],
+      [row({ paint_state: 'black' }), { rehearsing: false, live: true, black: true }, 0],
+    ];
+    for (const [st, wall, waited] of all)
+      expect(['content', 'blank', 'stale', 'unknown']).toContain(describeScreen(st, wall, waited).shows);
   });
 });

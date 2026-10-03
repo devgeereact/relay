@@ -1,6 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   import Button from '../ui/Button.svelte';
+  import Switch from '../ui/Switch.svelte';
   import { whyDisabled, ENGINE_OFF, SERVICE_LOCKED, MIC_LIVE, BUSY } from '../ui/whydisabled.js';
   // ── THE KIT, NOT A CLASS SOMEBODY REMEMBERED ──────────────────────────────
   //
@@ -45,6 +46,8 @@
     updateVoiceProfile,
     selectVoiceProfile,
     deleteVoiceProfile,
+    setFollowTheReader,
+    setParaphraseNeedsRun,
   } from '../stores/capture.js';
   import {
     listOutputDevices,
@@ -67,7 +70,7 @@
     Math.round(
       (Object.keys(CATALOGUES[code] ?? {}).filter((k) => !k.startsWith('_')).length / TOTAL) * 100,
     );
-  import { capture, meter, initAudio, startCapture, stopCapture, setSensitivity, getSensitivity, setSttLanguage, setInputDevice, listTranslations, getActiveTranslation, setActiveTranslation, localIp, getCrashReporting, setCrashReporting, serviceTargetMinutes, loadServiceTarget, setServiceTarget, countdownWarnMs, loadCountdownWarnMs, setCountdownWarnMs, latencyReport, latencyReset, latencySetEnabled, serviceLock, loadServiceLock, setServiceLock, rooms, loadRooms, saveRoom, useRoom, deleteRoom,
+  import { capture, meter, initAudio, startCapture, stopCapture, setSensitivity, getSensitivity, setSttLanguage, setInputDevice, getBuildMarker, listTranslations, getActiveTranslation, setActiveTranslation, importTranslation, deleteTranslation, fileToBase64, localIp, getCrashReporting, setCrashReporting, serviceTargetMinutes, loadServiceTarget, setServiceTarget, countdownWarnMs, loadCountdownWarnMs, setCountdownWarnMs, latencyReport, latencyReset, latencySetEnabled, serviceLock, loadServiceLock, setServiceLock, rooms, loadRooms, saveRoom, useRoom, deleteRoom,
     listOutputChannels, setChannelDisplay, activeVoiceProfile, languageReport, exportDiagnostics, readErrors,
     demoStatus, loadDemoContent, removeDemoContent } from '../stores/capture.js';
   // `Loading` and `ErrorState` are no longer imported HERE and that is the point
@@ -371,6 +374,38 @@
   // The ONE place that decides what this page may say about the gate — shared with
   // every other surface that shows it, so they cannot form separate opinions.
   $: gate = describeGate($capture);
+
+  // FOLLOW THE READER (DECISIONS §118). One throw, one sentence, one store.
+  //
+  // `setFollowTheReader` is a group-1 wrapper — it throws — and the command sits
+  // behind the service lock, so the reachable failure here is an operator trying
+  // to change what may reach a wall while a service is recording. That refusal
+  // has to be READ, not swallowed: a switch that springs back with no sentence is
+  // a control that failed in silence. `errors.js` is the one humaniser.
+  let followErr = '';
+  async function toggleFollowTheReader() {
+    followErr = '';
+    try {
+      await setFollowTheReader(!$capture.followsReader);
+    } catch (e) {
+      followErr = humanError(e);
+    }
+  }
+
+  // THE PARAPHRASE BAR (DECISIONS §125, RG-311). Same shape as the switch above and
+  // the same reasoning: `setParaphraseNeedsRun` is a group-1 wrapper, so a refusal
+  // has to be READ rather than swallowed into a switch that springs back with no
+  // sentence. Its own `let`, not `followErr`: two switches sharing one error line
+  // means the second one's failure erases the first one's explanation.
+  let paraErr = '';
+  async function toggleParaphraseBar() {
+    paraErr = '';
+    try {
+      await setParaphraseNeedsRun(!$capture.paraphraseNeedsRun);
+    } catch (e) {
+      paraErr = humanError(e);
+    }
+  }
   async function onSensitivity(v) {
     gatePending = v;
     gateErr = '';
@@ -921,6 +956,8 @@
   let appVersion = '';
   let versionState = 'loading';
   const environment = import.meta.env?.DEV ? 'Development' : 'Production';
+  // WHICH BUILD (S13). A version is every build of a branch; this is the commit.
+  let buildMarker = '';
   let bootAt = 0;
   // Never a dash, not even for the instant before the first tick: a row that
   // says nothing is a row an operator has to guess about.
@@ -1001,6 +1038,7 @@
     } finally {
       dataLoaded = true; // distinguish "loading" from a genuinely empty list
     }
+    buildMarker = await getBuildMarker();
     try {
       lanIp = await localIp();
       lanState = 'ok';
@@ -1015,6 +1053,61 @@
     // long-service stability test is supposed to catch, so this one does not.
     stopLatencyPoll();
   });
+
+  // ── IMPORT A BIBLE (RG-50 option two, DECISIONS §113) ────────────────────
+  // A licensed text cannot ship inside Relay, so a church brings its own file in
+  // the KJV's shape. The name and abbreviation are typed here, not guessed from
+  // the filename: what the list says is what the operator called it.
+  const BUNDLED = ['KJV', 'BSB'];
+  const isBundled = (tr) => BUNDLED.includes(tr.abbreviation);
+  let trFileInput;
+  let trName = '';
+  let trAbbr = '';
+  let trLang = 'en';
+  let trBusy = false;
+  let trMsg = '';
+  let trDeleteArmed = null;
+  async function onBibleFile(e) {
+    const file = e.target?.files?.[0];
+    if (trFileInput) trFileInput.value = '';
+    if (!file) return;
+    trMsg = '';
+    if (!trName.trim() || !trAbbr.trim()) {
+      trMsg = 'Type the translation\u2019s name and its short code first, then choose the file.';
+      return;
+    }
+    trBusy = true;
+    try {
+      const r = await importTranslation({
+        name: trName.trim(),
+        abbreviation: trAbbr.trim(),
+        language: trLang.trim() || 'en',
+        licenseType: 'licensed',
+        filename: file.name,
+        dataB64: await fileToBase64(file),
+      });
+      trMsg = r.replaced
+        ? `Replaced ${trAbbr.trim().toUpperCase()} with ${r.verses.toLocaleString()} verses.`
+        : `Imported ${trAbbr.trim().toUpperCase()}: ${r.verses.toLocaleString()} verses. Pick it above to read from it.`;
+      trName = ''; trAbbr = '';
+      await loadTranslations();
+    } catch (err) {
+      trMsg = humanError(err);
+    }
+    trBusy = false;
+  }
+  async function doDeleteTranslation(tr) {
+    if (trDeleteArmed !== tr.id) { trDeleteArmed = tr.id; return; }
+    trDeleteArmed = null;
+    trMsg = '';
+    try {
+      await deleteTranslation(tr.id);
+      trMsg = `Removed ${tr.abbreviation}.`;
+      await loadTranslations();
+    } catch (err) {
+      trMsg = humanError(err);
+    }
+  }
 
   async function pickTranslation(id) {
     const prev = activeTranslation;
@@ -1229,13 +1322,10 @@
                (rule 35). -->
           <div class="rw-nvctl s-nvpair">
             <span class="rw-nvv" class:s-armed={$safeMode}>{$safeMode ? 'on' : 'off'}</span>
-            <button
-              class="r-switch"
-              class:on={$safeMode}
-              role="switch"
-              aria-checked={$safeMode}
-              aria-label="Safe mode"
-              on:click={() => applySafeMode(!$safeMode)}></button>
+            <Switch
+              checked={$safeMode}
+              label="Safe mode"
+              on:click={() => applySafeMode(!$safeMode)} />
           </div>
         </div>
         <!-- SAFE MODE COULD NOT KEEP ITS PROMISE. Rose, never amber — amber is
@@ -1311,7 +1401,7 @@
               <span class="s-count">backend not attached</span>
             {/if}
           </div>
-          <select class="r-select" value={$capture.inputDevice} on:change={(e) => setInputDevice(e.target.value)} disabled={!$capture.available || $capture.capturing} aria-label="Microphone input device">
+          <select class="r-select" value={$capture.inputDevice} on:change={(e) => setInputDevice(e.target.value)} disabled={!$capture.available} title={$capture.capturing ? 'Change the microphone now — Relay moves the running capture onto it and picks the transcript back up when it hears audio.' : 'Which microphone Relay opens when you start listening.'} aria-label="Microphone input device">
             <option value="">Default input</option>
             {#each $capture.devices as d}
               <option value={d.name}>{d.name}{d.is_default ? ' — default' : ''}</option>
@@ -1503,13 +1593,34 @@
                detection inspector prints the same pair in the same words.
                `dd`, not `input`. Nothing here is draggable, and the label says
                "result" rather than letting the layout imply it. -->
-          <p class="r-lbl s-gatelbl">What that sets right now</p>
+          <p class="r-lbl s-gatelbl">What a match needs right now</p>
           <dl class="s-gatedl">
-            <dt>Auto-fire above</dt>
-            <dd class="r-mono">{gate.autoPct ?? '—'}</dd>
-            <dt>Suggest above</dt>
-            <dd class="r-mono">{gate.suggestPct ?? '—'}</dd>
+            <dt>Auto-fire needs</dt>
+            <dd class="r-mono">{gate.autoPct ?? '—'}<span class="s-gateof"> / 100</span></dd>
+            <dt>Suggest needs</dt>
+            <dd class="r-mono">{gate.suggestPct ?? '—'}<span class="s-gateof"> / 100</span></dd>
           </dl>
+          <!-- THE SENTENCE THAT SAYS WHICH WAY THESE RUN, and it has been rewritten
+               twice for two different complaints about the same pair.
+
+               §117: the raw bars were printed under a slider they run the opposite
+               way to, so the larger number read as the keener setting. That was
+               answered by inverting them into a readiness.
+
+               §121: on a readiness scale a SUGGESTION is the larger number, because
+               it is the easier bar — and the operator read that as a suggestion
+               outranking an auto-fire. *"suggestions should be lower by 20 if auto
+               fire is on 100 so auto fire has the higher priority."*
+
+               Only one framing answers both, and it is the WORD rather than the
+               arithmetic: say what each bar NEEDS. Auto-fire needs more, always,
+               by exactly one band, because it is the stricter rule. A smaller
+               number under "needs" is plainly the easier bar rather than the
+               keener setting. The figures still fall as the dial rises and nothing
+               can change that; the dial is the control and says so itself. -->
+          <p class="rw-foot s-gatescale">A match is scored 0–100. Auto-fire needs 20 points more
+            than a suggestion, always, so there is a band Relay offers rather than fires — and
+            moving the dial right lowers both, which is what makes it eager.</p>
           <!-- THE SENTENCE THAT SEPARATES THREE STATES A NUMBER CANNOT (rule 35):
                no engine, an engine nobody has asked yet, and a gate the learning
                has walked off the dial's curve. `describeGate` decides which, once,
@@ -1519,8 +1630,90 @@
           {#if gate.note}
             <p class="rw-foot s-gatenote" role="status">{gate.note}</p>
           {/if}
-          <p class="rw-foot">Only a direct, high-confidence quotation can ever auto-fire. A paraphrase is always a suggestion — a cosine is not a probability.</p>
+          <p class="rw-foot">A paraphrase is always a suggestion — a cosine is not a probability, so no threshold on one means anything.</p>
         </div>
+
+        <!-- FOLLOW THE READER (DECISIONS §118). The operator's instruction of
+             2026-09-23: *"follow the verse whenever a preacher is reading a bible
+             verse, you dont need to wait or suggest it."*
+
+             IT LIVES HERE, UNDER THE DIAL, and not in its own rail entry. It is
+             part of the same question the dial answers — what may reach a
+             congregation with nobody pressing anything — and the sentence above it
+             used to say the answer was "only a direct match". Splitting the two
+             across two screens is how an operator comes to believe they are
+             unrelated, which is the reasoning that put voice profiles in this
+             section as well.
+
+             THE SWITCH DOES NOT SET THE BAR. Eight words, held by one verse and
+             not sitting inside a longer run, is measured rather than chosen (see
+             `READING_RUN_WORDS`), and a dial that could move it would be the
+             demotion-as-a-number mistake rule 10 records, in reverse. So this is
+             one switch and not a second slider — §96's whole finding. -->
+        <div class="rw-nv">
+          <div class="s-nvtext">
+            <div class="rw-nvk">Follow the reader</div>
+            <p class="rw-nvnote">When Relay hears a run of words that is word for word in one verse and no other, it puts that verse up by itself — the preacher reading aloud, with no reference spoken. Turn it off and Relay offers the verse instead and waits for you.</p>
+          </div>
+          <div class="rw-nvctl s-nvpair">
+            <span class="rw-nvv" class:s-armed={$capture.followsReader}>{$capture.followsReader ? 'on' : 'off'}</span>
+            <Switch
+              checked={$capture.followsReader}
+              label="Follow the reader"
+              disabled={!$capture.available}
+              disabledReason={whyDisabled([!$capture.available, ENGINE_OFF])}
+              on:click={() => toggleFollowTheReader()} />
+          </div>
+        </div>
+        {#if followErr}
+          <p class="s-alert" role="alert">{followErr}</p>
+        {/if}
+
+        <!-- THE PARAPHRASE BAR (DECISIONS §125, RG-311). The operator, 2026-09-25:
+             *"The preacher paraphrases a lot so I want you to catch that and use the
+             style to work on how the app respond."* Measured over eleven of their own
+             services, 74% of what the paraphrase detector offers on speech that names
+             no scripture is noise — and no value of any threshold cuts it, because
+             the noise and the real citations have the same score distribution and
+             invert at the tails.
+
+             WHAT DOES CUT IT is a different question about the same evidence: did the
+             preacher say some of the verse's words IN ORDER. It removes about three
+             quarters of the list.
+
+             IT IS OFF BY DEFAULT AND THE NOTE SAYS WHAT IT COSTS, because it is a
+             real trade and not a free improvement: a story retold entirely in modern
+             words shares no run with the verse, so Relay stops finding it. That is
+             the case the product's claim rests on, so the person who loses it has to
+             be the one who chose to.
+
+             NO NUMBERS IN THE NOTE. "73.6% of offers, three points of labelled
+             recall" is not something a volunteer can act on in a dark booth; "Relay
+             will miss a story told in modern words" is. The measurements live in
+             `detection::PARAPHRASE_RUN_WORDS`.
+
+             IT SITS UNDER THE DIAL WITH THE OTHER TWO, for the reason the switch
+             above records: all three answer one question — what the AI is allowed to
+             do with what it thinks it heard — and splitting them across screens is
+             how an operator comes to believe they are unrelated. -->
+        <div class="rw-nv">
+          <div class="s-nvtext">
+            <div class="rw-nvk">Paraphrase must echo the verse</div>
+            <p class="rw-nvnote">Only suggest a paraphrase when the preacher said some of the verse’s own words in a row. Far fewer wrong suggestions — and Relay will miss a Bible story retold entirely in modern words. A paraphrase is only ever a suggestion either way; this never changes what reaches a screen.</p>
+          </div>
+          <div class="rw-nvctl s-nvpair">
+            <span class="rw-nvv" class:s-armed={$capture.paraphraseNeedsRun}>{$capture.paraphraseNeedsRun ? 'on' : 'off'}</span>
+            <Switch
+              checked={$capture.paraphraseNeedsRun}
+              label="Paraphrase must echo the verse"
+              disabled={!$capture.available}
+              disabledReason={whyDisabled([!$capture.available, ENGINE_OFF])}
+              on:click={() => toggleParaphraseBar()} />
+          </div>
+        </div>
+        {#if paraErr}
+          <p class="s-alert" role="alert">{paraErr}</p>
+        {/if}
 
         <!-- VOICE PROFILES, and the gate above them, are ONE section — which is
              why the section is named for the preacher rather than for the
@@ -1705,11 +1898,45 @@
                 <span class="s-tr-name">{tr.name}</span>
                 {#if tr.id === activeTranslation}<span class="s-tr-active r-mono">active</span>{/if}
               </button>
+              {#if !isBundled(tr)}
+                <!-- TWO PRESSES, in-app (rule 41). The bundled two never show this:
+                     `db::delete_translation` refuses them too, but a control that
+                     cannot succeed is a dead button. -->
+                <div class="s-tr-tools">
+                  <Button variant={trDeleteArmed === tr.id ? 'danger' : 'ghost'} size="sm"
+                    on:click={() => doDeleteTranslation(tr)}
+                    disabled={$serviceLock.engaged || tr.id === activeTranslation}
+                    disabledReason={tr.id === activeTranslation ? 'Choose another translation first.' : whyDisabled([$serviceLock.engaged && SERVICE_LOCKED])}>
+                    {trDeleteArmed === tr.id ? `Delete ${tr.abbreviation}, really` : 'Delete'}
+                  </Button>
+                  {#if trDeleteArmed === tr.id}
+                    <Button variant="ghost" size="sm" on:click={() => (trDeleteArmed = null)}>Keep it</Button>
+                  {/if}
+                </div>
+              {/if}
             {/each}
           </ListState>
         </div>
         <div class="s-prose">
-          <p class="rw-foot">Only public-domain <b>KJV</b> is bundled. Additional versions need their verse data added to the corpus.</p>
+          <p class="rw-foot">The <b>KJV</b> and the <b>Berean Standard Bible</b> ship inside Relay, both public domain. A licensed version (NKJV, NIV, ESV) cannot be bundled; if your church holds a licence and has the text as a file, import it below.</p>
+        </div>
+        <!-- IMPORT A BIBLE (RG-50 option two). The file is JSON in the KJV's shape:
+             a list of 66 books, each { "chapters": [[verse, …], …] }, Genesis to
+             Revelation. Relay checks every book is present and no verse is empty
+             before a single row is written; the refusal says which. -->
+        <div class="rw-group">Import a Bible</div>
+        <div class="s-prose s-trimport">
+          <label class="rw-nv"><span class="rw-nvk">Name</span><input class="r-input" type="text" bind:value={trName} placeholder="New King James Version" disabled={trBusy} /></label>
+          <label class="rw-nv"><span class="rw-nvk">Short code</span><input class="r-input" type="text" bind:value={trAbbr} placeholder="NKJV" maxlength="12" disabled={trBusy} /></label>
+          <label class="rw-nv"><span class="rw-nvk">Language</span><input class="r-input" type="text" bind:value={trLang} placeholder="en" maxlength="8" disabled={trBusy} /></label>
+          <input type="file" accept=".json,application/json" bind:this={trFileInput} on:change={onBibleFile} style="display:none" />
+          <Button variant="ghost" size="sm" on:click={() => trFileInput?.click()}
+            disabled={trBusy || $serviceLock.engaged || !$capture.available}
+            disabledReason={whyDisabled([trBusy && BUSY, $serviceLock.engaged && SERVICE_LOCKED, !$capture.available && ENGINE_OFF])}>
+            {trBusy ? 'Importing…' : 'Import a Bible from a file…'}
+          </Button>
+          {#if trMsg}<p class="rw-foot" role="status">{trMsg}</p>{/if}
+          <p class="rw-foot">A JSON file: a list of the 66 books in order, each with <code>"chapters"</code> as a list of verse lists. Verse layout may differ from the KJV; every book must be present. Held back while a service is being recorded.</p>
         </div>
         <!-- LANGUAGE COVERAGE. It had its own rail entry once and now shares a
              section with the translation list, which is the other answer to "what
@@ -1859,7 +2086,7 @@
         <div class="rw-nv"><span class="rw-nvk">Version</span><span class="rw-nvv">{settingValue(appVersion, {
             loading: versionState === 'loading',
             missing: 'could not be read',
-          })} · {environment}</span></div>
+          })} · {environment}{buildMarker ? ` · build ${buildMarker}` : ''}</span></div>
         <div class="rw-nv"><span class="rw-nvk">Uptime (this run)</span><span class="rw-nvv">{uptime}</span></div>
         <div class="rw-group">Live latency</div>
         <div class="s-prose">
@@ -1970,13 +2197,10 @@
                  its own is what an operator would reasonably read as saved. -->
             <span class="rw-nvv">{latMeasuring === null ? settingValue(null, { missing: 'not read yet' }) : latMeasuring ? 'on' : 'off · until you restart'}</span>
             {#if latMeasuring !== null}
-              <button
-                class="r-switch"
-                class:on={latMeasuring}
-                role="switch"
-                aria-checked={latMeasuring}
-                aria-label="Measuring latency"
-                on:click={() => toggleLatency(!latMeasuring)}></button>
+              <Switch
+                checked={latMeasuring}
+                label="Measuring latency"
+                on:click={() => toggleLatency(!latMeasuring)} />
             {/if}
           </div>
         </div>
@@ -2220,14 +2444,23 @@
           </div>
           <div class="rw-nvctl s-nvpair">
             <span class="rw-nvv" class:s-armed={crashOn}>{crashOn ? 'on' : 'off'}</span>
-            <button
-              class="r-switch"
-              class:on={crashOn}
-              role="switch"
-              aria-checked={crashOn}
-              aria-label="Send crash reports"
+            <!-- THE MEASURED INSTANCE OF RG-168. This was a raw `.r-switch` with
+                 no `title` and no `aria-describedby`, so the `!$capture.available`
+                 half of its `disabled` was explained by nothing at all — on the one
+                 control that decides whether anything leaves this machine. The
+                 `crashReadFailed` half already had the rose `[role="alert"]`
+                 paragraph below, and it keeps it; the sentence here is the one
+                 `whydisabled.js` writes, so it cannot disagree with the nineteen
+                 buttons on this page that say the same thing. -->
+            <Switch
+              checked={crashOn}
+              label="Send crash reports"
               disabled={!$capture.available || !!crashReadFailed}
-              on:click={() => toggleCrash(!crashOn)}></button>
+              disabledReason={whyDisabled([
+                !$capture.available && ENGINE_OFF,
+                !!crashReadFailed && 'Relay could not read this setting, so it will not change it. The message below says what failed.',
+              ])}
+              on:click={() => toggleCrash(!crashOn)} />
           </div>
         </div>
         <!-- The `{#if}` is OUTSIDE the block, not inside it: `.s-prose` carries a
@@ -2624,7 +2857,7 @@
      matching `.b-check.warn` in the boot ladder; never amber, which means ON AIR
      and nothing else. */
   .s-netbad{ color:var(--v-rose); }
-  .s-netwarn{ color:var(--v-amethyst2); }
+  .s-netwarn{ color:var(--v-caution2); }
   /* An error the operator must read now, rather than a footnote. */
   .s-alert{ margin-top:10px; font-size:var(--v-fs-cap); line-height:var(--v-lh-cap); color:var(--v-red); }
 
@@ -2679,6 +2912,10 @@
      no engine, an engine nobody has asked, and a gate the learning has walked off
      the dial's curve — cannot be told apart by a coloured dot. */
   .s-gatenote{ color:var(--v-dim); }
+  /* "/ 100" is the SCALE, not the reading. Dimmed so the eye lands on the figure
+     and still told, because a bare 70 beside a bare 50 says nothing about range. */
+  .s-gateof{ color:var(--v-faint); font-size:var(--v-fs-b2); }
+  .s-gatescale{ color:var(--v-dim); }
 
   .s-slider-ends{ display:flex; justify-content:space-between; margin-top:8px;
     font-family:var(--f-mono); font-size:var(--v-fs-cap); letter-spacing:.06em; text-transform:uppercase;
@@ -2704,6 +2941,8 @@
   .s-tr-dot{ width:13px; height:13px; border-radius:50%; flex:0 0 auto; border:2px solid var(--v-faint); }
   .s-tr-dot.on{ border-color:var(--v-accent); background:radial-gradient(circle,var(--v-accent) 40%,transparent 45%); }
   .s-tr-name{ color:var(--v-dim); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .s-tr-tools{ display:flex; gap:6px; padding:0 12px 8px; }
+  .s-trimport .rw-nv .r-input{ max-width:260px; }
   .s-tr-active{ font-family:var(--f-mono); font-size:var(--v-fs-cap); letter-spacing:.1em;
     text-transform:uppercase; color:var(--v-accent); }
 

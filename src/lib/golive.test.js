@@ -289,3 +289,36 @@ describe('a queued row is fired as the kind it is', () => {
     }
   });
 });
+
+// 2026-09-21 · Library D1 (RG-185). The scan above read the FIRST enqueue in each
+// of five panes. There are eight doors: the Inspector's `Cue in Live`, and the
+// bulk `Queue N selected` in Browse and Scripture, all queued rows with no `kind`,
+// and `fireQueued` — correctly — refused them. Every enqueue, in every file that
+// enqueues, carries a kind.
+describe('every door into the Library queue tags what it queued (all of them, not the first)', () => {
+  const files = [
+    'Announcements.svelte',
+    'MediaLibrary.svelte',
+    'Browse.svelte',
+    'LyricsPane.svelte',
+    'Scripture.svelte',
+    'Inspector.svelte',
+  ];
+  for (const file of files) {
+    it(`${file}: no enqueue without a kind`, () => {
+      const src = readFileSync(join(process.cwd(), 'src/lib/views/library', file), 'utf8');
+      const doors = [...src.matchAll(/onQueueChange\(\[\s*\.\.\.queue/g)];
+      expect(doors.length, `${file} enqueues nowhere?`).toBeGreaterThan(0);
+      for (const m of doors) {
+        // The tag may sit in the row literal after the call, or in the `.map`
+        // that built the rows just before it; either way it is within reach.
+        const window = src.slice(Math.max(0, m.index - 400), m.index + 700);
+        expect(window, `${file} at ${m.index} queues an untagged row`).toMatch(/kind:/);
+      }
+    });
+  }
+  it('the refusal no longer names a control that was retired (RG-158)', () => {
+    const src = readFileSync(join(process.cwd(), 'src/lib/views/Library.svelte'), 'utf8');
+    expect(src).not.toMatch(/Remove it from Up\s?Next/);
+  });
+});

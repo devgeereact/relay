@@ -15,15 +15,12 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { resolveOutputTemplate } from './layers.js';
 import { DEFAULT_TEMPLATE } from './templates.js';
+import { codeOnly } from './codeonly.js';
 
 const read = (p) => readFileSync(path.resolve(__dirname, '..', p), 'utf8');
 /** The same file with its prose removed. A comment that NAMES the defect is not the
  *  defect, and a scanner that cannot tell the two apart reports the fix as the bug. */
-const code = (src) =>
-  src
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^\s*\/\/.*$/gm, '');
+const code = (src) => codeOnly(src);
 
 // A content look: a full-screen, opaque scripture template.
 const LOOK = {
@@ -82,7 +79,11 @@ describe('the inspector and the output page resolve the same way', () => {
     // per-kind look and the blanket template and silently discards an opaque
     // Announcement look on a lower-third screen.
     expect(page).toMatch(
-      /resolveOutputTemplate\(t, override, !!content\?\.template_pinned, defaultTpl, kindLook\)/,
+      // The sixth argument is the content KIND (RG-219): scripture and song wear
+      // the configured default's style, media and notices keep their own. The
+      // SEVENTH is this screen's role (RG-272), because a pinned plan cue may
+      // not redesign a stage display.
+      /resolveOutputTemplate\(t, override, !!content\?\.template_pinned, defaultTpl, kindLook, content\?\.kind, myRole\)/,
     );
     // And the component is actually handed that answer, not a second one built
     // inline — a preview resolved twice is a preview that can disagree with itself.

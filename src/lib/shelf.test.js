@@ -212,6 +212,16 @@ describe('every shelf look derives the role it is for', () => {
     // above: only a SCROLLING text layer derives it, and the Scroll five are
     // bands, which is the more specific rule. A row for a role nothing renders
     // would be a control that saves a setting nothing reads (DECISIONS §78).
+    //
+    // THAT ABSENCE IS NOW REGISTERED RATHER THAN LEFT TO THIS COMMENT (RG-160,
+    // DECISIONS §129). This file argued it in prose and was the only thing that
+    // did, so the bucket the shelf cannot fill was invisible to every instrument.
+    // `kindregister.test.js` asserts that every role in `KIND_ORDER` has a real
+    // path — a seeded row or a starter — and that the two the SHELF cannot fill
+    // are exactly the ones written down by name. It also holds the measurement
+    // that closes the tempting repair: `Scripture · Column` is reference-first,
+    // exactly like `Announce · Board`, so no order rule can tell a static notice
+    // from a verse.
     const rows = kindsPresent(SHELF).map((k) => k.key);
     expect(rows).toEqual(
       ['scripture', 'song', 'lower-third', 'supersource', 'stage', 'media', 'timer'].sort(

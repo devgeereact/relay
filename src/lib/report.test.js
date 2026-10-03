@@ -13,7 +13,9 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
+  splitDetections,
   sundayReport,
+  wallMovedOff,
   latencySummary,
   replayAt,
   fmtMs,
@@ -56,21 +58,59 @@ describe('the Sunday report', () => {
     expect(r.suggestionsRejected).toBe(1);
   });
 
-  it('reads the operator decisions from cues, because detections cannot hold them', () => {
-    // The regression this replaced: these two came from `count('suggested')` and
-    // `count('dismissed')` over `detections`, and were ALWAYS 0 in production —
-    // `persist_fire` is the only insert and it runs only for a fire that reaches a
-    // screen, so the column can only ever hold 'auto' or 'manual'. The report was
-    // printing 0 for something nothing recorded, which reads as "Relay never
-    // offered you anything".
-    const detOnly = sundayReport([
-      ev(0, 'service_started'),
-      det(10, 'suggested', 'Romans 8:28'),
-      det(20, 'dismissed', 'Psalms 23:1'),
-    ]);
+  it('reads the operator decisions from cues, and what was OFFERED from detections', () => {
+    // Two different questions out of two different tables, and the split is the
+    // point. `suggestion_accepted` / `suggestion_dismissed` cues are what the
+    // operator PRESSED; `status = 'suggested'` rows are what Relay OFFERED. Reading
+    // the operator's decisions out of `detections` is the regression this test was
+    // originally written against — those counters were always 0, because
+    // `persist_fire` ran only inside `if fire.may_broadcast()`.
+    //
+    // RG-309 made the offer half real. The operator half still does NOT come from
+    // here: a suggestion row records that Relay offered something, and says nothing
+    // about whether anybody looked.
+    // NOTE THE THIRD ARGUMENT. Offers are counted from `detail.detections`, the
+    // forensic list, and NOT from the timeline — `service_timeline` excludes them on
+    // purpose (RG-309), so a test that put them in a timeline row would be measuring
+    // a shape the backend does not produce.
+    const detOnly = sundayReport([ev(0, 'service_started')], [], {
+      detections: [{ status: 'suggested' }, { status: 'suggested' }],
+    });
     expect(detOnly.suggestionsAccepted).toBeNull();
     expect(detOnly.suggestionsRejected).toBeNull();
     expect(detOnly.suggestionUptake).toBeNull();
+    // …and the offers ARE counted.
+    expect(detOnly.suggestionsOffered).toBe(2);
+    // Nobody answered either of them, which is a real and reportable 0 out of 2 —
+    // not a null, because the denominator exists.
+    expect(detOnly.suggestionsAnswered).toBe(0);
+  });
+
+  it('a service that recorded no offers reports null, never 0', () => {
+    // Every service before RG-309 is this service. `persist_fire` could not write a
+    // `'suggested'` row, so the column is empty for the whole of Relay's history to
+    // date — and `0 offered` over a 16-hour sermon is the same false claim the cue
+    // move was made to stop, arriving in a new column.
+    const none = sundayReport([ev(0, 'service_started'), det(10, 'auto', 'John 3:16')], [], {
+      detections: [{ status: 'auto' }],
+    });
+    expect(none.suggestionsOffered).toBeNull();
+    expect(none.suggestionsAnswered).toBeNull();
+  });
+
+  it('the share answered is out of everything offered, and uptake is not', () => {
+    // The two figures disagree on purpose. Measured on the author's own service of
+    // 2026-09-25: one acceptance, ~8,000 offers. Uptake reads 100% and is honest
+    // about the one the operator answered; answered reads ~0.0001 and is the number
+    // that says what the AI's suggestion list was actually worth to them.
+    const r2 = sundayReport(
+      [ev(0, 'service_started'), cue(10, 'suggestion_accepted', 'John 3:16')],
+      [],
+      { detections: [1, 2, 3, 4].map(() => ({ status: 'suggested' })) },
+    );
+    expect(r2.suggestionUptake).toBe(1);
+    expect(r2.suggestionsOffered).toBe(4);
+    expect(r2.suggestionsAnswered).toBeCloseTo(0.25);
   });
 
   it('uptake is out of the ones the operator ANSWERED, and says so', () => {
@@ -83,7 +123,13 @@ describe('the Sunday report', () => {
     expect(mixed.suggestionUptake).toBeCloseTo(1 / 3);
     // And the denominator's limit is named in the report rather than left for a
     // reader to infer.
-    expect(mixed.notMeasured.join(' ')).toMatch(/never acted on/);
+    // The report used to say a suggestion nobody answered was "recorded nowhere".
+    // RG-309 made that false, so the sentence had to change rather than survive —
+    // a caveat that asserts a defect the code has fixed is the same failure as one
+    // that asserts a feature it never had. What is still unmeasured is whether an
+    // unanswered offer was RIGHT, and that is what it now says.
+    expect(mixed.notMeasured.join(' ')).not.toMatch(/recorded nowhere/);
+    expect(mixed.notMeasured.join(' ')).toMatch(/never answered was RIGHT/);
   });
 
   it('counts the things that had no other home', () => {
@@ -330,5 +376,197 @@ describe('the live Diagnostics screen obeys the same rule', () => {
     expect(view).toMatch(/const msOrDash = \(v\) =>[\s\S]{0,80}'—'/);
     expect(view).not.toMatch(/Math\.round\(m\.p50_ms \?\? 0\)/);
     expect(view).toMatch(/msOrDash\(m\.p99_ms\)/);
+  });
+});
+
+describe('splitDetections — what reached a screen vs what was merely offered', () => {
+  // THE REGRESSION THIS EXISTS TO STOP (RG-309). Before suggestions were recorded,
+  // every `detections` row had reached a screen, so History could render the whole
+  // list under a heading reading "Detected verses (N)" and be right. Persisting
+  // offers made that heading a lie by a factor of twenty: a 16-hour service put 365
+  // verses on a screen and offered roughly 8,000, and the column would have printed
+  // the larger number under the smaller word. Rule 35 — a figure whose meaning
+  // changed silently under a label that did not.
+  it('keeps "detected" meaning what it said', () => {
+    const { fired, offered } = splitDetections([
+      { reference: 'John 3:16', status: 'auto' },
+      { reference: 'Psalms 23:1', status: 'manual' },
+      { reference: 'Hebrews 13:5', status: 'suggested' },
+      { reference: 'Romans 8:28', status: 'suggested' },
+      { reference: 'Isaiah 30:1', status: 'dismissed' },
+    ]);
+    expect(fired.map((d) => d.reference)).toEqual(['John 3:16', 'Psalms 23:1']);
+    expect(offered).toHaveLength(3);
+  });
+
+  it('is total over the list — nothing is silently discarded', () => {
+    // A third status added to the CHECK constraint one day must land in one bucket
+    // or the other, never in neither. A row that falls out of both is a detection
+    // the history stops showing without saying so.
+    const rows = ['auto', 'manual', 'suggested', 'dismissed'].map((status) => ({ status }));
+    const { fired, offered } = splitDetections(rows);
+    expect(fired.length + offered.length).toBe(rows.length);
+  });
+
+  it('survives a missing or malformed list', () => {
+    expect(splitDetections(null)).toEqual({ fired: [], offered: [] });
+    expect(splitDetections(undefined).fired).toEqual([]);
+  });
+});
+
+// ── RG-325 — OPERATOR DISAGREEMENT IS IN THE DATA AND NOTHING READ IT ────────
+//
+// The fixture below is not invented. It is service 42 (2026-09-27), the whole of it
+// that matters here: every one of its 14 `manual` detections, the 6 `auto` fires that
+// land in the same chapter as one of them, and all 9 `manual_override` /
+// `suggestion_accepted` cues — read out of the author's own `relay.db` and written
+// down, so the numbers these tests assert are the ones a real Sunday produced.
+//
+// **The row's premise needed one correction and it is the whole reason a direction and
+// a `how` exist.** RG-325 reads `John 7:36` fired by hand 72 s after `John 7:37`
+// auto-fired as *"the operator moved the wall off Relay's choice"*. It is a manual
+// detection row, correctly (rule 14) — but `handle_nav` fires through `fire_manual`
+// too, so **the transport writes the same row a typed reference does**, and `cues` is
+// the only thing that tells them apart. Both of the row's examples turn out to be
+// transport steps, and they are not the same event as each other: one is `←` landing
+// on the verse BEFORE Relay's choice, the other is `→` reading on past it.
+const SVC42_MANUAL = [
+  ['Genesis 8:22', 2_098_500, 'manual_override'],
+  ['Exodus 23:26', 3_355_800, null],
+  ['Matthew 17:21', 4_240_700, 'suggestion_accepted'],
+  ['Matthew 7:8', 4_321_400, 'suggestion_accepted'],
+  ['Daniel 9:2', 4_417_800, 'suggestion_accepted'],
+  ['Proverbs 1:5', 4_530_500, 'manual_override'],
+  ['Psalms 16:11', 4_544_900, 'suggestion_accepted'],
+  ['1 Corinthians 10:10', 4_616_600, 'manual_override'],
+  ['John 10:10', 4_649_100, 'suggestion_accepted'],
+  ['John 1:12', 4_909_400, 'manual_override'],
+  ['Psalms 71:8', 6_970_200, null],
+  ['Genesis 8:21', 18_741_900, null],
+  ['John 7:36', 21_258_000, null],
+  ['Matthew 6:4', 21_992_000, null],
+];
+
+// The auto-fires that share a chapter with one of those, and no others.
+const SVC42_AUTO = [
+  ['Exodus 23:25', 3_345_900],
+  ['Matthew 17:19', 4_236_000],
+  ['Psalms 71:7', 6_908_000],
+  ['Genesis 8:22', 18_264_600],
+  ['John 7:37', 21_185_800],
+  ['Matthew 6:3', 21_916_600],
+];
+
+const SERVICE_42 = [
+  ...SVC42_AUTO.map(([ref, at]) => det(at, 'auto', ref)),
+  ...SVC42_MANUAL.flatMap(([ref, at, how]) => [
+    det(at, 'manual', ref),
+    ...(how ? [cue(at, how, ref)] : []),
+  ]),
+].sort((a, b) => a.at_ms - b.at_ms);
+
+describe('RG-325 — how often the operator moved the wall off what Relay chose', () => {
+  const moved = wallMovedOff(SERVICE_42);
+
+  it('finds the two adjacencies the register filed, and both are transport steps', () => {
+    // `John 7:36` after `John 7:37` — one verse BACK, 72.2 s later.
+    expect(moved.back.map((m) => m.reference)).toContain('John 7:36');
+    const back = moved.back.find((m) => m.reference === 'John 7:36');
+    expect(back.from).toBe('John 7:37');
+    expect(Math.round(back.gapMs / 1000)).toBe(72);
+    // `Matthew 6:4` after `Matthew 6:3` — one verse FORWARD, 75.4 s later. The row
+    // treats it as the same event and it is not: forward is what the transport is
+    // FOR, so it cannot be told from a reading continuing.
+    expect(moved.readOn.map((m) => m.reference)).toContain('Matthew 6:4');
+    // Neither carries a cue, so neither was typed or accepted — both are `→`/`←`.
+    expect(back.how).toBe('transport');
+    expect(moved.readOn.every((m) => m.how === 'transport')).toBe(true);
+  });
+
+  it('counts one step back and three read on, out of 14 manual fires', () => {
+    expect(moved.back).toHaveLength(1);
+    expect(moved.readOn.map((m) => m.reference).sort()).toEqual([
+      'Exodus 23:26',
+      'Matthew 6:4',
+      'Psalms 71:8',
+    ]);
+  });
+
+  it('NOT ONE of them was a reference typed by hand — which is the finding', () => {
+    // All four of service 42's `manual_override` cues fired into a chapter Relay had
+    // never auto-fired in. So the clearest disagreement signal available — a human
+    // going and naming a different verse over Relay's own — occurred ZERO times, and
+    // a metric that lumped the transport in with it would have reported four.
+    expect([...moved.back, ...moved.readOn].filter((m) => m.how === 'typed')).toEqual([]);
+  });
+
+  it('never counts an accepted suggestion as disagreement', () => {
+    // `confirm_detection` fires through `fire_manual`, so accepting Relay's own offer
+    // writes `'manual'` too. It is agreement by definition and must never appear here,
+    // whatever it happens to be adjacent to.
+    const timeline = [
+      det(0, 'auto', 'Romans 8:27'),
+      det(30_000, 'manual', 'Romans 8:28'),
+      cue(30_000, 'suggestion_accepted', 'Romans 8:28'),
+    ];
+    expect(wallMovedOff(timeline)).toEqual({ back: [], readOn: [], windowMs: 90_000 });
+  });
+
+  it('is adjacency in the same chapter, one verse, after the auto-fire, inside the window', () => {
+    const near = (ref, at) => [det(0, 'auto', 'Luke 6:38'), det(at, 'manual', ref)];
+    // Two verses away is a jump, not a correction.
+    expect(wallMovedOff(near('Luke 6:36', 30_000)).back).toHaveLength(0);
+    // Another chapter is another reading.
+    expect(wallMovedOff(near('Luke 7:37', 30_000)).back).toHaveLength(0);
+    // Another book is not adjacent however close the numbers are.
+    expect(wallMovedOff(near('John 6:37', 30_000)).back).toHaveLength(0);
+    // BEFORE the auto-fire is not a response to it.
+    expect(wallMovedOff([det(30_000, 'auto', 'Luke 6:38'), det(0, 'manual', 'Luke 6:37')]).back)
+      .toHaveLength(0);
+    // And a step is a step.
+    expect(wallMovedOff(near('Luke 6:37', 30_000)).back).toHaveLength(1);
+  });
+
+  it('the window is 90 s because the field cases are at 72 s and 75 s, and 120 s says the same', () => {
+    // A minute misses both of the register's own examples. 90 s and 120 s return the
+    // identical answer on all five recorded services, so the number sits on a plateau
+    // rather than on a cliff — which is the only defence a window like this has.
+    expect(wallMovedOff(SERVICE_42, { windowMs: 60_000 }).back).toHaveLength(0);
+    const wider = wallMovedOff(SERVICE_42, { windowMs: 120_000 });
+    expect(wider.back).toEqual(moved.back);
+    expect(wider.readOn).toEqual(moved.readOn);
+  });
+
+  it('survives a timeline with no references, no cues and no rows at all', () => {
+    expect(wallMovedOff(null)).toEqual({ back: [], readOn: [], windowMs: 90_000 });
+    expect(wallMovedOff([det(0, 'auto', null), det(10_000, 'manual', null)]).back).toEqual([]);
+    expect(wallMovedOff([det(0, 'auto', 'not a reference')]).readOn).toEqual([]);
+  });
+});
+
+describe('RG-325 — and what the Sunday report is allowed to say about it', () => {
+  it('names the two separately, because conflating them is the register\'s own mistake', () => {
+    const r = sundayReport(SERVICE_42, [], { transcripts: [], detections: [] });
+    expect(r.wallSteppedBack).toBe(1);
+    expect(r.wallReadOn).toBe(3);
+  });
+
+  it('is null, never 0, when there was nothing to compare', () => {
+    // 0 out of no auto-fires reads as "the operator never disagreed with Relay",
+    // which is a claim; the honest answer is that nothing was measured. Same rule the
+    // rest of this file keeps.
+    const noAuto = sundayReport([det(0, 'manual', 'John 3:16')], [], null);
+    expect(noAuto.wallSteppedBack).toBeNull();
+    expect(noAuto.wallReadOn).toBeNull();
+    const noManual = sundayReport([det(0, 'auto', 'John 3:16')], [], null);
+    expect(noManual.wallSteppedBack).toBeNull();
+    // …and 0 IS a measurement once both exist.
+    const both = sundayReport([det(0, 'auto', 'John 3:16'), det(10_000, 'manual', 'Acts 1:8')], [], null);
+    expect(both.wallSteppedBack).toBe(0);
+  });
+
+  it('says out loud that it cannot tell a correction from a reading continuing', () => {
+    const r = sundayReport(SERVICE_42, [], null);
+    expect(r.notMeasured.join(' ')).toMatch(/moved the wall|off Relay's choice|next verse/i);
   });
 });

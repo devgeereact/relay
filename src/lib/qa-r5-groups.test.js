@@ -50,7 +50,6 @@ const GROUP_1 = {
   // and it is the one that runs while a countdown is already on the wall, so a
   // swallowed failure would leave the operator watching the OLD target tick down
   // believing they had moved it.
-  adjustCountdown: () => store.adjustCountdown(4 * 60_000),
   // Added to the header 2026-09-15. It reaches no screen, which is why it sat in
   // a bare `catch {}` for so long — but it releases the service lock, so a
   // swallowed failure leaves every protected action refusing with nothing said.

@@ -29,6 +29,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { tick } from 'svelte';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { codeOnly } from './codeonly.js';
 
 const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a) => invoke(...a) }));
@@ -36,7 +37,7 @@ vi.mock('@tauri-apps/api/event', () => ({ listen: async () => () => {} }));
 
 const cap = await import('./stores/capture.js');
 const Dock = await import('./Dock.svelte');
-const { pushReading, waveSegments, waveStale, WAVE_SPAN_MS, WAVE_GAP_MS } = Dock;
+const { pushReading, pushEnvelope, readingKind, waveRuns, waveSegments, waveStale, WAVE_SPAN_MS, WAVE_GAP_MS, CLIP_AT } = Dock;
 const src = readFileSync(resolve(process.cwd(), 'src/lib/Dock.svelte'), 'utf8');
 
 let host;
@@ -109,7 +110,7 @@ describe('the waveform reads time, not deliveries', () => {
     // A resumed laptop or a corrected system time would otherwise place new
     // readings to the LEFT of old ones and draw the envelope inside out.
     const buf = pushReading(pushReading([], 5_000, 0.4), 1_000, 0.9);
-    expect(buf).toEqual([{ t: 1_000, v: 0.9 }]);
+    expect(buf).toEqual([{ t: 1_000, v: 0.9, kind: 'quiet' }]);
   });
 
   it('positions each reading at the time it was taken', () => {
@@ -325,10 +326,32 @@ describe('the microphone is chosen and opened from the card that shows its level
     expect(called('stop_capture')).toHaveLength(1);
   });
 
-  it('will not let the device be changed under a running capture', async () => {
-    // `start_capture` takes the device name as an argument, so a change made
-    // mid-capture would move a label and nothing else. Same rule as Settings.
+  // ── REVERSED, NOT DELETED (RG-294, 2026-09-24) ──────────────────────────────
+  //
+  // This test used to read *"will not let the device be changed under a running
+  // capture"*, and its reasoning was exactly right at the time: *"`start_capture`
+  // takes the device name as an argument, so a change made mid-capture would move
+  // a label and nothing else."* A control that cannot do what it appears to do is
+  // worse than a control that is shut, so it was shut.
+  //
+  // RG-291 built the thing it was waiting for. `setInputDevice` now moves a
+  // running capture — stop, then open the new device, and a stop that did not
+  // stop ends there rather than putting a second capture thread on one device.
+  // So the premise is gone and the control is handed back. The operator's
+  // instruction is the reason: *"when audio input switch, continue transcript
+  // once audio is dected"*, and the case is a desk feed dying mid-sermon with a
+  // handheld already plugged in.
+  it('lets the device be changed under a running capture, now that it can be', async () => {
     cap.capture.update((s) => ({ ...s, devices: [{ name: 'Scarlett 2i2 USB' }], capturing: true }));
+    mount();
+    await settle();
+    expect(host.querySelector('[aria-label="Microphone input device"]').disabled).toBe(false);
+  });
+
+  it('and still refuses when there is no engine to open anything with', async () => {
+    // The half that did NOT change. `available` is the bridge, and with no
+    // backend attached there is nothing for a choice to reach.
+    cap.capture.update((s) => ({ ...s, devices: [{ name: 'Scarlett 2i2 USB' }], capturing: false, available: false }));
     mount();
     await settle();
     expect(host.querySelector('[aria-label="Microphone input device"]').disabled).toBe(true);
@@ -356,7 +379,7 @@ describe('the microphone is chosen and opened from the card that shows its level
     // written beside it, and a scanner that reads the prose about a rule
     // instead of the rule is a scanner that passes everything — `ipc.test.js`
     // has been wrong that way twice.
-    const markup = src.replace(/<!--[\s\S]*?-->/g, '');
+    const markup = codeOnly(src);
     const row = markup.slice(markup.indexOf('<span class="dcap">Mic</span>'), markup.indexOf('<span class="dcap">Sens</span>'));
     expect(row).not.toMatch(/amber/);
     // And on the rendered control, which is what an operator actually sees.
@@ -435,14 +458,69 @@ describe('C2 · the audio card wears icon toggles, with the switch semantics int
     }
   });
 
+  // ── THE TWO TOGGLES LINE UP (operator, 2026-09-21) ───────────────────────
+  //
+  // They did not. Each `.audrow` was its own flex container, and the SENS row
+  // carries one cell the MIC row does not: `.sensv`, the figure `50`. With a 7px
+  // gap that is 25px of content sitting between the slider and the switch, so the
+  // ARMED toggle sat 25px to the right of the LISTEN toggle — two instances of one
+  // instrument, on two lines of one card, not in one column.
+  //
+  // Two flex rows cannot be made to agree by arithmetic: any fix that reserves
+  // 25px somewhere is a number that has to be re-derived the moment the figure
+  // reaches three digits or the gap changes. A grid is the thing that makes a
+  // column a column, so the rows share ONE, and the picker spans the cell the
+  // figure occupies rather than a placeholder being invented for it.
+  //
+  // WHAT THIS FILE CANNOT SEE, said so it is not read as more: jsdom lays nothing
+  // out, so nothing here measures a pixel. What it can hold is the STRUCTURE that
+  // makes alignment a property of the layout rather than a coincidence — one grid,
+  // both rows in it, and a named column for the switch.
+  describe('the two icon toggles are in one column, not two rows that nearly agree', () => {
+    const style = () => codeOnly(src.slice(src.indexOf('<style>')));
+    const rule = (sel) => {
+      const at = style().indexOf(`\n  ${sel} {`);
+      return at === -1 ? '' : style().slice(at, style().indexOf('}', at));
+    };
+
+    it('the rows sit in ONE grid, so there is one switch column rather than two', () => {
+      const markup = codeOnly(src);
+      // A single container holding both rows. Two sibling grids would size their
+      // own columns independently and land in the same place only by luck.
+      const wrap = markup.indexOf('<div class="audgrid">');
+      expect(wrap, 'the two audio rows are not in a shared grid').toBeGreaterThan(-1);
+      const rows = markup.slice(wrap, markup.indexOf('</div>', markup.lastIndexOf('class="dcap detl"')));
+      expect((rows.match(/<div class="audrow">/g) ?? []).length, 'both rows must be inside it').toBe(2);
+      expect(rule('.audgrid'), 'the wrapper is not a grid').toMatch(/display:\s*grid/);
+    });
+
+    it('and the rows are transparent to it, so their cells are the grid’s cells', () => {
+      // `display: contents` is what lets a row keep its name in the markup while
+      // its children become the grid's own items. Without it the grid has two
+      // items — the rows — and the columns inside them are independent again,
+      // which is the defect wearing a wrapper.
+      expect(rule('.audrow'), 'a row is still its own flex container').toMatch(/display:\s*contents/);
+      expect(rule('.audrow'), 'a row still lays its own children out').not.toMatch(/display:\s*flex/);
+    });
+
+    it('the mic picker spans the figure’s column, so no empty cell is invented for it', () => {
+      // The MIC row has four cells and the SENS row five. The honest way to make
+      // four occupy five columns is to let the flexible one span, not to add a
+      // spacer element that exists only to be empty.
+      expect(rule('.micpick'), 'the picker does not span the value column').toMatch(
+        /grid-column:\s*2\s*\/\s*span\s*2/,
+      );
+    });
+  });
+
   it('and spends no amber on either of them', () => {
     // Rule 18, on the row the switch used to be on. Comments stripped: the
     // reason this is not amber is written beside it, and a scanner that reads
     // the prose instead of the rule passes everything.
-    const markup = src.replace(/<!--[\s\S]*?-->/g, '');
+    const markup = codeOnly(src);
     const rows = markup.slice(markup.indexOf('<div class="audrow">'), markup.indexOf('</div>\n    </div>'));
     expect(rows).not.toMatch(/amber/);
-    const style = src.slice(src.indexOf('<style>')).replace(/\/\*[\s\S]*?\*\//g, '');
+    const style = codeOnly(src.slice(src.indexOf('<style>')));
     const rule = style.slice(style.indexOf('\n  .audtog {'), style.indexOf('\n  .dcap {'));
     expect(rule).not.toMatch(/--v-amber|--v-amethyst|--v-cyan/);
     expect(rule, 'the on state paints nothing at all').toMatch(/--v-emerald/);
@@ -542,5 +620,219 @@ describe('the transcript is timestamped, and says which line is still being said
     const style = src.slice(src.indexOf('  .trl.cur'), src.indexOf('  .trl.cur') + 220);
     expect(style).toMatch(/--v-sel/);
     expect(style).not.toMatch(/--v-amber|--v-cyan|--v-amethyst/);
+  });
+});
+
+// ── THE WAVEFORM IS A WAVEFORM NOW, AND IT HAS THREE COLOURS ───────────────
+//
+// The operator, 2026-09-20: *"Make the Live Audio wave be professional and
+// colour coded, as this is not giving an original live audio wave."* They were
+// right and the fault was not in the drawing. `start_capture` emitted every
+// THIRD chunk carrying ONE rms number, so the trace was a reading every ~600 ms
+// joined with straight lines: about one point per spoken word. It was a level
+// history labelled as a waveform.
+//
+// The backend now sends every SECOND chunk (so the readings cover the timeline
+// once, with no overlap and no gap) carrying `audio::CHUNK_PEAKS` peaks across
+// its 400 ms — one reading per 25 ms, which is inside a syllable.
+describe('one chunk is a shape, not a number', () => {
+  it('spreads a chunk’s peaks across the time the chunk covers', () => {
+    // All sixteen stamped at the arrival time would pile on one pixel and draw a
+    // vertical spike per delivery: a different wrong picture, not a right one.
+    const peaks = [0.1, 0.2, 0.3, 0.4];
+    const buf = pushEnvelope([], 10_000, peaks, false, 0.25, 400);
+    expect(buf.map((r) => r.v)).toEqual(peaks);
+    expect(buf.map((r) => r.t)).toEqual([9_700, 9_800, 9_900, 10_000]);
+  });
+
+  it('puts the newest reading at the present, not 25 ms ago', () => {
+    const buf = pushEnvelope([], 10_000, [0.1, 0.9], false, 0.5, 400);
+    expect(buf[buf.length - 1].t).toBe(10_000);
+  });
+
+  it('falls back to one reading when the engine sent no envelope', () => {
+    // An older backend, or a build without the peaks. The console must draw what
+    // it always drew rather than a flat line.
+    for (const none of [undefined, null, []]) {
+      const buf = pushEnvelope([], 10_000, none, true, 0.42, 400);
+      expect(buf).toEqual([{ t: 10_000, v: 0.42, kind: 'voice' }]);
+    }
+  });
+});
+
+describe('the colour is measured, never guessed', () => {
+  it('asks the VOICE GATE whether this is speech, and never a level', () => {
+    // Rule 12 (DECISIONS §19): nothing may compare a signal to an absolute level
+    // to decide what speech is. The same quiet reading is emerald or steel purely
+    // according to what the gate said about the chunk it came from.
+    expect(readingKind(0.04, true)).toBe('voice');
+    expect(readingKind(0.04, false)).toBe('quiet');
+    expect(readingKind(0.8, false)).toBe('quiet');
+  });
+
+  it('calls full scale clipping, whatever the gate thought', () => {
+    // The ONE absolute fact in audio: the sample had nowhere left to go. Saying
+    // so is not a threshold Relay invented.
+    expect(readingKind(1, true)).toBe('clip');
+    expect(readingKind(1, false)).toBe('clip');
+    expect(readingKind(CLIP_AT, false)).toBe('clip');
+    expect(readingKind(CLIP_AT - 0.01, true)).toBe('voice');
+  });
+
+  it('has no fourth colour, and amber is not among the three', () => {
+    // Amber is ON AIR (rule 18) and is never spent on a microphone. A "hot but
+    // not clipping" band would be exactly the absolute threshold rule 12 removed.
+    const kinds = new Set();
+    for (const v of [0, 0.3, 0.6, 0.9, 1]) for (const g of [true, false]) kinds.add(readingKind(v, g));
+    expect([...kinds].sort()).toEqual(['clip', 'quiet', 'voice']);
+  });
+});
+
+describe('a segment is drawn in runs of one colour', () => {
+  const pt = (x, v, kind) => ({ x, v, kind });
+
+  it('splits where the colour changes, not per reading', () => {
+    const runs = waveRuns([
+      pt(0, 0.1, 'quiet'), pt(0.1, 0.1, 'quiet'),
+      pt(0.2, 0.5, 'voice'), pt(0.3, 0.6, 'voice'),
+      pt(0.4, 1, 'clip'),
+    ]);
+    expect(runs.map((r) => r.kind)).toEqual(['quiet', 'voice', 'clip']);
+  });
+
+  it('repeats the boundary point so the shapes meet with no gap', () => {
+    // Four points, so BOTH runs have width and survive the one-point filter.
+    const runs = waveRuns([
+      pt(0, 0.1, 'quiet'), pt(0.3, 0.2, 'quiet'),
+      pt(0.6, 0.9, 'voice'), pt(0.9, 0.8, 'voice'),
+    ]);
+    expect(runs).toHaveLength(2);
+    // Two filled shapes that merely abut leave a hairline of background between
+    // them at every voicing change, which on a live trace is most of them.
+    expect(runs[runs.length - 1].pts[0]).toEqual(runs[0].pts[runs[0].pts.length - 1]);
+  });
+
+  it('draws nothing for a run of one point, which has no width', () => {
+    expect(waveRuns([pt(0.5, 0.4, 'voice')])).toEqual([]);
+    expect(waveRuns([])).toEqual([]);
+  });
+
+  it('a clip lasting 25 ms is red for 25 ms, not for the whole chunk', () => {
+    // The reason the split is inside a segment rather than per delivery.
+    const buf = pushEnvelope([], 10_000, [0.3, 0.3, 1, 0.3], true, 0.5, 400);
+    const runs = waveRuns(waveSegments(buf, 10_000)[0]);
+    expect(runs.map((r) => r.kind)).toEqual(['voice', 'clip', 'voice']);
+  });
+});
+
+// ── THE TRANSCRIPT KEEPS THE WHOLE SERVICE, AND PAINTS A WINDOW OF IT ──────
+//
+// *"I want all transcript to be kept, not just what you hear before another
+// minute ... keep all, starting from different seconds and minute and hour."*
+// (operator, 2026-09-20). `capture.js` now keeps every closed line with no cap.
+//
+// This is the other half. A keyed `{#each}` lays out every row it is handed, and
+// handing it a whole service costs a layout pass over ~800 rows several times a
+// minute for a box that shows about eight. So the card paints a WINDOW of the
+// newest lines and grows it when the operator scrolls near the top, which is the
+// only moment more of them can be seen.
+describe('the transcript card paints a window, and the window grows', () => {
+  const DOCK = readFileSync(resolve(process.cwd(), 'src/lib/Dock.svelte'), 'utf8');
+  const CODE = codeOnly(DOCK);
+
+  it('renders the NEWEST lines, never the oldest', () => {
+    // A window taken off the front would show the start of the service for ever
+    // while the preacher talked.
+    expect(CODE).toContain('allLines.slice(-trShown)');
+  });
+
+  it('extends the window when the operator reaches the top of it', () => {
+    // Without this the cap is simply a shorter cap, and scrolling back stops at
+    // a wall with more session behind it and no way to reach it.
+    expect(CODE).toMatch(/trShown \+= TR_PAGE/);
+    expect(CODE).toMatch(/trShown < allLines\.length/);
+  });
+
+  it('never shrinks the window mid-service', () => {
+    // The only assignment that lowers it is the new-service reset below. A
+    // window that shrank while the operator was reading would take the line
+    // they were looking at off the screen.
+    const lowers = [...CODE.matchAll(/trShown\s*(=|-=)\s*([^;\n]+)/g)].map((m) => m[0]);
+    expect(lowers.every((l) => /TR_PAGE/.test(l))).toBe(true);
+  });
+
+  it('starts again for a new service rather than creeping up for ever', () => {
+    expect(CODE).toMatch(/allLines\.length < trShown - TR_PAGE/);
+  });
+
+  it('does not reintroduce a cap on the STORE', () => {
+    // The store is the session's memory; this file may cap what it PAINTS and
+    // must never cap what is kept.
+    const CAP = codeOnly(readFileSync(resolve(process.cwd(), 'src/lib/stores/capture.js'), 'utf8'));
+    expect(CAP).not.toMatch(/finals: \[[^\]]*\]\.slice\(/);
+    expect(CAP).not.toMatch(/finalsAt: \[[^\]]*\]\.slice\(/);
+  });
+});
+
+// ── ONE INSTRUMENT, NOT TWO (RG-276) ────────────────────────────────────────
+//
+// These five cases were `meterscale.test.js`'s *"the Live audio card wears the
+// meter"*, and every one of them is REVERSED here rather than deleted. They are
+// kept because the reasoning that put the meter on the card was good reasoning
+// and will be made again: a bar answers *how loud is it now, and did it clip*,
+// a trace answers *what has the room been doing*, and neither is the other's
+// summary. That argument is still true and it still lost.
+//
+// What it lost to is the box. The operator, looking at the rendered card:
+// *"LIVE AUDIO wave will be good better to have than having both as in
+// screenshoot"*. Live audio is 178px tall and also carries a Mic row and a Sens
+// row, so a bar plus a decibel ruler plus a trace is three pictures of one
+// signal with about a third of a card each. The trace is the one that shows a
+// preacher stepping away from a microphone; clipping stays visible on it,
+// because `readingKind` paints a clipped run rose; and the meter's one unique
+// fact, the figure, is still in the head as `dbLabel`.
+//
+// `meterscale.js` had exactly one consumer and went with the bar, so its pure
+// arithmetic cases went too - an unmounted module is a defect in this
+// repository, and so is a green test file for one.
+describe('the Live audio card wears ONE instrument (RG-276 reverses RG-257)', () => {
+  it('draws no meter bar, no held peak and no full-scale mark', () => {
+    expect(src, 'the meter bar is back').not.toMatch(/class="meter"/);
+    expect(src, 'the meter fill is back').not.toMatch(/class="mfill/);
+    expect(src, 'the held peak is back').not.toMatch(/class="mpeak/);
+    expect(src, 'the full-scale mark is back').not.toMatch(/class="mclip/);
+  });
+
+  it('draws no decibel ruler, because under the trace the axis is TIME', () => {
+    // This was the closer call of the two. A dB scale under a bar labels the
+    // bar; the same row under the trace labels a TIME axis with decibels, and
+    // `INPUT · 20s` already states what that axis actually is. A picture
+    // labelled in the wrong units is worse than one with no ruler.
+    expect(src, 'the decibel ruler is back under a time axis').not.toMatch(/class="mticks/);
+    expect(src).toMatch(/INPUT · \{WAVE_SPAN_MS \/ 1000\}s/);
+  });
+
+  it('does not import an arithmetic module that nothing renders', () => {
+    expect(src, 'meterscale.js is imported again').not.toContain('meterscale');
+  });
+
+  it('keeps the trace, which is the instrument that survived', () => {
+    expect(src).toMatch(/<canvas class="wave"/);
+  });
+
+  it('keeps the dB FIGURE in the head, so no measurement was lost with the bar', () => {
+    // The bar and the figure said the same thing in two sizes. The figure is
+    // the compact one and it was already in the meta slot, so removing the bar
+    // costs the card no fact at all.
+    expect(src).toMatch(/\$: dbLabel = /);
+    expect(src).toMatch(/class="db r-mono">\{dbLabel\}/);
+  });
+
+  it('runs no clock for a mark that is no longer drawn', () => {
+    // `waveNow` existed only so the held peak could decay on the frame the
+    // trace already repaints on. With no peak there is nothing to decay, and a
+    // variable stamped every frame and read by nobody is the second thing
+    // `dockloop.test.js` exists to stop being left running.
+    expect(src, 'the peak clock outlived the peak').not.toContain('waveNow');
   });
 });

@@ -22,6 +22,7 @@ import { get } from 'svelte/store';
 
 const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a) => invoke(...a) }));
+vi.mock('@tauri-apps/api/event', () => ({ listen: async () => () => {} }));
 
 const { chooseInputDevice, setInputDevice, capture, INPUT_DEVICE_KEY } = await import(
   './stores/capture.js'
@@ -105,5 +106,84 @@ describe('remembering the choice', () => {
     capture.update((s) => ({ ...s, inputDeviceMissing: 'Blackmagic Web Presenter 4K' }));
     setInputDevice('MacBook Pro Microphone');
     expect(get(capture).inputDeviceMissing).toBe(null);
+  });
+});
+
+
+// CHANGING THE MICROPHONE WHILE RELAY IS LISTENING HAS TO REACH THE ENGINE.
+//
+// RG-291. The operator: *"when audio input switch, continue transcript once audio
+// is dected"*. `setInputDevice` updated the store and persisted the setting and
+// did nothing else, so the choice took effect at the NEXT `start_capture` and not
+// before — and if the reason for the switch was that the old device had just died,
+// rule 5 had already stopped the loop and nothing restarted it. The transcript was
+// then off for the rest of the service.
+//
+// The two rendered pickers (`Dock.svelte`, `Settings.svelte`) are DISABLED while
+// capturing and say why, so this was never reachable from them. `rooms.js` reaches
+// it by another door, and the operator's ask is for the capability itself.
+describe('changing the microphone while Relay is listening', () => {
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+  beforeEach(() => {
+    invoke.mockReset();
+    capture.update((s) => ({ ...s, capturing: false, audioError: null, inputDevice: '' }));
+  });
+
+  it('moves the running capture onto the new device', async () => {
+    invoke.mockResolvedValue(1);
+    capture.update((s) => ({ ...s, capturing: true }));
+
+    await setInputDevice('Blackmagic Web Presenter 4K');
+
+    const cmds = invoke.mock.calls.map((c) => c[0]);
+    expect(cmds).toContain('stop_capture');
+    expect(cmds).toContain('start_capture');
+    // Stopped BEFORE started — two engines on one microphone is the bug
+    // `startCapture`'s own detach comment records, one level down.
+    expect(cmds.indexOf('stop_capture')).toBeLessThan(cmds.indexOf('start_capture'));
+    // And on the device the operator actually picked, not on whatever was stored.
+    const start = invoke.mock.calls.find((c) => c[0] === 'start_capture');
+    expect(start[1]).toEqual({ device: 'Blackmagic Web Presenter 4K' });
+  });
+
+  it('touches no engine when Relay is not listening', async () => {
+    invoke.mockResolvedValue(null);
+    await setInputDevice('Blackmagic Web Presenter 4K');
+    await flush();
+    const cmds = invoke.mock.calls.map((c) => c[0]);
+    expect(cmds).not.toContain('stop_capture');
+    expect(cmds).not.toContain('start_capture');
+    expect(cmds).toContain('set_setting');
+  });
+
+  // A FAILED STOP MAY NEVER OPEN A SECOND CAPTURE ON TOP OF A LIVE ONE.
+  //
+  // `stop_capture` takes a lock, and an audio thread that panicked while holding it
+  // leaves the mutex poisoned and the engine RUNNING (`micstop.test.js`,
+  // `firstrunmic.test.js`). Starting anyway would put two capture threads on one
+  // device and duplicate every event, which is exactly the failure `startCapture`
+  // detaches its listeners to avoid.
+  it('does not start a second capture when the first would not stop', async () => {
+    capture.update((s) => ({ ...s, capturing: true }));
+    invoke.mockImplementation(async (cmd) => {
+      if (cmd === 'stop_capture') throw new Error('audio lock poisoned');
+      return null;
+    });
+
+    await setInputDevice('Blackmagic Web Presenter 4K');
+
+    const cmds = invoke.mock.calls.map((c) => c[0]);
+    expect(cmds).toContain('stop_capture');
+    expect(cmds).not.toContain('start_capture');
+    // And it is SAID. A microphone that did not move is not a microphone that did.
+    expect(get(capture).audioError).toBeTruthy();
+  });
+
+  // GROUP 2: it never throws at the caller. An operator changing microphone thirty
+  // seconds before a service must not be handed an exception by the picker.
+  it('never rejects, whatever the backend does', async () => {
+    capture.update((s) => ({ ...s, capturing: true }));
+    invoke.mockRejectedValue(new Error('no bridge'));
+    await expect(setInputDevice('Anything')).resolves.toBeUndefined();
   });
 });
